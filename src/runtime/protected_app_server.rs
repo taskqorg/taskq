@@ -33,6 +33,8 @@ mod tests {
             let root=dir.join("project");let home=dir.join("home");let bin=dir.join("bin/codex");
             fs::create_dir(bin.parent().unwrap()).unwrap();
             fs::create_dir(&root).unwrap();fs::create_dir_all(home.join(".codex")).unwrap();fs::write(&bin,b"invented native fixture").unwrap();
+            fs::write(dir.join("taskq"),b"invented launcher").unwrap();
+            fs::write(home.join(".codex/config.toml"),b"# invented config").unwrap();
             fs::write(dir.join("projects"),format!("{}\n",root.display())).unwrap();
             fs::write(dir.join("host.json"),json!({"codex":["-s","danger-full-access","-m","invented-model","-c","model_reasoning_effort=high"]}).to_string()).unwrap();
             let p=policy::Policy{revision:29,grants:vec![policy::Grant{runtime:"codex".into(),mode:"workspace".into(),project:Some(root.to_str().unwrap().into()),by:"invented-operator".into(),at:1}]};
@@ -68,6 +70,106 @@ mod tests {
         fs::remove_file(f.dir.join("accounts.json")).unwrap();f.p.grants.clear();f.save();assert!(f.plan().is_err());
         let text=json!({"schema":SCHEMA,"slot":{"binding":{"runtime":"codex"}},"policy_revision":29,"account":"default","grant":"workspace"}).to_string();
         assert!(Request::parse(&text).is_err());assert!(Request::parse(&"x".repeat(16385)).is_err());
+    }
+    // Chain: R8 R9 R13 #2135 A1/A2: the existing Workspace/network request resolves without widening authority.
+    // Risk: rejecting approved host config, losing model/effort/account, or forwarding an unsupported override.
+    #[test]
+    fn protected_workspace_network_host_request_retains_authority_and_config() {
+        let f=Fixture::new();
+        let args=["-s","workspace-write","-c","sandbox_workspace_write.network_access=true"];
+        fs::write(f.dir.join("host.json"),json!({"codex":args}).to_string()).unwrap();
+        let p=f.plan().unwrap_or_else(|e|panic!("existing host Workspace/network request must resolve: {e}"));
+        assert_eq!(p.args,["-c","sandbox_mode=\"danger-full-access\"","-c","approval_policy=\"never\"","-c","sandbox_workspace_write.network_access=true"]);
+        assert_eq!(p.access.mode,"workspace");assert!(p.access.profile.as_ref().unwrap().contains("deny file-write"));
+        assert_eq!(p.authority["requested"],args.join(" "));
+        assert_eq!(p.authority["account"],"default");assert_eq!(p.authority["account_home"],json!(f.home.join(".codex")));
+        let profile=p.authority["profile_sha256"].clone();
+        fs::write(f.dir.join("host.json"),json!({"codex":["--sandbox","workspace-write","--config","sandbox_workspace_write.network_access=true","--model","invented-model","--config","model_reasoning_effort=high"]}).to_string()).unwrap();
+        let p=f.plan().unwrap();
+        assert_eq!(p.authority["profile_sha256"],profile);
+        assert_eq!(p.args,["-c","sandbox_mode=\"danger-full-access\"","-c","approval_policy=\"never\"","--config","sandbox_workspace_write.network_access=true","-c","model=\"invented-model\"","--config","model_reasoning_effort=high"]);
+        for config in ["sandbox_workspace_write.network_access=false","sandbox_workspace_write.network_access=true.extra","sandbox_workspace_write.network_access=\"true\"","sandbox_workspace_write.writable_roots=[]","sandbox_mode=\"danger-full-access\"","approval_policy=\"never\"","unknown=true"] {
+            fs::write(f.dir.join("host.json"),json!({"codex":["-s","workspace-write","-c",config]}).to_string()).unwrap();
+            assert!(f.plan().is_err(),"unsupported config must refuse: {config}");
+        }
+        for args in [vec!["-s","read-only"],vec!["-c"],vec!["--unknown"],vec!["--add-dir","/invented"]] {
+            fs::write(f.dir.join("host.json"),json!({"codex":args}).to_string()).unwrap();assert!(f.plan().is_err(),"{args:?}");
+        }
+    }
+    // Chain: R8 R12 #2135 A2: query errors and permission mismatches remain closed and attributable without private paths.
+    // Risk: treating unknown enforcement as allowed or hiding the native query needed to diagnose containment.
+    #[test]
+    fn protected_sandbox_refusal_names_query_and_result_without_paths() {
+        for (result,errno,denied,observed,expected) in [
+            (-1,Some(22),true,"unknown","denied"),
+            (0,None,true,"allowed","denied"),
+            (1,None,false,"denied","allowed"),
+        ] {
+            let error=sandbox_result("file-write-create","account-config",result,errno,denied).unwrap_err();
+            assert_eq!(error,format!("native sandbox readback: operation=file-write-create category=account-config expected={expected} observed={observed} return={result} errno={}; input refused",errno.map_or("none".into(),|v|v.to_string())));
+            assert!(!error.contains('/')&&!error.contains('\\'),"private paths must not reach diagnostics");
+        }
+        assert!(sandbox_result("file-write-data","workspace-probe",0,None,false).is_ok());
+        assert!(sandbox_result("file-write-unlink","policy-store",1,None,true).is_ok());
+        assert!(sandbox_result("file-write-unlink","policy-store",2,None,true).is_ok());
+        assert!(sandbox_result("file-write-data","workspace-probe",-1,Some(3),false).is_err());
+    }
+    // Chain: R8 #2135 A2: absent paths can report denial even when creation is allowed on macOS.
+    // Risk: rejecting the workspace or accepting nonexistent outside markers as containment evidence.
+    #[test]
+    fn protected_sandbox_queries_use_existing_trusted_objects() {
+        let f=Fixture::new();let p=f.plan().unwrap();
+        let paths=query_paths(&f.dir,&p);
+        assert_eq!(paths.len(),6);
+        assert_eq!(paths[0],("workspace-probe",f.root.clone(),false));
+        assert_eq!(paths[5],("outside-workspace",f.home.clone(),true));
+        for (category,path,_) in &paths {assert!(path.exists(),"{category} must already exist");}
+        assert_eq!(p.authority["sandbox_paths"],json!(p.queries));
+        let mut calls=vec![];
+        for q in &p.queries {for &op in if q.denied {&["file-write-data","file-write-create","file-write-unlink"][..]}else{&["file-write-data"][..]} {
+            q.check(op,|path| {assert!(path.exists());calls.push((q.category,op,q.denied));Ok((i32::from(q.denied),None))}).unwrap();
+        }}
+        assert_eq!(calls.len(),16);assert_eq!(calls[0],("workspace-probe","file-write-data",false));
+        assert!(calls[1..].iter().all(|(_,_,denied)|*denied));
+        let account=f.home.join(".codex").join(runtime::accounts::HOMES).join("invented-account");
+        fs::create_dir_all(&account).unwrap();fs::write(account.join("config.toml"),b"# invented account config").unwrap();
+        fs::write(f.dir.join("accounts.json"),r#"{"codex":[{"label":"invented-account","enabled":true}]}"#).unwrap();
+        let mut r=f.r.clone();r.account="invented-account".into();
+        let p=resolve(&f.dir,&f.home,&r,"macos",&f.bin).unwrap();
+        assert_eq!(p.queries[4].path,account.join("config.toml"));
+    }
+    // Chain: R8 R9 #2135 A2: unknown/missing/replaced query objects close both allowed and denied observations.
+    // Risk: treating ENOENT as enforcement or accepting a changed path before input delivery.
+    #[test]
+    fn protected_sandbox_query_identities_refuse_missing_changed_and_racing_paths() {
+        for index in 1..5 {
+            let f=Fixture::new();let p=f.plan().unwrap();let q=&p.queries[index];
+            fs::remove_file(&q.path).unwrap();fs::create_dir(&q.path).unwrap();
+            assert!(f.plan().is_err(),"a directory is not a required control file: {}",q.category);
+        }
+        for index in 0..6 {
+            let f=Fixture::new();let p=f.plan().unwrap();let q=&p.queries[index];
+            if q.path.is_dir() {fs::remove_dir_all(&q.path).unwrap();}else{fs::remove_file(&q.path).unwrap();}
+            let error=q.check("file-write-data",|_|panic!("a missing object must not reach the kernel query")).unwrap_err();
+            assert!(error.contains(q.category)&&error.contains("unknown-or-changed"));
+            assert!(!error.contains('/')&&!error.contains('\\'));
+            assert!(f.plan().is_err(),"a missing object must also refuse before launch");
+        }
+        for result in [0,1] {
+            let f=Fixture::new();let p=f.plan().unwrap();let q=&p.queries[4];
+            assert!(q.check("file-write-data",|path|{fs::write(path,b"# changed invented config").unwrap();Ok((result,None))}).is_err());
+            assert_ne!(f.plan().unwrap().authority,p.authority,"config changes must invalidate original launch authority");
+        }
+        let f=Fixture::new();let p=f.plan().unwrap();let q=&p.queries[0];
+        fs::write(f.root.join("ordinary-workspace-output"),b"invented output").unwrap();
+        q.check("file-write-data",|_|Ok((0,None))).unwrap();
+        assert_eq!(f.plan().unwrap().authority,p.authority,"directory content changes preserve identity");
+        #[cfg(unix)] {
+            let original=f.dir.join("original-project");fs::rename(&f.root,&original).unwrap();fs::create_dir(&f.root).unwrap();
+            assert!(q.check("file-write-data",|_|panic!("replacement must refuse")).is_err());
+            fs::remove_dir(&f.root).unwrap();std::os::unix::fs::symlink(&original,&f.root).unwrap();
+            assert!(q.check("file-write-data",|_|panic!("retargeted alias must refuse")).is_err());
+        }
     }
     // R9/R12 A2/A7: intent precedes spawn; interrupted/unknown/terminal records all consume the same launch.
     // Risk: restarting a supervisor replays an AssetQ operation or a stale PID is treated as live authority.
@@ -151,7 +253,38 @@ fn stamp(path:&Path)->Res<Value> {
     #[cfg(not(unix))] {Ok(json!([m.len(),format!("{modified:?}"),format!("{:?}",m.created().map_err(|_|"protected executable creation unknown")?)]))}
 }
 
-struct Plan {authority:Value,access:policy::Effective,args:Vec<String>,root:PathBuf,home:PathBuf,bin:PathBuf}
+struct Plan {authority:Value,access:policy::Effective,args:Vec<String>,root:PathBuf,home:PathBuf,bin:PathBuf,queries:Vec<SandboxQuery>}
+fn query_paths(install:&Path,p:&Plan)->[(&'static str,PathBuf,bool);6] {
+    [("workspace-probe",p.root.clone(),false),
+        ("policy-store",install.join(policy::FILE),true),("taskq-launcher",install.join("taskq"),true),
+        ("native-executable",p.bin.clone(),true),("account-config",Path::new(p.authority["account_home"].as_str().unwrap()).join("config.toml"),true),
+        ("outside-workspace",p.home.clone(),true)]
+}
+#[derive(serde::Serialize)]
+struct SandboxQuery {category:&'static str,path:PathBuf,denied:bool,identity:Value}
+fn query_identity(path:&Path)->Res<Value> {
+    let real=canonical(path)?;let m=fs::metadata(path).map_err(|_|"sandbox path identity unknown")?;
+    if !m.is_file()&&!m.is_dir() {return Err("sandbox path is not a file or directory".into());}
+    #[cfg(unix)] let object={use std::os::unix::fs::MetadataExt;json!([m.dev(),m.ino()])};
+    // Windows is refused by resolve; this branch only supports portable fixtures.
+    #[cfg(not(unix))] let object=json!(format!("{:?}",m.created().map_err(|_|"sandbox path creation unknown")?));
+    Ok(json!({"canonical":real,"directory":m.is_dir(),"object":object,"file_stamp":if m.is_file(){stamp(path)?}else{Value::Null}}))
+}
+impl SandboxQuery {
+    fn path_error(&self,operation:&str)->String {
+        format!("native sandbox path readback: operation={operation} category={} observed=unknown-or-changed; input refused",self.category)
+    }
+    fn unchanged(&self,operation:&str)->Res<()> {
+        if query_identity(&self.path).ok().as_ref()!=Some(&self.identity) {return Err(self.path_error(operation));}Ok(())
+    }
+    #[cfg(any(test,target_os="macos"))]
+    fn check(&self,operation:&str,query:impl FnOnce(&Path)->Res<(i32,Option<i32>)>)->Res<()> {
+        self.unchanged(operation)?;
+        let (result,errno)=query(&self.path)?;
+        self.unchanged(operation)?;
+        sandbox_result(operation,self.category,result,errno,self.denied)
+    }
+}
 // Resolve only host inputs. The request's revision/account are equality requirements, never grants.
 fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
     if os!="macos" {return Err("protected app-server supports qualified macOS Codex only; no Full fallback".into());}
@@ -198,7 +331,7 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
         "-s"|"--sandbox"=>{let v=it.next().ok_or("missing host sandbox request")?;if v!="danger-full-access"&&v!="workspace-write" {return Err("host sandbox narrowing is not qualified for app-server".into());}},
         "-m"|"--model"=>{let v=it.next().ok_or("missing host model")?;args.extend(["-c".into(),format!("model={}",serde_json::to_string(v).map_err(|_|"host model invalid")?)]);},
         "-c"|"--config"=>{let v=it.next().ok_or("missing host config request")?;
-            if !v.starts_with("model_reasoning_effort=") {return Err("unsupported host app-server config; existing paths unchanged".into());}
+            if !v.starts_with("model_reasoning_effort=")&&v!="sandbox_workspace_write.network_access=true" {return Err("unsupported host app-server config; existing paths unchanged".into());}
             args.extend([a.clone(),v.clone()]);},
         _=>return Err("unsupported host app-server arguments; existing paths unchanged".into()),
     }}
@@ -207,7 +340,15 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
         "executable":bin,"executable_identity":stamp(&bin)?,"executable_sha256":file_digest(&bin)?,
         "adapter":{"executable":adapter,"identity":stamp(&adapter)?,"sha256":file_digest(&adapter)?,"version":crate::platform::VERSION},
         "account":r.account,"account_home":account,"args":args});
-    Ok(Plan{authority,access,args,root,home,bin})
+    let mut plan=Plan{authority,access,args,root,home,bin,queries:vec![]};
+    for (category,path,denied) in query_paths(&install,&plan) {
+        let mut q=SandboxQuery{category,path,denied,identity:Value::Null};
+        q.identity=query_identity(&q.path).map_err(|_|q.path_error("bind"))?;
+        if q.identity["directory"]!=json!(category=="workspace-probe"||category=="outside-workspace") {return Err(q.path_error("bind"));}
+        plan.queries.push(q);
+    }
+    plan.authority["sandbox_paths"]=json!(plan.queries);
+    Ok(plan)
 }
 
 fn launch_record<'a>(s:&'a resources::State,key:&str,r:&Request)->Res<&'a Value> {
@@ -250,6 +391,16 @@ fn native(value:&Value)->Res<coreq::process::Identity> {
 }
 fn exact(expected:&coreq::process::Identity,seen:Res<Option<coreq::process::Identity>>)->Res<()> {
     if seen?.as_ref()!=Some(expected) {return Err("native incarnation absent or changed; retain slot and reconcile".into());}Ok(())
+}
+
+#[cfg(any(test,target_os="macos"))]
+fn sandbox_result(operation:&str,category:&str,result:i32,errno:Option<i32>,denied:bool)->Res<()> {
+    if result<0||(result!=0)!=denied {
+        let expected=if denied {"denied"}else{"allowed"};
+        let observed=if result<0 {"unknown"}else if result==0 {"allowed"}else{"denied"};
+        let errno=errno.map_or("none".into(),|v|v.to_string());
+        return Err(format!("native sandbox readback: operation={operation} category={category} expected={expected} observed={observed} return={result} errno={errno}; input refused"));
+    }Ok(())
 }
 
 pub(crate) fn versions_in_use(install:&Path)->Res<Vec<String>> {
@@ -315,19 +466,20 @@ mod mac {
         if canonical(Path::new(std::ffi::OsStr::from_bytes(&buf[..end])))?!=path {return Err("native executable has not matched the selected image".into());}
         live(id)
     }
-    fn check(pid:u32,operation:&str,path:&Path,denied:bool)->Res<()> {
-        let op=CString::new(operation).map_err(|_|"invalid sandbox operation")?;
-        let path=CString::new(path.as_os_str().as_bytes()).map_err(|_|"invalid sandbox path")?;
-        let result=unsafe{sandbox_check(pid as i32,op.as_ptr(),1|SANDBOX_CHECK_NO_REPORT,path.as_ptr())};
-        if result<0||(result!=0)!=denied {return Err("native sandbox readback unknown or mismatched; input refused".into());}Ok(())
+    fn check(pid:u32,operation:&str,q:&SandboxQuery)->Res<()> {
+        q.check(operation,|path| {
+            let op=CString::new(operation).map_err(|_|"invalid sandbox operation")?;
+            let path=CString::new(path.as_os_str().as_bytes()).map_err(|_|"invalid sandbox path")?;
+            let result=unsafe{*libc::__error()=0;sandbox_check(pid as i32,op.as_ptr(),1|SANDBOX_CHECK_NO_REPORT,path.as_ptr())};
+            let errno=if result<0 {io::Error::last_os_error().raw_os_error()}else{None};
+            Ok((result,errno))
+        })
     }
-    fn verified(id:&coreq::process::Identity,install:&Path,p:&Plan)->Res<Value> {
+    fn verified(id:&coreq::process::Identity,p:&Plan)->Res<Value> {
         image(id,&p.bin)?;
-        check(id.pid,"file-write-data",&p.root.join(".taskq-app-server-probe"),false)?;
-        let outside=p.home.join(".taskq-app-server-outside");
-        let protected=[install.join(policy::FILE),install.join("taskq"),p.bin.clone(),p.home.join(".codex/config.toml"),outside];
-        for path in &protected {for op in ["file-write-data","file-write-create","file-write-unlink"] {check(id.pid,op,path,true)?;}}
+        for q in &p.queries {for &op in if q.denied {&["file-write-data","file-write-create","file-write-unlink"][..]}else{&["file-write-data"][..]} {check(id.pid,op,q)?;}}
         image(id,&p.bin)?;
+        let protected:Vec<_>=p.queries.iter().filter(|q|q.denied).map(|q|&q.path).collect();
         Ok(json!({"state":"verified-effective","scope":"live native image and named effective sandbox queries; native workload qualification separate",
             "workspace_write":true,"protected_write_create_unlink_denied":protected,"reads":"existing profile","network":"existing profile"}))
     }
@@ -361,7 +513,7 @@ mod mac {
                 key(&install,r)?;let p=refresh(&install,&home,r,&record["authority"])?;
                 let supervisor=native(&record["supervisor"])?;live(&supervisor)?;
                 child_of(&id,&supervisor)?;
-                let effective=verified(&id,&install,&p)?;
+                let effective=verified(&id,&p)?;
                 resources::within(&install,resources::WAIT,|s|bound_gate(s,&slot_key,r,&p.authority,&id,&supervisor,Some(&effective)))?;
                 receipt["verified_effective"]=effective;
                 if record["state"]!="verified-effective" {return Err("launch receipt uncommitted; execution unknown".into());}Ok(())})();
@@ -403,7 +555,7 @@ mod mac {
             resources::within(install,resources::WAIT,|s| {
                 external_slots::reserved(install,s,&r.slot,"codex")?;refresh(install,home,r,&p.authority)?;
                 bound_gate(s,key,r,&p.authority,&id,&supervisor,None)?;child_of(&id,&supervisor)?;
-                let effective=verified(&id,install,&p)?;
+                let effective=verified(&id,&p)?;
                 let launch=&mut s.ops.get_mut(key).ok_or("slot disappeared")?.bound["local_slot"]["launch"];
                 launch["verified_effective"]=effective;launch["state"]=json!("verified-effective");launch["reason"]=Value::Null;Ok(())
             })
@@ -424,7 +576,7 @@ mod mac {
                 Err(_)=>return Err("consumer input interrupted; native outcome unknown, slot retained".into())};
             if bytes.is_empty() {drop(input);return Err("consumer input ended; native/descendant completion unproved, slot retained".into());}
             resources::within(install,resources::WAIT,|s| {
-                external_slots::reserved(install,s,&r.slot,"codex")?;refresh(install,home,r,&p.authority)?;let effective=verified(&id,install,&p)?;
+                external_slots::reserved(install,s,&r.slot,"codex")?;refresh(install,home,r,&p.authority)?;let effective=verified(&id,&p)?;
                 bound_gate(s,key,r,&p.authority,&id,&supervisor,Some(&effective))?;child_of(&id,&supervisor)?;
                 let until=Instant::now()+Duration::from_secs(1);let mut left=bytes.as_slice();
                 while !left.is_empty() {match input.write(left) {
