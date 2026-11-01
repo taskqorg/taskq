@@ -51,6 +51,8 @@ def sha256(p):
 def run(cmd, extra=None, cwd=None, timeout=120):
     e = {k: v for k, v in os.environ.items() if k not in STRIP}
     e.update(extra or {})
+    if WIN:  # CreateProcess skips PATHEXT, so `claude` and `codex` (.cmd shims) resolve through which()
+        cmd = [shutil.which(cmd[0]) or cmd[0], *cmd[1:]]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, env=e, cwd=cwd, timeout=timeout)
         return p.returncode, (p.stdout + p.stderr).strip()
