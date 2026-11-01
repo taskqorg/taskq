@@ -26,7 +26,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    await page.waitForFunction(id=>!document.querySelector('[data-c-field=text]')?.disabled&&document.querySelector('.conversation-detail')?.dataset.threadId===id,'owner-'+i);
   };
   await navigate(0);await page.locator('[data-c-field=text]').fill('Preserved unsent independent draft');
-  await page.waitForFunction(()=>sent.some(m=>m.action==='save'&&m.draft?.text==='Preserved unsent independent draft'));
+  try{await page.waitForFunction(()=>sent.some(m=>m.action==='save'&&m.draft?.text==='Preserved unsent independent draft'));}catch(error){console.error('Draft-save boundary',await page.evaluate(()=>({sent,text:document.querySelector('[data-c-field=text]')?.value,status:document.querySelector('.conversation-status')?.textContent,bounds:taskq.bounds()})));throw error;}
   const samples=[],heaps=[],cdp=await page.context().newCDPSession(page);
   for(let tour=0;tour<5;tour++){for(let i=0;i<30;i++){
    const t=Date.now();await navigate(i);samples.push(Date.now()-t);

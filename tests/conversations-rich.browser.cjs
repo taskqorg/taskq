@@ -29,6 +29,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium,webki
   assert(await page.locator('.conversation-reader').evaluate(e=>e.scrollWidth<=e.clientWidth+2),'rich reader has no horizontal scroll trap');
   if(process.env.TASKQ_EVIDENCE_2159){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2159,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2159+'/rich-'+engine.name()+'-'+theme+'-'+width+'.png'});if(theme==='dark'&&width===900){await first.scrollIntoViewIfNeeded();await page.screenshot({path:process.env.TASKQ_EVIDENCE_2159+'/image-'+engine.name()+'.png'});}}
  }}
+ assert((await page.evaluate(()=>taskq.bounds().conversations.nativeBytes))>src.length*6,'resident byte accounting includes recorded images');
  assert(!requests.some(u=>/^https?:/.test(u)),'rendering never fetches remote/private artifacts');assert.deepEqual(errors,[]);
  }finally{await browser.close();}
 }console.log('PASS rich Conversations: language tokens/exact source, bounded source-backed image rendering, no remote fetch, Chromium/WebKit themes/widths');})().catch(e=>{console.error(e);process.exitCode=1;});

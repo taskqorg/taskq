@@ -39,7 +39,8 @@ fn generation(path: &Path) -> Res<String> {
     (&mut file).take(meta.len().min(128)).read_to_end(&mut prefix).map_err(|e|format!("transcript unreadable: {e}"))?;
     let prefix=&prefix[..prefix.iter().position(|b|*b==b'\n').map_or(prefix.len(),|i|i+1)];
     let digest=ring::digest::digest(&ring::digest::SHA256,&prefix);
-    Ok(format!("{identity}:{}",digest.as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>()))
+    // Image extraction changes block ordinals; old saved positions must never bind to a different block.
+    Ok(format!("images-v1:{identity}:{}",digest.as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>()))
 }
 fn page(path:&Path,generation:String,mut items:Vec<Value>,start:u64,end:u64,size:u64)->Res<Page> {
     if self::generation(path)?!=generation {return Err("transcript replaced during read; view unknown".into());}
@@ -386,6 +387,7 @@ mod tests {
         let dir=tmp();let path=dir.join("images.jsonl");
         let recorded=json!({"type":"user","message":{"content":[{"type":"image","source":{"type":"base64","data":png}}]}});
         fs::write(&path,format!("{recorded}\n").repeat(8)).unwrap();let p=before(false,&path,None).unwrap();
+        assert!(p.generation.starts_with("images-v1:"),"new image ordinals require a parser-generation fence");
         assert_eq!(p.items.iter().filter(|i|i["image"]["src"].is_string()).count(),4,"page has at most four inline image sources");
         assert!(p.items[7]["image"]["reason"].as_str().unwrap().contains("limit"));
         let mut malformed=recorded.clone();malformed["message"]["content"][0]["source"]["data"]=json!("broken");

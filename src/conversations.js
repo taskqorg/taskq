@@ -17,7 +17,7 @@ module.exports=execution.module('conversations',{
   let sidebar={pins:[],collapsed:[],archived:{}},sidebarPending=null,revealed=null,activityRead=null,activityTimer=null,activityTimes={},activityChecks={};
   let focuses={},readerIdentity=null,layoutFrame=null,correcting=false,scrollIntent=null,scrollIntentTimer=null,dragScroll=false,sidebarEpoch=0,sidebarProjection=null,stableOrder=new Map(),stableGroups=new Map(),modeCounts={},pageSelected=null,listObserver=null,listObservedRoot=null,listAnchor=null;
   let resultFilter='all',sidebarItems=[],resultPages=new Map(),scopeReturn=null,completed=null,readerResize=null;
-  const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),imageFailures=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
+  const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),nativeSources=new Map(),imageFailures=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
   let recoveryQueue=[],recoveryDrafts=[];
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
@@ -136,7 +136,7 @@ module.exports=execution.module('conversations',{
     else if(op.kind==='after'&&op.after===view.end){view.items.push(...fresh);view.end=v.end;view.quiet.after=fresh.length?0:view.quiet.after+1;if(fresh.length){view.announce=fresh.length+(fresh.length===1?' new message':' new messages');if(!view.stick)view.unseen=true;}}
    },
    key:function(item){return item.at+':'+item.i;},
-   bytes:function(item){if(!recordBytes.has(item))recordBytes.set(item,new TextEncoder().encode(item.text||'').length);return recordBytes.get(item);},
+   bytes:function(item){if(!recordBytes.has(item))recordBytes.set(item,new TextEncoder().encode(item.text||'').length+(item.image?.src?.length||0));return recordBytes.get(item);},
    // Q-A3: the first visible native or board record and its offset from the viewport top
    mark:function(el){
     const top=el.getBoundingClientRect().top;
@@ -317,7 +317,7 @@ module.exports=execution.module('conversations',{
    short:function(text){return String(text).replace(/(?<![^\s'"`=(])(?:~\/|\/)(?:[^\s/'"`]+\/)+([^\s/'"`]*)/g,'…/$1');},
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
    nativeItem:function(item,label=item.role,closed=false,scope=''){
-    const key=api.key(item),text=item.text||'',source=closed?'native:'+item.at+':'+item.i:null;let raw=text,content=text.length<=32768?require('./reports.js').body(text,source,0):null;
+    const key=api.key(item),resident=closed?closedViews.get(scope)?.page:live||view,sourceKey='source:'+(scope||resident?.thread||resident?.id||selected)+':'+(resident?.source||resident?.generation||'')+':'+key,text=item.text||'',source=closed?'native:'+item.at+':'+item.i:null;let raw=text,content=text.length<=32768?require('./reports.js').body(text,source,0):null;
     if(text.length>32768){const resident=live||view,cache=(closed?scope:resident?.id||resident?.thread)+'@'+(closed?closedViews.get(scope)?.page?.generation||'':resident?.source||'')+':'+key,stored=closed&&new RegExp('^report:native:'+item.at+':'+item.i+':part:(\\d+)$').exec(positions[closedViews.get(scope)?.thread]?.key||''),anchor=!closed&&resident?.anchor?.key===key?resident.anchor:null,part=anchor?.part??(stored?Number(stored[1]):textPages.get(cache))??0,start=Math.floor(Math.min(part,text.length-1)/32768)*32768,end=Math.min(text.length,start+32768);
 
      const turn=next=>{textPages.delete(cache);textPages.set(cache,next);while(textPages.size>24)textPages.delete(textPages.keys().next().value);if(closed){const page=closedViews.get(scope);api.place(page.thread,{key:'report:native:'+item.at+':'+item.i+':part:'+next,y:0,before:page.page.end,g:page.page.generation});api.nav();}else if(resident){resident.stick=false;resident.anchor={key,part:next,y:0};api.storeAnchor(resident.id||resident.thread,resident);}draw();};
@@ -329,7 +329,7 @@ module.exports=execution.module('conversations',{
      const reason=imageFailures.get(identity)||image.reason||(earlier>=4?'Image reader preview limit; inspect the native source':!src?'Image bytes unavailable or unsupported':'');
      content=h('figure',{class:'transcript-image'},h('figcaption',null,name),reason?h('p',{role:'status'},reason):[h('details',{'data-view-key':'image:'+identity},h('summary',null,'Inspect recorded image')),h('img',{src,alt:name,width:image.width,height:image.height,loading:'lazy',decoding:'async',onError:()=>{imageFailures.set(identity,'Image decode failed; recorded source retained');while(imageFailures.size>24)imageFailures.delete(imageFailures.keys().next().value);draw();}})],typeof image.url==='string'&&/^https?:\/\//.test(image.url)&&h('a',{href:image.url,'data-url':image.url},'Open recorded artifact'));
     }
-    return h('article',{key,'data-key':key,...(closed?{'data-reading-key':'report:native:'+item.at+':'+item.i,'data-read-before':closedViews.get(scope)?.page?.end,'data-source-generation':closedViews.get(scope)?.page?.generation}:{}),class:'dialogue-item '+item.role},label&&h('p',{class:'meta'},label,time.stamp(item.updated,label+' message')),h('div',{class:'conversation-text conversation-prose'},content),!image&&text&&h('details',{'data-view-key':'source:'+scope+':'+key},h('summary',{class:'source-toggle'},'Exact source'),h('pre',null,raw)));
+    return h('article',{key,'data-key':key,...(closed?{'data-reading-key':'report:native:'+item.at+':'+item.i,'data-read-before':closedViews.get(scope)?.page?.end,'data-source-generation':closedViews.get(scope)?.page?.generation}:{}),class:'dialogue-item '+item.role},label&&h('p',{class:'meta'},label,time.stamp(item.updated,label+' message')),h('div',{class:'conversation-text conversation-prose'},content),!image&&text&&h('details',{'data-view-key':sourceKey,'data-native-source':sourceKey},h('summary',{class:'source-toggle'},'Exact source'),nativeSources.has(sourceKey)&&h('pre',null,raw)));
    },
    history:function(p,t,render){
     const total=t.history_count??t.history?.length??0,tail=t.history_tail===true?t.history||[]:t.history_tail||[],sourceRevision=t.history_source_revision??t.revision,sourceTotal=total-tail.length;if(!total)return null;
@@ -719,7 +719,7 @@ module.exports=execution.module('conversations',{
      api.place(selected,view.stick?undefined:view.anchor?.board?{key:view.anchor.key,y:Math.round(view.anchor.y)}:!a?undefined:{at:a.at,i:a.i,y:Math.round(view.anchor.y),...(view.source?{g:view.source}:{}),...(view.anchor.part!==undefined?{part:view.anchor.part}:{})});api.nav();
      const before=view.busy.before,after=view.busy.after;api.edge(e.target);if(shown!==api.latest()||before!==view.busy.before||after!==view.busy.after)draw();
     },true);
-    ui.listen(menu,'toggle',e=>{if(e.target.classList?.contains('conversation-info')&&view){view.stick=false;const detail=menu.querySelector('.conversation-reader');if(detail)view.anchor=api.mark(detail);}},true);
+    ui.listen(menu,'toggle',e=>{const source=e.target.dataset.nativeSource;if(source&&nativeSources.has(source)!==e.target.open){if(e.target.open){nativeSources.set(source,true);while(nativeSources.size>24)nativeSources.delete(nativeSources.keys().next().value);}else nativeSources.delete(source);draw();}if(e.target.classList?.contains('conversation-info')&&view){view.stick=false;const detail=menu.querySelector('.conversation-reader');if(detail)view.anchor=api.mark(detail);}},true);
     ui.listen(window,'resize',()=>{api.grow();api.layout();});
     ui.listen(menu,'dragover',e=>{if(e.target.closest('.conversations'))e.preventDefault();});
     ui.listen(menu,'drop',e=>{if(!e.target.closest('.conversations'))return;e.preventDefault();api.files([...e.dataTransfer.files]);});
