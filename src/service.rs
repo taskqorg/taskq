@@ -25,8 +25,11 @@ pub struct Config {
     pub limits: BTreeMap<String, u32>,
     /// What this host offers for `needs-<x>` labels.
     pub has: Vec<String>,
-    /// host.json `claim` `labelled` (§ 9): new claims need this host's `host-<me>` label.
-    pub labelled: bool,
+    /// Host task-claim mode (§4/§9); manager/owner turns are independent.
+    pub claim: crate::host::ClaimMode,
+    pub spillover_grace: u64,
+    pub allowed_runtimes: Option<Vec<String>>,
+    pub auto_reroute: bool,
     /// host.json `default_runtime` (§ 9): the runtime of reviewers and of workers without `run-*` (§ 4).
     pub default_runtime: String,
     pub routing: Vec<crate::labels::Routing>,
@@ -40,6 +43,15 @@ pub struct Config {
     pub external: bool,
     /// `host_setup` (§ 6 Shared project bootstrap): the project's one-time host setup command, run by `service install`.
     pub host_setup: Option<String>,
+}
+
+impl Config {
+    /// §4: only an explicit operator disable permits the project auto_reroute exception.
+    pub fn runtime_disabled(&self, rt: &str, limits: Option<&BTreeMap<String, u32>>) -> bool {
+        self.allowed_runtimes.as_ref().is_some_and(|a| !a.iter().any(|r| r == rt))
+            || limits.is_some_and(|l| l.get(rt) == Some(&0))
+            || { let a = crate::runtime::accounts::Host::read(&self.install); a.error.is_none() && a.off(rt) }
+    }
 }
 
 pub const HOST_LABEL: &str = "taskq-host";
@@ -152,9 +164,61 @@ fn refusal_admission(code: &str, text: &str) -> (&'static str, String) {
     (code, text.into())
 }
 
-/// § 4 Filter: a `host-*` label names the only host; an unlabelled task goes to any host whose `claim` is `any`.
-fn claims(i: &Issue, me: &str, labelled: bool) -> bool {
-    label(i, "host-").map_or(!labelled, |h| h == me)
+/// R12/§4: task-facing effective availability, published on the existing per-board heartbeat.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Balancing {
+    schema: u8,
+    mode: String,
+    default_runtime: String,
+    allowed_runtimes: Option<Vec<String>>,
+    auto_reroute: bool,
+    has: Vec<String>,
+    focus: Option<Vec<String>>,
+    routing: Vec<crate::labels::Routing>,
+    runtimes: BTreeMap<String, RuntimeAvailability>,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeAvailability { code: String, reason: String, full: bool, disabled: bool, quota: Vec<String> }
+
+impl Balancing {
+    fn read(body: &str) -> Option<Self> {
+        let rows:Vec<_>=body.lines().filter_map(|l|l.strip_prefix("balancing ")).collect();
+        if rows.len()!=1 {return None;}
+        let b:Self=serde_json::from_str(rows[0]).ok()?;
+        if b.schema!=1 || crate::host::ClaimMode::parse(&b.mode).is_err()
+            || !crate::runtime::CLI_RUNTIMES.contains(&b.default_runtime.as_str())
+            || b.allowed_runtimes.as_ref().is_some_and(|a|a.iter().any(|rt|!RUNTIMES.contains(&rt.as_str())) || a.iter().collect::<BTreeSet<_>>().len()!=a.len())
+            || crate::labels::routing(&json!({"routing":b.routing})).is_err()
+            || b.runtimes.len()!=RUNTIMES.len() || RUNTIMES.iter().any(|rt|!b.runtimes.contains_key(*rt))
+            || b.runtimes.values().any(|r|!crate::snapshot::ADMISSION_CODES.iter().any(|(c,_)|*c==r.code) || r.reason.chars().count()>160 || r.code=="admitted" && r.disabled) {return None;}
+        Some(b)
+    }
+
+    fn available(&self,v:&View) -> Result<(String,Option<String>),(&'static str,String)> {
+        let focus=self.focus.as_ref().ok_or(("unknown","primary focus unknown".into()))?;
+        if priority(&v.issue)!=0 && !focus.iter().any(|f|f=="all" || crate::labels::matches(&v.issue.labels,f)) || focus.is_empty() {
+            return Err(("focus","primary focus excludes task".into()));
+        }
+        if let Some(need)=v.issue.labels.iter().filter_map(|l|l.strip_prefix("needs-")).find(|n|*n!="gate" && !self.has.iter().any(|h|h==n)) {
+            return Err(("capability",format!("primary lacks needs-{need}")));
+        }
+        // Assignment is private to the primary's board account, so the projection cannot prove eligibility.
+        if v.issue.labels.iter().any(|l|l=="assignee-only") {return Err(("unknown","primary assignee eligibility unknown".into()));}
+        let reviewer=v.projection.task.state==State::Review;
+        let default=crate::labels::project_default(&v.issue.labels,reviewer,&self.routing,&self.default_runtime);
+        crate::labels::select_project(&v.issue.labels,reviewer,default,self.auto_reroute,
+            |rt| self.runtimes.get(rt).is_some_and(|r|r.disabled),
+            |rt| {
+                if self.allowed_runtimes.as_ref().is_some_and(|a|!a.iter().any(|r|r==rt)) {return Err(("capability",format!("{rt} excluded by primary project")));}
+                let r=self.runtimes.get(rt).ok_or(("unknown","primary runtime availability missing".into()))?;
+                if r.code=="unknown" {return Err(("unknown",r.reason.clone()));}
+                if r.code!="admitted" {return Err(("capacity",format!("{}{}",r.reason,if r.quota.is_empty() {String::new()}else{format!("; {}",r.quota.join("; "))})));}
+                if needs_gui(&v.issue) && !r.full {return Err(("capability",format!("{rt} has no primary Full grant")));}
+                Ok(rt.into())
+            })
+    }
 }
 
 pub fn is_task(i: &Issue) -> bool {
@@ -1472,7 +1536,7 @@ impl<'a> Service<'a> {
     }
 
     fn heartbeat_body(&self) -> String {
-        let mut lines = vec![format!("version {}", self.version)];
+        let mut lines = vec![format!("version {}", self.version),format!("balancing {}",serde_json::to_string(&self.balancing()).unwrap())];
         if !self.instance.is_empty() {
             lines.push(format!("service {}", self.instance));
             lines.push(format!("diagnostics {}", self.service_diagnostics()));
@@ -2147,9 +2211,7 @@ impl<'a> Service<'a> {
             let refusal = if self.execution_waits.contains_key(&n) { Some(("unknown", crate::snapshot::ADMISSION_UNKNOWN[3].to_string())) }
                 else if let Some(r) = self.launch_refusal(n) { Some(r) }
                 else if let Err(e) = crate::labels::validate(&v.issue.labels) { log!("#{n}: {e}; not admitted"); Some(("labels", e.to_string())) }
-                else if !claims(&v.issue, &me, self.cfg.labelled) {
-                    Some(("host", label(&v.issue, "host-").map_or("labelled claim: no host-* label".into(), |h| format!("labelled host-{h}"))))
-                }
+                else if let Some(reason)=self.host_claim(v,&hosts,now).err() {Some(("host",reason))}
                 else if let Some(x) = lacks() { Some(("capability", format!("needs-{x}"))) }
                 else if focus_off { Some(("focus", self.focus_error.clone().unwrap_or_else(|| FOCUS_OFF.into()))) }
                 else if priority(&v.issue) != 0 && !self.focus.iter().any(|f| f == "all" || crate::labels::matches(&v.issue.labels, f)) {
@@ -2186,6 +2248,9 @@ impl<'a> Service<'a> {
                 self.log.push(format!("#{n}: conflicting prefer-* labels; preference ignored"));
             }
             let (rt, fallback) = match self.select_runtime(v) { Ok(rt) => rt, Err(r) => { decided.insert(n, r); continue; } };
+            let host_reason=match self.host_claim(v,&hosts,now) {Ok(reason)=>reason,Err(reason)=>{decided.insert(n,("host",reason));continue;}};
+            let reasons:Vec<_>=host_reason.into_iter().chain(fallback).collect();
+            let fallback=(!reasons.is_empty()).then(||format!("{}; selected {rt}",reasons.join("; ")));
             if !self.reserve(n, 0, &rt) {
                 let r = self.launch_refusal(n).unwrap_or_else(|| self.refused.as_ref()
                     .map_or(("unknown", crate::snapshot::ADMISSION_UNKNOWN[2].into()), |(c, t)| refusal_admission(c, t)));
@@ -2411,18 +2476,71 @@ impl<'a> Service<'a> {
         }
     }
 
+    fn host_claim(&self,v:&View,hosts:&[Issue],now:i64) -> Result<Option<String>,String> {
+        use crate::host::ClaimMode;
+        if self.cfg.claim==ClaimMode::None {return Err("manager-only: task execution disabled".into());}
+        if let Some(host)=label(&v.issue,"host-") {return if host==self.cfg.me {Ok(None)} else {Err(format!("labelled host-{host}"))};}
+        match self.cfg.claim {
+            ClaimMode::Any=>return Ok(None),
+            ClaimMode::Labelled=>return Err("labelled claim: no host-* label".into()),
+            _=>{},
+        }
+        let since=v.projection.changes.last().and_then(|(id,_,_)|v.comments.iter().find(|c|c.id==*id)).map_or(v.issue.created,|c|c.created);
+        if now>=since && now-since>=self.cfg.spillover_grace as i64 {return Ok(Some(format!("spillover: grace {} s elapsed",self.cfg.spillover_grace)));}
+        let mut reasons=vec![];
+        let mut exhausted=vec![];
+        let mut known=false;
+        for host in hosts.iter().filter(|h|host_name(h).is_some_and(|name|name!=self.cfg.me)) {
+            let Some(balance)=Balancing::read(&host.body) else {reasons.push("primary availability unknown: incompatible heartbeat".into());continue;};
+            if balance.mode!="any" && balance.mode!="primary" {continue;}
+            known=true;
+            let name=host_name(host).unwrap();
+            if !crate::snapshot::live(now-host.updated,self.cfg.ttl) {reasons.push(format!("primary {name} availability unknown: stale heartbeat"));continue;}
+            match balance.available(v) {
+                Ok((rt,_))=>return Err(format!("spillover waits: primary {name} has effective {rt} capacity; grace {} s",self.cfg.spillover_grace)),
+                Err(("unknown",reason))=>reasons.push(format!("primary {name}: {reason}")),
+                Err((_,reason))=>exhausted.push(format!("primary {name}: {reason}")),
+            }
+        }
+        if !known && reasons.is_empty() {reasons.push("primary availability unknown: no primary heartbeat".into());}
+        if reasons.is_empty() {Ok(Some(format!("spillover: zero effective primary availability; {}",exhausted.join("; "))))}
+        else {Err(format!("spillover waits: {}; grace {} s",reasons.join("; "),self.cfg.spillover_grace))}
+    }
+
+    fn runtime_disabled(&self,rt:&str) -> bool {
+        self.cfg.runtime_disabled(rt, self.cap.as_ref().ok().map(|c| &c.limits))
+    }
+
+    fn balancing(&self) -> Balancing {
+        let accounts=crate::runtime::accounts::Host::read(&self.cfg.install).heartbeat(self.board.now().unwrap_or(0));
+        let runtimes=RUNTIMES.iter().map(|rt| {
+            // Focus off needs no runtime probe; routine refusals otherwise materialize every idle poll.
+            let outcome=if self.focus.is_empty() {
+                Err((if self.focus_error.is_some() {"unknown"}else{"focus"},"task focus admits nothing".into()))
+            } else {self.launch_refusal(0).map_or_else(||self.admit_runtime(rt,false),Err)};
+            let (mut code,mut reason)=match outcome {Ok(_)=>("admitted",String::new()),Err(e)=>e};
+            if code=="load-gate" && self.gate.state(self.mono).0=="unknown" {code="unknown";}
+            if matches!(code,"access"|"unknown"|"hold") {reason=format!("{rt}: {code}; see host diagnostics");}
+            ((*rt).into(),RuntimeAvailability {code:code.into(),reason:reason.chars().take(160).collect(),full:self.full.contains(*rt),disabled:self.runtime_disabled(rt),quota:accounts.iter().filter(|l|l.starts_with(&format!("quota {rt} "))).cloned().collect()})
+        }).collect();
+        let mut has=self.cfg.has.clone();has.retain(|h|h!="gui");if self.gui().is_ok() {has.push("gui".into());}
+        Balancing {schema:1,mode:self.cfg.claim.name().into(),default_runtime:self.cfg.default_runtime.clone(),allowed_runtimes:self.cfg.allowed_runtimes.clone(),
+            auto_reroute:self.cfg.auto_reroute,has,focus:self.focus_error.is_none().then(||self.focus.clone()),routing:self.cfg.routing.clone(),runtimes}
+    }
+
     fn select_runtime(&self, v: &View) -> Result<(String, Option<String>), (&'static str, String)> {
         if v.projection.reroute.is_some() {return Err(("unknown",crate::snapshot::ROUTING_WAIT.into()));}
         let reviewer = v.projection.task.state == State::Review;
         let default = crate::labels::project_default(&v.issue.labels, reviewer, &self.cfg.routing, &self.cfg.default_runtime);
-        crate::labels::select(&v.issue.labels, reviewer, default,
-            |rt| self.admit_runtime(rt, needs_gui(&v.issue)))
+        crate::labels::select_project(&v.issue.labels, reviewer, default, self.cfg.auto_reroute,
+            |rt|self.runtime_disabled(rt), |rt| self.admit_runtime(rt, needs_gui(&v.issue)))
     }
 
     /// `rt` when it has free capacity: `limits.<rt>` minus live children of it (§ 3), else the #1616 admission code
     /// and reason. `codex-app` only on a host whose `has` lists it (§ 9 opt-in).
     /// A `needs-gui` task gets only a runtime with effective Full access (§ 4 Filter): never a sandboxed one.
     fn admit_runtime(&self, rt: &str, gui: bool) -> Result<String, (&'static str, String)> {
+        if self.cfg.allowed_runtimes.as_ref().is_some_and(|a|!a.iter().any(|r|r==rt)) {return Err(("capability",format!("{rt} excluded by project allowed_runtimes")));}
         if crate::runtime::of(rt).app && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) {
             return Err(("capability", format!("{rt} not in has")));
         }
@@ -2446,6 +2564,8 @@ impl<'a> Service<'a> {
         let mut left = (n as usize).saturating_sub(self.entry().held.iter().filter(|r| r.2 == rt).count());
         if let Some(host) = &self.host {
             let h = host.lock().map_err(|_| ("unknown", crate::snapshot::ADMISSION_UNKNOWN[2].to_string()))?;
+            if h.policy.is_err() || h.rebuilding {return Err(("unknown","host occupancy/policy recovery pending".into()));}
+            if h.restart || h.draining.contains(&self.cfg.root) || h.held.is_some() {return Err(("hold","host draining, restart or hold".into()));}
             left = left.min(h.remaining(&self.cfg.root, rt, c));
         }
         if left > 0 { Ok(rt.to_string()) } else { Err(("capacity", format!("{rt} slots full"))) }
@@ -3265,7 +3385,10 @@ mod tests {
             me: me.into(),
             limits: BTreeMap::from([("claude".to_string(), 1)]),
             has: vec![],
-            labelled: false,
+            claim: crate::host::ClaimMode::Any,
+            spillover_grace: 300,
+            allowed_runtimes: None,
+            auto_reroute: false,
             default_runtime: "claude".into(),
             routing: vec![],
             permission_mode: "dontAsk".into(),
@@ -5037,7 +5160,7 @@ Open: none")).unwrap();
     // splits one machine into several Hosts rows or breaks the one-service-per-host check.
     #[test]
     fn heartbeat_body_lists_version_service_machine_focus() {
-        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ")).collect::<Vec<_>>().join("\n");
+        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ") && !l.starts_with("balancing ")).collect::<Vec<_>>().join("\n");
         let b = Fake::default();
         let c = cfg("win");
         let mut s = service(&b, &c, Default::default());
@@ -6014,7 +6137,7 @@ Open: none")).unwrap();
             std::fs::create_dir_all(&root).unwrap();
             let mut c = cfg("qualification");
             host.apply(&mut c); // preserve actual model/effort/permission options
-            c.root = root.clone(); c.install = root.join("install"); c.external = true; c.labelled = false;
+            c.root = root.clone(); c.install = root.join("install"); c.external = true; c.claim = crate::host::ClaimMode::Any;
             c.default_runtime = "claude".into(); // staged preference, not a host policy edit
             c.limits = BTreeMap::from([("claude".into(), 0), ("codex".into(), 1)]);
             let env = crate::runtime::Env { context: "", root: &root, exe: std::path::Path::new("taskq"), install: &install,
@@ -6695,6 +6818,156 @@ Open: none";
         std::fs::remove_dir_all(&c.root).ok();
     }
 
+    // #2138 A2-A4/R13: mode and collaborator policy must reach real claims; preserve strict pins by default.
+    #[test]
+    fn balancing_modes_and_project_execution() {
+        for (mode, own, unlabelled) in [("primary",true,true),("any",true,true),("pinned-only",true,false),("labelled",true,false),("manager-only",false,false),("none",false,false)] {
+            let b=Fake::default();
+            let n=b.create("unlabelled","", &["taskq".into()]).unwrap();
+            let pin=b.create("pinned","", &["taskq".into(),"host-mac".into()]).unwrap();
+            let foreign=b.create("foreign","", &["taskq".into(),"host-win".into()]).unwrap();
+            let review=b.create("review","", &["taskq".into(),"host-mac".into()]).unwrap();
+            let a=b.comment(review,"taskq: spawn worker claude:previous win").unwrap();
+            b.comment(review,&core::entry("result",&["0123456789abcdef0123456789abcdef01234567"],Some(a),"Changed: candidate\nOpen: none")).unwrap();
+            accept_execution(&b,review,a,a,None).unwrap();release_execution(&b,review,a,a,"exit").unwrap();
+            let mut c=cfg("mac");
+            crate::host::Policy::parse(json!({"hosts":{crate::hostname():"mac"},"claim":mode}),&crate::hostname()).unwrap().apply(&mut c);
+            c.limits.insert("claude".into(),4);
+            service(&b,&c,Default::default()).pass().unwrap();
+            assert_eq!(task(&b,n).state==State::Doing,unlabelled,"{mode}");
+            assert_eq!(task(&b,pin).state==State::Doing,own,"{mode}");
+            assert_eq!(task(&b,foreign).state,State::Ready);
+            assert_eq!(task(&b,review).role.as_deref()==Some("reviewer"),own,"review {mode}");
+        }
+        for reroute in [false,true] {
+            let b=Fake::default();
+            let n=b.create("collaborator","", &["taskq".into(),"run-claude".into()]).unwrap();
+            let mut c=cfg("fleet");
+            c.install=std::env::temp_dir().join(format!("taskq-collaborator-{}",crate::runtime::uuid()));
+            std::fs::create_dir_all(&c.install).unwrap();
+            let p=crate::host::Policy::parse(json!({"load_gate":{"enabled":false},"limits":{"claude":0,"codex":2},"projects":{"/nonexistent":{"default_runtime":"codex","allowed_runtimes":["codex"],"auto_reroute":reroute}}}),"fleet").unwrap();
+            p.apply(&mut c);
+            c.limits=p.project_limits(&c.root,&json!({})).unwrap();
+            let mut s=service(&b,&c,Default::default());
+            let mut host=crate::host::Host::new(Ok(p.clone()));host.reload(Ok(p.clone()));
+            s.host=Some(std::sync::Arc::new(std::sync::Mutex::new(host)));
+            s.reload(Ok(p.project(&c.root,&json!({})).unwrap()));s.pass().unwrap();
+            let t=task(&b,n);
+            assert_eq!(t.state,if reroute {State::Doing}else{State::Ready},"{:?}",s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().admission);
+            if reroute {assert_eq!(rt_of(&t).unwrap().0,"codex");}
+            assert!(b.issue(n).unwrap().labels.contains(&"run-claude".into()),"no board relabel");
+            std::fs::remove_dir_all(&c.install).unwrap();
+        }
+    }
+
+    // #2138 A2/A4/R12: real heartbeat publication -> spillover claim, with quota, unknown and fencing intact.
+    #[test]
+    fn balancing_spillover_uses_effective_primary_availability() {
+        for scenario in ["free","full","quota","spare","unknown","unknown-focus","unknown-load","legacy","corrupt","stale","none","grace","pinned","capability","fenced","one-free","all-full"] {
+            let b=Fake::default();
+            let root=std::env::temp_dir().join(format!("taskq-spillover-{}",crate::runtime::uuid()));
+            std::fs::create_dir_all(&root).unwrap();
+            let mut primary=cfg("win");primary.install=root.clone();
+            primary.limits=BTreeMap::from([("claude".into(),1),("codex".into(),if scenario=="spare" {1}else{0}),("antigravity".into(),0)]);
+            let mut p=service(&b,&primary,Default::default());
+            if matches!(scenario,"quota"|"spare") {
+                crate::runtime::accounts::record_windows(&root,"claude","default",0,&[("five_hour".into(),Some(18000)),("seven_day".into(),Some(604800))]).unwrap();
+            }
+            if scenario=="unknown" {p.cap=Err("unreadable policy".into());}
+            if scenario=="unknown-focus" {p.focus.clear();p.focus_error=Some("invalid focus".into());}
+            if scenario=="unknown-load" {p.gate.configure(GateCfg {enabled:true,..GATE_DEFAULT});}
+            if matches!(scenario,"full"|"one-free"|"all-full") {p.reserved.push((99,99,"claude".into()));}
+            if scenario!="none" {
+                let body=if scenario=="legacy" {"version old".into()} else if scenario=="corrupt" {"balancing {\"schema\":99}".into()} else {p.heartbeat_body()};
+                let hb=b.create("taskq host win",&body,&[HOST_LABEL.into()]).unwrap();
+                if scenario=="stale" {b.state.borrow_mut().issues.iter_mut().find(|i|i.number==hb).unwrap().updated=-1000;}
+            }
+            if matches!(scenario,"one-free"|"all-full") {
+                let mut second=p.balancing();
+                if scenario=="one-free" {let r=second.runtimes.get_mut("claude").unwrap();r.code="admitted".into();r.reason.clear();}
+                b.create("taskq host linux",&format!("balancing {}",serde_json::to_string(&second).unwrap()),&[HOST_LABEL.into()]).unwrap();
+            }
+            let labels=if scenario=="pinned" {vec!["taskq".into(),"host-mac".into()]} else if scenario=="capability" {vec!["taskq".into(),"needs-special".into()]} else {vec!["taskq".into()]};
+            let n=b.create("work","",&labels).unwrap();
+            if scenario=="fenced" {
+                let a=b.comment(n,"taskq: spawn worker claude:s win").unwrap();
+                b.comment(n,&core::entry("requeue",&[],Some(a),"Reason: keep old execution fenced")).unwrap();
+            }
+            let mut c=cfg("mac");c.claim=crate::host::ClaimMode::Spillover;c.spillover_grace=if scenario=="grace" {0}else{300};
+            c.has.push("special".into());
+            let mut s=service(&b,&c,Default::default());s.pass().unwrap();
+            let expected=matches!(scenario,"full"|"quota"|"grace"|"pinned"|"capability"|"all-full");
+            assert_eq!(task(&b,n).state==State::Doing,expected,"{scenario}: {:?}",s.log);
+            if scenario=="quota" {
+                let spawn=entries(&b,n).unwrap().into_iter().find(|e|e.body.starts_with("taskq: spawn")).unwrap();
+                assert!(spawn.body.contains("seven_day"),"quota reset/probe evidence retained: {}",spawn.body);
+                assert_eq!(p.cfg.limits,primary.limits,"quota never changes saved capacity");
+            }
+            if !expected && scenario!="fenced" {
+                let reason=&s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().admission.as_ref().unwrap().reason;
+                assert!(reason.contains("spillover waits"),"{scenario}: {reason}");
+            }
+            // A second pass must never duplicate a live claim, even after grace.
+            s.cfg.spillover_grace=0;s.pass().unwrap();
+            assert!(entries(&b,n).unwrap().iter().filter(|e|e.body.starts_with("taskq: spawn")).count()<=1,"{scenario}");
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    // #2138 A2/R1: old issue age cannot skip grace after a new ready transition; unrelated notes never reset it.
+    #[test]
+    fn balancing_grace_uses_last_queue_transition() {
+        let b=Fake::default();let mut c=cfg("mac");c.claim=crate::host::ClaimMode::Spillover;
+        let n=b.create("work","",&[TASK_LABEL.into()]).unwrap();
+        b.comment(n,"taskq: hold").unwrap();b.advance(1000);
+        let start=b.comment(n,"taskq: start").unwrap();
+        b.advance(100);b.raw(n,"unrelated note",true,false);
+        let mut s=service(&b,&c,Default::default());
+        let views=views(&b,&mut s.cache,&mut s.deps,300).unwrap().0;
+        let v=views.iter().find(|v|v.issue.number==n).unwrap();
+        let at=v.comments.iter().find(|c|c.id==start).unwrap().created;
+        assert!(s.host_claim(v,&[],at+299).is_err());
+        assert!(s.host_claim(v,&[],at+300).unwrap().unwrap().contains("grace"));
+    }
+
+    // #2138 A3/R9: the exception applies to operator disables only, for workers/reviewers, without enlarging access.
+    #[test]
+    fn balancing_project_reroute_keeps_other_pins_and_restrictions() {
+        for reviewer in [false,true] {
+            for scenario in ["zero","excluded","accounts-off","quota","full","login","access","unknown","app","none-enabled","fallback-access"] {
+                let b=Fake::default();let root=std::env::temp_dir().join(format!("taskq-project-reroute-{}",crate::runtime::uuid()));
+                std::fs::create_dir_all(&root).unwrap();
+                let mut c=cfg("fleet");c.install=root.clone();c.auto_reroute=true;c.default_runtime="codex".into();
+                c.limits=BTreeMap::from([("claude".into(),if matches!(scenario,"zero"|"fallback-access") {0}else{1}),("codex".into(),2)]);
+                if scenario=="excluded" {c.allowed_runtimes=Some(vec!["codex".into()]);}
+                if scenario=="none-enabled" {c.allowed_runtimes=Some(vec![]);}
+                if scenario=="accounts-off" {std::fs::write(root.join("accounts.json"),r#"{"claude":[{"label":"default","enabled":false}]}"#).unwrap();}
+                if scenario=="quota" {crate::runtime::accounts::record_windows(&root,"claude","default",0,&[("seven_day".into(),Some(604800))]).unwrap();}
+                let pin=if scenario=="app" {"run-codex-app"}else{"run-claude"};
+                let n=b.create("collaborator","",&["taskq".into(),pin.into()]).unwrap();
+                let mut s=service(&b,&c,Default::default());
+                if scenario=="full" {s.kids.push(Kid {unknown:None,stopping:false,session_url:None,execution:99,task:99,attempt:99,rt:"claude".into(),proc:Box::new(FakeProc(Default::default()))});}
+                if scenario=="login" {s.logged_out.insert("claude".into());}
+                if scenario=="access" {s.refused_access.insert("claude".into(),"missing grant".into());}
+                if scenario=="fallback-access" {s.refused_access.insert("codex".into(),"missing fallback grant".into());}
+                if scenario=="unknown" {s.cap=Err("invalid policy".into());}
+                let mut views=views(&b,&mut s.cache,&mut s.deps,300).unwrap().0;
+                let v=views.iter_mut().find(|v|v.issue.number==n).unwrap();
+                if reviewer {v.projection.task.state=State::Review;}
+                let selected=s.select_runtime(v);
+                if matches!(scenario,"zero"|"excluded"|"accounts-off") {
+                    let (rt,reason)=selected.unwrap();assert_eq!(rt,"codex");assert!(reason.unwrap().contains("auto_reroute"));
+                } else {assert!(selected.is_err(),"{scenario}: {selected:?}");}
+                // Reuse exactly the published runtime policy on the other host.
+                if !matches!(scenario,"unknown"|"app") {
+                    let balance=Balancing::read(&s.heartbeat_body()).unwrap();
+                    assert_eq!(balance.available(v).is_ok(),matches!(scenario,"zero"|"excluded"|"accounts-off"),"remote {scenario}");
+                }
+                std::fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
     // Chain: § 4 Filter, host.json `claim` (#1493). Risk: a labelled host claims unrouted work, or an any host stops
     // taking it.
     #[test]
@@ -6702,7 +6975,7 @@ Open: none";
         let b = Fake::default();
         let open = b.create("U", "", &["taskq".into()]).unwrap();
         let own = b.create("F", "", &["taskq".into(), "host-fra".into()]).unwrap();
-        let fra = Config { labelled: true, ..cfg("fra") };
+        let fra = Config { claim: crate::host::ClaimMode::Labelled, ..cfg("fra") };
         service(&b, &fra, Default::default()).pass().unwrap();
         assert_eq!((task(&b, open).state, task(&b, own).state), (State::Ready, State::Doing), "labelled host skips the unlabelled task");
         service(&b, &cfg("mac"), Default::default()).pass().unwrap();
