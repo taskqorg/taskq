@@ -1,5 +1,7 @@
 //! Runtimes: stdin briefs or file-backed Claude background input (taskq.md section 8).
 
+pub mod protected_app_server;
+
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
