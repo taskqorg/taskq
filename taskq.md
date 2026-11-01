@@ -123,8 +123,18 @@ Attempt stages and queue transitions (§ 4 Profiling) are adapter observations o
 - **Load gate** (host policy, § 9) holds every new child (claim, reviewer, resume) while CPU busy >= `cpu_max` % or available physical memory <= `memory_min` %. Slot keys, pending grants, readings, launch spacing, host admission and emergency hold: [capacity](docs/design/capacity.md#contract-detail).
 - **Cancellation** = `requeue`, `later`, `failed` or `gone`; the owner stops the child (R11). These task transitions never release execution; unknown termination stays fenced.
 ### Local external-consumer slots (R1, R3, R9, R12)
-`taskq service slots` is an owner-account local CLI exchange through the existing resource operation store and host mutex, not a task/attempt, scheduler or network API. `taskq.slots/1` binds caller, operation, secret release key, registered root, runtime, native caller identity, boot and admission deadline. Reserve/observe/release reconcile that identity; mismatched input or release authority refuses. No grant, limit, permission, focus or model changes. Workers cannot submit.
-The service alone admits a slot through the same runtime/project/host limits, load gate, spacing, emergency hold, draining and recovery barriers as workers/reviewers. External manager admission is independent of task focus; it neither changes focus nor admits tasks. Durable readback precedes `reserved`; only a fresh matching host-generation receipt permits a turn. Release attests that the consumer has ended its entire turn, including tools; it is irreversible, idempotent and acknowledged only after the service removes the slot. Caller exit, silence, expiry after admission and service restart never prove execution release: retain occupancy as unknown until the same release key reconciles completion or a verified later boot proves exit. Queued expired/dead callers never start; terminal receipts have bounded retention. [Consumer protocol](docs/design/external-slots.md#contract-detail).
+`taskq service slots` is an owner-account local CLI exchange through the existing resource operation store and host mutex, not a task/attempt, scheduler or network API.
+`taskq.slots/1` binds caller, operation, secret release key, registered root, runtime, native caller identity, boot and admission deadline.
+Reserve/observe/release reconcile that identity; mismatched input or release authority refuses.
+No grant, limit, permission, focus or model changes.
+Workers cannot submit.
+The service alone admits a slot through the same runtime/project/host limits, load gate, spacing, emergency hold, draining and recovery barriers as workers/reviewers.
+External manager admission is independent of task focus; it neither changes focus nor admits tasks.
+Durable readback precedes `reserved`; only a fresh matching host-generation receipt permits a turn.
+Release attests that the consumer has ended its entire turn, including tools; it is irreversible, idempotent and acknowledged only after the service removes the slot.
+Caller exit, silence, expiry after admission and service restart never prove execution release: retain occupancy as unknown until the same release key reconciles completion or a verified later boot proves exit.
+Queued expired/dead callers never start; terminal receipts have bounded retention.
+[Consumer protocol](docs/design/external-slots.md#contract-detail).
 ### Runtime accounts
 Each host keeps, per CLI runtime (`claude`, `codex`), an ordered list of named login homes in `<install>/accounts.json`, each enabled or disabled; no list means one `default` account, the runtime's own home. A new start uses the first enabled account that is not usage-limited; a resume, recovery or running child keeps the account its attempt log names.
 A usage limit before work (§ 2 `usage-limit`) on one account moves the runtime to the next enabled account on that host without spending a retry; the § 4 usage-limit hold applies only when none is left. Every switch goes to the service log and telemetry.
