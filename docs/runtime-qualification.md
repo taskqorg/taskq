@@ -474,6 +474,133 @@ Historical status prevention (R6, §3/§4): `historical_unaccepted_exit_reports_
 
 Historical resume remains unsupported by the current execution protocol: the original Exit is immutable, acceptance is absent and that older CLI launch has no native input binding. Closing its writer alone cannot authorize a new execution. The unresolved decision is a scoped native refusal proof receipt permitting same-attempt/session recovery, or an owner-ended attempt followed by a new native session with the old history preserved. Neither option has been applied; no native acceptance may be fabricated and no unknown input may be replayed. The status fix exposes this ownership-versus-health distinction immediately rather than relying on an age threshold or a PM comment.
 
+### Historical writer refusal: decision draft for #2143
+
+**Proposal only; not contract detail or implemented recovery.** Source request:
+[#2143, final steer](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6561990402).
+This draft separates two approvals. Candidate `518daf54` proposes the immediate
+blocked-status rule under R6, §3, §4 and M3.13. The additional protocol below
+requires a separate owner choice; approving status alone grants no legacy recovery.
+Neither choice authorizes changing the original task's receipts or controlling its app.
+
+The historical target is `taskqorg/agentq#190`, attempt `6560385070`, execution
+`6561176475`, input boundary `6561174165`, host `mac`, runtime `codex`, native
+thread `01a197da-5a44-7042-92c5-4db61865df0b`. These are the reported historical
+identities, not a fresh live read. Existing evidence has Exit without acceptance
+and no launch input binding. It does not yet satisfy the proof below.
+
+#### Proposed contract delta
+
+- **R1 and §3 Recovery:** permit one additional immutable board observation of
+  attributable pre-submission refusal for an exact execution already released
+  Exit. Keep that Exit and `accepted: false`; add a separate refusal-proof fact.
+  It resolves only that execution's input uncertainty, never its task state,
+  ownership lease, session, delivery cursor or another external side effect.
+- **R8 and §2 Executable behavioral model:** add the receipt projection and the
+  trace below before adapters. The §2 task transition table stays unchanged;
+  this is an execution observation like `accepted` and `released`.
+- **§3 and §4:** allow the normal same-attempt continuation retry to pass this
+  one input fence only after receipt readback. Count a proved refusal toward
+  the existing two-refusal bound. Retain every other unresolved-execution,
+  capacity, focus, load, policy and current-attempt check. No eager launch.
+- **§8 Compatibility:** require compatible services on every host serving this
+  board before emitting or consuming the new observation. Old hosts ignore its
+  kind and retain the input fence; mixed admission cannot safely proceed.
+  Do not downgrade while a live continuation depends on the new proof.
+- **R2/R9/R11/R12/R13 remain unchanged:** same attempt and native session only;
+  no grant/runtime/model/limit change, forced lock release, cancellation, restart,
+  owner attestation substituting for native evidence, or fabricated acceptance.
+
+Proposed wire form, emitted only by the owning service after native verification:
+
+```text
+taskq: input-refused 6561176475 attempt 6560385070
+<one canonical JSON proof object described below>
+op-id: input-refused-6561176475
+```
+
+The proof object's required fields and trust sources are:
+
+| Fields | Required source and verification |
+|---|---|
+| `version: 1`, `repo`, `task`, `attempt`, `execution`, `through`, `host`, `runtime`, `session` | Fresh trusted board intent, original assignment and inbox boundary; all must match the target above, with no intervening attempt replacement |
+| `release_comment` | First immutable trusted Exit receipt for this exact execution; verify it remains Exit and no `accepted` observation exists |
+| `account` | Original TaskQ account label from the native launch record, never credentials or inferred current default |
+| `process_identity`, `launch_record_sha256`, `log_sha256`, `log_start`, `log_end` | Preserved contemporaneous service/native launch evidence must bind this execution, account and thread to one CLI invocation and its complete output segment; verify PID creation identity and native process-tree termination, not PID absence alone |
+| `client_sha256`, `adapter_sha`, `verifier_sha` | Exact client and verifier source with native qualification of this refusal occurring before session creation/input submission; version strings alone do not qualify |
+| `proof: "codex-pre-session-active-writer"`, `exit_code` | Complete original output from the bound invocation: nonzero native exit, matching `Failed to create session` and `thread/resume` active-writer errors for the exact thread, with no session/turn events, other output, gaps or truncation |
+
+The service reads existing evidence without resuming a thread or acquiring its
+writer. It must show that the refused invocation never reached input submission;
+the absence of a user message in current history is insufficient. When original
+input binding is missing, a complete contemporaneous launch/output linkage is
+mandatory. Timestamps, matching error text or a newly written manifest alone
+cannot supply it. Hashes protect readback consistency, not authenticity.
+The board trusts the same service author as existing native receipts; the service
+trusts preserved native launch/output evidence, never a worker's assertion.
+Public receipts contain identities and digests only, no input text, credentials
+or private filesystem paths. Retain original artifacts under existing recovery
+retention; do not introduce another journal or rewrite old records.
+
+The pure projection validates schema, exact intent/attempt/cursor, Exit, absence
+of acceptance, and uniqueness. A duplicate proof is idempotent. A different proof
+for the same execution is conflicting evidence and holds admission. A later
+acceptance also holds admission as a contradiction; do not discard either fact.
+The native verifier validates the artifact claims before writing the observation.
+Unknown evidence at either boundary refuses the receipt and any retry.
+
+#### Proposed golden trace (not an executed test)
+
+| Event or observation | Expected projection and admission |
+|---|---|
+| Original spawn accepted and released; answer `6561174165`; executing `6561176475`; released Exit without acceptance | Doing; delivered cursor stays before the answer; ownership retained; blocked/nonrunning immediately |
+| Completed/idle history; app writer remains held, or its lock disappears | No change; no delivery and no new execution |
+| Unbound refusal text, missing launch linkage, truncated output, zero/signal exit, wrong account/thread/execution, or active turn events | No proof receipt; fence remains |
+| Exact verified `input-refused` receipt reads back | Exit unchanged; acceptance false; refusal proof attached only to `6561176475`; cursor unchanged; existing retry policy may consider one continuation |
+| Duplicate same receipt; stale/edited/foreign receipt | Duplicate changes nothing; invalid receipt ignored; never another native call from receipt retry |
+| App still refuses the normal continuation | Record the new execution separately; bounded no-start handling; never stop its writer |
+| Same-session continuation accepts the retained cumulative input once | Advance delivered cursor only from that new execution's native acceptance; duplicate delivery request sends nothing |
+| Acceptance appears for the old refused execution, conflicting proof, or another unresolved execution | Contradiction/unknown remains fenced; no continuation or replacement |
+
+After approval, implement this trace in the existing execution fixtures and run
+the normal gate plus exact-source isolated native qualification. Do not call
+this draft a passing golden trace or an installed-service qualification.
+
+#### Concrete decision and historical feasibility
+
+1. **Approve status and conditional native proof (recommended).** Approve the
+   R6/§3/§4/M3.13 candidate and the R1/R8/§2/§3/§4/§8 delta above. First gather
+   existing attributable evidence for the exact historical invocation read-only.
+   If any required field cannot be established, report it and keep #190 fenced;
+   approval never supplies missing proof. If proof qualifies, preserve its old
+   Exit and permit only the normal same-session continuation after all gates.
+   Gain: a narrowly testable recovery path. Cost: new protocol/cutover work, with
+   no promise that #190's old artifacts can meet its requirements.
+2. **Approve status only.** Approve R6/§3/§4/M3.13, reject the legacy delta and
+   retain #190's fence. Gain: immediate honest reporting with no new recovery
+   authority. Cost: historical delivery remains unresolved.
+
+Existing replay fails because `executing` requires every earlier input to be
+accepted or confirmed no-start; Exit does not meet either condition. Requeue or
+an owner-ended attempt changes task state but cannot resolve the old input's
+external side effect, even in a new session (§3/R11/R12). Closing or archiving
+only the old thread after any active turn finishes can release its writer; it
+does not resolve acceptance. #158's archive finding and #1664's owner-turn
+refusal do not grant a cross-client unlock or replay exception. Therefore this
+draft does not offer an owner-ended replacement as an already permitted repair.
+
+At this checkpoint A1 and prevention/status source checks have before/after
+evidence above. A2 historical recovery and A4 installed-service/exact-source
+qualification remain incomplete. The previous canonical run recorded 838 passed,
+7 sandbox-blocked protected-adapter tests and 41 ignored; it was not PASS.
+This continuation reran the historical-status and writer-refusal service checks:
+both passed on unchanged `518daf54` code. The ignored native refusal instrument
+also passed explicitly: two refused resumes, retained writer, preserved inputs,
+zero model turns. These observations qualify the isolated refusal boundary,
+not this proposed receipt, the installed service or the historical #190 input.
+No merge-group result or real #190 recovery is claimed. Only this decision draft
+is added in this continuation; no legacy recovery code or live action is applied.
+
 | Adapter | Existing evidence | What it proves | Missing boundary and smallest change | Unknown and recovery action |
 |---|---|---|---|---|
 | Codex CLI | Board spawn/continuation; attempt log `thread.started`; owned child `try_wait`; native turn events; `kids` on Unix re-exec | Accepted board intent; session identity; owned child exit; attributable turn outcome | Launch checkpoint now binds the captured PID/creation identity to the exact execution and retries failed persistence while retaining the handle. Controlled macOS cold restart and released-row reconciliation are source-qualified; native client cancellation, descendants and per-OS readback remain unqualified | Crash between spawn and identity persistence remains unknown. Query the recorded native session/process; retain capacity and request operator verification if ownership/termination cannot be established. Direct-child exit alone proves nothing about arbitrary descendants or external effects |
