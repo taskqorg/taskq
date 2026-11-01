@@ -511,6 +511,11 @@ impl Host {
         self.rebuilding=true;
     }
 
+    fn detached(&mut self,root:&Path) {
+        self.busy.remove(root);self.prepared.remove(root);self.recovered.remove(root);self.rebuilt.remove(root);self.ready.remove(root);
+        self.rebuilding=self.rebuilding&&!self.busy.keys().all(|root|self.rebuilt.contains(root));
+    }
+
     pub fn sync(&mut self, project: &Path, held: Vec<crate::admission::Res>) -> usize {
         self.slots.retain(|(p, claim), _| p != project || matches!(claim,Claim::External(_)));
         for (n, a, rt) in held { self.slots.insert(slot(project, n, a), rt); }
@@ -693,6 +698,7 @@ struct ServiceRecord {
     #[serde(default,skip_serializing_if="Option::is_none")] full_stop_protocol:Option<u8>,
     #[serde(default)] uninstall_protocol:Option<u8>,
     #[serde(default)] install_protocol:Option<u8>,
+    #[serde(default,skip_serializing_if="Option::is_none")] install_cancel_protocol:Option<u8>,
 }
 enum OwnerRecord { Legacy(u32), Current(ServiceRecord) }
 
@@ -711,6 +717,7 @@ fn service_record(install:&Path)->Res<Option<OwnerRecord>> {
         return Ok(Some(OwnerRecord::Legacy(pid)));
     }
     let r:ServiceRecord=serde_json::from_str(&text).map_err(|_|"host service owner unknown: malformed record")?;
+    if r.install_cancel_protocol.is_some_and(|v|v!=1) {return Err("host service cancellation protocol unknown; kept".into());}
     if r.schema!=1||r.pid==0||r.pid>i32::MAX as u32||r.started.is_empty()||r.started.len()>128
         ||!r.started.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-')||!crate::resources::id(&r.instance)||r.version.is_empty()||r.version.len()>80||r.restart_protocol.is_some_and(|v|v!=1)||r.stop_protocol.is_some_and(|v|v!=1&&v!=2)||r.full_stop_protocol.is_some_and(|v|v!=1)||r.uninstall_protocol.is_some_and(|v|v!=1)||r.install_protocol.is_some_and(|v|v!=1)||r.slots_protocol.is_some_and(|v|v!=1) {
         return Err("host service owner unknown: unsupported record; kept".into());
@@ -719,7 +726,7 @@ fn service_record(install:&Path)->Res<Option<OwnerRecord>> {
 }
 
 fn publish_service(install:&Path,native:&coreq::process::Identity,instance:&str)->Res<()> {
-    let record=ServiceRecord {schema:1,pid:native.pid,started:native.started.clone(),instance:instance.into(),at:wall()?,version:crate::platform::VERSION.into(),slots_protocol:Some(1),restart_protocol:Some(1),stop_protocol:Some(2),full_stop_protocol:cfg!(target_os="macos").then_some(1),uninstall_protocol:Some(1),install_protocol:Some(1)};
+    let record=ServiceRecord {schema:1,pid:native.pid,started:native.started.clone(),instance:instance.into(),at:wall()?,version:crate::platform::VERSION.into(),slots_protocol:Some(1),restart_protocol:Some(1),stop_protocol:Some(2),full_stop_protocol:cfg!(target_os="macos").then_some(1),uninstall_protocol:Some(1),install_protocol:Some(1),install_cancel_protocol:Some(1)};
     crate::platform::write_synced(&install.join("service"),&(serde_json::to_string(&record).map_err(|e|e.to_string())?+"\n"))
 }
 
@@ -772,7 +779,7 @@ pub fn service_status(install:&Path)->Value {
         let age=wall()?.checked_sub(r.at);
         let fresh=live&&age.is_some_and(|age|age<=60);
         Ok(json!({"state":if live {"running"}else{"exited"},"pid":r.pid,"started":r.started,"instance":r.instance,"version":r.version,
-            "at":r.at,"age_seconds":age,"slots_protocol":r.slots_protocol,"fresh":fresh,"restart_protocol":r.restart_protocol,"stop_protocol":r.stop_protocol,"full_stop_protocol":r.full_stop_protocol,"uninstall_protocol":r.uninstall_protocol,"install_protocol":r.install_protocol,"reason":if !live {Some("recorded host process exited; worker outcomes remain separate")}else if !fresh {Some("host observation stale or clock unknown")}else{None}}))
+            "at":r.at,"age_seconds":age,"slots_protocol":r.slots_protocol,"fresh":fresh,"restart_protocol":r.restart_protocol,"stop_protocol":r.stop_protocol,"full_stop_protocol":r.full_stop_protocol,"uninstall_protocol":r.uninstall_protocol,"install_protocol":r.install_protocol,"install_cancel_protocol":r.install_cancel_protocol,"reason":if !live {Some("recorded host process exited; worker outcomes remain separate")}else if !fresh {Some("host observation stale or clock unknown")}else{None}}))
     },|_|"owner-unknown");
     result.unwrap_or_else(|reason|json!({"state":"unknown","fresh":false,"reason":reason}))
 }
@@ -956,6 +963,10 @@ pub fn run(install: &Path) -> Res<()> {
                             Ok(c) => return crate::service_run(&c, Some(host)),
                             Err(e) => {
                                 if let Ok(mut h) = host.lock() {
+                                    if h.draining.contains(&root)&&installation::cancelling_root(&install).as_deref()==Some(root.as_path())
+                                        &&!h.slots.keys().any(|(project,_)|project==&root)&&crate::kids_file(&install,&root)?.is_empty() {
+                                        return Err("project drained".into());
+                                    }
                                     // No board/native reconciliation exists while configuration is invalid.
                                     h.busy.insert(root.clone(), true);
                                     h.prepared.remove(&root);
@@ -1007,7 +1018,7 @@ pub fn run(install: &Path) -> Res<()> {
             let mut h = shared.lock().unwrap_or_else(|e| e.into_inner());
             h.publication(&root, false);
             h.passing.remove(&root);
-            if drained { h.busy.remove(&root); h.prepared.remove(&root);h.recovered.remove(&root);drained_roots.insert(root.clone()); }
+            if drained { h.detached(&root);drained_roots.insert(root.clone()); }
             else {
                 // A reduced loop failed: its attempts expire on other hosts, and local launches hold for inspection.
                 log_all(install,std::slice::from_ref(&root),&thread_error(&outcome));
@@ -1016,6 +1027,12 @@ pub fn run(install: &Path) -> Res<()> {
                 h.recovered.remove(&root);
                 h.ready(&root, false);
                 append_project(install, &root, "project thread stopped; leases expire on other hosts; retained slots have unknown liveness");
+            }
+        }
+        if let Some(root)=installation::cancelling_root(install) {
+            let h=shared.lock().unwrap_or_else(|e|e.into_inner());
+            if let Err(error)=installation::finish_cancellation(install,&h,threads.contains_key(&root)||roots.contains(&root)) {
+                if reported!=error {crate::platform::log(&error);reported=error;}
             }
         }
         if let Some(p)=restart.current.as_ref().ok().and_then(Option::as_ref).filter(|p|p.action()==crate::lifecycle::Action::Uninstall&&!p.stops()) {
@@ -1302,6 +1319,7 @@ impl ProjectEdit {
 #[path="host_install.rs"]
 mod installation;
 pub use installation::install_project;
+pub use installation::cancel_install;
 pub use installation::install_acknowledgement;
 pub use installation::installation_status;
 
@@ -1309,7 +1327,8 @@ fn installation_observed(service:&Value,status:Option<&Value>,version:&str)->boo
     service["state"]=="running"&&service["fresh"]==true&&service["version"]==version
         &&service["pid"].as_u64().is_some_and(|pid|pid>0)
         &&service["instance"].as_str().is_some_and(crate::resources::id)
-        &&status.is_some_and(|status|status["pid"]==service["pid"]&&status["host_instance"]==service["instance"])
+        &&status.is_some_and(|status|status["pid"]==service["pid"]&&status["host_instance"]==service["instance"]
+            &&crate::snapshot::complete(status)&&status["error"].is_null()&&status["focus_error"].is_null())
 }
 
 #[derive(Default)]
@@ -1858,7 +1877,7 @@ mod tests {
     #[test]
     fn installation_observed_requires_current_native_owner_and_project_generation() {
         let service=json!({"state":"running","fresh":true,"version":crate::platform::VERSION,"pid":123,"instance":"owned-host"});
-        let project=json!({"pid":123,"host_instance":"owned-host"});
+        let project=json!({"pid":123,"host_instance":"owned-host","complete":true,"tasks":[]});
         assert!(installation_observed(&service,Some(&project),crate::platform::VERSION));
         for (key,value) in [("state",json!("unknown")),("fresh",json!(false)),("version",json!("older")),("pid",json!(0)),("instance",json!(""))] {
             let mut other=service.clone();other[key]=value;assert!(!installation_observed(&other,Some(&project),crate::platform::VERSION),"{key}");
@@ -1879,14 +1898,14 @@ mod tests {
             .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();
         fs::write(crate::dot(&root).join("status.json"),json!({"pid":child.id(),"kids":[{"task":7}]}).to_string()).unwrap();
         let before=fs::read(install.join("projects")).unwrap();
-        let result=install_project(&install,&root);
+        let result=installation::install_bound(&install,&root,None);
         child.kill().unwrap();child.wait().unwrap();
         assert!(result.unwrap_err().contains("another live service owns a registered root"));
         assert_eq!(fs::read(install.join("projects")).unwrap(),before);
         assert_eq!(fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"retained-focus");
         assert!(!install.join("releases").exists()&&!install.join("poke").exists());
         fs::write(install.join("service"),"{broken").unwrap();
-        assert!(install_project(&install,&root).unwrap_err().contains("malformed"));
+        assert!(installation::install_bound(&install,&root,None).unwrap_err().contains("malformed"));
         assert_eq!(fs::read(install.join("projects")).unwrap(),before);
         fs::remove_dir_all(base).unwrap();
     }
