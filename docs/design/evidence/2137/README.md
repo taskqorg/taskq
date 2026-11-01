@@ -109,3 +109,8 @@ R1/R11/R12 and §5 require unknown request execution to remain fenced: a killed 
 The final development selection passes: `cargo test --locked --bin taskq balancing_` (13 tests), `golden_traces` (2) and `synced_write_replaces_whole_record_and_leaves_no_temp` (1). The status regression first exposed a focus decision overwriting the pending fence explanation; the fix retains board-level routing refusals on every host, with the same test passing afterward. No existing protection assertion was removed. Contract lint and rule-ID checks pass; the root contract remains within R8 (281 lines, 56,907 bytes).
 
 The reviewer-requested rebase onto `a06aaaacbc3b61c85f45025633c887b939d382b8` preserves the newer Conversations Close/Reload and recovery requirements while applying Balancing terminology in `tray-workspace.md`. The coordinated §8/§9 cutover now includes writer ownership entries. This is source preparation only; no live host update, policy, account, grant or task-pin change occurred. The final canonical gate and exact-source boundary are recorded below when complete.
+
+
+### Final native-start boundary
+
+Final source review extended native-start validation to reject zero timestamps and malformed macOS microseconds as well as malformed Linux boot/tick identities. Such values cannot prove a later boot under R12. The existing valid-current-process assertion is retained; its data cases now include empty, zero and malformed starts. This follow-up was identified by source inspection, not a claimed native before/after reproduction. The first canonical invocation had already generated source `8aa37f28`; it is not final-candidate evidence for this parser amendment. The affected check and canonical gate must run on the amended candidate before hand-in.

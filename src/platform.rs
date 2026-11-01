@@ -50,7 +50,10 @@ pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
 
 #[cfg(target_os = "macos")]
 pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
-    let secs: i64 = started.split('-').next().and_then(|s| s.parse().ok()).ok_or_else(|| std::io::Error::other("invalid process start"))?;
+    let secs = started.split_once('-').and_then(|(secs,micros)| {
+        Some((secs.parse::<i64>().ok()?,micros.parse::<u32>().ok()?))
+    }).filter(|(secs,micros)| *secs>0 && *micros<1_000_000).map(|(secs,_)|secs)
+        .ok_or_else(|| std::io::Error::other("invalid process start"))?;
     let mut boot = libc::timeval { tv_sec: 0, tv_usec: 0 };
     let mut size = std::mem::size_of::<libc::timeval>();
     // SAFETY: kern.boottime fills one timeval of the given size.
@@ -65,7 +68,7 @@ pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
 pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
     #[link(name = "kernel32")]
     unsafe extern "system" { fn GetTickCount64() -> u64; fn GetSystemTimeAsFileTime(time: *mut u64); }
-    let created: u64 = started.parse().map_err(|_| std::io::Error::other("invalid process start"))?;
+    let created = started.parse::<u64>().ok().filter(|t|*t>0).ok_or_else(|| std::io::Error::other("invalid process start"))?;
     let mut now = 0u64;
     // SAFETY: FILETIME is two u32 words; a u64 holds it with stricter alignment.
     let up = unsafe { GetSystemTimeAsFileTime(&mut now); GetTickCount64() };
@@ -1125,7 +1128,7 @@ mod tests {
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "temp file removed");
         let me = coreq::process::identity(std::process::id()).unwrap().unwrap();
         assert!(!started_before_boot(&me.started).unwrap(), "this process started in this boot");
-        for invalid in ["", "invented-previous-incarnation"] {assert!(started_before_boot(invalid).is_err(),"malformed start cannot prove a later boot");}
+        for invalid in ["", "0", "0-0", "1-invalid", "invented-previous-incarnation"] {assert!(started_before_boot(invalid).is_err(),"malformed start cannot prove a later boot");}
         fs::remove_dir_all(dir).unwrap();
     }
 
