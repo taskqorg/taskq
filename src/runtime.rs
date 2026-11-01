@@ -308,6 +308,36 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
 /// `Some(reset)` with the reported reset (epoch seconds) when known; None after work started or without a limit.
 pub fn usage_limit(log: &Path) -> Option<Option<i64>> { agentq_runtime::agent::limit_reached(&events(log, 0)?) }
 
+/// Provider metadata for the latest native turn. AgentQ remains the owner of quota-error classification.
+/// Unknown names/resets stay unknown; prose never invents a weekly or five-hour reset.
+pub fn quota_windows(log: &Path) -> Vec<(String, Option<i64>)> {
+    let Some(events) = events(log,0) else { return vec![] };
+    let start = events.iter().rposition(|e| e["type"] == "taskq.rules" && matches!(e["phase"].as_str(),Some("start"|"resume"))).unwrap_or(0);
+    let mut windows = vec![];
+    for e in &events[start..] {
+        let info = if e["type"] == "rate_limit_event" { &e["rate_limit_info"] } else { &e["quotaLimits"] };
+        let reached = agentq_runtime::agent::limit_reached(std::slice::from_ref(e));
+        if reached.is_some() || e["type"] == "rate_limit_event" && info["status"] == "rejected" {
+            let window = info["rateLimitType"].as_str().filter(|w| w.len() <= 32 && w.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')).unwrap_or("unknown");
+            windows.push((window.into(),info["resetsAt"].as_i64().or(reached.flatten())));
+        }
+        let rates = match e["type"].as_str() {
+            Some("rate_limits") => &e["rate_limits"],
+            Some("event_msg") if e["payload"]["type"] == "rate_limits" => &e["payload"]["rate_limits"],
+            _ => continue,
+        };
+        for key in ["primary","secondary"] {
+            let w = &rates[key];
+            if w["used_percent"].as_f64().is_some_and(|v| v >= 100.0) {
+                let name = w["window_minutes"].as_u64().map_or_else(|| "unknown".into(), |m| format!("{m}m"));
+                windows.push((name,w["resets_at"].as_i64()));
+            }
+        }
+    }
+    windows.sort(); windows.dedup();
+    windows
+}
+
 /// A Codex login the auth server rejected (#1446); None when unreadable or absent.
 pub fn auth_rejected(log: &Path) -> Option<String> {
     agentq_runtime::agent::auth_rejected(&String::from_utf8_lossy(&std::fs::read(log).ok()?)).map(String::from)
@@ -1413,10 +1443,14 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
     rules_line(&log, phase, &text).map_err(|e| StartError::io(e, None))?;
     // § 3 Runtime accounts: a new start takes the host's active account; a resume keeps its log's account.
     if l.resume.is_none() && crate::runtime::accounts::applies(&l.rt) {
-        let account = crate::runtime::accounts::Host::read(env.install).pick(&l.rt, crate::runtime::accounts::now())
-            .ok_or_else(|| StartError::admission(&format!("{}: every account disabled on this host", l.rt)))?;
+        let account = crate::runtime::accounts::claim(env.install, &l.rt, None, crate::runtime::accounts::now(), &log)
+            .map_err(|e| StartError::admission(&e))?;
         crate::runtime::accounts::mark(&log, &account).map_err(|e| StartError::io(e, None))?;
         if account != crate::runtime::accounts::DEFAULT { log!("#{} attempt {} account {} {account}", l.task, l.attempt, l.rt); }
+    }
+    if l.resume.is_some() || l.rt == "antigravity" {
+        crate::runtime::accounts::claim(env.install, &l.rt, Some(&crate::runtime::accounts::of_log(&log)), crate::runtime::accounts::now(), &log)
+            .map_err(|e| StartError::admission(&e))?;
     }
     let home = crate::runtime::accounts::log_home(&l.rt, &log);
     if l.rt == "codex-app" {
@@ -2492,9 +2526,6 @@ pub fn of(rt: &str) -> &'static Adapter {
 
 /// Owner sessions run Claude Code.
 pub const OWNER: &str = RUNTIMES[0];
-/// § 4 Filter default for a worker without `run-*`: a lone legacy `prefer-codex` is Codex, else the owner runtime.
-pub fn preferred(prefer: &[&str]) -> &'static str { if prefer == [RUNTIMES[1]] { RUNTIMES[1] } else { OWNER } }
-
 /// The host config key that holds Codex CLI arguments.
 pub const CODEX_ARGS: &str = "codex";
 
@@ -2771,6 +2802,20 @@ mod tests {
         assert_eq!(remote_session("claude:abc mac"), Some("abc"));
         assert_eq!((remote_session("codex:abc mac"), remote_session("codex-app:abc"), remote_session("claude")), (None, None, None));
         assert_eq!(thread_of(&thread_url("019a-b2")), Some("019a-b2"));
+    }
+
+    // #2137 A5/A7: structured window metadata survives overlap; AgentQ classifies agy errors; old turns stay old.
+    #[test]
+    fn balancing_quota_observations_keep_windows() {
+        let log=std::env::temp_dir().join(format!("taskq-quota-metadata-{}",uuid()));
+        std::fs::write(&log,concat!("{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"rateLimitType\":\"seven_day\",\"resetsAt\":604800}}\n",
+            "{\"type\":\"rate_limits\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":18000}}}\n")).unwrap();
+        assert_eq!(quota_windows(&log),[("300m".into(),Some(18000)),("seven_day".into(),Some(604800))]);
+        rules_line(&log,"resume","fixture input").unwrap();
+        assert!(quota_windows(&log).is_empty(),"a successful later turn must not reuse old quota events");
+        std::fs::write(&log,"{\"event\":\"result\",\"result\":{\"status\":\"ERROR\",\"error\":\"quota exceeded\"}}\n").unwrap();
+        assert_eq!(quota_windows(&log),[("unknown".into(),None)],"no guessed agy reset/window");
+        std::fs::remove_file(log).unwrap();
     }
 
     // Chain: attempt log -> usage limit before work -> reset. Risk: a limit after work started skips its retry,

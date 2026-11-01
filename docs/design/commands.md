@@ -57,3 +57,7 @@ Scope optional, 1-4 bullet lines; with `--op-id`, a last line `op-id: <id>` mark
 - Receipt: `--json` prints `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the op id); else the lines above. Late answers add `answered {by, text}`, like R6 rows outside `ask`; every surface reads `already answered by <by>: <text>` once. [Task controls](task-controls.md) `taskq.task-controls/1`: start/stop/later/retry, no close.
 
 `add --runtime antigravity` creates a strict `run-antigravity` pin for both worker and reviewer. `service capacity --host H --antigravity N` edits only owner capacity; `--default-runtime antigravity` sets the unpinned preference. These commands never create grants or sign-ins. Quota holds are observed availability, never capacity edits.
+
+### Runtime reroute
+
+`taskq reroute --from <runtime> --to <runtime> [--json]` is owner/PM-only. Both runtimes must be different subscription CLIs (`claude`, `codex`, `antigravity`). It selects this board's open TaskQ tasks with the exact strict source pin, refuses non-ready tasks or unreleased executions, validates labels and rereads before mutation. Each changed task gets one `taskq: reroute <from> <to>` audit comment (no fold transition), the source pin is replaced, and both labels are read back. Every refusal retains its task number; partial failure is explicit. Existing attempts keep their original session/runtime/account. Host policy and soft preferences are unchanged.

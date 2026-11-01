@@ -79,6 +79,7 @@ use std::time::{Duration, Instant, SystemTime};
 pub type Res<T> = Result<T, String>;
 
 const USAGE: &str = "taskq agents
+ taskq reroute --from <runtime> --to <runtime> [--json]
  taskq accounts [--json] | taskq accounts enable|disable|move <runtime> <label> [<position>] | taskq accounts add <runtime> <label>
  taskq labels
  taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--conversation ID --op-id ID]
@@ -342,6 +343,7 @@ fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
         has,
         labelled: false,
         default_runtime: crate::runtime::OWNER.into(),
+        routing: labels::routing(&v)?,
         permission_mode: str_or("permission_mode", "dontAsk"),
         codex,
         ttl: secs("ttl", TTL as u64) as i64,
@@ -1433,7 +1435,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let quiet = reduced || observe;
         // § 3: capacity reloads before each admission decision; children are untouched; § 7 delivery follows too (#1942)
         let cap = s.reread_project()
-            .and_then(|v| match &host {
+            .and_then(|v| {
+                s.cfg.routing = labels::routing(&v)?;
+                match &host {
                 Some(h) => {
                     let h = h.lock().map_err(|_| "host admission poisoned; launches held")?;
                     let p = h.policy.as_ref().map_err(Clone::clone)?;
@@ -1444,7 +1448,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
                     Ok(cap)
                 }
                 None => service::capacity(&v, &cfg.me),
-            });
+            }});
         if let Err(e) = &cap {
             log!("capacity: {e}; launches held");
         }
@@ -3273,7 +3277,7 @@ fn accounts_cli(a: &Args) -> Res<()> {
     let out = match w.as_slice() {
         [] => {
             let h = accounts::Host::read(&install);
-            if let Some(e) = &h.error { eprintln!("accounts: {e}; this host reads as one default account per runtime"); }
+            if let Some(e) = &h.error { eprintln!("accounts: {e}; new account starts remain unknown and held"); }
             let board = ctx();
             let me = board.as_ref().map_or_else(|_| "this-host".to_string(), |c| c.cfg.me.clone());
             let mut rows = h.rows(&me, accounts::now(), runtime::account_email);
@@ -3470,6 +3474,36 @@ fn start_one(b: &dyn Board, root: &Path, n: u64, op: &Op) -> Receipt {
     readback().unwrap_or_else(|e| Receipt { outcome: "unknown", next: format!("Read taskq inbox {n}; retry the same start operation."), ..Receipt::rejected(n, op, e) })
 }
 
+/// §5: explicit owner request; labels change only on ready tasks without unreleased execution.
+fn reroute(b: &dyn Board, root: &Path, from: &str, to: &str) -> Res<Vec<Receipt>> {
+    if from == to || ![from, to].iter().all(|rt| runtime::CLI_RUNTIMES.contains(rt)) {
+        return Err("reroute requires two different CLI runtimes: claude, codex or antigravity".into());
+    }
+    let (old, new) = (format!("run-{from}"), format!("run-{to}"));
+    b.ensure_labels(std::slice::from_ref(&new))?;
+    let mut out = vec![];
+    for issue in b.issues(None)?.into_iter().filter(|i| i.open && service::is_task(i) && i.labels.contains(&old)) {
+        let n = issue.number;
+        let change = || -> Res<Receipt> {
+            let (issue, task, _) = current(b, n)?;
+            let log = entries(b, n)?;
+            if !issue.open || task.state != State::Ready { return Err(format!("#{} is {}; reroute only changes open ready tasks", n, task.state.name())); }
+            labels::validate(&issue.labels)?;
+            if !issue.labels.contains(&old) { return Err("source runtime pin changed; read the task again".into()); }
+            if core::project(n, &log, false).executions.iter().any(|x| x.release.is_none()) { return Err("execution unresolved; preserve its runtime and session".into()); }
+            b.comment(n, &format!("taskq: reroute {from} {to}\nStrict runtime pin: {old} -> {new}; no active execution moved."))?;
+            let (fresh, now, _) = current(b, n)?;
+            if !fresh.open || now.state != State::Ready || !fresh.labels.contains(&old) { return Err("task changed before reroute; no labels changed".into()); }
+            b.labels(n, std::slice::from_ref(&new), std::slice::from_ref(&old))?;
+            let got = b.issue(n)?;
+            if !got.labels.contains(&new) || got.labels.contains(&old) { return Err("runtime pin readback unconfirmed; inspect the task before retrying".into()); }
+            Ok(Receipt { reason: format!("{old} -> {new}"), ..Receipt::accepted(n, &Op::default(), State::Ready, core::revision(n, &log)) })
+        };
+        out.push(change().unwrap_or_else(|e| Receipt::rejected(n, &Op::default(), e)).wake(root));
+    }
+    Ok(out)
+}
+
 fn emit_finding(create: Receipt, start: Option<Receipt>, json: bool) -> Res<()> {
     let ok = create.ok() && start.as_ref().is_none_or(Receipt::ok);
     if json {
@@ -3526,6 +3560,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 None=>reports::act_with_reason(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"),a.one("text").unwrap_or(""),a.one("until"))?
             };
             println!("{value}"); Ok(())
+        }
+        "reroute" => {
+            if dispatch::agent() { return Err("only the owner or PM can reroute strict task pins".into()); }
+            emit(&reroute(b, root, a.need("from")?, a.need("to")?)?, json)
         }
         "labels" => {
             let mut names = labels::FIXED.iter().map(|s| s.to_string()).collect::<Vec<_>>();
@@ -3947,6 +3985,33 @@ mod tests {
         assert!(super::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), false, t, a).unwrap_err().contains("exclude"));
     }
 
+    // #2137 A3: reroute reads back ready pins, refuses active/unreleased work, and never rewrites other labels.
+    #[test]
+    fn balancing_reroute_preserves_live_attempts() {
+        let b=board::Fake::default();
+        let dir=std::env::temp_dir().join(format!("taskq-reroute-{}",runtime::uuid()));
+        let labels=vec!["taskq".into(),"run-claude".into(),"prefer-antigravity".into(),"host-mac".into()];
+        let ready=b.create("Ready","",&labels).unwrap();
+        let doing=b.create("Doing","",&labels).unwrap();
+        let spawn=b.comment(doing,"taskq: spawn worker claude:owned mac").unwrap();
+        let unknown=b.create("Unknown execution","",&labels).unwrap();
+        b.comment(unknown,"taskq: spawn worker claude:unknown mac").unwrap();
+        b.comment(unknown,"taskq: requeue").unwrap();
+        let held=b.create("Held","",&labels).unwrap();b.comment(held,"taskq: hold").unwrap();
+        let rs=reroute(&b,&dir,"claude","codex").unwrap();
+        assert_eq!(rs.iter().filter(|r|r.ok()).map(|r|r.task).collect::<Vec<_>>(),[ready]);
+        assert_eq!(rs.iter().filter(|r|!r.ok()).count(),3);
+        let got=b.issue(ready).unwrap().labels;
+        assert!(got.contains(&"run-codex".into())&&!got.contains(&"run-claude".into()));
+        for keep in ["taskq","host-mac","prefer-antigravity"] {assert!(got.contains(&keep.into()));}
+        assert_eq!(current(&b,doing).unwrap().1.attempt,Some(spawn));
+        assert!(b.issue(doing).unwrap().labels.contains(&"run-claude".into()));
+        assert_eq!(b.comments(ready).unwrap().iter().filter(|c|c.body.starts_with("taskq: reroute")).count(),1);
+        assert!(reroute(&b,&dir,"codex-app","codex").is_err());
+        assert!(reroute(&b,&dir,"codex","codex").is_err());
+        let _=std::fs::remove_dir_all(dir);
+    }
+
     // Chain: § 2 Stages, § 5 `later --stage` (#1880). Risk: a worker cannot park after a finished stage, a stage outside the
     // issue's Acceptance reaches the board, or the `Stages:` line breaks the § 5 `Reason:`/`Next:` text.
     #[test]
@@ -4312,6 +4377,7 @@ mod tests {
             has: vec![],
             labelled: false,
             default_runtime: "claude".into(),
+            routing: vec![],
             permission_mode: "dontAsk".into(),
             codex: vec![],
             ttl: 300,

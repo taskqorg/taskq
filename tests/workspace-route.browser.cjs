@@ -1,5 +1,5 @@
 // #1680 actual bundle, invented values in the Mac install's persisted shape: one launched request, idle dialogue, list-only
-// navigation, saved navigation on Work mode Recovery. Defect class: Conversations opens as Interface error, a failing route
+// navigation, saved navigation on Balancing Recovery. Defect class: Conversations opens as Interface error, a failing route
 // hides Home and Close, and the native request status leaks onto every page.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const evidence=process.env.TASKQ_EVIDENCE_1680;
@@ -57,7 +57,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture'
   assert.equal(await page.locator('h1').innerText(),'Conversations','safe navigation leaves the failing route');
   assert.deepEqual(errors,[]);
   // #1698 A1/A3: Settings opens each operation review while the tray forwards a Completed history page and an agentq
-  // reply; neither is a status snapshot, so Work mode no longer fails at operationBody on a snapshot without projects.
+  // reply; neither is a status snapshot, so Balancing no longer fails at operationBody on a snapshot without projects.
   for(const operation of ['resources','service','setup','admission','recovery','stop','update']){
    await page.evaluate(s=>taskq.receive(s),snapshot);
    await page.evaluate(o=>{taskq.receive({open:{page:'operations',operation:o}});taskq.receive({completed:{items:[],complete:true}});taskq.receive({agentqError:null});},operation);

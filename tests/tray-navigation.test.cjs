@@ -11,7 +11,7 @@ assert.equal(context.page,'appearance');assert.equal(context.document.scrollingE
 (context.back());assert.equal(context.page,'home');assert.equal(context.document.scrollingElement.scrollTop,120);
 assert.equal((JSON.stringify(context.disclosures)),'{"scope":true,"counts":false}');
 (context.navigate('project'),context.navigate('project','review'),context.navigate('project',null,{project:true}));
-assert.equal(context.working,null,'Work mode no longer opens inside the menu');
+assert.equal(context.working,null,'Balancing no longer opens inside the menu');
 assert.deepEqual(launches.at(-1),{a:'workspace',open:{page:'operations',operation:'resources',root:'project'}});
 assert.equal(context.page,'project');assert.deepEqual(context.taskFilter,['review']);
 (context.back());assert.equal(context.page,'project');assert.equal(context.taskFilter,null);

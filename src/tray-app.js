@@ -543,10 +543,12 @@ routeBody:function(){
     case 'notifications':return h('button',{'data-a':'workspace','data-page':'conversations','data-filter':'new'},'Open New in Conversations');
     case 'notification-settings':return notifications();
     case 'agents':return agents();
-    case 'work':return f(api.heading('Admission on '+(view.S.host||'unknown host'),'focus'),h('div',{class:'body',role:'status'},api.admissionText(view.S.projects,true)),
-      h('div',{class:'body meta'},'Admission applies per project; host limits affect all registered projects. Current tasks continue.'),
-      api.operationLauncher('admission',null,'Review project admission…'),view.S.projects.some(p=>p.resources)?api.operationLauncher('resources',null,'Review host limits…'):h('div',{class:'body meta'},'Capacity unavailable: no supported host projection.'),
-      h('details',{'data-view-key':'settings-admission'},api.disclosure('focus','Project admission details'),h('div',{class:'body meta'},api.admissionText()),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+' · '+(modeText(p)||'Intake unknown')+' · '+(p.capacity?.reasons?.map(r=>r.text||r.code).join(' · ')||(p.alive===true&&Array.isArray(p.capacity?.reasons)?'No reported blockers':'Admission observation unknown')))),api.accessFacts()));
+    case 'work':return f(h('div',{class:'body',role:'status'},api.admissionText(view.S.projects,true)),
+      api.heading('Task routing','focus'),h('div',{class:'body meta'},'run-* pins stay strict. prefer-* and project routing are soft preferences; eligible subscription CLIs provide fallback.'),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+' · '+(Array.isArray(p.routing)?p.routing.length?p.routing.map(r=>r.labels.join(' + ')+' → '+r.prefer).join('; '):'Host default':'Routing unknown'))),
+      api.heading('Runtime availability','bot'),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+' · '+(p.capacity?.reasons?.filter(r=>['usage-limit','login','capability','access'].includes(r.code)).map(r=>r.text||r.code).join(' · ')||(p.alive===true&&Array.isArray(p.capacity?.reasons)?'No reported availability blockers':'Availability unknown')))),h('details',{'data-view-key':'balancing-access'},api.disclosure('info','Runtime access details'),api.accessFacts()),
+      api.heading('Host balancing','focus'),h('div',{class:'body meta'},'Host '+(view.S.host||'unknown')+' · limits and load gate affect all registered projects. Quota holds never change configured limits. Current tasks continue.'),view.S.projects.some(p=>p.resources)?api.operationLauncher('resources',null,'Review host limits…'):h('div',{class:'body meta'},'Capacity unavailable: no supported host projection.'),
+      api.heading('Project policies','folder'),api.operationLauncher('admission',null,'Review project admission…'),
+      h('details',{'data-view-key':'settings-admission'},api.disclosure('focus','Project admission details'),h('div',{class:'body meta'},api.admissionText()),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+' · '+(modeText(p)||'Intake unknown')+' · '+(p.capacity?.reasons?.map(r=>r.text||r.code).join(' · ')||(p.alive===true&&Array.isArray(p.capacity?.reasons)?'No reported blockers':'Admission observation unknown'))))));
     case 'stop':return api.stopPanel();
     case 'recovery':return f(api.heading('Hold on '+(view.S.host||'unknown host'),'rotate-ccw'),h('div',{class:'body',role:'status'},view.S.stop_hold?'Admission held · '+(view.S.stop_hold.mode||'mode unknown')+(view.S.stop_hold.selected_count!=null?' · '+view.S.stop_hold.selected_count+' selected':''):'No emergency hold reported'),api.hostService(),h('div',{class:'body meta'},'Recovery is for selected local tasks. Ordinary Resume cannot clear an emergency hold; unknown effects stay held.'),api.recoveryPanel());
     case 'services':return f(api.heading(view.S.host||'This host','activity'),api.hostService(),view.S.projects.map(p=>problem(p)),api.operationLauncher('service',null,'Host maintenance in workspace…'),h('details',{'data-view-key':'service-projects'},api.disclosure('folder','Project observations · '+view.S.projects.length),view.S.projects.map(p=>[incidentNotice(p),service(p,false)])),view.S.agentq&&api.heading('AgentQ','bot'),view.S.agentq&&api.agentq(true));
@@ -567,7 +569,7 @@ resourceReceipt:function(m){
 capacity:function(p){if(!ports.workspace)return p.resources?api.operationLauncher('resources',p.root,'Review capacity…'):'';
   if(!p.resources)return '';
   return h('details',{class:'group','data-view-key':'capacity:'+p.root},h('summary',null,icon('sliders-horizontal'),'Capacity ',h('span',{class:'meta'},(p.cap_host||'this host')+' · '+require('./resource-controls.js').headline(resourceGroup(p),view.S.now))),h('div',{'data-resources':p.root}));},
-workEntry:function(root){return view.S.projects.some(p=>p.resources)?h('button',{class:'project','data-a':'work','data-root':root||null},icon('focus'),'Work mode…'):'';},
+workEntry:function(root){return view.S.projects.some(p=>p.resources)?h('button',{class:'project','data-a':'work','data-root':root||null},icon('focus'),'Balancing…'):'';},
 workPage:function(root){if(!ports.workspace)return api.operationLauncher('resources',Object.keys(view.working||{})[0]||null,'Review host limits in workspace…');const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>p.root===root||view.working?.[p.root])||ps[0],run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
   return f(h('div',{class:'body',role:'status'},'Admission · '+api.admissionText()),bulk(run,held),api.resourceMeters(p),h('details',{'data-view-key':'admission-reasons'},h('summary',null,'Admission details'),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+': '+(p.capacity?.reasons?.map(r=>r.text||r.code).join(' · ')||'No reported reasons')))),p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('div',{'data-work':''}),api.accessFacts());},
 admissionText:function(ps=view.S.projects,compact=false){
@@ -650,7 +652,7 @@ settings:function(){
     widget({'data-route':'cadence'},icon('chart-no-axes-column'),'Activity history',S.display?.periods?.find(x=>x.id===S.period)?.name||'period unknown')]],
    ['Host and projects',[
     widget({'data-route':'hosts'},icon('network'),'Hosts and resources',api.runningAgents(true).meta),
-    widget({'data-route':'work'},icon('focus'),'Work mode',api.admissionText(ps,true)+(ps.some(p=>p.resources)?'':' · capacity unavailable')),
+    widget({'data-route':'work'},icon('focus'),'Balancing',api.admissionText(ps,true)+(ps.some(p=>p.resources)?'':' · capacity unavailable')),
     widget({'data-route':'agents'},icon('bot'),'Agents and access',A?.checking?'checking sign-in':A?A.rows.map(r=>runtimeName(r.runtime)+' '+(r.state==='signed-in'&&!A.fresh?'signed in at capture':(signState[r.state]||'Unknown').toLowerCase())).join(' · ')||'no runtime':'sign-in unknown'),
     widget({'data-route':'projects'},icon('folder'),'Projects',ps.length+' registered'),
     widget({'data-route':'delivery'},icon('git-pull-request'),'Delivery',ps.length+' projects · '+new Set(ps.map(p=>p.delivery?.preset||'unavailable')).size+' '+(new Set(ps.map(p=>p.delivery?.preset||'unavailable')).size===1?'policy':'policies')),
@@ -661,7 +663,7 @@ settings:function(){
   return f(sections.map(([label,rows])=>h('section',{class:'settings-section'},api.heading(label,label==='Display'?'type':'network'),rows)));},
 windowSettings:function(){const mode=view.S.size_anchor||'auto';return f(h('p',{class:'meta'},'Auto follows the actual tray opening direction. Dragging pins the window; explicit growth choices stay selected.'),h('fieldset',null,h('legend',null,'Window growth'),h('div',{class:'growth-options'},[['auto','Auto'],['top','Down'],['bottom','Up'],['fixed','Fixed']].map(([value,label])=>h('button',{'data-a':'size-anchor','data-value':value,'aria-pressed':String(mode===value)},h('span',{class:'growth-miniature','data-growth':value,'data-opening':view.S.auto_anchor==='bottom'?'up':'down','aria-hidden':'true'},h('i')),h('span',null,label))))),h('div',{class:'options'},button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Menu always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)})));},
 head:function(){
-  const p=view.S.projects?.find(p=>p.root===view.page),title=view.working?'Work mode':p?p.name:routes[view.page]||'Unavailable';
+  const p=view.S.projects?.find(p=>p.root===view.page),title=view.working?'Balancing':p?p.name:routes[view.page]||'Unavailable';
   const crumbs=p?h('a',{href:'#','data-route':'projects'},'Projects'):settingsPages.includes(view.page)&&view.page!=='settings'?h('a',{href:'#','data-route':'settings'},'Settings'):'';
   // R07/A4: a stable action row; Close is always last, Keep open, Always on top and the task pin have distinct names
   if(ports.settings){const W=view.settingsChrome||{};return shell.bar({title,crumbs,home:'Settings home',back:view.page!=='settings'||renderer.entries().length>0,actions:[],windows:[button('always-on-top','Always on top',{'data-a':'settings-top','aria-pressed':String(!!W.top)}),button(W.maximized?'minimize-2':'maximize-2',W.maximized?'Restore window':'Enlarge window',{'data-a':'settings-enlarge','aria-pressed':String(!!W.maximized)}),button('x','Close settings',{'data-a':'hide'})]});}
@@ -694,7 +696,7 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   menu.style.setProperty('--background-alpha',(view.S.background_opacity??100)+'%');
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const settingsError=view.persistenceError||view.S.opacity_error||view.S.settings_error;
-  const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
+  const title=view.working?'Balancing':view.taskFilter?'Tasks':p?p.name:routes[view.page];
   // P-W4: the View window is one scroll of compact sections; Display, Save, Reset and Done stay in its footer.
   const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'+(settingsPages.includes(view.page)||view.page==='projects'?' settings-content':'')},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError||view.S.opacity_error?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
   // #1430: Preact keeps unchanged nodes, so a refresh leaves the textarea being typed in attached.
@@ -894,7 +896,7 @@ const signState={'signed-in':'Signed in',expired:'Expired',rejected:'Rejected','
 const actionErrors=new Map();
 
 // Navigation is view state only: every route consumes the same pushed snapshot.
-const routes={hosts:'Hosts and resources',delivery:'Delivery','agentq-shown':'Agentq shown','agentq-setting-up':'Agentq setting up','agentq-running':'Agentq running','agentq-unknown':'Agentq unknown',work:'Work mode',recovery:'Recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications','notification-settings':'Notifications',agents:'Agents and access',services:'Services and support',about:'About and updates'};
+const routes={hosts:'Hosts and resources',delivery:'Delivery','agentq-shown':'Agentq shown','agentq-setting-up':'Agentq setting up','agentq-running':'Agentq running','agentq-unknown':'Agentq unknown',work:'Balancing',recovery:'Recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications','notification-settings':'Notifications',agents:'Agents and access',services:'Services and support',about:'About and updates'};
 const settingsPages=['settings','appearance','hosts','delivery','cadence','notification-settings','work','recovery','agents','services','about'];
 if(ports.settings)view.page='settings';
 const viewState=require('./tray-view-state.js').create(view,{menu,document,send,defer,cancel,trail:renderer.entries(),routes:Object.fromEntries(Object.keys(routes).map(page=>[page,{parent:settingsPages.includes(page)&&page!=='settings'?'settings':'home'}]))});
@@ -932,7 +934,7 @@ const cutover='https://github.com/taskqorg/taskq/blob/main/taskq.md#9-config-and
 const workPageFor=p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('p',{role:'status'},'Legacy capacity editor unavailable; refresh host status.');
 const resourceCards=new Map(),resourceRequests=new Map(),resourcePayloads=new Map();
 
-// Work mode (menu M12): the shared editor over this host's projects; only the explicitly selected ones change
+// Balancing (menu M12): the shared editor over this host's projects; only the explicitly selected ones change
 
 // Notifications (menu.md M14): host mode per kind, the OS permission, and per project overrides
 const modes=[['off','Off'],['silent','Silent'],['banner','Banner'],['sound','Banner with sound']];

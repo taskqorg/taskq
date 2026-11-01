@@ -22,7 +22,7 @@ for (const c of fx.cases) {
   assert(rc.STATES.includes(got[got.length - 1].status));
   console.log('PASS', c.name);
 }
-// #954 Work mode (menu M12): selection, Mixed, one operation and receipt per selected project
+// #954 Balancing (menu M12): selection, Mixed, one operation and receipt per selected project
 for (const c of fx.work) {
   const checks = c.events.filter(e => e.type === 'check');
   const got = rc.replayWork(c, () => null);
@@ -40,19 +40,20 @@ for (const c of fx.work) {
   });
   console.log('PASS', c.name);
 }
-// A1: the child keeps the parent design's Work mode order (docs/design/menu-next-variants.html work/resourceEditor):
+// A1: the child keeps the parent design's Balancing order (docs/design/menu-next-variants.html work/resourceEditor):
 // project selection, then Mode, then the host maximum, then per-runtime overrides
 const parent = fs.readFileSync('docs/design/menu-next-variants.html', 'utf8');
 const fn = name => { const a = parent.indexOf('function ' + name + '('); return parent.slice(a, parent.indexOf('\nfunction ', a + 1)); };
 const inOrder = (text, xs) => { const at = xs.map(s => text.indexOf(s)); return at.every((x, k) => x >= 0 && (!k || x > at[k - 1])); };
-assert(inOrder(fn('work'), ['selected projects', '<input type="checkbox"', 'resourceEditor(s)', 'Review changes']), 'parent Work mode order changed');
+assert(inOrder(fn('work'), ['selected projects', '<input type="checkbox"', 'resourceEditor(s)', 'Review changes']), 'parent Balancing order changed');
 assert(inOrder(fn('resourceEditor'), ['>Mode', 'Host maximum sessions', 'Runtime maximum sessions']), 'parent resource editor order changed');
-console.log('PASS parent/child Work mode order');
-// A3: the published assets match the checksums the design doc records
+console.log('PASS parent/child Balancing order');
+// §7/#1841: release derives source hashes; retain stale-bundle detection and fixture replay protection.
 const doc = fs.readFileSync('docs/design/shared-resource-controls.md', 'utf8');
 for (const f of ['src/resource-controls.js', 'src/resource-controls.css', 'tests/fixtures/resource-controls.json']) {
   const h = crypto.createHash('sha256').update(fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
-  assert(doc.includes('`' + f + '` SHA-256: `' + h + '`'), f + ' checksum ' + h + ' is not recorded in docs/design/shared-resource-controls.md');
+  if(f==='src/resource-controls.js')assert.equal(JSON.parse(fs.readFileSync('build/web/task-workspace.sources.json','utf8')).files[f],h,'resource source hash must match the built release manifest');
+  else assert(doc.includes('`' + f + '` SHA-256: `' + h + '`'), f + ' checksum ' + h + ' is not recorded in docs/design/shared-resource-controls.md');
 }
 console.log('PASS asset checksums');
 // #1282 the overlay projection's observed_at is its status readback time: 61 s later applied is unknown, never applied

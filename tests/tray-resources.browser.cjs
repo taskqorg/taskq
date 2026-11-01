@@ -18,7 +18,7 @@ const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
       const modeState=state(modern.groups[0]);modeState.host='mac';Object.assign(modeState.projects[0],{host:'mac',mode:'run',sample_age_text:'5s',capacity:{gate:'open',reasons:[{code:'access',text:'claude: host grant missing'}],cpu_percent:42,memory_available_percent:62}});
       await page.evaluate(s=>taskq.receive(s),modeState);
       await page.evaluate(()=>taskq.receive({open:{page:'operations',operation:'resources'}}));
-      assert.match(await page.locator('.content [role=status]').first().innerText(),/^Admission · Blocked work: taskq \(access\).*Intake: 1 configured/,'R32: actual Work mode leads with scoped blockers before the load gate');
+      assert.match(await page.locator('.content [role=status]').first().innerText(),/^Admission · Blocked work: taskq \(access\).*Intake: 1 configured/,'R32: actual Balancing leads with scoped blockers before the load gate');
       assert.equal(await page.locator('.resource-meter meter').count(),2,'R28: resource meters retain percent units');
       assert(!await page.locator('.content').innerText().then(t=>t.includes(root)),'exact target paths start disclosed');
       const over=structuredClone(modern.groups[0]);over.targets[0].runtime_usage=[{runtime_id:'codex',used:3,limit:1,limit_kind:'ceiling'}];

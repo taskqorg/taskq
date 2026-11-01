@@ -1,6 +1,6 @@
 // #1661 R18–R20, R28–R31: Settings content reads the AS5 sign-in view, effective access and one host service line.
 // Defect guarded: a stale probe read as current sign-in, a method shown as the account, a remote host or a missing
-// access file shown as known, a probe in progress shown as its prior result, Work mode pointing elsewhere instead of
+// access file shown as known, a probe in progress shown as its prior result, Balancing pointing elsewhere instead of
 // showing access, the host service repeated per project, and a widget route without its page.
 const assert=require('node:assert/strict');
 const fx=require('./fixtures/display-model.json');
@@ -47,7 +47,7 @@ c.S.projects[1].alive=false;assert.match(c.admissionText(),/^Unknown:/,'stale ne
 c.S.projects=original;
 c.S.agents={at:900,fresh:true,rows:[row('codex','signed-in'),row('codex-app','signed-in',{version:'3.2'})]};
 c.S.projects[0].access.push({runtime:'codex-app',effective:'workspace'});c.page='agents';html=c.routeBody();assert(html.includes('Codex app 3.2 · <span'));assert(html.includes('Codex app · Workspace'));assert(html.includes('Codex · refused'));assert.equal((html.match(/Codex app 3.2/g)||[]).length,1,'A5: no client version repeated per project');
-// R32: Work mode shows the access facts themselves after admission, not a pointer to Agents
+// R32: Balancing shows the access facts themselves after admission, not a pointer to Agents
 const wm={operationController:true,S:c.S};require('./tray-harness.cjs').install(wm);html=wm.workPage();
 assert(html.indexOf('Admission · ')<html.indexOf('Codex: refused: host grant missing'),'admission first, then access');
 assert(html.includes('Claude: requested workspace-write · saved grant workspace-write · applied workspace-write · sandbox'));
@@ -82,3 +82,9 @@ c.S.projects[0].access=[];assert(c.accessFacts().includes('Access unknown for al
 c.S.projects=[];c.S.agents=null;c.S.service={state:'exited',reason:'fixture exit'};
 for(const route of ['settings','appearance','notification-settings','cadence','hosts','work','agents','projects','delivery','services','recovery','about']){c.page=route;assert.notEqual(c.routeBody(),'','empty '+route+' remains explicit');}
 c.page='services';assert(c.routeBody().includes('fixture exit'));
+
+// #2137 A1: the existing work route exposes the four Balancing sections in order.
+c.page='work';html=c.routeBody();
+const sections=['Task routing','Runtime availability','Host balancing','Project policies'].map(t=>html.indexOf(t));
+assert(sections.every((at,i)=>at>=0&&(!i||at>sections[i-1])),'Balancing section order');
+assert(!html.includes('Work mode'));

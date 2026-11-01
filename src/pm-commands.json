@@ -10,6 +10,7 @@
     {"name": "answer", "use": "taskq answer N.K [M.K..] | taskq answer N --text A", "purpose": "Relay the owner's answer to an open question; never answer for the owner."},
     {"name": "pick", "use": "taskq pick N.K --text R", "purpose": "Mark the option the PM proposes to the owner; it is not an answer."},
     {"name": "steer", "use": "taskq steer N --text T", "purpose": "Send text to the live worker of a doing task."},
+    {"name": "reroute", "use": "taskq reroute --from <runtime> --to <runtime> [--json]", "purpose": "Explicitly change strict runtime pins on open ready tasks; preserve active or unresolved executions and read back every result."},
     {"name": "requeue", "use": "taskq requeue N [--text T]", "purpose": "Send a task back to ready with the reason or fixes."},
     {"name": "later", "use": "taskq later N [--text T] [--blocker #M|--until UTC]", "purpose": "Park a task until a blocker closes or a time passes."},
     {"name": "close", "use": "taskq close N [M..] [--text VERDICT]", "purpose": "Publish and close accepted results."},
