@@ -13,7 +13,7 @@ const state={...fx.state,font:18,theme:'dark',projects:[{...fx.state.projects[0]
  const view=async name=>{await page.locator('.conversation-view').evaluateAll(es=>es.forEach(e=>e.open=true));await page.locator('[data-c=result-filter][data-filter='+name+']').click();};
  const out=process.env.TASKQ_EVIDENCE_2095,shot=async name=>{if(out){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:out+'/'+name+'.png'});}};
  const open=async n=>{const list=page.locator('.conversation-list');if(!await list.isVisible())await page.locator('[data-c=list]').click();await page.locator('[data-report=open][data-n="'+n+'"]').click();};
- await view('new');await shot('new');await view('all');await open(2091);
+ await view('new');assert.match(await page.locator('.conversation-row[data-thread$="/259"]').innerText(),/Question event/,'news keeps its source kind without inventing current question state');await shot('new');await view('all');await open(2091);
  assert.equal(await page.locator('[data-result-card=decision]').count(),0,'ordinary completion never requires Accept');
  assert.doesNotMatch(await page.locator('.report-card').innerText(),/Decision open/);await shot('finished');
  await view('decision');await open(2022);

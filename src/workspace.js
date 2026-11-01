@@ -120,7 +120,7 @@ const {create}=execution.module('workspace',{
      row.archived=!!row.event?.archived||Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown
      // #1819: an answer's expected state shows here in the same frame, marked unconfirmed until the board shows it
-     const state=t?.state||row.event?.state,unconfirmed=t?.sync?.phase==='sending'?' · Sending':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;if(!row.status&&row.news?.length&&state!=='ask')row.status=(notification.kinds[row.news[0].kind]||'Event')+' event';row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
+     const state=t?.state||row.event?.state,unconfirmed=t?.sync?.phase==='sending'?' · Sending':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;if(!row.status&&row.news?.length&&state!=='ask')row.status=notification.label(row.news[0].kind)+' event';row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
     const collected=reports.threads(),results=collected.filter(r=>!r.conversation||!owned.has(r.conversation)||refs.has(r.id));
