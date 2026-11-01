@@ -353,11 +353,12 @@ pub fn transient_failure(log: &Path) -> Option<String> { agentq_runtime::agent::
 pub fn mark_login_off(install: &Path, bin: &str, reason: &str) -> std::io::Result<()> {
     let dir = install.join("login-off");
     std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join(bin), format!("{}\n{reason}\n", codex_refreshed().unwrap_or_default()))
+    std::fs::write(dir.join(bin), format!("{}\n{reason}\n", codex_refreshed(install).unwrap_or_default()))
 }
 
-fn codex_refreshed() -> Option<String> {
-    kind_refresh("codex", None, std::fs::read_to_string(codex_home()?.join("auth.json")).ok().as_deref()).1
+fn codex_refreshed(install: &Path) -> Option<String> {
+    let home = crate::runtime::accounts::active_in(install, "codex", &codex_home()?);
+    kind_refresh("codex", None, std::fs::read_to_string(home.join("auth.json")).ok().as_deref()).1
 }
 
 /// The reason of a rejected login still current at `refreshed` (#1446).
@@ -378,7 +379,16 @@ pub fn which(name: &str) -> PathBuf {
 }
 
 /// The worker's last message in an attempt log, for the `gone` reason (§ 4 step 1); None when unreadable.
-pub fn last_message(log: &Path) -> Option<String> { final_text(&events(log, 0)?) }
+pub fn last_message(log: &Path) -> Option<String> {
+    let text = String::from_utf8_lossy(&std::fs::read(log).ok()?).into_owned();
+    let events: Vec<serde_json::Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    if let Some(m) = final_text(&events) { return Some(m); }
+    let mut tail: Vec<&str> = text.lines().rev().filter(|l| !l.trim().is_empty())
+        .take_while(|l| serde_json::from_str::<serde_json::Value>(l).is_err()).collect();
+    tail.reverse();
+    let root = log.parent().and_then(|d| if d.ends_with(".taskq") { d.parent() } else { Some(d) }).unwrap_or_else(|| Path::new(""));
+    Some(public_line(&tail.join("\n"), root, 240)).filter(|s| !s.is_empty())
+}
 
 /// Worker text as one public line (§ 4 step 1, § 7 rule 6): whitespace collapsed, absolute paths made relative to
 /// `root` or replaced by `<path>`, at most `max` characters ending in `…`. The full text stays in the attempt log.
@@ -2529,7 +2539,10 @@ pub fn login_state(rt: &str, bin: &Path) -> &'static str {
         let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty());
         return if home.is_some_and(|h| [".gemini/antigravity-cli/jetski_state.pbtxt", ".gemini/oauth_creds.json"].iter().any(|p| Path::new(&h).join(p).is_file())) { "logged in" } else { "unknown" };
     }
-    login(rt, probe("runtime.login", bin, if rt == "claude" { &["auth", "status"] } else { &["login", "status"] })).0
+    let home = if rt == "claude" { claude_home() } else { codex_home() }
+        .map(|b| crate::runtime::accounts::active_in(&crate::platform::default_install(), rt, &b));
+    login(rt, probe_in("runtime.login", bin, if rt == "claude" { &["auth", "status"] } else { &["login", "status"] },
+        home.as_deref().map(|h| (crate::runtime::accounts::var(rt), h)))).0
 }
 
 /// The only runtime list (§ 9 runtime adapters).
@@ -2604,25 +2617,29 @@ pub fn agents(install: &Path) -> serde_json::Value {
     let mut seen: std::collections::HashMap<&str, serde_json::Value> = std::collections::HashMap::new();
     let rows = agent_runtimes().iter().map(|rt| {
         let bin = of(rt).bin;
-        let mut row = seen.entry(bin).or_insert_with(|| {
-            let p = which(bin);
-            if !p.is_absolute() {
-                return serde_json::json!({"path": null, "version": null, "login": "not installed", "account": null});
-            }
-            let ver = probe("runtime.version", &p, &["--version"]).and_then(|(_, o)| version(&o));
-            let out = if *rt == "antigravity" { None } else { probe("runtime.login", &p, if bin == "claude" { &["auth", "status"] } else { &["login", "status"] }) };
-            let auth = (bin == "codex").then(|| codex_home().and_then(|h| std::fs::read_to_string(h.join("auth.json")).ok())).flatten();
-            let (kind, refreshed) = kind_refresh(bin, out.as_ref().map(|o| o.1.as_str()), auth.as_deref());
-            let (state, account) = if *rt == "antigravity" { (login_state(rt, &p), None) } else { login(bin, out) };
-            // Codex's `login status` reads logged in with a dead refresh token: the last rejection wins until re-login
-            let reason = (state == "logged in").then(|| login_off(install, bin, refreshed.as_deref())).flatten();
-            let state = if reason.is_some() { "not logged in" } else { state };
-            serde_json::json!({"path": p.display().to_string(), "version": ver, "login": state, "account": account, "kind": kind, "refreshed": refreshed, "reason": reason})
-        }).clone();
+        let mut row = seen.entry(bin).or_insert_with(|| agent_row_in(install, rt, &which(bin), crate::runtime::accounts::base(bin).as_deref())).clone();
         row["runtime"] = serde_json::json!(rt);
         row
     }).collect();
     serde_json::Value::Array(rows)
+}
+
+fn agent_row_in(install: &Path, rt: &str, p: &Path, base: Option<&Path>) -> serde_json::Value {
+    let bin = of(rt).bin;
+    if !p.is_absolute() {
+        return serde_json::json!({"path": null, "version": null, "login": "not installed", "account": null});
+    }
+    let ver = probe("runtime.version", p, &["--version"]).and_then(|(_, o)| version(&o));
+    let home = base.map(|b| crate::runtime::accounts::active_in(install, bin, b));
+    let env = home.as_deref().map(|h| (crate::runtime::accounts::var(bin), h));
+    let out = if rt == "antigravity" { None } else { probe_in("runtime.login", p, if bin == "claude" { &["auth", "status"] } else { &["login", "status"] }, env) };
+    let auth = (bin == "codex").then(|| home.as_deref().and_then(|h| std::fs::read_to_string(h.join("auth.json")).ok())).flatten();
+    let (kind, refreshed) = kind_refresh(bin, out.as_ref().map(|o| o.1.as_str()), auth.as_deref());
+    let (state, account) = if rt == "antigravity" { (login_state(rt, p), None) } else { login(bin, out) };
+    // Codex's `login status` reads logged in with a dead refresh token: the last rejection wins until re-login
+    let reason = (state == "logged in").then(|| login_off(install, bin, refreshed.as_deref())).flatten();
+    let state = if reason.is_some() { "not logged in" } else { state };
+    serde_json::json!({"path": p.display().to_string(), "version": ver, "login": state, "account": account, "kind": kind, "refreshed": refreshed, "reason": reason})
 }
 
 /// The heartbeat's CLI versions (§ 4): one per installed binary of `agents` rows; an unread version is `unknown` (R12).
@@ -3420,6 +3437,46 @@ finally:
         assert_eq!((long.chars().count(), long.ends_with(" wor…")), (224, true));
     }
 
+    // #2153 A1/A2: launcher/sandbox stderr before JSON events surfaces via public_line() in last_message(), and
+    // setup/readiness login probes verify the active runtime account home.
+    #[test]
+    fn launcher_stderr_in_last_message_and_active_account_probe() {
+        let dir = std::env::temp_dir().join(format!("taskq-2153-runtime-{}", uuid()));
+        let root = dir.join("project");
+        let log = attempt_log(&root, "worker", 2153, 1);
+        std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+        std::fs::write(&log, "{\"type\":\"taskq.rules\",\"phase\":\"start\"}\n{\"type\":\"taskq.account\",\"account\":\"work\"}\ntaskq: linux sandbox prerequisite /home/me/.codex/taskq-accounts/work/config.toml: No such file or directory (os error 2)\n").unwrap();
+        assert_eq!(last_message(&log).as_deref(), Some("taskq: linux sandbox prerequisite <path>: No such file or directory (os error 2)"));
+        std::fs::write(&log, "{\"type\":\"taskq.rules\",\"phase\":\"start\"}\n{\"type\":\"result\",\"result\":\"completed work\"}\ntrailing warning\n").unwrap();
+        assert_eq!(last_message(&log).as_deref(), Some("completed work"));
+        std::fs::write(&log, "{\"type\":\"taskq.rules\",\"phase\":\"start\"}\n{\"type\":\"thread.started\",\"thread_id\":\"t1\"}\n").unwrap();
+        assert_eq!(last_message(&log), None);
+
+        let install = dir.join("install");
+        let base = dir.join("codex-home");
+        let work = base.join(crate::runtime::accounts::HOMES).join("work");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(install.join(crate::runtime::accounts::FILE), r#"{"codex":[{"label":"default","enabled":false},{"label":"work","enabled":true}]}"#).unwrap();
+        std::fs::write(base.join("auth.json"), r#"{"auth_mode":"chatgpt","last_refresh":"2026-10-01T00:00:00Z"}"#).unwrap();
+        let bin = if cfg!(windows) {
+            let p = dir.join("codex.cmd");
+            std::fs::write(&p, "@echo off\r\nif \"%1\"==\"--version\" (echo codex-cli 0.159.3\r\nexit /b 0)\r\nif exist \"%CODEX_HOME%\\auth.json\" (echo Logged in using ChatGPT) else (echo Not logged in)\r\n").unwrap();
+            p
+        } else {
+            let p = dir.join("codex");
+            std::fs::write(&p, "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"codex-cli 0.159.3\"; exit 0; fi\nif [ -f \"$CODEX_HOME/auth.json\" ]; then echo \"Logged in using ChatGPT\"; else echo \"Not logged in\"; fi\n").unwrap();
+            #[cfg(unix)] std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+            p
+        };
+        let row = agent_row_in(&install, "codex", &bin, Some(&base));
+        assert_eq!(row["login"], "not logged in", "active work account has no auth.json yet: {row}");
+        std::fs::write(work.join("auth.json"), r#"{"auth_mode":"chatgpt","last_refresh":"2026-11-01T00:00:00Z"}"#).unwrap();
+        let row = agent_row_in(&install, "codex", &bin, Some(&base));
+        assert_eq!((row["login"].as_str(), row["refreshed"].as_str()), (Some("logged in"), Some("2026-11-01T00:00:00Z")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // Chain: § 4 service pass, `agents` rows (R12), #1114. Risk: a runtime CLI whose child keeps the pipes open blocks the pass.
     #[test]
     fn probe_gives_up_on_time_when_a_grandchild_keeps_the_pipes() {
@@ -3540,7 +3597,7 @@ finally:
         assert_eq!(auth_rejected(&dir.join("missing.log")), None);
         // the mark holds until auth.json's last_refresh changes (a re-login)
         mark_login_off(&dir, "codex", "refresh token rejected").unwrap();
-        let at = codex_refreshed();
+        let at = codex_refreshed(&dir);
         assert_eq!(login_off(&dir, "codex", at.as_deref()).as_deref(), Some("refresh token rejected"));
         assert_eq!(login_off(&dir, "codex", Some("2099-01-01T00:00:00Z")), None);
         assert_eq!(login_off(&dir, "claude", None), None);

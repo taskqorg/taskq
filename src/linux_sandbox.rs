@@ -17,11 +17,17 @@ fn trusted(path: &Path) -> Result<(), String> {
 
 pub fn ready(root: &Path) -> Result<(), String> {
     for p in [HELPER, BWRAP] { trusted(Path::new(p))?; }
-    let home = codex_home()?;
+    prerequisites(root, &crate::runtime::accounts::active_in(&crate::platform::default_install(), "codex", &codex_home()?))
+}
+
+fn prerequisites(root: &Path, home: &Path) -> Result<(), String> {
     for p in [home.join("config.toml"), root.join(".codex")] {
         if std::fs::symlink_metadata(&p).map_err(|e| format!("linux sandbox prerequisite {}: {e}", p.display()))?.file_type().is_symlink() {
             return Err(format!("linux sandbox refuses symlink {}", p.display()));
         }
+    }
+    if std::fs::symlink_metadata(home).map_err(|e| format!("linux sandbox prerequisite {}: {e}", home.display()))?.file_type().is_symlink() {
+        return Err(format!("linux sandbox refuses symlink {}", home.display()));
     }
     Ok(())
 }
@@ -86,7 +92,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
         return Err("linux sandbox: only bounded Codex exec allowed".into());
     }
     let home = PathBuf::from(std::env::var_os("HOME").ok_or("linux sandbox: HOME missing")?);
-    let ch = codex_home()?;
+    let ch = crate::runtime::accounts::active_in(&install, "codex", &codex_home()?);
     let mut c = crate::platform::command(BWRAP);
     c.args(["--die-with-parent", "--new-session", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--cap-drop", "ALL", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/var/tmp"]);
     let dns = Path::new("/etc/resolv.conf").canonicalize().map_err(|e| format!("linux sandbox DNS: {e}"))?;
@@ -193,6 +199,32 @@ mod tests {
         let ch = Path::new("/home/me/.codex");
         assert!(!read_only_entry(&ch.join("auth.json")), "a read-only auth.json burns the rotated refresh token (#1424)");
         for n in ["config.toml", "hooks.json", "AGENTS.md", "plugins", "skills", "packages"] { assert!(read_only_entry(&ch.join(n)), "{n}"); }
+    }
+
+    // #2153 A2: Linux sandbox readiness checks the active Codex account home's config.toml and refuses symlinks.
+    #[test]
+    fn prerequisites_check_active_account_home() {
+        let dir = std::env::temp_dir().join(format!("taskq-2153-linux-{}", crate::runtime::uuid()));
+        let root = dir.join("root");
+        let install = dir.join("install");
+        let base = dir.join("codex-home");
+        let work = base.join(crate::runtime::accounts::HOMES).join("work");
+        std::fs::create_dir_all(root.join(".codex")).unwrap();
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(base.join("config.toml"), "").unwrap();
+        assert!(prerequisites(&root, &crate::runtime::accounts::active_in(&install, "codex", &base)).is_ok());
+
+        std::fs::write(install.join(crate::runtime::accounts::FILE), r#"{"codex":[{"label":"default","enabled":false},{"label":"work","enabled":true}]}"#).unwrap();
+        let active = crate::runtime::accounts::active_in(&install, "codex", &base);
+        assert_eq!(active, work);
+        assert!(prerequisites(&root, &active).unwrap_err().contains("linux sandbox prerequisite"));
+        std::os::unix::fs::symlink(base.join("config.toml"), work.join("config.toml")).unwrap();
+        assert!(prerequisites(&root, &active).unwrap_err().contains("linux sandbox refuses symlink"));
+        std::fs::remove_file(work.join("config.toml")).unwrap();
+        std::fs::write(work.join("config.toml"), "").unwrap();
+        assert!(prerequisites(&root, &active).is_ok());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     // Chain: workspace worker git fetch/commit/push (#1490). Risk: the git common dir stays read-only for linked worktrees.

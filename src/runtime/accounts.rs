@@ -374,7 +374,11 @@ pub fn heartbeat_rows(host: &str, body: &str) -> Vec<Row> {
 
 /// The runtime's own home: `CLAUDE_CONFIG_DIR` / `CODEX_HOME` of this process, else `~/.claude` / `~/.codex`.
 pub fn base(rt: &str) -> Option<PathBuf> {
-    if rt == "claude" { crate::runtime::claude_home() } else { crate::runtime::codex_home() }
+    let b = if rt == "claude" { crate::runtime::claude_home() } else { crate::runtime::codex_home() }?;
+    if b.parent().and_then(|p| p.file_name()) == Some(std::ffi::OsStr::new(HOMES)) {
+        return b.parent().and_then(Path::parent).map(Path::to_path_buf);
+    }
+    Some(b)
 }
 
 /// The variable that names a home to the runtime.
@@ -383,6 +387,18 @@ pub fn var(rt: &str) -> &'static str { if rt == "claude" { "CLAUDE_CONFIG_DIR" }
 /// The home of a non-default account; None for `default` (the child keeps the service's own value).
 pub fn home(rt: &str, label: &str) -> Option<PathBuf> {
     (applies(rt) && label != DEFAULT).then(|| base(rt).map(|b| b.join(HOMES).join(label))).flatten()
+}
+
+/// The active account's home of `rt` under `base` on `install` (`base` itself when `default` is active, none is
+/// available, or `base` is already an account home).
+pub fn active_in(install: &Path, rt: &str, base: &Path) -> PathBuf {
+    if !applies(rt) || base.parent().and_then(|p| p.file_name()) == Some(std::ffi::OsStr::new(HOMES)) {
+        return base.to_path_buf();
+    }
+    match Host::read(install).active(rt, now()) {
+        Some(l) if l != DEFAULT => base.join(HOMES).join(l),
+        _ => base.to_path_buf(),
+    }
 }
 
 /// Every home of `rt` on this host: the default first, then each account home that exists (transcript lookup).
@@ -516,18 +532,29 @@ fn append(p: &mut Policy, rt: &str, label: &str) -> Result<(), String> {
 pub fn add(install: &Path, rt: &str, label: &str) -> Result<String, String> {
     guard()?;
     let rt = runtime_arg(rt)?;
+    let base = base(rt).ok_or("runtime home unknown: no home folder")?;
+    let bin = crate::runtime::which(crate::runtime::of(rt).bin);
+    if !bin.is_absolute() { return Err(format!("{} CLI not found on PATH", crate::runtime::of(rt).bin)); }
+    add_in(install, rt, label, &base, |home, args| {
+        crate::platform::console_command(&bin).args(args).env(var(rt), home).status().map_err(|e| format!("{rt} login: {e}")).map(|s| s.success())
+    })
+}
+
+fn add_in(install: &Path, rt: &str, label: &str, base: &Path, login: impl FnOnce(&Path, &[&str]) -> Result<bool, String>) -> Result<String, String> {
+    let rt = runtime_arg(rt)?;
     if !valid_label(label) || label == DEFAULT { return Err("label: 1-32 of a-z, 0-9 and -, not `default`".into()); }
     let mut p = read_policy(install)?;
     if p.get(rt).is_some_and(|l| l.iter().any(|e| e.label == label)) { return Err(format!("{rt} already has account {label}")); }
-    let home = home(rt, label).ok_or("runtime home unknown: no home folder")?;
+    let home = base.join(HOMES).join(label);
     if std::fs::read_dir(&home).is_ok_and(|mut d| d.next().is_some()) { return Err(format!("{rt} account {label} home is not empty; pick another label")); }
     std::fs::create_dir_all(&home).map_err(|e| format!("account home: {e}"))?;
-    let bin = crate::runtime::which(crate::runtime::of(rt).bin);
-    if !bin.is_absolute() { return Err(format!("{} CLI not found on PATH", crate::runtime::of(rt).bin)); }
     let args: &[&str] = if rt == "claude" { &["auth", "login"] } else { &["login", "--device-auth"] };
     // the owner's terminal runs the native login; TaskQ never sees the token
-    let ok = crate::platform::console_command(&bin).args(args).env(var(rt), &home).status().map_err(|e| format!("{} login: {e}", rt))?.success();
-    if !ok { return Err(format!("{rt} login for {label} did not finish; the list is unchanged")); }
+    if !login(&home, args)? { return Err(format!("{rt} login for {label} did not finish; the list is unchanged")); }
+    if rt == "codex" && !home.join("config.toml").exists() {
+        let cfg = std::fs::symlink_metadata(base.join("config.toml")).ok().filter(|m| m.is_file()).and_then(|_| std::fs::read(base.join("config.toml")).ok()).unwrap_or_default();
+        std::fs::write(home.join("config.toml"), cfg).map_err(|e| format!("account config.toml: {e}"))?;
+    }
     append(&mut p, rt, label)?;
     write_policy(install, &p)?;
     Ok(format!("accounts: {rt} {label} added at {} of {}, enabled", p[rt].len(), p[rt].len()))
@@ -690,6 +717,42 @@ mod tests {
         record_limit(&dir, "codex", "default", 6, Some(9)).unwrap();
         assert_eq!(Host::read(&dir).state["codex"]["work"], Limit { at: 5, until: None });
         assert_eq!(Host::read(&dir).state["codex"]["default"].end(), 9);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // #2153 A2: `accounts::add` for `codex` seeds `config.toml` into the new account home, and `active_in` resolves
+    // the active account home for setup/readiness checks.
+    #[test]
+    fn add_codex_seeds_config_toml_and_resolves_active_home() {
+        let dir = std::env::temp_dir().join(format!("taskq-2153-accounts-{}", crate::runtime::uuid()));
+        let install = dir.join("install");
+        let base = dir.join("codex-home");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::create_dir_all(&base).unwrap();
+        assert!(add_in(&install, "codex", "work", &base, |_, _| Ok(false)).is_err());
+        assert!(!base.join(HOMES).join("work").join("config.toml").exists(), "failed login leaves home empty for retry");
+
+        let out = add_in(&install, "codex", "work", &base, |home, args| {
+            assert_eq!(args, &["login", "--device-auth"]);
+            std::fs::write(home.join("auth.json"), "{}").unwrap();
+            Ok(true)
+        }).unwrap();
+        assert_eq!(out, "accounts: codex work added at 2 of 2, enabled");
+        let work_cfg = base.join(HOMES).join("work").join("config.toml");
+        assert!(std::fs::symlink_metadata(&work_cfg).is_ok_and(|m| m.is_file()), "codex add must seed a regular config.toml");
+
+        std::fs::write(base.join("config.toml"), "model_provider = \"agentq\"\n").unwrap();
+        add_in(&install, "codex", "spare", &base, |home, _| {
+            std::fs::write(home.join("auth.json"), "{}").unwrap();
+            Ok(true)
+        }).unwrap();
+        assert_eq!(std::fs::read_to_string(base.join(HOMES).join("spare").join("config.toml")).unwrap(), "model_provider = \"agentq\"\n");
+
+        assert_eq!(active_in(&install, "codex", &base), base, "default is active first");
+        record_limit(&install, "codex", "default", 10, Some(9999999999)).unwrap();
+        let work_home = base.join(HOMES).join("work");
+        assert_eq!(active_in(&install, "codex", &base), work_home, "limit on default activates work home");
+        assert_eq!(active_in(&install, "codex", &work_home), work_home, "already-resolved account home is not nested");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
