@@ -5696,6 +5696,11 @@ Open: none")).unwrap();
                     assert_eq!(task(&b, n).attempt, t.attempt, "no duplicate or migration");
                     assert_eq!(exits.borrow().len(), 1);
                     if why == "unknown-login" || why == "codex-unknown" {
+                        if why == "codex-unknown" {
+                            let path = crate::runtime::attempt_log(&c.root, t.role.as_deref().unwrap(), n, t.attempt.unwrap());
+                            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                            std::fs::write(path, "{\"type\":\"thread.started\",\"thread_id\":\"fixture-native-session\"}\n").unwrap();
+                        }
                         b.comment(n, &core::entry("ask", &[], t.attempt, "fixture pause")).unwrap();
                         *exits.borrow()[0].1.borrow_mut() = Some(0);
                         s.pass().unwrap();
