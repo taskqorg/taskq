@@ -22,6 +22,7 @@ pub(crate) struct Reply { pub id:String, pub input:String, pub revision:u64 }
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Draft {
     #[serde(skip_serializing_if="Option::is_none")] pub reply: Option<Reply>,
+    #[serde(skip_serializing_if="String::is_empty")] pub runtime: String,
     pub revision: u64, pub title: String, pub root: String, pub text: String, pub caret: [usize;2],
     pub scroll: u32, pub archived: bool, pub deleting: bool, pub next: bool, pub parent: Option<String>, pub files: Vec<File>, pub sent: Option<Sent>,
 }
@@ -46,6 +47,7 @@ fn rows(v:&Value)->Res<BTreeMap<String,Draft>> {
     if v["conversations"].is_null() {return Ok(BTreeMap::new());}
     let rows:BTreeMap<String,Draft>=serde_json::from_value(v["conversations"].clone()).map_err(|_|"Workspace draft metadata unreadable; kept")?;
     if rows.iter().any(|(id,d)|!crate::resources::id(id)||d.text.len()>65536||d.title.chars().count()>120||d.files.len()>4
+        ||!d.runtime.is_empty()&&!crate::runtime::setup_runtimes().any(|rt|rt==d.runtime)
         ||d.reply.as_ref().is_some_and(|r|!crate::resources::id(&r.id))
         ||d.sent.as_ref().is_some_and(|s|s.text.len()>65536||s.files.len()>4)
         ||d.files.iter().chain(d.sent.iter().flat_map(|s|&s.files)).any(|f|!valid_file(f))) {return Err("Workspace draft metadata invalid; kept".into());}
@@ -158,7 +160,7 @@ pub(crate) fn preserve_draft(install:&Path,id:&str)->Res<()> {
     let recovered=format!("draft-{}",&hash(id.as_bytes())[..40]);
     if crate::messages::request_deleted(install,&recovered)? {return Ok(());}
     if let Some(existing)=drafts.get(&recovered){return if existing.parent.as_deref()==Some(id){Ok(())}else{Err("Recovery draft identity differs; original kept".into())};}
-    let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),text,caret:source.caret,files:copy_files(install,id,&recovered,&files)?,..Draft::default()};
+    let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),runtime:source.runtime.clone(),text,caret:source.caret,files:copy_files(install,id,&recovered,&files)?,..Draft::default()};
     drafts.insert(recovered,draft);p["conversations"]=json!(drafts);persist(install,&p)
 }
 fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
@@ -171,7 +173,7 @@ fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
         if crate::messages::plain(&crate::setup::dir(install).join(format!("{to}.json")))? {return Err("New draft ID belongs to a native request; original kept".into());}
         let source=drafts.get(id).ok_or("Source draft unavailable")?;
         if Some(source.revision)!=revision||source.deleting {return Err("Draft changed; refresh before creating a new request".into());}
-        let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
+        let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),runtime:source.runtime.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
         let source=drafts.get_mut(id).ok_or("Source draft unavailable")?;source.text.clear();source.files.clear();source.next=false;source.caret=[0,0];source.revision=source.revision.checked_add(1).ok_or("Draft revision overflow")?;
         drafts.insert(to.into(),draft);p["conversations"]=json!(drafts);persist(install,&p)?;Ok(to.into())
     })
@@ -332,13 +334,17 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
             if d.deleting&&action!="delete" {return Err("Deletion incomplete; retry Delete without restoring history".into());}
             if m["revision"].as_u64()!=Some(d.revision) {return Err("Draft revision changed; refresh before editing or sending".into());}
             if action=="save" && d.reply.as_ref().is_some_and(|r|m["draft"]["reply_ack"]==r.id){let r=d.reply.as_ref().unwrap();if !crate::dialogue::accepted(install,id,&r.id,&r.input)? {return Err("Reply acknowledgement has no matching native receipt; draft kept".into());}d.reply=None;}
-            let prior=(d.title.clone(),d.root.clone(),d.text.clone(),d.files.clone());
+            let prior=(d.title.clone(),d.root.clone(),d.runtime.clone(),d.text.clone(),d.files.clone());
             match action {
                 "save"=>{
                     let v=&m["draft"];
                     let text=v["text"].as_str().filter(|s|s.len()<=65536).ok_or("Draft exceeds 64 KiB; existing data kept")?;
                     let title=v["title"].as_str().filter(|s|s.chars().count()<=120).ok_or("Name exceeds 120 characters")?;
                     let root=v["root"].as_str().ok_or("Choose a project")?;
+                    if let Some(runtime)=v.get("runtime") {
+                        let runtime=runtime.as_str().filter(|rt|crate::runtime::setup_runtimes().any(|r|r==*rt)).ok_or("Unsupported owner runtime; draft kept")?;
+                        d.runtime=runtime.into();
+                    }
                     if d.sent.is_some()&&(v["next"]==true||(!text.is_empty()&&d.text!=text)||d.root!=root) {d.next=true;}
                     d.text=text.into();d.title=title.into();d.root=root.into();
                     d.caret=serde_json::from_value(v["caret"].clone()).map_err(|_|"Invalid draft selection")?;
@@ -352,8 +358,11 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                     if d.sent.is_some(){return Err("This item already owns a request; check delivery or open its native session".into());}
                     if d.archived||d.text.trim().is_empty() {return Err("Restore the draft and write a request before sending files".into());}
                     if !registered.contains(&d.root) {return Err("Choose a registered project".into());}
+                    let runtime=if d.runtime.is_empty(){crate::runtime::OWNER}else{&d.runtime};
+                    if m["runtime"].as_str()!=Some(runtime) {return Err("Draft runtime changed; refresh before sending".into());}
+                    if !crate::runtime::owner::supported(runtime) {return Err("Selected owner runtime unsupported on this platform; draft kept".into());}
                     for f in &d.files {bytes(install,id,f)?;}
-                    d.next=false;d.sent=Some(Sent{revision:d.revision,text:d.text.clone(),root:d.root.clone(),runtime:m["runtime"].as_str().unwrap_or("").into(),files:d.files.clone()});
+                    d.next=false;d.sent=Some(Sent{revision:d.revision,text:d.text.clone(),root:d.root.clone(),runtime:runtime.into(),files:d.files.clone()});
                 }
                 "reconcile"|"cancel"=>{if d.sent.is_none(){return Err("No submitted request to reconcile".into());}}
                 "delete"=>{
@@ -375,7 +384,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                 }
                 _=>return Err("Unsupported draft action".into()),
             }
-            let changed=prior!=(d.title.clone(),d.root.clone(),d.text.clone(),d.files.clone())||d.revision==0||action=="send";
+            let changed=prior!=(d.title.clone(),d.root.clone(),d.runtime.clone(),d.text.clone(),d.files.clone())||d.revision==0||action=="send";
             d.revision=d.revision.checked_add(1).ok_or("Draft revision overflow")?;let sent=d.sent.clone();
             if changed {
                 if p["conversation_updated"].is_null() {p["conversation_updated"]=json!({});}
@@ -655,6 +664,21 @@ mod tests {
         fn attach(&self,id:&str,name:&str,mime:&str,data:&[u8])->Value {self.act(id,"attach",json!({"file":{"id":"invented-file","name":name,"mime":mime,"hash":"0".repeat(64),"bytes":data.len()},"data":STANDARD.encode(data)}))}
     }
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
+
+    // R9/C4: per-draft runtime survives storage; a stale Send cannot freeze another runtime or erase work.
+    #[test]
+    fn owner_runtime_choice_is_saved_and_send_is_fenced() {
+        let f=Fixture::new();f.save("owner","Keep literal text");
+        let saved=f.act("owner","save",json!({"draft":{"text":"Keep literal text","root":f.0,"title":"","runtime":"codex","caret":[2,4],"scroll":12}}));
+        assert_eq!(saved["state"],"accepted","{saved}");
+        assert_eq!(snapshot(&f.0)["items"][0]["runtime"],"codex","explicit choice survives native storage");
+        let before=fs::read(f.0.join("tray-requests.json")).unwrap();
+        assert_eq!(f.act("owner","send",json!({"runtime":"claude"}))["state"],"unknown");
+        assert_eq!(fs::read(f.0.join("tray-requests.json")).unwrap(),before,"stale runtime sends preserve draft and immutable input");
+        assert!(crate::setup::all(&f.0).unwrap().0.is_empty());
+        assert_eq!(f.act("owner","save",json!({"draft":{"text":"Keep literal text","root":f.0,"title":"","runtime":"unqualified","caret":[2,4],"scroll":12}}))["state"],"unknown");
+        assert_eq!(fs::read(f.0.join("tray-requests.json")).unwrap(),before,"unsupported choice must not corrupt the store");
+    }
 
     // #1929 A6: definite refusal releases Send, but uncertain storage never permits a replay.
     // #2110 A5: unrelated bodies never cross the bridge; selected source/revision and durable bytes survive.

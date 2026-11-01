@@ -222,7 +222,8 @@ const {create}=execution.module('workspace',{
     }
     view.restoreScroll=0;
     if(page==='conversations'&&context?.fresh)conversations.fresh({root:context.root||undefined});
-    api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
+    const restore=page==='conversations'&&!context?.fresh&&conversations.resume();
+    api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!restore&&!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
    },
    back:function(){if(view.routeFault){view.routeFault=null;view.safe=true;view.answer=null;view.message=null;view.result=null;view.page='conversations';renderer.clear();api.draw();return;}if(view.page==='operations'&&view.operationOrigin){const origin=view.operationOrigin;view.operationOrigin=null;ui.send({a:'workspace-origin',origin});const prior=renderer.pop();if(prior){state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);}api.draw();return;}const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
    receive:function(s){
@@ -253,7 +254,7 @@ const {create}=execution.module('workspace',{
     if(s.replyFileReceipt){answers.answerFileReceipt(s.replyFileReceipt);return;}
     if(s.viewStateError!==undefined||s.workspaceLocalError!==undefined){if(s.viewStateError!==undefined)view.navigationError=s.viewStateError;if(s.workspaceLocalError!==undefined)view.localError=s.workspaceLocalError;api.draw();return;}
     if(s.workspaceRecoveryReady){ui.send({a:'workspace-recovered'});recoveryText='';api.checkpoint();return;}
-    if(s.workspaceRecovery){answers.restoreRecovery(s.workspaceRecovery.answers);answerField=null;view.localError=s.workspaceRecovery.localError;conversations.restoreRecovery(s.workspaceRecovery.conversation);const v=require('./tray-view-state.js').normalize({schema:1,current:s.workspaceRecovery.navigation},snapshot.value||{},routes,'conversations');state.apply(v.current);api.draw();state.focus(v.current.focus);return;}
+    if(s.workspaceRecovery){answers.restoreRecovery(s.workspaceRecovery.answers);answerField=null;view.localError=s.workspaceRecovery.localError;conversations.restoreRecovery(s.workspaceRecovery.conversation);const v=require('./tray-view-state.js').normalize({schema:1,current:s.workspaceRecovery.navigation},snapshot.value||{},routes,'conversations');state.apply(v.current);const restore=v.current.page==='conversations'&&conversations.resume();api.draw();if(!restore)state.focus(v.current.focus);return;}
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}

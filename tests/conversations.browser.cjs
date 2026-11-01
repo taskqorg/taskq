@@ -1,7 +1,7 @@
 // #1580 C-A1–10/CW1–8: actual bundle with explicit invented native receipts; no native launch/board effects.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto'),{chromium}=require('playwright');
 const evidence=process.env.TASKQ_EVIDENCE_1580;
-const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixture-alpha',name:'Alpha',alive:true,complete:true,issues:'https://example.org/alpha/issues',tasks:[]}],ai:{history:['History fills only'],runtime:{id:'claude',name:'Claude Code',available:true}},conversations:{complete:true,items:[]},messages:{complete:true,entries:[]}};
+const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixture-alpha',name:'Alpha',alive:true,complete:true,issues:'https://example.org/alpha/issues',tasks:[]}],ai:{history:['History fills only'],runtime:{id:'claude',name:'Claude Code',available:true,choices:[{id:'claude',name:'Claude Code',available:true},{id:'codex',name:'Codex',available:true}]}},conversations:{complete:true,items:[]},messages:{complete:true,entries:[]}};
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
@@ -29,7 +29,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
     if(m.action==='remove')c.files=c.files.filter(f=>f.id!==m.file);
     if(m.action==='archive')c.archived=true;
     if(m.action==='restore')c.archived=false;
-    if(m.action==='send'){c.sent={text:c.text,root:c.root,runtime:'claude',files:structuredClone(c.files)};c.request={id:c.id,state:'pending',kind:'starting',next:'Awaiting native launch'};}
+    if(m.action==='send'){c.sent={text:c.text,root:c.root,runtime:m.runtime,files:structuredClone(c.files)};c.request={id:c.id,state:'pending',kind:'starting',next:'Awaiting native launch'};}
     let value=m.action==='preview'?{file:c.files.find(f=>f.id===m.file),data:fileData.get(m.file)}:null;
     if(m.action==='fork'){const next={id:m.fork_id,revision:1,title:'',root:c.root,text:c.text,caret:c.caret,scroll:0,files:structuredClone(c.files),archived:false};state.conversations.items.push(next);c.text='';c.caret=[0,0];c.files=[];value={forked:next.id};}
     if(m.action!=='preview')c.revision++;
@@ -41,13 +41,26 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   async function tool(action){await details();await page.locator('[data-c='+action+']').click();}
   await boot();
   assert.equal(await page.locator('[data-c=new]').count(),1,'CW1: Conversations must have direct New');
+  await page.locator('.conversation-view>summary').click();await page.locator('[data-c=result-filter][data-filter=finished]').click();
   await page.locator('[data-c=new]').click();await drain();
+  assert.equal(await page.locator('.conversation-view>summary').innerText().then(t=>t.includes('Finished')),false,'#2159 New clears Finished scope');
+  assert.equal(await page.locator('.conversation-row[aria-current=page]').count(),1,'New remains visibly selected');
   const input=page.locator('[data-c-field=text]');assert.equal(await input.evaluate(e=>document.activeElement===e),true,'New focuses its own composer');
   await input.fill('Design draft\nFirst independent context');await input.dispatchEvent('select');await drain();
+  await input.evaluate(e=>{e.focus();e.setSelectionRange(2,9);e.dispatchEvent(new Event('select',{bubbles:true}));});await drain();
+  await page.evaluate(()=>{taskq.receive({workerPanelClosed:true});taskq.receive({open:{page:'conversations',thread:'centre'}});});
+  assert(await input.evaluate(e=>document.activeElement===e),'#2159 native-shaped Close/reopen restores composer focus');assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[2,9],'Close/reopen retains selected text');
   assert.match(await page.locator('.conversation-row[aria-current=page]').innerText(),/^Design draft/,'#1748 A2: an unsent draft names itself by its first line');
   // Switching before the debounce must save the previous item, even if another draft is immediately edited.
   await page.locator('[data-c=new]').click();await drain();await input.fill('Release draft');await input.evaluate(e=>e.setSelectionRange(2,5));await input.dispatchEvent('select');await drain();
-  const [first,second]=state.conversations.items;assert.equal(first.text,'Design draft\nFirst independent context');assert.equal(second.text,'Release draft');
+  await details();await page.locator('[data-c-field=runtime]').selectOption('codex');await drain();
+  const [first,second]=state.conversations.items;assert.equal(second.runtime,'codex','#2159 choice is saved per request');assert.equal(first.runtime,'claude','other draft keeps its runtime');await capture('runtime-choice-dark-16');
+  if(evidence){
+   const preview=structuredClone(state);preview.version='2159 isolated fixture preview';preview.conversations.navigation={selected:second.id,list:'recent'};
+   const boot=`<script>document.title='TaskQ 2159 isolated fixture preview';(()=>{const state=${JSON.stringify(preview).replaceAll('<','\\u003c')};window.ipc={postMessage:text=>{const m=JSON.parse(text);if(m.a!=='conversation-action')return;queueMicrotask(()=>{if(m.action!=='save'){taskq.receive({conversationReceipt:{id:m.id,state:'unknown',reason:'Isolated preview: native and board actions are disabled'}});return;}let c=state.conversations.items.find(c=>c.id===m.conversation);if(!c){c={id:m.conversation,revision:0,files:[],archived:false};state.conversations.items.push(c);}Object.assign(c,m.draft);c.revision++;taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:state.conversations}});});}};taskq.receive(state);taskq.receive({open:{page:'conversations'}});})();</script>`;
+   fs.writeFileSync(path.join(evidence,'preview.html'),html.replace('</body>',boot+'</body>'));
+  }
+assert.equal(first.text,'Design draft\nFirst independent context');assert.equal(second.text,'Release draft');
   await page.locator('[data-c=select][data-id="'+first.id+'"]').click();await drain();assert.equal(await input.inputValue(),first.text);assert(await input.evaluate(e=>document.activeElement===e));
   await details();await page.locator('[data-c-field=title]').fill('Explicit name');await input.focus();await drain();await input.fill('Changed temporary title');await input.dispatchEvent('select');await drain();
   assert.match(await page.locator('[data-c=select][data-id="'+first.id+'"]').innerText(),/Explicit name/,'explicit title wins');
@@ -90,7 +103,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   paused=true;await input.press('Enter');
   // First save, then Send: acknowledge the former, withhold the latter.
   paused=false;await drain();
-  assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),1);
+  assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),1);assert.equal(await page.evaluate(()=>sent.find(m=>m.action==='send').runtime),'codex','Send freezes the explicit choice');
   await input.fill('Next draft while launch waits');await input.dispatchEvent('select');await drain();assert.equal(second.sent.text,'Review the attached text');assert.equal(second.sent.files[0].hash,file.hash);
   // #1748 A1: the next draft never renames a sent thread in its heading or sidebar row.
   assert.match(await page.locator('[data-c=select][data-id="'+second.id+'"]').innerText(),/^Review the attached text/);assert.equal(await page.locator('[data-c-field=title]').getAttribute('placeholder'),'Review the attached text');
@@ -99,7 +112,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   // A receipt from another item/operation cannot change text or claim cancellation.
   await page.evaluate(()=>taskq.receive({conversationReceipt:{id:'foreign',state:'accepted'}}));assert.equal(await input.inputValue(),'Next draft while launch waits');
   await page.locator('[data-c=reconcile]').click();await drain();const retries=await page.evaluate(()=>sent.filter(m=>m.action==='reconcile'));assert(retries.every(m=>m.conversation===second.id));
-  const launched={id:second.id,state:'launched',kind:'launched',url:'https://claude.ai/code/session_invented1580',next:'Read and answer in Claude Code'};second.request=launched;await page.evaluate(s=>taskq.receive(s),state);
+  const launched={id:second.id,state:'launched',kind:'launched',runtime:'codex',url:'codex://threads/invented-1580',next:'Read and answer in Codex'};second.request=launched;await page.evaluate(s=>taskq.receive(s),state);
   // #1699 A5: the handoff sits under Launch details
   await details();await page.locator('.native-session').click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='open').at(-1).url),launched.url);assert.equal(await page.locator('[data-c=cancel]').count(),0,'no runtime Stop adapter is invented');
   await capture('launched-dark-16');
@@ -125,6 +138,8 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   const nextFiles=structuredClone(second.files);await tool('from-draft');await drain();
   const forked=state.conversations.items.at(-1);assert.notEqual(forked.id,second.id);assert.equal(await input.inputValue(),'Next draft while launch waits');assert.deepEqual(forked.files,nextFiles);assert.equal(forked.sent,undefined);
   assert.equal(second.sent.text,'Review the attached text');assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0,'draft transfer never launches');
+  // The selected fork can live on the next bounded page; revisit the original through normal paging.
+  if(!await page.locator('[data-c=select][data-id="'+second.id+'"]').count())await page.getByRole('button',{name:'Previous threads',exact:true}).click();
   await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await input.fill('Next draft while launch waits');await input.dispatchEvent('select');await drain();
   // #1665 D3: a launched item replies in place; a refused turn shows its reason and keeps the next draft.
   await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await drain();await page.locator('[data-c=reply]').click();
@@ -137,6 +152,11 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   await capture('narrow-light-20');
   await page.locator('[data-c=list]').click();assert(await page.locator('[data-c=search-open]').isVisible());await page.locator('[data-c=select][data-id="'+first.id+'"]').click();assert(await input.isVisible());
   await page.getByRole('button',{name:'Close workspace',exact:true}).click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='hide').length),1);assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0,'close never sends');
+  await page.setViewportSize({width:800,height:650});state.font=20;await page.evaluate(s=>taskq.receive(s),state);
+  await page.locator('.conversation-view>summary').click();await page.locator('[data-c=result-filter][data-filter=activity]').click();
+  const label=await page.locator('.conversation-view>summary .view-label').boundingBox(),count=await page.locator('.conversation-view>summary .view-count').boundingBox();
+  assert(Math.abs(label.y-count.y)<=2,'#2159 sidebar mode and exact count stay on one line at native-sized width and 20px');
+  await capture('sidebar-count-light-20');
   assert.deepEqual(errors,[]);
   console.log('PASS #1580: CW1–8, independent native drafts/caret/files, archive/Undo/Restore, explicit names/search, history fills only, IME/keyboard, immutable send IDs, native-only links, partial delivery, restart/close and narrow layout');
  }finally{await browser.close();}

@@ -194,14 +194,25 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
 },
 
 // Keep untrusted Markdown as text/vnodes; evidence URLs are the only active content. No raw HTML.
-body:function(text,source='body'){
- const prose=text.replace(/```taskq-tasks\n[\s\S]*?```/g,'').replace(/(^|\n)#{1,6}[ \t]+Proposed tasks[ \t]*(?=\n|$)/gi,'$1').replace(/(^|\n)(#{1,6} [^\n]+)\n/g,'$1$2\n\n');
- return prose.split(/\n\s*\n/).map((p,i)=>{
-  const heading=/^#{1,6}\s+(.+)$/.exec(p.trim());
-  if(heading)return h('h3',{key:i,'data-reading-key':'report:'+source+':'+i},heading[1]);
-  const parts=p.split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>\])]+)/g).map((s,k)=>{const link=/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(s),url=link?.[2]||(/^https?:\/\//.test(s)?s:null);return url?h('a',{key:k,href:url,'data-url':url},link?.[1]||url):s;});
-  return h('p',{key:i,'data-reading-key':'report:'+source+':'+i,style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},parts);
- });
+body:function(text,source='body',nativeAt){
+ if(nativeAt===undefined)text=text.replace(/```taskq-tasks\n[\s\S]*?```/g,'').replace(/(^|\n)#{1,6}[ \t]+Proposed tasks[ \t]*(?=\n|$)/gi,'$1');
+ const lines=text.split('\n'),starts=[];let offset=0;for(const line of lines){starts.push(offset);offset+=line.length+1;}
+ const blocks=[],props=at=>nativeAt===undefined?(source===null?{}:{'data-reading-key':'report:'+source+':'+blocks.length}):{'data-native-part':nativeAt+at,...(source?{'data-reading-key':'report:'+source+':part:'+(nativeAt+at)}:{})};
+ const plain=(text,at)=>{const nodes=[];for(let n=0;n<text.length;){let end=Math.min(text.length,n+1024);if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end++;nodes.push(nativeAt===undefined?text.slice(n,end):h('span',{key:at+n,...props(at+n)},text.slice(n,end)));n=end;}return nodes;};
+ const inline=(text,at)=>{const nodes=[];let end=0;for(const m of text.matchAll(/`([^`\n]+)`|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>\]\)]+/g)){
+  nodes.push(...plain(text.slice(end,m.index),at+end));const value=m[1]??m[2]??m[3]??m[0];nodes.push(h(m[1]!==undefined?'code':m[2]!==undefined?'strong':'a',{key:at+m.index,...(m[1]===undefined&&m[2]===undefined?{href:m[4]||m[0],'data-url':m[4]||m[0]}:{})},plain(value,at+m.index+(m[1]!==undefined?1:m[2]!==undefined?2:m[3]!==undefined?1:0))));end=m.index+m[0].length;
+ }return [...nodes,...plain(text.slice(end),at+end)];};
+ const list=line=>/^\s*(?:([-*+])|(\d+)[.)])\s+(.+)$/.exec(line);
+ for(let i=0;i<lines.length;){
+  if(!lines[i].trim()){i++;continue;}const start=i,at=starts[i],fence=/^\s*(`{3,}|~{3,})([^\n]*)$/.exec(lines[i]);let node;
+  if(fence){i++;const begin=i;while(i<lines.length&&!lines[i].trim().startsWith(fence[1]))i++;node=h('pre',null,h('code',{'aria-label':(fence[2].trim()||'Text')+' code'},plain(lines.slice(begin,i).join('\n'),starts[begin]??text.length)));if(i<lines.length)i++;}
+  else if(/^#{1,6}\s/.test(lines[i])){const heading=/^#{1,6}\s+/.exec(lines[i])[0];node=h('h3',null,inline(lines[i].slice(heading.length),at+heading.length));i++;}
+  else if(list(lines[i])){const ordered=!!list(lines[i])[2],items=[];while(i<lines.length){const m=list(lines[i]);if(!m||!!m[2]!==ordered)break;items.push(h('li',{key:i,...(ordered?{value:Number(m[2])}:{}),...props(starts[i])},inline(m[3],starts[i]+lines[i].indexOf(m[3]))));i++;}node=h(ordered?'ol':'ul',null,items);}
+  else {i++;while(i<lines.length&&lines[i].trim()&&!/^\s*(`{3,}|~{3,})|^#{1,6}\s/.test(lines[i])&&!list(lines[i]))i++;node=h('p',null,inline(lines.slice(start,i).join('\n'),at));}
+  Object.assign(node.props,{...props(at),style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}});node.key=at;blocks.push(node);
+ }
+ return blocks;
+
 }
 });
 module.exports={create,body};

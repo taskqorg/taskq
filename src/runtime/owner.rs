@@ -8,6 +8,11 @@ type Res<T> = Result<T, String>;
 
 pub enum Launched { Job { job: String, session: Option<String>, url: Option<String> }, NoStart(String), Unknown(String) }
 
+pub(crate) fn supported(runtime:&str)->bool {
+    let a=super::of(runtime);
+    a.remote || a.codex && a.child && cfg!(any(target_os="macos",windows))
+}
+
 /// The request's runtime adapter (§ 8 table).
 pub fn launch(own: &Path, r: &Request) -> Launched {
     if super::of(&r.runtime).codex { codex_launch(own, r) } else { claude_launch(own, r) }
@@ -25,9 +30,9 @@ fn read_brief(path: &Path) -> String {
     format!("Before any work, use Read to read {} in full. It is this session's brief; follow it.", serde_json::to_string(&path.to_string_lossy()).unwrap_or_default())
 }
 
-/// Codex app thread (§ 8 Codex app, #1522): a `codex exec` handshake turn in the session folder creates the thread, then
-/// the app shows it and gets the brief. Access is the `codex-app` grant, as for app workers; nothing falls back (R9).
+/// The visible Codex app owns the thread after the handshake; its existing app grant bounds launch and resume (R9).
 fn codex_launch(own: &Path, r: &Request) -> Launched {
+    let workdir=r.root.as_deref().map_or(own,Path::new);
     let a = super::of(&r.runtime);
     let bin = super::which(a.bin);
     if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
@@ -35,14 +40,14 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let codex = crate::host::Policy::read_for_hostname(install, crate::hostname).map_or(vec![], |p| p.codex);
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { context: "", root: own, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
     let access = match super::access(&env, a.setup) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
     let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
-    // the session folder is no repository; skipping that check trusts nothing and leaves sandbox and approvals as granted
-    let args: Vec<&str> = ["--skip-git-repo-check"].into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
-    let spec = spec(&mut c, agentq_runtime::agent::Client::Codex, own, "-", &args);
+    // Standalone setup has no repository; project requests keep the repository check and their exact root.
+    let args: Vec<&str> = r.root.is_none().then_some("--skip-git-repo-check").into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
+    let spec = spec(&mut c, agentq_runtime::agent::Client::Codex, workdir, "-", &args);
     let spec = match super::optimized(spec) { Ok(s) => s, Err(e) => return Launched::NoStart(e) };
     let mut c = agentq_runtime::agent::command(c, &spec);
     use coreq::process::Failure;
@@ -138,13 +143,13 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let codex = policy.map_or(vec![], |p| p.codex);
     // the same folder and grant as the launch, so the turn resumes where the session started
-    let workdir = if a.codex { own } else { r.root.as_deref().map_or(own, Path::new) };
+    let workdir = r.root.as_deref().map_or(own, Path::new);
     let exe = std::env::current_exe().unwrap_or_default();
     let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
     let access = super::access(&env, if a.codex { a.setup } else { &r.runtime }).map_err(|e| e.message)?;
     let mut c = super::cli(&r.runtime, &access, &env)?;
     let spec = if a.codex {
-        let args: Vec<&str> = ["--skip-git-repo-check"].into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
+        let args: Vec<&str> = r.root.is_none().then_some("--skip-git-repo-check").into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
         spec(&mut c, agentq_runtime::agent::Client::Codex, workdir, session, &args)
     } else {
         spec(&mut c, agentq_runtime::agent::Client::Claude, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),

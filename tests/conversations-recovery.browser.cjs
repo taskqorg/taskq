@@ -1,6 +1,6 @@
 // Chain: P-W3/TW2/C2/C7/D4 recovery -> same sources/drafts/receipts, no replay or acknowledgement.
 // Risk: native-shaped lazy local worker source faults the whole reader; rebuilding loses unsaved edits or replays input.
-const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
+const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium,webkit}=require('playwright');
 const html=fs.readFileSync(process.env.TASKQ_CONVERSATION_HTML||'build/web/workspace.html','utf8');
 const board='https://example.org/invented/issues',thread='task:'+board+'/112';
 const draft={id:'invented-owner-2140',revision:1,root:'invented-root',title:'Independent draft',text:'Saved draft',caret:[2,4],scroll:0,files:[{id:'invented-file',name:'notes.md',mime:'text/markdown',bytes:2,hash:'0'.repeat(64)}]};
@@ -44,6 +44,25 @@ async function taskRecovery(browser,kind,savedNavigation=false){
   assert.deepEqual(errors,[]);
  }finally{await page.close();}
 }
+// #2159 A3: a saved owner draft can recover while the shell's Reload control owns DOM focus.
+async function savedOwnerRecovery(browser){
+ const page=await browser.newPage({viewport:{width:900,height:740}});try{
+  const saved={...draft,runtime:'codex',caret:[3,9]},state={font:20,theme:'dark',projects:[{root:draft.root,name:'Invented',issues:board,alive:true,complete:true,tasks:[]}],ai:{runtime:{id:'claude',name:'Claude Code',available:true,choices:[{id:'claude',name:'Claude Code',available:true},{id:'codex',name:'Codex',available:true}]}},messages:{complete:true,entries:[]},conversations:{items:[saved],complete:true,navigation:{selected:draft.id,list:'recent'}}};
+  const context={selected:draft.id,list:'recent',selection:{recent:draft.id},scrolls:{},positions:{},focuses:{[draft.id]:{tag:'TEXTAREA',key:'{"cField":"text"}',index:0}},opened:[],listOnly:false,search:'',filter:'all'};
+  const recovery={conversation:{drafts:[],localQueue:[],context},navigation:{page:'conversations',focus:{tag:'BUTTON',key:'{"a":"workspace-reload"}',index:0}}};
+  await page.setContent(html);await page.evaluate(({state,recovery})=>{window.sent=[];window.ipc={postMessage:t=>sent.push(JSON.parse(t))};taskq.receive(state);taskq.receive({workspaceRecovery:recovery});taskq.receive({workspaceRecoveryReady:true});},{state,recovery});
+  const field=page.locator('[data-c-field=text]');
+  for(const action of ['reload','reopen']){
+   if(action==='reopen')await page.evaluate(()=>{taskq.receive({workerPanelClosed:true});taskq.receive({open:{page:'conversations',thread:'centre'}});});
+   assert.equal(await field.inputValue(),saved.text,action+' retains exact saved text');
+   assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),saved.caret,action+' retains selected substring');
+   assert(await field.evaluate(e=>document.activeElement===e),action+' retains composer focus instead of shell heading');
+   assert.match(await page.locator('.conversation-files').innerText(),/notes.md/);
+   assert.equal(await page.locator('[data-c-field=runtime]').inputValue(),'codex','per-request runtime survives recovery');
+  }
+  assert.equal(await page.evaluate(()=>sent.filter(m=>['conversation-action','answer','reports','ai-send'].includes(m.a)).length),0,'saved-draft restoration does not save or resend');
+ }finally{await page.close();}
+}
 // A4: native ready may deliver recovery before a lazy catalog/body; retain it across another recreation.
 async function loadingRecovery(browser){
  const page=await browser.newPage({viewport:{width:380,height:740}});try{
@@ -79,6 +98,8 @@ async function loadingRecovery(browser){
 }
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
+ const nativeEngine=await webkit.launch({headless:true});try{await savedOwnerRecovery(nativeEngine);}finally{await nativeEngine.close();}
+ await savedOwnerRecovery(browser);
  try{
   const regressions=await Promise.allSettled(['answer','steer'].flatMap(kind=>[false,true].map(saved=>taskRecovery(browser,kind,saved))).concat(loadingRecovery(browser)));
   assert.deepEqual(regressions.filter(r=>r.status==='rejected').map(r=>r.reason.message),[]);
@@ -94,7 +115,7 @@ async function loadingRecovery(browser){
      window.ipc={postMessage:text=>{
       const m=JSON.parse(text);sent.push(m);
       if(m.a==='workspace-checkpoint')window.checkpoint=m.value;
-      if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='transcript'&&window.invalidWorkerPage?(window.invalidWorkerPage=false,{}):m.action==='task-body'?{...state.projects[0].tasks[0],body_lazy:false,history:[]}:m.action==='transcript'?{generation:'invented-source-a',start:0,end:10,size:10,items:[{at:0,i:0,role:'assistant',text:'Reading the original worker source.',updated:Date.now()-1000}]}:{state:'idle',turn:null}}}));
+      if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='transcript'&&window.invalidWorkerPage?(window.invalidWorkerPage=false,{}):m.action==='task-body'?{...state.projects[0].tasks[0],body_lazy:false,history:[]}:m.action==='transcript'?{generation:'invented-source-a',start:0,end:10,size:10,items:[{at:0,i:0,role:'assistant',text:'Reading the original worker source.\n\n## Current action\n\nKeep **literal negations** and `taskq inbox 2159`.\n\n- Inspect exact source\n- Do not resend',updated:Date.now()-1000}]}:{state:'idle',turn:null}}}));
      }};
      taskq.receive(state);if(recovery)taskq.receive({workspaceRecovery:recovery});
     },{state,recovery});
@@ -105,6 +126,7 @@ async function loadingRecovery(browser){
    assert(await page.locator('.worker-live').isVisible(),'an invalid accepted local-source page must not replace the whole workspace');
    assert.match(await page.locator('.worker-live').innerText(),/response invalid/);
    await page.locator('.worker-live .dialogue-item').waitFor();
+   assert.equal(await page.locator('.worker-live .conversation-prose h3').innerText(),'Current action');assert.equal(await page.locator('.worker-live .conversation-prose strong').innerText(),'literal negations');assert.match(await page.locator('.worker-live .conversation-prose').innerText(),/Do not resend/);
    if(process.env.TASKQ_EVIDENCE_2140&&runtime==='codex'&&theme==='dark'&&font===20&&width===900){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2140,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2140+'/worker-document.png'});}
    assert.equal(await page.getByText('Interface error',{exact:false}).count(),0);
    const request=await page.evaluate(()=>sent.find(m=>m.action==='transcript'));

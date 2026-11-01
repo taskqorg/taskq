@@ -67,3 +67,14 @@ u.sync(empty);assert(JSON.stringify(u.section(empty)).includes('No results waiti
 const unavailable=[{...empty[0],reports:{complete:false,reason:'Board unavailable',reports:[]}}];
 assert(!JSON.stringify(u.section(unavailable)).includes('No results waiting for review.'),'a failed collection cannot report a healthy empty board');
 assert(JSON.stringify(u.section(unavailable)).includes('Board unavailable'));
+
+// #2159 D4: native and result prose share safe formatting; markup is never executable content.
+{
+ const {body}=require('../src/reports.js'),nodes=v=>Array.isArray(v)?v.flatMap(nodes):v?.props?[v,...nodes(v.props.children)]:[];
+ const source='## Current action\n\nKeep **literal negations** and `taskq inbox 2159`.\n\n- Read the task\n- Do not resend\n\n```text\n<script>bad()</script>\n```\n\n[Safe](https://example.org/source) [Blocked](javascript:bad())';
+ const rendered=nodes(body(source)),types=rendered.map(n=>n.type);
+ for(const type of ['h3','strong','code','ul','li','pre'])assert(types.includes(type),'readable Markdown needs '+type);
+ assert(rendered.filter(n=>n.type==='a').every(n=>/^https?:/.test(n.props.href)),'unsafe schemes remain literal text');
+ assert(!types.includes('script'),'HTML stays escaped text');
+ const native=nodes(body(source,null,0));assert(native.every(n=>!n.props['data-reading-key']),'native record keeps its original source anchor');
+}
