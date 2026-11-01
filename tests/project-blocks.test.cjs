@@ -3,6 +3,10 @@
 const fs=require('node:fs'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const q=require('../src/project-blocks.js'),fx=require('./fixtures/project-blocks.json');
 const p=fx.project,row=fx.row;
+// #2136 A2: Antigravity keeps task-agent navigation with a bundled neutral icon; no invented native URL.
+const agy=q.task(p,{...row,runtime:'antigravity',session_url:null},false,true);
+assert(agy.includes('aria-label="View antigravity agent #'+row.n+'"')&&agy.includes('data-icon="terminal"'));
+assert(!agy.includes('codex://'),'no invented Antigravity native destination');
 // #1592: counts, dedup, conflict and partial come from the Rust display model (display.rs tests); blocks only render it.
 const {display}=require('./fixtures/display-model.json'),names=Object.fromEntries(display.states.map(s=>[s.id,s.name]));
 const counts=(o={},unknown=false)=>Object.keys(names).map(state=>({state,name:names[state],n:unknown?null:o[state]||0}));

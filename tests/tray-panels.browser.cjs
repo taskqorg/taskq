@@ -43,13 +43,15 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
   assert.match(await page.locator('.content').innerText(),/Fixture urgent fault/);
   assert(await page.locator('.alert').first().evaluate(e=>e.compareDocumentPosition(document.querySelector('[data-card]'))&Node.DOCUMENT_POSITION_FOLLOWING));
   // #2136 A2/R6: the third runtime stays visible at large type without claiming known native sign-in.
-  const agy={...project,tasks:[{...project.tasks[0],runtime:'antigravity',session_url:null,executions:[{...project.tasks[0].executions[0],runtime:'antigravity'}]}]};
+  const agy={...project,age_text:'1s',tasks:[{...project.tasks[0],runtime:'antigravity',session_url:null,executions:[{...project.tasks[0].executions[0],runtime:'antigravity'}]}]};
   await page.evaluate(s=>taskq.receive(s),{...snapshot,font:20,page:'home',projects:[agy]});
   assert.equal(await page.locator('.dashboard-status>summary [data-runtime=Antigravity]').count(),1);
   assert.match(await page.locator('.dashboard-status>summary').innerText(),/Antigravity/);
   assert(await page.locator('.content').evaluate(e=>e.scrollWidth<=e.clientWidth));
+  await page.getByRole('button',{name:'View antigravity agent #1',exact:true}).click();
+  assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open.task),1,'Antigravity runtime mark opens the exact task-agent view');
   await shot('2136-home-antigravity');
-  await page.evaluate(s=>taskq.receive(s),{...snapshot,font:20,page:'agents',projects:[agy],agents:{at:1000,fresh:true,rows:[{runtime:'antigravity',version:'unknown',state:'check-failed'}]}});
+  await page.evaluate(s=>taskq.receive(s),{...snapshot,font:20,page:'agents',projects:[agy],agents:{at:1000,age:'0s',fresh:true,rows:[{runtime:'antigravity',version:'unknown',state:'check-failed'}]}});
   assert.match(await page.locator('.content').innerText(),/Antigravity/);
   assert(await page.locator('.content').evaluate(e=>e.scrollWidth<=e.clientWidth));
   await shot('2136-agents-antigravity');

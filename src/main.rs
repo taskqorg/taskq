@@ -2761,9 +2761,8 @@ fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<St
     }).ok().map(|(rt, _)| rt);
     let fallback = selected.as_ref().is_some_and(|rt| rt != &cfg.default_runtime);
     let pinned = |rt: &str| open.as_ref().is_some_and(|tasks| tasks.iter().any(|(_, labels)| labels.iter().any(|l| l.strip_prefix("run-") == Some(rt))));
-    let candidates = labels::candidates(&[], false, &cfg.default_runtime);
     let runtimes = runtime::agent_runtimes().iter().filter(|rt| {
-        let in_use = match limits.get(**rt) { Some(n) => *n > 0, None => selected.as_ref().map_or_else(|| candidates.iter().any(|candidate| candidate == *rt), |chosen| chosen == *rt) };
+        let in_use = match limits.get(**rt) { Some(n) => *n > 0, None => selected.as_ref().unwrap_or(&cfg.default_runtime) == *rt };
         pinned(rt) || in_use && !(fallback && **rt == cfg.default_runtime)
     })
         .map(|rt| {
