@@ -335,7 +335,15 @@ fn login_off(install: &Path, bin: &str, refreshed: Option<&str>) -> Option<Strin
     (at == refreshed.unwrap_or_default()).then(|| reason.trim().to_string()).filter(|r| !r.is_empty())
 }
 
-pub use agentq_runtime::agent::{final_text, which, which_in, user_bin_path, codex_native};
+pub use agentq_runtime::agent::{final_text, which_in, user_bin_path, codex_native};
+
+/// agy user installs must also resolve in a service's non-login PATH (§ 8).
+pub fn which(name: &str) -> PathBuf {
+    if name != "agy" { return agentq_runtime::agent::which(name); }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+    which_in(name, &user_bin_path(&path, home.as_deref()).unwrap_or(path))
+}
 
 /// The worker's last message in an attempt log, for the `gone` reason (§ 4 step 1); None when unreadable.
 pub fn last_message(log: &Path) -> Option<String> { final_text(&events(log, 0)?) }
@@ -553,7 +561,10 @@ pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Resu
     let build = build_cache_for(&l.rt, access, env);
     let args: Vec<std::ffi::OsString> = if l.rt == "claude" {
         ["--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l, env.jobs, build.as_deref())].map(Into::into).to_vec()
-    } else if of(&l.rt).codex { codex.iter().map(Into::into).collect() } else { vec![] };
+    } else if of(&l.rt).codex { codex.iter().map(Into::into).collect() }
+    else if l.rt == "antigravity" && access.refused.is_none() && matches!(access.mode.as_str(), "workspace" | "full") {
+        vec!["--dangerously-skip-permissions".into()]
+    } else { vec![] };
     let mut c = agentq_runtime::agent::command(cli(&l.rt, access, env)?, &optimized(spec(env, l, env.root.into(), args))?);
     if let Some(p) = build { c.env("RUSTC_WRAPPER", p); }
     Ok(c)
@@ -2418,7 +2429,7 @@ fn kind_refresh(rt: &str, status: Option<&str>, auth: Option<&str>) -> (Option<S
 
 /// The re-login step for a logged-out runtime: the longest-lived option first ([runbook](../docs/relogin.md)).
 pub fn relogin(rt: &str) -> &'static str {
-    if rt == "antigravity" { "sign in through the Antigravity client; login probe unqualified" }
+    if rt == "antigravity" { "sign in through the Antigravity client" }
     else if rt == "claude" { "run `claude auth login` with the PM (docs/relogin.md)" } else { "run `codex login --device-auth` with the PM (docs/relogin.md)" }
 }
 
@@ -2435,7 +2446,10 @@ pub fn login_lines(rows: &serde_json::Value) -> Vec<String> {
 
 /// `logged in`, `not logged in` or `unknown` for an installed runtime binary.
 pub fn login_state(rt: &str, bin: &Path) -> &'static str {
-    if rt == "antigravity" { return "unknown"; }
+    if matches!(rt, "antigravity" | "agy") {
+        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty());
+        return if home.is_some_and(|h| [".gemini/antigravity-cli/jetski_state.pbtxt", ".gemini/oauth_creds.json"].iter().any(|p| Path::new(&h).join(p).is_file())) { "logged in" } else { "unknown" };
+    }
     login(rt, probe("runtime.login", bin, if rt == "claude" { &["auth", "status"] } else { &["login", "status"] })).0
 }
 
@@ -2523,7 +2537,7 @@ pub fn agents(install: &Path) -> serde_json::Value {
             let out = if *rt == "antigravity" { None } else { probe("runtime.login", &p, if bin == "claude" { &["auth", "status"] } else { &["login", "status"] }) };
             let auth = (bin == "codex").then(|| codex_home().and_then(|h| std::fs::read_to_string(h.join("auth.json")).ok())).flatten();
             let (kind, refreshed) = kind_refresh(bin, out.as_ref().map(|o| o.1.as_str()), auth.as_deref());
-            let (state, account) = login(bin, out);
+            let (state, account) = if *rt == "antigravity" { (login_state(rt, &p), None) } else { login(bin, out) };
             // Codex's `login status` reads logged in with a dead refresh token: the last rejection wins until re-login
             let reason = (state == "logged in").then(|| login_off(install, bin, refreshed.as_deref())).flatten();
             let state = if reason.is_some() { "not logged in" } else { state };
@@ -2614,31 +2628,74 @@ mod tests {
         assert!(access.refused.is_none());
         assert!(access.profile.as_deref().unwrap().contains(".gemini/antigravity"));
         assert!(access.codex.is_none() && access.claude.is_none(), "a runtime grant never translates another client's policy");
-        let unsupported = crate::policy::Host { os:"linux", ..host };
+        let unsupported = crate::policy::Host { os:"linux", install:&root, root:&root, home:&root };
         assert!(crate::policy::resolve(&policy, &unsupported, "antigravity", env.permission_mode, &args).refused.is_some(), "no Full fallback for unqualified containment");
         let text = "Literal \"quote\", $HOME, `command`\nsecond line 🦀";
         let input:serde_json::Value = serde_json::from_str(&stdin_text("antigravity", text)).unwrap();
         assert_eq!(input, serde_json::json!({"event":"user","message":{"content":text}}));
-        for role in ["worker", "reviewer"] {
-            for resume in [false, true] {
-                let launch = Launch {files:String::new(),execution:None,task:2136,title:"Invented fixture".into(),attempt:42,role:role.into(),rt:"antigravity".into(),session:if resume {"agy-owned"} else {"-"}.into(),url:String::new(),resume:resume.then(||text.into())};
-                let command = command(&env, &launch, &access).unwrap();
-                let actual:Vec<_> = command.get_args().map(|v|v.to_string_lossy().into_owned()).collect();
-                let protocol = actual.iter().position(|v|v=="--input-format").unwrap();
-                let mut expected = vec!["--input-format", "stream-json", "--output-format", "stream-json"];
-                if resume { expected.extend(["--conversation", "agy-owned"]); }
-                assert_eq!(&actual[protocol..], expected, "{role} resume={resume}");
-                assert!(!actual.iter().any(|v|v=="invented-model" || v=="bypassPermissions" || v=="exec"));
-                assert_eq!(command.get_current_dir(), Some(root.as_path()));
-                assert!(command.get_envs().any(|(k,v)|k=="TASKQ_ATTEMPT" && v==Some(std::ffi::OsStr::new("42"))));
+        for mode in ["workspace", "full"] {
+            let mut policy = policy.clone();
+            policy.as_mut().unwrap().grants[0].mode = mode.into();
+            let access = crate::policy::resolve(&policy, &host, "antigravity", env.permission_mode, &args);
+            assert!(access.refused.is_none());
+            assert_eq!(access.profile.is_some(), mode == "workspace");
+            for role in ["worker", "reviewer"] {
+                for resume in [false, true] {
+                    let launch = Launch {files:String::new(),execution:None,task:2136,title:"Invented fixture".into(),attempt:42,role:role.into(),rt:"antigravity".into(),session:if resume {"agy-owned"} else {"-"}.into(),url:String::new(),resume:resume.then(||text.into())};
+                    let command = command(&env, &launch, &access).unwrap();
+                    let actual:Vec<_> = command.get_args().map(|v|v.to_string_lossy().into_owned()).collect();
+                    let protocol = actual.iter().position(|v|v=="--input-format").unwrap();
+                    let mut expected = vec!["--input-format", "stream-json", "--output-format", "stream-json", "--dangerously-skip-permissions"];
+                    if resume { expected.extend(["--conversation", "agy-owned"]); }
+                    assert_eq!(&actual[protocol..], expected, "{role} resume={resume}");
+                    assert!(!actual.iter().any(|v|v=="invented-model" || v=="bypassPermissions" || v=="exec"));
+                    assert_eq!(command.get_current_dir(), Some(root.as_path()));
+                    assert!(command.get_envs().any(|(k,v)|k=="TASKQ_ATTEMPT" && v==Some(std::ffi::OsStr::new("42"))));
+                }
             }
         }
         let log = root.join("native.log");
         std::fs::write(&log, "{\"type\":\"thread.started\",\"thread_id\":\"other-runtime\"}\n{\"conversationId\":\"agy-owned\"}\n").unwrap();
         assert_eq!(native_session("antigravity", &log).as_deref(), Some("agy-owned"));
-        assert_eq!(login_state("antigravity", Path::new("must-not-probe")), "unknown");
         assert!(of("antigravity").child && !of("antigravity").app && !of("antigravity").remote);
         assert!(agent_runtimes().contains(&"antigravity"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Chain: R9/R12, #2145 A3/A4. Risk: a service PATH misses agy or credential presence stays unknown.
+    #[test]
+    fn antigravity_cli_state_and_user_bin_lookup() {
+        if let Some(home) = std::env::var_os("TASKQ_AGY_FIXTURE") {
+            let home = PathBuf::from(home);
+            let bin = home.join(".local/bin/agy");
+            assert_eq!(which("agy"), bin);
+            assert_eq!(login_state("antigravity", &bin), "unknown");
+            for name in [".gemini/antigravity-cli/jetski_state.pbtxt", ".gemini/oauth_creds.json"] {
+                let path = home.join(name);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::create_dir(&path).unwrap();
+                assert_eq!(login_state("antigravity", &bin), "unknown", "a directory is not credentials");
+                std::fs::remove_dir(&path).unwrap();
+                std::fs::write(&path, "invented fixture").unwrap();
+                for rt in ["antigravity", "agy"] {
+                    assert_eq!(login_state(rt, &bin), "logged in", "{name}");
+                }
+                let rows = agents(&home);
+                let row = rows.as_array().unwrap().iter().find(|r|r["runtime"]=="antigravity").unwrap();
+                assert_eq!(row["login"], "logged in");
+                std::fs::remove_file(path).unwrap();
+            }
+            assert_eq!(login_state("antigravity", &bin), "unknown");
+            return;
+        }
+        let root = rules_root("agy-cli-state");
+        std::fs::create_dir_all(root.join(".local/bin")).unwrap();
+        std::fs::write(root.join(".local/bin/agy"), "invented executable fixture").unwrap();
+        let out = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "runtime::tests::antigravity_cli_state_and_user_bin_lookup", "--nocapture"])
+            .env("TASKQ_AGY_FIXTURE", &root).env("HOME", &root).env("USERPROFILE", &root).env("PATH", root.join("missing-bin"))
+            .output().unwrap();
+        assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         std::fs::remove_dir_all(root).unwrap();
     }
 

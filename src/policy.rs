@@ -158,6 +158,7 @@ pub fn profile(install: &Path, writable: Option<&[PathBuf]>, home: &Path) -> Str
             s += &format!("(deny file-write* (subpath {}))\n", sb(if d.ends_with("bin") { d.parent().unwrap_or(d) } else { d }));
         }
     }
+    s += "(deny file-write* (regex #\"/\\.gemini/(config/hooks\\.json|antigravity-cli/settings\\.json)$\"))\n";
     s += "(deny file-write* (regex #\"/\\.codex/(taskq-accounts/[^/]+/)?[^/]*\\.toml$\"))\n";
     s
 }
@@ -223,7 +224,7 @@ pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_m
             e.grant = format!("{} ({}) rev {} by {}", g.mode, if g.project.is_some() { "project" } else { "host" }, p.revision, g.by);
             e.mode = g.mode.clone();
             if g.mode == "full" {
-                e.enforcement = if a.grant_required { "uncontained by TaskQ; native runtime defaults unchanged" } else { "runtime sandbox off, uncontained; the same user can edit the policy" }.into();
+                e.enforcement = if a.grant_required { "runtime approval prompts off, uncontained by TaskQ" } else { "runtime sandbox off, uncontained; the same user can edit the policy" }.into();
                 if a.remote {
                     e.claude = Some("bypassPermissions".into());
                 } else if a.codex {
@@ -244,7 +245,7 @@ pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_m
             } else {
                 e.enforcement = format!("taskq seatbelt, writes only to the {} set", g.mode);
                 let mut paths = writable(&g.mode, h);
-                if a.grant_required { paths.push(h.home.join(a.home)); }
+                if a.grant_required { paths.extend([h.home.join(a.home), h.home.join(".gemini/antigravity-cli")]); }
                 e.profile = Some(profile(h.install, Some(&paths), h.home));
                 if a.codex {
                     e.codex = Some(codex_unsandboxed(codex));
@@ -407,6 +408,22 @@ mod tests {
         assert!(resolve(&p, &host("linux", i, r), "codex", "", &ws).refused.unwrap().contains("enforcement unknown"));
     }
 
+    // Chain: R9 / § 8 Access, #2145 A2/A4. Risk: CLI state is blocked or writable settings bypass tool policy.
+    #[test]
+    fn antigravity_workspace_state_and_protected_settings() {
+        let h = host("macos", Path::new("/i"), Path::new("/p"));
+        let p = Ok(Policy { revision:1, grants:vec![g("antigravity", "workspace", None)] });
+        let e = resolve(&p, &h, "antigravity", "", &[]);
+        assert!(e.refused.is_none());
+        let profile = e.profile.unwrap();
+        for path in [".gemini/antigravity", ".gemini/antigravity-cli"] {
+            assert!(profile.contains(&format!("(subpath {})", sb(&h.home.join(path)))), "{path}");
+        }
+        assert!(profile.contains(r#"(deny file-write* (regex #"/\.gemini/(config/hooks\.json|antigravity-cli/settings\.json)$"))"#));
+        let other = resolve(&Ok(Policy { revision:1, grants:vec![g("claude", "workspace", None)] }), &h, "claude", "", &[]).profile.unwrap();
+        assert!(!other.contains(&format!("(subpath {})", sb(&h.home.join(".gemini/antigravity-cli")))));
+    }
+
     // Chain: § 8 Access store. Risk: a grant loses its revision, or a corrupt store is replaced by a grant.
     #[test]
     fn grants_write_with_revision_and_refuse_workers() {
@@ -477,7 +494,7 @@ mod tests {
         }
         let path = install.join(FILE);
         std::fs::write(&path, "{\"revision\": 1}\n").unwrap();
-        let run = |profile: &str, script: &str| Command::new("sandbox-exec").args(["-p", profile, "/bin/sh", "-c", script]).env("P", &path).env("I", &install).env("R", &root).env("O", &other).env("T", &t).status().unwrap().success();
+        let run = |profile: &str, script: &str| Command::new("sandbox-exec").args(["-p", profile, "/bin/sh", "-c", script]).env("P", &path).env("I", &install).env("R", &root).env("O", &other).env("T", &t).env("H", &home).status().unwrap().success();
         let h = |os| Host { os, install: &install, root: &root, home: &home };
         let none = Ok(Policy::default());
         let legacy = resolve(&none, &h("macos"), "claude", "dontAsk", &[]).profile.unwrap();
@@ -498,6 +515,25 @@ mod tests {
         assert!(legacy.contains(&sb(&canon(&first))), "PATH dirs closed");
         assert!(run(&ws, "echo x > \"$R/a\"") && !run(&ws, "echo x > \"$O/a\""));
         assert!(!run(&ro, "echo x > \"$R/b\"") && !run(&ro, "echo x > \"$O/b\""));
+        // #2145 A2/A4: CLI state remains writable; protected configuration cannot be replaced or deleted.
+        for d in [".gemini/antigravity", ".gemini/antigravity-cli", ".gemini/config"] {
+            std::fs::create_dir_all(home.join(d)).unwrap();
+        }
+        let agy = resolve(&Ok(Policy { revision:1, grants:vec![g("antigravity", "workspace", None)] }), &h("macos"), "antigravity", "", &[]).profile.unwrap();
+        for d in ["antigravity", "antigravity-cli"] {
+            assert!(run(&agy, &format!("echo state > \"$H/.gemini/{d}/state\"")));
+        }
+        assert!(!run(&agy, "echo x > \"$H/.gemini/ungranted\""));
+        for name in ["config/hooks.json", "antigravity-cli/settings.json"] {
+            let protected = home.join(".gemini").join(name);
+            std::fs::write(&protected, "invented original").unwrap();
+            for profile in [&legacy, &agy] {
+                assert!(!run(profile, &format!("echo changed > \"$H/.gemini/{name}\"")));
+                assert!(!run(profile, &format!("echo changed > \"$R/replacement\" && mv \"$R/replacement\" \"$H/.gemini/{name}\"")));
+                assert!(!run(profile, &format!("rm \"$H/.gemini/{name}\"")));
+                assert_eq!(std::fs::read_to_string(&protected).unwrap(), "invented original");
+            }
+        }
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"revision\": 1}\n");
         let _ = std::fs::remove_dir_all(&t);
     }
