@@ -1010,30 +1010,8 @@ pub fn run(install: &Path) -> Res<()> {
                 Err(e)=> {if reported!=e {crate::platform::log(&e);reported=e;}}
             }
         }
-        // Joining is nonblocking: failed projects do not stop unrelated loops, and their occupied slots stay held.
-        let ended: Vec<_> = threads.iter().filter(|(_, t)| t.is_finished()).map(|(p, _)| p.clone()).collect();
-        for root in ended {
-            let outcome = threads.remove(&root).unwrap().join();
-            let drained = matches!(&outcome, Ok(Err(e)) if e == "project drained");
-            let mut h = shared.lock().unwrap_or_else(|e| e.into_inner());
-            h.publication(&root, false);
-            h.passing.remove(&root);
-            if drained { h.detached(&root);drained_roots.insert(root.clone()); }
-            else {
-                // A reduced loop failed: its attempts expire on other hosts, and local launches hold for inspection.
-                log_all(install,std::slice::from_ref(&root),&thread_error(&outcome));
-                stopped.insert(root.clone());
-                h.prepared.remove(&root);
-                h.recovered.remove(&root);
-                h.ready(&root, false);
-                append_project(install, &root, "project thread stopped; leases expire on other hosts; retained slots have unknown liveness");
-            }
-        }
-        if let Some(root)=installation::cancelling_root(install) {
-            let h=shared.lock().unwrap_or_else(|e|e.into_inner());
-            if let Err(error)=installation::finish_cancellation(install,&h,threads.contains_key(&root)||roots.contains(&root)) {
-                if reported!=error {crate::platform::log(&error);reported=error;}
-            }
+        if let Err(error)=reconcile_projects(install,&shared,&mut threads,&roots,&mut stopped,&mut drained_roots) {
+            if reported!=error {crate::platform::log(&error);reported=error;}
         }
         if let Some(p)=restart.current.as_ref().ok().and_then(Option::as_ref).filter(|p|p.action()==crate::lifecycle::Action::Uninstall&&!p.stops()) {
             let drained=p.removal().is_some_and(|root|drained_roots.contains(root));
@@ -1176,6 +1154,36 @@ fn restart_waits(roots: &[PathBuf]) -> String {
         status["restart_waits"].as_array().into_iter().flatten().filter_map(|w|w.as_str()).map(|w|format!("{name} {w}")).collect::<Vec<_>>()
     }).collect();
     if waits.is_empty() {"project passes in flight".into()} else {waits.join(", ")}
+}
+
+// Join before reconciling cancellation; a thread exit alone never releases its execution.
+fn reconcile_projects(install:&Path,shared:&Shared,threads:&mut BTreeMap<PathBuf,std::thread::JoinHandle<Res<()>>>,
+    roots:&[PathBuf],stopped:&mut BTreeSet<PathBuf>,drained_roots:&mut BTreeSet<PathBuf>)->Res<()> {
+    // Joining is nonblocking: failed projects do not stop unrelated loops, and their occupied slots stay held.
+    let ended: Vec<_> = threads.iter().filter(|(_, t)| t.is_finished()).map(|(p, _)| p.clone()).collect();
+    for root in ended {
+        let outcome = threads.remove(&root).unwrap().join();
+        let drained = matches!(&outcome, Ok(Err(e)) if e == "project drained");
+        let mut h = shared.lock().unwrap_or_else(|e| e.into_inner());
+        h.publication(&root, false);
+        h.passing.remove(&root);
+        if drained { h.detached(&root);drained_roots.insert(root.clone()); }
+        else {
+            // A reduced loop failed: its attempts expire on other hosts, and local launches hold for inspection.
+            log_all(install,std::slice::from_ref(&root),&thread_error(&outcome));
+            stopped.insert(root.clone());
+            h.prepared.remove(&root);
+            h.recovered.remove(&root);
+            h.ready(&root, false);
+            append_project(install, &root, "project thread stopped; leases expire on other hosts; retained slots have unknown liveness");
+        }
+    }
+    if let Some(root)=installation::cancelling_root(install) {
+        let mut h=shared.lock().unwrap_or_else(|e|e.into_inner());
+        installation::finish_cancellation(install,&mut h,threads.contains_key(&root)||roots.contains(&root))?;
+        stopped.remove(&root);
+    }
+    Ok(())
 }
 
 /// #1416: a host line goes to the service log and every project log; project `taskq`'s log is the service's stderr file, so it gets the line once.

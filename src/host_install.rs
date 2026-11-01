@@ -534,14 +534,14 @@ pub(super) fn cancelling_root(install:&Path)->Option<PathBuf> {
     pending(install).ok().filter(|p|p.phase=="cancelling").map(|p|p.root)
 }
 
-pub(super) fn finish_cancellation(install:&Path,h:&Host,served:bool)->Res<()> {
+pub(super) fn finish_cancellation(install:&Path,h:&mut Host,served:bool)->Res<()> {
     let _update=coreq::file_lock::try_lock(&install.join("update.lock")).map_err(|e|e.to_string())?;
     let _projects=coreq::file_lock::try_lock(&install.join("projects.lock")).map_err(|e|e.to_string())?;
     let p=pending(install)?;
     if p.phase!="cancelling"||p.owner.as_ref().is_none_or(|o|o.pid!=std::process::id()||o.instance!=h.instance) {
         return Err("attachment cancellation belongs to another host; kept".into());
     }
-    if served||h.busy.contains_key(&p.root)||h.slots.keys().any(|(root,_)|root==&p.root) {
+    if served||h.slots.keys().any(|(root,_)|root==&p.root) {
         return Err("attachment project drain/execution unconfirmed; kept".into());
     }
     cancellation_guard(install,&p)?;
@@ -559,8 +559,9 @@ pub(super) fn finish_cancellation(install:&Path,h:&Host,served:bool)->Res<()> {
         op.receipt["reason"]=json!("attachment cancelled; exact original registry restored; project thread joined without execution");
         Ok(())
     })?;
-    fs::remove_file(install.join(INSTALL_PENDING)).map_err(|e|e.to_string())?;
-    coreq::write_durable(&install.join("poke"),"")
+    coreq::write_durable(&install.join("poke"),"")?;
+    h.detached(&p.root);
+    fs::remove_file(install.join(INSTALL_PENDING)).map_err(|e|e.to_string())
 }
 
 fn receive_initial(install:&Path,p:&mut Pending)->Res<()> {
@@ -994,19 +995,19 @@ mod tests {
                 assert_eq!(projects(&install).unwrap(),vec![existing.clone()]);
                 assert_eq!(install_acknowledgement(&install,&root,"invented-cancel-host"),None);
                 assert!(!acknowledge(&install,&p).unwrap());
-                assert!(finish_cancellation(&install,&h,false).unwrap_err().contains("drain/execution"));
+                assert!(finish_cancellation(&install,&mut h,true).unwrap_err().contains("drain/execution"),"cached membership/thread still fences retirement");
                 assert_eq!(h.occupied(),1,"existing child remains owned and supervised");
             }
             h.detached(&root);
             assert!(!h.rebuilding,"the removed startup failure cannot strand original occupancy recovery");
-            assert!(finish_cancellation(&install,&h,true).is_err(),"cached membership/thread still fences retirement");
+            assert!(finish_cancellation(&install,&mut h,true).is_err(),"cached membership/thread still fences retirement");
             h.sync(&root,vec![(11,12,"codex".into())]);
-            assert!(finish_cancellation(&install,&h,false).is_err(),"unknown occupied execution refuses removal");
+            assert!(finish_cancellation(&install,&mut h,false).is_err(),"unknown occupied execution refuses removal");
             h.sync(&root,vec![]);
             // Crash after restoring registry: same cursor and command must finish the remaining audit writes.
             if committed {replace_owned(&install.join("projects"),&next,&original).unwrap();}
             assert!(admission_reason(&install).is_some());
-            finish_cancellation(&install,&h,false).unwrap();
+            finish_cancellation(&install,&mut h,false).unwrap();
             assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),original);
             assert_eq!(fs::read(manifest(&install)).unwrap(),original_bytes);
             let failed=installation_status(&install,Some(&p.id));
@@ -1017,13 +1018,82 @@ mod tests {
             // Crash after the terminal receipt but before cursor retirement still needs host reconciliation.
             let cancelled:Pending=serde_json::from_value(failed["cancelled_attachment"].clone()).unwrap();save(&install,&cancelled).unwrap();
             assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancellation requested"));
-            assert!(admission_reason(&install).is_some());finish_cancellation(&install,&h,false).unwrap();
+            assert!(admission_reason(&install).is_some());finish_cancellation(&install,&mut h,false).unwrap();
             for _ in 0..2 {assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancelled"));}
             assert_eq!(crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap(),1);
             h.reload_admission(Ok(policy.clone()),admission_reason(&install),std::slice::from_ref(&existing));
             assert!(h.reserve(&existing,9,10,"codex",&policy.cap,true,0).is_ok(),"unrelated project can launch after cancellation");
             assert_eq!(h.occupied(),2,"the prior child keeps its slot");
             drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);drop(_owner);
+            fs::remove_dir_all(install.parent().unwrap()).unwrap();
+        }
+    }
+
+    // Chain: §8 Project attachment (A3/R12): worker_env failure -> host join -> exact cancellation -> unrelated grant.
+    // Risk: a joined pre-execution failure strands busy/stopped; cancellation must still fence uncertain execution.
+    #[test]
+    fn joined_startup_failure_cancellation_preserves_existing_execution() {
+        for cancel_before_join in [false,true] {
+            let (install,root,paths)=fixture();let baseline=snapshot(&install,vec![root.clone()],paths).unwrap();
+            let originals=fs::read(manifest(&install)).unwrap();
+            let existing=install.parent().unwrap().join("existing");fs::create_dir(&existing).unwrap();
+            let existing=existing.canonicalize().unwrap();let original=format!("{}\r\n\n",existing.display());
+            let next=format!("{original}{}\n",crate::platform::plain_path(&root).display());
+            let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
+            let _owner=owner(&install).unwrap().unwrap();publish_service(&install,&native,"invented-joined-host").unwrap();
+            let (capture,guard)=crate::profile::tests::collecting(&install);
+            let span=tracing::info_span!("host.install");let entered=span.enter();
+            let p=Pending {schema:1,id:"invented-joined-attachment".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),
+                original:Some(original.clone()),next:next.clone(),phase:"registered".into(),restore:false,attach:true,
+                owner:Some(InstallOwner {pid:native.pid,started:native.started.clone(),instance:"invented-joined-host".into()}),activation:None,command:CommandReceipt::current().unwrap().encode()};
+            save(&install,&p).unwrap();fs::write(install.join("projects"),&next).unwrap();
+            record(&install,&p,"received").unwrap();record(&install,&p,"applied").unwrap();let applied=retained(&install,&p).unwrap();
+            let policy=Policy::parse(json!({"limits":{"codex":4},"load_gate":{"enabled":false}}),"invented").unwrap();
+            let mut h=Host::new(Ok(policy.clone()));h.instance="invented-joined-host".into();
+            h.sync(&existing,vec![(7,8,"codex".into())]);h.busy.insert(existing.clone(),true);h.rebuilt.insert(existing.clone());
+            h.attach(&root);h.held=admission_reason(&install);let shared=Arc::new(Mutex::new(h));
+            let (project,store,host)=(root.clone(),install.clone(),shared.clone());
+            let thread=std::thread::spawn(move || {
+                enter(&project,&store);let mut cfg=crate::tests::cfg();cfg.root=project;cfg.install=store;
+                cfg.board=&crate::board::github::KIND;
+                let result=crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(crate::board::Fake::default())},Some(host));
+                assert_eq!(result.as_ref().unwrap_err(),crate::board::github::TOKEN_ERROR);
+                result
+            });
+            let until=Instant::now()+std::time::Duration::from_secs(30);
+            while !thread.is_finished() {assert!(Instant::now()<until,"startup failure did not finish");std::thread::sleep(std::time::Duration::from_millis(1));}
+            let mut threads=BTreeMap::from([(root.clone(),thread)]);let mut stopped=BTreeSet::new();let mut drained=BTreeSet::new();
+            if !cancel_before_join {
+                reconcile_projects(&install,&shared,&mut threads,&[existing.clone(),root.clone()],&mut stopped,&mut drained).unwrap();
+                assert!(stopped.contains(&root));assert!(shared.lock().unwrap().busy.contains_key(&root));
+            }
+            assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancellation requested"));
+            let roots=projects(&install).unwrap();assert_eq!(roots,vec![existing.clone()]);
+            // Recheck execution and native ownership after the cancellation request, before retiring cached state.
+            shared.lock().unwrap().sync(&root,vec![(11,12,"codex".into())]);
+            assert!(reconcile_projects(&install,&shared,&mut threads,&roots,&mut stopped,&mut drained).is_err());
+            shared.lock().unwrap().sync(&root,vec![]);
+            let kids=crate::kids_path(&install,&root).unwrap();fs::create_dir_all(kids.parent().unwrap()).unwrap();fs::write(&kids,"unknown execution").unwrap();
+            assert!(reconcile_projects(&install,&shared,&mut threads,&roots,&mut stopped,&mut drained).is_err());fs::remove_file(&kids).unwrap();
+            publish_service(&install,&native,"another-host-generation").unwrap();
+            assert!(reconcile_projects(&install,&shared,&mut threads,&roots,&mut stopped,&mut drained).is_err());
+            assert!(shared.lock().unwrap().busy.contains_key(&root));assert!(stopped.contains(&root));
+            assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),next);
+            assert_eq!(installation_status(&install,Some(&p.id))["state"],"applied");
+            publish_service(&install,&native,"invented-joined-host").unwrap();
+            reconcile_projects(&install,&shared,&mut threads,&roots,&mut stopped,&mut drained).unwrap();
+            assert!(threads.is_empty());assert!(!stopped.contains(&root),"a later attachment may retry this root");
+            let mut h=shared.lock().unwrap();assert!(!h.busy.contains_key(&root));assert!(!h.rebuilding);
+            assert_eq!(h.slots.get(&slot(&existing,7,8)).map(String::as_str),Some("codex"));
+            h.reload_admission(Ok(policy.clone()),admission_reason(&install),&roots);
+            h.reserve(&existing,9,10,"codex",&policy.cap,true,0).unwrap();assert_eq!(h.occupied(),2);
+            assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),original);assert_eq!(fs::read(manifest(&install)).unwrap(),originals);
+            let failed=installation_status(&install,Some(&p.id));assert_eq!(failed["state"],"failed");assert!(failed.get("observed_receipt").is_none());
+            for phase in ["received_receipt","applied_receipt"] {assert_eq!(failed[phase],applied[phase]);}
+            assert_eq!(failed["cancelled_attachment"]["command"],p.command);
+            assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancelled"));
+            assert_eq!(crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap(),1);
+            drop(h);drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);drop(_owner);
             fs::remove_dir_all(install.parent().unwrap()).unwrap();
         }
     }
