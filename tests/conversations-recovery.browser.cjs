@@ -23,7 +23,7 @@ async function taskRecovery(browser,kind,savedNavigation=false){
   const recovery=await page.evaluate(()=>window.checkpoint);
   if(savedNavigation){
    state.workspace_navigation={schema:1,current:{page:'conversations',answer:{board,task:112,root:'invented-root'}},trail:[]};
-   state.conversations.navigation={list:'recent',threads:{selected:thread}};
+   state.conversations.navigation={selected:thread,list:'recent',threads:{selected:thread}};
   }
   await mount(recovery);await field.waitFor();
   assert.equal(await field.inputValue(),'Unsaved '+kind+' draft','refused answer-local save must retain '+kind+' text');
