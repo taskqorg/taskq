@@ -114,3 +114,17 @@ The reviewer-requested rebase onto `a06aaaacbc3b61c85f45025633c887b939d382b8` pr
 ### Final native-start boundary
 
 Final source review extended native-start validation to reject zero timestamps and malformed macOS microseconds as well as malformed Linux boot/tick identities. Such values cannot prove a later boot under R12. The existing valid-current-process assertion is retained; its data cases now include empty, zero and malformed starts. This follow-up was identified by source inspection, not a claimed native before/after reproduction. The first canonical invocation had already generated source `8aa37f28`; it is not final-candidate evidence for this parser amendment. The affected check and canonical gate must run on the amended candidate before hand-in.
+
+
+## Final requeue candidate verification
+
+Final executable source: `bdc09d46b76e5acb513417d356d0c75ef671fc03`, rebased onto `a06aaaacbc3b61c85f45025633c887b939d382b8`. The hand-in differs only by this evidence update; tested executable, fixture, dependency and browser inputs are unchanged.
+
+- `python3 scripts/check.py --base a06aaaacbc3b61c85f45025633c887b939d382b8`: **not PASS**, stopped at Rust unit checks after **187.623s / 900s**. **850 passed, 7 sandbox-blocked, 40 ignored**. The seven protected app-server fixtures refuse temporary `.codex/config.toml` creation with `PermissionDenied: Operation not permitted`. All Balancing, writer/status, quota, golden, native-start and transcript cases pass. No sandbox refusal was converted to PASS or bypassed.
+- The same gate's whitespace, selector/live-probe checks, rule-ID gate and contract lint: **PASS**, zero lint errors, 281 lines and 56,907 bytes. Budget-headroom warnings remain. The final native-start filtered check separately passed once after its parser amendment.
+- `cargo test --locked --test integration`: **22 passed, 1 sandbox-blocked, 1 ignored**. The existing read-only telemetry fixture refuses nested `sandbox-exec` with `sandbox_apply: Operation not permitted`.
+- `TASKQ_SELFTEST_OFFLINE=1 cargo run --locked -- selftest`: **PASS**, 130 golden traces, owner-text formats and 8 committed staged telemetry observations, using the canonical isolated test environment. Board and native tool probes were not run.
+- All **37** Node component commands plus shot-check/update and release-tag/exact-source release instruments: **PASS**. The three affected browser instruments also pass, completing **44 commands in 150.820s**: 8 resource cells including 4 actual Home handoffs, workspace route preservation, and 104 Settings cells.
+- Fresh actual-size inspection covered Settings and Balancing at 320px/18px plus light/dark Home Balancing top/bottom at 280px/20px. All four sections, direct reviews and retained host/project controls are present; text wraps and shared scrolling reaches the later controls. These six fresh captures are byte-identical to the six linked retained images, so those references remain the final visual evidence. This is browser evidence, not installed/native acceptance.
+
+Eight host fixture checks remain sandbox-blocked. Native provider/OS behavior, HTTP request-tree recovery and telemetry delivery remain unqualified. A crashed routing writer with unknown HTTP descendants retains its fence until its machine verifies a later boot; normal returning writers release explicitly. Green `merge_group` CI and reviewer publication remain required under R12/§7. Coordinated board-host adoption includes the new writer entries. No live policy, account, grant, task pin, installation or service was changed.
