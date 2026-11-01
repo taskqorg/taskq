@@ -148,7 +148,7 @@ pub fn record_windows(install: &Path, rt: &str, label: &str, at: i64, observed: 
     v[rt][label] = packed;
     save_state(install, &v)?;
     drop(_lock);
-    crate::profile::measure_counted("account.quota", || ((), [format!("runtime:{rt}"),format!("account:{label}")].into_iter().chain(observed.iter().map(|(w,_)|format!("window:{w}"))).map(|k|(k,1)).collect()));
+    crate::profile::measure_counted("account.quota", || ((), [format!("runtime:{rt}"),format!("account:{label}")].into_iter().chain(observed.iter().map(|(w,reset)|format!("window:{w}:{}:{}",if reset.is_some(){"until"}else{"probe"},reset.unwrap_or(at.saturating_add(PROBE))))).map(|k|(k,1)).collect()));
     Ok(())
 }
 
