@@ -43,7 +43,8 @@ const state={...fx.state,font:18,theme:'dark',projects:[{...fx.state.projects[0]
  await page.locator('#result-reason').evaluate(e=>{e.focus();e.setSelectionRange(5,12);e.dispatchEvent(new Event('select',{bubbles:true}));});
  await open(2021);await open(2022);
  assert.equal(await page.locator('#result-reason').inputValue(),'Keep this independent follow-up draft');assert.deepEqual(await page.locator('#result-reason').evaluate(e=>[e.selectionStart,e.selectionEnd]),[5,12]);assert(await page.locator('#result-reason').evaluate(e=>document.activeElement===e),'return restores source focus');
- await page.waitForTimeout(150);
+ assert(await full.evaluate(e=>e.open),'return keeps Full report while restoring the independent correction draft');
+ await page.waitForFunction(()=>{const c=sent.filter(m=>m.a==='conversation-navigation'&&m.navigation).at(-1)?.navigation,w=sent.filter(m=>m.a==='workspace-set').at(-1)?.navigation;return c?.threads?.selected?.endsWith('/2022')&&Object.entries(w?.current?.open||{}).some(([k,v])=>k.includes('#2022@')&&k.endsWith(':full')&&v===true);});
  const saved=await page.evaluate(()=>({navigation:sent.filter(m=>m.a==='conversation-navigation'&&m.navigation).at(-1).navigation,workspace:sent.filter(m=>m.a==='workspace-set').at(-1).navigation,locals:Object.fromEntries(sent.filter(m=>m.a==='answer-local').map(m=>[m.key,m.local]))}));
  assert(JSON.stringify(saved.navigation).length<=4096,'bounded existing navigation envelope');
  const reloaded=await browser.newPage({viewport:{width:820,height:700}});reloaded.on('pageerror',e=>errors.push(e.message));await reloaded.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await reloaded.evaluate(({s,saved})=>{window.ipc={postMessage(){}};taskq.receive({...s,workspace_navigation:saved.workspace,workspace_local:saved.locals,conversations:{...s.conversations,navigation:saved.navigation}});},{s:state,saved});
