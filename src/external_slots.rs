@@ -160,10 +160,9 @@ fn reconcile(install:&Path,h:&mut host::Host,at:u64,boot:Res<i64>,mut live:impl 
                 let roots=host::projects(install).map_err(|e|format!("unknown: {e}"))?;
                 if !roots.contains(&b.root)||b.root.canonicalize().ok().as_ref()!=Some(&b.root) {return Err("denied: caller root is not registered canonically".into());}
                 let v=crate::data::json(&b.root.join("taskq.json")).map_err(|e|format!("unknown: {e}"))?.ok_or("unknown: project configuration absent")?;
-                let policy=host::Policy::read(install).map_err(|e|format!("unknown: {e}"))?;
+                // The host loop's guarded policy may forbid admission despite a valid host.json.
+                let policy=h.policy.as_ref().map_err(|e|format!("unknown: {e}"))?;
                 let cap=policy.project(&b.root,&v).map_err(|e|format!("unknown: {e}"))?;
-                // Reuse host-owned policy/gates; never synthesize limits or change focus/grants.
-                h.reload(Ok(policy));
                 h.external_reserve(&key,&b.root,&b.runtime,&cap,h.elapsed())
             })();
             match decision {
@@ -221,6 +220,25 @@ mod tests {
             assert_eq!(fs::read(f.dir.join("host.json")).unwrap(),policy);assert_eq!(fs::read_to_string(f.root.join(".taskq/focus")).unwrap(),"off");
         }
     }
+    // Chain: R9 R12 §3 — a valid host.json cannot clear the host loop's legacy/startup barrier.
+    // Risk: reconciling PilotQ admission also enables workers later in the same host pass.
+    #[test]
+    fn external_admission_preserves_guarded_policy() {
+        let mut f=Fixture::new();
+        let cap=f.h.policy.as_ref().unwrap().cap.clone();
+        let barrier="legacy/startup barrier".to_owned();
+        f.h.reload(Err(barrier.clone()));
+        f.call("reserve");
+        for _ in 0..2 {
+            f.tick(Ok(true));
+            assert_eq!(f.h.policy,Err(barrier.clone()));
+            let out=f.stored();
+            assert_eq!(out["state"],"unknown");assert_eq!(out["occupied"],false);
+            assert!(out["reason"].as_str().unwrap().contains(&barrier));
+            assert_eq!(f.h.reserve(&f.root,1,77,"codex",&cap,false,30),Err(barrier.clone()));
+            assert_eq!(f.h.occupied(),0);
+        }
+    }
     // Chain: R9 R12 §3 — existing policy gates external callers without changing policy or fabricating healthy reads.
     #[test]
     fn external_admission_keeps_each_existing_barrier() {
@@ -238,6 +256,7 @@ mod tests {
                 _=>{},
             }
             fs::write(f.dir.join("host.json"),if case=="config" {"{".into()}else{policy.to_string()}).unwrap();
+            f.h.reload(host::Policy::read(&f.dir));
             f.call("reserve");
             if case=="aggregate" {
                 // A worker occupies a different runtime; the host aggregate still includes it.
