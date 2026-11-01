@@ -111,3 +111,9 @@ The two reachable protected-overflow cases now disclose a `role=status` message 
 The change does not alter source ceilings, cursor/revision fences, receipt acceptance, page selection, source text, or eviction conditions. `node tests/conversations-overflow.test.cjs` passed: both oversized invented records remain readable through existing text paging, receive the overflow status, clear it after a small replacement, and the earlier history page is evicted.
 
 Verdict: no new P0, P1, or P2 found in this exact diff. Native installed acceptance remains Not tested.
+
+## Corrective re-review after publication refusal
+
+Independent Codex read-only review of exact production source `60fc0c5bb419dfb1fb10cbce96c46fe5cb157be4`, delta from `66bd758f86fd66380fbbf2c19a68a2c7021d6d9c`: **Pass for the correction; no concrete P0/P1/P2 finding**. The reviewer inspected all seven changed paths plus task/history render callers, registered-root/board/revision/cursor fences and native notification persistence. Current, linked and recorded task text now pass the project identity into the same paging/anchor owner. Bulk message reads use the existing exact-key receipt path; rejected readback and later arrivals remain unread. Clear stores an exact host-local marker without answering board work. Inline image expansion has the same macOS/Windows guard as its tray owner.
+
+The reviewer independently ran the three overflow/source-isolation cases, the attention browser instrument, JS syntax checks and whitespace validation. All passed. A subsequent test-only change adds an optional initial screenshot and confirms that Clear read disables after its confirmed marker; production source remains equivalent. Full gate, Linux build and installed/native acceptance were not rerun by the reviewer. Performance and longer engine-heap gaps remain open; this source verdict does not pass them.

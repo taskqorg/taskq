@@ -11,6 +11,7 @@ const fx=require('./fixtures/task-workspace.json'),board='https://example.org/is
  const entrance=async n=>{await menu.evaluate(s=>{window.ipc={postMessage(){}};taskq.receive(s);},await page.evaluate(()=>fixture));assert.match(await menu.locator('.conversations-entry').getAttribute('aria-label'),new RegExp(' '+n+' New'));};
  const count=async n=>assert.equal((await page.locator('.conversation-view>summary').innerText()).replace(/\s+/g,' '),'New · '+n);
  await entrance(1);await count(1);assert.equal(await page.locator('.conversation-row').count(),1);
+ if(process.env.TASKQ_ATTENTION_EVIDENCE){fs.mkdirSync(process.env.TASKQ_ATTENTION_EVIDENCE,{recursive:true});await page.screenshot({path:process.env.TASKQ_ATTENTION_EVIDENCE+'/attention-unread.png'});}
  assert(await page.getByRole('button',{name:'Mark all read',exact:true}).isEnabled());
  await page.getByRole('button',{name:'Mark all read',exact:true}).click();
  assert.deepEqual(await page.evaluate(()=>pendingRead.keys),['invented-question-7']);
@@ -22,7 +23,7 @@ const fx=require('./fixtures/task-workspace.json'),board='https://example.org/is
  await page.evaluate(()=>{taskq.receive({messageReceipt:{id:pendingRead.id,outcomes:pendingRead.keys.map(key=>({key,action:'read',state:'accepted'}))}});});
  await entrance(1);await count(1);assert.match(await page.locator('.conversation-row').innerText(),/#8 /,'later arrivals stay unread');
  assert.equal(await page.evaluate(()=>fixture.projects[0].tasks[0].state),'ask');
- await page.getByRole('button',{name:'Clear read',exact:true}).click();await count(1);await entrance(1);
+ await page.getByRole('button',{name:'Clear read',exact:true}).click();await count(1);await entrance(1);assert(await page.getByRole('button',{name:'Clear read',exact:true}).isDisabled(),'confirmed clears survive subsequent draws');
  // Owner-linked and detached request sources retain one canonical New identity each.
  await page.evaluate(()=>{fixture.notify.inbox={};fixture.messages.entries=[{...fixture.messages.entries[0],read:false},{kind:'request',id:'detached',key:'invented-request',root:'fixture',title:'Detached request',read:false,state:'failed'}];fixture.conversations.items=[{id:'owner',root:'fixture',revision:1,text:'Saved draft',files:[],sent:{root:'fixture',text:'Original',files:[]}}];fixture.projects[0].tasks[0].conversation={id:'owner'};fixture.projects[0].events=[[1,'ask','71',7]];taskq.receive(fixture);});
  await entrance(2);await count(2);assert.equal(await page.locator('.conversation-row').count(),2);
