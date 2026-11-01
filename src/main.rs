@@ -111,7 +111,7 @@ const USAGE: &str = "taskq agents
  taskq service slots --identity PID | --action reserve|observe|release --request JSON [--json]
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
- taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled] [--default-runtime claude|codex|antigravity]
+ taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim primary|any|spillover|pinned-only|labelled|manager-only|none] [--default-runtime claude|codex|antigravity]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
  taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. | --revoke ID] [--json]
@@ -341,7 +341,10 @@ fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
         me,
         limits,
         has,
-        labelled: false,
+        claim: host::ClaimMode::Any,
+        spillover_grace: 300,
+        allowed_runtimes: None,
+        auto_reroute: false,
         default_runtime: crate::runtime::OWNER.into(),
         routing: labels::routing(&v)?,
         permission_mode: str_or("permission_mode", "dontAsk"),
@@ -1878,8 +1881,8 @@ struct CapEdit {
     gate: Option<bool>,
     cpu_max: Option<u32>,
     memory_min: Option<u32>,
-    /// host.json `claim`: `labelled` (true) or `any` (false), § 9
-    claim: Option<bool>,
+    /// host.json task-claim mode, § 9
+    claim: Option<host::ClaimMode>,
     /// host.json `default_runtime`, § 9
     default_runtime: Option<String>,
 }
@@ -1905,12 +1908,7 @@ impl CapEdit {
             Some("off") => Some(false),
             Some(x) => return Err(format!("--load-gate: on or off, not {x}")),
         };
-        e.claim = match a.one("claim") {
-            None => None,
-            Some("any") => Some(false),
-            Some("labelled") => Some(true),
-            Some(x) => return Err(format!("--claim: any or labelled, not {x}")),
-        };
+        e.claim = a.one("claim").map(host::ClaimMode::parse).transpose()?;
         e.default_runtime = match a.one("default-runtime") {
             None => None,
             Some(rt) if host::DEFAULT_RUNTIMES.contains(&rt) => Some(rt.into()),
@@ -2003,7 +2001,7 @@ fn cap_changes(old: &service::Capacity, new: &service::Capacity) -> String {
 
 /// § 9: a task added on a `claim` `labelled` host keeps that host unless `--host` names one.
 fn add_host(given: Option<&str>, cfg: &Config) -> Option<String> {
-    given.map(String::from).or_else(|| cfg.labelled.then(|| cfg.me.clone()))
+    given.map(String::from).or_else(|| (cfg.claim == host::ClaimMode::Labelled).then(|| cfg.me.clone()))
 }
 
 /// § 9: a labelled host keeps its own host on every board; a board this host does not serve refuses the add,
@@ -2015,7 +2013,7 @@ fn serve_hint(e: String, cfg: &Config) -> String {
 }
 
 /// host.json `claim` value (§ 9).
-fn claim_name(labelled: bool) -> &'static str { if labelled { "labelled" } else { "any" } }
+fn claim_name(mode: host::ClaimMode) -> &'static str { mode.name() }
 
 fn runtime_name(rt: &str) -> String {
     let mut c = rt.chars();
@@ -2145,7 +2143,7 @@ fn capacity_cmd(a: &Args) -> Res<()> {
     };
     let e = CapEdit::from_args(a)?;
     if e.is_empty() {
-        let own=policy.as_ref().ok().filter(|p|p.me==host).map(|p|(p.labelled,p.default_runtime.clone()));
+        let own=policy.as_ref().ok().filter(|p|p.me==host).map(|p|(p.claim,p.default_runtime.clone()));
         let saved = policy.and_then(|policy| {
             if policy.me!=host {return Err("no local policy for remote host".into());}
             Ok(policy.cap)
@@ -2481,7 +2479,15 @@ fn service_project_fields(root:&Path,status:Res<Option<Value>>)->String {
         Err(e) => out.push(format!("Focus: unknown ({e})")),
     }
     match host::Policy::read(&platform::default_install()) {
-        Ok(p) => out.extend([format!("Claim: {} (host {})", claim_name(p.labelled), p.me), format!("Default runtime: {} (host {})", p.default_runtime, p.me)]),
+        Ok(p) => {
+            let overlay=p.overlay(root).map(|(_,e)|e);
+            let default=overlay.and_then(|e|e["default_runtime"].as_str()).unwrap_or(&p.default_runtime);
+            out.extend([format!("Claim: {} (host {})",claim_name(p.claim),p.me),format!("Default runtime: {default} (host {})",p.me)]);
+            if let Some(e)=overlay {
+                if let Some(allowed)=e["allowed_runtimes"].as_array() {out.push(format!("Allowed runtimes: {}",if allowed.is_empty() {"none".into()}else{allowed.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")}));}
+                if e["auto_reroute"]==true {out.push("Auto reroute: disabled CLI pins may fall back".into());}
+            }
+        },
         Err(e) => out.extend([format!("Claim: unknown ({e})"), "Default runtime: unknown".into()]),
     }
     if let Err(e) = &status {
@@ -2787,7 +2793,7 @@ fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<St
         external: cfg.external.then(|| cfg.root.join("AGENTS.md").is_file()),
         runtimes,
         codex_dir: cfg.root.join(".codex").is_dir(),
-        labelled: cfg.labelled,
+        labelled: cfg.claim == host::ClaimMode::Labelled,
         unlabelled: open.map(|v| v.into_iter().filter(|(_, l)| !l.iter().any(|l| l.starts_with("host-"))).map(|(n, _)| n).collect()),
         token: (cfg.board.name == "github").then(|| board::github::token(&cfg.install).map(|_| ()).map_err(|_| "missing, empty or unreadable".to_string())),
         delivery,
@@ -4418,7 +4424,10 @@ mod tests {
             me: "mac".into(),
             limits: BTreeMap::new(),
             has: vec![],
-            labelled: false,
+            claim: host::ClaimMode::Any,
+            spillover_grace: 300,
+            allowed_runtimes: None,
+            auto_reroute: false,
             default_runtime: "claude".into(),
             routing: vec![],
             permission_mode: "dontAsk".into(),
@@ -4438,14 +4447,14 @@ mod tests {
     fn add_on_a_labelled_host_keeps_that_host() {
         let parse = |v: &[&str]| Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         let mut c = cfg();
-        c.labelled = true;
+        c.claim = host::ClaimMode::Labelled;
         assert_eq!(add_host(None, &c).as_deref(), Some("mac"), "labelled host: add without --host gets host-mac");
         assert_eq!(add_host(Some("win"), &c).as_deref(), Some("win"), "--host wins over the labelled default");
-        c.labelled = false;
+        c.claim = host::ClaimMode::Any;
         assert_eq!(add_host(None, &c), None, "any-claim host: add stays unrouted");
         assert_eq!(add_host(Some("win"), &c).as_deref(), Some("win"));
         let a = parse(&["service", "capacity", "--host", "mac", "--claim", "labelled"]).unwrap();
-        assert_eq!(CapEdit::from_args(&a).unwrap().claim, Some(true));
+        assert_eq!(CapEdit::from_args(&a).unwrap().claim, Some(host::ClaimMode::Labelled));
         let bad = parse(&["service", "capacity", "--claim", "some"]).unwrap();
         assert!(CapEdit::from_args(&bad).is_err());
     }
@@ -4455,7 +4464,7 @@ mod tests {
     #[test]
     fn add_on_a_labelled_host_the_board_lacks_refuses_naming_service_install() {
         let mut cfg = cfg();
-        cfg.labelled = true;
+        cfg.claim = host::ClaimMode::Labelled;
         cfg.me = "pds18".into();
         let c = Ctx { cfg, raw: json!({}), board: Box::new(Fake::default()) };
         let add = |extra: &[&str]| {
@@ -6421,7 +6430,7 @@ mod tests {
         assert!(text.contains("'taskq телеметрия': taskq profile watch --since 1h; procedure: ") && text.contains(profile::WATCH_DOC));
         assert_eq!(serde_json::from_str::<Value>(&help(true).unwrap()).unwrap(), catalog);
         assert!(USAGE.contains("--snapshot DIR"));
-        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled] [--default-runtime claude|codex|antigravity]"));
+        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim primary|any|spillover|pinned-only|labelled|manager-only|none] [--default-runtime claude|codex|antigravity]"));
         run(&["service".into(), "capacity".into(), "--help".into()]).unwrap();
         let e = platform::error_text("#7 is ready", None);
         assert!(e.starts_with("Error: #7 is ready\nNext: "));

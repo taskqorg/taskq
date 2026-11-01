@@ -16,14 +16,31 @@ pub fn enter(root: &Path, install: &Path) {
 /// host.json `default_runtime` values (§ 9); `codex-app` stays opt-in per task.
 pub const DEFAULT_RUNTIMES: [&str; 3] = crate::runtime::CLI_RUNTIMES;
 
+/// §4/§9: aliases preserve existing policy while extending task admission, not manager turns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ClaimMode { #[default] Any, Spillover, Labelled, None }
+impl ClaimMode {
+    pub fn parse(s: &str) -> Res<Self> {
+        match s {
+            "primary" | "any" => Ok(Self::Any), "spillover" => Ok(Self::Spillover),
+            "pinned-only" | "labelled" => Ok(Self::Labelled), "manager-only" | "none" => Ok(Self::None),
+            _ => Err("claim must be primary/any, spillover, pinned-only/labelled or manager-only/none".into()),
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self { Self::Any => "any", Self::Spillover => "spillover", Self::Labelled => "labelled", Self::None => "none" }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Policy {
     pub raw: Value,
     pub cap: Capacity,
     pub me: String,
     pub has: Vec<String>,
-    /// `claim` `labelled`: this host claims only tasks labelled `host-<me>` (§ 9).
-    pub labelled: bool,
+    /// Task-claim mode (§4/§9); aliases preserve any/labelled policies.
+    pub claim: ClaimMode,
+    pub spillover_grace: u64,
     /// `default_runtime`: reviewers and workers without `run-*` run on it (§ 4, § 9).
     pub default_runtime: String,
     pub codex: Vec<String>,
@@ -34,8 +51,11 @@ pub struct Policy {
 
 impl Policy {
     pub fn apply(&self, cfg: &mut service::Config) {
-        cfg.me = self.me.clone(); cfg.has = self.has.clone(); cfg.labelled = self.labelled; cfg.codex = self.codex.clone();
-        cfg.default_runtime = self.default_runtime.clone();
+        cfg.me = self.me.clone(); cfg.has = self.has.clone(); cfg.claim = self.claim; cfg.spillover_grace = self.spillover_grace; cfg.codex = self.codex.clone();
+        let overlay = self.overlay(&cfg.root).map(|(_,p)|p);
+        cfg.default_runtime = overlay.and_then(|p|p["default_runtime"].as_str()).unwrap_or(&self.default_runtime).into();
+        cfg.allowed_runtimes = overlay.and_then(|p|p["allowed_runtimes"].as_array()).map(|a|a.iter().map(|rt|rt.as_str().unwrap().to_string()).collect());
+        cfg.auto_reroute = overlay.is_some_and(|p|p["auto_reroute"]==true);
         cfg.permission_mode = self.permission_mode.clone(); cfg.update_every = self.update_every; cfg.rollback_after = self.rollback_after;
     }
     pub fn parse(v: Value, hostname: &str) -> Res<Self> {
@@ -62,11 +82,12 @@ impl Policy {
             Value::Null => "dontAsk".into(), Value::String(s) if !s.is_empty() => s.clone(),
             _ => return Err("host.json: permission_mode must be a nonempty string".into()),
         };
-        let labelled = match v["claim"].as_str() {
-            _ if v["claim"].is_null() => false,
-            Some("any") => false, Some("labelled") => true,
-            _ => return Err("host.json: claim must be any or labelled".into()),
+        let claim = match &v["claim"] {
+            Value::Null => ClaimMode::Any,
+            Value::String(s) => ClaimMode::parse(s).map_err(|e|format!("host.json: {e}"))?,
+            _ => return Err("host.json: claim must be a string".into()),
         };
+        let spillover_grace = if v["spillover_grace"].is_null() {300} else {v["spillover_grace"].as_u64().filter(|n|*n<=i64::MAX as u64).ok_or("host.json: spillover_grace must be nonnegative seconds")?};
         let default_runtime = match v["default_runtime"].as_str() {
             _ if v["default_runtime"].is_null() => crate::runtime::OWNER.to_string(),
             Some(rt) if DEFAULT_RUNTIMES.contains(&rt) => rt.to_string(),
@@ -86,15 +107,24 @@ impl Policy {
         // The project overlay only lowers: a count above the host ceiling is invalid policy, never clamped.
         if !matches!(v["projects"], Value::Null | Value::Object(_)) { return Err("host.json: projects must be an object".into()); }
         for (root, p) in v["projects"].as_object().into_iter().flatten() {
-            let bad = || format!("host.json: projects.{root}: expected {{\"limits\": {{runtime: count}}, \"op\": id}}");
-            let o = p.as_object().filter(|o| o.keys().all(|k| k == "limits" || k == "op") && o.contains_key("limits")).ok_or_else(bad)?;
+            let bad = || format!("host.json: projects.{root}: invalid limits or execution policy");
+            let o = p.as_object().filter(|o| o.keys().all(|k| ["limits","op","default_runtime","allowed_runtimes","auto_reroute"].contains(&k.as_str()))
+                && ["limits","default_runtime","allowed_runtimes","auto_reroute"].iter().any(|k|o.contains_key(*k))).ok_or_else(bad)?;
+            if o.get("default_runtime").is_some_and(|rt|!rt.as_str().is_some_and(|rt|DEFAULT_RUNTIMES.contains(&rt))) {return Err(bad());}
+            if o.get("auto_reroute").is_some_and(|b|!b.is_boolean()) {return Err(bad());}
+            if let Some(allowed)=o.get("allowed_runtimes") {
+                let a=allowed.as_array().ok_or_else(bad)?;
+                let mut seen=BTreeSet::new();
+                for rt in a {if !rt.as_str().is_some_and(|rt|service::RUNTIMES.contains(&rt) && seen.insert(rt)) {return Err(bad());}}
+            }
             if o.get("op").is_some_and(|x| !x.as_str().is_some_and(crate::resources::id)) { return Err(bad()); }
-            for (rt, n) in p["limits"].as_object().ok_or_else(bad)? {
+            if o.get("limits").is_some_and(|v|!v.is_object()) {return Err(bad());}
+            for (rt, n) in p["limits"].as_object().into_iter().flatten() {
                 let n = n.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|_| service::RUNTIMES.contains(&rt.as_str())).ok_or_else(bad)?;
                 if cap.limits.get(rt).is_some_and(|host| n > *host) { return Err(format!("host.json: projects.{root}.limits.{rt} raises host ceiling")); }
             }
         }
-        let policy=Self { raw: v, cap, me, has, labelled, default_runtime, codex, permission_mode, update_every, rollback_after };
+        let policy=Self { raw: v, cap, me, has, claim, spillover_grace, default_runtime, codex, permission_mode, update_every, rollback_after };
         policy.command()?;
         Ok(policy)
     }
@@ -232,7 +262,7 @@ fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:
             if let Some(value)=edit.cpu_max {next["load_gate"]["cpu_max"]=json!(value);}
             if let Some(value)=edit.memory_min {next["load_gate"]["memory_min"]=json!(value);}
         }
-        if let Some(labelled)=edit.claim {next["claim"]=json!(if labelled {"labelled"} else {"any"});}
+        if let Some(mode)=edit.claim {next["claim"]=json!(mode.name());}
         if let Some(rt)=&edit.default_runtime {next["default_runtime"]=json!(rt);}
         let candidate=Policy::parse(next,&hostname)?;
         let command=CommandReceipt::current()?;
@@ -295,7 +325,8 @@ pub(crate) fn write_project_limit(install:&Path, root:&Path, rt:&str, limit:Opti
     let mut next=old.raw.clone();
     if next["projects"].is_null() {next["projects"]=json!({});}
     let entry=&mut next["projects"][&key];
-    if entry.is_null() {*entry=json!({"limits":{}});}
+    if entry.is_null() {*entry=json!({});}
+    if entry["limits"].is_null() {entry["limits"]=json!({});}
     match limit {
         Some(n)=>entry["limits"][rt]=json!(n),
         None=>{entry["limits"].as_object_mut().map(|l|l.remove(rt));}
@@ -1875,10 +1906,27 @@ mod tests {
     // Chain: § 9 `claim` (#1493). Risk: a typo silently makes a labelled host claim everything.
     #[test]
     fn claim_parses_any_or_labelled_only() {
-        assert!(!policy().labelled, "missing claim: any");
-        assert!(Policy::parse(json!({"claim": "labelled"}), "invented").unwrap().labelled);
-        assert!(!Policy::parse(json!({"claim": "any"}), "invented").unwrap().labelled);
+        assert_eq!(policy().claim, ClaimMode::Any, "missing claim: any");
+        assert_eq!(Policy::parse(json!({"claim": "labelled"}), "invented").unwrap().claim, ClaimMode::Labelled);
+        assert_eq!(Policy::parse(json!({"claim": "any"}), "invented").unwrap().claim, ClaimMode::Any);
         assert!(Policy::parse(json!({"claim": "label"}), "invented").is_err());
+    }
+    // #2138 A2/A3/R13: invalid new policy must hold launches; defaults and lower-only overlays remain intact.
+    #[test]
+    fn balancing_policy_validates_modes_and_project_execution() {
+        for (alias,mode) in [("primary",ClaimMode::Any),("any",ClaimMode::Any),("spillover",ClaimMode::Spillover),("pinned-only",ClaimMode::Labelled),("labelled",ClaimMode::Labelled),("manager-only",ClaimMode::None),("none",ClaimMode::None)] {
+            assert_eq!(Policy::parse(json!({"claim":alias,"spillover_grace":0}),"invented").unwrap().claim,mode);
+        }
+        assert_eq!(policy().spillover_grace,300);
+        for invalid in [json!({"spillover_grace":-1}),json!({"spillover_grace":"5"}),json!({"claim":true}),json!({"claim":"primari"})] {assert!(Policy::parse(invalid,"invented").is_err());}
+        for entry in [json!({"default_runtime":"unknown"}),json!({"default_runtime":"codex-app"}),json!({"auto_reroute":1}),json!({"allowed_runtimes":null}),json!({"allowed_runtimes":["codex","codex"]}),json!({"allowed_runtimes":["unknown"]}),json!({"limits":null}),json!({"auto_reroute":false,"unexpected":true})] {
+            assert!(Policy::parse(json!({"projects":{"/invented":entry}}),"invented").is_err());
+        }
+        for entry in [json!({"default_runtime":"codex"}),json!({"allowed_runtimes":[]}),json!({"auto_reroute":true})] {
+            let p=Policy::parse(json!({"projects":{"/invented":entry}}),"invented").unwrap();
+            assert!(p.overlay(Path::new("/other")).is_none());
+            assert_ne!(p.project_revision(Path::new("/invented"),&json!({})).unwrap(),policy().project_revision(Path::new("/invented"),&json!({})).unwrap());
+        }
     }
     // Chain: § 9 `default_runtime` (#1668). Risk: a host without the key stops running reviews on claude,
     // or a typo or `codex-app` silently becomes the runtime of every review on the host.

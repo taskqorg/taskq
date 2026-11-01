@@ -1175,6 +1175,26 @@ mod tests {
         fs::remove_dir_all(&t.base).unwrap();
     }
 
+    // Chain: #2138/R9: the limits-only remote profile must preserve local execution policy, including without limits.
+    #[test]
+    fn balancing_overlay_preserves_execution_policy() {
+        let t=setup("execution-overlay");
+        let execution=json!({"default_runtime":"codex","allowed_runtimes":["codex"],"auto_reroute":true});
+        fs::write(t.install.join("host.json"),json!({"limits":{"codex":5},"projects":{t.root.display().to_string():execution}}).to_string()).unwrap();
+        go(&t,&[],&[],100);
+        with(&t.install,|s|{s.grants.get_mut("grant-1").unwrap().project_limits=true;Ok(())}).unwrap();
+        for (id,limit) in [("lower",json!(1)),("restore",Value::Null)] {
+            let revision=read(&t.install).unwrap().projects["project-1"].revision.clone();
+            let mut op=submit(id,json!({"runtime_limit":limit}));op["policy_schema"]=json!(OVERLAY);op["expected_revision"]=json!(revision);
+            go(&t,&[op],&[],101);
+            assert_eq!(receipt_of(&t,id)["state"],"saved","{:?}",receipt_of(&t,id));
+            let saved=crate::host::Policy::read(&t.install).unwrap();
+            let (_,entry)=saved.overlay(&t.root).unwrap();
+            for key in ["default_runtime","allowed_runtimes","auto_reroute"] {assert_eq!(entry[key],execution[key]);}
+        }
+        fs::remove_dir_all(t.base).unwrap();
+    }
+
     // Chain #1282: DashQ overlay submit -> exchange -> project grant -> host.json projects writer -> service
     // status readback -> receipt. Risk: a project grant read as host-wide, a write losing other host keys, a stale
     // or reverted revision applying, a duplicate writing twice, or saved reported applied without the exact revision.

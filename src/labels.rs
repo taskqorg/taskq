@@ -8,7 +8,8 @@ pub fn canonical(name: &str) -> &str {
 }
 
 /// §4/§9: ordered project rules; every label (including task type) must match.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Routing { pub labels: Vec<String>, pub prefer: String }
 
 pub fn routing(value: &serde_json::Value) -> Result<Vec<Routing>> {
@@ -58,6 +59,21 @@ pub fn select(labels: &[String], reviewer: bool, default: &str,
         }
     }
     Err((code, failures.join("; ")))
+}
+
+/// R13/§4: only an owner-enabled project may ignore an explicitly disabled CLI pin.
+pub fn select_project(labels: &[String], reviewer: bool, default: &str, auto_reroute: bool,
+    disabled: impl Fn(&str) -> bool,
+    eligible: impl FnMut(&str) -> std::result::Result<String, (&'static str, String)>) -> std::result::Result<(String, Option<String>), (&'static str, String)> {
+    let pin=labels.iter().find_map(|l|l.strip_prefix("run-"))
+        .filter(|rt|auto_reroute && crate::runtime::CLI_RUNTIMES.contains(rt) && disabled(rt));
+    let Some(pin)=pin else {return select(labels,reviewer,default,eligible)};
+    let filtered:Vec<_>=labels.iter().filter(|l|!l.starts_with("run-")).cloned().collect();
+    let prefix=format!("auto_reroute: run-{pin} disabled by project/host policy");
+    match select(&filtered,reviewer,default,eligible) {
+        Ok((rt,reason))=>Ok((rt.clone(),Some(format!("{prefix}; {}",reason.unwrap_or_else(||format!("selected {rt}")))))),
+        Err((code,reason))=>Err((code,format!("{prefix}; {reason}"))),
+    }
 }
 
 pub fn matches(labels: &[String], filter: &str) -> bool {
