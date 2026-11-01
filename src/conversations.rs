@@ -193,6 +193,18 @@ pub(crate) fn snapshot(install:&Path)->Value { snapshot_inner(install,true) }
 /// C2/Q-A5: summary identities never transport saved bodies of unrelated threads.
 pub(crate) fn summary(install:&Path)->Value { snapshot_inner(install,false) }
 
+/// The same source identities and totals, without unrelated current-card payloads.
+pub(crate) fn task_header(row:&Value)->Value {
+    let mut header=serde_json::Map::new();
+    for (key,value) in row.as_object().into_iter().flatten() {
+        if !["card","question","verdict","conversation","history","answered"].contains(&key.as_str()) {header.insert(key.clone(),value.clone());}
+    }
+    if row["conversation"].is_object(){header.insert("conversation".into(),json!({"id":row["conversation"]["id"]}));}
+    header.insert("body_lazy".into(),json!(true));header.insert("body_source_revision".into(),row["history_source_revision"].as_u64().map_or_else(||row["revision"].clone(),|r|json!(r)));
+    header.insert("history_count".into(),row["history_count"].as_u64().map_or_else(||json!(row["history"].as_array().map_or(0,Vec::len)),|n|json!(n)));
+    Value::Object(header)
+}
+
 struct Catalog {
     root:PathBuf, value:Value, at:Option<std::time::Instant>, epoch:u64,
     pending:Option<(std::time::Instant,u64,std::sync::mpsc::Receiver<Value>)>,
@@ -400,10 +412,14 @@ fn receipt_snapshot(install:&Path,id:&str)->Value {
 /// behind a save and never rebuilds the conversation list.
 pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
     let id=m["conversation"].as_str().unwrap_or("");let action=m["action"].as_str().unwrap_or("");
+    static READS:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
+    use std::sync::atomic::Ordering::Relaxed;
+    if READS.fetch_update(Relaxed,Relaxed,|n|(n<8).then_some(n+1)).is_err(){return json!({"id":m["id"],"conversation":id,"action":action,"state":"unknown","reason":"Conversation reads busy; retry the selected source"});}
     let result=(||->Res<Value>{
         if id.starts_with("task:")&&thread_id(id) {
             if action=="transcript" {return worker_read(install,m);}
             if action=="history" {return history_page(install,m);}
+            if action=="task-body" {return task_body(install,m);}
         }
         if !crate::setup::owner_id(id){return Err("Invalid or reserved draft identity".into());}
         match action {
@@ -426,14 +442,34 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
                     else {crate::closed_history(&*b,m["page"].as_u64().and_then(|n|u32::try_from(n).ok()).filter(|n|*n>0).unwrap_or(1),None,!cfg.board.closed_reason)?};
                 if value["tasks"].as_array().is_some_and(|rows|rows.iter().any(|t|!t["error"].is_null())) {return Err("Task history incomplete; board comments unavailable".into());}
                 value["tasks"]=json!(value["tasks"].as_array().into_iter().flatten().filter(|t|t["conversation"]["id"]==id).cloned().collect::<Vec<_>>());
-                Ok(value)
+                value["tasks"]=json!(value["tasks"].as_array().into_iter().flatten().map(task_header).collect::<Vec<_>>());Ok(value)
             }
             "activity"=>{let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;Ok(crate::dialogue::activity(&r))},
             "transcript"=>crate::dialogue::transcript(install,id,m["before"].as_u64(),m["after"].as_u64()),
             _=>Err("Unsupported dialogue read".into()),
         }
     })();
+    READS.fetch_sub(1,Relaxed);
     match result {Ok(value)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"accepted","value":value}),Err(reason)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"unknown","reason":reason})}
+}
+
+fn task_body(install:&Path,m:&Value)->Res<Value> {
+    let root=Path::new(m["root"].as_str().ok_or("Task project missing")?);
+    if !crate::host::project_paths(install)?.iter().any(|p|p==root){return Err("Task project is not registered".into());}
+    let status=crate::data::json(&crate::dot(root).join("status.json"))?.ok_or("Task snapshot unavailable")?;
+    let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("Task board unknown")?;
+    let n=m["conversation"].as_str().and_then(|s|s.strip_prefix(&format!("task:{board}/"))).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("Task thread does not match its project")?;
+    let mut row=if let Some(t)=status["tasks"].as_array().into_iter().flatten().find(|t|t["n"]==n){t.clone()}else{
+        let (cfg,raw)=crate::load(root)?;
+        let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
+        crate::closed_pin(&*b,n,!cfg.board.closed_reason)?["tasks"].as_array().and_then(|a|a.first()).cloned().ok_or("Task source unavailable")?
+    };
+    if !m["source_revision"].is_number()||row["revision"]!=m["source_revision"] {return Err("Task body revision changed; refresh before reading".into());}
+    if !row["error"].is_null(){return Err("Task source incomplete; refresh or open its board".into());}
+    crate::tray::inline_images(root,&mut row);
+    row["history_source_revision"]=row["revision"].clone();row["history_source_count"]=json!(row["history"].as_array().map_or(0,Vec::len));row["history_thin"]=json!(true);row.as_object_mut().map(|r|r.remove("history"));
+    let key=format!("{board}#{n}");let local=preferences(install)?["answers"][&key].clone();
+    Ok(json!({"root":root,"expected_revision":m["revision"],"tasks":[row],"workspace_local":{key:local}}))
 }
 
 /// One immutable page of recorded questions; UI reads never become board writes or token probes.
@@ -443,7 +479,11 @@ fn history_page(install:&Path,m:&Value)->Res<Value> {
     let status=crate::data::json(&crate::dot(root).join("status.json"))?.ok_or("History snapshot unavailable")?;
     let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("History board unknown")?;
     let n=m["conversation"].as_str().and_then(|s|s.strip_prefix("task:")).and_then(|s|s.strip_prefix(board)).and_then(|s|s.strip_prefix('/')).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("History thread does not match its project")?;
-    let task=status["tasks"].as_array().and_then(|a|a.iter().find(|t|t["n"]==n)).ok_or("History source unavailable")?;
+    let closed;
+    let task=if let Some(t)=status["tasks"].as_array().and_then(|a|a.iter().find(|t|t["n"]==n)){t}else{
+        let (cfg,raw)=crate::load(root)?;let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
+        closed=crate::closed_pin(&*b,n,!cfg.board.closed_reason)?;closed["tasks"].as_array().and_then(|a|a.first()).filter(|t|t["error"].is_null()).ok_or("History source unavailable")?
+    };
     if !m["revision"].is_number()||task["revision"]!=m["revision"] {return Err("Recorded questions changed; refresh before paging".into());}
     let rows=task["history"].as_array().ok_or("Recorded questions unavailable")?;
     let cursor=m["before"].as_u64().or_else(||m["start"].as_u64()).and_then(|n|usize::try_from(n).ok()).filter(|n|*n<=rows.len()).ok_or("History cursor is outside its source")?;
@@ -647,6 +687,16 @@ mod tests {
         m["before"]=large["next"].clone();let back=history_page(&f.0,&m).unwrap();assert_eq!(back["start"],64);assert_eq!(back["rows"][0],history[64]);
         m["revision"]=json!(70);assert!(history_page(&f.0,&m).unwrap_err().contains("changed"));m["revision"]=json!(71);m["conversation"]=json!("task:https://other.example/issues/7");assert!(history_page(&f.0,&m).is_err());
         m["root"]=json!(f.0.join("unregistered"));assert!(history_page(&f.0,&m).unwrap_err().contains("not registered"));assert_eq!(fs::read_to_string(path).unwrap(),source,"read-only paging keeps its exact source");
+    }
+
+    #[test]
+    fn current_task_body_reads_only_the_registered_exact_revision() {
+        let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();fs::write(f.0.join("projects"),format!("{}\n",root.display())).unwrap();
+        let row=json!({"n":7,"revision":71,"state":"ask","question":{"text":"Exact invented question","choices":[]},"conversation":{"id":"invented-owner","brief":"Exact invented brief"}});
+        let path=root.join(".taskq/status.json");let source=json!({"complete":true,"issues":"https://example.org/issues","tasks":[row]}).to_string();fs::write(&path,&source).unwrap();
+        let mut m=json!({"id":"read","conversation":"task:https://example.org/issues/7","root":root,"revision":71,"source_revision":71,"action":"task-body"});
+        let r=dialogue(&f.0,&m);assert_eq!(r["state"],"accepted");assert_eq!(r["value"]["tasks"][0]["question"]["text"],"Exact invented question");assert_eq!(r["value"]["tasks"][0]["conversation"]["brief"],"Exact invented brief");
+        m["source_revision"]=json!(70);assert_eq!(dialogue(&f.0,&m)["state"],"unknown");m["source_revision"]=json!(71);m["conversation"]=json!("task:https://other.example/issues/7");assert_eq!(dialogue(&f.0,&m)["state"],"unknown");m["root"]=json!(f.0.join("unregistered"));assert_eq!(dialogue(&f.0,&m)["state"],"unknown");assert_eq!(fs::read_to_string(path).unwrap(),source);
     }
 
     #[test]

@@ -49,11 +49,11 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
   const merged={...(won?.sha===op.sha?won:{}),...fields};receipts.set(k,merged);return merged;
  }
  const api=execution.module('reports.view',{
-  sync(ps){
-   projects=targets(ps);
+  sync(ps,spare=16*1024*1024){
+   projects=targets(ps);let retainedBytes=0,retainedRows=0;for(const root of pages.keys())if(!projects.some(p=>p.root===root))pages.delete(root);
    for(const p of projects){
     const data=p.reports;
-    const incoming=[...(data?.reports||[]),...(data?.history||[])],retained=data?.complete===true?[]:(pages.get(p.root)?.rows||[]).filter(r=>!incoming.some(v=>v.n===r.n));
+    const incoming=[...(data?.reports||[]),...(data?.history||[])],retained=data?.complete===true?[]:(pages.get(p.root)?.rows||[]).filter(r=>!incoming.some(v=>v.n===r.n)&&(active(r)||++retainedRows<=192&&(retainedBytes+=new TextEncoder().encode(JSON.stringify(r)).length)<=spare/2));
     pages.set(p.root,{rows:[...incoming,...retained].map(r=>{const k=receiptKey(p.root,r.n,r.sha),won=receipts.get(k);if(Number.isSafeInteger(r.comments_through)&&Number.isSafeInteger(won?.comments_through)&&r.comments_through>=won.comments_through)receipts.delete(k);return receipts.has(k)?{...r,...won}:r;}),unknown:data?.complete!==true,reason:data?.reason||(data?.complete===true?'':'Reports not collected yet')});
    }
    if(selected){const row=api.rows(true).find(r=>key(r.root,r.n)===key(selected.root,selected.n)&&r.sha===selected.sha);selected=row?{...selected,...row,...bodies.get(receiptKey(row.root,row.n,row.sha))}:null;}
@@ -162,7 +162,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
   section(ps){
    api.sync(ps);const r=selected;if(!r)return h('p',null,api.count()===null?api.reason()||'Results unknown; waiting for collection.':'No results waiting for review.');
    if(r.lazy&&!bodies.has(receiptKey(r.root,r.n,r.sha)))return h('article',{class:'report-card'},h('p',{role:'status'},notice||'Reading the exact result source…'),h('button',{'data-report':'source-retry',disabled:[...pending.values()].some(active)},'Retry source read'));
-   const ordinary=r.kind==='task',nav=navigation(r),k=namespace(r,'correction'),local=saved[k]||card.fresh(api.cardRow(r,'correction')),context=api.cardRow(r,'correction'),cap=api.capability(r,'correction');
+   const proposals=textPage(r,'proposals');const ordinary=r.kind==='task',nav=navigation(r),k=namespace(r,'correction'),local=saved[k]||card.fresh(api.cardRow(r,'correction')),context=api.cardRow(r,'correction'),cap=api.capability(r,'correction');
    const decision=api.cardRow(r,'decision'),date=saved[namespace(r,'decision')]||card.fresh(decision),dateCap=api.capability(r,'decision'),dateLive=['actionable','changed'].includes(card.status(decision,date,dateCap));
    const [mark,tone,outcome]=dashboard.outcome(r);
    const slot=kind=>h('div',{'data-result-card':kind,key:namespace(r,kind)});
@@ -181,7 +181,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
      h('div',{class:'conversation-tools'},h('button',{'data-report':'date-send',disabled:!dateLive||!!card.textProblem(decision.question,date.draft)},'Send'),h('button',{'data-report':'date-cancel',disabled:!dateLive},'Cancel'))))),
     h('details',{class:'result-other',open:!!local.intent,'data-view-key':namespace(r,'other')},h('summary',null,'Other actions'),slot('correction')),
     local.intent&&composer({id:'result-reason',field:'result-reason',label:(local.intent==='reopen'?'Reopen':'Follow-up')+' reason',placeholder:'What needs to change?',text:local.draft,disabled:!cap.answer||['sending','unknown','partial'].includes(card.status(context,local,cap)),reason:'Creates a linked held successor. The original stays closed. Read it back before separate Start.',tools:h('div',{class:'conversation-tools'},h('button',{'data-report':'reason-send',disabled:!cap.answer||!!card.textProblem(context.question,local.draft)||!['actionable','changed'].includes(card.status(context,local,cap))},'Send'),h('button',{'data-report':'reason-cancel',disabled:['sending','unknown','partial'].includes(card.status(context,local,cap))},'Cancel'))}),
-    !ordinary&&Array.isArray(r.tasks)&&h('section',null,h('h3',null,'Proposed tasks'),r.tasks.length?r.tasks.map((t,i)=>h('details',{key:i,'data-view-key':namespace(r,'proposal'+i)},h('summary',null,(i+1)+'. '+t.title),h('p',null,t.goal),h('ul',null,t.acceptance?.map(a=>h('li',null,a))),t.scope?.map(s=>h('p',null,s)))):h('p',null,'No follow-up tasks proposed.'),r.tasks.length>0&&h('p',{class:'meta'},'Make tasks creates held drafts linked to this report. Start them separately.'),r.pending_decision==='make'&&h('p',{role:'status'},'Make tasks is pending. Retry Make tasks to reconcile the original claims.'),(r.tasks.length>0||r.pending_decision==='make')&&!settled(r)&&slot('make')),
+    !ordinary&&Array.isArray(r.tasks)&&h('section',null,h('h3',null,'Proposed tasks'),r.tasks.length?[h('p',{class:'meta','data-reading-key':'report:proposals-'+proposals.start+':0'},'Tasks '+(proposals.start+1)+'–'+Math.min(r.tasks.length,proposals.start+64)+' / '+r.tasks.length),r.tasks.slice(proposals.start,proposals.start+64).map((t,i)=>{const index=proposals.start+i,page=textPage(r,'proposal'+index);return h('details',{key:index,open:page.open,'data-view-key':namespace(r,'proposal'+index)},h('summary',{onClick:e=>{e.preventDefault();page.open=!page.open;draw();}},(index+1)+'. '+t.title),page.open&&textBody(r,[t.goal,...(t.acceptance||[]).map(a=>'- '+a),...(t.scope||[])].join('\n\n'),'proposal'+index));}),h('div',{class:'conversation-tools'},proposals.start>0&&h('button',{onClick:()=>{proposals.start=Math.max(0,proposals.start-64);reading('report:proposals-'+proposals.start+':0',r);draw();}},'Previous proposals'),proposals.start+64<r.tasks.length&&h('button',{onClick:()=>{proposals.start+=64;reading('report:proposals-'+proposals.start+':0',r);draw();}},'Next proposals'))]:h('p',null,'No follow-up tasks proposed.'),r.tasks.length>0&&h('p',{class:'meta'},'Make tasks creates held drafts linked to this report. Start them separately.'),r.pending_decision==='make'&&h('p',{role:'status'},'Make tasks is pending. Retry Make tasks to reconcile the original claims.'),(r.tasks.length>0||r.pending_decision==='make')&&!settled(r)&&slot('make')),
     !ordinary&&r.body&&h('details',{'data-view-key':namespace(r,'full'),open:textPage(r,'full').open,onToggle:e=>{const page=textPage(r,'full');if(page.open!==e.currentTarget.open){page.open=e.currentTarget.open;draw();}}},h('summary',{'data-reading-key':'report:full',onClick:e=>{e.preventDefault();const page=textPage(r,'full');page.open=!page.open;e.currentTarget.parentElement.open=page.open;draw();}},'Full report'),textPage(r,'full').open&&textBody(r,r.body,'full')),
     transcript?.(r),notice&&h('p',{role:'status'},notice),
     !!(notice||successor||r.tasks_made?.length)&&![...pending.values()].some(op=>active(op)&&op.action!=='read')&&h('div',{class:'conversation-tools result-next'},
@@ -204,4 +204,4 @@ body:function(text,source='body'){
  });
 }
 });
-module.exports={create};
+module.exports={create,body};

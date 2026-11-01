@@ -144,10 +144,17 @@ async function historyCase(browser,html,runtime){
  await page.mouse.move(450,300);await page.evaluate(()=>{const h=history1742;let last=performance.now();h.frames=[];h.run=true;const tick=t=>{h.frames.push(t-last);last=t;if(h.run)requestAnimationFrame(tick);};requestAnimationFrame(tick);});
  for(let k=0;k<60;k++){await page.mouse.wheel(0,-240);await page.waitForTimeout(16);}
  await settle();const frames=(await page.evaluate(()=>{history1742.run=false;return history1742.frames;})).slice(1).sort((x,y)=>x-y);
+ // Same live DOM/CSS without application handlers, then a blank page: attribute the frame floor separately.
+ const staticHTML=await page.evaluate(()=>{const root=document.documentElement.cloneNode(true);root.querySelectorAll('script').forEach(n=>n.remove());return '<!doctype html>'+root.outerHTML;});
+ const control=await browser.newPage({viewport:{width:900,height:720}});await control.setContent(staticHTML);await control.mouse.move(450,300);
+ await control.evaluate(()=>{window.controlFrames=[];let last=performance.now();window.running=true;const tick=t=>{controlFrames.push(t-last);last=t;if(running)requestAnimationFrame(tick);};requestAnimationFrame(tick);});
+ for(let k=0;k<60;k++){await control.mouse.wheel(0,-240);await control.waitForTimeout(16);}const staticFrames=(await control.evaluate(()=>{running=false;return controlFrames;})).slice(1).sort((a,b)=>a-b);
+ await control.setContent('<!doctype html><button>Invented empty control</button>');const emptyFrames=(await control.evaluate(()=>new Promise(resolve=>{const values=[];let last;const tick=t=>{if(last!==undefined)values.push(t-last);last=t;if(values.length<120)requestAnimationFrame(tick);else resolve(values);};requestAnimationFrame(tick);}))).sort((a,b)=>a-b);await control.close();
  assert.deepEqual(errors,[]);
+ const controls={static_clone_p95:staticFrames[Math.floor(staticFrames.length*.95)],empty_p95:emptyFrames[Math.floor(emptyFrames.length*.95)],budget_ms:32,product_budget:frames[Math.floor(frames.length*.95)]<=32?'Pass':'Fail'};
  const long=await page.evaluate(()=>history1742.longtasks),renders=(await page.evaluate(()=>history1742.renders)).sort((x,y)=>x-y);
  await page.close();
- return {runtime,records:10000,items:total,reads:renders.length,mounted_max:max,load_render_ms:{median:Math.round(renders[renders.length>>1]),p95:Math.round(renders[Math.floor(renders.length*.95)]),max:Math.round(renders.at(-1))},longtasks:{count:long.length,max_ms:Math.round(Math.max(0,...long))},wheel_frame_ms:{frames:frames.length,median:Math.round(frames[frames.length>>1]),p95:Math.round(frames[Math.floor(frames.length*.95)]),max:Math.round(frames.at(-1))},result:'Pass: browser model; timings measured, not asserted'};
+ return {runtime,records:10000,items:total,reads:renders.length,mounted_max:max,load_render_ms:{median:Math.round(renders[renders.length>>1]),p95:Math.round(renders[Math.floor(renders.length*.95)]),max:Math.round(renders.at(-1))},longtasks:{count:long.length,max_ms:Math.round(Math.max(0,...long))},controls,wheel_frame_ms:{frames:frames.length,median:Math.round(frames[frames.length>>1]),p95:Math.round(frames[Math.floor(frames.length*.95)]),max:Math.round(frames.at(-1))},result:'Pass: browser model; timings measured, not asserted'};
 }
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')()),html=fs.readFileSync('build/web/workspace.html');fs.mkdirSync(out,{recursive:true});

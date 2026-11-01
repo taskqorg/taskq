@@ -17,10 +17,10 @@ module.exports=execution.module('conversations',{
   let sidebar={pins:[],collapsed:[],archived:{}},sidebarPending=null,revealed=null,activityRead=null,activityTimer=null,activityTimes={},activityChecks={};
   let focuses={},readerIdentity=null,layoutFrame=null,correcting=false,scrollIntent=null,scrollIntentTimer=null,dragScroll=false,sidebarEpoch=0,sidebarProjection=null,stableOrder=new Map(),stableGroups=new Map(),modeCounts={},pageSelected=null,listObserver=null,listObservedRoot=null,listAnchor=null;
   let resultFilter='all',sidebarItems=[],resultPages=new Map(),scopeReturn=null,completed=null,readerResize=null;
-  const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),recordBytes=new WeakMap();
+  const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
-  // Q-A5: owner/result/closed/question caches each reserve 2 slots / 2 MiB; combined inactive ceiling is 8 / 8 MiB.
+  // Q-A5: owner/task/result reserve 2 slots/2 MiB each; closed/question reserve 1/1 MiB each, total 8/8 MiB.
   let bodyReads=new Map(),bodyCache=new Map(),bodyNotice='';
   let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false,observed=null,resize=null;
   // #1831: one attempt-fenced live tail, owned only by the visible task thread.
@@ -28,14 +28,31 @@ module.exports=execution.module('conversations',{
   const api=execution.module('conversations.instance',{
    id:function(){return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');},
    note:function(text,id=selected){notices[id||'list']=text;},
-   linked:function(c,p){
+   task:function(p,t){
+    if(!t){taskSelected=null;return t;}if(!t.body_lazy)return t;const key=p.root+'#'+t.n+'@'+t.revision+':'+t.body_source_revision;taskSelected=key;
+    const cached=taskBodies.get(key);if(cached){taskBodies.delete(key);taskBodies.set(key,cached);return {...t,...cached.row,body_lazy:false};}
+    if(!taskReads.has(key)){const op={id:api.id(),root:p.root,n:t.n,revision:t.revision,source:t.body_source_revision};taskReads.set(key,op);while(taskReads.size>8){const [old,v]=taskReads.entries().next().value;ui.cancel(v.timer);taskReads.delete(old);}op.timer=ui.defer(()=>{if(taskReads.get(key)===op){op.reason='Task body readback missing. Refresh before reading or answering.';draw();}},30000);ui.send({a:'conversation-dialogue',action:'task-body',id:op.id,conversation:'task:'+p.issues+'/'+t.n,root:p.root,revision:t.revision,source_revision:t.body_source_revision});}
+    return {...t,body_reason:taskReads.get(key)?.reason||'Reading the current task card…'};
+   },
+   taskTrim:function(){let bytes=0;for(const [key,v]of [...taskBodies].reverse()){bytes+=v.bytes;if(key!==taskSelected&&(taskBodies.size>2||bytes>2*1024*1024))taskBodies.delete(key);}},
+   taskOverflow:function(){const v=taskBodies.get(taskSelected);return v?.bytes>2*1024*1024?h('p',{role:'status',class:'meta'},'Selected task source: '+(v.bytes/1048576).toFixed(1)+' MiB pinned while reading; inactive task bodies are evicted.'):null;},
+   taskText:function(t,text,source){
+    if(!text)return null;const key='task-'+t.n+'-'+t.revision+'-'+source,match=new RegExp('^report:'+key+'-(\\d+):').exec(positions[selected]?.key||'');
+    const start=Math.min(text.length-1,match?Number(match[1]):textPages.get(key)||0);const endAt=at=>{let end=Math.min(text.length,at+32768),count=0;for(const m of text.slice(at,end).matchAll(/\n\s*\n/g))if(++count===63){end=at+m.index+m[0].length;break;}if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end++;return end;},end=endAt(start);
+    const turn=next=>{textPages.delete(key);textPages.set(key,next);while(textPages.size>24)textPages.delete(textPages.keys().next().value);api.place(selected,{key:'report:'+key+'-'+next+':0',y:0});api.nav();draw();};
+    return [require('./reports.js').body(text.slice(start,end),key+'-'+start),(start>0||end<text.length)&&h('div',{class:'conversation-tools'},h('span',{class:'meta'},'Text '+(start+1)+'–'+end+' / '+text.length),start>0&&h('button',{onClick:()=>{let before=0;for(let at=0;at<start;){before=at;at=endAt(at);}turn(before);}},'Previous text'),end<text.length&&h('button',{onClick:()=>turn(end)},'Next text'))];
+   },
+   linked:function(c,p,results=[]){
     if(!c||!p||!c.sent&&!c.request)return [];
-    if(linked?.id!==c.id){linked={id:c.id,rows:[],known:new Set(),checked:new Set(),busy:false,page:1,more:false,reason:''};api.linkedRead(c.id);}
+    if(linked?.id!==c.id){linked={id:c.id,rows:[],known:new Set(),checked:new Set(),busy:false,page:1,more:false,reason:'',start:0,current:null};api.linkedRead(c.id);}
     const rows=p.tasks.filter(t=>t.conversation?.id===c.id),current=new Set(rows.map(t=>t.n));
     for(const n of linked.known)if(!current.has(n)&&!linked.checked.has(n)&&!linked.rows.some(t=>t.n===n)&&!Object.values(linkedReads).some(r=>r.conversation===c.id&&r.task===n))api.linkedRead(c.id,n);
-    for(const t of rows)linked.known.add(t.n);
-    return [...rows,...linked.rows.filter(t=>!current.has(t.n))];
+    const tasks=[...rows,...linked.rows.filter(t=>!current.has(t.n))],known=new Set(tasks.map(t=>t.n)),all=[...tasks,...results.filter(r=>r.conversation===c.id&&r.root===p.root&&!known.has(r.report)).map(r=>({n:r.report,title:r.title,report:r}))];linked.total=all.length;linked.start=Math.min(linked.start,Math.max(0,all.length-1));const page=all.slice(linked.start,linked.start+PAGE);
+    for(const t of page){linked.known.delete(t.n);linked.known.add(t.n);}while(linked.known.size>ROWS)linked.known.delete(linked.known.values().next().value);while(linked.checked.size>ROWS)linked.checked.delete(linked.checked.values().next().value);
+    if(!page.some(t=>t.n===linked.current))linked.current=(page.find(t=>t.state==='ask')||page[0])?.n;
+    return page;
    },
+   linkedCurrent:function(){return linked?.current;},
    linkedRead:function(conversation,task,page=1){
     if(!linked||linked.id!==conversation||!task&&linked.busy)return;
     if(task)linked.checked.add(task);
@@ -43,7 +60,7 @@ module.exports=execution.module('conversations',{
     ui.send({a:'conversation-dialogue',action:'tasks',id,conversation,...(task?{task}:{page})});
     ui.defer(()=>{if(linkedReads[id])api.receive({dialogueReceipt:{id,conversation,action:'tasks',state:'unknown',reason:'Task readback missing; nothing was replayed'}});},30000);
    },
-   linkedTools:function(){return linked&&[linked.reason&&h('p',{role:'status'},'Task history unknown: '+linked.reason),h('div',{class:'conversation-tools'},h('button',{'data-c':'linked-refresh',disabled:linked.busy},'Refresh task history'),linked.page>1&&h('button',{'data-c':'linked-newer',disabled:linked.busy},'Newer results'),linked.more&&h('button',{'data-c':'linked-older',disabled:linked.busy},'Older results'))];},
+   linkedTools:function(){return linked&&[linked.reason&&h('p',{role:'status'},'Task history unknown: '+linked.reason),h('p',{class:'meta'},'Linked tasks · '+(linked.start+1)+'–'+Math.min(linked.total,linked.start+PAGE)+' / '+linked.total+' loaded'+(linked.more?' · older board pages available':'')),h('div',{class:'conversation-tools'},linked.start>0&&h('button',{'data-c':'linked-page','data-start':Math.max(0,linked.start-PAGE)},'Previous tasks'),linked.start+PAGE<linked.total&&h('button',{'data-c':'linked-page','data-start':linked.start+PAGE},'Next tasks'),h('button',{'data-c':'linked-refresh',disabled:linked.busy},'Refresh task history'),linked.page>1&&h('button',{'data-c':'linked-newer',disabled:linked.busy},'Newer results'),linked.more&&h('button',{'data-c':'linked-older',disabled:linked.busy},'Older results'))];},
    current:function(){return items.find(c=>c.id===selected);},
    bodyRead:function(c){if(!c?.lazy||c.bodyReason||bodyReads.has(c.id))return;const id=api.id(),op={id,revision:c.revision};bodyReads.set(c.id,op);while(bodyReads.size>8){const [key,old]=bodyReads.entries().next().value;ui.cancel(old.timer);bodyReads.delete(key);}ui.send({a:'conversation-dialogue',action:'body',conversation:c.id,revision:c.revision,id});op.timer=ui.defer(()=>{if(bodyReads.get(c.id)===op){bodyReads.delete(c.id);c.bodyReason='Saved draft read unknown; refresh to retry. Nothing was sent.';api.note(c.bodyReason,c.id);draw();}},30000);},
    bodyTrim:function(){
@@ -102,7 +119,7 @@ module.exports=execution.module('conversations',{
     // Q-A3/A5: a reply for a replaced window, or for a cursor the window no longer ends at, is obsolete
     if(op.gen!==view.gen)return;
     if(v.generation&&view.source&&v.generation!==view.source&&(view.items.length||view.end>0||view.anchor)){
-     view.gen++;view.stick=false;view.lost='Transcript source changed. Choose Latest to open the current source.';view.reason=view.lost;api.place(view.id);return;
+     view.gen++;view.items=[];view.start=view.end=null;if(!view.anchor?.board)view.anchor=null;view.stick=false;view.lost='Transcript source changed. Choose Latest to open the current source.';view.reason=view.lost;api.place(view.id);return;
     }
     const priorSize=view.size;view.source=v.generation||view.source;view.reason='';view.size=v.size;if(op.kind==='tail'){if(v.size>priorSize&&!view.stick)view.unseen=true;return;}
     // The user scroll owns the anchor; a late read must not sample an intermediate reflow.
@@ -121,13 +138,13 @@ module.exports=execution.module('conversations',{
    mark:function(el){
     const top=el.getBoundingClientRect().top;
     // Nested disclosures have overlapping rectangles: use the deepest visible paragraph/record, never binary search.
-    const nodes=[...el.querySelectorAll('.dialogue-transcript [data-key],[data-reading-key],[data-native-part]')].filter(n=>n.getClientRects().length&&![...n.querySelectorAll('[data-reading-key],[data-key],[data-native-part]')].some(c=>c.getClientRects().length));
+    const nodes=[...el.querySelectorAll('.dialogue-transcript [data-key],[data-reading-key],[data-native-part]')].filter(n=>n.checkVisibility()&&![...n.querySelectorAll('[data-reading-key],[data-key],[data-native-part]')].some(c=>c.checkVisibility()));
     let first=null,last=null;for(const node of nodes){const r=node.getBoundingClientRect();if(r.height<=0||r.bottom<=top)continue;if(!first)first=node;if(r.top<=top)last=node;else if(last)break;}
     const node=last||first;if(!node)return null;const page=node.closest('[data-read-before]');return {key:node.dataset.readingKey||node.dataset.key||node.closest('[data-key]').dataset.key,board:!!node.dataset.readingKey,...(page?{before:Number(page.dataset.readBefore),g:page.dataset.sourceGeneration}:{}),...(node.dataset.nativePart!==undefined?{part:Number(node.dataset.nativePart)}:{}),y:node.getBoundingClientRect().top-top};
    },
    hold:function(el,state=view){
     if(!state)return;
-    const a=state.anchor,record=a&&[...el.querySelectorAll('[data-reading-key],[data-key]')].find(n=>(a.board?n.dataset.readingKey:n.dataset.key)===a.key),node=a?.part!==undefined?record?.querySelector('[data-native-part="'+a.part+'"]')||record:record;
+    const a=state.anchor,record=a&&[...el.querySelectorAll('[data-reading-key],[data-key]')].filter(n=>n.checkVisibility()&&(a.board?n.dataset.readingKey:n.dataset.key)===a.key).at(-1),node=a?.part!==undefined?record?.querySelector('[data-native-part="'+a.part+'"]')||record:record;
     const delta=state.stick?el.scrollHeight-el.clientHeight-el.scrollTop:node?node.getBoundingClientRect().top-el.getBoundingClientRect().top-a.y:0;
     if(Math.abs(delta)>.5){correcting=true;el.scrollTop+=delta;window.requestAnimationFrame(()=>{correcting=false;});}return state.stick||!!node;
    },
@@ -280,7 +297,7 @@ module.exports=execution.module('conversations',{
     const was=l.reason,first=l.end===null;let fresh=[];
     if(r.value?.ended){l.ended=true;l.reason='';return true;}
     if(r.state!=='accepted')l.reason=r.reason||'Transcript unknown';
-    else if(r.value.generation&&l.source&&r.value.generation!==l.source&&(l.items.length||l.end>0||l.anchor)){l.reason='Transcript source changed. Choose Latest to open the current source.';l.lost=true;l.stick=false;}
+    else if(r.value.generation&&l.source&&r.value.generation!==l.source&&(l.items.length||l.end>0||l.anchor)){l.gen++;l.items=[];l.start=l.end=null;l.anchor=null;api.place(l.thread);l.reason='Transcript source changed. Choose Latest to open the current source.';l.lost=true;l.stick=false;}
     else {
      const v=r.value;l.source=v.generation||l.source;l.reason='';l.size=v.size;
      const have=new Set(l.items.map(api.key));fresh=v.items.filter(i=>!have.has(api.key(i)));
@@ -312,8 +329,8 @@ module.exports=execution.module('conversations',{
     return [h('p',{class:'meta'},'Recorded questions · '+total+' · Read only'),tail.length>0&&[h('p',{class:'meta'},'Latest confirmed answer · source refresh pending'),render({...t,history:tail,history_start:sourceTotal})],state.loading&&h('p',{role:'status'},'Reading recorded questions…'),state.reason&&h('p',{role:'status'},state.reason),state.reason&&h('button',{onClick:()=>{read(state.start);draw();}},'Retry history read'),state.rows&&render({...t,history:state.rows,history_start:state.start}),h('div',{class:'conversation-tools'},state.start>0&&h('button',{disabled:state.loading,onClick:()=>{read(state.start,true);draw();}},'Previous questions'),state.next<sourceTotal&&h('button',{disabled:state.loading,onClick:()=>{read(state.next);draw();}},'Next questions'))];
    },
    closed:function(r){const key=r.root+'#'+r.n+'@'+r.sha,thread=api.readingId(r),p=positions[thread];let t=closedViews.get(key);if(!t&&/^report:native:/.test(p?.key||'')&&Number.isSafeInteger(p.before)){t={scheduled:true,loading:true};closedViews.set(key,t);ui.defer(()=>{t.loading=false;api.closedRead(r.root,r.n,r.sha,p.before,true,false,thread);},0);}return h('details',{'data-view-key':'native:'+key},h('summary',null,'Task activity · native transcript'),h('p',{class:'meta'},'Read-only native transcript. Opening sends no input.'),!t&&h('button',{'data-c':'closed-open','data-root':r.root,'data-task':r.n,'data-sha':r.sha},'Open transcript'),t&&[t.loading&&h('p',{role:'status'},'Reading transcript…'),t.reason&&h('p',{role:'status'},'Transcript unavailable: '+t.reason),t.reason&&h('button',{'data-c':'closed-open','data-root':r.root,'data-task':r.n,'data-sha':r.sha,disabled:t.loading},'Latest transcript'),t.page&&[t.page.start>0&&h('button',{'data-c':'closed-earlier','data-root':r.root,'data-task':r.n,'data-sha':r.sha,disabled:t.loading},'Load earlier'),h('button',{'data-c':'closed-open','data-root':r.root,'data-task':r.n,'data-sha':r.sha,disabled:t.loading},'Latest messages'),t.page.items.map((item,i)=>api.nativeItem({...item,at:item.at??t.page.start,i:item.i??i},{user:'You',assistant:'Agent'}[item.role]||item.role,true,key)),!t.page.items.length&&h('p',{class:'meta'},'No messages in this chunk.')]]);},
-   closedRead:function(root,task,sha,before,restore=false,latest=false,thread='result:'+root+'/'+task+'@'+sha){const key=root+'#'+task+'@'+sha,prior=closedViews.get(key);if(prior?.loading)return;const t={...prior,root,task,sha,before,restore,latest,thread,id:api.id(),loading:true,reason:''};closedViews.delete(key);closedViews.set(key,t);while(closedViews.size>2){const old=closedViews.keys().next().value;ui.cancel(closedViews.get(old).timer);closedViews.delete(old);}ui.send({a:'completed',root,task,id:t.id,transcript:true,...(before==null?{}:{before})});t.timer=ui.defer(()=>api.closedReceive({root,id:t.id,reason:'No transcript response within 65 seconds'}),65000);draw();},
-   closedReceive:function(r){const t=[...closedViews.values()].find(t=>t.id===r.id&&t.root===r.root);if(!t?.loading)return;ui.cancel(t.timer);t.loading=false;t.reason=r.reason||r.transcript?.reason||'';if(r.transcript?.items){const p=positions[t.thread],parts=/^report:native:(\d+):(\d+)/.exec(p?.key||'');if(t.restore&&(p?.g&&r.transcript.generation!==p.g||parts&&!r.transcript.items.some(i=>i.at===Number(parts[1])&&i.i===Number(parts[2])))){t.reason='Saved native source position unavailable. Choose Latest to open the current source.';delete t.page;}else {t.page=r.transcript;if((t.latest||!t.restore&&t.before!==undefined)&&t.page.items.length){const last=t.latest?t.page.items.at(-1):t.page.items[0];api.place(t.thread,{key:'report:native:'+last.at+':'+last.i,y:0,before:t.page.end,g:t.page.generation});}}}let bytes=0;for(const [key,v]of [...closedViews].reverse()){bytes+=(v.page?.items||[]).reduce((n,i)=>n+api.bytes(i),0);if(bytes>2*1024*1024&&v!==t&&!v.loading)closedViews.delete(key);}draw();},
+   closedRead:function(root,task,sha,before,restore=false,latest=false,thread='result:'+root+'/'+task+'@'+sha){const key=root+'#'+task+'@'+sha,prior=closedViews.get(key);if(prior?.loading)return;const t={...prior,root,task,sha,before,restore,latest,thread,id:api.id(),loading:true,reason:''};closedViews.delete(key);closedViews.set(key,t);while(closedViews.size>1){const old=closedViews.keys().next().value;ui.cancel(closedViews.get(old).timer);closedViews.delete(old);}ui.send({a:'completed',root,task,id:t.id,transcript:true,...(before==null?{}:{before})});t.timer=ui.defer(()=>api.closedReceive({root,id:t.id,reason:'No transcript response within 65 seconds'}),65000);draw();},
+   closedReceive:function(r){const t=[...closedViews.values()].find(t=>t.id===r.id&&t.root===r.root);if(!t?.loading)return;ui.cancel(t.timer);t.loading=false;t.reason=r.reason||r.transcript?.reason||'';if(r.transcript?.items){const p=positions[t.thread],parts=/^report:native:(\d+):(\d+)/.exec(p?.key||'');if(t.restore&&(p?.g&&r.transcript.generation!==p.g||parts&&!r.transcript.items.some(i=>i.at===Number(parts[1])&&i.i===Number(parts[2])))){t.reason='Saved native source position unavailable. Choose Latest to open the current source.';delete t.page;}else {t.page=r.transcript;if((t.latest||!t.restore&&t.before!==undefined)&&t.page.items.length){const last=t.latest?t.page.items.at(-1):t.page.items[0];api.place(t.thread,{key:'report:native:'+last.at+':'+last.i,y:0,before:t.page.end,g:t.page.generation});}}}let bytes=0;for(const [key,v]of [...closedViews].reverse()){bytes+=(v.page?.items||[]).reduce((n,i)=>n+api.bytes(i),0);if(bytes>1024*1024&&v!==t&&!v.loading)closedViews.delete(key);}draw();},
    local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next,...(c.replyAck?{reply_ack:c.replyAck}:{})};},
    // #1773 A4: the host refuses fractional scroll offsets and navigation over 4096 bytes; whole pixels and the newest opened threads fit
    nav:function(){ui.cancel(navTimer);navTimer=ui.defer(()=>{const whole=Object.fromEntries(Object.entries(scrolls).map(([k,v])=>[k,Math.max(0,Math.round(v)||0)]));let navigation;
@@ -368,10 +385,10 @@ module.exports=execution.module('conversations',{
    },
    pollActivity:function(){
     if(activityRead||activityTimer||!menu.querySelector('.conversation-list'))return;
-    const candidates=items.filter(c=>api.launched(c)&&!!c.archived===(list==='archive')&&!c.deleted).sort((a,b)=>(activityChecks[a.id]||0)-(activityChecks[b.id]||0));
+    const visible=new Set([selected,...[...menu.querySelectorAll('.conversation-row[data-id]')].map(n=>n.dataset.id)]),candidates=items.filter(c=>visible.has(c.id)&&api.launched(c)&&!!c.archived===(list==='archive')&&!c.deleted).sort((a,b)=>(activityChecks[a.id]||0)-(activityChecks[b.id]||0));
     if(!candidates.length)return;const c=candidates[0],wait=(activityChecks[c.id]||0)+10000-Date.now();
     if(wait>0){activityTimer=ui.defer(()=>{activityTimer=null;api.pollActivity();},wait);return;}
-    const id=api.id();activityChecks[c.id]=Date.now();activityRead={id,conversation:c.id};
+    const id=api.id();delete activityChecks[c.id];activityChecks[c.id]=Date.now();while(Object.keys(activityChecks).length>24){const key=Object.keys(activityChecks)[0];delete activityChecks[key];delete activityTimes[key];}activityRead={id,conversation:c.id};
     ui.send({a:'conversation-dialogue',id,conversation:c.id,action:'activity'});
     ui.defer(()=>{if(activityRead?.id===id){activityTimes[c.id]={updated:null,reason:'Activity read receipt missing'};activityRead=null;draw();}},30000);
    },
@@ -395,13 +412,14 @@ module.exports=execution.module('conversations',{
     }
     if(s.dialogueReceipt){
      const r=s.dialogueReceipt;
-     if(r.action==='history'){const state=[...historyViews.values()].find(v=>v.id===r.id);if(!state?.loading)return true;ui.cancel(state.timer);state.loading=false;if(r.state==='accepted'&&(state.previous?r.value?.next===state.cursor:r.value?.start===state.cursor)&&r.value.revision===state.revision){state.rows=r.value.rows;state.start=r.value.start;state.next=r.value.next;state.reason=r.value.complete===false?'Recorded questions are from a partial observation.':'';}else state.reason=r.reason||'Recorded questions changed; refresh their source.';let bytes=0,sources=0;for(const v of [...historyViews.values()].reverse())if(v.rows){bytes+=new TextEncoder().encode(JSON.stringify(v.rows)).length;sources++;if(v!==state&&(bytes>2*1024*1024||sources>2))delete v.rows;}return true;}
+     if(r.action==='task-body'){const found=[...taskReads].find(([,op])=>op.id===r.id);if(!found)return true;const [key,op]=found;ui.cancel(op.timer);const t=snapshot.projects?.find(p=>p.root===op.root)?.tasks?.find(t=>t.n===op.n);if(t&&(t.revision!==op.revision||t.body_source_revision!==op.source)){taskReads.delete(key);return true;}if(r.state==='accepted'&&r.value?.revision===op.revision&&r.value.n===op.n){const {card,question,verdict,conversation,answered,history,history_tail,history_count,history_lazy,history_source_revision,history_source_count}=r.value,row={card,question,verdict,conversation,answered,history,history_tail,history_count,history_lazy,history_source_revision,history_source_count};taskBodies.set(key,{row,bytes:new TextEncoder().encode(JSON.stringify(row)).length});taskReads.delete(key);api.taskTrim();}else op.reason=r.reason||'Task source changed. Refresh before reading or answering.';return true;}
+     if(r.action==='history'){const state=[...historyViews.values()].find(v=>v.id===r.id);if(!state?.loading)return true;ui.cancel(state.timer);state.loading=false;if(r.state==='accepted'&&(state.previous?r.value?.next===state.cursor:r.value?.start===state.cursor)&&r.value.revision===state.revision){state.rows=r.value.rows;state.start=r.value.start;state.next=r.value.next;state.reason=r.value.complete===false?'Recorded questions are from a partial observation.':'';}else state.reason=r.reason||'Recorded questions changed; refresh their source.';let bytes=0,sources=0;for(const v of [...historyViews.values()].reverse())if(v.rows){bytes+=new TextEncoder().encode(JSON.stringify(v.rows)).length;sources++;if(v!==state&&(bytes>1024*1024||sources>1))delete v.rows;}return true;}
      if(r.action==='body'){const op=bodyReads.get(r.conversation),c=items.find(c=>c.id===r.conversation);if(!op||op.id!==r.id)return true;bodyReads.delete(r.conversation);ui.cancel(op.timer);if(!c||c.revision!==op.revision)return true;if(r.state==='accepted'&&r.value?.id===c.id&&r.value.revision===op.revision){Object.assign(c,r.value);bodyCache.delete(c.id);bodyCache.set(c.id,true);api.bodyTrim();}else {c.bodyReason=r.reason||'Saved draft unavailable; refresh to retry.';api.note(c.bodyReason,c.id);}return true;}
      if(r.action==='tasks'){
       const op=linkedReads[r.id];if(!op||r.conversation!==op.conversation)return true;delete linkedReads[r.id];if(linked?.id!==op.conversation)return true;
       if(!op.task)linked.busy=false;
       if(r.state==='accepted'){const rows=(r.value?.tasks||[]).filter(t=>t.conversation?.id===op.conversation);
-       linked.rows=op.task?[...linked.rows.filter(t=>t.n!==op.task),...rows].slice(-200):rows;linked.reason=op.task&&!rows.length?'Task #'+op.task+' has no matching originating-chat receipt; open the board or refresh.':'';if(!op.task){linked.page=op.page;linked.more=!!r.value.more;}
+       linked.rows=op.task?[...linked.rows.filter(t=>t.n!==op.task),...rows].slice(-ROWS):rows.slice(0,ROWS);linked.reason=op.task&&!rows.length?'Task #'+op.task+' has no matching originating-chat receipt; open the board or refresh.':'';if(!op.task){linked.page=op.page;linked.more=!!r.value.more;}
       }else linked.reason=r.reason||'Board read unavailable';return true;
      }
      if(r.id===activityRead?.id){sidebarProjection=null;const id=activityRead.conversation;activityRead=null;activityTimes[id]=r.state==='accepted'?r.value:{updated:null,reason:r.reason||'Activity unknown'};activityTimer=ui.defer(()=>{activityTimer=null;api.pollActivity();},100);return true;}
@@ -449,6 +467,7 @@ module.exports=execution.module('conversations',{
      const existing=new Map(items.map(c=>[c.id,c]));
      for(const n of incoming.items||[]){const c=existing.get(n.id);if(c&&n.revision<c.revision)continue;if(c){c.request=n.request;c.dialogue=n.dialogue;c.reply=n.reply;if(!pending&&!queue.some(o=>o.conversation===c.id)&&(c.saved??0)===(c.version??0)){if(n.lazy&&!c.lazy&&n.revision===c.revision){const {text,files,sent,lazy,...meta}=n;Object.assign(c,meta);if(sent)c.sent={...c.sent,...sent};}else Object.assign(c,n);}}else items.push({...n,version:0,saved:n.revision===0?-1:0});}
      const present=new Set((incoming.items||[]).map(n=>n.id));
+     if(incoming.complete!==true){let kept=0,bytes=0;items=items.filter(c=>{if(present.has(c.id)||c.id===selected||c.sending||c.reply||pending?.conversation===c.id||queue.some(o=>o.conversation===c.id)||(c.saved??0)!==(c.version??0))return true;const {text,files,sent,...meta}=c;bytes+=new TextEncoder().encode(JSON.stringify(meta)).length;return ++kept<=ROWS&&bytes<=(s.index_spare??16*1024*1024)/2;});}
      if(incoming.complete&&incoming.absence_complete!==false)for(const c of items){if(c.revision>0&&!present.has(c.id)){c.deleted=true;if(c.text===c.sent?.text)c.text='';c.sent=null;c.request=null;c.files=[];queue=queue.filter(o=>o.conversation!==c.id);if(pending?.conversation===c.id){pending=null;ui.cancel(timer);}if(failure?.conversation===c.id)failure=null;}}
     }
     if(!hydrated&&!incoming?.loading){hydrated=true;const nav=navigated?null:incoming?.navigation;if(nav){list=nav.list==='archive'?'archive':'recent';search=nav.search||'';resultFilter=['all','new','needs','reply','decision','activity','finished'].includes(nav.filter)?nav.filter:'all';selection=nav.selection||{};scrolls=nav.scrolls||{};selected=nav.selected;listOnly=nav.listOnly===true;}if(nav?.threads&&typeof nav.threads==='object'){
@@ -509,8 +528,8 @@ module.exports=execution.module('conversations',{
      const byRoot=new Map(projects.map(p=>[p.root,p])),owners=new Map(items.map(c=>[c.id,c]));
      const source=[...(extra.rows||[]).map(r=>({...r,thread:true})),...items.filter(c=>!c.deleted).map(c=>({id:c.id,root:c.sent?.root||c.request?.root||c.root,title:api.title(c),archived:c.archived,updated:c.updated,...extra.outcomes?.[c.id],meta:api.rowStatus(c)+((owner.detached||[]).includes(c.id)?' · Detached':''),unread:!!(extra.marks?.[c.id]||extra.outcomes?.[c.id]?.unread),marker:extra.outcomes?.[c.id]?.needsReply?'Needs reply':extra.outcomes?.[c.id]?.needsDecision?'Needs decision':extra.marks?.[c.id]}))];
      const query=r=>!search||[r.title,r.meta,r.root,r.id,byRoot.get(r.root)?.name,r.project].join(' ').toLowerCase().includes(search.toLowerCase());
-     for(const [mode]of MODES)modeCounts[mode]=source.filter(r=>!!r.archived===(list==='archive')&&api.matches(r,mode)&&query(r)).length;
-     const candidate=source.find(r=>r.id===selected),outside=candidate&&(!api.matches(candidate)||!!candidate.archived!==(list==='archive')||!query(candidate));if(outside&&!scopeReturn)scopeReturn={...api.context(),selected:null};
+     for(const [mode]of MODES)modeCounts[mode]=source.filter(r=>!r.linkedAlias&&!!r.archived===(list==='archive')&&api.matches(r,mode)&&query(r)).length;
+     const candidate=source.find(r=>r.id===selected),outside=candidate&&(candidate.linkedAlias||!api.matches(candidate)||!!candidate.archived!==(list==='archive')||!query(candidate));if(outside&&!scopeReturn)scopeReturn={...api.context(),selected:null};
      const buckets=new Map(),add=(id,name,r)=>{if(!buckets.has(id))buckets.set(id,{id,name,total:0,at:-1,rows:[]});const g=buckets.get(id);g.total++;g.at=Math.max(g.at,r.activityMs??-1);if(query(r)||r.id===selected)g.rows.push(r);};
      for(const raw of source){const external=outside&&scopeReturn&&raw.id===selected;if(!external&&(!!raw.archived!==(list==='archive')||!api.matches(raw)))continue;
       const p=byRoot.get(raw.root),pin=!external&&sidebar.pins.includes(raw.id),activity=Object.hasOwn(activityTimes,raw.id)?activityTimes[raw.id].updated:raw.updated,group=external?'linked':list==='archive'?'archive':pin?'pinned':p?JSON.stringify([p.root,p.issues||'']):'other';
@@ -600,6 +619,9 @@ module.exports=execution.module('conversations',{
     if(action==='body-retry'&&c){delete c.bodyReason;api.bodyRead(c);draw();}
     else if(action==='list-page'){const key=JSON.stringify([resultFilter,completed,search,list]);resultPages.delete(key);resultPages.set(key,{start:Number(b.dataset.start),size:PAGE});draw();}
     else if(action==='closed-open'||action==='closed-earlier'){const r=closedViews.get(b.dataset.root+'#'+b.dataset.task+'@'+b.dataset.sha);api.closedRead(b.dataset.root,Number(b.dataset.task),b.dataset.sha,action==='closed-earlier'?r?.page?.start:undefined,false,action==='closed-open'&&!!(r?.reason||r?.page));}
+    else if(action==='task-body-retry'){for(const [key,op]of taskReads)if(op.root===b.dataset.root&&op.n===Number(b.dataset.task)){ui.cancel(op.timer);taskReads.delete(key);}draw();}
+    else if(action==='linked-select'){linked.current=Number(b.dataset.task);draw();}
+    else if(action==='linked-page'){linked.start=Number(b.dataset.start);linked.current=null;draw();}
     else if(action==='linked-refresh'){linked.checked.clear();api.linkedRead(selected);}
     else if(action==='linked-older')api.linkedRead(selected,undefined,linked.page+1);
     else if(action==='linked-newer')api.linkedRead(selected,undefined,Math.max(1,linked.page-1));
@@ -692,6 +714,7 @@ module.exports=execution.module('conversations',{
     }
    },
    afterDraw:function(){
+    api.taskTrim();
     if(view&&view.id!==selected){ui.cancel(pollTimer);pollTimer=null;for(const op of Object.values(reads))ui.cancel(op.timer);reads={};view=null;}
     if(!menu.querySelector('.worker-live')?.checkVisibility())api.workerStop();
     api.pollActivity();api.listEdge();
@@ -705,7 +728,7 @@ module.exports=execution.module('conversations',{
     const c=api.current(),input=menu.querySelector('[data-c-field=text]'),record=menu.querySelector('.conversation-record');const rows=menu.querySelector('.conversation-rows');if(focusSearch){focusSearch=false;menu.querySelector('[data-c-field=search]')?.focus();}if(listAnchor&&rows){const a=listAnchor;listAnchor=null;const n=[...rows.querySelectorAll('.conversation-row')].find(n=>(n.dataset.thread||n.dataset.id)===a.id);if(n)rows.scrollTop+=n.getBoundingClientRect().top-rows.getBoundingClientRect().top-a.y;}else if(rows&&rows.scrollTop!==scrolls[list]&&changed)rows.scrollTop=scrolls[list]||0;if(record&&c)record.scrollTop=c.scroll||0;if(focusDraft&&input&&!input.disabled){focusDraft=false;const row=menu.querySelector('[data-c=select][data-id="'+c.id+'"]');if(row?.checkVisibility()){row.scrollIntoView({block:'nearest'});scrolls[list]=rows.scrollTop;api.nav();}input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}
     if(changed&&identity&&focuses[identity]&&!focusDraft){const f=focuses[identity],target=[...detail.parentElement.querySelectorAll(f.tag)].filter(n=>JSON.stringify(n.dataset)===f.key)[f.index];if(target?.checkVisibility()&&!target.disabled)target.focus({preventScroll:true});}
     if(log&&open){if(api.trim(detail))draw();else api.edge(detail);}},
-   bounds:function(){const resident=live||view;return {listRows:menu.querySelectorAll('.conversation-row').length,indexRows:items.length+sidebarItems.filter(r=>r.thread).length,queryKeys:resultPages.size,nativeRecords:(view?.items.length||0)+(live?.items.length||0),nativeBytes:[...(view?.items||[]),...(live?.items||[])].reduce((n,i)=>n+api.bytes(i),0),anchor:resident?.anchor||null,bodySources:bodyCache.size,bodyBytes:[...bodyCache.keys()].reduce((n,id)=>{const c=items.find(c=>c.id===id);return n+(c?new TextEncoder().encode(JSON.stringify(api.local(c))+JSON.stringify(c.sent||'')).length:0);},0),closedSources:closedViews.size,historyKeys:historyViews.size,historyRecords:[...historyViews.values()].reduce((n,v)=>n+(v.rows?.length||0),0),historyBytes:[...historyViews.values()].reduce((n,v)=>n+new TextEncoder().encode(JSON.stringify(v.rows||[])).length,0),textPages:textPages.size,bodyReads:bodyReads.size};},
+   bounds:function(){const resident=live||view;return {listRows:menu.querySelectorAll('.conversation-row').length,indexRows:items.length+sidebarItems.filter(r=>r.thread).length,queryKeys:resultPages.size,nativeRecords:(view?.items.length||0)+(live?.items.length||0),nativeBytes:[...(view?.items||[]),...(live?.items||[])].reduce((n,i)=>n+api.bytes(i),0),anchor:resident?.anchor||null,bodySources:bodyCache.size,bodyBytes:[...bodyCache.keys()].reduce((n,id)=>{const c=items.find(c=>c.id===id);return n+(c?new TextEncoder().encode(JSON.stringify(api.local(c))+JSON.stringify(c.sent||'')).length:0);},0),closedSources:closedViews.size,historyKeys:historyViews.size,historyRecords:[...historyViews.values()].reduce((n,v)=>n+(v.rows?.length||0),0),historyBytes:[...historyViews.values()].reduce((n,v)=>n+new TextEncoder().encode(JSON.stringify(v.rows||[])).length,0),textPages:textPages.size,bodyReads:bodyReads.size,taskBodies:taskBodies.size,taskBytes:[...taskBodies.values()].reduce((n,v)=>n+v.bytes,0),taskReads:taskReads.size,linkedRows:linked?.total||0,linkedKnown:linked?.known.size||0,linkedChecked:linked?.checked.size||0};},
    flush:function(){ui.cancel(saveTimer);const c=api.current();if(c&&!c.lazy)api.save(c);api.nav();},
   });return api;
  }

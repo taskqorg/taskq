@@ -664,8 +664,37 @@ fn project(install: &Path, root: &str) -> Value {
 fn history_header(task:&mut Value) {
     if !task["revision"].is_number() {return;}
     let rows=match task["history"].take(){Value::Array(rows)=>rows,_=>Vec::new()};let prefix=task["history_source_count"].as_u64().unwrap_or(rows.len() as u64) as usize;
-    task["history_count"]=json!(rows.len());task["history_lazy"]=json!(true);let tail=rows.into_iter().skip(prefix).collect::<Vec<_>>();
+    let thin=task["history_thin"].take()==true;task.as_object_mut().map(|r|r.remove("history_thin"));
+    task["history_count"]=json!(if thin{prefix+rows.len()}else{rows.len()});task["history_lazy"]=json!(true);let tail=rows.into_iter().skip(if thin{0}else{prefix}).collect::<Vec<_>>();
     if tail.is_empty(){task.as_object_mut().map(|t|t.remove("history"));}else{task["history_tail"]=json!(true);task["history"]=json!(tail);}
+}
+
+// Only the reader projection drops bodies; Pending, Home and OS delivery retain their canonical source rows.
+fn workspace_snapshot(st:&Value)->Value {
+    let mut out=serde_json::Map::new();
+    for (key,value) in st.as_object().into_iter().flatten(){if !["projects","workspace_local"].contains(&key.as_str()){out.insert(key.clone(),value.clone());}}
+    out.insert("projects".into(),json!(st["projects"].as_array().into_iter().flatten().map(|p|{
+        let mut header=serde_json::Map::new();for(key,value)in p.as_object().into_iter().flatten(){if key!="tasks"{header.insert(key.clone(),value.clone());}}
+        header.insert("tasks".into(),json!(p["tasks"].as_array().into_iter().flatten().map(crate::conversations::task_header).collect::<Vec<_>>()));Value::Object(header)
+    }).collect::<Vec<_>>()));let mut out=Value::Object(out);
+    if out.to_string().len()>16*1024*1024 {
+        let reason="Conversation snapshot exceeds 16 MiB; coverage unknown; source and drafts kept";
+        out=json!({"platform":st["platform"],"version":st["version"],"now":st["now"],"font":st["font"],"theme":st["theme"],"palette":st["palette"],"workspace_navigation":st["workspace_navigation"],"display":st["display"],
+            "projects":st["projects"].as_array().into_iter().flatten().map(|p|json!({"root":p["root"],"name":p["name"],"issues":p["issues"],"alive":false,"complete":false,"error":reason,"tasks":[],"events":[],"reports":{"complete":false,"reports":[],"history":[],"reason":reason}})).collect::<Vec<_>>(),
+            "messages":{"entries":[],"complete":false,"reason":reason},"conversations":{"items":[],"complete":false,"absence_complete":false,"reason":reason},"ai":{"runtime":{"available":false,"reason":reason}}});
+        if out.to_string().len()>16*1024*1024 {out=json!({"projects":[],"messages":{"entries":[],"complete":false,"reason":reason},"conversations":{"items":[],"complete":false,"absence_complete":false,"reason":reason},"ai":{"runtime":{"available":false,"reason":reason}}});}
+    }out
+}
+
+fn task_body_receipt(sync:&crate::pending::Pending,receipt:&mut Value) {
+    if receipt["action"]!="task-body"||receipt["state"]!="accepted"{return;}
+    let expected=receipt["value"]["expected_revision"].clone();let mut ps=vec![receipt["value"].take()];
+    let locals=ps[0]["workspace_local"].take();
+    for t in ps[0]["tasks"].as_array_mut().into_iter().flatten(){if t["history_thin"]!=true{t["history_source_revision"]=t["revision"].clone();t["history_source_count"]=json!(t["history"].as_array().map_or(0,Vec::len));}}
+    sync.apply(&mut ps);
+    let task=ps[0]["tasks"].as_array_mut().and_then(|a|a.first_mut());
+    if let Some(t)=task.filter(|t|t["revision"]==expected){history_header(t);if t.to_string().len()>16*1024*1024{receipt["state"]=json!("unknown");receipt["reason"]=json!("Task card exceeds the 16 MiB source ceiling; open its board");return;}t["body_lazy"]=json!(false);receipt["value"]=t.take();receipt["workspace_local"]=locals;}
+    else{receipt["state"]=json!("unknown");receipt["reason"]=json!("Task revision changed; refresh before reading its body");}
 }
 
 fn bad_report_reason(s:&Value,live:bool)->Option<&str> {
@@ -930,10 +959,15 @@ fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
 }
 
 /// §7 Reports use the owner CLI, the registered project and its board token. Never trust task data as authority.
-fn queued_reports(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
+fn queued_reports(install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     let action=m["action"].as_str().ok_or("report action missing")?;
     if action=="list" {return crate::reports::cached_list(root,m["page"].as_u64().unwrap_or(1) as usize,None);}
-    if action=="open" {return crate::reports::cached_open(root,m["n"].as_u64().ok_or("report task missing")?,m["sha"].as_str().ok_or("report SHA missing")?);}
+    if action=="open" {
+        let n=m["n"].as_u64().ok_or("report task missing")?;let sha=m["sha"].as_str().ok_or("report SHA missing")?;
+        let mut reply=crate::reports::cached_open(root,n,sha)?;
+        let locals=crate::conversations::preferences(install)?;
+        if let Some((board,_))=reply["report"]["url"].as_str().and_then(|url|url.rsplit_once('/')) {let prefix=format!("result:{board}#{n}@{sha}:");reply["workspace_local"]=json!(locals["answers"].as_object().into_iter().flatten().filter(|(key,_)|key.starts_with(&prefix)).map(|(k,v)|(k.clone(),v.clone())).collect::<serde_json::Map<_,_>>());}return Ok(reply);
+    }
     if !["read","accept","followup","reopen","later","drop","make"].contains(&action) {return Err("unsupported result action".into());}
     let n=m["n"].as_u64().filter(|n|*n>0).ok_or("report task missing")?;
     let mut command=owner_command(root)?;
@@ -1497,7 +1531,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let mut comparable=st.clone();comparable.as_object_mut().expect("tray snapshot object").remove("now");
                 let sig=comparable.to_string();
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
-                    if sig!=workspace_shown && !calls.failed && calls.idle() {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
+                    if sig!=workspace_shown && !calls.failed && calls.idle() {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&st)),TICK,&proxy,calls);}
                 }
                 if let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) {
                     if sig!=settings_shown && !calls.failed && calls.idle() {settings_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
@@ -1506,7 +1540,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     if sig!=views_shown && !calls.failed && calls.idle() {views_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
                 }
                 detached_shown.retain(|id,_|detached.contains_key(id));
-                for (id,(_,wv,calls)) in detached.iter_mut(){if take_due(detached_shown.entry(id.clone()).or_default(),&sig,!calls.failed && calls.idle()){web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}}
+                for (id,(_,wv,calls)) in detached.iter_mut(){if take_due(detached_shown.entry(id.clone()).or_default(),&sig,!calls.failed && calls.idle()){web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&st)),TICK,&proxy,calls);}}
                 if sig != shown && web.idle() {
                     shown = sig;
                     if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,&mut web);}
@@ -1585,7 +1619,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 web.finish(id,result);
                 if web.pending.is_empty() && let Some(next)=shot_wait.take() {let _=proxy.send_event(next);}
             }
-            Event::UserEvent(Ev::Dialogue(surface,receipt)) => {
+            Event::UserEvent(Ev::Dialogue(surface,mut receipt)) => {
+                task_body_receipt(&sync,&mut receipt);
                 let script=format!("taskq.receive({})",json!({"dialogueReceipt":receipt}));
                 if surface=="main" {if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}}
                 else if let Some((_,wv,calls))=detached.get_mut(&surface) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
@@ -1626,7 +1661,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){
                         let owner=json!({"workspaceOwner":{"id":"main","detached":detached.keys().collect::<Vec<_>>()}});
                         web_eval(wv,&format!("taskq.receive({owner})"),"tray.web.receive",&proxy,calls);
-                        if action=="return" {web_eval(wv,&format!("taskq.receive({});taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync),json!({"open":{"page":"conversations"}})),"tray.web.receive",&proxy,calls);let select=json!({"workspaceOwner":{"id":"main","select":id,"detached":detached.keys().collect::<Vec<_>>()}});web_eval(wv,&format!("taskq.receive({select})"),"tray.web.receive",&proxy,calls);}
+                        if action=="return" {web_eval(wv,&format!("taskq.receive({});taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync)),json!({"open":{"page":"conversations"}})),"tray.web.receive",&proxy,calls);let select=json!({"workspaceOwner":{"id":"main","select":id,"detached":detached.keys().collect::<Vec<_>>()}});web_eval(wv,&format!("taskq.receive({select})"),"tray.web.receive",&proxy,calls);}
                         else {let r=json!({"conversationReceipt":{"id":input["id"],"state":"accepted","snapshot":crate::conversations::summary(&install)}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
                     }
                     return;
@@ -1648,7 +1683,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     Some("ready") | Some("refresh") => {
                         let _=proxy.send_event(Ev::Sync);
                         calls.finish(0,"ok");
-                        web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);
+                        web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);
                         if surface=="main" && !workspace_open.is_null() && !workspace_open["page"].is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
                         let own=if surface=="main" {json!({"id":"main","detached":detached_ids})}else{json!({"id":surface,"conversation":surface,"detached":[]})};
                         web_eval(wv,&format!("taskq.receive({})",json!({"workspacePin":w.is_always_on_top(),"workspaceMaximized":w.is_maximized()})),"tray.web.receive",&proxy,calls);
@@ -1693,7 +1728,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let keys:Vec<String>=m["keys"].as_array().into_iter().flatten().filter_map(|v|v.as_str().map(String::from)).collect();
                         let mut receipt=crate::messages::act(&install,&ps,m["action"].as_str().unwrap_or(""),&keys);receipt["id"]=m["id"].clone();
                         web_eval(wv,&format!("taskq.receive({})",json!({"messageReceipt":receipt})),"tray.web.receive",&proxy,calls);
-                        web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);
+                        web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);
                         push(&mut web,&ui,&state(&install,&settings,dark,None,&adding,&mut sync));
                     }
                     Some("workspace-set") => {
@@ -1720,7 +1755,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let result=ai(&install,a,&m);
                         let receipt=if a=="ai-send" {json!({"aiReceipt":{"id":m["id"],"state":if result.is_ok(){"accepted"}else{"unknown"},"reason":result.err().unwrap_or_else(||"Request saved; native launch is separate".into())}})}else{json!({"workspaceLocalError":result.err()})};
                         web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);
-                        if a=="ai-send" {web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);}
+                        if a=="ai-send" {web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);}
                     }
                     // Workspace reviews use the same queues, native picker and receipt adapters as the tray.
                     Some(a) if workspace_operation(a) => {let _=proxy.send_event(Ev::Ipc(message));}
@@ -2068,7 +2103,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if matches!(adding["state"].as_str(),Some("picking dismissed"|"installing dismissed"))&&add_generation==generation.wrapping_add(1) {adding=Value::Null;push(&mut web,&ui,&state(&install,&settings,dark,None,&adding,&mut sync));return;}
                 if !apply_added(&mut adding,add_generation,generation,v) {return;}
                 push(&mut web,&ui, &state(&install, &settings, dark, None, &adding, &mut sync));
-                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);}
+                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);}
                 if !adding.is_null() && let Some((w,_))=&workspace {
                     w.set_visible(true);
                     w.set_focus();
@@ -4190,6 +4225,23 @@ mod tests {
         assert_ne!(before[0]["tasks"][0]["history_count"],3,"before: the overlay's answered record was not in the projected total");
         let mut after=source;after[0]["tasks"][0]["history_source_count"]=json!(2);after[0]["tasks"][0]["history_source_revision"]=json!(30);pending.apply(after.as_array_mut().unwrap());history_header(&mut after[0]["tasks"][0]);
         let row=&after[0]["tasks"][0];assert_eq!(row["history_count"],3);assert_eq!(row["history_source_revision"],30);assert_eq!(row["history_source_count"],2);assert_eq!(row["history_tail"],true);assert_eq!(row["history"].as_array().unwrap().len(),1);assert_eq!(row["history"][0]["question"]["text"],"Current");assert_eq!(row["history"][0]["answered"]["text"],"Ship");
+        let thin=json!({"n":7,"state":"ask","revision":30,"question":{"text":"Current"},"history_source_revision":30,"history_source_count":2,"history_thin":true});let mut receipt=json!({"action":"task-body","state":"accepted","value":{"root":"invented","expected_revision":31,"tasks":[thin]}});task_body_receipt(&pending,&mut receipt);assert_eq!(receipt["value"]["history_count"],3);assert_eq!(receipt["value"]["history_source_revision"],30);assert_eq!(receipt["value"]["history"].as_array().unwrap().len(),1);assert_eq!(receipt["value"]["history"][0]["question"]["text"],"Current");assert_eq!(receipt["value"]["history"][0]["answered"]["text"],"Ship");
+    }
+
+    #[test]
+    fn conversation_task_headers_keep_counts_and_pending_source_without_eager_bodies() {
+        let card="Problem: Invented question\n1. Ship ★\n2. Wait";
+        let rows=(1..=10_000).map(|n|json!({"n":n,"title":format!("Task {n}"),"state":"ask","revision":30,"card":card,"question":crate::snapshot::question(card),"conversation":{"id":"invented-owner","brief":"Invented body ".repeat(500),"verdict":"Earlier result"},"history":[]})).collect::<Vec<_>>();
+        let source=json!({"projects":[{"root":"invented","tasks":rows,"complete":true}],"workspace_local":{"unrelated":{"draft":"Invented draft ".repeat(1000)}},"display":{"open":10000}});
+        let before=source.to_string().len();let after=workspace_snapshot(&source);
+        assert!(before>60_000_000,"before: the old workspace envelope transfers every brief");assert!(after.to_string().len()<3_000_000,"after: lightweight metadata, independent of brief length");
+        assert_eq!(after["display"],source["display"]);assert_eq!(after["projects"][0]["tasks"].as_array().unwrap().len(),10_000);assert!(after["workspace_local"].is_null());
+        assert!(after["projects"][0]["tasks"][0]["question"].is_null());assert_eq!(source["projects"][0]["tasks"][0]["question"]["text"],card,"canonical Pending/Home/OS source is not thinned");
+        let oversized=json!({"projects":[{"root":"invented","name":"Invented","tasks":[{"n":1,"title":"x".repeat(17*1024*1024)}]}],"display":{"open":1}});let refused=workspace_snapshot(&oversized);assert!(refused.to_string().len()<16*1024*1024);assert_eq!(refused["conversations"]["complete"],false);assert_eq!(refused["conversations"]["absence_complete"],false);assert_eq!(refused["display"],oversized["display"]);
+        let mut pending=crate::pending::Pending::default();pending.begin(&json!({"root":"invented","op":{"id":"answer","task":1,"revision":30,"text":"Ship"}}),&source["projects"]);
+        assert!(pending.receipt(&json!({"answerReceipt":{"root":"invented","id":"answer","state":"accepted"},"sync":{"state":"doing","revision":31,"answered":{"by":"owner","text":"Ship"}}})));
+        let body=source["projects"][0]["tasks"][0].clone();let mut receipt=json!({"action":"task-body","state":"accepted","value":{"root":"invented","expected_revision":31,"tasks":[body],"workspace_local":{"invented#1":{"draft":"Kept"}}}});
+        task_body_receipt(&pending,&mut receipt);assert_eq!(receipt["value"]["revision"],31);assert_eq!(receipt["value"]["state"],"doing");assert!(receipt["value"]["question"].is_null());assert_eq!(receipt["value"]["history"][0]["question"]["text"],card);assert_eq!(receipt["workspace_local"]["invented#1"]["draft"],"Kept");
     }
 
     // Chain: #1712 events file -> project() -> Hour summary. Risk: a second ask of one attempt or a close in the
