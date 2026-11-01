@@ -12,27 +12,23 @@ const fx=require('./fixtures/task-workspace.json'),out=process.env.TASKQ_NOTIFIC
   assert.equal(await page.locator('.report-row,.reports-section,.notification-row').count(),0,'Home keeps work without result/event rows');
   assert.equal(await page.locator('[data-card]').count(),2);assert.equal(await page.locator('.question-shortcut').count(),1);await fit();await shot('home');
   await page.getByRole('button',{name:'Notifications · 12 unread',exact:true}).click();
-  assert.equal(await page.locator('[data-notification-group]').count(),1);assert.equal(await page.locator('.notification-row:visible').count(),2);await fit();await shot('panel');
-  assert.equal(await page.evaluate(()=>notificationSent.filter(m=>m.a==='reports'||m.a==='notification-state').length),0,'Panel/group navigation acknowledges nothing');
-  await page.locator('[data-notification-group]>summary').click();assert.equal(await page.locator('.notification-row:visible').count(),12);await fit();
-  await page.locator('[data-notification-group] .notification-row').first().click();await page.locator('.report-card').waitFor();
-  assert.match(await page.locator('.report-card').innerText(),/Delivered series item 10/);await fit();await shot('result');
-  await page.locator('[data-report=back]').click();assert.match(await page.locator('[data-notification-group]>summary').innerText(),/10 events · 9 unread/);
-  await page.evaluate(()=>{notificationDelayed=true;notificationFail=true;});await page.getByRole('button',{name:'Mark all read',exact:true}).click();
-  await page.evaluate(()=>{while(notificationReplies.length)notificationReplies.shift()();});
-  await page.getByText('Notification state was not saved; previous state retained',{exact:true}).waitFor();
-  assert.equal(await page.locator('[data-notification-group]').count(),1,'Failed read keeps group');
-  await page.evaluate(()=>{notificationFail=false;notificationDelayed=true;});await page.getByRole('button',{name:'Mark all read',exact:true}).click();
-  // Arrives while result read receipts are still in flight: bulk read binds only its displayed members.
-  await page.evaluate(()=>{const s=notificationFixture;s.projects[0].events.push([s.now+1,'failed','new',21]);taskq.receive({...s,page:undefined});while(notificationReplies.length)notificationReplies.shift()();notificationDelayed=false;});
-  await page.getByRole('button',{name:'Notifications · 1 unread',exact:true}).waitFor();
-  await page.getByRole('button',{name:'Clear read',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.notification-row').length===1);
-  assert.match(await page.locator('.notification-row').innerText(),/Unread · Failed/);await fit();await shot('cleared');
-  // Native persisted marker projection is restored independently of the navigation state.
-  await page.evaluate(()=>taskq.receive({...notificationFixture,page:'home'}));assert.equal(await page.locator('.question-shortcut').count(),1,'Read/clear cannot answer or age out question');assert.equal(await page.locator('[data-card]').count(),2);
-  await page.locator('.question-shortcut').click();assert.equal(await page.evaluate(()=>notificationSent.filter(m=>m.a==='workspace').at(-1).open.task),20,'Find what needs me reaches exact question');
-  await page.locator('[data-route=notifications]').click();await page.locator('.notification-row').click();await page.locator('[data-card$="/21"]').waitFor();
-  assert.equal(await page.evaluate(()=>notificationSent.filter(m=>m.a==='answer').length),0);
+  const target=await page.evaluate(()=>notificationSent.filter(m=>m.a==='workspace').at(-1).open);assert.equal(target.page,'conversations');assert.equal(target.filter,'new');assert.equal(await page.locator('.notification-panel,.notification-row').count(),0,'M14: menu has no independent news reader');
+  const work=await browser.newPage({viewport:{width:1000,height:750}});work.on('pageerror',e=>errors.push(e.message));await work.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await work.addScriptTag({content:fs.readFileSync('tests/fixtures/notifications-shots.js','utf8')});
+  await work.evaluate(({s,target})=>{taskqNotificationsInstall(s);taskq.receive({open:target});},{s:{...fx.state,theme,font},target});
+  assert.equal(await work.locator('[data-notification-group]').count(),1);assert.equal(await work.locator('.conversation-row:visible').count(),2,'numbered series starts collapsed; current question and ended task remain individual');
+  assert.equal(await work.evaluate(()=>notificationSent.filter(m=>m.a==='reports'||m.a==='notification-state').length),0,'opening New/group acknowledges nothing');
+  await work.locator('[data-notification-group]>summary').click();assert.equal(await work.locator('.conversation-row:visible').count(),12);
+  await work.locator('[data-notification-group] [data-report=open]').first().click();await work.locator('.report-card').waitFor();assert.match(await work.locator('.report-card').innerText(),/Delivered series item 10/);assert.equal(await work.locator('[data-result-card=decision]').count(),0,'ordinary completion has no mandatory Accept');
+  await work.evaluate(()=>{notificationDelayed=true;notificationFail=true;});await work.getByRole('button',{name:'Mark all read',exact:true}).click();await work.evaluate(()=>{while(notificationReplies.length)notificationReplies.shift()();});
+  await work.getByText('Notification state was not saved; previous state retained',{exact:true}).waitFor();assert.equal(await work.locator('[data-notification-group]').count(),1,'failed reads retain history');
+  await work.evaluate(()=>{notificationFail=false;notificationDelayed=true;});await work.getByRole('button',{name:'Mark all read',exact:true}).click();
+  await work.evaluate(()=>{const s=notificationFixture;s.projects[0].events.push([s.now+1,'failed','new',22]);taskq.receive({...s,page:undefined});while(notificationReplies.length)notificationReplies.shift()();notificationDelayed=false;});
+  await work.getByRole('button',{name:'Clear read',exact:true}).click();
+  const cleared=await work.evaluate(()=>notificationFixture);await page.evaluate(s=>taskq.receive({...s,page:undefined}),cleared);
+  await page.getByRole('button',{name:'Notifications · 1 unread',exact:true}).waitFor();assert.equal(await page.locator('.question-shortcut').count(),1,'read/clear cannot answer the current question');
+  assert.equal(await work.locator('.thread-events [data-event]').count(),0,'clearing hides read news, not the selected result');assert(await work.locator('.report-card').isVisible());
+  await page.locator('.question-shortcut').click();assert.equal(await page.evaluate(()=>notificationSent.filter(m=>m.a==='workspace').at(-1).open.task),20,'question badge reaches its exact task');
+  assert.equal(await work.evaluate(()=>notificationSent.filter(m=>m.a==='answer').length),0);await work.close();
   // Large count and partial observation: numeric badge remains numeric; exact accessible count survives the cap.
   await page.evaluate(()=>{const s=notificationFixture,p=s.projects[0];p.events=Array.from({length:105},(_,i)=>[s.now+i,'gone','bulk-'+i,21]);p.reports.reports=[];s.notify.inbox={};taskq.receive({...s,page:'home'});});
   assert.equal(await page.locator('.notifications-entry .badge').textContent(),'99+');assert.equal(await page.locator('.notifications-entry').getAttribute('aria-label'),'Notifications · 105 unread');

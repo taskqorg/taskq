@@ -1,0 +1,64 @@
+// Chain: Product / M14 / RC1-RC7 / CS1-CS6 / UC-09/11/14/15 (#2095).
+// Risk: an entry opens the wrong reader/scope, navigation escapes, or a report switch destroys its reading/draft context.
+// Real production bundles; invented board/native receipts, never a live request.
+const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
+const fx=require('./fixtures/task-workspace.json'),board='https://example.org/taskq/issues',other='https://example.org/coreq/issues',now=Math.floor(Date.now()/1000),sha='a'.repeat(40);
+const report=n=>({n,sha,title:'Report '+n+' long title '.repeat(12),kind:'report',url:board+'/'+n,closed:now-n,read:true,decision:'none',visible:true,body:'# Question\n\nHow to retain reading?\n\n# Recommendation\n\nKeep the exact source.\n\n# Findings\n\n'+Array.from({length:70},(_,i)=>'Passage '+i+': '+('Readable source content. '.repeat(12))).join('\n\n'),tasks:[]});
+const ordinary={...report(2091),kind:'task',read:false,title:'Ordinary completed task',body:'Changed: Delivered.\nChecks: source -- passed\nOpen: none'};
+const state={...fx.state,font:18,theme:'dark',projects:[{...fx.state.projects[0],root:'fixture',name:'taskq',issues:board,board_kind:'github',alive:true,complete:true,tasks:[{n:256,title:'Active reviewer',state:'review',role:'reviewer',attempt:42,revision:42,runtime:'claude',session:'claude:fixture mac',host:'mac',controls:[]}],reports:{complete:true,reports:[report(2022),report(2021),ordinary,{...report(2000),decision:'later',later_until:'2099-01-01T12:00:00Z'}],history:[]},events:[[now,'ask','historical-question',259]]},{root:'other',name:'coreq',issues:other,board_kind:'github',alive:true,complete:true,tasks:[],reports:{complete:true,reports:[{...ordinary,n:100,title:'Other project result',url:other+'/100',closed:now+1,read:true}]}}],conversations:{complete:true,items:[]},messages:{complete:true,entries:[]},notify:{inbox:{}},ai:{history:[],runtime:{id:'claude',available:true}}};
+(async()=>{const browser=await chromium.launch(require('./browser.cjs')());try{
+ const page=await browser.newPage({viewport:{width:1000,height:700}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
+ await page.evaluate(s=>{window.fixture=s;window.sent=[];window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='reports'&&m.action==='read'){const r=fixture.projects.find(p=>p.root===m.root).reports.reports.find(r=>r.n===m.n);r.read=true;queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,report:{...r}}}));}}};taskq.receive(s);},state);
+ const view=async name=>{await page.locator('.conversation-view').evaluateAll(es=>es.forEach(e=>e.open=true));await page.locator('[data-c=result-filter][data-filter='+name+']').click();};
+ const out=process.env.TASKQ_EVIDENCE_2095,shot=async name=>{if(out){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:out+'/'+name+'.png'});}};
+ const open=async n=>{const list=page.locator('.conversation-list');if(!await list.isVisible())await page.locator('[data-c=list]').click();await page.locator('[data-report=open][data-n="'+n+'"]').click();};
+ await view('new');await shot('new');await view('all');await open(2091);
+ assert.equal(await page.locator('[data-result-card=decision]').count(),0,'ordinary completion never requires Accept');
+ assert.doesNotMatch(await page.locator('.report-card').innerText(),/Decision open/);await shot('finished');
+ await view('decision');await open(2022);
+ assert.equal(await page.locator('[data-result-card=make]').count(),0,'zero proposals omit Make tasks');
+ assert(!await page.locator('.report-card').evaluate(e=>[...e.childNodes].some(n=>n.nodeType===3&&n.textContent==='0')),'no stray numeric zero');
+ assert.equal(await page.locator('[data-report=open][data-n="2000"]').count(),0,'future Later remains inspectable outside due attention');
+ await page.locator('[data-report=previous]').click();
+ assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-n'),'2021','Previous uses filtered sidebar order');
+ await open(2022);
+ const full=page.locator('.report-card details').filter({has:page.getByText('Full report',{exact:true})});await full.locator('summary').click();
+ const passage=page.locator('[data-reading-key]').filter({hasText:/^Passage 30:/}).first();
+ await passage.evaluate(e=>{const r=e.closest('.conversation-reader');r.scrollTop+=e.getBoundingClientRect().top-r.getBoundingClientRect().top+7;r.dispatchEvent(new Event('scroll'));});
+ const offset=()=>passage.evaluate(e=>e.getBoundingClientRect().top-e.closest('.conversation-reader').getBoundingClientRect().top),before=await offset();
+ await open(2021);await open(2022);
+ assert(await full.evaluate(e=>e.open),'switch restores Full report before measuring');assert(Math.abs(await offset()-before)<2,'switch keeps content anchor and offset');
+ await page.evaluate(()=>taskq.receive(fixture));assert(Math.abs(await offset()-before)<2,'snapshot keeps passage');
+ await page.setViewportSize({width:820,height:700});await page.waitForTimeout(100);assert(Math.abs(await offset()-before)<2,'reflow keeps passage');
+ await shot('reading');await page.evaluate(board=>taskq.receive({open:{page:'conversations',root:'fixture',board,task:256}}),board);
+ assert.equal(await page.locator('.conversation-row[aria-current=page]').count(),1,'external task selection is visible');assert.match(await page.locator('.conversation-scope').innerText(),/outside|linked/i);
+ assert.equal(await page.locator('[data-c-field=steer]').count(),0,'reviewers stay read-only');await shot('linked-reviewer');
+ await page.locator('[data-c=scope-return]').click();assert.equal(await page.locator('[data-c=result-filter][data-filter=decision]').getAttribute('aria-pressed'),'true');
+ assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-n'),'2022');
+
+ // RC1/CS5: source-bound reason/caret/focus survives selection and a restored navigation envelope.
+ const otherActions=page.locator('.result-other');if(!await otherActions.evaluate(e=>e.open))await otherActions.locator('summary').click();
+ await page.locator('[data-result-card=correction] [data-choice="2"]').click();await page.locator('#result-reason').fill('Keep this independent follow-up draft');
+ await page.locator('#result-reason').evaluate(e=>{e.focus();e.setSelectionRange(5,12);e.dispatchEvent(new Event('select',{bubbles:true}));});
+ await open(2021);await open(2022);
+ assert.equal(await page.locator('#result-reason').inputValue(),'Keep this independent follow-up draft');assert.deepEqual(await page.locator('#result-reason').evaluate(e=>[e.selectionStart,e.selectionEnd]),[5,12]);assert(await page.locator('#result-reason').evaluate(e=>document.activeElement===e),'return restores source focus');
+ await page.waitForTimeout(150);
+ const saved=await page.evaluate(()=>({navigation:sent.filter(m=>m.a==='conversation-navigation'&&m.navigation).at(-1).navigation,workspace:sent.filter(m=>m.a==='workspace-set').at(-1).navigation,locals:Object.fromEntries(sent.filter(m=>m.a==='answer-local').map(m=>[m.key,m.local]))}));
+ assert(JSON.stringify(saved.navigation).length<=4096,'bounded existing navigation envelope');
+ const reloaded=await browser.newPage({viewport:{width:820,height:700}});reloaded.on('pageerror',e=>errors.push(e.message));await reloaded.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await reloaded.evaluate(({s,saved})=>{window.ipc={postMessage(){}};taskq.receive({...s,workspace_navigation:saved.workspace,workspace_local:saved.locals,conversations:{...s.conversations,navigation:saved.navigation}});},{s:state,saved});
+ assert(await reloaded.locator('.report-card details').filter({has:reloaded.getByText('Full report',{exact:true})}).evaluate(e=>e.open),'reload keeps per-SHA report expansion');assert.equal(await reloaded.locator('#result-reason').inputValue(),'Keep this independent follow-up draft');assert.deepEqual(await reloaded.locator('#result-reason').evaluate(e=>[e.selectionStart,e.selectionEnd]),[5,12]);await reloaded.close();
+ // MP14/RC3: Completed carries the original view criteria into the common projection, with outcome/PR/native reading.
+ await page.evaluate(()=>{const p=fixture.projects[0];p.reports.history=Array.from({length:230},(_,i)=>({...p.reports.reports.find(r=>r.kind==='task'),n:3000+i,title:'Archived history '+(3000+i),read:true,visible:false,outcome:i===0?'not_planned':i===1?'unknown':'success',closed:fixture.now-i,pr:'https://example.org/taskq/pull/7',merged:i===2?'merged #7 as abc':null}));taskq.receive(fixture);taskq.receive({open:{page:'conversations',filter:'finished',criteria:{projects:['github://example.org/taskq'],query:'3000',period:'all',outcomes:['not_planned']}}});});
+ assert.equal(await page.locator('.conversation-row').count(),1,'Completed project/query/period/outcome intersect');await open(3000);assert.match(await page.locator('.report-card').innerText(),/Not planned/);assert.equal(await page.locator('.report-card a').filter({hasText:'Open PR'}).count(),1);
+ await page.evaluate(()=>taskq.receive({open:{page:'conversations',filter:'finished',criteria:{projects:['github://example.org/taskq'],period:'all',outcomes:[]}}}));
+ const loaded=await page.locator('[data-report=open]').count();await page.locator('[data-c=results-more]').click();assert(await page.locator('[data-report=open]').count()>loaded,'close-time/number cursor pages historical work without a board read');await open(3001);assert.match(await page.locator('.report-card').innerText(),/Outcome unknown/);
+ const native=page.locator('.report-card details').filter({has:page.getByText('Task activity · native transcript',{exact:true})});await native.locator('summary').click();await page.locator('[data-c=closed-open]').click();let request=await page.evaluate(()=>sent.filter(m=>m.a==='completed').at(-1));assert.deepEqual([request.root,request.task,request.transcript],['fixture',3001,true]);
+ await page.evaluate(m=>taskq.receive({completed:{...m,reason:'Native transcript belongs to remote host invented-remote'}}),request);assert.match(await native.innerText(),/remote host invented-remote/);
+ await page.locator('[data-c=closed-open]').click();request=await page.evaluate(()=>sent.filter(m=>m.a==='completed').at(-1));await page.evaluate(m=>taskq.receive({completed:{...m,transcript:{start:40,end:80,size:80,items:[{at:40,i:0,role:'assistant',text:'Retained closed native record'}]}}}),request);assert.match(await native.innerText(),/Retained closed native record/);assert.equal(await native.locator('textarea').count(),0,'completed transcript stays read-only');await page.locator('[data-c=closed-earlier]').click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='completed').at(-1).before),40,'earlier history retains its native cursor');
+ await page.evaluate(board=>taskq.receive({open:{page:'conversations',board,root:'fixture',task:259}}),board);assert.match(await page.locator('.thread-events').innerText(),/259/);assert.equal(await page.locator('[data-a=answer-send],[data-qac=choose]').count(),0,'historical question does not become an actionable owner question');
+ // Entry/return before/after images are emitted only when explicitly requested by the task evidence run.
+
+ assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>sent.filter(m=>['answer','conversation-action'].includes(m.a)).length),0,'read/navigation never sends work or owner answers');
+ console.log('PASS #2095 ordinary news, zero proposals, due decisions, scoped Previous, exact deep-link return, source expansions/anchor/refresh/reflow and reviewer limits');
+ }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -1,11 +1,11 @@
 'use strict';
 const {h}=require('preact'),ui=require('./ui-runtime.js'),{execution}=ui;
-const card=require('./answer-card.js'),composer=require('./pm-composer.js').composer;
+const card=require('./answer-card.js'),composer=require('./pm-composer.js').composer,time=require('./relative-time.js'),icons=require('./ui-icons.js'),dashboard=require('./task-dashboard.js');
 
 // §7: both surfaces use this view; the board owns read/decision state, memory holds only an in-flight view.
 const {create,body}=execution.module('reports',{
-create:function({send=ui.send,draw,defer=ui.defer,onOpen,id=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')}){
- let projects=[],pages=new Map(),pending=new Map(),selected=null,notice='',draft=null,successor=null,readFailure='',readQueue=[];
+create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>({index:0,length:1}),transcript,id=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')}){
+ let projects=[],pages=new Map(),pending=new Map(),selected=null,notice='',draft=null,successor=null,readFailure='',readQueue=[],reasonField=null;
  const receipts=new Map(),outcomes=new Map(),key=(root,n)=>root+'#'+n;
  const saved={},controllers=new Map(),displayedReads=new Set();
  const settled=r=>['accepted','drop','made','answered'].includes(r.decision);
@@ -45,7 +45,8 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,id=()=>Array.from(crypt
    projects=targets(ps);
    for(const p of projects){
     const data=p.reports;
-    pages.set(p.root,{rows:[...(data?.reports||[]),...(data?.history||[])].map(r=>{const k=receiptKey(p.root,r.n,r.sha),won=receipts.get(k);if(Number.isSafeInteger(r.comments_through)&&Number.isSafeInteger(won?.comments_through)&&r.comments_through>=won.comments_through)receipts.delete(k);return receipts.has(k)?{...r,...won}:r;}),unknown:data?.complete!==true,reason:data?.reason||(data?.complete===true?'':'Reports not collected yet')});
+    const incoming=[...(data?.reports||[]),...(data?.history||[])],retained=data?.complete===true?[]:(pages.get(p.root)?.rows||[]).filter(r=>!incoming.some(v=>v.n===r.n));
+    pages.set(p.root,{rows:[...incoming,...retained].map(r=>{const k=receiptKey(p.root,r.n,r.sha),won=receipts.get(k);if(Number.isSafeInteger(r.comments_through)&&Number.isSafeInteger(won?.comments_through)&&r.comments_through>=won.comments_through)receipts.delete(k);return receipts.has(k)?{...r,...won}:r;}),unknown:data?.complete!==true,reason:data?.reason||(data?.complete===true?'':'Reports not collected yet')});
    }
    if(selected){const row=api.rows(true).find(r=>key(r.root,r.n)===key(selected.root,selected.n)&&r.sha===selected.sha);selected=row?{...selected,...row}:null;}
    for(const op of pending.values())if(op.unknown&&!op.checking&&!pages.get(op.root)?.unknown){const row=pages.get(op.root)?.rows.find(r=>r.n===op.n&&r.sha===op.sha);if(row&&(confirmed(op,{report:row})||settled(row)&&['accept','later','drop','make'].includes(op.action))){op.checking=true;defer(()=>api.receive({id:op.id,root:op.root,report:row}),0);}}
@@ -57,6 +58,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,id=()=>Array.from(crypt
   undecided(r){const until=Date.parse(r.later_until||'');return r.kind!=='task'&&r.visible!==false&&!r.pending_decision&&(!r.decision||r.decision==='none'||r.decision==='later'&&!(until>Date.now()));},
   decide(rows=api.rows()){return rows.filter(api.undecided).sort((a,b)=>(a.closed||0)-(b.closed||0)||a.n-b.n);},
   count(){return projects.every(p=>pages.has(p.root)&&!pages.get(p.root).unknown)?api.unread().length:null;},
+  sources(){return projects.map(p=>({root:p.root,name:p.name,loaded:api.rows(true).filter(r=>r.root===p.root).length,reason:pages.get(p.root)?.unknown?pages.get(p.root).reason:''}));},
   reason(){return projects.flatMap(p=>pages.get(p.root)?.reason?[p.name+': '+pages.get(p.root).reason]:[]).join('; ');},
   current(){return selected;},
   feedback(){return notice;},
@@ -71,7 +73,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,id=()=>Array.from(crypt
   open(root,n,sha){return execution.action('reports.card.open',()=>{const r=api.rows(true).find(r=>r.root===root&&r.n===n&&(!sha||r.sha===sha));if(!r)return false;selected={...r};displayedReads.delete(receiptKey(root,n,r.sha));const prior=outcomes.get(receiptKey(root,n,r.sha));notice=prior?.notice||'';draft=null;successor=prior?.successor||api.savedSuccessor(r);onOpen?.(selected);draw();readShown(r);return true;})();},
   savedSuccessor(r){const n=Object.values(saved).find(v=>v.request?.root===r.root&&v.request?.n===r.n&&v.request?.sha===r.sha&&v.receipt?.state==='accepted'&&v.successor>0)?.successor;return n?{n,url:r.url?.replace(/\d+$/,String(n))}:null;},
   focus(root,n){const r=api.rows(true).find(r=>r.root===root&&r.n===n);if(!r||active(r))return;selected={...r};const prior=outcomes.get(receiptKey(root,n,r.sha));notice=prior?.notice||'';successor=prior?.successor||api.savedSuccessor(r);},
-  move(step){const rows=api.rows(true),i=rows.findIndex(r=>r.root===selected?.root&&r.n===selected?.n),r=rows[i+step];if(r)api.open(r.root,r.n);},
+  move(step){onMove?.(step);},
   act(action,text,until){if(!selected)return;outcome(selected,'',null);request(selected.root,action,{n:selected.n,sha:selected.sha,...(text===undefined?{}:{text}),...(until===undefined?{}:{until})});draw();},
   receive(r){
    const op=pending.get(r.id);if(!op||op.root!==r.root)return false;const shown=active(op);
@@ -111,13 +113,18 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,id=()=>Array.from(crypt
    else if(action==='next')api.move(1);
    return true;
   },
-  threads(){return api.rows(true).map(r=>({id:'task:'+(projects.find(p=>p.root===r.root)?.issues||r.root)+'/'+r.n,root:r.root,board:projects.find(p=>p.root===r.root)?.issues,conversation:r.conversation,task:r.n,report:r.n,title:r.title,result:r.result,updated:r.closed*1000,finished:true,needsDecision:r.kind!=='task'&&!settled(r),status:({accepted:'Accepted',drop:'Dropped',made:'Drafts created',answered:'Decided'})[r.decision]||(r.kind==='task'?'Finished':'Report'),marker:r.kind!=='task'&&!settled(r)?'Needs decision':!r.read?'Unread result':''}));},
+  threads(){return api.rows(true).map(r=>({id:'task:'+(projects.find(p=>p.root===r.root)?.issues||r.root)+'/'+r.n,root:r.root,board:projects.find(p=>p.root===r.root)?.issues,conversation:r.conversation,task:r.n,report:r.n,title:r.title,result:r.result,updated:r.closed*1000,finished:true,needsDecision:api.undecided(r),status:({accepted:'Accepted',drop:'Dropped',made:'Drafts created',answered:'Decided'})[r.decision]||(r.kind==='task'?'Finished':'Report'),unread:!r.read,outcome:r.outcome,closed:r.closed,marker:api.undecided(r)?'Needs decision':!r.read?'New':''}));},
   hydrate(locals){for(const [k,v] of Object.entries(locals||{}))if(k.startsWith('result:')&&!saved[k]&&typeof v.draft==='string'){saved[k]={...v};if(v.op&&['sending','unknown','partial'].includes(v.receipt?.state)){saved[k].receipt={state:'unknown',reason:'Workspace reopened; check the original operation'};if(v.request?.id===v.op.id&&typeof v.request.root==='string'&&Number.isSafeInteger(v.request.n)&&typeof v.request.sha==='string')pending.set(v.op.id,{...v.request,unknown:true});}}},
   cardRow(r,kind){
    const choices=kind==='decision'?[['Accept','+ Acknowledge this result; - no new work.','accept'],['Later',r.kind==='task'?'+ Keep it for another decision; - revisit it yourself.':'+ Return to Decide on a date; - choose the date before Send.','later'],['Drop','+ Dismiss this decision; - no follow-up work.','drop']]:kind==='correction'?[['Reopen','+ Request correction; - creates a linked held successor.','reopen'],['Follow up','+ Add related work; - creates a separate held draft.','followup']]:[['Make tasks','+ Create the displayed held drafts; - read back before separate Start.','make'],['Keep report','+ Create nothing; - proposed work stays unfiled.','keep']];
    return {...r,state:'closed',revision:r.sha+':'+kind,resultDecision:true,repeatable:kind!=='decision'||!settled(r),question:{parsed:true,done:kind==='correction'?'The original task stays closed.':'Work is closed; reading does not accept it.',problem:kind==='decision'?'What should happen to this result?':kind==='correction'?'Correction or additional work?':'Create these held drafts?',resultReason:kind==='correction',resultDate:kind==='decision'&&r.kind!=='task',choices:choices.map(([label,detail,action],i)=>({id:i+1,label,text:label,detail,action,...(kind==='correction'||action==='later'&&r.kind!=='task'?{reason:action}:{}),local:action==='keep',recommended:i===(kind==='correction'?1:kind==='decision'&&r.outcome!=='success'?1:0)})),evidence:[]}};
   },
-  capability(r,kind){const p=projects.find(p=>p.root===r.root),ops=[...pending.values(),...Object.values(saved).filter(v=>['sending','unknown','partial'].includes(v.receipt?.state)).map(v=>v.request).filter(Boolean)],blockers=ops.filter(op=>op.root===r.root&&op.n===r.n&&op.sha===r.sha&&op.action!=='read');return {answer:!!p&&p.alive!==false&&p.complete!==false&&!pages.get(r.root)?.unknown&&!r.reason&&blockers.every(op=>op.id===saved[namespace(r,kind)]?.op?.id)&&!(kind==='decision'&&settled(r))&&!(kind==='make'&&(!r.tasks?.length||settled(r)))&&!(r.pending_decision==='make'&&kind!=='make'),composer:true,reason:'Result or project unavailable, already decided, or another decision needs readback'};},
+  capability(r,kind){
+   const p=projects.find(p=>p.root===r.root),ops=[...pending.values(),...Object.values(saved).filter(v=>['sending','unknown','partial'].includes(v.receipt?.state)).map(v=>v.request).filter(Boolean)];
+   const blocked=ops.some(op=>op.root===r.root&&op.n===r.n&&op.sha===r.sha&&op.action!=='read'&&op.id!==saved[namespace(r,kind)]?.op?.id);
+   const reason=!p?'Registered project unavailable':p.alive===false?'Project observation stale':p.complete===false?'Project observation incomplete':pages.get(r.root)?.unknown?pages.get(r.root).reason:r.reason?'Result unavailable: '+r.reason:blocked?'Another result operation needs readback':kind==='decision'&&settled(r)?'Report already decided':kind==='make'&&!r.tasks?.length?'No follow-up tasks proposed':kind==='make'&&settled(r)?'Report already decided':r.pending_decision==='make'&&kind!=='make'?'Make tasks needs readback':'';
+   return {answer:!reason,composer:true,reason};
+  },
   mount(menu){
    if(!selected)return;
    for(const slot of menu.querySelectorAll('[data-result-card]')){
@@ -136,34 +143,37 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,id=()=>Array.from(crypt
     if(c.el.parentNode!==slot)slot.append(c.el);c.ui.update([{board:k,row}]);
     if(kind==='correction'&&menu.ownerDocument.defaultView.innerWidth<=620)slot.closest('details').open=true;
    }
+   const field=menu.querySelector('[data-c-field=result-reason]');if(field&&field!==reasonField){reasonField=field;const caret=saved[namespace(selected,'correction')]?.caret;if(Array.isArray(caret))field.setSelectionRange(...caret);}
    readShown(selected);
   },
-  reasonInput(text,caret){if(!selected)return;const k=namespace(selected,'correction'),c=controllers.get(k);if(c)c.ui.input(k,selected.n,text,caret);draw();},
+  reasonInput(text,caret){if(!selected)return;const k=namespace(selected,'correction'),c=controllers.get(k);if(text===null&&JSON.stringify(saved[k]?.caret)===JSON.stringify(caret))return;if(c)c.ui.input(k,selected.n,text,caret);draw();},
   reasonSend(){if(selected){const k=namespace(selected,'correction');controllers.get(k)?.ui.act(k,selected.n,'submit');}},
   dateInput(text){if(selected){const k=namespace(selected,'decision');controllers.get(k)?.ui.input(k,selected.n,text);draw();}},
   section(ps){
    api.sync(ps);const r=selected;if(!r)return h('p',null,api.count()===null?api.reason()||'Results unknown; waiting for collection.':'No results waiting for review.');
-   const ordinary=r.kind==='task',position=api.rows(true).findIndex(row=>row.root===r.root&&row.n===r.n),k=namespace(r,'correction'),local=saved[k]||card.fresh(api.cardRow(r,'correction')),context=api.cardRow(r,'correction'),cap=api.capability(r,'correction');
+   const ordinary=r.kind==='task',nav=navigation(r),k=namespace(r,'correction'),local=saved[k]||card.fresh(api.cardRow(r,'correction')),context=api.cardRow(r,'correction'),cap=api.capability(r,'correction');
    const decision=api.cardRow(r,'decision'),date=saved[namespace(r,'decision')]||card.fresh(decision),dateCap=api.capability(r,'decision'),dateLive=['actionable','changed'].includes(card.status(decision,date,dateCap));
+   const [mark,tone,outcome]=dashboard.outcome(r);
    const slot=kind=>h('div',{'data-result-card':kind,key:namespace(r,kind)});
    return h('article',{class:'report-card','aria-label':ordinary?'Completed result':'Research report'},
-    h('div',{class:'conversation-tools'},h('span',{class:'meta'},(ordinary?'Finished task':'Report')+' \u00b7 '+(r.read?'Read':'Unread')+' \u00b7 '+(({accepted:'Accepted',drop:'Dropped',made:'Drafts created',answered:'Decided'})[r.decision]||'Decision open')),
-     h('a',{href:r.url,'data-url':r.url},'#'+r.n),h('button',{'data-report':'previous',disabled:position<=0},'Previous'),h('button',{'data-report':'next',disabled:position>=api.rows(true).length-1},'Next')),
+    h('div',{class:'conversation-tools'},h('span',{class:'meta'},(ordinary?'Finished':'Report')+' · '+(r.read?'Read':'New')+(!ordinary?' · '+(({accepted:'Accepted',drop:'Dropped',made:'Drafts created',answered:'Decided',later:'Later'})[r.decision]||'Decision open'):'')),
+     h('a',{href:r.url,'data-url':r.url},'#'+r.n),h('button',{'data-report':'previous',disabled:nav.index<=0},'Previous'),h('button',{'data-report':'next',disabled:nav.index>=nav.length-1},'Next')),
+    ordinary&&h('p',{class:'meta'},h('span',{class:tone},icons.icon(mark),outcome),r.merged&&h('span',null,' · '+r.merged),time.stamp(time.seconds(r.closed),'Task closed')),
     r.reason&&h('p',{role:'status'},'Result unknown: '+r.reason),
-    !ordinary&&h('p',{class:'meta'},'Verdict: '+(r.experiment_verdict||'unknown')+' · '+(r.closed?Math.max(0,Math.floor((Date.now()/1000-r.closed)/86400))+'d':'age unknown')),
-    ordinary?[...['Changed','Checks','Open'].map(label=>h('section',{key:label},h('h3',null,label),body(field(r.body,label)))),r.pr&&h('a',{href:r.pr,'data-url':r.pr},'Open PR'),r.verdict&&h('details',{'data-view-key':namespace(r,'verdict')},h('summary',null,'Review and delivery'),body(r.verdict))]:
-     r.body?[h('h3',null,'Question'),body(summary(r.body,'Question')),h('h3',null,'Recommendation'),body(summary(r.body,'Recommendation'))]:h('p',null,'Report content unknown; waiting for background collection.'),
-    settled(r)?h('p',{class:'meta'},'Decision recorded: '+r.decision+'. Retained in Finished.'):h('section',null,slot('decision'),date.intent==='later'&&h('div',{class:'result-date'},
+    !ordinary&&h('p',{class:'meta'},'Verdict: '+(r.experiment_verdict||'unknown'),time.stamp(time.seconds(r.closed),'Report closed')),
+    ordinary?[...['Changed','Checks','Open'].map(label=>h('section',{key:label},h('h3',null,label),body(field(r.body,label),label.toLowerCase()))),r.pr&&h('a',{href:r.pr,'data-url':r.pr},'Open PR'),r.verdict&&h('details',{'data-view-key':namespace(r,'verdict')},h('summary',null,'Review and delivery'),body(r.verdict,'verdict'))]:
+     r.body?[h('h3',null,'Question'),body(summary(r.body,'Question'),'question'),h('h3',null,'Recommendation'),body(summary(r.body,'Recommendation'),'recommendation')]:h('p',null,'Report content unknown; waiting for background collection.'),
+    (!ordinary||saved[namespace(r,'decision')]?.op&&['sending','unknown','partial'].includes(saved[namespace(r,'decision')]?.receipt?.state))&&(settled(r)?h('p',{class:'meta'},'Decision recorded: '+r.decision+'. Retained in Finished.'):h('section',null,slot('decision'),date.intent==='later'&&h('div',{class:'result-date'},
      h('label',null,'Revisit on',h('input',{type:'date','data-c-field':'result-date','aria-label':'Revisit date',value:date.draft,min:new Date(Date.now()+86400000).toISOString().slice(0,10),disabled:!dateLive})),
      h('p',{class:'meta'},'The report returns to Decide on this date.'),
      card.textProblem(decision.question,date.draft)&&h('p',{role:'status'},card.textProblem(decision.question,date.draft)),
-     h('div',{class:'conversation-tools'},h('button',{'data-report':'date-send',disabled:!dateLive||!!card.textProblem(decision.question,date.draft)},'Send'),h('button',{'data-report':'date-cancel',disabled:!dateLive},'Cancel')))),
+     h('div',{class:'conversation-tools'},h('button',{'data-report':'date-send',disabled:!dateLive||!!card.textProblem(decision.question,date.draft)},'Send'),h('button',{'data-report':'date-cancel',disabled:!dateLive},'Cancel'))))),
     h('details',{class:'result-other',open:!!local.intent,'data-view-key':namespace(r,'other')},h('summary',null,'Other actions'),slot('correction')),
     local.intent&&composer({id:'result-reason',field:'result-reason',label:(local.intent==='reopen'?'Reopen':'Follow-up')+' reason',placeholder:'What needs to change?',text:local.draft,disabled:!cap.answer||['sending','unknown','partial'].includes(card.status(context,local,cap)),reason:'Creates a linked held successor. The original stays closed. Read it back before separate Start.',tools:h('div',{class:'conversation-tools'},h('button',{'data-report':'reason-send',disabled:!cap.answer||!!card.textProblem(context.question,local.draft)||!['actionable','changed'].includes(card.status(context,local,cap))},'Send'),h('button',{'data-report':'reason-cancel',disabled:['sending','unknown','partial'].includes(card.status(context,local,cap))},'Cancel'))}),
-    !ordinary&&r.tasks&&h('section',null,h('h3',null,'Proposed tasks'),r.tasks.length?r.tasks.map((t,i)=>h('details',{key:i,'data-view-key':namespace(r,'proposal'+i)},h('summary',null,(i+1)+'. '+t.title),h('p',null,t.goal),h('ul',null,t.acceptance?.map(a=>h('li',null,a))),t.scope?.map(s=>h('p',null,s)))):h('p',null,'No follow-up tasks proposed.'),h('p',{class:'meta'},'Make tasks creates held drafts linked to this report. Start them separately.'),r.pending_decision==='make'&&h('p',{role:'status'},'Make tasks is pending. Retry Make tasks to reconcile the original claims.'),!settled(r)&&slot('make')),
-    !ordinary&&r.body&&h('details',{'data-view-key':namespace(r,'full')},h('summary',null,'Full report'),body(r.body)),
-    notice&&h('p',{role:'status'},notice),
-    (notice||successor||r.tasks_made?.length)&&![...pending.values()].some(op=>active(op)&&op.action!=='read')&&h('div',{class:'conversation-tools result-next'},
+    !ordinary&&Array.isArray(r.tasks)&&h('section',null,h('h3',null,'Proposed tasks'),r.tasks.length?r.tasks.map((t,i)=>h('details',{key:i,'data-view-key':namespace(r,'proposal'+i)},h('summary',null,(i+1)+'. '+t.title),h('p',null,t.goal),h('ul',null,t.acceptance?.map(a=>h('li',null,a))),t.scope?.map(s=>h('p',null,s)))):h('p',null,'No follow-up tasks proposed.'),r.tasks.length>0&&h('p',{class:'meta'},'Make tasks creates held drafts linked to this report. Start them separately.'),r.pending_decision==='make'&&h('p',{role:'status'},'Make tasks is pending. Retry Make tasks to reconcile the original claims.'),(r.tasks.length>0||r.pending_decision==='make')&&!settled(r)&&slot('make')),
+    !ordinary&&r.body&&h('details',{'data-view-key':namespace(r,'full')},h('summary',{'data-reading-key':'report:full'},'Full report'),body(r.body,'full')),
+    transcript?.(r),notice&&h('p',{role:'status'},notice),
+    !!(notice||successor||r.tasks_made?.length)&&![...pending.values()].some(op=>active(op)&&op.action!=='read')&&h('div',{class:'conversation-tools result-next'},
      successor&&h('a',{href:successor.url,'data-url':successor.url},'1. Read held draft #'+successor.n+' ★'),
      !!r.tasks_made?.length&&h('details',{'data-view-key':namespace(r,'drafts')},h('summary',null,'1. Read held drafts ★'),r.tasks_made.map(n=>h('a',{href:r.url?.replace(/\d+$/,String(n)),'data-url':r.url?.replace(/\d+$/,String(n)),key:n},'Read held draft #'+n))),
      h('button',{'data-report':'unresolved'},(successor||r.tasks_made?.length?'2. Next unresolved item':'1. Next unresolved item ★')),
@@ -173,13 +183,13 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,id=()=>Array.from(crypt
 },
 
 // Keep untrusted Markdown as text/vnodes; evidence URLs are the only active content. No raw HTML.
-body:function(text){
+body:function(text,source='body'){
  const prose=text.replace(/```taskq-tasks\n[\s\S]*?```/g,'').replace(/(^|\n)#{1,6}[ \t]+Proposed tasks[ \t]*(?=\n|$)/gi,'$1').replace(/(^|\n)(#{1,6} [^\n]+)\n/g,'$1$2\n\n');
  return prose.split(/\n\s*\n/).map((p,i)=>{
   const heading=/^#{1,6}\s+(.+)$/.exec(p.trim());
-  if(heading)return h('h3',{key:i},heading[1]);
+  if(heading)return h('h3',{key:i,'data-reading-key':'report:'+source+':'+i},heading[1]);
   const parts=p.split(/(\[[^\]\n]+\]\(https?:\/\/[^\s)]+\)|https?:\/\/[^\s<>\])]+)/g).map((s,k)=>{const link=/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/.exec(s),url=link?.[2]||(/^https?:\/\//.test(s)?s:null);return url?h('a',{key:k,href:url,'data-url':url},link?.[1]||url):s;});
-  return h('p',{key:i,style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},parts);
+  return h('p',{key:i,'data-reading-key':'report:'+source+':'+i,style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}},parts);
  });
 }
 });

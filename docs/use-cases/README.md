@@ -134,8 +134,10 @@ Source: owner. [Decision UI and API proposal](../design/plans-and-decisions.md#q
 - Use Other answer or discuss with AI when choices do not fit. AI does not answer for the owner.
 - Replaced question: refresh and choose again. Unknown delivery: reconcile before retry.
 
+- Enter from bell news, question attention or a task link; the same exact task opens in Conversations. A historical resolved question is readable without an active answer. Return preserves the invoking scope and focus.
+
 Result: the intended task receives one owner answer, without opening an external agent.
-Open: conditional-write/receipt contract; current option parsing alone does not prove race safety.
+Evidence: shared source-bound answer/receipt guards are implemented; native/provider qualification retains its recorded limits.
 
 ## UC-10. Continue through another agent or client
 
@@ -156,6 +158,8 @@ Source: owner. [P10](../product-principles.md).
 - Use the menu/workspace to plan, attach evidence, confirm task/configuration proposals, answer numbered questions and inspect results.
 - Reopen the same conversation/session when supported; never launch another attempt just to display it.
 - Missing runtime or app-dependent adapter: show the exact limitation and supported alternative before starting work.
+
+- Open Work sessions/task activity in the common Conversations list. Retain worker/reviewer/attempt/host/native/progress context and reviewer read-only limits; omit empty project groups. Deep-linked selections remain visible without erasing saved filters.
 
 Result: no external agent desktop is needed for the supported headless path. Planning and runtime adapters require end-to-end qualification.
 
@@ -192,6 +196,8 @@ Source: owner. [P3/P4/P9](../product-principles.md), [Delivery](../design/agent-
 - Changed SHA, missing CI, protection failure or uncertain merge invalidates success; preserve work and reconcile.
 - Show final remote readback or pending handoff. Task closure and downstream eligibility follow the reviewed lifecycle, not merely a created PR.
 
+- Open Completed with project/query/period/outcome preserved; inspect closed history, PR/outcome and native transcript or its exact host refusal in Conversations. Ordinary completion shows Finished and New/Read, with optional correction/follow-up, no mandatory Accept. Reports retain source-bound decisions; future Later stays inspectable outside due attention.
+
 Result: the owner knows what is verified and delivered. D04/D10 and G4/G7 govern outstanding behavior.
 
 ## UC-15. Inspect the system in daily use
@@ -203,6 +209,8 @@ Source: owner menu requirements.
 - Enlarge text; let the menu use available work area before scrolling. Essential controls remain reachable.
 - Open Settings → named service/runtime for health, accounts, versions, logs, resources, incident consent and lifecycle actions. Never infer zero from stale data.
 - Reopen a conversation/window without another request. Failed update, missing runtime, unavailable remote link or resource tool shows a next action and preserves context.
+
+- Bell New and required decisions are separate. Exercise entry → exact item → action/readback → return, Previous/Next and keyboard against the same filtered order. Expand and scroll #2022, switch to #2021 and back, refresh/reflow: disclosures, stable passage offset, drafts/files/caret and focus survive. Only Latest resumes following.
 
 Result: common control remains compact and inspectable; native matrix and G8 qualify real platform behavior.
 

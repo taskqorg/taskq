@@ -190,3 +190,11 @@
 .dialogue-tool .tool-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .dialogue-tool .relative-time{font-size:1em;margin-inline-start:auto}
 @media(max-width:450px){.dialogue-status dl{grid-template-columns:minmax(0,1fr)}.dialogue-status dd{margin-block-end:4px}}
+
+/* CS3/CS6: one compact view control; empty search adds no row. */
+.conversation-view{position:relative;flex:1;min-width:0}.conversation-view>summary{min-height:32px;font-size:.9em;cursor:pointer}
+.conversation-view>.result-filters{position:absolute;inset-inline:0;top:100%;z-index:20;background:var(--raised);border:1px solid var(--edge);border-radius:6px;min-width:180px;box-shadow:0 4px 12px #0004}
+.conversation-view .result-filters>button{width:100%;text-align:left;min-height:32px}
+.conversation-item .conversation-row>span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.conversation-scope,.news-tools,.completed-scope{margin:0;padding:0 6px;font-size:.85em}.conversation-scope button{margin-top:4px}
+.news-tools button{font-size:.85em}.news-tools p:empty{display:none}.conversation-row>small{line-height:1.25}

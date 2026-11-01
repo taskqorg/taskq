@@ -36,14 +36,11 @@ context.S.notify.status='allowed';h=(context.routeBody());assert(!h.includes('no
 h=(context.notifyGroup({root:'/p'}));
 assert(h.includes('lucide-bell')&&!h.includes('◉'),'#1775 R43: project Notifications uses the catalog bell, not a text glyph');
 assert(h.includes('data-kind="close" data-root="/p" data-v="banner" aria-pressed="true"'));assert(h.includes('data-kind="ask" data-root="/p" data-v="inherit" aria-pressed="true"'));
-// M14 click on a closed task: no open row, so the project page shows its card from the notification until navigation
-Object.assign(context,{TaskqProjectBlocks:require('../src/project-blocks.js'),CSS:{escape:s=>s},blockProject:p=>({name:p.name,board:{kind:'github',url:p.issues}}),
-  S:{display:context.S.display,projects:[{root:'/p',name:'p',issues:'https://x/issues',tasks:[]}]}});
-(context.page='home',context.openCard({root:'/p',n:8,kind:'close',title:'Ship it'}));
-assert.equal(context.page,'/p');h=(context.notedCard(context.S.projects[0]));
-assert(h.includes('data-card="https://x/issues/8"'));assert(h.includes('Closed'));assert(h.includes('Ship it'));assert(h.includes('href="https://x/issues/8"'));
-(context.navigate('home'));assert.equal((context.notedCard(context.S.projects[0])),'');
-console.log('PASS M14 notification settings, OS block, project override and closed-task card');
+// M14: OS clicks and historical closed-task links forward the exact source into Conversations, without a menu card.
+context.S={display:context.S.display,projects:[{root:'/p',name:'p',issues:'https://x/issues',tasks:[]}]};
+(context.page='home',context.openCard({root:'/p',n:8,kind:'close',title:'Ship it',sha:'a'.repeat(40)}));
+assert.equal(context.page,'home');assert.deepEqual(launches.at(-1),{a:'workspace',open:{page:'conversations',root:'/p',board:'https://x/issues',task:8,sha:'a'.repeat(40)}});
+console.log('PASS M14 notification settings, OS block, project override and exact common-reader deep-link');
 console.log('PASS WS11 nested Back, filter/scroll/disclosure restoration, settings categories, unknown probes/versions and maintenance destinations');
 
 // Chain: M13 header/fit -> native size request -> reopened persisted dimensions.
@@ -71,7 +68,7 @@ console.log('PASS actual resize listeners release once after capture loss');
 
 // A2/A4: header destinations and content-fit modes preserve the user's width.
 // R09: one Conversations entry replaces the separate Inbox and Conversations buttons.
-assert.equal(sizing.head().match(/data-a="workspace"/g).length,1);assert.match(sizing.head(),/Conversations · /);assert.doesNotMatch(sizing.head(),/Inbox/);assert.match(sizing.head(),/data-route="settings"/);
+assert.equal(sizing.head().match(/data-a="workspace"/g).length,2,'M14: news bell and Conversations enter the same workspace independently');assert.match(sizing.head(),/Conversations · /);assert.doesNotMatch(sizing.head(),/Inbox/);assert.match(sizing.head(),/data-route="settings"/);
 for(const mode of ['bottom','top']){sizing.S.size_anchor=mode;sizing.fit();assert.equal(sizing.sent.at(-1).h,422);assert.equal(sizing.sent.at(-1).w,500);}
 sizing.S.size_anchor='fixed';sizing.fit();assert.equal(sizing.sent.at(-1).h,300);
 console.log('PASS A2/A4 header navigation and fixed/content-fit modes');

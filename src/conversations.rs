@@ -509,7 +509,7 @@ fn valid_navigation(v:&Value)->bool {
     if v.is_null(){return true;}
     v.is_object()&&v.to_string().len()<=4096
         &&(v["list"].is_null()||v["list"].as_str().is_some_and(|s|["recent","archive"].contains(&s)))
-        &&(v["filter"].is_null()||v["filter"].as_str().is_some_and(|s|["all","reply","decision","finished"].contains(&s)))
+        &&(v["filter"].is_null()||v["filter"].as_str().is_some_and(|s|["all","new","reply","decision","activity","finished"].contains(&s)))
         &&(v["search"].is_null()||v["search"].as_str().is_some_and(|s|s.chars().count()<=512))
         &&(v["selected"].is_null()||v["selected"].as_str().is_some_and(crate::setup::owner_id))
         &&(v["listOnly"].is_null()||v["listOnly"].is_boolean())
@@ -697,6 +697,8 @@ mod tests {
     #[test]
     fn drafts_files_and_launches_keep_immutable_identity_through_failure_and_restart() {
         assert!(valid_navigation(&json!({"scrolls":{"recent":240,"archive":0}})));
+        for filter in ["all","new","reply","decision","activity","finished"] {assert!(valid_navigation(&json!({"filter":filter})));}
+        assert!(!valid_navigation(&json!({"filter":"invented"})));
         for scrolls in [json!("invalid"),json!({"recent":-1}),json!({"other":12})] {assert!(!valid_navigation(&json!({"scrolls":scrolls})));}
         let f=Fixture::new();
         assert_eq!(f.save("first","first draft")["state"],"accepted");

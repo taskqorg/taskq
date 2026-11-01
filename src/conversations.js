@@ -1,5 +1,6 @@
 'use strict';
 const pm=require('./pm-composer.js'),blocks=require('./project-blocks.js'),time=require('./relative-time.js');
+const views=require('./task-views.js'),news=require('./notification-panel.js');
 const {h}=require('preact'),ui=require('./ui-runtime.js'),icons=require('./ui-icons.js'),{execution}=ui;
 // D6: the event kinds a watch may follow.
 const EVENTS=['close','failed','ask','blocked','gone'];
@@ -13,7 +14,9 @@ module.exports=execution.module('conversations',{
  create:function({window,document,menu,draw,navigate,onSelect}){
   let snapshot={},hydrated=false,items=[],selected=null,list='recent',search='',selection={},scrolls={},listOnly=false,focusDraft=false,focusSearch=false,searchOpen=false,undo=null,notices={},failure=null,preview=null,confirmDelete=false;
   let sidebar={pins:[],collapsed:[],archived:{}},sidebarPending=null,revealed=null,activityRead=null,activityTimer=null,activityTimes={},activityChecks={};
-  let resultFilter='all',sidebarItems=[],resultPages=new Map(),resultMore=new Map();
+  let focuses={},readerIdentity=null;
+  let resultFilter='all',sidebarItems=[],resultPages=new Map(),resultMore=new Map(),scopeReturn=null,completed=null,readerResize=null;
+  const closedViews=new Map();
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
   let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false,observed=null,resize=null;
@@ -47,16 +50,16 @@ module.exports=execution.module('conversations',{
    sync:function(rows,legacy){
     if(!synced){synced=true;if(!unified&&legacy)selected=legacy;}
     const row=items.find(c=>c.id===selected&&!c.deleted)||rows.find(r=>r.id===selected);
-    if(!row||!!row.archived!==(list==='archive'))selected=null;
+    if(row&&scopeReturn)list=row.archived?'archive':'recent';if(!row||!!row.archived!==(list==='archive'))selected=null;
     selection[list]=selected;onSelect?.(selected);return selected;
    },
-   capture:function(){const el=menu.querySelector('.conversation-reader');if(el?.parentElement.dataset.threadId&&!el.querySelector('.dialogue-transcript')){const a=api.mark(el);api.place(el.parentElement.dataset.threadId,a?.board?{key:a.key,y:a.y}:el.scrollTop);}},
+   capture:function(){const el=menu.querySelector('.conversation-reader'),id=el?.parentElement.dataset.threadId;if(id&&!el.querySelector('.dialogue-transcript')&&positions[id]===undefined){const a=api.mark(el);api.place(id,a?.board?{key:a.key,y:Math.round(a.y)}:Math.round(el.scrollTop));}},
    // Stable board/native record offsets share the bounded navigation; plain readers retain pixel positions.
    place:function(id,value){
     if(id!==undefined){delete positions[id];if(value!==undefined)positions[id]=value;}
     for(const k of Object.keys(positions)){if(Object.keys(positions).length<=SAVED&&JSON.stringify(positions).length<=SAVED_BYTES)break;delete positions[k];}
    },
-   anchored:function(v){return !!v&&typeof v==='object'&&Number.isFinite(v.y)&&(/^(task|brief|question|answer|result):[0-9]+(?::[0-9]+)?$/.test(v.key)||Number.isSafeInteger(v.at)&&v.at>=0&&Number.isSafeInteger(v.i)&&v.i>=0);},
+   anchored:function(v){return !!v&&typeof v==='object'&&Number.isFinite(v.y)&&(/^(?:(task|brief|question|answer|result):[0-9]+(?::[0-9]+)?|report:[a-z0-9:-]+)$/.test(v.key)||Number.isSafeInteger(v.at)&&v.at>=0&&Number.isSafeInteger(v.i)&&v.i>=0);},
    editable:function(c){return !!c&&(!owner.conversation||owner.conversation===c.id)&&!(owner.detached||[]).includes(c.id)&&!c.deleted;},
    // The draft names only an unsent request; a sent or native thread keeps its title while the owner types the next message.
    title:function(c){const line=s=>(s||'').split('\n').find(s=>s.trim())?.trim();return c.title||(c.sent||c.request?line(c.sent?.text)||'Native request':line(c.text)||'New request');},
@@ -106,7 +109,7 @@ module.exports=execution.module('conversations',{
    key:function(item){return item.at+':'+item.i;},
    // Q-A3: the first visible native or board record and its offset from the viewport top
    mark:function(el){
-    const nodes=el.querySelectorAll('.dialogue-transcript>[data-key],[data-reading-key]');if(!nodes.length)return null;
+    const nodes=[...el.querySelectorAll('.dialogue-transcript>[data-key],[data-reading-key]')].filter(n=>n.getClientRects().length&&n.getBoundingClientRect().height>0);if(!nodes.length)return null;
     const top=el.getBoundingClientRect().top;let lo=0,hi=nodes.length-1;
     while(lo<hi){const mid=(lo+hi)>>1;if(nodes[mid].getBoundingClientRect().bottom<=top)lo=mid+1;else hi=mid;}
     const node=nodes[lo];return {key:node.dataset.readingKey||node.dataset.key,board:!!node.dataset.readingKey,y:node.getBoundingClientRect().top-top};
@@ -199,7 +202,7 @@ module.exports=execution.module('conversations',{
      v?.start>0&&h('button',{'data-c':'earlier',disabled:!!v.busy.before},v.busy.before?'Loading earlier…':'Load earlier'),
      v?.lost&&h('p',{role:'status',class:'dialogue-unknown'},v.lost),
      v?.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Transcript unknown: '+v.reason+(v.items.length?'. Showing what was read before.':'')),
-     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief',time.stamp(item.updated,'Setup brief recorded')),h('p',{class:'conversation-text'},item.text)):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},label[item.role]||item.role,time.stamp(item.updated,(label[item.role]||item.role)+' message')),h('p',{class:'conversation-text'},item.text));}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
+     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief',time.stamp(item.updated,'Setup brief recorded')),h('p',{class:'conversation-text'},item.text)):api.nativeItem(item,label[item.role]||item.role);}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
@@ -244,7 +247,7 @@ module.exports=execution.module('conversations',{
       live.start>0&&h('button',{'data-c':'worker-earlier',disabled:!!live.request},'Load earlier'),live.end<live.size&&live.quiet.after>=FILL&&h('button',{'data-c':'worker-later',disabled:!!live.request},'Load later'),
       live.ended&&h('p',{role:'status',class:'meta'},'Worker attempt ended'),
       live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
-      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):api.steps(live.items,!live.ended,item=>{const key=api.key(item);return item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn',time.stamp(item.updated,'Turn brief recorded')):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role,time.stamp(item.updated,(label[item.role]||item.role)+' message')),h('p',{class:'conversation-text'},item.text));})));
+      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):api.steps(live.items,!live.ended,item=>{const key=api.key(item);return item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn',time.stamp(item.updated,'Turn brief recorded')):api.nativeItem(item,item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role);})));
    },
    workerRead:function(kind='after',extra={}){
     const l=live;if(!l||l.request)return;ui.cancel(l.timer);l.timer=null;
@@ -276,9 +279,26 @@ module.exports=execution.module('conversations',{
    // #1775: a tool line keeps the file name of an absolute path, never the local directories
    short:function(text){return String(text).replace(/(?<![^\s'"`=(])(?:~\/|\/)(?:[^\s/'"`]+\/)+([^\s/'"`]*)/g,'…/$1');},
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
+   nativeItem:function(item,label=item.role,closed=false){const key=api.key(item);return h('article',{key,'data-key':key,...(closed?{'data-reading-key':'report:native:'+item.at+':'+item.i}:{}),class:'dialogue-item '+item.role},h('p',{class:'meta'},label,time.stamp(item.updated,label+' message')),h('p',{class:'conversation-text'},item.text));},
+   closed:function(r){const key=r.root+'#'+r.n+'@'+r.sha,t=closedViews.get(key);return h('details',{'data-view-key':'native:'+key},h('summary',null,'Task activity · native transcript'),h('p',{class:'meta'},'Read-only native transcript. Opening sends no input.'),!t&&h('button',{'data-c':'closed-open','data-root':r.root,'data-task':r.n,'data-sha':r.sha},'Open transcript'),t&&[t.loading&&h('p',{role:'status'},'Reading transcript…'),t.reason&&h('p',{role:'status'},'Transcript unavailable: '+t.reason),t.reason&&h('button',{'data-c':'closed-open','data-root':r.root,'data-task':r.n,'data-sha':r.sha,disabled:t.loading},'Retry transcript read'),t.page&&[t.page.start>0&&h('button',{'data-c':'closed-earlier','data-root':r.root,'data-task':r.n,'data-sha':r.sha,disabled:t.loading},'Load earlier'),h('button',{'data-c':'closed-open','data-root':r.root,'data-task':r.n,'data-sha':r.sha,disabled:t.loading},'Latest messages'),t.page.items.map((item,i)=>api.nativeItem({...item,at:item.at??t.page.start,i:item.i??i},{user:'You',assistant:'Agent'}[item.role]||item.role,true)),!t.page.items.length&&h('p',{class:'meta'},'No messages in this chunk.')]]);},
+   closedRead:function(root,task,sha,before){const key=root+'#'+task+'@'+sha,prior=closedViews.get(key);if(prior?.loading)return;const t={...prior,root,task,sha,id:api.id(),loading:true,reason:''};closedViews.delete(key);closedViews.set(key,t);while(closedViews.size>SAVED)closedViews.delete(closedViews.keys().next().value);ui.send({a:'completed',root,task,id:t.id,transcript:true,...(before==null?{}:{before})});t.timer=ui.defer(()=>api.closedReceive({root,id:t.id,reason:'No transcript response within 65 seconds'}),65000);draw();},
+   closedReceive:function(r){const t=[...closedViews.values()].find(t=>t.id===r.id&&t.root===r.root);if(!t?.loading)return;ui.cancel(t.timer);t.loading=false;t.reason=r.reason||r.transcript?.reason||'';if(r.transcript?.items)t.page=r.transcript;draw();},
    local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next,...(c.replyAck?{reply_ack:c.replyAck}:{})};},
    // #1773 A4: the host refuses fractional scroll offsets and navigation over 4096 bytes; whole pixels and the newest opened threads fit
-   nav:function(){ui.cancel(navTimer);navTimer=ui.defer(()=>{const whole=Object.fromEntries(Object.entries(scrolls).map(([k,v])=>[k,Math.max(0,Math.round(v)||0)]));let navigation;do navigation={list,search,filter:resultFilter,selected:api.current()?.id||null,listOnly,scrolls:whole,threads:{selected,selection,opened,positions}};while(JSON.stringify(navigation).length>4096&&opened.shift());ui.send({a:'conversation-navigation',navigation});},100);},
+   nav:function(){ui.cancel(navTimer);navTimer=ui.defer(()=>{const whole=Object.fromEntries(Object.entries(scrolls).map(([k,v])=>[k,Math.max(0,Math.round(v)||0)]));let navigation;
+    for(;;){navigation={list,search,filter:resultFilter,selected:api.current()?.id||null,listOnly,scrolls:whole,threads:{selected,selection,opened,positions,focuses,completed,scopeReturn}};if(JSON.stringify(navigation).length<=4096)break;if(opened.length){opened.shift();continue;}if(Object.keys(focuses).length>1){delete focuses[Object.keys(focuses)[0]];continue;}const key=Object.keys(positions)[0];if(key){delete positions[key];continue;}api.note('Navigation exceeds saved-state capacity; current view kept in this window.');return;}
+    ui.send({a:'conversation-navigation',navigation});},100);},
+   order:function(){return sidebarItems;},
+   navigation:function(){return {index:sidebarItems.findIndex(r=>r.id===selected),length:sidebarItems.length};},
+   move:function(step){const rows=api.order(),at=rows.findIndex(r=>r.id===selected),r=rows[at+step];if(r)api.activate(r);},
+   activate:function(r){if(r.report)onSelect?.(r.id);api.select(r.id,!!items.find(c=>c.id===r.id));},
+   enter:function(id,archived){if(!scopeReturn)scopeReturn={selected,list,filter:resultFilter,search,completed};const row=items.find(c=>c.id===id)||sidebarItems.find(r=>r.id===id),target=(archived??row?.archived??Object.hasOwn(sidebar.archived||{},id))?'archive':'recent';if(list!==target){selection[list]=selected;list=target;}api.select(id,false);},
+   filterName:function(){return resultFilter;},
+   archived:function(id){if(selected===id){scopeReturn=null;revealed=null;selected=null;selection[list]=null;onSelect?.(null);api.nav();}},
+   context:function(){return {selected,list,filter:resultFilter,search,completed};},
+   restoreContext:function(v){list=v.list;resultFilter=v.filter;search=v.search;completed=v.completed;scopeReturn=null;selected=v.selected;onSelect?.(selected);api.nav();},
+   filter:function(value,criteria){api.flush();resultFilter=value;list='recent';selected=null;onSelect?.(null);if(criteria)completed=views.criteria(criteria);else completed=null;scopeReturn=null;revealed=null;api.nav();},
+   returnScope:function(){if(!scopeReturn)return;const prior=scopeReturn;scopeReturn=null;list=prior.list;resultFilter=prior.filter;search=prior.search;completed=prior.completed;api.select(prior.selected,false);},
    select:function(id,focus=true){revealed=id;const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;onSelect?.(id);selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
    // #1699 A2: open one owner conversation in its list without acknowledging anything
    reveal:function(id,focus=true,keepSearch=false){const c=items.find(c=>c.id===id);if(!c)return false;list=c.archived?'archive':'recent';if(!keepSearch){search='';searchOpen=false;}api.select(id,focus);return true;},
@@ -334,6 +354,7 @@ module.exports=execution.module('conversations',{
      const r=s.conversationSidebarReceipt;if(r.id!==sidebarPending?.id)return true;
      const op=sidebarPending;sidebarPending=null;
      if(r.state==='accepted'&&r.sidebar){sidebar=r.sidebar;if(snapshot.conversations)snapshot.conversations.sidebar=sidebar;
+      if(op.action==='archive')api.archived(op.key);
       if(op.action==='restore'){api.remember(op.key,op.root);api.show('recent');api.select(op.key,false);}
       api.note({pin:'Pin saved',collapse:'Group saved',archive:'Archived',restore:'Restored'}[op.action]+' · local view only');
      }else api.note(r.reason||'Sidebar save unknown; refresh before retrying.');return true;
@@ -366,7 +387,7 @@ module.exports=execution.module('conversations',{
      }else {
       if(c&&op.action==='save')c.saved=op.version;
       if(c&&op.action==='send'){c.sending=false;if(c.text===c.sent?.text&&!c.next){c.text='';c.caret=[0,0];for(const f of c.sent.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=c.files.filter(f=>!c.sent.files.some(sent=>sent.id===f.id));c.version=(c.version||0)+1;api.save(c);}api.note('Request saved. Native launch and replies are separate.',op.conversation);}
-      if(op.action==='archive'&&c){c.archived=true;undo=c.id;if(selected===c.id){const next=api.visible().find(row=>row.id!==c.id);selected=next?.id||null;selection[list]=selected;}api.note('Archived · '+api.title(c));api.nav();}
+      if(op.action==='archive'&&c){scopeReturn=null;revealed=null;c.archived=true;undo=c.id;if(selected===c.id){const next=api.visible().find(row=>row.id!==c.id);selected=next?.id||null;selection[list]=selected;}api.note('Archived · '+api.title(c));api.nav();}
       if(op.action==='restore'&&c){c.archived=false;list='recent';search='';searchOpen=false;api.select(c.id);api.note('Restored',op.conversation);undo=null;}
       if(op.action==='delete'){items=items.filter(c=>c.id!==op.conversation);selected=api.visible()[0]?.id||null;api.note('Permanently deleted');confirmDelete=false;undo=null;api.nav();}
       if(op.action==='fork'&&r.value?.forked){if(c&&c.version===op.version)Object.assign(c,native);for(const row of r.snapshot.items)if(!items.some(c=>c.id===row.id))items.push({...row,version:0,saved:0});api.select(r.value.forked);api.note('Draft and files moved to a separate request. Nothing sent.');}
@@ -391,8 +412,8 @@ module.exports=execution.module('conversations',{
      for(const n of incoming.items||[]){const c=items.find(c=>c.id===n.id);if(c){c.request=n.request;c.sent=n.sent;c.dialogue=n.dialogue;c.reply=n.reply;if(!pending&&!queue.some(o=>o.conversation===c.id)&&(c.saved??0)===(c.version??0)){Object.assign(c,n);}}else items.push({...n,version:0,saved:n.revision===0?-1:0});}
      if(incoming.complete)for(const c of items){if(c.revision>0&&!incoming.items.some(n=>n.id===c.id)){c.deleted=true;if(c.text===c.sent?.text)c.text='';c.sent=null;c.request=null;c.files=[];queue=queue.filter(o=>o.conversation!==c.id);if(pending?.conversation===c.id){pending=null;ui.cancel(timer);}if(failure?.conversation===c.id)failure=null;}}
     }
-    if(!hydrated){hydrated=true;const nav=incoming?.navigation;if(nav){list=nav.list==='archive'?'archive':'recent';search=nav.search||'';resultFilter=['all','reply','decision','finished'].includes(nav.filter)?nav.filter:'all';selection=nav.selection||{};scrolls=nav.scrolls||{};selected=nav.selected;listOnly=nav.listOnly===true;}if(nav?.threads&&typeof nav.threads==='object'){
-      const t=nav.threads;unified=true;selected=typeof t.selected==='string'?t.selected:null;
+    if(!hydrated){hydrated=true;const nav=incoming?.navigation;if(nav){list=nav.list==='archive'?'archive':'recent';search=nav.search||'';resultFilter=['all','new','reply','decision','activity','finished'].includes(nav.filter)?nav.filter:'all';selection=nav.selection||{};scrolls=nav.scrolls||{};selected=nav.selected;listOnly=nav.listOnly===true;}if(nav?.threads&&typeof nav.threads==='object'){
+      const t=nav.threads;focuses=Object.fromEntries(Object.entries(t.focuses||{}).filter(([k,v])=>k.length<=1024&&v&&/^(BUTTON|A|SUMMARY|INPUT|SELECT|TEXTAREA)$/.test(v.tag)&&typeof v.key==='string'&&v.key.length<=2048&&Number.isInteger(v.index)&&v.index>=0&&v.index<4096));completed=t.completed?views.criteria(t.completed):null;scopeReturn=t.scopeReturn&&['recent','archive'].includes(t.scopeReturn.list)&&['all','new','reply','decision','activity','finished'].includes(t.scopeReturn.filter)&&typeof t.scopeReturn.search==='string'&&t.scopeReturn.search.length<=512?{...t.scopeReturn,completed:t.scopeReturn.completed?views.criteria(t.scopeReturn.completed):null}:null;unified=true;selected=typeof t.selected==='string'?t.selected:null;
       selection=Object.fromEntries(['recent','archive'].map(k=>[k,typeof t.selection?.[k]==='string'?t.selection[k]:null]));
       opened=Array.isArray(t.opened)?t.opened.filter(r=>r&&typeof r.id==='string'&&/^task:https?:\/\/.+\/[1-9][0-9]*$/.test(r.id)&&(r.root==null||typeof r.root==='string')).map(r=>({id:r.id,root:r.root||null})):[];
       positions=t.positions&&typeof t.positions==='object'?Object.fromEntries(Object.entries(t.positions).filter(([k,v])=>Number.isFinite(v)&&v>=0||api.anchored(v))):{};api.place();
@@ -437,45 +458,47 @@ module.exports=execution.module('conversations',{
     }
    },
    // CS1–CS6: the three source types share one identity, project assignment and activity order.
-   matches:function(r){return resultFilter==='all'||resultFilter==='reply'&&(r.marker==='Needs reply'||r.needsReply)||resultFilter==='decision'&&r.needsDecision||resultFilter==='finished'&&r.finished;},
-   nextUnresolved:function(rows){const visible=[...menu.querySelectorAll('.conversation-row')].map(b=>[...rows,...sidebarItems].find(r=>r.id===(b.dataset.thread||b.dataset.id))).filter(Boolean),at=visible.findIndex(r=>r.id===selected);return [...visible.slice(at+1),...visible.slice(0,at)].find(r=>!r.archived&&(r.needsDecision||r.marker==='Needs reply'));},
+   matches:function(r){const view=resultFilter==='all'||resultFilter==='new'&&r.unread||resultFilter==='reply'&&(r.marker==='Needs reply'||r.needsReply)||resultFilter==='decision'&&r.needsDecision||resultFilter==='activity'&&r.activityThread||resultFilter==='finished'&&r.finished;if(!view||!completed)return view;const p=snapshot.projects?.find(p=>p.root===r.root),days={'7d':7,'30d':30}[completed.period];return (!completed.projects.length||completed.projects.includes(views.identity(p||{})))&&views.matches({...r,n:r.task},completed.query)&&(!days||r.closed>=(snapshot.now||Date.now()/1000)-days*86400)&&(!completed.outcomes.length||completed.outcomes.includes(['success','not_planned'].includes(r.outcome)?r.outcome:'unknown'));},
+   nextUnresolved:function(){const rows=api.order(),at=rows.findIndex(r=>r.id===selected);return [...rows.slice(at+1),...rows.slice(0,Math.max(0,at))].find(r=>!r.archived&&(r.needsDecision||r.marker==='Needs reply'||r.needsReply));},
    sidebarGroups:function(extra){
     const projects=snapshot.projects||[];
-    const source=[...(extra.rows||[]).map(r=>({...r,thread:true})),...items.filter(c=>!c.deleted).map(c=>({...c,root:c.sent?.root||c.request?.root||c.root,title:api.title(c),...extra.outcomes?.[c.id],meta:api.rowStatus(c)+((owner.detached||[]).includes(c.id)?' · Detached':''),marker:extra.outcomes?.[c.id]?.needsReply?'Needs reply':extra.outcomes?.[c.id]?.needsDecision?'Needs decision':extra.marks?.[c.id]}))];
-    const all=source.filter(r=>!!r.archived===(list==='archive')&&api.matches(r)).map(r=>{
-     const p=projects.find(p=>p.root===r.root&&(!r.board||p.issues===r.board)),group=p?JSON.stringify([p.root,p.issues||'']):'other';
-     return {...r,p,group,activity:activityTimes[r.id]?activityTimes[r.id].updated:r.updated,activityMs:time.value(activityTimes[r.id]?activityTimes[r.id].updated:r.updated),pin:sidebar.pins.includes(r.id)};
+    const source=[...(extra.rows||[]).map(r=>({...r,thread:true})),...items.filter(c=>!c.deleted).map(c=>({...c,root:c.sent?.root||c.request?.root||c.root,title:api.title(c),...extra.outcomes?.[c.id],meta:api.rowStatus(c)+((owner.detached||[]).includes(c.id)?' · Detached':''),unread:!!extra.marks?.[c.id],marker:extra.outcomes?.[c.id]?.needsReply?'Needs reply':extra.outcomes?.[c.id]?.needsDecision?'Needs decision':extra.marks?.[c.id]}))];
+    const candidate=source.find(r=>r.id===selected),outside=candidate&&(!api.matches(candidate)||!!candidate.archived!==(list==='archive')||search&&![candidate.title,candidate.id,candidate.root].join(' ').toLowerCase().includes(search.toLowerCase()));if(outside&&!scopeReturn)scopeReturn={...api.context(),selected:null};
+    const external=scopeReturn&&candidate,all=source.filter(r=>r===external||!!r.archived===(list==='archive')&&api.matches(r)).map(r=>{
+     const p=projects.find(p=>p.root===r.root&&(!r.board||p.issues===r.board)),group=r===external&&outside?'linked':p?JSON.stringify([p.root,p.issues||'']):'other';
+     return {...r,p,group,activity:activityTimes[r.id]?activityTimes[r.id].updated:r.updated,activityMs:time.value(activityTimes[r.id]?activityTimes[r.id].updated:r.updated),pin:r===external&&outside?false:sidebar.pins.includes(r.id)};
     });
-    sidebarItems=all;
     const compare=(a,b)=>(b.activityMs??-1)-(a.activityMs??-1)||(a.finished&&b.finished?(b.task||0)-(a.task||0):0)||a.id.localeCompare(b.id);
-    const make=(id,name,rows)=>({id,name,total:rows.length,at:Math.max(-1,...rows.map(r=>r.activityMs??-1)),rows:rows.filter(r=>!search||[r.title,r.meta,r.root,r.id,r.p?.name,r.project].join(' ').toLowerCase().includes(search.toLowerCase())).sort(compare)});
+    const make=(id,name,rows)=>({id,name,total:rows.length,at:Math.max(-1,...rows.map(r=>r.activityMs??-1)),rows:rows.filter(r=>r.id===external?.id||!search||[r.title,r.meta,r.root,r.id,r.p?.name,r.project].join(' ').toLowerCase().includes(search.toLowerCase())).sort(compare)});
     let groups;
     if(list==='archive')groups=[make('archive','Archived',all)];
     else {
-     const projectGroups=[...new Set(all.filter(r=>!r.pin&&r.p).map(r=>r.group))].map(id=>make(id,all.find(r=>r.group===id).p.name,all.filter(r=>!r.pin&&r.group===id)));
+     const projectGroups=[...new Set(all.filter(r=>!r.pin&&r.p&&r.group!=='linked').map(r=>r.group))].map(id=>make(id,all.find(r=>r.group===id).p.name,all.filter(r=>!r.pin&&r.group===id)));
      projectGroups.sort((a,b)=>b.at-a.at||a.id.localeCompare(b.id));
-     groups=[make('pinned','Pinned',all.filter(r=>r.pin)),...projectGroups,make('other','Other',all.filter(r=>!r.pin&&!r.p))];
+     groups=[make('linked','Linked item outside this view',all.filter(r=>r.group==='linked')),make('pinned','Pinned',all.filter(r=>r.pin)),...projectGroups,make('other','Other',all.filter(r=>!r.pin&&!r.p&&r.group!=='linked'))];
     }
-    return groups.filter(g=>g.rows.length).map(g=>{
-     const pageKey=resultFilter+':'+g.id,finished=g.rows.filter(r=>r.finished),boundary=resultPages.get(pageKey)||finished[Math.min(99,finished.length-1)];if(boundary&&!resultPages.has(pageKey))resultPages.set(pageKey,boundary);
+    sidebarItems=[];return groups.filter(g=>g.rows.length).map(g=>{
+     const pageKey=JSON.stringify([resultFilter,completed,search,g.id]),finished=g.rows.filter(r=>r.finished),boundary=resultPages.get(pageKey)||finished[Math.min(99,finished.length-1)];if(boundary&&!resultPages.has(pageKey))resultPages.set(pageKey,boundary);
      const older=boundary?finished.filter(r=>compare(r,boundary)>0):[];resultMore.set(pageKey,older[Math.min(99,older.length-1)]);
+     const shown=g.rows.filter(r=>!r.finished||!boundary||compare(r,boundary)<=0||r.id===selected),series=resultFilter==='new'?news.groups(shown):shown.map(r=>({rows:[r]}));sidebarItems.push(...series.flatMap(g=>g.rows));
      const project=g.id.startsWith('['),open=!project||!!search||resultFilter!=='all'||!sidebar.collapsed.includes(g.id)||g.rows.some(r=>r.id===revealed);
-     return h('section',{key:g.id,'data-conversation-group':g.id,'aria-label':g.name},
-      h(project?'button':'div',{class:'conversation-group-head',...(project?{'data-c':'group-collapse','data-group':g.id,'aria-expanded':String(open),disabled:!!sidebarPending}:{})},project&&icons.icon('arrow-down'),h('span',null,g.name),h('small',null,search?g.rows.length+'/'+g.total:String(g.total))),
-      open&&g.rows.filter(r=>!r.finished||!boundary||compare(r,boundary)<=0||r.id===selected).map(r=>{
-       const own=items.find(c=>c.id===r.id),context=!r.p?(r.root||r.board||r.project?(r.project?r.project+' · ':'')+'Project unavailable':'No project'):(g.id==='pinned'||list==='archive'?r.p.name:''),meta=r.thread?(r.status??r.meta??''):r.meta;
+     const render=r=>{
+       const own=items.find(c=>c.id===r.id),context=!r.p?(r.root||r.board||r.project?(r.project?r.project+' · ':'')+'Project unavailable':'No project'):(g.id==='pinned'||list==='archive'?r.p.name:''),meta=r.report&&r.needsDecision?'':r.thread?(r.status??r.meta??''):r.meta;
        const blocked=!!sidebarPending||!!pending||!!failure||!!extra.busy;
-       return h('div',{key:r.id,class:'conversation-item'},h('button',{class:'conversation-row',...(r.report?{'data-report':'open','data-root':r.root,'data-n':r.report,'data-thread':r.id}:r.thread?{'data-a':'thread','data-thread':r.id}:{'data-c':'select','data-id':r.id}),'aria-current':r.id===selected?'page':null},h('span',null,r.title),h('small',null,[context,meta].filter(Boolean).join(' · '),(context||meta)?' · ':null,r.timeContext==='Request created'?'Created · ':null,time.stamp(r.activity,r.timeContext||'Last activity',activityTimes[r.id]?.reason||r.updated_reason||'The source did not supply an activity time',false),r.marker&&h('b',{class:'thread-marker'},' · '+r.marker))),
+       return h('div',{key:r.id,class:'conversation-item'},h('button',{class:'conversation-row',...(r.report?{'data-report':'open','data-root':r.root,'data-n':r.report,'data-thread':r.id}:r.thread?{'data-a':'thread','data-thread':r.id}:{'data-c':'select','data-id':r.id}),title:r.title,'aria-current':r.id===selected?'page':null},h('span',null,r.title),h('small',null,[context,meta].filter(Boolean).join(' · '),(context||meta)?' · ':null,r.timeContext==='Request created'?'Created · ':null,time.stamp(r.activity,r.timeContext||'Last activity',activityTimes[r.id]?.reason||r.updated_reason||'The source did not supply an activity time',false),r.marker&&h('b',{class:'thread-marker'},' · '+r.marker))),
         h('div',{class:'conversation-row-actions'},icons.button(r.pin?'pin-off':'pin',r.pin?'Unpin':'Pin',{'data-c':'row-pin','data-id':r.id,class:'compact-action',disabled:blocked}),
          icons.button(r.archived?'archive-restore':'archive',r.archived?'Restore':'Archive',{'data-c':'row-archive','data-id':r.id,class:'compact-action',disabled:blocked,onClick:()=>{if(blocked)return;if(own)api.action(r.archived?'restore':'archive',{},r.id);else extra.archive?.(r);}})));
-      }),open&&older.length>0&&h('button',{'data-c':'results-more','data-page':pageKey},'More finished work'));
+};
+     return h('section',{key:g.id,'data-conversation-group':g.id,'aria-label':g.name},
+      h(project?'button':'div',{class:'conversation-group-head',...(project?{'data-c':'group-collapse','data-group':g.id,'aria-expanded':String(open),disabled:!!sidebarPending}:{})},project&&icons.icon('arrow-down'),h('span',null,g.name),h('small',null,search?g.rows.length+'/'+g.total:String(g.total))),
+      open&&(resultFilter==='new'?series.map(series=>series.rows.length===1?render(series.rows[0]):h('details',{key:series.rows[0].id,class:'notification-series','data-notification-group':'','data-view-key':'notification-series:'+series.rows[0].id},h('summary',null,series.title+' · '+series.rows.reduce((n,r)=>n+(r.news?.length||1),0)+' events · '+series.rows.reduce((n,r)=>n+(r.news?.filter(e=>!e.read).length||0),0)+' unread'),series.rows.map(render))):shown.map(render)),open&&older.length>0&&h('button',{'data-c':'results-more','data-page':pageKey},'More finished work'));
     });
    },
    // #1699 A1/A4: one thread list: owner conversations plus the task and event threads the workspace passes in
    body:function(extra={}){
     const thread=extra.selected,c=thread?null:api.current(),disabled=!api.editable(c)||c.deleting||c.archived,bad=api.problem(c),button=icons.button,dialogue=api.launched(c);
     if(c?.deleted)return h('section',{class:'conversations'},h('p',{role:'status'},'History permanently deleted. Sent content cannot be restored. Independent saved drafts remain in Recent.'),c.text&&h('label',null,'Unsent local text',h('textarea',{readOnly:true,value:c.text})),owner.conversation?h('button',{'data-c':'return'},'Return to main'):h('button',{'data-c':'new'},'New request'));
-    const rows=api.sidebarGroups(extra);
+    const rows=api.sidebarGroups(extra),detail=typeof extra.detail==='function'?extra.detail():extra.detail;
     // A6: the session runtime is the one the request recorded at launch, not the current owner default
     const runtime=c?.request?.runtime||c?.sent?.runtime;
     // #1773 A3: the composer bottom row holds the attach, new-from-draft and history icons and the send arrow
@@ -489,8 +512,15 @@ module.exports=execution.module('conversations',{
     return h('section',{class:'conversations'+(listOnly?' list-only':'')+(owner.conversation?' detached':''),'aria-label':'Conversations'},
      h('div',{class:'conversation-toolbar chat-entry-bar'},button(listOnly?'arrow-left':'rows-3',listOnly?'Back':'List',{'data-c':'list',class:'conversation-list-toggle compact-action'}),h('button',{'data-c':'new',class:'new-chat-action',disabled:!!owner.conversation},icons.icon('plus'),'New chat'),button('search','Search threads',{'data-c':'search-open',class:'compact-action'}),button('terminal','Work sessions',{'data-route':'sessions',class:'compact-action'})),
      h('div',{class:'conversation-grid'},
-      h('aside',{class:'conversation-list','aria-label':'Threads'},h('div',{class:'conversation-tools result-filters'},[['all','All'],['reply','Needs reply'],['decision','Needs decision'],['finished','Finished']].map(([value,label])=>h('button',{'data-c':'result-filter','data-filter':value,'aria-pressed':resultFilter===value},label))),h('div',{class:'conversation-tools list-tabs'},h('button',{'data-c':'recent','aria-pressed':list==='recent'},icons.icon('inbox'),'Recent'),h('button',{'data-c':'archive-list','aria-pressed':list==='archive'},icons.icon('archive'),'Archive')),h('div',{class:'conversation-search'},h('label',null,icons.icon('search'),h('span',{class:'sr-only'},'Search threads'),h('input',{type:'search','data-c-field':'search',value:search,placeholder:'Search',maxLength:512})),button('x','Clear search',{'data-c':'clear-search',class:'compact-action'})),h('div',{class:'conversation-rows'},rows.length?rows:h('p',null,search?'No matches':resultFilter!=='all'?'No matching items in this view':'No '+(list==='archive'?'archived threads':'threads yet'))),extra.resultReason&&h('p',{class:'meta',role:'status'},extra.resultReason)),
-      thread?h('section',{class:'conversation-detail thread-detail','data-thread-id':extra.detail?.readingKey||thread,'aria-label':'Selected thread'},extra.detail?.header,h('div',{class:'conversation-reader'},extra.detail?.reading),extra.detail?.tools&&h('div',{class:'conversation-send'},extra.detail.tools)):
+      h('aside',{class:'conversation-list','aria-label':'Threads'},h('div',{class:'conversation-tools list-tabs'},
+       h('details',{class:'conversation-view','data-view-key':'conversation-view'},h('summary',{title:sidebarItems.length+' loaded threads'},({all:'All',new:'New',reply:'Needs reply',decision:'Decisions',activity:'In progress',finished:'Finished'})[resultFilter]+' · '+sidebarItems.length),h('div',{class:'conversation-tools result-filters'},[['all','All'],['new','New'],['reply','Needs reply'],['decision','Needs decision'],['activity','In progress'],['finished','Finished']].map(([value,label])=>h('button',{'data-c':'result-filter','data-filter':value,'aria-pressed':resultFilter===value},label)))),
+       button('inbox','Recent',{'data-c':'recent','aria-pressed':list==='recent',class:'compact-action'}),button('archive','Archive',{'data-c':'archive-list','aria-pressed':list==='archive',class:'compact-action'})),
+       (searchOpen||search)&&h('div',{class:'conversation-search'},h('label',null,icons.icon('search'),h('span',{class:'sr-only'},'Search threads'),h('input',{type:'search','data-c-field':'search',value:search,placeholder:'Search',maxLength:512})),button('x','Clear search',{'data-c':'clear-search',class:'compact-action'})),
+       scopeReturn&&h('p',{class:'meta conversation-scope'},'Linked source; saved view retained.',h('button',{'data-c':'scope-return'},'Return to view')),
+       completed&&h('details',{'data-view-key':'completed-scope',class:'completed-scope'},h('summary',null,'Completed scope'),h('p',{class:'meta'},'Projects: '+(completed.projects.length?views.scope(snapshot.projects||[],completed).map(p=>p.name).join(', ')||'Selected projects unavailable':'All')+' · '+completed.period+' · '+(completed.query||'No query')+' · '+(completed.outcomes.join(', ')||'All outcomes')),h('button',{'data-c':'scope-clear'},'All finished work')),
+       extra.newsTools,
+       h('div',{class:'conversation-rows'},search&&sidebarItems.length>0&&sidebarItems.every(r=>r.group==='linked')&&h('p',null,'No matches in this view'),rows.length?rows:h('p',null,search?'No matches':resultFilter!=='all'?'No matching items in this view':'No '+(list==='archive'?'archived threads':'threads yet'))),extra.historyTools,extra.resultReason&&h('p',{class:'meta',role:'status'},extra.resultReason)),
+      thread?h('section',{class:'conversation-detail thread-detail','data-thread-id':detail?.readingKey||thread,'aria-label':'Selected thread'},detail?.header,h('div',{class:'conversation-reader'},detail?.reading),detail?.tools&&h('div',{class:'conversation-send'},extra.detail.tools)):
       h('section',{class:'conversation-detail','data-thread-id':c?.id||'','aria-label':'Selected request'},c?[h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title owner-title',title:api.title(c)},api.title(c)),h('span',{class:'options'},win,button(c.archived?'archive-restore':'archive',c.archived?'Restore':'Archive',{'data-c':c.archived?'restore':'archive',class:'compact-action',disabled:!api.editable(c)||!!pending}))),
        dialogue&&h('p',{class:'dialogue-activity'},h('span',{class:'meta dialogue-state','data-state':api.state(c).split(' ')[0],'aria-label':'Session state: '+api.state(c)},api.activity(c))),
        h('div',{class:'conversation-reader'},
@@ -514,28 +544,19 @@ module.exports=execution.module('conversations',{
       ]:h('p',null,'Choose a thread or New. Launched requests continue here as native turns.'))),
      h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},notices[selected||'list']||'',pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
    },
-   sessions:function(){
-    const groups=(snapshot.projects||[]).map(p=>{
-     const tasks=(p.tasks||[]).filter(t=>t.session||t.until).map(t=>h('article',{key:t.n},
-      h('button',{'data-a':'workspace','data-root':p.root,'data-board':p.issues,'data-task':t.n},'#'+t.n+' '+t.title),
-      h('a',{href:t.url||p.issues+'/'+t.n,'data-url':t.url||p.issues+'/'+t.n},'Open issue'),
-      t.session&&h('p',{class:'meta'},(t.role||'Role unknown')+' · '+(t.runtime||t.session)+' · '+(t.host||'Host unknown')+' · attempt '+(t.attempt||'unknown')+' · '+(t.state_name||t.state)),
-      t.until&&h('p',{class:'meta'},blocks.parked(t)),
-      t.session&&blocks.destinations(t).map(d=>d.url?h('a',{href:d.url,'data-url':d.url},d.label):h('p',{class:'meta'},d.label+' unavailable: '+d.reason))));
-     return h('section',{key:p.root},h('h2',null,p.name),(!p.alive||p.complete===false)&&h('p',{role:'status'},'Session state unknown: project snapshot stale or incomplete.'),tasks);
-    });
-    return [h('p',{class:'meta'},'Recorded task activity. Opening a task only reads its existing thread.'),groups,h('p',{class:'meta'},'No session is created and no input is sent by reading task activity.')];
-   },
    click:function(b){
     const action=b.dataset.c;if(!action)return false;const c=api.current();
-    if(action==='linked-refresh'){linked.checked.clear();api.linkedRead(selected);}
+    if(action==='closed-open'||action==='closed-earlier'){const r=closedViews.get(b.dataset.root+'#'+b.dataset.task+'@'+b.dataset.sha);api.closedRead(b.dataset.root,Number(b.dataset.task),b.dataset.sha,action==='closed-earlier'?r?.page?.start:undefined);}
+    else if(action==='linked-refresh'){linked.checked.clear();api.linkedRead(selected);}
     else if(action==='linked-older')api.linkedRead(selected,undefined,linked.page+1);
     else if(action==='linked-newer')api.linkedRead(selected,undefined,Math.max(1,linked.page-1));
     else if(action==='worker-earlier'&&live){live.quiet.before=0;api.workerRead('before');}
     else if(action==='worker-later'&&live){live.quiet.after=0;api.workerRead('after',{after:live.end});}
     else if(action==='worker-latest'&&live){live.stick=true;live.anchor=null;if(live.end<live.size){live.gen++;live.items=[];live.start=live.end=null;live.request=null;live.busy={};api.workerRead('initial');}draw();}
     else if(action==='row-pin'){api.sidebar('pin',b.dataset.id,!sidebar.pins.includes(b.dataset.id));}
-    else if(action==='result-filter'){resultFilter=b.dataset.filter;api.nav();draw();}
+    else if(action==='result-filter'){api.filter(b.dataset.filter);menu.querySelector('.conversation-view')?.removeAttribute('open');draw();}
+    else if(action==='scope-return')api.returnScope();
+    else if(action==='scope-clear'){completed=null;api.nav();draw();}
     else if(action==='results-more'){const cursor=resultMore.get(b.dataset.page);if(cursor)resultPages.set(b.dataset.page,cursor);draw();}
     else if(action==='group-collapse')api.sidebar('collapse',b.dataset.group,!sidebar.collapsed.includes(b.dataset.group));
     else if(action==='row-archive'){return true;}
@@ -544,7 +565,7 @@ module.exports=execution.module('conversations',{
     else if(action==='select'){if((owner.detached||[]).includes(b.dataset.id))ui.send({a:'conversation-window',action:'raise',conversation:b.dataset.id});else api.select(b.dataset.id);}
     else if(action==='search-open'){listOnly=true;searchOpen=true;focusSearch=true;api.nav();draw();}
     else if(action==='list'){listOnly=!listOnly;api.nav();draw();}
-    else if(action==='recent'||action==='archive-list'){api.flush();api.show(action==='recent'?'recent':'archive');listOnly=true;api.nav();draw();}
+    else if(action==='recent'||action==='archive-list'){api.flush();scopeReturn=null;revealed=null;api.show(action==='recent'?'recent':'archive');listOnly=true;api.nav();draw();}
     else if(action==='clear-search'){search='';searchOpen=false;api.nav();draw();}
     else if(action==='history'&&api.editable(c)){b.closest('details')?.removeAttribute('open');if(c.sent||c.sending)c.next=true;c.text=snapshot.ai.history[Number(b.dataset.index)];c.caret=[0,0];c.version=(c.version||0)+1;api.save(c);focusDraft=true;draw();}
     else if(action==='clear-history'){ui.send({a:'ai-clear'});snapshot.ai.history=[];draw();}
@@ -575,15 +596,16 @@ module.exports=execution.module('conversations',{
    },
    mount:function(){
     time.mount(menu);
+    ui.listen(menu,'focusin',e=>{const pane=e.target.closest('.conversation-detail'),key=pane?.dataset.threadId;if(!key||!e.target.matches('button,a,summary,input,textarea,select'))return;const target=e.target,data=JSON.stringify(target.dataset);delete focuses[key];focuses[key]={tag:target.tagName,key:data,index:[...pane.querySelectorAll(target.tagName)].filter(n=>JSON.stringify(n.dataset)===data).indexOf(target)};api.nav();});
     ui.listen(menu,'input',e=>{const watch=e.target.dataset.wField;if(view?.form&&(watch==='prompt'||watch==='every')){view.form[watch]=e.target.value;view.form.dirty=true;draw();return;}const field=e.target.dataset.cField;if(field==='search'){search=e.target.value;api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);saveTimer=ui.defer(()=>api.save(c),100);draw();});
     ui.listen(menu,'change',e=>{if(e.target.dataset.wField==='event'&&view?.form){view.form.events=view.form.events.filter(k=>k!==e.target.value).concat(e.target.checked?[e.target.value]:[]);view.form.dirty=true;draw();return;}const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(e.target.dataset.cField==='root'&&api.editable(c)){if(c.sent||c.sending)c.next=true;c.root=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField!=='text')return;const c=api.current();if(api.editable(c)&&JSON.stringify(c.caret)!==JSON.stringify([e.target.selectionStart,e.target.selectionEnd])){c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;api.save(c);}});
     ui.listen(menu,'wheel',e=>{if(e.deltaY<0&&e.target.closest('.conversation-reader'))api.pause();},{passive:true});
-    ui.listen(menu,'keydown',e=>{if(['ArrowUp','PageUp','Home'].includes(e.key)&&e.target.closest('.conversation-reader')&&!e.target.matches('input,textarea,select'))api.pause();});
+    ui.listen(menu,'keydown',e=>{if(e.target.closest('.conversation-row')&&['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const rows=api.order(),at=rows.findIndex(r=>r.id===(e.target.dataset.thread||e.target.dataset.id)),next=rows[at+(e.key==='ArrowUp'?-1:1)];if(next){api.activate(next);menu.querySelector('.conversation-row[aria-current=page]')?.focus({preventScroll:true});menu.querySelector('.conversation-row[aria-current=page]')?.scrollIntoView({block:'nearest'});}return;}if(['ArrowUp','PageUp','Home'].includes(e.key)&&e.target.closest('.conversation-reader')&&!e.target.matches('input,textarea,select'))api.pause();});
     ui.listen(menu,'scroll',e=>{
      if(e.target.classList?.contains('conversation-rows')){scrolls[list]=e.target.scrollTop;api.nav();return;}
      if(!e.target.classList?.contains('conversation-reader'))return;
-     if(!e.target.querySelector('.dialogue-transcript')){const a=api.mark(e.target);api.place(e.target.parentElement.dataset.threadId||selected,a?.board?{key:a.key,y:a.y}:e.target.scrollTop);api.nav();return;}
+     if(!e.target.querySelector('.dialogue-transcript')){const a=api.mark(e.target);api.place(e.target.parentElement.dataset.threadId||selected,a?.board?{key:a.key,y:Math.round(a.y)}:Math.round(e.target.scrollTop));api.nav();return;}
      if(live?.thread===selected){const was=live.stick;if(e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight>=24)live.stick=false;live.anchor=api.mark(e.target);const a=live.anchor&&live.items.find(i=>api.key(i)===live.anchor.key);api.place(selected,live.stick?undefined:live.anchor?.board?{key:live.anchor.key,y:Math.round(live.anchor.y)}:!a?undefined:{at:a.at,i:a.i,y:Math.round(live.anchor.y),...(live.source?{g:live.source}:{})});api.nav();api.edge(e.target,live);if(was!==live.stick)draw();return;}
      if(view?.id!==selected||view.end===null||!view.items.length)return;
      // Q-A3/A4: a reader at the end of a window that holds the file end follows; anywhere else keeps its record anchor
@@ -611,12 +633,14 @@ module.exports=execution.module('conversations',{
    afterDraw:function(){
     if(!menu.querySelector('.worker-live')?.checkVisibility())api.workerStop();
     api.pollActivity();
+    const row=menu.querySelector('.conversation-row[aria-current=page]');if(row&&!row.checkVisibility()){const group=row.closest('details[data-notification-group]');if(group)group.open=true;}
     api.grow();
-    const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current();
+    const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current(),identity=detail?.parentElement.dataset.threadId,changed=identity!==readerIdentity;readerIdentity=identity;if(changed&&row)row.scrollIntoView({block:'nearest'});
     if(live&&detail&&log){api.observe(log);api.hold(detail,live);if(api.trim(detail,live))draw();else api.edge(detail,live);}
-    if(detail&&!log){const p=positions[detail.parentElement.dataset.threadId||selected];if(p?.key)api.hold(detail,{stick:false,anchor:{key:p.key,board:true,y:p.y}});else detail.scrollTop=(typeof p==='number'?p:null)??open?.scroll??0;}
+    readerResize?.disconnect();if(detail&&!log){const p=positions[detail.parentElement.dataset.threadId||selected];if(p?.key)api.hold(detail,{stick:false,anchor:{key:p.key,board:true,y:p.y}});else detail.scrollTop=(typeof p==='number'?p:null)??open?.scroll??0;readerResize??=new window.ResizeObserver(()=>{const el=menu.querySelector('.conversation-reader'),p=positions[el?.parentElement.dataset.threadId];if(p?.key)api.hold(el,{stick:false,anchor:{key:p.key,board:true,y:p.y}});});for(const node of detail.children)readerResize.observe(node);}
     if(log&&open){api.open(open);api.observe(log);api.hold(detail);}
     const c=api.current(),input=menu.querySelector('[data-c-field=text]'),record=menu.querySelector('.conversation-record');const rows=menu.querySelector('.conversation-rows');if(focusSearch){focusSearch=false;menu.querySelector('[data-c-field=search]')?.focus();}if(rows)rows.scrollTop=scrolls[list]||0;if(record&&c)record.scrollTop=c.scroll||0;if(focusDraft&&input&&!input.disabled){focusDraft=false;const row=menu.querySelector('[data-c=select][data-id="'+c.id+'"]');if(row?.checkVisibility()){row.scrollIntoView({block:'nearest'});scrolls[list]=rows.scrollTop;api.nav();}input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}
+    if(changed&&identity&&focuses[identity]&&!focusDraft){const f=focuses[identity],target=[...detail.parentElement.querySelectorAll(f.tag)].filter(n=>JSON.stringify(n.dataset)===f.key)[f.index];if(target?.checkVisibility()&&!target.disabled)target.focus({preventScroll:true});}
     if(log&&open){if(api.trim(detail))draw();else api.edge(detail);}},
    flush:function(){ui.cancel(saveTimer);const c=api.current();if(c)api.save(c);api.nav();},
   });return api;

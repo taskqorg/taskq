@@ -20,7 +20,7 @@ Every comparison starts with an unrelated report already open in Conversations, 
 
 Of the four currently supported paths, none is worse: three remove one click, correction ties, and all four remove a section switch in this starting condition. Report Accept is a new two-click path with no equivalent current action. Both correction paths require the same one-line reason. The proposal trades the current direct correction button for Other actions, paying one click back to keep the primary card small and preserve the four-choice limit. A collapsed target project adds one disclosure click to both supported paths. At narrow width, List replaces the return click and Other actions starts expanded to avoid an extra correction click; native narrow paths still need qualification. Scroll distance is not measured; long reports and 20 px type remain layout/qualification cases.
 
-The proposed report Accept acknowledges only; Make tasks remains an explicit separate decision. Ordinary finished results already have an Accept acknowledgement, but substituting that path would not measure the requested report job. The owner approved the acknowledgement meaning and this unavailable-baseline qualification for A3.
+The proposed report Accept acknowledges only; Make tasks remains an explicit separate decision. The historical ordinary-result reference had an Accept acknowledgement (superseded by RC4/RC5), but substituting that path would not measure the requested report job. The owner approved the acknowledgement meaning and this unavailable-baseline qualification for A3.
 
 ## Preservation and build ledger
 
@@ -39,7 +39,7 @@ The proposed report Accept acknowledges only; Make tasks remains an explicit sep
 
 Selection is board/project/task identity, with result SHA inside its history. Grouping uses recorded registered project identity, never title matching. One independently opened task row spans question, work and completion. A PM thread keeps its linked outcome without automatically adding a second standalone result row. An independently opened task may remain alongside its PM conversation; those are two different conversation contexts, not two result rows.
 
-All is default. Needs reply and Needs decision reveal matching items across project groups; Finished keeps decided work. Search intersects the filter and temporarily reveals collapsed groups. Read/Later does not mean decided; Accepted/Dropped/Drafts created do. A collection failure never becomes “no results.” Local Archive is separate from board decision truth. More and Next preserve the selected filter; no next item offers All, rather than quietly changing project/filter. RC1–RC7 own these rules; this ledger maps them to the existing implementation.
+The current view and due-attention rules are RC3; All is default, New is independent from required decisions, and future Later remains in All/Finished. Search intersects the filter and temporarily reveals collapsed groups. Read/Later does not mean decided; Accepted/Dropped/Drafts created do. A collection failure never becomes “no results.” Local Archive is separate from board decision truth. More and Next preserve the selected filter; no next item offers All, rather than quietly changing project/filter. RC1–RC7 own these rules; this ledger maps them to the existing implementation.
 
 ## Six-screen reference
 

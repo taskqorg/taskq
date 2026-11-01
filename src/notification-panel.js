@@ -1,4 +1,5 @@
 'use strict';
+const time=require('./relative-time.js');
 const {h}=require('preact'),{icon}=require('./ui-icons.js'),{execution}=require('./ui-runtime.js');
 const kinds={ask:'Question',close:'Finished',failed:'Failed',gone:'Attempt ended',blocked:'Blocked'};
 const api=execution.module('notificationPanel',{
@@ -26,23 +27,20 @@ const api=execution.module('notificationPanel',{
   }
   return groups;
  },
- create:function({view,reports,send,draw,openCard}){
+ create:function({view,reports,send,draw}){
   let notice='';
   const model=execution.module('notificationPanel.view',{
    rows(){return api.rows(view.S.projects||[],reports.rows(),view.S.notify?.inbox||{});},
    reasons(){return [...new Set([...(reports.count()===null?['Results incomplete; check result collection.']:[]),...(view.S.projects||[]).flatMap(p=>p.events_error||p.alive===false?[p.name+': '+(p.events_error||'project observation stale')]:[])])];},
    label(){const n=model.rows().filter(r=>!r.read).length;return 'Notifications · '+n+(model.reasons().length?' loaded unread · history incomplete':' unread');},
-   bell(){const n=model.rows().filter(r=>!r.read).length,label=model.label();return h('button',{class:'notifications-entry',type:'button','data-route':'notifications',title:label,'aria-label':label},icon('bell'),n>0&&h('span',{class:'badge','aria-hidden':'true'},n>99?'99+':String(n)),model.reasons().length>0&&h('span',{class:'notification-warning','aria-hidden':'true'},icon('circle-alert')));},
+   bell(){const n=model.rows().filter(r=>!r.read).length,label=model.label();return h('button',{class:'notifications-entry',type:'button','data-a':'workspace','data-page':'conversations','data-filter':'new',title:label,'aria-label':label},icon('bell'),n>0&&h('span',{class:'badge','aria-hidden':'true'},n>99?'99+':String(n)),model.reasons().length>0&&h('span',{class:'notification-warning','aria-hidden':'true'},icon('circle-alert')));},
    save(action,rows){if(rows.length)send({a:'notification-state',action,ids:rows.map(r=>r.id)});},
    read(rows){model.save('read',rows.filter(r=>r.source!=='result'&&!r.read));reports.markRead(rows.filter(r=>r.source==='result'&&!r.read));},
    receive(r){notice=r.reason||'';draw();},
-   click(b){const action=b.dataset.notification;if(!action)return false;const rows=model.rows();if(action==='read')model.read(rows);else if(action==='clear')model.save('clear',rows.filter(r=>r.read));else if(action==='open'){const row=rows.find(r=>r.id===b.dataset.id);if(row){if(row.source==='result'){const p=view.S.projects.find(p=>p.root===row.root);send({a:'workspace',open:{page:'conversations',root:row.root,board:p?.issues,task:row.n,sha:row.sha}});}else{model.read([row]);openCard({...row,title:row.title});}}}return true;},
-   body(){
-    const rows=model.rows(),reasons=model.reasons(),row=r=>h('button',{class:'project notification-row'+(!r.read?' unread':''),'data-notification':'open','data-id':r.id,key:r.id},h('span',{class:'meta'},(r.read?'Read':'Unread')+' · '+(r.source==='result'&&r.resultKind!=='task'?'Report ready':kinds[r.kind])+' · '+r.project+' · #'+r.n),h('span',null,r.title));
-    return h('section',{'aria-label':'Notifications',class:'notification-panel'},h('div',{class:'options'},h('button',{'data-notification':'read',disabled:!rows.some(r=>!r.read)},'Mark all read'),h('button',{'data-notification':'clear',disabled:!rows.some(r=>r.read)},'Clear read'),h('button',{'data-route':'notification-settings'},'Delivery settings')),
-     notice&&h('p',{role:'alert'},notice),!reports.current()&&reports.feedback()&&h('p',{role:'status'},reports.feedback()),reports.readFailure()&&h('p',{role:'status'},reports.readFailure()),reasons.map(reason=>h('p',{role:'status',class:'meta',key:reason},reason)),
-     rows.length?api.groups(rows).map(g=>g.rows.length===1?row(g.rows[0]):h('details',{class:'notification-series','data-notification-group':'','data-view-key':'notification-series:'+g.rows[0].id,key:g.rows[0].id},h('summary',null,g.title+' · '+g.rows.length+' events · '+g.rows.filter(r=>!r.read).length+' unread'),g.rows.map(row))):h('p',null,reasons.length?'No loaded notifications. History incomplete.':'No notifications.'));
-   }
+   click(b){const action=b.dataset.notification;if(!action)return false;const rows=model.rows();if(action==='read')model.read(rows);else if(action==='clear')model.save('clear',rows.filter(r=>r.read));return true;},
+   tools(){const rows=model.rows();return h('div',{class:'news-tools'},h('div',{class:'conversation-tools'},h('button',{'data-notification':'read',disabled:!rows.some(r=>!r.read)},'Mark all read'),h('button',{'data-notification':'clear',disabled:!rows.some(r=>r.read)},'Clear read')),notice&&h('p',{role:'alert'},notice),reports.readFailure()&&h('p',{role:'status'},reports.readFailure()),model.reasons().map(reason=>h('p',{role:'status',class:'meta',key:reason},reason)));},
+   history(rows){return rows.length>0&&h('section',{class:'thread-events','aria-label':'News history'},rows.map(r=>h('p',{key:r.id,'data-event':r.id,class:'meta'},(r.read?'Read':'New')+' · '+(r.source==='result'&&r.resultKind!=='task'?'Report ready':kinds[r.kind])+' · '+r.project+' · #'+r.n,time.stamp(time.seconds(r.at),'Event recorded'),!r.read&&h('button',{'data-notification':'event-read','data-id':r.id,onClick:()=>model.read([r])},'Mark read'))));}
+
   });return model;
  }
 });
