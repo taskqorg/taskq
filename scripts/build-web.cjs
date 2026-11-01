@@ -16,10 +16,10 @@ for(const name of ['tray-guard','workspace-entry'])esbuild.buildSync({entryPoint
 // One task workspace stylesheet: the tray embeds it and the release publishes the same file (docs/design/task-workspace.md).
 fs.writeFileSync(path.join(out,'task-workspace.css'),['task-workspace','answer-card','project-blocks','resource-controls','app-shell','task-dashboard'].map(name=>fs.readFileSync(path.join(root,'src',name+'.css'),'utf8')).join('\n'));
 let html=fs.readFileSync(path.join(root,'src/tray.html'),'utf8').replace('{{TASK_WORKSPACE_CSS}}',fs.readFileSync(path.join(out,'task-workspace.css'),'utf8'));
-html=html.replace('{{GUARD_JS}}',fs.readFileSync(path.join(out,'tray-guard.js'),'utf8').replaceAll('</script','<\/script'));
+html=html.replace('{{GUARD_JS}}',()=>fs.readFileSync(path.join(out,'tray-guard.js'),'utf8').replaceAll('</script','<\/script'));
 fs.writeFileSync(path.join(out,'tray-entry.js'),fs.readFileSync(path.join(out,'task-workspace.js'),'utf8')+';\n'+fs.readFileSync(path.join(root,'src/tray-entry.js'),'utf8'));
 for(const name of ['tray','workspace']){
- const page=html.replace('{{APP_JS}}',fs.readFileSync(path.join(out,name+'-entry.js'),'utf8').replaceAll('</script','<\/script')).replace('class="menu" role="menu"','class="menu'+(name==='workspace'?' workspace':'')+'"').replace('</head>',name==='workspace'?'<style>'+fs.readFileSync(path.join(root,'src/conversations.css'),'utf8')+'</style></head>':'</head>');
+ const page=html.replace('{{APP_JS}}',()=>fs.readFileSync(path.join(out,name+'-entry.js'),'utf8').replaceAll('</script','<\/script')).replace('class="menu" role="menu"','class="menu'+(name==='workspace'?' workspace':'')+'"').replace('</head>',name==='workspace'?'<style>'+fs.readFileSync(path.join(root,'src/conversations.css'),'utf8')+'</style></head>':'</head>');
  if(/\{\{[A-Z_]+\}\}/.test(page))throw Error('Unresolved web asset');
  fs.writeFileSync(path.join(out,name+'.html'),page);
 }

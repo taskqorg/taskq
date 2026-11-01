@@ -17,7 +17,7 @@ module.exports=execution.module('conversations',{
   let sidebar={pins:[],collapsed:[],archived:{}},sidebarPending=null,revealed=null,activityRead=null,activityTimer=null,activityTimes={},activityChecks={};
   let focuses={},readerIdentity=null,layoutFrame=null,correcting=false,scrollIntent=null,scrollIntentTimer=null,dragScroll=false,sidebarEpoch=0,sidebarProjection=null,stableOrder=new Map(),stableGroups=new Map(),modeCounts={},pageSelected=null,listObserver=null,listObservedRoot=null,listAnchor=null;
   let resultFilter='all',sidebarItems=[],resultPages=new Map(),scopeReturn=null,completed=null,readerResize=null;
-  const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
+  const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),imageFailures=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
   let recoveryQueue=[],recoveryDrafts=[];
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
@@ -237,7 +237,7 @@ module.exports=execution.module('conversations',{
      v?.start>0&&h('button',{'data-c':'earlier',disabled:!!v.busy.before||!!v.lost},v.busy.before?'Loading earlier…':'Load earlier'),
      v?.limitReason&&h('p',{role:'status',class:'meta'},v.limitReason),v?.lost&&h('p',{role:'status',class:'dialogue-unknown'},v.lost),
      v?.reason&&v.reason!==v.lost&&h('p',{role:'status',class:'dialogue-unknown'},'Transcript unknown: '+v.reason+(v.items.length?'. Showing what was read before.':'')),
-     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief',time.stamp(item.updated,'Setup brief recorded')),api.nativeItem(item,null)):api.nativeItem(item,label[item.role]||item.role);}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
+     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'&&!item.image?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief',time.stamp(item.updated,'Setup brief recorded')),api.nativeItem(item,null)):api.nativeItem(item,label[item.role]||item.role);}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
@@ -246,8 +246,8 @@ module.exports=execution.module('conversations',{
    steps:function(items,current,render){
     const out=[],tool=item=>{const key=api.key(item);return h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded'));};
     for(let i=0;i<items.length;){
-     if(items[i].role!=='tool'){out.push(render(items[i]));i++;continue;}
-     let j=i;while(j<items.length&&items[j].role==='tool')j++;
+     if((items[i].role!=='tool'||items[i].image)){out.push(render(items[i]));i++;continue;}
+     let j=i;while(j<items.length&&items[j].role==='tool'&&!items[j].image)j++;
      const run=items.slice(i,j),key=api.key(run[0]),now=current&&j===items.length;
      out.push(run.length===1?tool(run[0]):h('details',{key,'data-key':key,class:'dialogue-steps'},
       h('summary',{class:'dialogue-tool'},h('span',{class:'tool-label'},api.stepSummary(run)+(now?' · now: '+api.short(run.at(-1).text):'')),time.stamp(run.at(-1).updated,'Latest tool recorded',undefined,false)),run.map(tool)));
@@ -317,13 +317,19 @@ module.exports=execution.module('conversations',{
    short:function(text){return String(text).replace(/(?<![^\s'"`=(])(?:~\/|\/)(?:[^\s/'"`]+\/)+([^\s/'"`]*)/g,'…/$1');},
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
    nativeItem:function(item,label=item.role,closed=false,scope=''){
-    const key=api.key(item),text=item.text||'',source=closed?'native:'+item.at+':'+item.i:null;let content=text.length<=32768?require('./reports.js').body(text,source,0):null;
+    const key=api.key(item),text=item.text||'',source=closed?'native:'+item.at+':'+item.i:null;let raw=text,content=text.length<=32768?require('./reports.js').body(text,source,0):null;
     if(text.length>32768){const resident=live||view,cache=(closed?scope:resident?.id||resident?.thread)+'@'+(closed?closedViews.get(scope)?.page?.generation||'':resident?.source||'')+':'+key,stored=closed&&new RegExp('^report:native:'+item.at+':'+item.i+':part:(\\d+)$').exec(positions[closedViews.get(scope)?.thread]?.key||''),anchor=!closed&&resident?.anchor?.key===key?resident.anchor:null,part=anchor?.part??(stored?Number(stored[1]):textPages.get(cache))??0,start=Math.floor(Math.min(part,text.length-1)/32768)*32768,end=Math.min(text.length,start+32768);
 
      const turn=next=>{textPages.delete(cache);textPages.set(cache,next);while(textPages.size>24)textPages.delete(textPages.keys().next().value);if(closed){const page=closedViews.get(scope);api.place(page.thread,{key:'report:native:'+item.at+':'+item.i+':part:'+next,y:0,before:page.page.end,g:page.page.generation});api.nav();}else if(resident){resident.stick=false;resident.anchor={key,part:next,y:0};api.storeAnchor(resident.id||resident.thread,resident);}draw();};
-     content=[require('./reports.js').body(text.slice(start,end),source,start),h('span',{class:'conversation-tools'},h('span',{class:'meta'},'Message text · '+(start/32768+1)+' / '+Math.ceil(text.length/32768)),start>0&&h('button',{onClick:()=>turn(start-32768)},'Previous text'),end<text.length&&h('button',{onClick:()=>turn(end)},'Next text'))];
+     raw=text.slice(start,end);content=[require('./reports.js').body(raw,source,start),h('span',{class:'conversation-tools'},h('span',{class:'meta'},'Message text · '+(start/32768+1)+' / '+Math.ceil(text.length/32768)),start>0&&h('button',{onClick:()=>turn(start-32768)},'Previous text'),end<text.length&&h('button',{onClick:()=>turn(end)},'Next text'))];
     }
-    return h('article',{key,'data-key':key,...(closed?{'data-reading-key':'report:native:'+item.at+':'+item.i,'data-read-before':closedViews.get(scope)?.page?.end,'data-source-generation':closedViews.get(scope)?.page?.generation}:{}),class:'dialogue-item '+item.role},label&&h('p',{class:'meta'},label,time.stamp(item.updated,label+' message')),h('div',{class:'conversation-text conversation-prose'},content));
+    const image=item.image;if(image){
+     const resident=closed?closedViews.get(scope)?.page:live||view,items=resident?.items||[],index=items.findIndex(i=>api.key(i)===key),earlier=items.slice(0,Math.max(0,index)).filter(i=>i.image?.src).length;
+     const name=typeof image.name==='string'?image.name:'Recorded image',identity=(resident?.thread||resident?.id||scope)+':'+(resident?.source||resident?.generation||'')+':'+key,src=typeof image.src==='string'&&/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(image.src)&&image.src.length<=2*1024*1024&&image.width>0&&image.height>0&&image.width<=4096&&image.height<=4096&&image.width*image.height<=4000000?image.src:null;
+     const reason=imageFailures.get(identity)||image.reason||(earlier>=4?'Image reader preview limit; inspect the native source':!src?'Image bytes unavailable or unsupported':'');
+     content=h('figure',{class:'transcript-image'},h('figcaption',null,name),reason?h('p',{role:'status'},reason):[h('details',{'data-view-key':'image:'+identity},h('summary',null,'Inspect recorded image')),h('img',{src,alt:name,width:image.width,height:image.height,loading:'lazy',decoding:'async',onError:()=>{imageFailures.set(identity,'Image decode failed; recorded source retained');while(imageFailures.size>24)imageFailures.delete(imageFailures.keys().next().value);draw();}})],typeof image.url==='string'&&/^https?:\/\//.test(image.url)&&h('a',{href:image.url,'data-url':image.url},'Open recorded artifact'));
+    }
+    return h('article',{key,'data-key':key,...(closed?{'data-reading-key':'report:native:'+item.at+':'+item.i,'data-read-before':closedViews.get(scope)?.page?.end,'data-source-generation':closedViews.get(scope)?.page?.generation}:{}),class:'dialogue-item '+item.role},label&&h('p',{class:'meta'},label,time.stamp(item.updated,label+' message')),h('div',{class:'conversation-text conversation-prose'},content),!image&&text&&h('details',{'data-view-key':'source:'+scope+':'+key},h('summary',{class:'source-toggle'},'Exact source'),h('pre',null,raw)));
    },
    history:function(p,t,render){
     const total=t.history_count??t.history?.length??0,tail=t.history_tail===true?t.history||[]:t.history_tail||[],sourceRevision=t.history_source_revision??t.revision,sourceTotal=total-tail.length;if(!total)return null;

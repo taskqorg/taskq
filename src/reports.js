@@ -1,5 +1,11 @@
 'use strict';
 const {h}=require('preact'),ui=require('./ui-runtime.js'),{execution}=ui;
+// Use only tokenizer grammars; never let the dependency rewrite the document or fetch files.
+if(typeof window!=='undefined')window.Prism={manual:true,disableWorkerMessageHandler:true};
+const Prism=require('prismjs/components/prism-core');
+require('prismjs/components/prism-markup');require('prismjs/components/prism-css');require('prismjs/components/prism-clike');require('prismjs/components/prism-javascript');
+require('prismjs/components/prism-rust');require('prismjs/components/prism-python');require('prismjs/components/prism-bash');require('prismjs/components/prism-json');require('prismjs/components/prism-typescript');require('prismjs/components/prism-diff');require('prismjs/components/prism-sql');require('prismjs/components/prism-yaml');
+const syntaxCache=new Map();
 const card=require('./answer-card.js'),composer=require('./pm-composer.js').composer,time=require('./relative-time.js'),icons=require('./ui-icons.js'),dashboard=require('./task-dashboard.js');
 
 // §7: both surfaces use this view; the board owns read/decision state, memory holds only an in-flight view.
@@ -199,13 +205,23 @@ body:function(text,source='body',nativeAt){
  const lines=text.split('\n'),starts=[];let offset=0;for(const line of lines){starts.push(offset);offset+=line.length+1;}
  const blocks=[],props=at=>nativeAt===undefined?(source===null?{}:{'data-reading-key':'report:'+source+':'+blocks.length}):{'data-native-part':nativeAt+at,...(source?{'data-reading-key':'report:'+source+':part:'+(nativeAt+at)}:{})};
  const plain=(text,at)=>{const nodes=[];for(let n=0;n<text.length;){let end=Math.min(text.length,n+1024);if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end++;nodes.push(nativeAt===undefined?text.slice(n,end):h('span',{key:at+n,...props(at+n)},text.slice(n,end)));n=end;}return nodes;};
- const inline=(text,at)=>{const nodes=[];let end=0;for(const m of text.matchAll(/`([^`\n]+)`|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>\]\)]+/g)){
-  nodes.push(...plain(text.slice(end,m.index),at+end));const value=m[1]??m[2]??m[3]??m[0];nodes.push(h(m[1]!==undefined?'code':m[2]!==undefined?'strong':'a',{key:at+m.index,...(m[1]===undefined&&m[2]===undefined?{href:m[4]||m[0],'data-url':m[4]||m[0]}:{})},plain(value,at+m.index+(m[1]!==undefined?1:m[2]!==undefined?2:m[3]!==undefined?1:0))));end=m.index+m[0].length;
+ const inline=(text,at)=>{const nodes=[];let end=0;for(const m of text.matchAll(/`(?<code>[^`\n]+)`|\*\*(?<strong>[^*\n]+)\*\*|\*(?<em>[^*\n]+)\*|_(?<italic>[^_\n]+)_|\[(?<label>[^\]\n]+)\]\((?<url>https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>\]\)]+/g)){
+  nodes.push(...plain(text.slice(end,m.index),at+end));const g=m.groups,value=g.code??g.strong??g.em??g.italic??g.label??m[0],tag=g.code!==undefined?'code':g.strong!==undefined?'strong':g.em!==undefined||g.italic!==undefined?'em':'a';
+  nodes.push(h(tag,{key:at+m.index,...(tag==='a'?{href:g.url||m[0],'data-url':g.url||m[0]}:{})},plain(value,at+m.index+(g.strong!==undefined?2:tag==='a'&&!g.label?0:1))));end=m.index+m[0].length;
  }return [...nodes,...plain(text.slice(end),at+end)];};
+ const code=(text,language,at)=>{
+  const name=language.toLowerCase().split(/\s/)[0],grammar=Object.hasOwn(Prism.languages,name)&&Prism.languages[name];
+  // shortcut: synchronous grammar work is capped at 8 KiB; use a worker if measured reader latency requires it.
+  if(!grammar||text.length>8192)return plain(text,at);
+  const key=name+'\n'+text;let tokens=syntaxCache.get(key);
+  try {if(!tokens){tokens=Prism.tokenize(text,grammar);syntaxCache.set(key,tokens);while(syntaxCache.size>16)syntaxCache.delete(syntaxCache.keys().next().value);}}catch{return plain(text,at);}
+  let cursor=at;const render=token=>{if(typeof token==='string'){const nodes=plain(token,cursor);cursor+=token.length;return nodes;}if(Array.isArray(token))return token.map(render);return h('span',{class:'syntax-'+token.type},render(token.content));};
+  return render(tokens);
+ };
  const list=line=>/^\s*(?:([-*+])|(\d+)[.)])\s+(.+)$/.exec(line);
  for(let i=0;i<lines.length;){
   if(!lines[i].trim()){i++;continue;}const start=i,at=starts[i],fence=/^\s*(`{3,}|~{3,})([^\n]*)$/.exec(lines[i]);let node;
-  if(fence){i++;const begin=i;while(i<lines.length&&!lines[i].trim().startsWith(fence[1]))i++;node=h('pre',null,h('code',{'aria-label':(fence[2].trim()||'Text')+' code'},plain(lines.slice(begin,i).join('\n'),starts[begin]??text.length)));if(i<lines.length)i++;}
+  if(fence){i++;const begin=i;while(i<lines.length&&!lines[i].trim().startsWith(fence[1]))i++;node=h('pre',null,h('code',{'aria-label':(fence[2].trim()||'Text')+' code'},code(lines.slice(begin,i).join('\n'),fence[2].trim(),starts[begin]??text.length)));if(i<lines.length)i++;}
   else if(/^#{1,6}\s/.test(lines[i])){const heading=/^#{1,6}\s+/.exec(lines[i])[0];node=h('h3',null,inline(lines[i].slice(heading.length),at+heading.length));i++;}
   else if(list(lines[i])){const ordered=!!list(lines[i])[2],items=[];while(i<lines.length){const m=list(lines[i]);if(!m||!!m[2]!==ordered)break;items.push(h('li',{key:i,...(ordered?{value:Number(m[2])}:{}),...props(starts[i])},inline(m[3],starts[i]+lines[i].indexOf(m[3]))));i++;}node=h(ordered?'ol':'ul',null,items);}
   else {i++;while(i<lines.length&&lines[i].trim()&&!/^\s*(`{3,}|~{3,})|^#{1,6}\s/.test(lines[i])&&!list(lines[i]))i++;node=h('p',null,inline(lines.slice(start,i).join('\n'),at));}

@@ -226,3 +226,13 @@
 .conversation-prose ul,.conversation-prose ol{margin:.3em 0;padding-left:1.5em}
 .conversation-prose pre{margin:.4em 0;padding:6px;background:var(--raised);white-space:pre-wrap;overflow-wrap:anywhere}
 .conversation-prose code{font-size:.9em}.conversation-prose p code{background:var(--raised);padding:0 2px}
+
+/* Grammar tokens preserve selectable code; contrast stays readable in both native themes. */
+.conversation-prose .syntax-keyword,.report-card .syntax-keyword{color:light-dark(#7133a8,#d6acff)}
+.conversation-prose .syntax-string,.report-card .syntax-string{color:light-dark(#216332,#a8dab5)}
+.conversation-prose .syntax-comment,.report-card .syntax-comment{color:light-dark(#555d65,#b2bac4)}
+.conversation-prose :is(.syntax-number,.syntax-boolean),.report-card :is(.syntax-number,.syntax-boolean){color:light-dark(#965000,#f6c17b)}
+.transcript-image{margin:.4em 0;max-width:100%}.transcript-image img{display:block;max-width:100%;width:auto;height:auto;max-height:320px;object-fit:contain;object-position:left top}
+.transcript-image details[open]+img{max-height:none}.transcript-image :is(summary,figcaption){font-size:.85em;color:var(--muted)}
+@media(forced-colors:active){.conversation-prose [class^=syntax-],.report-card [class^=syntax-]{color:CanvasText}}
+.source-toggle{font-size:.85em;color:var(--muted)}
