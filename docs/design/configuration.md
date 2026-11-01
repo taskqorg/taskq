@@ -47,3 +47,14 @@ Optional project `routing` is an ordered array, for example `[{"labels":["ui"],"
 Owner-only `taskq reroute --from claude --to codex` changes matching strict pins on open ready tasks without unresolved execution, reporting each readback/refusal. It does not change focus, limits, accounts, grants or models and does not migrate work.
 
 Provider/account quota windows live in the existing host-wide account availability record, separate from operator enable/disable and slot limits. Retain overlapping observed windows; unknown reset uses bounded probes, never an inferred weekly reset. Every project excludes exhausted accounts; a spare account precedes runtime fallback. All exhausted means automatic wait with account/window/reset or next-probe evidence. Restart retains holds and probe ownership; missing or corrupt observations remain unknown. No paid API fallback, login creation or credential copying.
+
+### Balancing cutover
+
+Routing fences and reviewer quota continuation change older folds and require the coordinated project cutover in §8/§9 before new entries are written. This includes fenced `taskq: reroute` intents, `rerouted` completion, claims carrying `routing-revision`, and reviewer `steer quota attempt`. Historical unfenced reroute audits retain their meaning. Soft preferences and project routing also require compatible admission policy on every board host.
+
+1. Inventory the configured board hosts and open tasks, including pending routing intents, results, retries, quota windows and native execution ownership. Unknown or unreadable ownership blocks replacement; it never proves exit.
+2. Under the existing owner-approved cutover procedure, pause new admissions. Preserve active work until it finishes or a qualified native handover preserves its attempt, session, account and grants. Never replay, migrate or duplicate uncertain execution.
+3. Upgrade and verify compatible CLI readers and services on every board host before allowing the new entries. Do not run mixed readers. Preserve strict pins, focus, configured limits, accounts, permissions, independent quota windows and pending probe ownership; no label rewrite or live policy change is implicit.
+4. Resume in the existing approved order only after all hosts read the new model and retained state correctly. Read back new claims and continuations against the accepted golden traces; qualify actual native behavior separately under R12.
+
+After these entries exist, rollback requires a compatible reader. Retain board logs, pending routing intents, quota journals and execution evidence; never delete or edit them to make an old fold appear compatible. Unknown completion stays fenced and follows the existing §9 repair procedure. Documentation and portable checks do not prove a live cutover.
