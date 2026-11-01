@@ -84,7 +84,7 @@ The formerly intermittent Remove assertion assumed no caret Save could precede R
 
 Focused validation and exact-source review for this correction are recorded below. Original N01 attribution, installed Mac/Windows interaction, long heap plateau and the performance failures above remain open. No live messages, task answers, report decisions, Held admission, installation/restart or policy changes were performed.
 
-## Current candidate checks
+## Prior candidate checks
 
 The rejected source `be2a875e8365cf8e1a3b6ca66a598c32ed385ec9` was also rebuilt from a Git archive in temporary storage with the unchanged pinned dependencies. Running the strengthened `tests/conversations-recovery.browser.cjs` against that exact baseline bundle fails for all three original losses: answer text, steer text and the deferred owner checkpoint. The same instrument passes against final source `b3c97adf27ef511ae0066bc7262b8e313621f931`.
 
@@ -102,3 +102,23 @@ Validation on this Mac with Node 22.18.0, Python 3.14.8 and Cargo 1.98.1:
 The [unavailable-source screen](unresolved-draft.png) was visually inspected at 380 px, 20 px type, light theme: the retained-edit warning is visible in the existing status area and window controls remain reachable. The final dark worker document and recovered owner draft were also inspected; existing single-centre layout, file chip and explicit unknown delivery remain visible. This adds one distinct gap screen to the review set, with no theme/size variants committed.
 
 The full native gate is still sandbox-blocked. Merge-result CI remains the publication gate. Installed Mac/Windows window interaction, original N01 attribution and long heap plateau remain unknown; known performance failures remain failures. No service restart, app install or live conversation/decision action was used to obtain this evidence.
+
+## Saved-navigation caret correction
+
+The reviewer rejected `467aa66038f4a80bf1ce8e8e3abacd147229da61` under A4 and R13/C2/C7: after a refused `answer-local` save, recovery kept task text but lost the selection when saved navigation had already mounted the composer. Rebuilding that exact source and extending the existing recovery instrument with `workspace_navigation.current.answer` and `conversations.navigation.threads.selected` reproduces answer `[20,20]` and steer `[19,19]` instead of the checkpoint's `[3,9]`.
+
+The renderer cached the field's DOM identity during the initial disk-backed draw, so the later checkpoint skipped its new-field caret restoration. Source `ae22b52bbe1ed638d6ae85407f731b47aa8f7ff8` invalidates that cached identity when recovery replaces task state. The existing draw reapplies the checkpoint caret to the mounted field, then restores focus through the existing navigation path. No product decision changes; this implements the existing C2/C7 requirement.
+
+The existing fixture now exercises answer and steer with and without saved task navigation. It retains the text, file, focus, explicit storage-error, same-root/board/operation and zero automatic save/send assertions. The earlier fixture started without persisted navigation, so its field first mounted after checkpoint hydration and missed this loading order. The correction adds that missing order without changing the protected result.
+
+Worker Codex source review of frozen `ae22b52bbe1ed638d6ae85407f731b47aa8f7ff8` found no further actionable findings in the requested fix or its direct effects. The invalidation occurs only on explicit checkpoint hydration; ordinary redraws keep the user's current selection. Main and detached workspaces reuse this renderer. This is worker source review, not installed native acceptance or the task reviewer's publication decision.
+
+Validation for this correction:
+
+- `node tests/conversations-recovery.browser.cjs`: FAIL before on rebuilt `467aa660`, PASS after on `ae22b52b`: both saved-navigation regressions, the original recovery cases and all 16 runtime/theme/font/width cells with three faults each. Files, caret/focus, explicit refusal and same-ID/no-replay checks remain protected.
+- `node tests/workspace-communication.browser.cjs` and `node tests/workspace-route.browser.cjs`: PASS ordinary answer restart/selection, immutable explicit retry, safe route/boot and detached ownership.
+- `python3 scripts/check.py --base 467aa66038f4a80bf1ce8e8e3abacd147229da61`: PASS on frozen source `ae22b52b`, selected web delta, 11 core tests, 37 Node suites, four script fixtures and the updated recovery browser instrument; 232.874 s / 900 s on this Mac. The pinned contract lint remains explicitly unknown locally; CI runs it. The final follow-up changes this evidence report only.
+
+Visual inspection of the gate-generated recovered-answer screen confirms the selected text, file chip and explicit storage failure remain visible in the existing composer and status area (dark, 20 px, 1280×720). The worker-document screen remains readable at 900 px / 20 px with the existing current-action and unknown-delivery controls. No new layout, icon or palette decision was introduced; the automated matrix still checks both themes and narrow/wide sizes. These are isolated browser images, not native OS-window evidence.
+
+The earlier full native gate's sandbox-blocked verdict, contract-lint gap, original N01 attribution, installed Mac/Windows acceptance, long heap plateau and recorded performance failures remain unchanged. No live input, task decisions, admission, production fault injection, installation/restart or policy change was performed.
