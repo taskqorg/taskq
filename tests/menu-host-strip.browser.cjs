@@ -5,11 +5,11 @@ const states=['doing','review','ask','failed','ready','waiting','later','held'];
 const exec=(id,host,runtime)=>({id,attempt:id,host,runtime,role:'worker',state:'running',observed:990,live:true});
 const longFresh='buildworker'+'0123456789'.repeat(5),longStale='staleworker'+'9876543210'.repeat(5);
 const hosts=[{name:longFresh,updated:990,live:true},{name:longStale,updated:690,live:false,age:310,age_text:'5m'},{name:'mac',updated:990,live:true},{name:'win',updated:990,live:true},{name:'hermes-fra1',updated:690,live:false,age:310,age_text:'5m'}];
-const projects=['taskq','pilotq','agentq','dashq','coreq','serverq','specq','csgo'].map((name,i)=>({root:'/fixture/'+name,name,host:'mac',issues:'https://example.org/'+name+'/issues',board_kind:'github',alive:true,complete:true,age:1,tasks_age_seconds:0,tasks_live:true,observed:1000,hosts,focus:['all'],labels:[],
+const projects=['taskq','pilotq','agentq','dashq','coreq','serverq','specq','csgo'].map((name,i)=>({root:'/fixture/'+name,name,host:'mac',issues:'https://example.org/'+name+'/issues',board_kind:'github',alive:true,complete:true,age:1,tasks_age_seconds:0,tasks_live:true,observed:1000,hosts,focus:['all'],labels:[],reports:{complete:true,reports:[]},
  ...(i===0?{error:'Fixture urgent fault'}:{}),
  tasks:[{n:i+1,state:states[i],title:name+' task '+(i+1),revision:1,...(i===0?{runtime:'claude',host:'mac',local_session:true,executions:[exec(10,'mac','claude')]}:i===1?{runtime:'codex',host:'win',executions:[exec(11,'win','codex')]}:i===2?{executions:[exec(12,'pilot','codex')]}:{})}]}));
 const navigation={schema:1,current:{page:'home'},dashboard:{selected:'all',views:[{id:'view-running',name:'Running',pinned:true,working:{states:['doing','review']}},{id:'view-answers',name:'Waiting for answer',pinned:true,working:{states:['ask']}}]}};
-const snapshot={display:require('./fixtures/display-model.json').display,platform:'macos',font:18,theme:'dark',host:'mac',now:1000,version:'fixture',projects,notify:{host:{ask:'on',close:'on',failed:'on',gone:'on'},projects:{}},stop_modes:true,navigation,period:'1d',history:require('./fixtures/icon-history/day-dark.json')};
+const snapshot={display:require('./fixtures/display-model.json').display,platform:'macos',font:18,theme:'dark',host:'mac',now:1000,version:'fixture',projects,messages:{complete:true,entries:[]},conversations:{complete:true,items:[]},notify:{host:{ask:'on',close:'on',failed:'on',gone:'on'},projects:{}},stop_modes:true,navigation,period:'1d',history:require('./fixtures/icon-history/day-dark.json')};
 const html=fs.readFileSync('build/web/tray.html','utf8');
 const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filter(e=>e.checkVisibility()).flatMap(e=>{
  const style=getComputedStyle(e);
@@ -32,7 +32,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    }
    const summary=page.locator('.dashboard-status>summary');
    assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>[c.dataset.host,c.querySelector('.host-number').textContent])),[[longFresh,'0'],['hermes-fra1','?'],['mac','1'],[longStale,'?'],['win','1']],'UX30-06 A1: per-host totals, idle 0, stale ?');
-   assert.deepEqual(await summary.locator('.host-runtime-totals [data-runtime]').evaluateAll(es=>es.map(e=>[e.dataset.runtime,e.querySelector('.host-number').textContent])),[['Codex','≥1'],['Claude','≥1']],'A3/A4: execution-only host retains overall uncertainty');
+   assert.deepEqual(await summary.locator('.host-runtime-totals [data-runtime]').evaluateAll(es=>es.map(e=>[e.dataset.runtime,e.querySelector('.host-number').textContent])),[['Codex','≥1'],['Claude','≥1'],['Antigravity','?']],'A3/A4: execution-only host retains overall uncertainty');
    assert(await summary.locator('.host-chip').evaluateAll(cs=>cs.every(c=>c.title===c.getAttribute('aria-label')&&c.title.startsWith(c.dataset.host))),'full name, counts and reasons stay accessible');
    assert.deepEqual(await summary.locator('.host-chip strong').allTextContents(),['bui','her','mac','sta','win']);
    const line=await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>{const r=c.getClientRects();return r.length===1&&c.scrollWidth<=c.clientWidth+1;}));
@@ -56,7 +56,8 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    await summary.click();
    assert.equal(await page.locator('.host-breakdown').count(),6,'A2: first expansion includes execution-only hosts');
    const axes=await page.locator('.host-breakdown').evaluateAll(es=>es.map(e=>[...e.querySelectorAll('.host-number')].map(n=>{const r=n.getBoundingClientRect();return r.x+r.width/2;})));
-   assert(axes.every(row=>row.every((x,i)=>Math.abs(x-axes[0][i])<1)),'A2: stable Codex/Claude/Total numeric axes');
+   assert.equal(axes[0].length,4,'A1/A2: Codex, Claude, Antigravity and Total columns');
+   assert(axes.every(row=>row.every((x,i)=>Math.abs(x-axes[0][i])<1)),'A2: stable Codex/Claude/Antigravity/Total numeric axes');
    assert.deepEqual(await overflow(page),[],'A2: expanded hosts '+width+'/'+font+'/'+theme);
    if(process.env.PANEL_EVIDENCE&&width===320&&font===20&&theme==='dark')await page.screenshot({path:process.env.PANEL_EVIDENCE+'/hosts-expanded.png'});
    await summary.click();
@@ -82,7 +83,6 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    assert.equal(await summary.locator('.host-chip').count(),5,'#1724 A2: Completed keeps every host');
    assert.deepEqual(await overflow(page),[],'#1724 A4: Completed has no horizontal overflow');
    if(process.env.PANEL_EVIDENCE&&width===320&&font===20&&theme==='dark')await page.screenshot({path:process.env.PANEL_EVIDENCE+'/completed.png'});
-   await page.locator('[data-a=view-select][data-id=all]').click();
    for(const surface of ['views','settings']){
     const window=await browser.newPage({viewport:{width,height:760}});
     window.on('pageerror',e=>{throw e;});
