@@ -3,7 +3,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 spec = importlib.util.spec_from_file_location("live_probe", Path(__file__).with_name("live-probe.py"))
 probe = importlib.util.module_from_spec(spec)
@@ -22,6 +22,31 @@ class Inventory(unittest.TestCase):
                 "123 /invented/probe-2094/taskq service run\n124 /invented/ordinary/taskq service run")):
             self.assertEqual(probe.procs({"dir": "/invented/probe-2094"}),
                              [(123, "/invented/probe-2094/taskq service run")])
+
+    def test_process_ownership_requires_folder_boundaries(self):
+        for windows, folder in [(False, "/invented/probe-2094"),
+                                (False, "/invented/space parent/probe-2094"),
+                                (True, r"C:\Invented\Space Parent\Probe-2094")]:
+            with self.subTest(windows=windows, folder=folder), patch.object(probe, "WIN", windows):
+                commands = [f'"{folder}"', f'"{folder}/root/taskq" service run',
+                            f'taskq --target="{folder}/install"', f'{folder}/taskq service run',
+                            f'"{folder}-other/root/taskq" service run',
+                            f'"{folder}.old/taskq" service run',
+                            f'"prefix{folder}/taskq" service run',
+                            f'"{folder} other/taskq" service run']
+                with patch.object(probe, "run", return_value=(0, "\n".join(
+                        f"{100 + i} {cmd}" for i, cmd in enumerate(commands)))):
+                    self.assertEqual(probe.procs({"dir": folder}),
+                                     [(100 + i, cmd) for i, cmd in enumerate(commands[:4])])
+
+    def test_reconcile_keeps_sibling_process_after_excluding_own(self):
+        own = "/invented/probe-2094"
+        with patch.object(probe, "WIN", False), patch.object(probe.os.path, "isdir", return_value=False), \
+                patch("builtins.open", mock_open(read_data="{}")), patch.object(probe, "run", return_value=(0,
+                    f'123 "{own}/taskq" service run\n124 "{own}-other/taskq" service run')):
+            bad = probe.reconcile("/invented", "/repo", own=own)
+            self.assertEqual(len(bad), 1)
+            self.assertIn("process 124 names an earlier fixture", bad[0])
 
     def test_failed_or_unrecognized_claude_inventory_keeps_fixture(self):
         m = {"dir": "/invented/probe-2094", "root": "/invented/probe-2094/root"}

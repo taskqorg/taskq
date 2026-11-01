@@ -114,8 +114,8 @@ def reconcile(parent, repo, own=None):
             print("kept receipts", p)
         elif f.startswith("probe-") and os.path.isdir(p) and key(p) != mine:
             bad.append(f"fixture {p} exists; run its `cleanup` first")
-    bad += [f"process {pid} names an earlier fixture: {cmd[:120]}" for pid, cmd in procs({"dir": os.path.join(parent, "probe-")})
-            if not (own and norm(own) in norm(cmd))]
+    bad += [f"process {pid} names an earlier fixture: {cmd[:120]}" for pid, cmd in procs({"dir": os.path.join(parent, "probe-")}, prefix=True)
+            if not (own and names_folder(cmd, own))]
     try:
         rows = json.load(open(os.path.join(repo, ".taskq", "status.json"))).get("tasks", [])
     except (OSError, ValueError) as x:
@@ -507,7 +507,14 @@ def report(a):
         print(f, json.dumps(v))
 
 
-def procs(m):
+def names_folder(cmd, folder, *, prefix=False):
+    # ps may flatten argv without quotes; keep spaces inside the path, but require its folder boundary.
+    start = r'''(?:^|[\s=])(["']?)''' + re.escape(norm(folder).rstrip("/"))
+    end = "" if prefix else r'''(?:/|(?=\1(?:\s|$)))'''
+    return re.search(start + end, norm(cmd)) is not None
+
+
+def procs(m, *, prefix=False):
     """Processes, other than this one, whose command line names the fixture folder (codex exec, app server, children)."""
     if WIN:
         rc, out = run(["powershell", "-NoProfile", "-Command", "$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process | % { \"$($_.ProcessId) $($_.CommandLine)\" }"])
@@ -516,9 +523,8 @@ def procs(m):
     if rc != 0 or not out:
         sys.exit("Process inventory unknown; no fixture launch or cleanup allowed")
     # ponytail: command-line match only; a process that names nothing of the fixture is missed, add a cwd scan if one shows up
-    want = norm(m["dir"])
     rows = [l.strip().split(" ", 1) for l in out.splitlines()]
-    return [(int(r[0]), r[1]) for r in rows if len(r) == 2 and r[0].isdigit() and int(r[0]) != os.getpid() and want in norm(r[1])]
+    return [(int(r[0]), r[1]) for r in rows if len(r) == 2 and r[0].isdigit() and int(r[0]) != os.getpid() and names_folder(r[1], m["dir"], prefix=prefix)]
 
 
 def cleanup(a):
