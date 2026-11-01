@@ -232,3 +232,7 @@ Moved verbatim from `taskq.md` (#1179) to keep the contract under its R8 size bo
 Moved verbatim from `taskq.md` (#1325) to keep the contract under its R8 size bound. Known macOS Codex 0.159.3 cases (other versions/platforms unknown):
 - Blender 5.2.1 Metal: Workspace exit 139 3/3; Full passes 3/3 ([#157](https://github.com/taskqorg/taskq/issues/157#issuecomment-6029143783)).
 - App-server socket client: Workspace EPERM despite socket roots/allowlist; Full connects ([#270](https://github.com/taskqorg/taskq/issues/270#issuecomment-6067173258)); no supervisor role restored.
+
+### Antigravity CLI grants
+
+Antigravity workers and reviewers require an explicit `antigravity` grant in the existing operator-owned policy store. Legacy Claude/Codex requests do not grant it. macOS Workspace/Restricted use the existing Seatbelt boundary, with Antigravity's native state home added only for its own runtime grant; other operating systems refuse unqualified containment. Full uses only the explicit Full grant. Native permission enforcement remains unqualified under R12; no live grant or runtime setting changes as part of adapter adoption.

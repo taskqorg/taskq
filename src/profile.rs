@@ -157,7 +157,7 @@ pub const STAGES: [&str; 7] = ["claim", "start", "build", "checks", "review", "a
 const OUTCOMES: [&str; 6] = ["ok", "ask", "retried", "failed", "cancelled", "unknown"];
 /// Stage-only error classes: a child ended without hand-in; its issue left the board read or could not be read back.
 pub(crate) const STAGE_ERRORS: [&str; 3] = ["exit", "left-board", "unreadable"];
-pub(crate) const RUNTIMES: [&str; 4] = { let r = crate::runtime::RUNTIMES; [r[0], r[1], r[2], "other"] };
+pub(crate) const RUNTIMES: [&str; 5] = { let r = crate::runtime::RUNTIMES; [r[0], r[1], r[2], r[3], "other"] };
 const UNKNOWN: [&str; 6] = ["no-model", "no-usage", "log-unreadable", "app-turn", "adopted", "open-stage"];
 
 /// Model use of one stage: service stages run no model; a runtime that reports none reads unknown, never zero;

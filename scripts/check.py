@@ -27,7 +27,7 @@ def selection(paths):
 # docs/runtime-qualification.md#runtime-adapters: only these files may name a runtime
 ADAPTER_EXCEPTIONS = {'src/runtime.rs', 'src/linux_sandbox.rs', 'src/windows_sandbox.rs'}
 # Runtime names, bare or name-prefixed, and the native names only the adapter may know (#1593).
-RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app)(:[^"]*)?"|claude\.exe|\.claude\.json|CODEX_HOME|CODEX_THREAD_ID')
+RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app|antigravity)(:[^"]*)?"|claude\.exe|\.claude\.json|CODEX_HOME|CODEX_THREAD_ID')
 TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(pub(\([\w:]+\))?\s+)?mod\s+\w+\s*\{')
 
 
@@ -110,14 +110,14 @@ def typo_only(old, new):
 
 
 def id_pattern(rule):
-    body = r'\s+'.join(re.escape(w) for w in rule.split()).replace('§', r'(?:§ ?|[Ss]ection\s+)')
+    body = r'\s+'.join(re.escape(w) for w in rule.split()).replace('§', r'(?:§ ?|[Ss]ection\s*)')
     return re.compile(r'(?<![\w.])' + body + r'(?!\w|\.\d)')
 
 
 def cited(text, rules):
     """IDs cited in text; a longer ID's match never also cites a shorter one (`§2 Ask card` is not `§2`)."""
     # Owners also cite paired sections, e.g. "sections 4 Filter and 9"; keep any subsection title for longest-match fencing.
-    text = re.sub(r'\bsections\s+(\d+(?:\s+[A-Za-z]+)?)\s+and\s+(\d+)\b', r'section \1 and section \2', text, flags=re.I)
+    text = re.sub(r'\bsections\s*(\d+(?:\s+[A-Za-z]+)?)(?:\s+and\s+|\s*/\s*)(\d+)\b', r'section \1 and section \2', text, flags=re.I)
     found = set()
     for rule in sorted(rules, key=len, reverse=True):
         pattern = id_pattern(rule)

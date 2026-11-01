@@ -14,7 +14,7 @@ pub fn enter(root: &Path, install: &Path) {
 }
 
 /// host.json `default_runtime` values (§ 9); `codex-app` stays opt-in per task.
-pub const DEFAULT_RUNTIMES: [&str; 2] = [crate::runtime::RUNTIMES[0], crate::runtime::RUNTIMES[1]];
+pub const DEFAULT_RUNTIMES: [&str; 3] = crate::runtime::CLI_RUNTIMES;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Policy {
@@ -1883,13 +1883,13 @@ mod tests {
     // Chain: § 9 `default_runtime` (#1668). Risk: a host without the key stops running reviews on claude,
     // or a typo or `codex-app` silently becomes the runtime of every review on the host.
     #[test]
-    fn default_runtime_parses_claude_or_codex_only() {
+    fn default_runtime_parses_cli_subscriptions_only() {
         assert_eq!(policy().default_runtime, "claude", "missing key: claude");
-        for rt in ["claude", "codex"] {
+        for rt in crate::runtime::CLI_RUNTIMES {
             assert_eq!(Policy::parse(json!({"default_runtime": rt}), "invented").unwrap().default_runtime, rt);
         }
         for bad in [json!("codex-app"), json!("Codex"), json!(""), json!(1)] {
-            assert_eq!(Policy::parse(json!({"default_runtime": bad}), "invented").unwrap_err(), "host.json: default_runtime must be claude or codex");
+            assert_eq!(Policy::parse(json!({"default_runtime": bad}), "invented").unwrap_err(), "host.json: default_runtime must be claude or codex or antigravity");
         }
     }
     fn policy() -> Policy {

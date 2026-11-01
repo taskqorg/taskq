@@ -368,7 +368,7 @@ agents:function(){
   const prior=r=>r.state==='signed-in'?(A.fresh?'Signed in':'Signed in at '+when(A.at)):signState[r.state]||'Unknown';
   // AS5 Checking: the service marked a probe in progress; the prior result stays in the detail with its age
   const label=r=>A.checking?'Checking':prior(r),checked=A?.at==null?'no earlier check':'checked '+A.age+' ago';
-  const rows=A?.rows.length?A.rows.map(r=>h('details',{class:'group agent-signin','data-view-key':'agent:'+r.runtime},api.disclosure(r.runtime==='claude'?'claude':'openai',[runtimeName(r.runtime)+' '+(r.version||'version unknown')+' · ',h('span',{class:!A.checking&&signAlert.includes(r.state)?'alert':''},label(r)),h('span',{class:'meta'},' · '+(r.account||'account unknown'))]),
+  const rows=A?.rows.length?A.rows.map(r=>h('details',{class:'group agent-signin','data-view-key':'agent:'+r.runtime},api.disclosure(r.runtime==='claude'?'claude':r.runtime==='antigravity'?'bot':'openai',[runtimeName(r.runtime)+' '+(r.version||'version unknown')+' · ',h('span',{class:!A.checking&&signAlert.includes(r.state)?'alert':''},label(r)),h('span',{class:'meta'},' · '+(r.account||'account unknown'))]),
     h('div',{class:'body meta'},lines([A.checking&&'Last result: '+prior(r),r.method&&'Method: '+r.method,r.expires?'Expires '+when(r.expires):'Expiry unknown',r.refreshed&&'Last refresh '+r.refreshed+'; not an expiry',r.reason&&'Reason: '+r.reason,checked].filter(Boolean))),
     r.next&&h('div',{class:'body'},'Sign in: '+r.next+'. A check never signs in.'))):[h('div',{class:'body meta'},A?.checking?'Checking: no earlier result':'Unknown: no status.json has agents')];
   return f(api.heading('Clients on this computer','bot'),h('div',{class:'row'},h('span',null,h('strong',null,view.S.host||'This host'),' · sign-in '+(A?(A.checking?'checking now · ':'')+checked:'unknown: no service probe yet'))),
@@ -376,7 +376,7 @@ agents:function(){
     // #1702 A3: a remote host's only source here is its board heartbeat (freshness); client, sign-in, account and access read unknown with the missing source
     remote.length>0&&api.heading('Other computers','network'),remote.map(n=>{const beat=view.S.projects.flatMap(p=>Array.isArray(p.hosts)?p.hosts:[]).find(x=>x?.name===n);
       return h('details',{class:'group remote-agents','data-view-key':'agents:'+n},api.disclosure('network',n+' · '+(beat?.age_text?'heartbeat '+beat.age_text+' old':beat?'heartbeat age unknown':'heartbeat unknown: no host row')+' · clients unknown'),
-        ['claude','codex','codex-app'].map(rt=>h('div',{class:'body meta'},runtimeName(rt)+' · unknown: '+n+' heartbeat publishes no client version, sign-in, account or access')),
+        ['claude','codex','antigravity','codex-app'].map(rt=>h('div',{class:'body meta'},runtimeName(rt)+' · unknown: '+n+' heartbeat publishes no client version, sign-in, account or access')),
         h('div',{class:'body meta'},'Source: board heartbeat only; no runtime-client or access probe of '+n+' reaches this host.'));}),
     api.heading('Project access','shield'),api.accessFacts(),
     h('div',{class:'body meta'},'Editing is not available here: the operator changes grants with `taskq service permissions --runtime <runtime> --mode <mode>`.'),view.S.agentq&&api.heading('AgentQ','bot'),api.agentq(true));
@@ -883,8 +883,8 @@ const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;
 // Pages are Preact vnodes; shared module HTML enters only as an island the module owns.
 const f=(...children)=>h(Fragment,null,...children),raw=html=>html?h('div',{style:'display:contents',dangerouslySetInnerHTML:{__html:html}}):'',lines=items=>items.flatMap((x,i)=>i?[h('br'),x]:[x]);
 // R16/R18: Claude and Codex are counted and named apart; equal values form one group
-const runtimeName=rt=>({'claude':'Claude','codex':'Codex','codex-app':'Codex app'}[rt]||rt||'Unknown runtime');
-const family=rt=>/^codex/.test(rt||'')?'Codex':rt==='claude'?'Claude':rt||'Unknown runtime',grouped=list=>{const m=new Map();for(const x of list)m.set(x,(m.get(x)||0)+1);return [...m].map(([k,n])=>n>1?k+' ('+n+')':k).join(' · ');};
+const runtimeName=rt=>({'claude':'Claude','codex':'Codex','codex-app':'Codex app','antigravity':'Antigravity'}[rt]||rt||'Unknown runtime');
+const family=rt=>/^codex/.test(rt||'')?'Codex':rt==='claude'?'Claude':runtimeName(rt),grouped=list=>{const m=new Map();for(const x of list)m.set(x,(m.get(x)||0)+1);return [...m].map(([k,n])=>n>1?k+' ('+n+')':k).join(' · ');};
 // AS5 states from runtime::agent_view; a stale signed-in reads as "Signed in at <time>"
 const signState={'signed-in':'Signed in',expired:'Expired',rejected:'Rejected','sign-in-required':'Sign in required','not-installed':'Not installed','check-failed':'Check failed',unknown:'Unknown'},signAlert=['expired','rejected','sign-in-required','check-failed'];
 

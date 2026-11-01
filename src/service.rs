@@ -2041,7 +2041,7 @@ impl<'a> Service<'a> {
             let mut session = session.to_string();
             let mut l = Launch { files: String::new(), execution: None, task: n, title: v.issue.title.clone(), attempt: a, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: session.clone(), url: self.board.url(n), resume: None };
             if session == "-" || crate::runtime::of(rt).remote {
-                session = crate::runtime::codex_thread(&crate::runtime::log_path(&self.cfg.root, &l)).unwrap_or_else(|| if session == "-" { String::new() } else { session });
+                session = crate::runtime::native_session(rt, &crate::runtime::log_path(&self.cfg.root, &l)).unwrap_or_else(|| if session == "-" { String::new() } else { session });
             }
             let text: Vec<String> = new.iter().map(|c| core::delivery(n, &v.log, c.id)).collect();
             let inbox: Vec<(&str, &str)> = new.iter().zip(&text).map(|(c, t)| (core::kind(n, &c.body), t.as_str())).collect();
@@ -4430,7 +4430,7 @@ Open: none")).unwrap();
             std::fs::write(&log,"").unwrap();
             let child=std::process::Command::new("sleep").arg("30").spawn().unwrap();
             let native=coreq::process::identity(child.id()).unwrap();
-            Ok(Box::new(crate::runtime::CliTurn {proc:Box::new(child),log,pos:0,start:0,stopping:false,accepted:false,read_error:None,native,recovery:None}))
+            Ok(Box::new(crate::runtime::CliTurn {proc:Box::new(child),log,pos:0,start:0,stopping:false,accepted:false,read_error:None,session:None,native,recovery:None}))
         }));
         s.focus=vec!["all".into()];
         s.pass().unwrap();
@@ -4485,7 +4485,7 @@ Open: none")).unwrap();
             let log = crate::runtime::log_path(&r, l);
             std::fs::create_dir_all(log.parent().unwrap()).unwrap();
             std::fs::write(&log, "{\"type\":\"thread.started\",\"thread_id\":\"t\"}\n").unwrap();
-            Ok(Box::new(crate::runtime::CliTurn { proc: Box::new(FakeProc(flag)), log, pos: 0, start: 0, stopping: false, accepted: false, read_error: None, native: None, recovery: None }) as Box<dyn Proc>)
+            Ok(Box::new(crate::runtime::CliTurn { proc: Box::new(FakeProc(flag)), log, pos: 0, start: 0, stopping: false, accepted: false, read_error: None, session: None, native: None, recovery: None }) as Box<dyn Proc>)
         }));
         s.focus = vec!["all".into()];
         s.pass().unwrap();
@@ -5582,6 +5582,7 @@ Open: none")).unwrap();
             let ns: Vec<u64> = (0..tasks).map(|_| b.create("T", "", &labels).unwrap()).collect();
             let mut c = cfg("mac");
             c.limits = limits.iter().cloned().collect();
+            c.default_runtime = tr["default"].as_str().unwrap_or("claude").into();
             let mut s = service(&b, &c, Default::default());
             for (task, attempt, rt) in held {
                 s.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution: attempt, task, attempt, rt, proc: Box::new(FakeProc(Rc::new(RefCell::new(None)))) });
@@ -5644,6 +5645,60 @@ Open: none")).unwrap();
                     s.pass().unwrap(); // gone ends the reviewer; the next pass claims its replacement
                     assert_eq!(task(&b, n).attempt, None);
                 }
+            }
+        }
+    }
+
+    // A2-A4, R2/R9/R12: worker/reviewer admission, quota fallback and same-session resume; never edit capacity or override pins/grants.
+    #[test]
+    fn antigravity_admission_and_resume_keep_ownership() {
+        for reviewer in [false, true] {
+            for why in ["quota", "pin", "disabled", "grant"] {
+                let b = Fake::default();
+                let root = std::env::temp_dir().join(format!("taskq-antigravity-{}", crate::runtime::uuid()));
+                std::fs::create_dir_all(root.join(".taskq")).unwrap();
+                let mut c = cfg("mac"); c.root=root.clone(); c.install=root.join("install");
+                c.limits=BTreeMap::from([("claude".into(),1),("codex".into(),0),("antigravity".into(),1)]);
+                let mut labels=vec!["taskq".into()];
+                if why=="pin" {labels.push("run-claude".into());}
+                let n=b.create("Invented Antigravity admission", "", &labels).unwrap();
+                if reviewer {
+                    let a=b.comment(n,"taskq: spawn worker codex:fixture mac").unwrap();
+                    b.comment(n,&core::entry("result",&[&"a".repeat(40)],Some(a),"fixture candidate")).unwrap();
+                    release_execution(&b,n,a,a,"exit").unwrap();
+                }
+                let launches=Rc::new(RefCell::new(vec![])); let calls=launches.clone();
+                let exits:Exits=Default::default(); let running=exits.clone();
+                let mut s=Service::new(&b,&c,"fixture",Box::new(move |l| {
+                    calls.borrow_mut().push((l.rt.clone(),l.session.clone(),l.resume.is_some()));
+                    let flag=Rc::new(RefCell::new(None));running.borrow_mut().push((l.task,flag.clone()));
+                    Ok(Box::new(FakeProc(flag)))
+                }));
+                s.focus=vec!["all".into()];
+                s.limited.insert("claude".into(),(i64::MAX,true));
+                if why=="disabled" {s.cap.as_mut().unwrap().limits.insert("antigravity".into(),0);}
+                if why=="grant" {s.refused_access.insert("antigravity".into(),"no operator grant".into());}
+                let capacity=s.cap.as_ref().unwrap().limits.clone();
+                for _ in 0..2 {s.pass().unwrap();}
+                assert_eq!(s.cap.as_ref().unwrap().limits,capacity,"quota cannot rewrite operator capacity");
+                if why!="quota" {
+                    assert!(launches.borrow().is_empty(),"{reviewer} {why}");
+                    let row=s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().json();
+                    assert!(row["admission"]["reason"].as_str().unwrap().contains(if why=="pin" {"claude"} else {"antigravity"}));
+                } else {
+                    assert_eq!(*launches.borrow(),[("antigravity".into(),"-".into(),false)]);
+                    let t=task(&b,n);let a=t.attempt.unwrap();
+                    assert_eq!(t.role.as_deref(),Some(if reviewer {"reviewer"} else {"worker"}));
+                    let path=crate::runtime::attempt_log(&root,t.role.as_deref().unwrap(),n,a);
+                    std::fs::write(path,"{\"conversationId\":\"agy-owned\"}\n").unwrap();
+                    b.comment(n,&core::entry("ask",&[],Some(a),"fixture question")).unwrap();
+                    *exits.borrow()[0].1.borrow_mut()=Some(0);s.pass().unwrap();
+                    b.comment(n,"taskq: answer\ncontinue").unwrap();s.pass().unwrap();
+                    assert_eq!(launches.borrow().last().unwrap(), &("antigravity".into(),"agy-owned".into(),true));
+                    assert_eq!(launches.borrow().len(),2,"only one new turn for the answer");
+                    assert_eq!(task(&b,n).attempt,Some(a));
+                }
+                drop(s);std::fs::remove_dir_all(root).unwrap();
             }
         }
     }
@@ -6788,7 +6843,7 @@ Open: none";
         assert!(e.borrow().is_empty(), "no reviewer slot");
         let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
         assert_eq!((&row["state"], &row["admission"]["code"], &row["admission"]["host"]), (&json!("review"), &json!("capacity"), &json!("mac")));
-        assert_eq!(row["wait"], "Waiting for a free slot · claude disabled (limit 0); codex not in limits");
+        assert_eq!(row["wait"], "Waiting for a free slot · claude disabled (limit 0); codex not in limits; antigravity not in limits");
     }
 
     // Chain: `host-<name>` label -> heartbeat names -> board admission -> status wait text (R6). Risk (#1721): a task

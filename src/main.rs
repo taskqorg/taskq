@@ -110,7 +110,7 @@ const USAGE: &str = "taskq agents
  taskq service slots --identity PID | --action reserve|observe|release --request JSON [--json]
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
- taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled] [--default-runtime claude|codex]
+ taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled] [--default-runtime claude|codex|antigravity]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
  taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. | --revoke ID] [--json]
@@ -1936,7 +1936,7 @@ fn edit_capacity(text: &str, host: &str, me: &str, e: &CapEdit, expect: Option<&
         return Err("capacity changed since it was shown; nothing written".into());
     }
     if e.is_empty() {
-        return Err("nothing to change: give --mode, --max, --claude, --codex, --codex-app, --load-gate, --cpu-max or --memory-min".into());
+        return Err("nothing to change: give --mode, --max, --claude, --codex, --antigravity, --codex-app, --load-gate, --cpu-max or --memory-min".into());
     }
     if let Some(rt) = e.limits.keys().chain(&e.unset).find(|k| !RUNTIMES.contains(&k.as_str())) {
         return Err(format!("unknown runtime {rt}"));
@@ -2753,16 +2753,16 @@ fn host_setup(cfg: &Config) -> Option<String> {
 fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<String, String>, agents: &Value, access: &[policy::Effective],
     open: Option<Vec<(u64, Vec<String>)>>, pr_route: Option<check::Probe>) -> Vec<check::Item> {
     // A healthy fallback removes the preferred CLI as a setup prerequisite; explicit pins still expose its gaps.
-    let fallback = labels::select(&[], false, &cfg.default_runtime, |rt| {
+    let selected = labels::select(&[], false, &cfg.default_runtime, |rt| {
         let login = agents.as_array().into_iter().flatten().find(|r| r["runtime"] == rt).and_then(|r| r["login"].as_str());
         let allowed = access.iter().any(|e| e.runtime == rt && e.refused.is_none() && !e.grant.starts_with("none") && e.grant != "unknown");
         if limits.get(rt) != Some(&0) && login == Some("logged in") && allowed { Ok(rt.into()) }
         else { Err(("access", format!("{rt} not ready"))) }
-    }).ok().is_some_and(|(_, reason)| reason.is_some());
+    }).ok().map(|(rt, _)| rt);
+    let fallback = selected.as_ref().is_some_and(|rt| rt != &cfg.default_runtime);
     let pinned = |rt: &str| open.as_ref().is_some_and(|tasks| tasks.iter().any(|(_, labels)| labels.iter().any(|l| l.strip_prefix("run-") == Some(rt))));
-    let candidates = labels::candidates(&[], false, &cfg.default_runtime);
     let runtimes = runtime::agent_runtimes().iter().filter(|rt| {
-        let in_use = match limits.get(**rt) { Some(n) => *n > 0, None => candidates.iter().any(|candidate| candidate == *rt) };
+        let in_use = match limits.get(**rt) { Some(n) => *n > 0, None => selected.as_ref().unwrap_or(&cfg.default_runtime) == *rt };
         pinned(rt) || in_use && !(fallback && **rt == cfg.default_runtime)
     })
         .map(|rt| {
@@ -4370,17 +4370,28 @@ mod tests {
     // Chain: § 5 `service capacity --default-runtime` -> host.json `default_runtime` (#1668). Risk: a typo or
     // `codex-app` reaches host policy, or the flag alone reads as an empty edit and nothing is saved.
     #[test]
-    fn capacity_default_runtime_accepts_claude_or_codex_only() {
+    fn capacity_default_runtime_accepts_cli_subscriptions_only() {
         let parse = |v: &[&str]| Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-        for rt in ["claude", "codex"] {
+        for rt in crate::runtime::CLI_RUNTIMES {
             let e = CapEdit::from_args(&parse(&["service", "capacity", "--host", "fra", "--default-runtime", rt]).unwrap()).unwrap();
             assert_eq!(e.default_runtime.as_deref(), Some(rt));
             assert!(!e.is_empty(), "the flag alone is a write");
         }
         for bad in ["codex-app", "gpt"] {
             let a = parse(&["service", "capacity", "--host", "fra", "--default-runtime", bad]).unwrap();
-            assert_eq!(CapEdit::from_args(&a).err().unwrap(), format!("--default-runtime: claude or codex, not {bad}"));
+            assert_eq!(CapEdit::from_args(&a).err().unwrap(), format!("--default-runtime: claude or codex or antigravity, not {bad}"));
         }
+    }
+
+    // #2136 A1/A2: capacity flag and strict task pin must reach existing CLI validation, never a soft hint.
+    #[test]
+    fn antigravity_capacity_and_task_pin_are_accepted() {
+        let parse = |v:&[&str]| Args::parse(&v.iter().map(|s|s.to_string()).collect::<Vec<_>>()).unwrap();
+        let edit = CapEdit::from_args(&parse(&["service","capacity","--host","invented","--antigravity","0","--default-runtime","antigravity"])).unwrap();
+        assert_eq!(edit.limits["antigravity"],0);assert_eq!(edit.default_runtime.as_deref(),Some("antigravity"));
+        let c=Ctx {cfg:cfg(),raw:json!({}),board:Box::new(Fake::default())};
+        command(&c,"add",&parse(&["add","Invented runtime pin","--goal","G","--acceptance","Observable result","--runtime","antigravity"])).unwrap();
+        assert!(c.board.issues(None).unwrap().iter().any(|t|t.labels.contains(&"run-antigravity".into())));
     }
 
     // Chain: § 5 CLI arguments. Risk: stray words or a consumed scope/JSON flag change the requested command.
@@ -5451,7 +5462,7 @@ mod tests {
             } else { command.spawn().unwrap() };
             let native=coreq::process::identity(child.id()).unwrap();
             s.kids.push(Kid { unknown:None, stopping:false, session_url:None,execution,task:n,attempt:a,rt:"codex".into(),proc:Box::new(runtime::CliTurn {
-                proc:Box::new(child),log,pos:old.len() as u64,start:old.len() as u64,stopping:false,accepted:false,read_error:None,native,recovery:None
+                proc:Box::new(child),log,pos:old.len() as u64,start:old.len() as u64,stopping:false,accepted:false,read_error:None,session:None,native,recovery:None
             })});
             let launch=runtime::Launch {files: String::new(), execution:None,task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"codex".into(),session:"session".into(),url:String::new(),resume:Some("continue".into())};
             s.kids[0].proc.checkpoint(&c,&launch,execution).unwrap();
@@ -5669,7 +5680,7 @@ mod tests {
             let native=coreq::process::identity(child.id()).unwrap();
             if exit {child.kill().unwrap();child.wait().unwrap();}
             Kid {unknown:None,stopping:false,session_url:None,execution:attempt,task,attempt,rt:"codex".into(),proc:Box::new(runtime::CliTurn {
-                proc:Box::new(child),log:root.join("log"),pos:0,start:0,stopping:false,accepted:false,read_error:None,native,recovery:None})}
+                proc:Box::new(child),log:root.join("log"),pos:0,start:0,stopping:false,accepted:false,read_error:None,session:None,native,recovery:None})}
         };
         let mut s=Service::new(&b,&c,"test",Box::new(|_|unreachable!()));
         fs::write(root.join("log"),"").unwrap();
@@ -6301,7 +6312,7 @@ mod tests {
         assert!(text.contains("'taskq телеметрия': taskq profile watch --since 1h; procedure: ") && text.contains(profile::WATCH_DOC));
         assert_eq!(serde_json::from_str::<Value>(&help(true).unwrap()).unwrap(), catalog);
         assert!(USAGE.contains("--snapshot DIR"));
-        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled] [--default-runtime claude|codex]"));
+        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled] [--default-runtime claude|codex|antigravity]"));
         run(&["service".into(), "capacity".into(), "--help".into()]).unwrap();
         let e = platform::error_text("#7 is ready", None);
         assert!(e.starts_with("Error: #7 is ready\nNext: "));

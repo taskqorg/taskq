@@ -153,7 +153,7 @@ pub fn profile(install: &Path, writable: Option<&[PathBuf]>, home: &Path) -> Str
         s += &format!("(deny file-write* (subpath {}))\n", sb(&canon(&d)));
     }
     // the service probes the runtimes unwrapped: close their real package dirs too (an npm `bin/` shim's package)
-    for b in crate::runtime::RUNTIMES[..2].iter().map(|r| crate::runtime::which(crate::runtime::of(r).bin)).filter(|b| b.is_absolute()).map(|b| canon(&b)) {
+    for b in crate::runtime::clis().map(|a| crate::runtime::which(a.bin)).filter(|b| b.is_absolute()).map(|b| canon(&b)) {
         if let Some(d) = b.parent() {
             s += &format!("(deny file-write* (subpath {}))\n", sb(if d.ends_with("bin") { d.parent().unwrap_or(d) } else { d }));
         }
@@ -175,7 +175,7 @@ fn writable(mode: &str, h: &Host) -> Vec<PathBuf> {
 /// The effective access of `rt` in this project (§ 8 Access). A project grant replaces the host default for its root.
 pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_mode: &str, codex: &[String]) -> Effective {
     let a = crate::runtime::of(rt);
-    let requested = if !a.codex { format!("--permission-mode {permission_mode}") } else if codex.is_empty() { "codex defaults".into() } else { codex.join(" ") };
+    let requested = if a.grant_required { "native runtime defaults; operator grant required".into() } else if !a.codex { format!("--permission-mode {permission_mode}") } else if codex.is_empty() { "codex defaults".into() } else { codex.join(" ") };
     let mut e = Effective { runtime: rt.into(), requested, grant: "none".into(), mode: "legacy".into(), enforcement: String::new(), profile: None, linux: false, windows: false, claude: None, codex: None, refused: None };
     let p = match policy {
         Ok(p) => p,
@@ -193,7 +193,7 @@ pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_m
             // legacy flags run unchanged, never as a grant; only the policy store is closed to the worker
             e.grant = "none (taskq.json is a request)".into();
             let own = a.codex.then(|| codex_sandbox(codex)).flatten().filter(|s| *s != "danger-full-access");
-            if !mac {
+            if a.grant_required || !mac {
                 e.refused = Some(format!("no operator grant and no policy store protection for {rt} on {}; grant a preset", h.os));
             } else if let Some(s) = own {
                 // codex's own Seatbelt writes cwd (the root), temp and added dirs: only one sandbox choice, a model,
@@ -223,10 +223,10 @@ pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_m
             e.grant = format!("{} ({}) rev {} by {}", g.mode, if g.project.is_some() { "project" } else { "host" }, p.revision, g.by);
             e.mode = g.mode.clone();
             if g.mode == "full" {
-                e.enforcement = "runtime sandbox off, uncontained; the same user can edit the policy".into();
-                if !a.codex {
+                e.enforcement = if a.grant_required { "uncontained by TaskQ; native runtime defaults unchanged" } else { "runtime sandbox off, uncontained; the same user can edit the policy" }.into();
+                if a.remote {
                     e.claude = Some("bypassPermissions".into());
-                } else {
+                } else if a.codex {
                     e.codex = Some(codex_unsandboxed(codex));
                 }
             } else if h.os == "linux" && a.codex && a.child && g.project.is_some() {
@@ -243,7 +243,9 @@ pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_m
                 e.refused = Some(format!("{} enforcement unknown for {rt} on {}", g.mode, h.os));
             } else {
                 e.enforcement = format!("taskq seatbelt, writes only to the {} set", g.mode);
-                e.profile = Some(profile(h.install, Some(&writable(&g.mode, h)), h.home));
+                let mut paths = writable(&g.mode, h);
+                if a.grant_required { paths.push(h.home.join(a.home)); }
+                e.profile = Some(profile(h.install, Some(&paths), h.home));
                 if a.codex {
                     e.codex = Some(codex_unsandboxed(codex));
                 }

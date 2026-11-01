@@ -27,7 +27,7 @@ const RETAIN: u64 = 24 * 3600;
 pub(crate) const MAX_OPS: usize = 4096;
 /// Longest host grant, in hours.
 pub const MAX_HOURS: u64 = 720;
-const RUNTIMES: [&str; 3] = crate::service::RUNTIMES;
+use crate::service::RUNTIMES;
 
 #[derive(Default, Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]

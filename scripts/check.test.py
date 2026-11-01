@@ -49,7 +49,7 @@ assert names('src/x.rs', 's.starts_with("claude:")') == ['src/x.rs:1: s.starts_w
 assert names('src/runtime.rs', 'rt == "codex-app"') == names('src/runtime/owner.rs', '".claude.json"') == []
 assert names('src/windows_sandbox.rs', '"codex"') == names('src/windows_sandbox/acl.rs', '"claude"') == names('src/linux_sandbox.rs', 'CODEX_HOME') == []
 # #1593: a planted bypass in main.rs or a former exception fails, native names included
-for planted in ['if k.runtime=="claude" {}', 'tasklist claude.exe', 'home.join(".claude.json")', 'env("CODEX_HOME", h)', 'env_remove("CODEX_THREAD_ID")']:
+for planted in ['if k.runtime=="claude" {}', 'if k.runtime=="antigravity" {}', 'tasklist claude.exe', 'home.join(".claude.json")', 'env("CODEX_HOME", h)', 'env_remove("CODEX_THREAD_ID")']:
     for path in ['src/main.rs', 'src/labels.rs', 'src/host.rs', 'src/setup.rs']:
         assert names(path, planted) == [f'{path}:1: {planted}'], (path, planted)
 print('PASS runtime names stay in the adapter')
@@ -107,6 +107,10 @@ plural = {'changed': ['§4', '§9', '§3', '§4.1', '§4 Profiling'], 'removed':
 assert unnamed(plural, 'sections 4 Filter and 9') == ['§3 (changed)', '§4.1 (changed)', '§4 Profiling (changed)']
 assert unnamed(plural, 'sections 4 and 90') == ['§9 (changed)', '§3 (changed)', '§4.1 (changed)', '§4 Profiling (changed)']
 assert unnamed(plural, 'sections 4 Profiling and 9') == ['§4 (changed)', '§3 (changed)', '§4.1 (changed)']
+# #2136: compact owner citations keep section and subsection boundaries.
+assert unnamed(plural, 'R13/sections4/9') == ['§3 (changed)', '§4.1 (changed)', '§4 Profiling (changed)']
+assert unnamed({'changed': ['§8', '§80', '§8 Access'], 'removed': [], 'tests': []}, 'amend section8') == ['§80 (changed)', '§8 Access (changed)']
+assert unnamed(plural, 'sections4/90') == ['§9 (changed)', '§3 (changed)', '§4.1 (changed)', '§4 Profiling (changed)']
 print('PASS replays of bf4a2be9 and ecb1e57d fail unnamed and pass named')
 
 

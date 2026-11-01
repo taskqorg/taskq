@@ -28,7 +28,7 @@ task:function(p,row,global=false,compact=false){
     // Closed has no counter (#1476) but notification cards still name it.
     const name=row.state_name??row.state,[mark,kind]=marks[row.state]||['circle',''];
     const board=row.key?row.key.slice(0,row.key.lastIndexOf('/')):p.board.url;
-    const rt=row.runtime,brand=rt==='claude'?'claude':['codex','codex-app'].includes(rt)?'openai':'';
+    const rt=row.runtime,brand=rt==='claude'?'claude':['codex','codex-app'].includes(rt)?'openai':rt==='antigravity'?'terminal':'';
     const remote=row.host&&!row.local_session;
     // M3: a remote row puts the remote mark before the runtime mark; the host name is its only text.
     const badges=(remote?'<span title="Remote host" aria-label="Remote host">'+icon('network')+'</span> ':'')+(rt?icon(brand)+' '+esc(rt):'');
