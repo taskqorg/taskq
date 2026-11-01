@@ -450,7 +450,7 @@ impl CliTurn {
 impl Proc for CliTurn {
     fn refused(&self,task:u64,attempt:u64,execution:u64,code:i32)->Option<String> {
         use std::io::{Seek,SeekFrom};
-        if code==0 || self.accepted || self.read_error.is_some() {return None;}
+        if code<=0 || self.accepted || self.read_error.is_some() {return None;}
         let mut file=File::open(&self.log).ok()?;
         file.seek(SeekFrom::Start(self.start)).ok()?;
         let mut text=String::new();file.take(1024*1024+1).read_to_string(&mut text).ok()?;

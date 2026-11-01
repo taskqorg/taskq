@@ -2865,7 +2865,7 @@ mod tests {
     // R2/R11/R12, #2143: native pre-submit writer refusal must retain input, never replay unknown submission or stop the app.
     #[test]
     fn codex_writer_refusal_keeps_unknown_input_fenced_and_bounds_no_start_retry() {
-        for case in ["refused", "reap", "unknown", "active", "unbound", "duplicate", "foreign"] {
+        for case in ["refused", "reap", "unknown", "active", "unbound", "duplicate", "foreign", "signal"] {
             let b=Fake::default(); let mut c=cfg("mac");
             let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
             let thread="11111111-1111-4111-8111-111111111111";
@@ -2890,7 +2890,7 @@ mod tests {
                 let start=std::fs::metadata(&log).map_or(0,|m|m.len());
                 use std::io::Write;
                 std::fs::OpenOptions::new().append(true).create(true).open(&log).unwrap().write_all(stream.as_bytes()).unwrap();
-                Ok(Box::new(crate::runtime::CliTurn {proc:Box::new(FakeProc(Rc::new(RefCell::new(Some(1))))),log,pos:start,start,
+                Ok(Box::new(crate::runtime::CliTurn {proc:Box::new(FakeProc(Rc::new(RefCell::new(Some(if case=="signal" {-1} else {1}))))),log,pos:start,start,
                     stopping:false,accepted:false,read_error:None,session:None,native:None,recovery:None}))
             }));
             s.pass().unwrap();if case=="reap" {s.reap_owned();} else {s.pass().unwrap();}

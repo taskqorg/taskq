@@ -590,59 +590,60 @@ does not resolve acceptance. #158's archive finding and #1664's owner-turn
 refusal do not grant a cross-client unlock or replay exception. Therefore this
 draft does not offer an owner-ended replacement as an already permitted repair.
 
-At this checkpoint A1 and prevention/status source checks have before/after
-evidence above. A2 historical recovery and A4 installed-service/exact-source
-qualification remain incomplete. The previous canonical run recorded 838 passed,
-7 sandbox-blocked protected-adapter tests and 41 ignored; it was not PASS.
-This continuation reran the historical-status and writer-refusal service checks:
-both passed on unchanged `518daf54` code. The ignored native refusal instrument
-also passed explicitly: two refused resumes, retained writer, preserved inputs,
-zero model turns. These observations qualify the isolated refusal boundary,
-not this proposed receipt, the installed service or the historical #190 input.
-No merge-group result or real #190 recovery is claimed. Only this decision draft
-is added in this continuation; no legacy recovery code or live action is applied.
+#### Original-source verification after read-scope approval
 
-#### Proof feasibility after the owner answer
+[Owner answer `6562451325`](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6562451325)
+authorized reading the exact original AgentQ launch/recovery/output/client
+artifacts. No AgentQ task work or state write was performed.
 
-Read-only readback after answer `6562359732` confirmed the original immutable
-board observations: intent `6561176475` at `2026-11-01T17:11:17Z`, input boundary
-`6561174165`, and Exit `6561179427` at `17:11:32Z`. The later PM narrative about
-pre-session refusal is not a native receipt. The exact native history still has
-only the earlier turn (`task_started` at `16:03:52.529Z`, `task_complete` at
-`16:07:33.983Z`); current lock readback names writer PID `10165`. Neither fact
-attributes the failed CLI invocation or proves its input was not submitted.
+The original attempt log is 898,297 bytes, SHA-256
+`0f3739918c58b12716f66b3b6844bbddee141e26f8ae41846cc426cb28d2a88a`.
+Its prior turn completes at line 71. A resume rules record occupies bytes
+896798–897788; the three native active-writer refusal lines occupy
+897788–898297, at `2026-11-01T17:11:21Z`. They name the expected native thread
+and include both required pre-session errors. There are no session/turn events
+after that resume marker. The original account record names `default`.
 
-| Required proof | Available in this worker's permitted sources |
-|---|---|
-| Exact board task/attempt/execution/input boundary and Exit | Confirmed from the original trusted unedited comments |
-| Original thread history and current writer | Read-only native observations; useful context, insufficient for no-start |
-| Contemporaneous execution-to-process launch record, PID creation identity, original account, complete output segment boundaries | Unavailable in the permitted TaskQ checkout and native thread history; a PM narrative and copied command output cannot substitute |
-| Original client artifact digest and matching qualified verifier | Original invocation digest unavailable; the current installed client or an isolated probe cannot establish old artifact identity |
-| Compatible board hosts for receipt consumption | Not established; no cutover or host changes authorized or performed |
+This confirms the reported failure, but does not meet the approved receipt's
+attribution requirements: the file has no `taskq.input` or native launch binding
+and no marker for execution `6561176475`. The owning project's protected native
+recovery store has no row for that execution. Its current #190 row belongs to
+attempt `6562400888`, PID `47019` with its distinct native creation identity.
+The old PID/creation identity, original complete process-bound output range and
+original client artifact digest cannot be reconstructed from the old log or
+that current row. Three retained input files contain the pending answer text;
+none binds itself to that old execution. Do not select one by timestamp or
+matching content. The current client version is not the old artifact's digest.
 
-The selected option explicitly keeps #190 fenced when a required field cannot
-be established. This feasibility stop precedes implementing the new receipt;
-there is no legacy importer, weakened verifier or fabricated manifest. Existing
-prevention and immediate status remain independently reviewable. Core still
-ignores the proposed `input-refused` kind, so no service gains legacy replay
-authority from this design or from the owner answer.
+Fresh board readback also changes the recovery target: owner/PM requeue
+`6561958633` ended the original attempt, followed by spawns `6561967939` and
+`6562400888`. The last has native acceptance `6562402263`; local complete status
+reports its actual Codex child, and its log starts native session
+`01a19878-6576-7a81-9c51-e674909a0b40`. The original Exit `6561179427` is unchanged;
+no native acceptance or refusal-proof receipt was added for `6561176475`.
+The current work is a replacement, not proof of delivery of the old input or
+proof that this patch recovered it. This investigation did not cause those
+board transitions and does not retroactively qualify their safety.
 
-Concrete safe owner action: make the original preserved host launch evidence
-available for read-only verification of execution `6561176475`, including native
-process creation identity, account, expected thread, complete output range and
-the original client artifact identity. Do not construct those facts from current
-idle/history/lock state. This worker is restricted to the TaskQ project, native
-Codex/Claude state and OS temporary files; it has not opened the sibling project's
-host launch/output files. Their absence has **not** been established. If the
-original evidence cannot be recovered, no same-input retry is authorized by
-this decision; retain the pending answer, tree, session and Exit unchanged.
+The approved protocol requires the same current attempt as well as complete
+native proof. Both conditions fail for this historical execution. No legacy
+importer or alternative attestation is implemented. Concrete safe action now:
+follow the existing replacement attempt; do not send the original pending answer
+again, resume the old thread, or release its writer to try to repair that old
+execution. Its unknown acceptance and immutable evidence remain preserved.
+This is the explicit unsupported historical case allowed by the selected
+conditional option, not a claim of successful same-session recovery.
 
-The seven previously sandbox-blocked protected-adapter tests were retried once
-as a focused module after the owner answer: one passed, seven again failed at
-native boundary setup with `Operation not permitted`. No assertion or sandbox
-policy was changed. This remains sandbox-blocked, not a product pass or a new
-request for permissions. Installed-service recovery and merge-result CI remain
-unknown; the historical proof gap is independent of those sandbox failures.
+The original AgentQ root was read with its existing dirty `agentq/hooks.rs` on
+`main`; this worker neither edits nor checks out that tree. Preservation hashes
+of the original log, native history, dirty file and three candidate inputs are
+kept locally for final readback. Existing source regressions protect unbound
+refusal, active-turn, unknown output and duplicate binding; a signal-termination
+case additionally requires Exit/unknown, never inferred no-start.
+Before the signal guard, the same service regression failed with `Some(NoStart)`
+instead of `Some(Exit)` for exit sentinel `-1`. After requiring a positive native
+exit code, that regression passes with every prior refusal/unknown/active/duplicate
+case retained. A signal or zero code cannot supply the native refusal proof.
 
 | Adapter | Existing evidence | What it proves | Missing boundary and smallest change | Unknown and recovery action |
 |---|---|---|---|---|
