@@ -75,6 +75,10 @@ fn parse(id:&str,op:&resources::Op)->Res<Pending> {
         else {keys.push("project_drained");if op.receipt["project_drained"]!=true {return Err(invalid.into());}}
         if phase=="observed"&&request.project.is_some() {keys.push("unregistered");if op.receipt["unregistered"]!=true {return Err(invalid.into());}}
     }
+    if let Some(owner)=op.receipt.get("registry_owner") {
+        if request.action!=Action::Uninstall||request.project.is_none()||phase=="queued"||!(owner.is_array()||owner.is_object())||owner.to_string().len()>1<<20 {return Err(invalid.into());}
+        keys.push("registry_owner");
+    }
     if request.stops()&&phase!="queued" {
         if phase=="observed" {keys.retain(|key|*key!="service_instance");keys.push("native_exit");if op.receipt["native_exit"]!=true {return Err(invalid.into());}}
         keys.extend(["native_pid","native_started","unit_revision"]);
@@ -152,6 +156,7 @@ fn review_action(install:&Path,id:&str,action:Action)->Res<Value> {
 }
 fn public(op:&resources::Op)->Value {
     let mut value=op.receipt.clone();
+    if let Some(fields)=value.as_object_mut() {fields.remove("registry_owner");}
     if let Some(phases)=op.receipt["telemetry_unknown"].as_array() {
         for phase in phases {value[format!("{}_receipt",phase.as_str().unwrap())]=Value::Null;}
         value["telemetry"]=json!("unknown");
@@ -481,6 +486,16 @@ pub fn save_launcher(install:&Path,id:&str,native:&coreq::process::Identity,laun
     })
 }
 
+fn registry_owner(install:&Path,request:&Request,op:&resources::Op,roots:&[PathBuf])->Res<Value> {
+    let current=host::ownership(&install.join("projects"))?;
+    let owner=match op.receipt.get("registry_owner") {
+        Some(owner)=>owner.clone(),None if roots==request.roots=>current.clone(),
+        None=>return Err("Uninstall original registry ownership unknown; removal remains applied".into()),
+    };
+    if current!=owner {return Err("Uninstall registry ownership differs; removal remains applied".into());}
+    Ok(owner)
+}
+
 fn complete_stop_with(install:&Path,id:&str,effect:impl FnOnce(&coreq::process::Identity,&str)->Res<()>)->Res<Value> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot complete host Stop".into());}
     if !resources::id(id) {return Err("invalid Stop request ID".into());}
@@ -490,9 +505,10 @@ fn complete_stop_with(install:&Path,id:&str,effect:impl FnOnce(&coreq::process::
     };
     let _projects=if edit.is_none() {Some(coreq::file_lock::try_lock(&install.join("projects.lock")).map_err(|e|format!("Stop registry busy: {e}"))?)}else{None};
     let (pending,original)=resources::try_with(install,|state| {
-        let op=state.ops.get(id).ok_or("Stop request not retained")?;
+        let op=state.ops.get_mut(id).ok_or("Stop request not retained")?;
         let pending=parse(id,op)?;
         if !pending.stops()||pending.phase=="queued" {return Err("Stop has no qualified applied receipt; native effect refused".into());}
+        if pending.phase!="observed"&&pending.removal().is_some() {op.receipt["registry_owner"]=registry_owner(install,&pending.request,op,&scope(install)?)?;}
         Ok((pending,op.clone()))
     })?;
     if pending.phase=="observed" {return Ok(public(&original));}
@@ -509,6 +525,7 @@ fn complete_stop_with(install:&Path,id:&str,effect:impl FnOnce(&coreq::process::
     let service=host::service_status(install);
     if service["state"]!="exited"||service["instance"]!=pending.origin() {return Err("host changed after Stop; outcome unknown".into());}
     if let Some(edit)=edit {edit.commit()?;}
+    if pending.removal().is_some()&&host::ownership(&install.join("projects"))?!=original.receipt["registry_owner"] {return Err("Uninstall registry ownership readback differs; removal remains applied".into());}
     resources::try_with(install,|state| {
         let op=state.ops.get_mut(id).ok_or("Stop request lost; outcome unknown")?;
         let current=parse(id,op)?;
@@ -530,13 +547,15 @@ pub fn finish_project_uninstall(install:&Path,id:&str,instance:&str,drained:bool
     let roots=scope(install)?;
     if roots!=p.request.roots&&roots!=p.request.after() {return Err("Uninstall scope changed; registry kept".into());}
     if !drained&&!(p.phase=="applied"&&roots==p.request.after()) {return Err("project drain not observed; registry kept".into());}
-    resources::try_with(install,|state| {
+    let owner=resources::try_with(install,|state| {
         let op=state.ops.get_mut(id).ok_or("Uninstall binding lost")?;
         if parse(id,op)?.request!=p.request {return Err("Uninstall binding changed".into());}
-        required(op,&p.command,"applied")?;op.receipt["state"]=json!("applied");op.receipt["project_drained"]=json!(true);op.receipt["applied_receipt"]=json!(p.command.event_id("applied")?);Ok(())
+        let owner=registry_owner(install,&p.request,op,&roots)?;
+        required(op,&p.command,"applied")?;op.receipt["state"]=json!("applied");op.receipt["project_drained"]=json!(true);op.receipt["applied_receipt"]=json!(p.command.event_id("applied")?);op.receipt["registry_owner"]=owner.clone();Ok(owner)
     })?;
     host::ProjectEdit::for_uninstall(install,root,id)?.commit()?;
     if scope(install)?!=p.request.after() {return Err("Uninstall registry readback differs".into());}
+    if host::ownership(&install.join("projects"))?!=owner {return Err("Uninstall registry ownership readback differs; removal remains applied".into());}
     resources::try_with(install,|state| {
         let op=state.ops.get_mut(id).ok_or("Uninstall binding lost")?;
         if parse(id,op)?.request!=p.request {return Err("Uninstall binding changed".into());}
@@ -708,6 +727,11 @@ mod tests {
         assert_eq!(received["state"],"queued");assert!(prepare(&install,"original").unwrap_err().contains("qualified project drain"));
         assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),format!("{}\n{}\n",root.display(),other.display()));
         assert!(finish_project_uninstall(&install,"drain-project","original",false).unwrap_err().contains("project drain not observed"));
+        tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(),|| {
+            assert!(finish_project_uninstall(&install,"drain-project","original",true).unwrap_err().contains("collector unavailable"));
+        });
+        assert_eq!(receipt(&install,"drain-project").unwrap().unwrap()["state"],"queued","receipt refusal must leave a readable queued request");
+        assert!(resources::try_with(&install,|state|Ok(state.ops["drain-project"].receipt.get("registry_owner").is_none())).unwrap());
 
         let db=rusqlite::Connection::open(install.join("telemetry.log/universal.sqlite3")).unwrap();
         // #1351: refused receipt commits stay unknown; the drained uninstall proceeds.

@@ -2491,6 +2491,15 @@ fn service_project(root:&Path,binding:&str,read:&Res<Option<Value>>)->Value {
     if let Some(s)=status.as_mut().filter(|s|s["reports"]["reports"].is_array()) {s["reports"]=reports::summary(&s["reports"]);}
     json!({"root":root,"host_binding":binding,"status":status,"error":read.as_ref().err()})
 }
+fn lifecycle_scope(value:&Value)->String {
+    let mut lines=if let Some(root)=value["project"].as_str() {
+        vec![format!("Scope: project uninstall; {root}"),"Reviewed registry (other projects stay registered):".into()]
+    } else {
+        vec![if value["action"]=="uninstall" {"Scope: host uninstall; all projects drain; registry kept"}else{"Scope: host service; all registered projects"}.into()]
+    };
+    for root in value["projects"].as_array().into_iter().flatten() {lines.push(format!("Registered project: {}",root.as_str().unwrap_or("unknown")));}
+    lines.join("\n")
+}
 fn service_report(a:&Args)->Res<()> {
     let install=platform::default_install();
     let service=host::service_status(&install);
@@ -2511,7 +2520,10 @@ fn service_report(a:&Args)->Res<()> {
         println!("{}",host::service_line(&service));
         if lifecycle["telemetry"]=="unknown" {println!("Telemetry receipts: unknown; lifecycle state is recorded separately");}
         let restart=lifecycle;let title=match restart["action"].as_str() {Some("stop")=>"Stop",Some("uninstall")=>"Uninstall",Some("install")=>"Install",_=>"Restart"};
-        if let Some(id)=restart["id"].as_str() {println!("{title}: {id} {}",restart["state"].as_str().unwrap_or("unknown"));}
+        if let Some(id)=restart["id"].as_str() {
+            println!("{title}: {id} {}",restart["state"].as_str().unwrap_or("unknown"));
+            if matches!(restart["action"].as_str(),Some("restart"|"stop"|"uninstall")) {println!("{}",lifecycle_scope(&restart));}
+        }
         if let Some(reason)=restart["reason"].as_str() {println!("{title}: unknown ({reason})");}
         if a.one("request").is_none()&&let Some(id)=installation["id"].as_str() {println!("Install: {id} {}",installation["state"].as_str().unwrap_or("unknown"));}
         if a.one("request").is_none()&&let Some(reason)=installation["reason"].as_str() {println!("Install: unknown ({reason})");}
@@ -2586,16 +2598,15 @@ fn service(args: &Args) -> Res<()> {
                 "uninstall"=>{let root=if args.flags.contains_key("host") {None}else{Some(find_root()?)};lifecycle::uninstall_review(&install,&id,root.as_deref())?},
                 _=>lifecycle::review(&install,&id)?,
             };
-            if !args.flags.contains_key("json") {
-                println!("Scope: host service; all registered projects");
-                if sub=="stop" && cfg!(target_os="macos") {println!("Stop mode: {}; durable hold retained; automatic rollback to older releases disabled",args.one("mode").unwrap_or("drain"));}
-                for root in reviewed["roots"].as_array().into_iter().flatten() {println!("Project: {}",root.as_str().unwrap_or("unknown"));}
-            }
             lifecycle::submit(&install,&reviewed)?
         };
         if args.one("mode").is_some_and(|mode|result["mode"]!=mode) {return Err("request ID belongs to another Stop mode".into());}
         if result["action"].as_str().unwrap_or("restart")!=sub {return Err("request ID belongs to another lifecycle action".into());}
         if args.flags.contains_key("host")&&result["scope"]!="host" {return Err("request ID belongs to a project Uninstall; payload unchanged".into());}
+        if !args.flags.contains_key("json") {
+            println!("{}",lifecycle_scope(&result));
+            if sub=="stop" && cfg!(target_os="macos") {println!("Stop mode: {}; durable hold retained; automatic rollback to older releases disabled",result["mode"].as_str().unwrap_or("unknown"));}
+        }
         if matches!(sub,"stop"|"uninstall")&&result["state"]=="applied"&&let Some(p)=lifecycle::pending(&install)?.filter(|p|p.stops()) {
             if p.id()!=id {return Err("Stop replay binding changed; reconcile service status".into());}
             host_control::dispatch(&install,&p)?.wait()?;
@@ -6397,6 +6408,19 @@ mod tests {
         fs::write(dot(&root).join("status.json"), r#"{"error":"board failed","tasks":[]}"#).unwrap();
         assert!(service_fields(&root).contains("Counts: unknown"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // A4: receipt replay and status must distinguish one removal target from the reviewed registry.
+    #[test]
+    fn lifecycle_scope_names_only_the_project_being_uninstalled() {
+        let mut receipt=json!({"action":"uninstall","project":"/fixture/remove","projects":["/fixture/remove","/fixture/keep"]});
+        assert_eq!(lifecycle_scope(&receipt),"Scope: project uninstall; /fixture/remove\nReviewed registry (other projects stay registered):\nRegistered project: /fixture/remove\nRegistered project: /fixture/keep");
+        receipt.as_object_mut().unwrap().remove("project");
+        assert!(lifecycle_scope(&receipt).starts_with("Scope: host uninstall; all projects drain; registry kept\n"));
+        for action in ["restart","stop"] {
+            receipt["action"]=json!(action);
+            assert!(lifecycle_scope(&receipt).starts_with("Scope: host service; all registered projects\n"));
+        }
     }
 
     // Chain: #1975 report rows -> reports.json; status.json and `service status --json` keep counts.
