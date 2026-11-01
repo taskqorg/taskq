@@ -80,12 +80,14 @@ Preserve [PR #1267 at `3a19ecc3d96f39db81a1f9c25c65cd84f432d5a6`](https://github
 
 #### Isolated native fallback launch (#2118)
 
-Source `b74e836614ea8026b11ea1508239b9cc40940b94`, macOS 27.2 arm64, installed Codex CLI 0.159.3. The signed test artifact `target/debug/deps/taskq-724e7071ecaf3ec8` had SHA-256 `dbf22cbf6cf8ac2dd4f95a635799672fd0766d476e0d03bc9070f02ca6fb0537`.
-Command: `cargo test --locked --bin taskq fallback_2118_native_admission_without_model -- --ignored --nocapture` — PASS, two native launches in 0.37s.
+Source `8455ff940c0a59eb61bea3bae7d46d67572e3c5e`, macOS 27.2 arm64, installed Codex CLI 0.159.3. The signed test artifact `target/debug/deps/taskq-724e7071ecaf3ec8` had SHA-256 `eb105d654bb9bc9f2460d9c3b301489144a0f0d309d82ef0feb083b94c1d51f1`.
+Command: `cargo test --locked --bin taskq fallback_2118_native_admission_without_model -- --ignored --nocapture` — PASS, two native launches in 0.48s.
 
-The production service admission/claim path selected Codex with `fallback: claude disabled (limit 0); selected codex` for both worker and reviewer. Native identities were PID 10424 / creation `1793527183-340352` and PID 10425 / creation `1793527183-389945`. A second service pass kept each original attempt and exactly one launch. Owned termination confirmed both native processes absent. Scratch was removed; no live board task, host-policy change, service install or new grant occurred.
+The production service admission/claim path selected Codex with `fallback: claude disabled (limit 0); selected codex` for both worker and reviewer. Native identities were PID 65247 / creation `1793527890-846405` and PID 65248 / creation `1793527890-901598`. A second service pass kept each original attempt and exactly one launch. Owned termination confirmed both native processes absent. Scratch was removed; no live board task, host-policy change, service install or new grant occurred.
 
 The board and capacity were isolated fixtures (Claude 0, Codex 1). Login, CLI discovery, effective access and Codex options came from the existing host; launch used the production runtime command builder and actual installed executor. Effective access remained legacy native `workspace-write` with network enabled and the policy store outside its writable scope; the resolver reported no explicit operator grant. No model/effort/access setting changed. Stdin stayed open without input, so no prompt, model turn, tools or native session was submitted. This qualifies admission through native process launch and exit, not brief delivery, task completion or the installed host service. Telemetry collection was unavailable and stayed unknown. The earlier 34-case fixture remains model/adapter proof only.
+
+The owning unknown-login policy is retained: a failed probe alone does not stop admission or resume, and its display remains `login unknown`. The focused 34-case worker/reviewer fixture reproduced the unintended switch (`codex` instead of free `claude`) before removal of the blanket refusal; it now passes unknown Claude/Codex admission and same-attempt/session continuation. Known logout, missing CLI, quota, capacity, grants and common gates retain their guards.
 
 Tested is not deployed: normal PR review, green merge-result CI and the existing compatible dev delivery are still required. No installed version containing this candidate was observed.
 
