@@ -1,6 +1,6 @@
 //! R8/R9/R12: one launchd generation and a kernel-accounted descendant scope, never a scheduler.
 use super::*;
-use std::{io::{self,BufRead,BufReader,Write},net::Shutdown,os::{fd::{AsRawFd},unix::{fs::{DirBuilderExt,MetadataExt},net::{UnixListener,UnixStream}}},process::{Command,Stdio},time::{Duration,Instant}};
+use std::{io::{self,BufRead,BufReader,Write},net::Shutdown,os::{fd::{AsRawFd},unix::{fs::{DirBuilderExt,MetadataExt},net::{UnixListener,UnixStream}}},process::Stdio,time::{Duration,Instant}};
 const WAIT:Duration=Duration::from_secs(5);
 
 unsafe extern "C" {fn coalition_info_resource_usage(id:u64,buffer:*mut libc::c_void,size:usize)->i32;}
@@ -59,7 +59,7 @@ fn plist(label:&str,program:&str,key:&str,root:&str,environment:&Value)->Res<Str
     Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>Label</key><string>{}</string><key>Program</key><string>{}</string><key>ProgramArguments</key><array><string>{}</string><string>service</string><string>app-server</string><string>--action</string><string>scope-run</string><string>--request</string><string>{}</string></array><key>WorkingDirectory</key><string>{}</string><key>EnvironmentVariables</key><dict>{vars}</dict><key>RunAtLoad</key><false/><key>KeepAlive</key><false/><key>LaunchOnlyOnce</key><true/><key>AbandonProcessGroup</key><true/></dict></plist>",xml(label),xml(program),xml(program),xml(key),xml(root)))
 }
 fn launchctl(args:&[&str])->Res<String> {
-    let out=coreq::process::output("protected.scope.launchctl",Command::new("/bin/launchctl").args(args).stdin(Stdio::null()),WAIT)
+    let out=coreq::process::output("protected.scope.launchctl",crate::platform::command("/bin/launchctl").args(args).stdin(Stdio::null()),WAIT)
         .map_err(|_|"native job command unacknowledged; retain intent, never retry")?;
     if out.stdout.len()>65536 {return Err("native job readback exceeds bound; retain intent".into());}
     String::from_utf8(out.stdout).map_err(|_|"native job readback encoding unknown".into())
