@@ -15,7 +15,7 @@ const out=process.env.MENU_2099_EVIDENCE,before=process.env.MENU_2099_BEFORE;
  if(out){fs.mkdirSync(out,{recursive:true});for(const [name,font,width] of [['narrow',16,320],['large-text',20,360]]){const p=await open({...snapshot,font},{viewport:{width,height:820}});await p.screenshot({path:out+'/'+(before?'before':'after')+'-'+name+'.png'});await p.close();}}
  let p=await open({...snapshot,navigation:{...navigation,dashboard:{...navigation.dashboard,pins:[{ref:views.identity(project)+'#2',title:'Invented pinned draft',url:project.issues+'/2'}]}}});
  assert.equal(await p.locator('.held-control').count(),1,'A4/A5: Doing-only still exposes one joined Held/Start group');
- assert.deepEqual(await p.locator('.host-runtime-totals .host-number').allTextContents(),['≥1','≥1']);
+ assert.deepEqual(await p.locator('.host-runtime-totals .host-number').allTextContents(),['≥1','≥1','?']);
  assert.equal(await p.locator('.host-runtime-totals .host-completeness').textContent(),'Partial');
  assert.match(await p.locator('.host-runtime-totals').getAttribute('title'),/ali.*47m.*stale/i);
  await p.locator('.dashboard-status>summary').click();assert.match(await p.locator('[data-view-key="host:ali"]>summary').innerText(),/ali.*[\s\S]*47m[\s\S]*stale/i);if(out)await p.screenshot({path:out+'/host-details.png'});await p.locator('.dashboard-status>summary').click();

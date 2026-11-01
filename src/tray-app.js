@@ -484,7 +484,7 @@ runningAgents:function(compact=false){
     facts.push('Reservations: '+(known?([...counts].map(([rt,n])=>rt+' '+n).join(' · ')||'none'):'unknown'));
   }else facts.push('Capacity unknown');
   const alerts=(view.S.agents?.rows||[]).filter(r=>signAlert.includes(r.state)&&r.state!=='check-failed');
-  const totals=host=>{const t=new Map([['Claude',0],['Codex',0]]);for(const [rt,c] of host.counts)t.set(family(rt),(t.get(family(rt))||0)+c.worker+c.reviewer);return t;};
+  const totals=host=>{const t=new Map([['Claude',0],['Codex',0],['Antigravity',0]]);for(const [rt,c] of host.counts)t.set(family(rt),(t.get(family(rt))||0)+c.worker+c.reviewer);return t;};
   for(const host of hosts.values())if(!host.live)host.reasons.add(!host.beat?'host observation missing':host.beatLive?'current execution data unavailable':host.age===null?'heartbeat freshness unknown':'stale heartbeat; current runs unknown');
   const known=host=>host.live&&!host.reasons.has('conflicting execution observations');
   const sum=counts=>[...counts.values()].reduce((n,x)=>n+x,0);
@@ -499,7 +499,7 @@ runningAgents:function(compact=false){
     const runtimes=[...host.counts].sort(([a],[b])=>a.localeCompare(b));
     out.push(h('details',{class:'host-line','data-view-key':'host:'+host.name,key:'host:'+host.name},
       h('summary',{class:'host-breakdown',title:'Heartbeat'+age},h('strong',{class:'host-name'},host.name),
-        h('span',{class:'host-runtime-split'},['Codex','Claude',...[...t.keys()].filter(rt=>!['Codex','Claude'].includes(rt))].map(rt=>runtime(rt,t.get(rt)||0,!unknown,partial))),
+        h('span',{class:'host-runtime-split'},['Codex','Claude','Antigravity',...[...t.keys()].filter(rt=>!['Codex','Claude','Antigravity'].includes(rt))].map(rt=>runtime(rt,t.get(rt)||0,!unknown,partial))),
         h('span',{class:'host-row-total','aria-label':'Total running agents: '+total},h('span',{class:'host-number'},total)),
         (unknown||partial||warnings.length>0)&&h('span',{class:'host-observation'},unknown?'Status unknown'+age:partial?'Partial observation'+age:'',why&&h('span',null,why),warnings.length>0&&h('span',{class:'host-warning'},'Sign-in: '+warnings.join(' · ')))),
       h('div',{class:'body meta'},'Heartbeat'+age),unknown?h('div',{class:'body meta'},'Unknown: '+(why||'host observation missing or stale')):why&&h('div',{class:'body meta'},'Partial: '+why),
@@ -514,7 +514,7 @@ runningAgents:function(compact=false){
   const text=host=>{const age=host.age!==null&&host.age>=0?host.age_text:'',busy=[...totals(host)].filter(([,n])=>n>0);
    return [host.name,...(!known(host)?['runs unknown',...(age?[age+' old']:[]),...(host.reasons.size?[[...host.reasons].join('; ')]:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):[host.reasons.size?'no confirmed running agents':'idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
   // UX30-06: host totals precede runtime totals; only nonconflicting fresh hosts establish a minimum.
-  const overall=new Map([['Codex',0],['Claude',0]]);let anyKnown=false,uncertain=partial||!sorted.length;
+  const overall=new Map([['Codex',0],['Claude',0],['Antigravity',0]]);let anyKnown=false,uncertain=partial||!sorted.length;
   for(const host of sorted){const t=totals(host);for(const rt of t.keys())if(!overall.has(rt))overall.set(rt,0);uncertain ||= !known(host)||host.reasons.size>0;if(!known(host))continue;anyKnown=true;for(const [rt,n] of t)overall.set(rt,overall.get(rt)+n);}
   const chip=host=>{const shown=value(sum(totals(host)),known(host),host.reasons.size>0),label=text(host)+' · Total running agents: '+shown,w=warn(host);
     return h('span',{class:'host-chip'+(!known(host)?' unknown':''),'data-host':host.name,role:'img','aria-label':label,title:label,key:host.name},h('strong',null,short.get(host.name)),h('span',{class:'host-number'},shown),
@@ -522,7 +522,7 @@ runningAgents:function(compact=false){
   const completeness=anyKnown&&[...overall.values()].some(n=>n>0)?'Partial':'Unknown';
   const explanation='All observed hosts · running agents'+(uncertain?' · '+completeness+': confirmed counts are lower bounds; additional agents unknown. '+[...sorted.filter(host=>!known(host)||host.reasons.size).map(host=>host.name+' · '+(host.age_text||'age unknown')+' · '+[...host.reasons].join('; ')),...sources].join('; '):' · complete fresh observations');
   if(compact)return {label:strip.map(text).join('; ')||'Host unknown',meta:strip.length+' hosts · '+(uncertain?'observations incomplete':'current observations'),strip:h('span',{class:'host-overview'},h('span',{class:'host-strip'},strip.length?strip.map(chip):h('span',{class:'host-chip unknown'},'Hosts ?')),h('span',{class:'host-runtime-totals',title:explanation,'aria-label':explanation},[...overall].map(([rt,n])=>runtime(rt,n,anyKnown,uncertain)),uncertain&&h('span',{class:'host-completeness'},completeness)))};
-  return h('section',{class:'group running-agents',style:{'--host-number-width':numberWidth},'aria-label':'Running agents'},h('div',{class:'host-grid-head','aria-label':'Host, Codex, Claude, Total running agents'},h('span',null,'Host'),['Codex','Claude','Total'].map(rt=>h('span',{title:rt,'aria-label':rt,role:'img'},icon(mark(rt))))),out,h('div',{class:'body meta'},'Registered project boards · '+(partial||all.some(c=>c.n===null)?'Tasks unknown':'Tasks: '+all.filter(c=>['doing','review'].includes(c.state)).map(c=>c.name+' '+c.n).join(' · '))),
+  return h('section',{class:'group running-agents',style:{'--host-number-width':numberWidth},'aria-label':'Running agents'},h('div',{class:'host-grid-head','aria-label':'Host, Codex, Claude, Antigravity, Total running agents'},h('span',null,'Host'),['Codex','Claude','Antigravity','Total'].map(rt=>h('span',{title:rt,'aria-label':rt,role:'img'},icon(mark(rt))))),out,h('div',{class:'body meta'},'Registered project boards · '+(partial||all.some(c=>c.n===null)?'Tasks unknown':'Tasks: '+all.filter(c=>['doing','review'].includes(c.state)).map(c=>c.name+' '+c.n).join(' · '))),
     h('details',{'data-view-key':'run-definitions'},api.disclosure('info','Count definitions'),h('div',{class:'body meta'},'Running processes, occupied slots, reservations and board tasks are counted apart. ≥ means a confirmed minimum; Partial means additional agents are unknown; ? means no confirmed total. Reservations include pending or unconfirmed work; occupied slots can include other projects.')));
 },
 home:function(){
