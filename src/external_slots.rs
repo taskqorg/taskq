@@ -128,7 +128,13 @@ fn reconcile(install:&Path,h:&mut host::Host,at:u64,boot:Res<i64>,mut live:impl 
             let state=op.receipt["state"].as_str().unwrap().to_owned();
             if matches!(state.as_str(),"released"|"denied") {
                 h.external_sync(&key,&b.root,&b.runtime,false);
-                if at>op.expires_at.saturating_add(RETAIN) {s.ops.remove(&key);}continue;
+                if at>op.expires_at.saturating_add(RETAIN) {s.ops.remove(&key);}else{
+                    let expires_at=op.expires_at;
+                    let reason=op.receipt["reason"].as_str().unwrap_or("terminal slot retained").to_owned();
+                    outcome(op,&state,&reason,&h.instance,at);
+                    op.expires_at=expires_at;
+                }
+                continue;
             }
             if op.bound["local_slot"]["release"]==true {
                 // Only the exact immutable binding and release key can persist this completion attestation.
@@ -261,6 +267,10 @@ mod tests {
         fs::write(f.dir.join("service"),record.to_string()).unwrap();
         assert_eq!(f.call("release")["state"],"releasing");f.tick(Ok(false));assert_eq!(f.h.occupied(),0);
         assert_eq!(f.call("release")["state"],"released");assert_eq!(f.call("reserve")["state"],"released");
+        let retained_until=resources::try_with(&f.dir,|s|Ok(s.ops.values().next().unwrap().expires_at)).unwrap();
+        f.h=host::Host::new(Ok(host::Policy::read(&f.dir).unwrap()));f.tick(Ok(false));
+        assert_eq!(f.stored()["instance"],f.h.instance,"a restarted host must reacknowledge a terminal slot");
+        assert_eq!(resources::try_with(&f.dir,|s|Ok(s.ops.values().next().unwrap().expires_at)).unwrap(),retained_until,"readback cannot extend terminal retention");
         f.at+=RETAIN+1;f.tick(Ok(false));assert!(resources::try_with(&f.dir,|s|Ok(s.ops.is_empty())).unwrap());
     }
     // Chain: §3 R12 — never-started calls expire/cancel; admitted calls survive expiry until release or proven reboot.
