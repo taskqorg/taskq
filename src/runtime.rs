@@ -333,7 +333,7 @@ fn login_off(install: &Path, bin: &str, refreshed: Option<&str>) -> Option<Strin
     (at == refreshed.unwrap_or_default()).then(|| reason.trim().to_string()).filter(|r| !r.is_empty())
 }
 
-pub use coreq::agent::{final_text, which, which_in, user_bin_path, codex_native};
+pub use coreq::agent::{final_text, which, which_in, codex_native};
 
 /// The worker's last message in an attempt log, for the `gone` reason (§ 4 step 1); None when unreadable.
 pub fn last_message(log: &Path) -> Option<String> { final_text(&events(log, 0)?) }
@@ -2546,24 +2546,6 @@ mod tests {
         assert_eq!(remote_session("claude:abc mac"), Some("abc"));
         assert_eq!((remote_session("codex:abc mac"), remote_session("codex-app:abc"), remote_session("claude")), (None, None, None));
         assert_eq!(thread_of(&thread_url("019a-b2")), Some("019a-b2"));
-    }
-
-    // Chain: systemd unit PATH frozen without ~/.local/bin -> codex resolves (#1393). Risk: the service spawns a bare
-    // `codex` and every attempt ends in os error 2.
-    #[test]
-    fn user_bin_dir_joins_a_frozen_path() {
-        let home = std::env::temp_dir().join(format!("taskq-user-bin-{}", uuid()));
-        let bin = home.join(".local/bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        std::fs::write(bin.join("codex"), "").unwrap();
-        let frozen = std::ffi::OsString::from("/usr/bin:/bin");
-        assert_eq!(which_in("codex", &frozen), PathBuf::from("codex"));
-        let path = user_bin_path(&frozen, Some(home.as_os_str())).unwrap();
-        assert_eq!(which_in("codex", &path), bin.join("codex"));
-        assert_eq!(user_bin_path(&path, Some(home.as_os_str())), None, "appended once");
-        assert_eq!(user_bin_path(&frozen, Some(std::env::temp_dir().join("taskq-no-home").as_os_str())), None);
-        assert_eq!(user_bin_path(&frozen, None), None);
-        let _ = std::fs::remove_dir_all(&home);
     }
 
     // Chain: attempt log -> usage limit before work -> reset. Risk: a limit after work started skips its retry,

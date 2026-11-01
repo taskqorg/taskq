@@ -13,6 +13,13 @@ pub fn launch(own: &Path, r: &Request) -> Launched {
     if super::of(&r.runtime).codex { codex_launch(own, r) } else { claude_launch(own, r) }
 }
 
+/// An owner session's CoreQ `agent` turn (§ 8 Spawn and resume); `base` loses TaskQ's attempt variables first.
+fn spec(base: &mut std::process::Command, client: coreq::agent::Client, root: &Path, session: &str, args: &[&str]) -> coreq::agent::Spec {
+    for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE", "TASKQ_ROOT"] { base.env_remove(k); }
+    coreq::agent::Spec { client, root: root.into(), session: session.into(), resume: session != "-" && !session.is_empty(),
+        args: args.iter().map(Into::into).collect(), home: None, env: vec![] }
+}
+
 /// The brief is a file in the session folder; the first message only points at it.
 fn read_brief(path: &Path) -> String {
     format!("Before any work, use Read to read {} in full. It is this session's brief; follow it.", serde_json::to_string(&path.to_string_lossy()).unwrap_or_default())
@@ -33,10 +40,10 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
     let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
-    c.current_dir(own).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
-        .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
-        // the session folder is no repository; skipping that check trusts nothing and leaves sandbox and approvals as granted
-        .args(["exec", "--json", "--skip-git-repo-check"]).args(access.codex.as_deref().unwrap_or(&codex)).arg("-C").arg(own).arg("-");
+    // the session folder is no repository; skipping that check trusts nothing and leaves sandbox and approvals as granted
+    let args: Vec<&str> = ["--skip-git-repo-check"].into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
+    let spec = spec(&mut c, coreq::agent::Client::Codex, own, "-", &args);
+    let mut c = coreq::agent::command(c, &spec);
     use coreq::process::Failure;
     let out = match coreq::process::exchange("setup.codex-launch", &mut c, super::HANDSHAKE.as_bytes(), std::time::Duration::from_secs(60)) {
         Ok(out) | Err(Failure::Exit(out)) => out,
@@ -82,12 +89,15 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
     let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
-    c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
-        .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
-        .args(["--bg", "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string(), "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
+    let settings = serde_json::json!({"env": super::claude_env(install, None, None)}).to_string();
+    let spec = spec(&mut c, coreq::agent::Client::Claude, workdir, "", &["--settings", &settings, "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
     let input = read_brief(&path);
     use coreq::process::Failure;
-    let out = match coreq::process::exchange("setup.claude-launch", &mut c, input.as_bytes(), std::time::Duration::from_secs(30)) {
+    let out = match coreq::agent::background_launch(c, &spec, &input, std::time::Duration::from_secs(30)) {
+        Err(e) => return Launched::NoStart(format!("Claude launch: {e}")),
+        Ok(out) => out,
+    };
+    let out = match out {
         Ok(out) | Err(Failure::Exit(out)) => out,
         Err(e @ (Failure::InvalidDeadline | Failure::Capacity | Failure::Owner(_) | Failure::Spawn(_) | Failure::InputLimit)) => return Launched::NoStart(format!("Claude launch: {e}")),
         Err(e) => return Launched::Unknown(format!("Claude launch outcome unknown: {e}")),
@@ -131,16 +141,14 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
     let access = super::access(&env, if a.codex { a.setup } else { &r.runtime }).map_err(|e| e.message)?;
     let mut c = super::cli(&r.runtime, &access, &env)?;
-    c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
-        .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT");
-    if a.codex {
-        c.args(["exec", "--json", "--skip-git-repo-check"]).args(access.codex.as_deref().unwrap_or(&codex)).args(["resume", session, "-"]);
+    let spec = if a.codex {
+        let args: Vec<&str> = ["--skip-git-repo-check"].into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
+        spec(&mut c, coreq::agent::Client::Codex, workdir, session, &args)
     } else {
-        // print mode streams JSON only with --verbose
-        c.args(["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", access.claude.as_deref().unwrap_or(&mode),
-            "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string(), "--resume", session]);
-    }
-    Ok(c)
+        spec(&mut c, coreq::agent::Client::Claude, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
+            "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string()])
+    };
+    Ok(coreq::agent::command(c, &spec))
 }
 
 /// D3: Claude lists a session someone has open; Codex refuses the second writer itself, so its check is the turn.
