@@ -44,8 +44,8 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    for(const extra of [false,true]){
     await page.setViewportSize({width:360,height:900});
     await page.evaluate(s=>{messages.length=0;taskq.receive(s);},extra?{...state,page:undefined,projects:[{...project,complete:false,partial:['Alpha'],tasks:[...project.tasks,t(12,'held')]}]}:{...state,page:undefined});
-    // #1775 M2: the held shortcut is a green play icon; its label stays the accessible name.
-    if(extra){assert.match(await page.locator('.content').innerText(),/Alpha: Project snapshot incomplete or stale/,'named project cause renders (#1840 A2)');assert.equal(await page.getByRole('button',{name:'Start 2 held'}).count(),1,'held shortcut renders');}
+    // #2099 / K-A3: incomplete scope keeps the joined Start visible and disabled; it cannot admit observed drafts as all.
+    if(extra){assert.match(await page.locator('.content').innerText(),/Alpha: Project snapshot incomplete or stale/,'named project cause renders (#1840 A2)');assert.equal(await page.getByRole('button',{name:/^Start \? held ·/}).count(),1,'unknown-scope Held admission stays visible');}
     const h=await page.evaluate(()=>messages.filter(m=>m.a==='size').at(-1).h);
     await page.setViewportSize({width:360,height:h});
     const fit=await page.evaluate(()=>{const c=document.querySelector('.content'),rows=document.querySelectorAll('[data-card]'),last=rows[rows.length-1].getBoundingClientRect(),grip=document.querySelector('.menu .grip').getBoundingClientRect(),menu=document.querySelector('.menu').getBoundingClientRect();return {scroll:c.scrollHeight-c.clientHeight,last:last.bottom,content:c.getBoundingClientRect().bottom,grip:grip.bottom,menu:menu.bottom,vh:innerHeight};});
@@ -79,8 +79,11 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    assert.equal(await row.locator('ol,[data-qac],.question-cue').count(),0,'question text and choices stay in Conversations');
    for(const [target,edge] of [[identity],[row.locator('.tqp-task-title')],[cue],[row,'top'],[row,'bottom'],[row,'left'],[row,'right']])for(const delta of [90,12]){
     // Center by actual scrolling, then test both directions at text, action and outer preview boundaries.
-    await target.scrollIntoViewIfNeeded();let r=await target.boundingBox();await page.mouse.move(edge==='left'?r.x+1:edge==='right'?r.x+r.width-1:r.x+r.width/2,edge==='top'?r.y+1:edge==='bottom'?r.y+r.height-1:r.y+Math.min(r.height/2,20));
-    for(const sign of [1,-1]){const y=await page.locator('.content').evaluate(e=>e.scrollTop);await page.mouse.wheel(0,sign*delta);await page.waitForFunction(({y,sign})=>sign*(document.querySelector('.content').scrollTop-y)>1,{y,sign},{timeout:1500});await frames(page);}
+    await target.scrollIntoViewIfNeeded();
+    // A tall coarse-pointer row can exceed the viewport; put its bottom edge above the footer before wheeling.
+    if(edge==='bottom'){await target.evaluate(e=>e.scrollIntoView({block:'end'}));await frames(page);}
+    let r=await target.boundingBox();await page.mouse.move(edge==='left'?r.x+1:edge==='right'?r.x+r.width-1:r.x+r.width/2,edge==='top'?r.y+1:edge==='bottom'?r.y+r.height-1:r.y+Math.min(r.height/2,20));
+    for(const sign of [1,-1]){const y=await page.locator('.content').evaluate(e=>e.scrollTop);await page.mouse.wheel(0,sign*delta);await page.waitForFunction(({y,sign})=>sign*(document.querySelector('.content').scrollTop-y)>1,{y,sign},{timeout:1500}).catch(async error=>{throw new Error('Wheel did not reach the menu scroll: '+JSON.stringify({width,font,theme,edge,delta,sign,y,hit:await page.evaluate(()=>{const c=document.querySelector('.content');return {scroll:c.scrollTop,max:c.scrollHeight-c.clientHeight};})})+' · '+error.message);});await frames(page);}
    }
    assert.deepEqual(await row.evaluate(e=>[e,...e.querySelectorAll('*')].filter(n=>['auto','scroll'].includes(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight).map(n=>n.className)),[],'no question scroll container');
    await page.mouse.wheel(0,20000);await page.waitForFunction(()=>{const c=document.querySelector('.content');return c.scrollHeight-c.clientHeight-c.scrollTop<=1;});

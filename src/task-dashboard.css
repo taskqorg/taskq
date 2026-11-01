@@ -11,7 +11,7 @@
 /* M3.1: only the host summary sticks; expanded details keep the menu's scroll. */
 .dashboard-status{display:contents}.dashboard-status>summary{position:sticky;top:calc(-1 * var(--outer));z-index:6;background:var(--surface);box-shadow:8px 0 var(--surface),-8px 0 var(--surface);border-bottom:1px solid var(--divider);padding-bottom:3px;font-size:.85em;min-height:32px}
 /* UX30-06: atomic host chips wrap before the overall runtime counters. */
-.dashboard-status>summary{grid-template-columns:minmax(0,1fr) auto 1em;align-items:start}
+.menu .dashboard-status>summary{grid-template-columns:minmax(0,1fr) auto 1em;align-items:start}
 .menu .host-overview{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;min-width:0}
 .menu .host-overview .host-strip{display:flex;flex-wrap:wrap;gap:2px 6px;align-items:center;min-width:0}
 .menu .host-overview .host-chip{display:inline-flex;flex:none;gap:4px;align-items:center;white-space:nowrap;flex-wrap:nowrap;min-height:24px}
@@ -108,7 +108,14 @@
 .view-window-footer{flex:none;border-top:1px solid var(--edge);padding:0 8px 4px}.view-window-footer fieldset{border-top:0;margin:0;padding:0 0 4px}
 .view-window .options{padding:0;gap:4px}.view-window button{padding:4px;overflow-wrap:anywhere}.view-window .saved-view .ui-icon{width:16px;height:16px}
 .filter-header>.state-filters,.filter-header>.state-filters>.tqp-counts{display:contents}.filter-header{display:flex;flex-wrap:wrap;align-items:center;gap:3px}
-.held-shortcut{display:inline-flex;align-items:center;margin-left:2px}.held-shortcut button{display:inline-flex;align-items:center;justify-content:center;width:32px;min-width:32px;height:32px;min-height:32px;padding:7px;border:0;border-radius:6px;background:var(--work);color:light-dark(#fafbfc,#20332a)}.held-shortcut button>span:not(.ui-icon){display:none}.held-shortcut .ui-icon{width:16px;height:16px}
+/* K-A3/K-A6: two sibling targets; the divided group is one wrapping item. */
+.held-control{display:inline-flex;align-items:stretch;border:1px solid var(--edge);border-radius:20px;white-space:nowrap;max-width:100%}
+.tqp-counts .held-control>button{border-radius:20px 0 0 20px;background:transparent}
+.tqp-counts .held-control>[data-a=held-review]{border-inline-start:1px solid var(--edge);border-radius:0 20px 20px 0;background:var(--work);color:light-dark(#fafbfc,#20332a)}
+.tqp-counts .held-control>[data-a=held-review]:disabled{background:var(--hover);color:var(--muted)}
+.held-review{padding:6px;border:1px solid var(--edge);border-radius:6px;overflow-wrap:anywhere}
+.held-review p{margin:4px 0}.held-review ul{padding-inline-start:20px}
+.menu .host-completeness{font-size:max(12px,.85em);color:var(--muted)}
 /* M2 / UX30-03: neutral rail; preserve independent collapse/name/actions and wrapping counts. */
 .project-group.project-shortcuts{display:grid;grid-template-columns:var(--target) minmax(0,1fr) auto;align-items:center;gap:4px;min-width:0;position:relative;margin-top:var(--heading-space);margin-bottom:var(--heading-gap);padding:2px 4px 2px 0;border-radius:0;background:transparent;color:inherit;font-size:1em}
 .project-group.project-shortcuts::before{content:"";position:absolute;inset-inline-start:0;top:8px;bottom:8px;width:2px;min-height:16px;border-radius:2px;background:var(--muted)}
@@ -131,7 +138,7 @@
 .menu.background-only :is(button,.counter){background-color:var(--surface)}
 .menu.background-only :is(input:not([type=checkbox]),select,textarea){background-color:var(--background-fill)}
 .menu.background-only :is(button:hover,button[aria-pressed=true]){background-color:var(--surface)}
-.menu.background-only .held-shortcut button{background-color:var(--work)}
+.menu.background-only .held-control>[data-a=held-review]:not(:disabled){background-color:var(--work)}
 .menu.background-only :is(:disabled,[aria-disabled=true]){opacity:1;cursor:default}
 .menu.background-only .tqp{--hover:var(--background-fill)}
 /* WKWebView ignores accent-color on some range thumbs; paint the foreground cue explicitly. */
