@@ -290,13 +290,13 @@ fn events(log: &Path, pos: u64) -> Option<Vec<serde_json::Value>> {
     Some(String::from_utf8_lossy(&bytes).lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
 }
 
-/// Model use of the attempt log after byte `pos` (§ 4 Profiling), read by CoreQ `agent::usage`; context tokens are
+/// Model use of the attempt log after byte `pos` (§ 4 Profiling), read by AgentQ `agent::usage`; context tokens are
 /// uncached input, cache reads and cache writes, and their sum.
 pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     use crate::profile::Usage;
     if rt == "codex-app" { return Usage::Unknown("app-turn"); }
     let Some(events) = events(log, pos) else { return Usage::Unknown("log-unreadable") };
-    let u = coreq::agent::usage(&events);
+    let u = agentq_runtime::agent::usage(&events);
     if let Some(why) = u.unknown { return Usage::Unknown(why); }
     let tokens = [u.input, u.cache_read, u.cache_write].into_iter().try_fold(0, |a, b| b.map(|b| a + b));
     Usage::Known { calls: u.calls, tokens, model: u.model, input: u.input, cache_read: u.cache_read, cache_write: u.cache_write, output: u.output }
@@ -304,15 +304,15 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
 
 /// A usage or quota limit the runtime reported before any work started ([usage limit](docs/design/capacity.md#usage-limit)):
 /// `Some(reset)` with the reported reset (epoch seconds) when known; None after work started or without a limit.
-pub fn usage_limit(log: &Path) -> Option<Option<i64>> { coreq::agent::limit_reached(&events(log, 0)?) }
+pub fn usage_limit(log: &Path) -> Option<Option<i64>> { agentq_runtime::agent::limit_reached(&events(log, 0)?) }
 
 /// A Codex login the auth server rejected (#1446); None when unreadable or absent.
 pub fn auth_rejected(log: &Path) -> Option<String> {
-    coreq::agent::auth_rejected(&String::from_utf8_lossy(&std::fs::read(log).ok()?)).map(String::from)
+    agentq_runtime::agent::auth_rejected(&String::from_utf8_lossy(&std::fs::read(log).ok()?)).map(String::from)
 }
 
 /// A Codex turn that ended on a transient model failure (#1843, [transient model failure](docs/design/capacity.md#transient-model-failure)).
-pub fn transient_failure(log: &Path) -> Option<String> { coreq::agent::transient_failure(&events(log, 0)?) }
+pub fn transient_failure(log: &Path) -> Option<String> { agentq_runtime::agent::transient_failure(&events(log, 0)?) }
 
 /// `<install>/login-off/<bin>` (#1446): line 1 the `last_refresh` of `auth.json` when the login was rejected, line 2
 /// the reason. It reads not logged in until a re-login changes `last_refresh`.
@@ -333,7 +333,7 @@ fn login_off(install: &Path, bin: &str, refreshed: Option<&str>) -> Option<Strin
     (at == refreshed.unwrap_or_default()).then(|| reason.trim().to_string()).filter(|r| !r.is_empty())
 }
 
-pub use coreq::agent::{final_text, which, which_in, user_bin_path, codex_native};
+pub use agentq_runtime::agent::{final_text, which, which_in, user_bin_path, codex_native};
 
 /// The worker's last message in an attempt log, for the `gone` reason (§ 4 step 1); None when unreadable.
 pub fn last_message(log: &Path) -> Option<String> { final_text(&events(log, 0)?) }
@@ -463,12 +463,12 @@ impl Proc for CliTurn {
 
 /// Codex's thread id: the first `thread.started` line of the attempt log.
 pub fn codex_thread(log: &Path) -> Option<String> {
-    coreq::agent::codex_thread(&String::from_utf8_lossy(&std::fs::read(log).ok()?))
+    agentq_runtime::agent::codex_thread(&String::from_utf8_lossy(&std::fs::read(log).ok()?))
 }
 
 /// Why `rt` cannot start here when its CLI does not resolve on PATH (§ 3: no claim, resume or reviewer).
 pub fn missing_cli(rt: &str) -> Option<String> {
-    coreq::agent::missing_cli(if rt == "claude" { coreq::agent::Client::Claude } else { coreq::agent::Client::Codex })
+    agentq_runtime::agent::missing_cli(if rt == "claude" { agentq_runtime::agent::Client::Claude } else { agentq_runtime::agent::Client::Codex })
 }
 
 /// § 6 setup check: the § 8 grant mode the owner gives `rt` on `os`; Claude has no Workspace enforcement off macOS.
@@ -532,28 +532,72 @@ pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Resu
     let args: Vec<std::ffi::OsString> = if l.rt == "claude" {
         ["--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l, env.jobs, build.as_deref())].map(Into::into).to_vec()
     } else { codex.iter().map(Into::into).collect() };
-    let mut c = coreq::agent::command(cli(&l.rt, access, env)?, &spec(env, l, env.root.into(), args));
+    let mut c = agentq_runtime::agent::command(cli(&l.rt, access, env)?, &optimized(spec(env, l, env.root.into(), args))?);
     if let Some(p) = build { c.env("RUSTC_WRAPPER", p); }
     Ok(c)
 }
 
-/// The CoreQ `agent` turn of launch `l` (§ 8 Spawn and resume): TaskQ's attempt variables, board secrets, compile
+/// The AgentQ `agent` turn of launch `l` (§ 8 Spawn and resume): TaskQ's attempt variables, board secrets, compile
 /// jobs and the § 3 account home the attempt log names (`default` keeps the service's own).
-fn spec(env: &Env, l: &Launch, root: PathBuf, args: Vec<std::ffi::OsString>) -> coreq::agent::Spec {
+fn spec(env: &Env, l: &Launch, root: PathBuf, args: Vec<std::ffi::OsString>) -> agentq_runtime::agent::Spec {
     let mut vars: Vec<(String, String)> = vec![("TASKQ_TASK".into(), l.task.to_string()), ("TASKQ_ATTEMPT".into(), l.attempt.to_string()),
         ("TASKQ_ROLE".into(), l.role.clone()), ("TASKQ_ROOT".into(), env.root.to_string_lossy().into())];
     vars.extend(env.board_env.iter().cloned());
     if let Some(jobs) = env.jobs { vars.push(("CARGO_BUILD_JOBS".into(), jobs.to_string())); }
     let home = crate::runtime::accounts::applies(&l.rt).then(|| crate::runtime::accounts::log_home(&l.rt, &log_path(env.root, l))).flatten();
-    coreq::agent::Spec { client: client(&l.rt), root, session: l.session.clone(), resume: l.resume.is_some(), args, home,
+    agentq_runtime::agent::Spec { client: client(&l.rt), root, session: l.session.clone(), resume: l.resume.is_some(), args, home,
         env: vars.into_iter().map(|(k, v)| (k.into(), v.into())).collect() }
 }
 
-fn client(rt: &str) -> coreq::agent::Client { if of(rt).codex { coreq::agent::Client::Codex } else { coreq::agent::Client::Claude } }
+fn client(rt: &str) -> agentq_runtime::agent::Client { if of(rt).codex { agentq_runtime::agent::Client::Codex } else { agentq_runtime::agent::Client::Claude } }
+
+/// Prepare only a submitted launch; native inspection and stop never change optimizer intent.
+fn optimized(mut spec: agentq_runtime::agent::Spec) -> Result<agentq_runtime::agent::Spec, String> {
+    let state = optimization(&mut spec, agentq_runtime::optimization::install_root().as_deref())?;
+    eprintln!("AgentQ optimization ({} {}): {}", spec.client.code(), spec.session, state.json());
+    Ok(spec)
+}
+
+fn optimization(spec: &mut agentq_runtime::agent::Spec, install: Option<&Path>) -> Result<agentq_runtime::optimization::Optimization, String> {
+    use agentq_runtime::optimization::{self, Intent};
+    let intent = spec.env.iter().rev().find(|(k, _)| k == optimization::ENV).map(|(_, v)| v.clone())
+        .or_else(|| std::env::var_os(optimization::ENV));
+    let intent = match intent {
+        None => Intent::Inherit,
+        Some(v) => v.to_str().and_then(Intent::parse).ok_or("AGENTQ_OPTIMIZATION must be inherit, off or on")?,
+    };
+    spec.env.extend([(optimization::ENV.into(), intent.code().into()), ("AGENTQ_LAUNCHER".into(), "taskq".into())]);
+    let state = optimization::prepare(intent, "taskq", spec, install);
+    if spec.client == agentq_runtime::agent::Client::Claude {
+        let env = optimizer_settings(spec)["env"].clone();
+        if let Some(i) = spec.args.iter().rposition(|a| a == "--settings") {
+            let value = spec.args.get_mut(i + 1).ok_or("Claude settings missing")?;
+            let mut settings: serde_json::Value = serde_json::from_str(value.to_str().ok_or("Claude settings invalid")?).map_err(|e| e.to_string())?;
+            let settings = settings.as_object_mut().ok_or("Claude settings must be an object")?;
+            let vars = settings.entry("env").or_insert_with(|| serde_json::json!({})).as_object_mut().ok_or("Claude settings env must be an object")?;
+            vars.extend(env.as_object().unwrap().clone());
+            *value = serde_json::to_string(settings).map_err(|e| e.to_string())?.into();
+        } else { spec.args.extend(["--settings".into(), serde_json::json!({"env":env}).to_string().into()]); }
+    }
+    Ok(state)
+}
+
+fn optimizer_settings(spec: &agentq_runtime::agent::Spec) -> serde_json::Value {
+    let env: serde_json::Map<String, serde_json::Value> = spec.env.iter()
+        .filter(|(k, _)| k == "AGENTQ_OPTIMIZATION" || k == "AGENTQ_LAUNCHER")
+        .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned().into())).collect();
+    serde_json::json!({"env":env})
+}
+
+/// Claude's daemon ignores launcher env; resume overlays only optimizer keys, preserving saved native policy.
+fn background_base(mut base: Command, spec: &agentq_runtime::agent::Spec) -> Command {
+    if spec.resume { base.args(["--settings", &optimizer_settings(spec).to_string()]); }
+    base
+}
 
 /// A Claude turn spec without TaskQ arguments: native job reads and stops.
-fn claude_spec(root: &Path, home: Option<&Path>) -> coreq::agent::Spec {
-    coreq::agent::Spec { client: coreq::agent::Client::Claude, root: root.into(), session: String::new(), resume: false, args: vec![], home: home.map(Into::into), env: vec![] }
+fn claude_spec(root: &Path, home: Option<&Path>) -> agentq_runtime::agent::Spec {
+    agentq_runtime::agent::Spec { client: agentq_runtime::agent::Client::Claude, root: root.into(), session: String::new(), resume: false, args: vec![], home: home.map(Into::into), env: vec![] }
 }
 
 /// Build cache (docs/testing.md#build-cache): `sccache` on the service's PATH, unless the service inherits
@@ -1423,7 +1467,7 @@ pub(crate) fn claude_agents(root: &Path) -> Result<Vec<serde_json::Value>, Strin
 fn claude_agents_in(root: &Path, home: Option<&Path>) -> Result<Vec<serde_json::Value>, String> {
     let budget = observation_left(std::time::Duration::from_secs(10));
     if budget.is_zero() { return Err("Claude agents unavailable or timed out".into()); }
-    coreq::agent::background_jobs(crate::platform::command(which("claude")), &claude_spec(root, home), budget).map_err(|e| format!("claude agents: {e}"))
+    agentq_runtime::agent::background_jobs(crate::platform::command(which("claude")), &claude_spec(root, home), budget).map_err(|e| format!("claude agents: {e}"))
 }
 
 pub(crate) fn claude_home() -> Option<PathBuf> {
@@ -1568,7 +1612,7 @@ fn claude_stop(root: &Path, id: &str, known: Option<&coreq::process::Identity>, 
     let budget = observation_left(std::time::Duration::from_secs(10));
     if budget.is_zero() { return Err("Claude stop unavailable or timed out; state unknown".into()); }
     let spec = claude_spec(root, home);
-    coreq::agent::background_stop(crate::platform::command(which("claude")), &spec, &coreq::agent::BackgroundJob::read(row, &spec, id)?, budget)
+    agentq_runtime::agent::background_stop(crate::platform::command(which("claude")), &spec, &agentq_runtime::agent::BackgroundJob::read(row, &spec, id)?, budget)
         .map_err(|e| format!("claude stop: {e}"))?;
     // Native stop acknowledges the request first; the service owns later retries/readback.
     let rows = claude_agents_in(root, home)?;
@@ -1655,14 +1699,14 @@ impl ClaudeTurn {
         let (input, input_file, path) = claude_input(&root, text, Some(l))?;
         bind_input(log,l,&path,&input,serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}))?;
         let args = ["--settings", &compact_settings(&root, env.install, l, env.jobs, build_cache_for(&l.rt, access, env).as_deref()), "--name", &session_name(l), "--remote-control", &session_name(l), "--permission-mode", permission_mode];
-        let mut spec = spec(env, l, root.clone(), args.map(Into::into).to_vec());
+        let mut spec = optimized(spec(env, l, root.clone(), args.map(Into::into).to_vec()))?;
         if l.role == "operator" {
             for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"] { c.env_remove(k); }
             spec.env.retain(|(k, _)| !["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"].iter().any(|r| k == r));
         }
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),
             announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, launch_error:None };
-        let out=coreq::agent::background_launch(c, &spec, &turn.input, std::time::Duration::from_secs(30))?;
+        let out=agentq_runtime::agent::background_launch(background_base(c, &spec), &spec, &turn.input, std::time::Duration::from_secs(30))?;
         turn.finish_launch(out)?;
         Ok(turn)
     }
@@ -1978,8 +2022,8 @@ pub(crate) fn app_submit(thread: &str, text: &str) -> Result<(), String> {
     open_link(&thread_url(thread), true).map_err(|e| format!("codex queue failed for thread {thread}: {e}"))?;
     // #1856: the error names the queue call's exit and stderr; the brief itself stays out of it
     // ponytail: the queue call has no project; any existing directory serves as its working directory
-    let spec = coreq::agent::Spec { client: coreq::agent::Client::Codex, root: std::env::temp_dir(), session: thread.into(), resume: true, args: vec![], home: None, env: vec![] };
-    coreq::agent::app_queue(codex_direct(), &spec, text, std::time::Duration::from_secs(10)).map(drop).map_err(|e| format!("codex queue failed for thread {thread}: {e}"))
+    let spec = agentq_runtime::agent::Spec { client: agentq_runtime::agent::Client::Codex, root: std::env::temp_dir(), session: thread.into(), resume: true, args: vec![], home: None, env: vec![] };
+    agentq_runtime::agent::app_queue(codex_direct(), &optimized(spec)?, text, std::time::Duration::from_secs(10)).map(drop).map_err(|e| format!("codex queue failed for thread {thread}: {e}"))
 }
 
 /// Codex without a `cmd` in between: an npm `codex.cmd` shim runs its `codex.js` through `node`, since `cmd` caps a
@@ -2081,11 +2125,11 @@ fn app_presence(text: &str, windows: bool) -> Result<bool, String> {
 }
 
 /// `$CODEX_HOME`, default `~/.codex`; a Windows service has no `HOME`.
-pub(crate) fn codex_home() -> Option<PathBuf> { coreq::agent::base_home(coreq::agent::Client::Codex) }
+pub(crate) fn codex_home() -> Option<PathBuf> { agentq_runtime::agent::base_home(agentq_runtime::agent::Client::Codex) }
 
 /// The thread's rollout file in the Codex home or a § 3 runtime account's home.
 pub(crate) fn rollout(thread: &str) -> Option<PathBuf> {
-    crate::runtime::accounts::homes("codex").iter().find_map(|home| coreq::agent::rollout(thread, Some(home)))
+    crate::runtime::accounts::homes("codex").iter().find_map(|home| agentq_runtime::agent::rollout(thread, Some(home)))
 }
 
 /// Volatile cursor over the native append-only history; restart rebuilds it without replaying work.
@@ -2516,6 +2560,76 @@ pub fn agents_line(r: &serde_json::Value) -> String {
 mod tests {
     use std::process::Stdio;
     use super::*;
+
+    // A4/R9: launch intent must preserve client policy and identity, never enable or rewrite an integration.
+    #[test]
+    fn optimization_preserves_policy_and_reports_effective_state() {
+        use agentq_runtime::{agent::{Client, Spec}, optimization::Intent};
+        let root = rules_root("optimization");
+        let home = root.join("home");
+        let install = root.join("optimizer");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(install.join("data")).unwrap();
+        let config = "model_provider = \"agentq\"\n";
+        std::fs::write(home.join("config.toml"), config).unwrap();
+        std::fs::write(home.join("settings.json"), r#"{"hooks":{"PreToolUse":[{"hooks":[{"command":"agentq hook claude pre"}]}]}}"#).unwrap();
+        for client in [Client::Claude, Client::Codex] {
+            for (intent, effective) in [("inherit", "on"), ("off", "off"), ("on", "on")] {
+                for resume in [false, true] {
+                    let mut spec = Spec { client, root: root.clone(), session: "saved-native-id".into(), resume,
+                        args: vec!["--permission-mode".into(), "dontAsk".into()], home: Some(home.clone()),
+                        env: vec![("AGENTQ_OPTIMIZATION".into(), intent.into()), ("TASKQ_TASK".into(), "2111".into())] };
+                    let state = optimization(&mut spec, Some(&install)).unwrap();
+                    assert_eq!((state.intent, state.effective), (Intent::parse(intent).unwrap(), effective));
+                    assert_eq!(spec.session, "saved-native-id");
+                    assert_eq!((spec.resume, spec.home.as_ref()), (resume, Some(&home)));
+                    assert_eq!(&spec.args[..2], &["--permission-mode", "dontAsk"]);
+                    assert_eq!(spec.args.len(), if client == Client::Claude || intent == "off" { 4 } else { 2 });
+                    if intent == "off" && client == Client::Codex { assert_eq!(spec.args[3], "model_providers.agentq.http_headers.x-agentq-optimization=\"off\""); }
+                    if intent == "on" {
+                        assert_eq!(optimization(&mut spec, None).unwrap().reason, "not_installed");
+                        std::fs::write(install.join("data/config.json"), r#"{"compression":{"enabled":false}}"#).unwrap();
+                        assert_eq!(optimization(&mut spec, Some(&install)).unwrap().effective, "off");
+                        std::fs::remove_file(install.join("data/config.json")).unwrap();
+                    }
+                    spec.env.push(("AGENTQ_OPTIMIZATION".into(), "invalid".into()));
+                    assert!(optimization(&mut spec, Some(&install)).unwrap_err().contains("inherit, off or on"));
+                }
+            }
+        }
+        assert_eq!(std::fs::read_to_string(home.join("config.toml")).unwrap(), config);
+        assert!(!install.join("data/integration.json").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // A3/A4/R9: daemon-backed turns need session env, including on resume; saved policy stays untouched.
+    #[test]
+    fn optimization_reaches_background_settings_and_operator_attribution() {
+        use agentq_runtime::agent::{Client, Spec};
+        for resume in [false, true] {
+            let mut spec = Spec { client: Client::Claude, root: std::env::temp_dir(), session: "saved-native-id".into(), resume,
+                args: vec!["--settings".into(), r#"{"env":{"TASKQ_INSTALL":"invented"},"hooks":{"SessionStart":[]}}"#.into(),
+                    "--permission-mode".into(), "dontAsk".into(), "--name".into(), "retained name".into()], home: None,
+                env: vec![("AGENTQ_OPTIMIZATION".into(), "off".into())] };
+            optimization(&mut spec, None).unwrap();
+            let command = agentq_runtime::agent::background_command(background_base(Command::new("invented-client"), &spec), &spec).unwrap();
+            let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+            assert_eq!(args.iter().filter(|a| a.as_str() == "--settings").count(), 1);
+            let settings: serde_json::Value = serde_json::from_str(&args[args.iter().position(|a| a == "--settings").unwrap() + 1]).unwrap();
+            assert_eq!(settings["env"]["AGENTQ_OPTIMIZATION"], "off");
+            assert_eq!(settings["env"]["AGENTQ_LAUNCHER"], "taskq");
+            if resume {
+                assert_eq!(args.len(), 5, "only optimizer settings, --bg and exact native resume");
+                assert_eq!(&args[2..], &["--bg", "--resume", "saved-native-id"]);
+                assert_eq!(settings["env"].as_object().unwrap().len(), 2, "no permission, model or attempt override");
+            } else {
+                assert_eq!(settings["env"]["TASKQ_INSTALL"], "invented");
+                assert_eq!(settings["hooks"]["SessionStart"], serde_json::json!([]));
+                assert!(args.windows(2).any(|a| a == ["--permission-mode", "dontAsk"]));
+                assert!(args.windows(2).any(|a| a == ["--name", "retained name"]));
+            }
+        }
+    }
 
     // Risk: Windows `explorer` exits 1 after a successful open, so a Codex app queue reads it as a failed open (#1593).
     #[test]
@@ -4388,6 +4502,8 @@ mod tests {
         // Risk: a worker reads another launch's TASKQ_* (install, task, attempt), or an operator session gets an attempt.
         let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
         let mut worker = want("7", "42", "worker");
+        worker["AGENTQ_OPTIMIZATION"] = std::env::var("AGENTQ_OPTIMIZATION").unwrap_or("inherit".into()).into();
+        worker["AGENTQ_LAUNCHER"] = "taskq".into();
         if let Some(p) = build_cache_for("claude", &access(&env, "claude").unwrap(), &env) { worker["RUSTC_WRAPPER"] = p.to_string_lossy().into(); }
         assert_eq!(settings["env"], worker, "a full-access Claude worker gets this host's build cache, if any");
         let operator: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &Launch { role: "operator".into(), ..launch("claude") }, None, None)).unwrap();

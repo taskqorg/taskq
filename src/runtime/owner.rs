@@ -13,10 +13,10 @@ pub fn launch(own: &Path, r: &Request) -> Launched {
     if super::of(&r.runtime).codex { codex_launch(own, r) } else { claude_launch(own, r) }
 }
 
-/// An owner session's CoreQ `agent` turn (§ 8 Spawn and resume); `base` loses TaskQ's attempt variables first.
-fn spec(base: &mut std::process::Command, client: coreq::agent::Client, root: &Path, session: &str, args: &[&str]) -> coreq::agent::Spec {
+/// An owner session's AgentQ `agent` turn (§ 8 Spawn and resume); `base` loses TaskQ's attempt variables first.
+fn spec(base: &mut std::process::Command, client: agentq_runtime::agent::Client, root: &Path, session: &str, args: &[&str]) -> agentq_runtime::agent::Spec {
     for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE", "TASKQ_ROOT"] { base.env_remove(k); }
-    coreq::agent::Spec { client, root: root.into(), session: session.into(), resume: session != "-" && !session.is_empty(),
+    agentq_runtime::agent::Spec { client, root: root.into(), session: session.into(), resume: session != "-" && !session.is_empty(),
         args: args.iter().map(Into::into).collect(), home: None, env: vec![] }
 }
 
@@ -42,8 +42,9 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
     // the session folder is no repository; skipping that check trusts nothing and leaves sandbox and approvals as granted
     let args: Vec<&str> = ["--skip-git-repo-check"].into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
-    let spec = spec(&mut c, coreq::agent::Client::Codex, own, "-", &args);
-    let mut c = coreq::agent::command(c, &spec);
+    let spec = spec(&mut c, agentq_runtime::agent::Client::Codex, own, "-", &args);
+    let spec = match super::optimized(spec) { Ok(s) => s, Err(e) => return Launched::NoStart(e) };
+    let mut c = agentq_runtime::agent::command(c, &spec);
     use coreq::process::Failure;
     let out = match coreq::process::exchange("setup.codex-launch", &mut c, super::HANDSHAKE.as_bytes(), std::time::Duration::from_secs(60)) {
         Ok(out) | Err(Failure::Exit(out)) => out,
@@ -90,10 +91,11 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
     let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
     let settings = serde_json::json!({"env": super::claude_env(install, None, None)}).to_string();
-    let spec = spec(&mut c, coreq::agent::Client::Claude, workdir, "", &["--settings", &settings, "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
+    let spec = spec(&mut c, agentq_runtime::agent::Client::Claude, workdir, "", &["--settings", &settings, "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
+    let spec = match super::optimized(spec) { Ok(s) => s, Err(e) => return Launched::NoStart(e) };
     let input = read_brief(&path);
     use coreq::process::Failure;
-    let out = match coreq::agent::background_launch(c, &spec, &input, std::time::Duration::from_secs(30)) {
+    let out = match agentq_runtime::agent::background_launch(super::background_base(c, &spec), &spec, &input, std::time::Duration::from_secs(30)) {
         Err(e) => return Launched::NoStart(format!("Claude launch: {e}")),
         Ok(out) => out,
     };
@@ -143,12 +145,12 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let mut c = super::cli(&r.runtime, &access, &env)?;
     let spec = if a.codex {
         let args: Vec<&str> = ["--skip-git-repo-check"].into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
-        spec(&mut c, coreq::agent::Client::Codex, workdir, session, &args)
+        spec(&mut c, agentq_runtime::agent::Client::Codex, workdir, session, &args)
     } else {
-        spec(&mut c, coreq::agent::Client::Claude, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
+        spec(&mut c, agentq_runtime::agent::Client::Claude, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
             "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string()])
     };
-    Ok(coreq::agent::command(c, &spec))
+    Ok(agentq_runtime::agent::command(c, &super::optimized(spec)?))
 }
 
 /// D3: Claude lists a session someone has open; Codex refuses the second writer itself, so its check is the turn.

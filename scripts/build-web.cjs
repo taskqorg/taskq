@@ -3,8 +3,8 @@
 const fs=require('node:fs'),path=require('node:path'),esbuild=require('esbuild');
 const root=path.resolve(__dirname,'..');
 const out=path.resolve(process.argv[2]||path.join(root,'build/web'));
-const cargo=fs.readFileSync(path.join(root,'Cargo.toml'),'utf8');
-const revisions=[...cargo.matchAll(/coreq(?:-instrument)? = \{ git = "https:\/\/github.com\/taskqorg\/coreq", rev = "([a-f0-9]{40})"/g)].map(m=>m[1]);
+const lock=fs.readFileSync(path.join(root,'Cargo.lock'),'utf8');
+const revisions=lock.split('[[package]]').filter(p=>/^name = "coreq(?:-instrument)?"$/m.test(p)).map(p=>p.match(/^source = "git\+https:\/\/github.com\/taskqorg\/coreq\?[^"#]+#([a-f0-9]{40})"$/m)?.[1]);
 const dependency=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).dependencies['@taskq/coreq'];
 if(revisions.length!==2||revisions[0]!==revisions[1]||dependency!=='https://codeload.github.com/taskqorg/coreq/tar.gz/'+revisions[0])throw Error('Cargo/instrumenter/JS must pin the same CoreQ revision');
 

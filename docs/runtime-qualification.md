@@ -362,6 +362,14 @@ Rule delivery follows the [current contract detail](#rule-delivery-contract-deta
 
 Linked from `taskq.md` [§ 8](../taskq.md#8-runtimes-and-deployment); this text binds like the contract (R8, R13).
 
+### AgentQ runtime
+
+AgentQ owns shared native runtime mechanics through `agentq_runtime::agent`, pinned to published source `513193c8a96f3de1c71a86291a679230817ce0b2` (`agentq-runtime` 0.1.0). CoreQ retains process, telemetry, update and host primitives; its frozen agent compatibility API remains available to older consumers. TaskQ owns board state, attempts, capacity, accounts, permissions, model/effort, focus, briefs, tool grants and protected recovery persistence (R3/R8/R9/R13). Worker, reviewer and owner/operator start/resume paths use the same shared API, including Claude background/Remote Control and Codex app. Native identities, checkpoints and usage attribution retain their existing meaning.
+
+Optimizer installation is optional. A launch inherits `AGENTQ_OPTIMIZATION=inherit|off|on` (absent: inherit); invalid intent refuses before submission. AgentQ resolves the account's actual client home and optional installation read-only. Each launch reports intent, effective on/off/unknown and reason in the private service/launch diagnostic. `on` never enables a disabled integration; `off` applies only to the child/provider request. Configuration at launch never proves actual compression. No host/global configuration is written; app handshakes and queued turns remain separate observations. Claude starts merge only optimizer environment keys into existing per-session settings; background resumes pass only those keys as a settings overlay before the shared resume command. Permission/model settings remain native-owned; the overlay transport and same-session effect still need native qualification. Active sessions remain unchanged.
+
+Forward: adopt the immutable dependency and run the selected Windows/portable gate and existing deterministic client/recovery/contract checks; publication requires green merge-result CI (R12). Ordinary installation uses only the merged release. Rollback selects the previous immutable TaskQ build with CoreQ `e84761cdab43723b871a42b3021e9c39afcd9484`; session IDs, checkpoint formats and observation IDs remain compatible, with no replay or policy change. Preserve the predecessor's qualification receipts. Live Mac and Claude (capacity 0) Q1/Q6/Q15 and live usage baseline remain explicitly unverified until their authorized native qualification; source/fake-client checks do not qualify them.
+
 ### Spawn and resume
 
 | Runtime | spawn (child of service) | resume |

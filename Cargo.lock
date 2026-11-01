@@ -9,6 +9,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "agentq-runtime"
+version = "0.1.0"
+source = "git+https://github.com/taskqorg/agentq?rev=513193c8a96f3de1c71a86291a679230817ce0b2#513193c8a96f3de1c71a86291a679230817ce0b2"
+dependencies = [
+ "coreq",
+ "ring",
+ "serde_json",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -252,7 +262,7 @@ dependencies = [
 [[package]]
 name = "coreq"
 version = "0.18.0"
-source = "git+https://github.com/taskqorg/coreq?rev=e84761cdab43723b871a42b3021e9c39afcd9484#e84761cdab43723b871a42b3021e9c39afcd9484"
+source = "git+https://github.com/taskqorg/coreq?tag=v0.18.0#e84761cdab43723b871a42b3021e9c39afcd9484"
 dependencies = [
  "coreq-instrument",
  "flate2",
@@ -267,7 +277,7 @@ dependencies = [
 [[package]]
 name = "coreq-instrument"
 version = "0.1.0"
-source = "git+https://github.com/taskqorg/coreq?rev=e84761cdab43723b871a42b3021e9c39afcd9484#e84761cdab43723b871a42b3021e9c39afcd9484"
+source = "git+https://github.com/taskqorg/coreq?tag=v0.18.0#e84761cdab43723b871a42b3021e9c39afcd9484"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2453,6 +2463,7 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 name = "taskq"
 version = "4.6.58"
 dependencies = [
+ "agentq-runtime",
  "base64 0.22.1",
  "block2",
  "coreq",
