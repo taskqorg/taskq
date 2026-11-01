@@ -73,32 +73,21 @@ const snapshot={...require('./fixtures/display-model.json'),platform:'macos',fon
    assert.equal(await wheel.evaluate(()=>sent.filter(m=>m.a==='answer'||m.a==='workspace').length),0,'wheel never triggers an operation');await wheel.close();
   }
   console.log('PASS #1928 eight-state wheel/trackpad deltas over text, controls and panel edges');
-  // Closed pins disappear on the first explicit open. The independent reader survives and Completed reopens it.
+  // RC1/MP14: close-pin opening preserves exact scope while retiring the independent menu reader.
+  // Full transcript/cursor/outcome/PR/return protection is in conversations-centre and closed-pins instruments.
   const ref='gitlab://forge.example/team/project#40',pin={ref,title:'Closed task',url:board+'/40'},s={...snapshot,navigation:{schema:1,dashboard:{pins:[pin]}}},page=await open('tray',s);
-  await page.waitForFunction(()=>sent.some(m=>m.a==='completed'&&m.task===40));
-  const read=await page.evaluate(()=>sent.find(m=>m.a==='completed'&&m.task===40)),closed={n:40,title:'Closed task',state:'closed',url:board+'/40',pr:'https://forge.example/team/project/-/merge_requests/41',closed:990,outcome:'success',close:'delivered',result:'Preserved outcome'};
-  await page.evaluate(({read,closed})=>taskq.receive({completed:{...read,tasks:[closed]}}),{read,closed});
-  await page.locator('[data-a=pin-transcript]').click();assert.equal(await page.locator('.task-pins').count(),0,'first open unpins under #1829');
-  assert.equal(await page.locator('#taskq-popover').count(),0);const reader=page.locator('.task-transcript-page');assert.equal(await reader.count(),1,'ordinary reading page survives auto-unpin');
-  const request=await page.evaluate(()=>sent.filter(m=>m.transcript).at(-1));
-  await page.evaluate(r=>taskq.receive({completed:{...r,transcript:{start:10,items:[{role:'assistant',text:'Closed task transcript retained'}]}}}),request);
-  assert.match(await reader.innerText(),/Preserved outcome[\s\S]*Closed task transcript retained/);assert.equal(await reader.getByRole('link',{name:'Open PR'}).getAttribute('data-url'),closed.pr);
-  await reader.getByRole('button',{name:'Load earlier'}).click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.transcript).at(-1).before),10);
-  await page.keyboard.press('Escape');assert(await page.locator('[data-a=view-list]').first().evaluate(e=>e===document.activeElement),'removed trigger has a stable fallback');
-  await page.locator('[data-a=view-select][data-id=completed]').click();const history=await page.evaluate(()=>sent.filter(m=>m.a==='completed'&&m.page===1).at(-1));
-  await page.evaluate(({history,closed})=>taskq.receive({completed:{...history,tasks:[closed],more:false}}),{history,closed});await page.locator('[data-a=completed-transcript]').click();assert.equal(await reader.count(),1,'Completed reopens the same closed task');
-  const reopened=await page.evaluate(()=>sent.filter(m=>m.transcript).at(-1));await page.evaluate(r=>taskq.receive({completed:{...r,transcript:{start:0,items:[{role:'assistant',text:'Closed task transcript retained'}]}}}),reopened);
-  if(out)await page.screenshot({path:out+'/closed-reader.png'});
-  await page.keyboard.press('Escape');assert(await page.locator('[data-a=completed-transcript]').evaluate(e=>e===document.activeElement));await page.close();
+  await page.waitForFunction(()=>sent.some(m=>m.a==='completed'&&m.task===40));const read=await page.evaluate(()=>sent.find(m=>m.a==='completed'&&m.task===40));
+  await page.evaluate(read=>taskq.receive({completed:{...read,tasks:[{n:40,state:'closed',url:read.root+'/40',title:'Closed task',closed:990,outcome:'success'}]}}),read);
+  await page.locator('[data-a=pin-transcript]').click();assert.equal(await page.locator('.task-pins').count(),0,'first open retains the closed-pin policy');assert.deepEqual(await page.evaluate(()=>sent.filter(m=>m.a==='workspace').at(-1).open),{page:'conversations',root,board,task:40});assert.equal(await page.locator('.task-transcript-page').count(),0);await page.close();
   // Task activity is a read-only route to the same exact thread, including archived Q&A and independent owner drafts.
   const owner={id:'independent-draft',title:'Independent draft',root,text:'Keep this unsent draft',caret:[2,4],files:[],revision:1},workspace=await open('workspace',{...snapshot,conversations:{complete:true,items:[owner]}},{width:940,height:740});
   await workspace.evaluate(()=>taskq.receive({open:{page:'sessions'}}));
-  const activity=workspace.locator('[data-a=workspace][data-task="3"]');assert.match(await activity.locator('..').innerText(),/worker · codex · fixture · attempt 202/);
-  await activity.click();assert.equal(await workspace.locator('.thread-title').innerText(),'Alpha · #3 Preserve task 3');
+  const activity=workspace.locator('.conversation-row[data-thread="task:'+board+'/3"]');assert.equal(await workspace.locator('[data-c=result-filter][data-filter=activity]').getAttribute('aria-pressed'),'true');
+  await activity.click();assert.equal(await workspace.locator('.thread-title').innerText(),'Alpha · #3 Preserve task 3');assert.match(await workspace.locator('.conversation-info').textContent(),/attempt 202.*worker.*fixture/s);
   assert.match(await workspace.locator('.conversation-reader').innerText(),/Historical question: preserve this exact wording[\s\S]*Earlier choice[\s\S]*Earlier answer[\s\S]*Current problem/);
   await workspace.locator('[data-c-field=answer]').fill('Retain task answer draft');
-  await workspace.locator('[data-a=back]').click();assert.equal(await workspace.locator('h1').innerText(),'Work sessions','Back restores activity route');
-  await activity.click();assert.equal(await workspace.locator('[data-c-field=answer]').inputValue(),'Retain task answer draft');
+  await workspace.locator('.conversation-row[data-thread="task:'+board+'/4"]').click();await activity.click();assert.equal(await workspace.locator('[data-c-field=answer]').inputValue(),'Retain task answer draft');
+  await workspace.locator('[data-a=back]').click();assert.equal(await workspace.locator('h1').innerText(),'Conversations','Back restores the invoking common view');
   await workspace.locator('[data-c=select][data-id=independent-draft]').click();assert.equal(await workspace.locator('[data-c-field=text]').inputValue(),owner.text,'independent owner draft survives navigation');
   assert.equal(await workspace.evaluate(()=>sent.filter(m=>m.a==='answer'||m.a==='message-action'||m.a==='conversation-change'&&['send','reply','create'].includes(m.action)).length),0,'reading never creates, sends or marks read');
   await workspace.close();console.log('PASS #1928 closed reading/auto-unpin, history/PR/outcome, exact task activity and draft/Back preservation');

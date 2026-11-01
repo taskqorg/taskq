@@ -1,0 +1,179 @@
+{
+  "sourceCommit": "13124ca0b67283363771a8c624ae5247ca661832",
+  "ruleApplication": [
+    "R13: Product/M14/MP14/TW1/TW2/TW5/CS1-CS6/RC1-RC7/UC-09/11/14/15 amended before implementation",
+    "R1/R3/R9: source/board/permission and pending-operation authority retained",
+    "R12 and section 7: sandbox-blocked stays unknown; merge_group is the publication gate"
+  ],
+  "runs": [
+    {
+      "command": "node tests/conversations-centre.browser.cjs",
+      "source": "60c7868ce6d7a97247b65af718a1771605636cb1",
+      "status": "Fail before",
+      "failure": "ordinary completion never requires Accept: actual 1, expected 0"
+    },
+    {
+      "command": "python3 scripts/check.py --base 60c7868ce6d7a97247b65af718a1771605636cb1",
+      "source": "1d135efddd8633159ea319c01d93889bbed50f18",
+      "status": "Fail before",
+      "unit": {
+        "passed": 806,
+        "failed": 1,
+        "ignored": 37
+      },
+      "failure": "tidy::tests::dubious_ownership_root_is_tidied expected stale fetch failed, observed current with foreign dirty 1"
+    },
+    {
+      "command": "cargo test --locked --bin taskq tidy::tests::dubious_ownership_root_is_tidied",
+      "source": "3b7a451376af3fa13ac78c0dc40e98501b4b8e51",
+      "status": "Pass after",
+      "passed": 1,
+      "protection": "All original trust, failed-fetch, later-success and foreign-status assertions remain unchanged; only the child fixture file transport is refused."
+    },
+    {
+      "command": "python3 scripts/check.py --base 60c7868ce6d7a97247b65af718a1771605636cb1",
+      "source": "3b7a451376af3fa13ac78c0dc40e98501b4b8e51",
+      "status": "sandbox-blocked",
+      "elapsedSeconds": 87.413,
+      "unit": {
+        "passed": 807,
+        "failed": 0,
+        "ignored": 37
+      },
+      "integration": {
+        "passed": 21,
+        "blocked": 1,
+        "ignored": 1
+      },
+      "blockedTest": "telemetry_process::resume_records_its_result_without_releasing_the_host_hold",
+      "diagnostic": "sandbox-exec: sandbox_apply: Operation not permitted",
+      "note": "No assertion, test skip or permission change; not a full local gate PASS."
+    },
+    {
+      "command": "python3 scripts/check.py --rules --base 60c7868ce6d7a97247b65af718a1771605636cb1",
+      "status": "Pass",
+      "changedRules": [
+        "Product",
+        "M14"
+      ],
+      "coverage": "Report only: 72/105 IDs have no Chain citation"
+    },
+    {
+      "command": "python3 .specq/engineering/scripts/contract_lint.py taskq.md",
+      "lintSource": "specq@45ff029915bc8e0e53b4523217de636183aa6ad9",
+      "status": "Pass",
+      "bytes": 47693,
+      "lines": 235,
+      "longestLine": 394,
+      "errors": 0,
+      "warnings": [
+        "Above 70 percent headroom thresholds"
+      ]
+    },
+    {
+      "command": "cargo test --locked --bin taskq conversations::tests",
+      "status": "Pass",
+      "passed": 12
+    },
+    {
+      "command": "cargo +stable run --locked -- selftest",
+      "environment": "Isolated OS temporary installation; TASKQ_SELFTEST_OFFLINE=1; TASKQ_INCIDENT_REPORTS=off; launching worker bindings and board credentials removed in child only",
+      "status": "Pass",
+      "source": "13124ca0b67283363771a8c624ae5247ca661832",
+      "goldenTraces": 113,
+      "formats": "Pass",
+      "telemetryCommittedObservations": 8,
+      "board": "Unknown: explicitly offline",
+      "tools": "Unknown: explicitly offline"
+    },
+    {
+      "command": "35 individual node tests/*.test.cjs invocations",
+      "source": "13124ca0b67283363771a8c624ae5247ca661832",
+      "status": "Pass",
+      "scripts": [
+        "tests/answer-card.test.cjs",
+        "tests/display-model.test.cjs",
+        "tests/finding-composer.test.cjs",
+        "tests/notification-panel.test.cjs",
+        "tests/pm-composer.test.cjs",
+        "tests/project-blocks.test.cjs",
+        "tests/relative-time.test.cjs",
+        "tests/reply-files.test.cjs",
+        "tests/report-decisions.test.cjs",
+        "tests/reports-bulk.test.cjs",
+        "tests/reports-cache.test.cjs",
+        "tests/reports.test.cjs",
+        "tests/resource-controls.test.cjs",
+        "tests/sync-view.test.cjs",
+        "tests/task-controls.test.cjs",
+        "tests/task-views.test.cjs",
+        "tests/task-workspace.test.cjs",
+        "tests/tray-action.test.cjs",
+        "tests/tray-agentq.test.cjs",
+        "tests/tray-agents.test.cjs",
+        "tests/tray-answer.test.cjs",
+        "tests/tray-home-ai.test.cjs",
+        "tests/tray-incidents.test.cjs",
+        "tests/tray-navigation.test.cjs",
+        "tests/tray-press.test.cjs",
+        "tests/tray-refresh.test.cjs",
+        "tests/tray-resources.test.cjs",
+        "tests/tray-running.test.cjs",
+        "tests/tray-settings.test.cjs",
+        "tests/tray-setup.test.cjs",
+        "tests/tray-view-state.test.cjs",
+        "tests/tray-web.test.cjs",
+        "tests/ui-architecture.test.cjs",
+        "tests/ui-runtime.test.cjs",
+        "tests/worker-steps.test.cjs"
+      ],
+      "passed": 35
+    },
+    {
+      "command": "Changed browser instruments",
+      "source": "13124ca0b67283363771a8c624ae5247ca661832",
+      "status": "Pass",
+      "scripts": [
+        "closed-pins",
+        "conversations-centre",
+        "notifications",
+        "reports",
+        "results",
+        "task-dashboard",
+        "task-navigation"
+      ],
+      "centreCaptureStatus": "Pass",
+      "matrix": "Reports: 16 surface/theme/width/font cells; notifications: 4 theme/font cells; task navigation: 64 inline cells plus wheel/context checks",
+      "passedInstruments": 7,
+      "elapsedSecondsForNodeAndSixBrowserRuns": 208.921
+    },
+    {
+      "command": "sh docs/shots/check.test.sh; sh docs/shots/update.test.sh; sh .github/release-tag.test.sh; python3 .github/release-check.test.py",
+      "status": "Pass",
+      "note": "Separate canonical remainder after the sandbox-blocked integration guard"
+    },
+    {
+      "command": "node tests/conversations-flow.browser.cjs; node tests/conversations-selection.browser.cjs; node tests/conversations-sidebar.browser.cjs; node tests/conversations-stable.browser.cjs; node tests/worker-panel.browser.cjs; node tests/workspace-route.browser.cjs",
+      "status": "Pass",
+      "note": "Affected preservation instruments; production adapters substituted with invented IPC, no native/provider qualification."
+    },
+    {
+      "command": "node tests/shell-navigation.browser.cjs",
+      "sources": [
+        "60c7868ce6d7a97247b65af718a1771605636cb1",
+        "3b7a451376af3fa13ac78c0dc40e98501b4b8e51"
+      ],
+      "status": "Fail, baseline and earlier candidate",
+      "diagnostic": "G02/V23: essential Back/Close clipped at 320px / 200% text",
+      "note": "Before the affected route checks; unmodified test, not counted as pass."
+    },
+    {
+      "command": "Evidence hash/format/dimension and HTML-link verification; visual-screenlist-qa",
+      "status": "Pass",
+      "frames": 8,
+      "nativeAfter": "Not tested"
+    }
+  ],
+  "nativeLive": "Not tested; no disposable Mac requirement, real owner/PM message, restart, install, grant or production fault injection",
+  "publicationGate": "merge_group green required; not observed by worker"
+}

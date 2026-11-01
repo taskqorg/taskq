@@ -195,6 +195,7 @@ focusReadback:function(){
 remember:function(){return {...viewState.capture(),workCard:view.workCard};},
 navigate:function(next,filter=null,work=null){
   view.popup=null;
+  if(next==='notifications'){send({a:'workspace',open:{page:'conversations',filter:'new'}});return;}
   // R22: from the menu, Settings opens or raises its own window; plain Settings keeps that window's section
   if(view.settingsWindow&&!ports.settings&&settingsPages.includes(next)){viewState.flush();send({a:'settings-open',page:next==='settings'?null:next});return;}
   if(ports.settings&&next==='home')next='settings';
@@ -519,7 +520,7 @@ routeBody:function(){
     case 'delivery':return f(h('p',{class:'meta'},'Delivery is project policy, separate from Access. Exact-candidate approval and publication remain on the board.'),view.S.projects.map(p=>h('details',{class:'group','data-view-key':'delivery:'+p.root},api.disclosure('git-pull-request',[p.name+' · ',h('span',{class:'meta'},p.delivery?.preset||'policy unavailable')]),h('div',{class:'body meta'},'Revision '+(p.delivery?.revision??'unknown')),p.issues&&h('a',{class:'project',href:p.issues,'data-url':p.issues},'Open Board'))));
     case 'appearance':return appearance();
     case 'cadence':return history();
-    case 'notifications':return notificationPanel.body();
+    case 'notifications':return h('button',{'data-a':'workspace','data-page':'conversations','data-filter':'new'},'Open New in Conversations');
     case 'notification-settings':return notifications();
     case 'agents':return agents();
     case 'work':return f(api.heading('Host admission','focus'),view.S.projects.some(p=>p.resources)?api.workPage():api.operationLauncher('admission',null,'Review admission in workspace…'));
@@ -595,20 +596,11 @@ notifyGroup:function(p){
   const name=v=>modes.find(m=>m[0]===v)[1];
   return h('details',{class:'group','data-view-key':'notifications:'+p.root},h('summary',{class:'line'},icon('bell'),'Notifications ',h('span',{class:'meta'},view.S.display.notify.map(x=>[x.id,x.name]).map(([k])=>name(N[k][1])).join(' · '))),view.S.display.notify.map(x=>[x.id,x.name]).map(([k,l])=>[h('div',{class:'body'},l+' ',h('span',{class:'meta'},'· '+name(N[k][1]))),h('div',{class:'options'},[['inherit','Inherit'],...modes].map(([v,m])=>h('button',{'data-a':'notify','data-kind':k,'data-root':p.root,'data-v':v,'aria-pressed':String((N[k][0]||'inherit')===v)},m)))]));
 },
-openCard:function(o){
-  const p=view.S&&view.S.projects.find(p=>p.root===o.root);if(!p)return;
-  if(view.page!==p.root||view.working||view.taskFilter)navigate(p.root);
-  const key=p.issues+'/'+o.n;
-const find=()=>o.n!=null&&(menu.querySelector('[data-card="'+CSS.escape(key)+'"]'));
-  if(o.n!=null&&!find()){view.noted={root:p.root,n:o.n,key,url:key,title:o.title||'',state:o.kind==='close'?'closed':o.kind,state_name:[...view.S.display.states,...view.S.display.notify].find(x=>x.id===o.kind)?.name};present(true);}
-  const el=find();
-  if(el){el.scrollIntoView({block:'center'});(el.querySelector('textarea,button,a')||el).focus({preventScroll:true});}
-},
-notedCard:function(p){return view.noted&&view.noted.root===p.root?h('div',{class:'group'},h('div',{class:'row meta'},h('span',null,'Notification')),h('div',{'data-card':view.noted.key,tabindex:'-1'},raw(TaskqProjectBlocks.task(blockProject(p),view.noted)))):'';},
+openCard:function(o){const p=view.S?.projects.find(p=>p.root===o.root);if(p)send({a:'workspace',open:{page:'conversations',root:p.root,board:p.issues,task:o.n,...(o.sha?{sha:o.sha}:{}),...(o.id?{event:o.id}:{})}});},
 project:function(p){
   const ts=tasks(p),counters=TaskqProjectBlocks.counters(p.counts,p.root,p.name);
   const groups=view.S.display.states.map(({id:st,name})=>{const r=ts.filter(t=>t.state===st);return r.length?h('div',{class:'group',key:st},h('h2',{class:'section-heading task-group-heading'},h('span',null,name),counter(r.length,color(st),name),r.length>1&&startButton(r)),r.map(t=>taskRow(t))):'';}).filter(Boolean);
-  return f(h('section',{class:'tqp',dangerouslySetInnerHTML:{__html:counters}}),h('div',{class:'body meta'},modeText(p)),problem(p),incident(p,true),incidentNotice(p),notedCard(p),
+  return f(h('section',{class:'tqp',dangerouslySetInnerHTML:{__html:counters}}),h('div',{class:'body meta'},modeText(p)),problem(p),incident(p,true),incidentNotice(p),
   groups.length?groups:h('div',{class:'body muted'},'No open tasks'),answerNotices(p.issues),
   h('div',{class:'group'},admission(p)),capacity(p),notifyGroup(p),workEntry(p.root),service(p));},
 filteredTasks:function(p){if(p&&!view.dashboard){view.dashboard=require('./task-views.js').normalize(null,{taskFilter:view.taskFilter});require('./task-views.js').current(view.dashboard).working.projects=[require('./task-views.js').identity(p)];}return dashboard.list();},
@@ -791,7 +783,7 @@ ui.listen(menu,'click',e=>{
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
   if(d.a==='hide')viewState.flush();
   if(d.a==='home'){const root=ports.settings?'settings':'home';if(view.page!==root||view.taskFilter||view.working)navigate(root);return;}
-  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'conversations',...(d.thread!==undefined?{thread:d.thread}:{}),operation:d.operation||null,root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null,...(d.fresh==='true'?{fresh:true}:{})}});return;}
+  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'conversations',...(d.thread!==undefined?{thread:d.thread}:{}),...(d.filter?{filter:d.filter}:{}),operation:d.operation||null,root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null,...(d.fresh==='true'?{fresh:true}:{})}});return;}
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){startOperations.dismiss(d.key);return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
@@ -828,7 +820,7 @@ ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
 });
-const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,tasks,blockProject,unique,mode,counter,known,taskRow,taskOrder,startButton,globalGroup,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
+const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,tasks,blockProject,unique,mode,counter,known,taskRow,taskOrder,startButton,globalGroup,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
 function resourceSend(g,op){
   const capability=resourceCapability(g);
@@ -851,7 +843,7 @@ let batching=0,staged=null;
 const paint=(...args)=>{if(batching){staged=[!!(staged?.[0]||args[0])];return;}(ports.render||draw)(...args);};
 const present=execution.action('ui.render',paint);
 const reports=require('./reports.js').create({send,draw:()=>present(),defer});
-const notificationPanel=require('./notification-panel.js').create({view,reports,send,draw:()=>present(),openCard});
+const notificationPanel=require('./notification-panel.js').create({view,reports,send,draw:()=>present()});
 const {tick}=execution.module('ui.render',{tick:paint});
 const renderer=shell.create(menu);
 const color=st=>({doing:'work',review:'review',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted');

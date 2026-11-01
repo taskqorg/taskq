@@ -33,7 +33,7 @@ console.log('PASS result cards: closed-source choices, intent then validated rea
 const restored=create({send(){},draw(){},defer(){}});restored.sync(projects);const ck='result:https://example.invalid/issues#12@'+sha+':correction';restored.hydrate({[ck]:{draft:'',bound:sha+':correction',op:{id:'done'},request:{id:'done',root:'fixture',n:12,sha,action:'followup'},receipt:{state:'accepted'},successor:42}});restored.open('fixture',12);const markup=JSON.stringify(restored.section(projects));assert.match(markup,/Read held draft #42/,'restart shows recovered held successor without a transient notice');
 
 // Failed readback must not flood the board when the workspace redraws the same reader.
-const reads=[],menu={querySelectorAll:()=>[]};let reader;
+const reads=[],menu={querySelectorAll:()=>[],querySelector:()=>null};let reader;
 reader=create({send:m=>reads.push(m),draw(){reader.mount(menu);},defer(){},id:()=>String(reads.length+1)});
 reader.sync([{...projects[0],reports:{complete:true,reports:[{...report,read:false}]}}]);reader.open('fixture',12);
 const read=reads[0];assert.equal(read.action,'read');reader.receive({id:read.id,root:'fixture',reason:'Board unavailable'});reader.mount(menu);

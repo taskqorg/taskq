@@ -1,6 +1,6 @@
 'use strict';
 const ui=require('./ui-runtime.js'),icons=require('./ui-icons.js'),shell=require('./app-shell.js'),{h}=require('preact'),{signal}=require('@preact/signals'),{execution}=ui;
-const syncView=require('./sync-view.js'),time=require('./relative-time.js');
+const syncView=require('./sync-view.js'),time=require('./relative-time.js'),notification=require('./notification-panel.js');
 const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null);
@@ -10,11 +10,12 @@ const {create}=execution.module('workspace',{
   // A2: the recorded Wouter history is the Back stack; each entry keeps its scroll, disclosures and focus.
   const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail:renderer.entries(),root:'conversations',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
   let composing=false,answerField=null,redraw=null;
+  const notifications=notification.create({view,send:ui.send,draw:()=>api.draw(),reports:{rows:()=>reports.rows(),count:()=>reports.count(),markRead:rows=>reports.markRead(rows),feedback:()=>reports.feedback(),readFailure:()=>reports.readFailure()}});
   // #1662 A3: task answers use the workspace's one composer; a card change repaints it once per tick
   const pm=require('./pm-composer.js');
   const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw(),composer:true,steer:pm.composer,changed:()=>{if(view.page==='conversations'&&view.answer&&!redraw)redraw=ui.defer(()=>{redraw=null;api.draw();},0);}});
   const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),navigate:(...args)=>api.navigate(...args),onSelect:id=>{if(view.result?.conversation!==id)view.result=null;const row=api.threads().find(t=>t.id===id);view.answer=row?.task?{root:row.root,board:row.board,task:row.task,revision:row.revision}:null;view.message=row?.event&&!row.task?row.event.key:null;}});
-  const reports=require('./reports.js').create({draw:()=>api.draw(),onOpen:r=>{if(r.next){const next=conversations.nextUnresolved(api.threads());if(next?.report)reports.open(next.root,next.report);else if(next)conversations.select(next.id,false);else{view.threadNotice={thread:'list',text:'No unresolved items in this view. Choose All to continue.'};api.draw();}return;}if(r.conversation&&conversations.ids().includes(r.conversation)){conversations.reveal(r.conversation,false,true);view.result={root:r.root,n:r.n,sha:r.sha,conversation:r.conversation};}else api.openTask(r.board||view.S.projects.find(p=>p.root===r.root)?.issues,r.n,r.root);}});
+  const reports=require('./reports.js').create({draw:()=>api.draw(),onMove:step=>conversations.move(step),navigation:()=>conversations.navigation(),transcript:r=>conversations.closed(r),onOpen:r=>{if(r.next){const next=conversations.nextUnresolved(api.threads());if(next?.report)reports.open(next.root,next.report);else if(next)conversations.select(next.id,false);else{view.threadNotice={thread:'list',text:'No unresolved items in this view. Choose All to continue.'};api.draw();}return;}if(r.conversation&&conversations.ids().includes(r.conversation)){conversations.reveal(r.conversation,false,true);view.result={root:r.root,n:r.n,sha:r.sha,conversation:r.conversation};}else api.openTask(r.board||view.S.projects.find(p=>p.root===r.root)?.issues,r.n,r.root);}});
   const operationView=require('./tray-app.js').createState();
   const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
   const {session,keyed}=execution.module('workspace.links',{session:function(url){return !!url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url);},
@@ -34,7 +35,7 @@ const {create}=execution.module('workspace',{
     const ev=!selected&&(snapshot.value.messages?.entries||[]).find(r=>r.kind==='request'&&r.id===conversations.current()?.id);
     const pmResult=view.result&&view.result.conversation===c?.id&&reports.rows(true).find(r=>r.root===view.result.root&&r.n===view.result.n&&r.sha===view.result.sha);
     if(row?.report)reports.focus(row.root,row.report);else if(pmResult)reports.focus(pmResult.root,pmResult.n);
-    return [conversations.body({rows:threads,selected:selected||(pmResult?c.id:null),marks,cards,outcomes,editor:editor&&h('section',{class:'answer-composer'},h('button',{'data-a':'pm-return'},'Back to PM draft'),editor),resultReason:reports.count()===null?'Result collection incomplete; loaded rows shown, total unknown. '+reports.reason():null,busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:pmResult?{readingKey:'result:'+pmResult.root+'/'+pmResult.n+'@'+pmResult.sha,header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},pmResult.title),h('button',{'data-a':'result-return'},'Back to conversation')),reading:reports.section(snapshot.value.projects||[])}:selected&&(row?.report?{header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},row.title),h('span',{class:'meta'},row.project)),reading:reports.section(snapshot.value.projects||[])}:row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
+    return [conversations.body({rows:threads,historyTools:conversations.filterName()==='finished'&&h('details',{'data-view-key':'history-sources',class:'completed-scope'},h('summary',null,'History sources'),reports.sources().map(p=>h('p',{key:p.root,'data-history-source':p.root,role:p.reason?'status':undefined},p.name+' · '+p.loaded+' loaded'+(p.reason?' · History incomplete: '+p.reason:''))),h('button',{'data-a':'refresh'},'Refresh history')),newsTools:conversations.filterName()==='new'?notifications.tools():null,selected:selected||(pmResult?c.id:null),marks,cards,outcomes,editor:editor&&h('section',{class:'answer-composer'},h('button',{'data-a':'pm-return'},'Back to PM draft'),editor),resultReason:[...(reports.count()===null?['Result collection incomplete; loaded rows shown, total unknown. '+reports.reason()]:[]),...(conversations.filterName()==='activity'?snapshot.value.projects.filter(p=>!p.alive||p.complete===false).map(p=>p.name+': Task activity unknown; '+(p.error||'project snapshot stale or incomplete')):[])].join(' '),busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:()=>pmResult?{readingKey:'result:'+pmResult.root+'/'+pmResult.n+'@'+pmResult.sha,header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},pmResult.title),h('button',{'data-a':'result-return'},'Back to conversation')),reading:reports.section(snapshot.value.projects||[])}:selected&&(row?.report?{readingKey:'result:'+row.root+'/'+row.report+'@'+reports.current()?.sha,header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},row.title),h('span',{class:'meta'},row.project)),reading:[notifications.history(row.news||[]),reports.section(snapshot.value.projects||[])]}:row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
      // #1819: the window's one stale-data line sits in the status footer, which is already a live region
      footer:[api.staleText(),api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]})];
    },
@@ -64,7 +65,8 @@ const {create}=execution.module('workspace',{
       ev&&!row.archived&&!ev.read&&icons.button('check-check','Mark read',{'data-a':'message-read','data-key':ev.key,class:'compact-action',disabled:busy}),
       row.archived?h('button',{'data-a':'thread-restore','data-thread':row.id,disabled:busy},'Restore'):ev&&icons.button('archive','Archive',{'data-a':'message-archive','data-key':ev.key,class:'compact-action',disabled:busy}))],reading:[
      row.archived&&h('p',{role:'status'},'Archived in TaskQ · read-only. Restore before replying.'),
-     api.threadNotice(row.id),
+     api.threadNotice(row.id),notifications.history(row.news||[]),
+     t?.until&&h('p',{class:'meta'},require('./project-blocks.js').parked(t)),
      t&&h('div',{class:'task-destinations'},require('./project-blocks.js').destinations(t).map(d=>d.url?h('a',{href:d.url,'data-url':d.url,'data-destination':d.kind},d.label):h('p',{class:'meta','data-destination':d.kind},d.label+' unavailable: '+d.reason))),
      // #1819: the task's pending operation (Sending, Waiting GitHub, Done, Failed with Retry), as on the menu row
      syncView.row(t?.sync),
@@ -81,7 +83,7 @@ const {create}=execution.module('workspace',{
      h('p',null,request?.reason||request?.next||'Deletion incomplete; retry Delete to remove the remaining owned files.')]};
    },
    operations:function(){return operations.operationBody(view.operation);},
-   sessions:function(){return conversations.sessions();}
+   sessions:function(){return pages.conversations();}
   });
   const api=execution.module('workspace.instance',{
    // the notice stays on the thread that asked; an archived thread leaves the list, so its notice and Undo go to the list footer
@@ -104,6 +106,8 @@ const {create}=execution.module('workspace',{
      if(r.kind==='question'){const id='task:'+r.board+'/'+r.task,prior=rows.get(id);if(!prior||prior.event.archived&&!r.archived)rows.set(id,{id,task:r.task,board:r.board,root:r.root,title:'#'+r.task+' '+(r.title||''),project:r.project,revision:r.revision,event:r,archived:r.archived});}
      else if(r.kind==='request'&&!owned.has(r.id))rows.set('event:'+r.key,{id:'event:'+r.key,title:r.title||'Request',root:r.root,updated:r.created,timeContext:'Request created',event:r,archived:r.archived,meta:(r.host||'Host unknown')+' · '+api.plain(r.state),marker:!r.read&&!r.archived?'Unread':''});
     }
+    for(const p of S.projects)for(const t of p.tasks||[])if(t.session||t.until||t.state==='ask'){const id='task:'+p.issues+'/'+t.n;if(!rows.has(id))rows.set(id,{id,root:p.root,board:p.issues,task:t.n,title:'#'+t.n+' '+t.title});}
+    for(const event of notifications.rows()){const p=S.projects.find(p=>p.root===event.root);if(!p)continue;const id='task:'+p.issues+'/'+event.n,row=rows.get(id)||{id,root:p.root,board:p.issues,task:event.n,title:event.title,project:p.name};row.news=[...(row.news||[]),event];row.unread=row.news.some(r=>!r.read);row.updated??=event.at*1000;rows.set(id,row);}
     const a=view.answer,refs=new Map(conversations.opened().map(r=>[r.id,r]));
     if(a&&!refs.has('task:'+a.board+'/'+a.task))refs.set('task:'+a.board+'/'+a.task,{id:'task:'+a.board+'/'+a.task,root:a.root});
     for(const [id,root] of Object.entries(local.archived||{}))if(!refs.has(id))refs.set(id,{id,root});
@@ -111,19 +115,20 @@ const {create}=execution.module('workspace',{
     for(const row of rows.values())if(row.task){
      const matches=S.projects.filter(p=>p.issues===row.board&&(!row.root||p.root===row.root)),p=matches.length===1?matches[0]:null,t=p?.tasks?.find(t=>t.n===row.task);
      if(t?.conversation?.id&&owned.has(t.conversation.id)&&!refs.has(row.id)){rows.delete(row.id);continue;}
-     if(t){row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=time.seconds(t.updated);row.updated_reason=t.updated_reason;}
+     if(t){row.activityThread=!!(t.session||t.until);row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=time.seconds(t.updated);row.updated_reason=t.updated_reason;}
      if(p){row.root=p.root;row.project=p.name;}
      row.archived=!!row.event?.archived||Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown
      // #1819: an answer's expected state shows here in the same frame, marked unconfirmed until the board shows it
-     const state=t?.state||row.event?.state,unconfirmed=t?.sync?.phase==='sending'?' · Sending':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
+     const state=t?.state||row.event?.state,unconfirmed=t?.sync?.phase==='sending'?' · Sending':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;if(!row.status&&row.news?.length&&state!=='ask')row.status=notification.label(row.news[0].kind)+' event';row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
     const collected=reports.threads(),results=collected.filter(r=>!r.conversation||!owned.has(r.conversation)||refs.has(r.id));
     for(const r of results){r.archived=Object.hasOwn(local.archived||{},r.id);r.project=S.projects.find(p=>p.root===r.root)?.name;}
+    for(const r of results){const row=rows.get(r.id);r.news=row?.news||[];r.unread=r.unread||row?.unread;r.at=r.news[0]?.at;r.kind=r.news[0]?.kind;}for(const row of rows.values()){row.at=row.news?.[0]?.at;row.kind=row.news?.[0]?.kind;}
     const done=new Set(collected.map(r=>r.id));return [...rows.values()].filter(r=>!done.has(r.id)).concat(results);
    },
-   openTask:function(board,task,root){const id='task:'+board+'/'+Number(task);conversations.flush();conversations.remember(id,root,true);conversations.show(api.threads().find(r=>r.id===id)?.archived?'archive':'recent');conversations.select(id,false);},
+   openTask:function(board,task,root,external=false){const id='task:'+board+'/'+Number(task);conversations.flush();conversations.remember(id,root,true);if(external)conversations.enter(id,api.threads().find(r=>r.id===id)?.archived);else{conversations.show(api.threads().find(r=>r.id===id)?.archived?'archive':'recent');conversations.select(id,false);}},
    // #1699 A2: the menu badge selects the first unread thread, an open question first; nothing is acknowledged
    unread:function(){
     const e=(snapshot.value?.messages?.entries||[]).filter(r=>!r.archived&&!r.read),r=e.find(r=>r.kind==='question'&&r.state==='ask')||e.find(r=>r.kind==='question')||e.find(r=>r.kind==='request');
@@ -152,17 +157,17 @@ const {create}=execution.module('workspace',{
    answerContext:function(){return view.answer||(view.pmTask?.conversation===conversations.current()?.id?view.pmTask:null);},
    answerAct:function(type){const c=api.answerContext();if(c)answers.answerAct(c.board,c.task,type);},
    draw:function(){
-    conversations.capture();
+    conversations.capture();view.disclosures={...view.disclosures,...state.groups()};
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
     document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');for(const entry of (s?.palette||'').split(';')){const [key,value]=entry.split(':');if(key&&value)menu.style.setProperty(key,value);}
     const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},icons.icon('ellipsis')),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
     renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='conversations'||renderer.entries().length>0,actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
      h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Conversations.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.notice||''))),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
-    answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
+    answers.mountAnswers();if(view.page==='operations')operations.mountResources();if(view.page==='conversations'&&menu.querySelector('.report-card'))reports.mount(menu);state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     // a new answer field takes its saved caret once
     const field=menu.querySelector('[data-c-field=answer]');if(field&&field!==answerField){answerField=field;const target=api.answerContext(),t=target&&view.S?.projects.find(p=>p.issues===target.board&&(!target.root||p.root===target.root))?.tasks?.find(t=>t.n===target.task),c=t&&answers.answerCompose(target.board,t);if(Array.isArray(c?.caret))field.setSelectionRange(...c.caret);}
-    if(view.page==='conversations'&&menu.querySelector('.report-card'))reports.mount(menu);conversations.afterDraw();state.flush();
+    conversations.afterDraw();state.flush();
    },
    // #1680 A3: a failing route keeps the shell (Home, Back, Close); its class and site reach tray stderr, not the page-wide fence
    route:function(){
@@ -178,25 +183,31 @@ const {create}=execution.module('workspace',{
     if(page==='request'){page='conversations';context={...context,fresh:true};}
     // #1699 A2: the removed Inbox, message and answer routes open their thread in Conversations
     if(page==='messages'){page='conversations';context={...context,thread:'unread'};}
+    if(page==='notifications'){page='conversations';context={...context,filter:'new'};}
+    if(page==='sessions'){page='conversations';context={...context,filter:'activity'};}
+    if(page==='completed'){page='conversations';context={...context,filter:'finished'};}
     if(page==='answer'||page==='message'||page==='results'||page==='reports')page='conversations';
     if(Object.hasOwn(routes,page))view.unavailable=null;
     else {view.unavailable='Requested destination is not available.';page='conversations';}
-    renderer.push(state.capture());view.page=page;
+    renderer.push({...state.capture(),conversation:conversations.context()});view.page=page;
     if(page==='operations')view.operation={operation:context?.operation,root:context?.root||null};
     // the menu entry names 'unread' when it counts events; otherwise the last thread stays
     if(page==='conversations'){
      const r=context?.key&&snapshot.value?.messages?.entries?.find(r=>r.key===context.key);
+     if(context?.filter)conversations.filter(context.filter,context.criteria);
      if(context?.thread==='unread')api.unread();
-     else if(context?.board&&context?.task){const root=context.root||snapshot.value.projects.find(p=>p.issues===context.board)?.root;if(context.sha){if(!reports.open(root,Number(context.task),context.sha)){view.answer=null;view.result=null;conversations.select(null,false);view.threadNotice={thread:'list',text:'The requested result SHA is unavailable. Choose the current result to review it; nothing was acknowledged.'};}}else api.openTask(context.board,context.task,root);}
+     else if(context?.board&&context?.task){const root=context.root||snapshot.value.projects.find(p=>p.issues===context.board)?.root;if(context.sha){conversations.enter('task:'+context.board+'/'+Number(context.task));if(!reports.open(root,Number(context.task),context.sha)){view.answer=null;view.result=null;conversations.select(null,false);view.threadNotice={thread:'list',text:'The requested result SHA is unavailable. Choose the current result to review it; nothing was acknowledged.'};}}else api.openTask(context.board,context.task,root,true);}
      else if(r?.task&&r?.board)api.openTask(r.board,r.task,r.root);
-     else if(r&&!conversations.reveal(r.id,false)){conversations.show(r.archived?'archive':'recent');conversations.select('event:'+r.key,false);}
+     else if(r)conversations.enter(conversations.ids().includes(r.id)?r.id:'event:'+r.key);
     }
-    view.disclosures={};view.restoreScroll=0;
+    view.restoreScroll=0;
     if(page==='conversations'&&context?.fresh)conversations.fresh({root:context.root||undefined});
-    api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
+    api.draw();if(context?.event){const event=notifications.rows().find(r=>r.id===context.event);if(event)notifications.read([event]);}menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
    },
-   back:function(){const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
+   back:function(){const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
    receive:function(s){
+    if(s.notificationReceipt){notifications.receive(s.notificationReceipt);return;}
+    if(s.completed){conversations.closedReceive(s.completed);return;}
     if(s.reportReceipt){reports.receive(s.reportReceipt);return;}
     if(s.workspacePin!==undefined||s.workspaceMaximized!==undefined){if(s.workspacePin!==undefined)view.workspacePin=s.workspacePin;if(s.workspaceMaximized!==undefined)view.workspaceMaximized=s.workspaceMaximized;api.draw();return;}
     if(conversations.receive(s)) {api.draw();return;}
@@ -206,6 +217,7 @@ const {create}=execution.module('workspace',{
      const text=r.reason||r.outcomes.map(o=>o.state==='accepted'?({read:'Message marked read',archive:'Archived',restore:'Restored',delete:'Message permanently deleted'}[o.action]||'Message updated'):'Unknown: '+o.reason).join('; '),done=!r.reason&&r.outcomes.every(o=>o.state==='accepted'),{thread,action,keys}=view.messageThread||{};
      view.undoMessage=done&&action==='archive'&&keys.length===1?keys[0]:null;
      if(done)for(const e of snapshot.value.messages?.entries||[])if(keys.includes(e.key)){if(action==='archive'||action==='restore')e.archived=action==='archive';if(action==='read')e.read=true;}
+     if(done&&(action==='archive'||action==='delete'))conversations.archived(thread);
      if(done&&(action==='archive'||action==='delete')&&thread!=='conversation'&&(view.answer||view.message)&&thread===(view.answer?'task:'+view.answer.board+'/'+view.answer.task:'event:'+view.message)){view.answer=null;view.message=null;}
      // A7: Restore and Undo open the restored thread in Recent
      if(done&&action==='restore'&&keys.length===1){const e=snapshot.value.messages?.entries?.find(e=>e.key===keys[0]);conversations.show('recent');if(e?.kind==='question')conversations.select('task:'+e.board+'/'+e.task,false);else if(e&&!conversations.reveal(e.id,false))conversations.select('event:'+e.key,false);}
@@ -244,6 +256,7 @@ const {create}=execution.module('workspace',{
       if(b.dataset.a==='pm-answer'){view.pmTask={conversation:c.id,board:p.issues,root:p.root,task:t.n};api.draw();menu.querySelector('[data-c-field=answer]')?.focus();}
       else if(t.state==='held'&&(t.controls||[]).includes('start')){const op=require('./task-controls.js').op(t,'start','conversation.'+c.id);answers.save(p.issues,t,{...(answers.load(p.issues,t)||{draft:'',files:[]}),op,receipt:{state:'sending'}});ui.effect('workspace.assign',()=>answers.answerSend(p.issues,op),()=>{});api.draw();}return;
      }
+     if(notifications.click(b))return;
      if(conversations.click(b))return;
      if(reports.click(b,snapshot.value?.projects||[]))return;
      if(b.dataset.a==='home'){if(view.page!=='conversations')api.navigate('conversations');return;}
@@ -253,7 +266,7 @@ const {create}=execution.module('workspace',{
      // #1699 A2/A7: selecting a thread acknowledges nothing; its draft, caret and scroll stay with it
      else if(b.dataset.a==='workspace'){api.navigate('conversations',{board:b.dataset.board,root:b.dataset.root,task:+b.dataset.task});}else if(b.dataset.a==='thread'){
       const row=api.threads().find(t=>t.id===b.dataset.thread);if(!row)return;conversations.flush();
-      conversations.select(row.id,false);
+      if(row.task)conversations.remember(row.id,row.root,true);conversations.select(row.id,false);notifications.read((row.news||[]).filter(r=>!r.read));
       view.restoreScroll=0;api.draw();state.flush();
      }
      else if(['message-read','message-archive','message-restore','message-delete'].includes(b.dataset.a))api.messageAction(b.dataset.a.slice(8),[b.dataset.key],api.thread(b.dataset.key));
@@ -271,7 +284,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='answer-dismiss')answers.dismiss(b.dataset.key);
     });
     ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);if(e.target.dataset.cField==='result-reason')reports.reasonInput(e.target.value,[e.target.selectionStart,e.target.selectionEnd]);if(e.target.dataset.cField==='result-date')reports.dateInput(e.target.value);});
-    for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{const c=api.answerContext();if(e.target.dataset.cField==='answer'&&c)answers.answerInput(c.board,c.task,null,[e.target.selectionStart,e.target.selectionEnd]);});
+    for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField==='result-reason')reports.reasonInput(null,[e.target.selectionStart,e.target.selectionEnd]);const c=api.answerContext();if(e.target.dataset.cField==='answer'&&c)answers.answerInput(c.board,c.task,null,[e.target.selectionStart,e.target.selectionEnd]);});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
     ui.listen(menu,'scroll',()=>state.schedule(),true);ui.listen(menu,'toggle',()=>state.schedule(),true);
     ui.listen(document,'keydown',e=>{
