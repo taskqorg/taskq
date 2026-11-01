@@ -1,0 +1,129 @@
+{
+  "samples": [
+    6873228,
+    7028140,
+    7089460,
+    7208580,
+    7174536,
+    7221932,
+    7347284,
+    7225164,
+    7241272,
+    7289884,
+    7293196,
+    7436072,
+    7320116,
+    7357204,
+    7420584,
+    7364104,
+    7432508,
+    7621492,
+    7479244,
+    7577940,
+    7769424,
+    7596920,
+    7626012,
+    7598548,
+    7786684,
+    7814448,
+    7638392,
+    7679884,
+    7678360,
+    7679160,
+    7650064,
+    7699248,
+    7832680,
+    7747924,
+    7678664,
+    7883828,
+    7883656,
+    7600688,
+    7690104,
+    7956952,
+    7760500,
+    7694436,
+    7928748,
+    7781104,
+    7788440,
+    7730980,
+    7813128,
+    7768284,
+    7673952,
+    7911104
+  ],
+  "bounds": {
+    "conversations": {
+      "listRows": 64,
+      "indexRows": 7501,
+      "queryKeys": 1,
+      "nativeRecords": 0,
+      "nativeBytes": 0,
+      "anchor": null,
+      "bodySources": 0,
+      "bodyBytes": 0,
+      "closedSources": 0,
+      "historyKeys": 0,
+      "historyRecords": 0,
+      "historyBytes": 0,
+      "textPages": 0,
+      "bodyReads": 0,
+      "taskBodies": 2,
+      "taskBytes": 64844,
+      "taskReads": 0,
+      "linkedRows": 0,
+      "linkedKnown": 0,
+      "linkedChecked": 0
+    },
+    "reports": {
+      "bodySources": 0,
+      "bodyBytes": 0,
+      "controllers": 0,
+      "textPages": 0
+    },
+    "answers": {
+      "controllers": 1,
+      "protectedSources": 8,
+      "protectedBytes": 1163
+    },
+    "projectionRows": 7500
+  },
+  "source": "33eda27f77847dd98fecf8f52a75abf25a0b4ba8",
+  "longerEngineHeapPlateau": "Not tested",
+  "snapshotSelfSizeBytes": {
+    "native": [
+      6560017,
+      6622133,
+      6620801
+    ],
+    "string": [
+      1266837,
+      1273529,
+      1265529
+    ],
+    "code": [
+      1828120,
+      2243944,
+      2375620
+    ],
+    "object": [
+      1156264,
+      1168660,
+      1156760
+    ],
+    "array": [
+      468740,
+      468836,
+      468492
+    ],
+    "closure": [
+      164280,
+      164184,
+      164184
+    ]
+  },
+  "tours": [
+    5,
+    25,
+    50
+  ]
+}

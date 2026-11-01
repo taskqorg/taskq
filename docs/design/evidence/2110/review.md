@@ -1,4 +1,4 @@
-# Claude source review
+# Independent source review
 
 First frozen source manifest: `02b8367904f3282e66133ec3e057fdbaf975475caee276f0c3255f4fc4998963`. Read-only CLI review; no installation or native acceptance.
 
@@ -60,6 +60,54 @@ Manifest SHA-256: `4281e35f56a29a47d791bd4fcbb43febf451a3d8fd45df61790514966bc6a
 
 > You've hit your weekly limit · resets 12pm (Asia/Bangkok)
 
-No review verdict was produced. The reset message supplies no date, so no reset deadline is inferred. The owner-configured local account list has only the enabled default Claude account. No fallback was taken. A8 exact-source review remains **Not tested / blocked by quota**. Later source corrections include archive/count scope, the duplicate brief time label, result-reader identity, eviction/reload cursors, immutable requested-anchor validation, worker source loss and pending-history tail preservation; they are not certified by this aborted review. The final candidate requires a complete Claude review.
+No review verdict was produced. The reset message supplies no date, so no reset deadline is inferred. The owner-configured local account list has only the enabled default Claude account. No fallback was taken. At this earlier checkpoint the Claude-specific A8 review was **Not tested / blocked by quota**. Later source corrections include archive/count scope, the duplicate brief time label, result-reader identity, eviction/reload cursors, immutable requested-anchor validation, worker source loss and pending-history tail preservation; they are not certified by this aborted review. The owner subsequently superseded that requirement with independent Codex review; see the final verdict below.
 
 The two first-round blockers have explicit failing-before/passing-after component checks: stale catalog absence cannot erase a confirmed draft/operation, and a thin snapshot cannot erase immutable sent text/files. Epoch fences bind source receipts and scan-start freshness. Pinned overflow is now disclosed; unknown collection returns an unknown envelope. The conservative body-cache partition retains a combined maximum of eight inactive sources / 8 MiB, with protected live edits/receipts retained.
+
+## Final independent Codex review
+
+The [owner correction](https://github.com/taskqorg/taskq/issues/2110#issuecomment-6556477418) supersedes Claude-specific A8 and requires Codex continuation and exact-source review without waiting for quota. One read-only Codex reviewer inspected the frozen candidate; it made no repository, board or native changes. The final implementation SHA is `4ab0782e2aed5430653534a50061a88d7ebd0383`.
+
+### Source review and heap probe
+
+Reviewed candidate: `33eda27f77847dd98fecf8f52a75abf25a0b4ba8`.
+
+### Verdict
+
+No P0 or P1 source defect was found in the reviewed Conversations changes. The task-body and linked-task paths preserve the source-revision and selected-identity fences. The Pending overlay is applied before the task body is rendered, and its local answer state is hydrated before the answer composer is enabled. The earlier catalog/draft and thin-snapshot/sent-text regressions remain protected by their focused checks.
+
+The fixed 32 ms frame budget still fails. The canonical check is sandbox-blocked, and installed native acceptance remains Not tested. These are acceptance gaps, not passing evidence.
+
+### Heap probe
+
+Method: the current built workspace bundle ran a deterministic 10,000-task, four-project fixture for 50 tours. Each tour opened eight revision-fenced task bodies. Fake IPC returned only those selected bodies and kept its audit at 64 messages. No native action, board write, task answer, or admission was sent. Chromium used `--expose-gc` and `--enable-precise-memory-info`; CDP collected garbage before each sample and captured heap snapshots after tours 5, 25, and 50.
+
+Self-size bytes by category:
+
+| Category | Tour 5 | Tour 25 | Tour 50 |
+|---|---:|---:|---:|
+| native | 6,560,017 | 6,622,133 | 6,620,801 |
+| string | 1,266,837 | 1,273,529 | 1,265,529 |
+| code | 1,828,120 | 2,243,944 | 2,375,620 |
+| object | 1,156,264 | 1,168,660 | 1,156,760 |
+| array | 468,740 | 468,836 | 468,492 |
+| closure | 164,280 | 164,184 | 164,184 |
+
+Used heap rose during warm-up, then fluctuated: 7,221,932 bytes at tour 5, 7,814,448 at tour 25, and 7,911,104 at tour 50. The material snapshot delta is V8 code metadata: code self-size grew 547,500 bytes from tour 5 to 50. Native, string, object, array, and closure totals did not grow materially.
+
+At tour 50, exactly two long task brief strings remained. Each is retained only by an `Object.brief` property, matching the two-body task cache. The final application counters were: two task bodies / 64,844 bytes, one answer controller, and eight protected answer sources / 1,163 bytes. No growing source-object or callback retainer was reproduced.
+
+Limits: this establishes bounded application retention for this fixture. It does not prove a stable browser-engine heap plateau, because V8 compilation warm-up still changes total heap. It does not qualify installed native behavior.
+
+### Final overflow review — 4ab0782e2aed5430653534a50061a88d7ebd0383
+
+Reviewed exact diff from 33eda27f77847dd98fecf8f52a75abf25a0b4ba8. It changes only `src/conversations.js` and `tests/conversations-overflow.test.cjs`.
+
+The two reachable protected-overflow cases now disclose a `role=status` message while retaining the selected source:
+
+- Closed transcript pages compute their selected byte size after an accepted receipt and report a pinned page above 1 MiB. A subsequent small page clears the message.
+- Recorded-question pages do the same after the existing revision/cursor acceptance fence. Starting another read clears the prior message; existing eviction still removes a non-selected page above the 1 MiB reserve.
+
+The change does not alter source ceilings, cursor/revision fences, receipt acceptance, page selection, source text, or eviction conditions. `node tests/conversations-overflow.test.cjs` passed: both oversized invented records remain readable through existing text paging, receive the overflow status, clear it after a small replacement, and the earlier history page is evicted.
+
+Verdict: no new P0, P1, or P2 found in this exact diff. Native installed acceptance remains Not tested.
