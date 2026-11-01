@@ -907,7 +907,7 @@ mod tests {
         r.sh(&r.root, &["worktree", "add", "-q", "--detach", foreign.to_str().unwrap()]);
         b.close(1).unwrap();
         r.upstream("b", "1");
-        TEST_ENV.with_borrow_mut(|e| *e = vec![("GIT_TEST_ASSUME_DIFFERENT_OWNER".into(), "1".into())]);
+        TEST_ENV.with_borrow_mut(|e| *e = vec![("GIT_TEST_ASSUME_DIFFERENT_OWNER".into(), "1".into()), ("GIT_ALLOW_PROTOCOL".into(), "https".into())]);
         match git(&r.root, &["status"]) {
             Err(e) => assert!(e.contains("dubious ownership"), "outside a pass Git refuses the root: {e}"),
             // Git before 2.45 honours the test owner switch only on Windows (WSL git 2.43): nothing to simulate
@@ -915,8 +915,8 @@ mod tests {
         }
         let o = pass(&r.tidy(&b, false));
         TEST_ENV.with_borrow_mut(Vec::clear);
-        // the test's `origin` is a local repository that this Git test mode also marks foreign, and upload-pack ignores
-        // command-line safe.directory, so only the fetch fails; a real origin is a URL
+        // Refuse the fixture's file transport explicitly: Git versions differ in upload-pack ownership checks.
+        // All root/worktree trust and foreign-status assertions below remain unchanged.
         assert!(!r.wt("taskq-1") && o.report["root"] == "stale fetch failed", "{:?} {}", o.lines, o.report);
         assert_eq!(o.log, ["#1 worktree removed", "#1 branch deleted", "root stale: fetch failed"]);
         assert_eq!(pass(&r.tidy(&b, false)).report["root"], "current", "the same root reaches origin/main once Git trusts its owner");
