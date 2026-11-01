@@ -15,7 +15,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   const query=async()=>{const q=p.locator('[data-task-query]');if(!await q.count())await p.locator('[data-a=search-open]').click();return q;};
   assert.equal(await p.locator('[data-a=view-editor]').count(),1,'before: approved overlay editor missing; after: reachable');
   assert.equal(await list().count(),6,'canonical duplicate registrations count once');
-  assert.equal(await p.getByRole('button',{name:'Conversations · 1 new',exact:true}).count(),1);assert.equal(await p.getByRole('button',{name:/^Inbox/}).count(),0);
+  assert.equal(await p.getByRole('button',{name:/^Conversations ·/}).count(),1);assert.equal(await p.getByRole('button',{name:/^Inbox/}).count(),0);
   await p.locator('[data-a=view-editor]').click();assert(await editor().evaluate(e=>e.matches(':popover-open')));
   const before=await list().first().boundingBox();
   await editor().locator('[data-facet=projects][data-value="github://example.org/org/alpha"]').click();
@@ -117,6 +117,15 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert(reach.length===7&&reach.every(Boolean),'Close, Display, Save, Reset and Done reachable without scrolling '+reach);
   assert.equal(await w.locator('.content').evaluate(e=>getComputedStyle(e).overflowY),'auto','one designated content scroll, used only for overflow');
   assert.equal(await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').length),0,'opening sends nothing back');
+  // #2110: the owned View editor retains Completed's advanced criteria without persisting a dead menu route.
+  await w.locator('[data-a=view-select][data-id=completed]').click();
+  assert.deepEqual(await w.locator('legend').allInnerTexts(),['Saved views','Projects','Period','Outcome']);
+  await w.getByRole('button',{name:'7 days',exact:true}).click();await w.getByRole('button',{name:'Read finished work',exact:true}).click();
+  const finished=await w.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open);assert.equal(finished.filter,'finished');assert.equal(finished.criteria.period,'7d');
+  assert.notEqual(await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').at(-1).dashboard.selected),'completed','the menu keeps its useful task view');
+  await w.getByRole('button',{name:'All tasks',exact:true}).click();
+
+
   // #1730 A3: names select exclusively; checkboxes toggle membership, including All and the last selected project.
   const working=()=>w.evaluate(()=>{const d=messages.filter(m=>m.a==='views-dashboard').at(-1).dashboard;return d.views.find(v=>v.id===d.selected).working;});
   const scope=i=>'github://example.org/org/p'+i;

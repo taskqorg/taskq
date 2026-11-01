@@ -230,8 +230,8 @@ Now: macOS signs locally with the [`TaskQ Local Signing` identity](docs/design/w
 GitLab keeps coreq token lookup and `Authorization: Bearer`. A cutover is one step per project, not per host; board formats never mix. No migration code: `CHANGELOG.md` says per release what changed on the board and what an open issue needs. Publication cutover, planning, owner approval, apply order and repair: [configuration](docs/design/configuration.md#contract-detail).
 ## Product
 Looks/sound: one line each (R13).
-- Home: current work, unresolved questions. Bell: [Notifications](docs/design/menu.md#m14-notifications). Read/clear changes no task state.
-- Bell/news, questions, reports, Completed and task activity share [Conversations](docs/design/reports.md); ordinary completions need no Accept.
+- Home: current work, unresolved questions. Communication: [Notifications](docs/design/menu.md#m14-notifications). Read/clear changes no task state.
+- One [Conversations](docs/design/reports.md) entrance shows independent canonical-thread New and Needs me counts; current content leads grouped history, scoped paging is bounded, and ordinary completions need no Accept.
 - [Promo A](docs/video-experiments/planning-802/approval.md).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 first, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
 - UI: Preact/Signals/Wouter O1–O3; [UI30 targets](docs/design/ui-polish.md): palette A, exact counts, event stack A; no Custom. Native proof pending (R12).
@@ -239,6 +239,7 @@ Looks/sound: one line each (R13).
 - Closed pins: unpin after first open or 24 h; [P-W1](docs/design/menu-product.md#windows-and-task-pins).
 - Settings retains twelve destinations with bounded scope/count/exception summaries, active-only transparency fields, useful Work mode/Recovery state and direct existing reviews; client facts appear once, project details stay available ([M8/M12](docs/design/menu.md#m8-implementation-boundary)).
 - Home agent totals show confirmed lower bounds with one explained Partial/Unknown group state; host details retain age and cause. Held filter and scoped Start are sibling segments of one wrapping control; review freezes task keys/revisions before admission ([M3](docs/design/menu.md#running-agents), [K-A3/K-A6](docs/design/task-counters.md)).
+- Shared times use <1m/3m/2h/4d, with exact local date, zone and source on hover/focus; future and unknown stay explicit ([D-A19](docs/design/ai-workspace.md#conversation-time-d-a19)).
 - Menu/View/Settings wrap, no horizontal scroll; compact rows, growing input; M2 rail; M3/M1.2 opaque sticky Home host strip and filter row.
 - Standalone: [onboarding](docs/design/standalone-onboarding.md); [telemetry](docs/design/standalone-telemetry.md): local SQLite/WAL, 30 days, async only under revocable `taskq-telemetry/1`. `profile export`: analysis; `guide`: agents. Migration keeps legacy rows (R1).
 - README: header, three-part setup (install phrase; repository and Issues-as-board permission, existing or new private; optional SDD request), purpose, three visual examples, shots, disclosures and final line: [README rules](docs/design/readme-plan.md#contract-detail).

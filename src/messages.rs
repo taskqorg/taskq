@@ -28,7 +28,7 @@ impl Default for Store {
 fn digest(value: &Value) -> String {
     ring::digest::digest(&ring::digest::SHA256, value.to_string().as_bytes()).as_ref().iter().map(|b|format!("{b:02x}")).collect()
 }
-fn request_key(id: &str) -> String { digest(&json!(["request-id",id])) }
+pub(crate) fn request_key(id: &str) -> String { digest(&json!(["request-id",id])) }
 
 /// Refuse links/reparse points before reading or deleting; never walk outside the owned directory.
 pub(crate) fn plain(path: &Path) -> Res<bool> {
@@ -70,6 +70,12 @@ fn write(install: &Path, store: &Store) -> Res<()> {
     if let Err(e)=result {let _=fs::remove_file(stage);return Err(format!("Message marks write unknown: {e}"));}
     if read(install)?!=*store {return Err("Message marks readback unknown".into());}
     Ok(())
+}
+/// One source read for a whole conversation catalog; same durable deletion fences as individual reads.
+pub(crate) fn request_visibility(install:&Path)->Res<(BTreeSet<String>,BTreeSet<String>)> {
+    let store=read(install)?;
+    let deleting:BTreeSet<_>=store.marks.values().filter(|m|m.deleting).filter_map(|m|m.request.as_ref().map(|r|r.id.clone())).collect();
+    Ok((store.deleted,deleting))
 }
 pub(crate) fn request_deleted(install: &Path, id: &str) -> Res<bool> {
     Ok(read(install)?.deleted.contains(&request_key(id)))

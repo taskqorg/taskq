@@ -66,3 +66,8 @@
 .notification-panel .notification-row{display:flex;flex-direction:column;align-items:stretch;text-align:left;white-space:normal;overflow-wrap:anywhere}
 .notification-panel .notification-row.unread{border-inline-start:3px solid var(--work)}
 .notification-panel summary{overflow-wrap:anywhere}
+
+/* M14: one entrance, independent New/Needs me identities; exact totals stay in accessible labels. */
+.head .conversations-entry{gap:5px;inline-size:auto;padding-inline:5px}
+.communication-count{display:inline-flex;align-items:center;gap:2px;font-variant-numeric:tabular-nums}.communication-count .ui-icon,.communication-count .ui-icon svg{width:12px;height:12px}.communication-count.New{color:var(--new,var(--work))}.communication-count.Needs.me{color:var(--ask)}
+.conversations-entry .notification-warning{display:inline-flex;flex:none}

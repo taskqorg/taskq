@@ -1,0 +1,90 @@
+{
+  "functionalAssertions": "Pass; latency budget is reported separately, never inferred from exit status",
+  "environment": "Headless Chromium, 8 logical cores, 1000x700, 20px, dark; driver timing includes Playwright auto-wait",
+  "measured": [
+    {
+      "count": 600,
+      "bytes": 89041,
+      "parse": 0.8000000007450581,
+      "project": 84,
+      "layout": 0,
+      "bounds": {
+        "conversations": {
+          "listRows": 192,
+          "indexRows": 600,
+          "queryKeys": 24,
+          "nativeRecords": 0,
+          "nativeBytes": 0,
+          "anchor": null,
+          "bodySources": 2,
+          "bodyBytes": 232,
+          "closedSources": 0,
+          "historyKeys": 0,
+          "historyRecords": 0,
+          "historyBytes": 0,
+          "textPages": 0,
+          "bodyReads": 0
+        },
+        "reports": {
+          "bodySources": 0,
+          "bodyBytes": 0,
+          "controllers": 0,
+          "textPages": 0
+        },
+        "projectionRows": 0
+      },
+      "interactionP95": 76.70000000298023,
+      "interactionBudget": "Pass",
+      "retainedHeapAfterTours": [
+        4112312,
+        4196032,
+        4335972,
+        4430632,
+        4581948
+      ],
+      "driverInteractionP95": 280
+    },
+    {
+      "count": 10000,
+      "bytes": 1498241,
+      "parse": 3.600000001490116,
+      "project": 53.399999998509884,
+      "layout": 0.10000000149011612,
+      "bounds": {
+        "conversations": {
+          "listRows": 192,
+          "indexRows": 10000,
+          "queryKeys": 24,
+          "nativeRecords": 0,
+          "nativeBytes": 0,
+          "anchor": null,
+          "bodySources": 2,
+          "bodyBytes": 232,
+          "closedSources": 0,
+          "historyKeys": 0,
+          "historyRecords": 0,
+          "historyBytes": 0,
+          "textPages": 0,
+          "bodyReads": 0
+        },
+        "reports": {
+          "bodySources": 0,
+          "bodyBytes": 0,
+          "controllers": 0,
+          "textPages": 0
+        },
+        "projectionRows": 0
+      },
+      "interactionP95": 124.30000000074506,
+      "interactionBudget": "Fail",
+      "retainedHeapAfterTours": [
+        5919556,
+        5918484,
+        6046760,
+        6236832,
+        6382716
+      ],
+      "driverInteractionP95": 602
+    }
+  ]
+}

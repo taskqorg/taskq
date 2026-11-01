@@ -11,7 +11,7 @@ createState:function(snapshot=null){return {dashboard:null,popup:null,manualSize
 create:function(view,ports){
 const api=execution.module("tray.create",{
 
-operationLauncher:function(operation,root,label){return h('button',{class:'project','data-a':'workspace','data-page':'operations','data-operation':operation,'data-root':root||null},label);},
+operationLauncher:function(operation,root,label){return h('button',{class:'project','data-a':'workspace','data-page':'operations','data-origin':ports.settings?view.page:undefined,'data-operation':operation,'data-root':root||null},label);},
 operationTarget:function(d){return ({work:'resources',confirm:'admission','pause-all':'admission','resume-all':'admission',pause:'admission',resume:'admission',focus:'admission',pick:'admission',add:'setup','add-ask':'setup','add-install':'setup','add-setup':'setup','add-cancel':'setup','stop-review':'stop',stop:'stop','stop-full':'stop',restart:'service',uninstall:'service',update:'update','recovery-read':'recovery','recovery-apply':'recovery','recovery-reconcile':'recovery','recovery-pending':'recovery'})[d.a];},
 operationBody:function(context){
   const c=context||{},ps=view.S.projects,p=ps.find(p=>p.root===c.root),host=view.S.host||'unknown';
@@ -667,9 +667,7 @@ head:function(){
   if(ports.settings){const W=view.settingsChrome||{};return shell.bar({title,crumbs,home:'Settings home',back:view.page!=='settings'||renderer.entries().length>0,actions:[],windows:[button('always-on-top','Always on top',{'data-a':'settings-top','aria-pressed':String(!!W.top)}),button(W.maximized?'minimize-2':'maximize-2',W.maximized?'Restore window':'Enlarge window',{'data-a':'settings-enlarge','aria-pressed':String(!!W.maximized)}),button('x','Close settings',{'data-a':'hide'})]});}
   if(ports.views)return shell.bar({title:'View · '+dashboard.current().name,actions:[],windows:[button('x','Close view window',{'data-a':'hide'})]});
   // R09/MP12, #1699 A2: one Conversations entry opens the thread screen at every count, the first unread thread with new events; the count is deduplicated, unknown never reads as zero; opening acknowledges nothing
-  const m=view.S.messages,count=m?.complete===true&&Number.isSafeInteger(m.count)?m.count:null;
-  const conversations=h('button',{type:'button',class:'conversations-entry','data-a':'workspace','data-page':'conversations','data-thread':count?'unread':'',title:'Conversations · '+(count===null?'unknown':count+' new'),'aria-label':'Conversations · '+(count===null?'unknown':count+' new')},icon('messages-square'),count?h('span',{class:'badge','aria-hidden':'true'},count>99?'99+':String(count)):'');
-  const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,title:'Open Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)),view.S.stop_modes&&button('octagon-x','Emergency stop',{'data-a':'stop-review'}),notificationPanel.bell(),conversations,button('settings','Settings',{'data-route':'settings'})];
+  const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,title:'Open Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)),view.S.stop_modes&&button('octagon-x','Emergency stop',{'data-a':'stop-review'}),notificationPanel.entry(),button('settings','Settings',{'data-route':'settings'})];
   const windows=[button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)}),button('x','Close menu',{'data-a':'hide'})];
   return shell.bar({title:view.page==='home'?'Tasks':title,crumbs,home:'Home',back:view.page!=='home'||renderer.entries().length>0||!!view.working,actions,windows});
 },
@@ -811,12 +809,12 @@ ui.listen(menu,'click',e=>{
   if(notificationPanel.click(b))return;
   if(reports.click(b,view.S.projects))return;
   if(d.historyBin!==undefined){view.historyBin=d.historyBin;present();return;}
-  if(!ports.workspace&&api.operationTarget(d)){send({a:'workspace',open:{page:'operations',operation:api.operationTarget(d),root:d.root||null}});return;}
+  if(!ports.workspace&&api.operationTarget(d)){send({a:'workspace',open:{page:'operations',operation:api.operationTarget(d),root:d.root||null,...(ports.settings?{origin:{surface:'settings',page:view.page}}:{})}});return;}
   if(d.a==='filter-reset'){view.taskFilter=[];present();return;}
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
   if(d.a==='hide')viewState.flush();
   if(d.a==='home'){const root=ports.settings?'settings':'home';if(view.page!==root||view.taskFilter||view.working)navigate(root);return;}
-  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'conversations',...(d.thread!==undefined?{thread:d.thread}:{}),...(d.filter?{filter:d.filter}:{}),operation:d.operation||null,root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null,...(d.fresh==='true'?{fresh:true}:{})}});return;}
+  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'conversations',...(d.thread!==undefined?{thread:d.thread}:{}),...(d.filter?{filter:d.filter}:{}),operation:d.operation||null,...(ports.settings?{origin:{surface:'settings',page:view.page}}:{}),root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null,...(d.fresh==='true'?{fresh:true}:{})}});return;}
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){startOperations.dismiss(d.key);return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}

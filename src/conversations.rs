@@ -187,24 +187,71 @@ fn task(install:&Path,id:&str,text:&str,files:&[File])->Res<String> {
     }
     Ok(task)
 }
-pub(crate) fn snapshot(install:&Path)->Value {
+#[cfg(test)]
+pub(crate) fn snapshot(install:&Path)->Value { snapshot_inner(install,true) }
+
+/// C2/Q-A5: summary identities never transport saved bodies of unrelated threads.
+pub(crate) fn summary(install:&Path)->Value { snapshot_inner(install,false) }
+
+struct Catalog {
+    root:PathBuf, value:Value, at:Option<std::time::Instant>, epoch:u64,
+    pending:Option<(std::time::Instant,u64,std::sync::mpsc::Receiver<Value>)>,
+}
+static CATALOG:std::sync::OnceLock<std::sync::Mutex<Catalog>>=std::sync::OnceLock::new();
+fn catalog_unknown(reason:&str)->Value {json!({"items":[],"complete":false,"loading":true,"absence_complete":false,"reason":reason})}
+fn catalog()->&'static std::sync::Mutex<Catalog> {
+    CATALOG.get_or_init(||std::sync::Mutex::new(Catalog{root:PathBuf::new(),value:catalog_unknown("Reading conversation catalog"),at:None,epoch:0,pending:None}))
+}
+fn invalidate_catalog(install:&Path) {
+    if let Ok(mut cache)=catalog().lock() {if cache.root==install {cache.epoch=cache.epoch.wrapping_add(1);cache.at=None;cache.value["absence_complete"]=json!(false);}}
+}
+/// R12: one bounded catalog read off the event loop; a pre-mutation scan never proves absence after its receipt.
+pub(crate) fn observed(install:&Path)->Value {
+    use std::{sync::mpsc,time::{Duration,Instant}};
+    let Ok(mut cache)=catalog().lock() else{return catalog_unknown("Conversation catalog lock unavailable")};
+    if cache.root!=install {cache.root=install.into();cache.value=catalog_unknown("Reading conversation catalog");cache.at=None;cache.pending=None;cache.epoch=cache.epoch.wrapping_add(1);}
+    if let Some((started,epoch,rx))=&cache.pending {match rx.try_recv(){
+        Ok(mut value)=>{let (started,epoch)=(*started,*epoch);cache.pending=None;if epoch==cache.epoch {value["absence_complete"]=json!(true);value["catalog_epoch"]=json!(epoch);cache.value=value;cache.at=Some(started);}},
+        Err(mpsc::TryRecvError::Disconnected)=>{cache.value=catalog_unknown("Conversation catalog read stopped; retrying");cache.pending=None;},
+        Err(mpsc::TryRecvError::Empty)=>{}
+    }}
+    if cache.pending.is_none()&&cache.at.is_none_or(|at|at.elapsed()>=Duration::from_secs(2)) {
+        let (tx,rx)=mpsc::sync_channel(1);let root=install.to_path_buf();cache.pending=Some((Instant::now(),cache.epoch,rx));
+        std::thread::spawn(move||{let value=coreq::telemetry::capture::operation("conversations.catalog.read",||Ok::<_,String>(summary(&root)),|_|"source-read").unwrap_or_else(|reason|catalog_unknown(&reason));let _=tx.send(value);});
+    }
+    let mut value=cache.value.clone();
+    if cache.at.is_some_and(|at|at.elapsed()>=Duration::from_secs(4)){value["complete"]=json!(false);value["absence_complete"]=json!(false);value["reason"]=json!("Conversation catalog observation is stale; refresh pending");}
+    value
+}
+
+fn snapshot_inner(install:&Path,details:bool)->Value {
     let result=(||->Res<Value>{
         let p=preferences(install)?;let mut drafts=rows(&p)?;
         let (requests,bad)=crate::setup::all(install)?;
         for r in &requests {if let Some(root)=&r.root {drafts.entry(r.id.clone()).or_insert_with(||Draft{root:root.clone(),..Draft::default()});}}
-        let mut items=vec![];
+        let visibility=crate::messages::request_visibility(install)?;
+        let requests: BTreeMap<_,_>=requests.iter().map(|r|(r.id.as_str(),r)).collect();
+        let mut items=vec![];let mut index_bytes=0usize;let mut truncated=false;
         for (id,d) in drafts {
-            if crate::messages::request_deleted(install,&id)? && !d.deleting && !crate::messages::request_deleting(install,&id)? {continue;}
+            let (deleted,deleting)=(visibility.0.contains(&crate::messages::request_key(&id)),visibility.1.contains(&id));
+            if deleted && !d.deleting && !deleting {continue;}
             let mut row=serde_json::to_value(d).map_err(|_|"Draft readback encoding failed")?;row["id"]=json!(id);row["updated"]=p["conversation_updated"][&id].clone();
-            if crate::messages::request_deleting(install,&id)? {row["deleting"]=json!(true);}
-            if let Some(r)=requests.iter().find(|r|r.id==id) {
+            if deleting {row["deleting"]=json!(true);}
+            if let Some(r)=requests.get(id.as_str()) {
                 row["request"]=crate::setup::view(r);
                 if r.state=="launched" {row["dialogue"]=crate::dialogue::status(install,r,false,&crate::dialogue::NATIVE);row["updated"]=Value::Null;}
                 else if row["updated"].is_null() {row["updated"]=json!(r.created);}
             }
+            if !details {
+                let title=row["title"].as_str().filter(|s|!s.is_empty()).or_else(||row["sent"]["text"].as_str()).or_else(||row["text"].as_str()).unwrap_or("").lines().find(|s|!s.trim().is_empty()).unwrap_or("").chars().take(120).collect::<String>();
+                row["preview_title"]=json!(title);row["lazy"]=json!(true);
+                row.as_object_mut().unwrap().remove("text");row.as_object_mut().unwrap().remove("files");
+                if let Some(sent)=row["sent"].as_object_mut(){sent.remove("text");sent.remove("files");}
+            }
+            if !details {index_bytes+=row.to_string().len();if index_bytes>16*1024*1024 {truncated=true;continue;}}
             items.push(row);
         }
-        Ok(json!({"items":items,"navigation":p["conversation_navigation"],"sidebar":sidebar_value(&p["conversation_sidebar"])?,"complete":bad.is_empty(),"reason":if bad.is_empty(){""}else{"Some owner requests are unreadable; existing data kept"},"limits":{"files":4,"file_bytes":FILE_BYTES,"draft_bytes":4*FILE_BYTES,"store_bytes":STORE_BYTES,"pdf_pages":0}}))
+        Ok(json!({"items":items,"navigation":p["conversation_navigation"],"sidebar":sidebar_value(&p["conversation_sidebar"])?,"complete":bad.is_empty()&&!truncated,"reason":if truncated{"Conversation index exceeds 16 MiB; coverage unknown; source data kept"}else if bad.is_empty(){""}else{"Some owner requests are unreadable; existing data kept"},"limits":{"files":4,"file_bytes":FILE_BYTES,"draft_bytes":4*FILE_BYTES,"store_bytes":STORE_BYTES,"pdf_pages":0}}))
     })();result.unwrap_or_else(|reason|json!({"items":[],"complete":false,"reason":reason}))
 }
 
@@ -337,7 +384,16 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
         }
         Ok(Value::Null)
     })();
-    match result {Ok(value)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"accepted","value":value,"snapshot":snapshot(install)}),Err(reason)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"unknown","reason":reason,"snapshot":snapshot(install)})}
+    if action!="preview" {invalidate_catalog(install);}
+    match result {Ok(value)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"accepted","value":value,"snapshot":receipt_snapshot(install,id)}),Err(reason)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"unknown","reason":reason,"snapshot":receipt_snapshot(install,id)})}
+}
+
+fn receipt_snapshot(install:&Path,id:&str)->Value {
+    let epoch=catalog().lock().ok().filter(|c|c.root==install).map_or(0,|c|c.epoch);
+    let mut value=summary(install);value["catalog_epoch"]=json!(epoch);
+    // The acting draft alone carries full files/text; unrelated histories remain metadata.
+    if let Ok(p)=preferences(install) {if let Ok(drafts)=rows(&p) {if let Some(d)=drafts.get(id) {if let Some(row)=value["items"].as_array_mut().and_then(|a|a.iter_mut().find(|r|r["id"]==id)) {if let Ok(full)=serde_json::to_value(d) {for (k,v) in full.as_object().unwrap(){row[k]=v.clone();}row["lazy"]=json!(false);}}}}}
+    value
 }
 
 /// D4/D5/D7 reads for an open dialogue view: no draft lock and no snapshot, so the 2 s transcript poll never waits
@@ -345,9 +401,17 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
 pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
     let id=m["conversation"].as_str().unwrap_or("");let action=m["action"].as_str().unwrap_or("");
     let result=(||->Res<Value>{
-        if id.starts_with("task:")&&thread_id(id)&&action=="transcript" {return worker_read(install,m);}
+        if id.starts_with("task:")&&thread_id(id) {
+            if action=="transcript" {return worker_read(install,m);}
+            if action=="history" {return history_page(install,m);}
+        }
         if !crate::setup::owner_id(id){return Err("Invalid or reserved draft identity".into());}
         match action {
+            "body"=>{
+                let p=preferences(install)?;let drafts=rows(&p)?;let d=drafts.get(id).ok_or("Draft unavailable; saved position cannot be restored")?;if crate::messages::request_deleted(install,id)?&&!d.deleting{return Err("Deleted history cannot be restored".into());}
+                if m["revision"].as_u64()!=Some(d.revision){return Err("Draft revision changed; refresh before reading".into())}
+                let mut row=serde_json::to_value(d).map_err(|_|"Draft readback encoding failed")?;row["id"]=json!(id);row["lazy"]=json!(false);Ok(row)
+            }
             "status"=>{
                 let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;
                 Ok(crate::dialogue::status(install,&r,true,&crate::dialogue::NATIVE))
@@ -370,6 +434,24 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
         }
     })();
     match result {Ok(value)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"accepted","value":value}),Err(reason)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"unknown","reason":reason})}
+}
+
+/// One immutable page of recorded questions; UI reads never become board writes or token probes.
+fn history_page(install:&Path,m:&Value)->Res<Value> {
+    let root=Path::new(m["root"].as_str().ok_or("History project missing")?);
+    if !crate::host::project_paths(install)?.iter().any(|p|p==root) {return Err("History project is not registered".into());}
+    let status=crate::data::json(&crate::dot(root).join("status.json"))?.ok_or("History snapshot unavailable")?;
+    let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("History board unknown")?;
+    let n=m["conversation"].as_str().and_then(|s|s.strip_prefix("task:")).and_then(|s|s.strip_prefix(board)).and_then(|s|s.strip_prefix('/')).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("History thread does not match its project")?;
+    let task=status["tasks"].as_array().and_then(|a|a.iter().find(|t|t["n"]==n)).ok_or("History source unavailable")?;
+    if !m["revision"].is_number()||task["revision"]!=m["revision"] {return Err("Recorded questions changed; refresh before paging".into());}
+    let rows=task["history"].as_array().ok_or("Recorded questions unavailable")?;
+    let cursor=m["before"].as_u64().or_else(||m["start"].as_u64()).and_then(|n|usize::try_from(n).ok()).filter(|n|*n<=rows.len()).ok_or("History cursor is outside its source")?;
+    let backwards=m["before"].is_number();let candidates:Vec<_>=if backwards {rows[..cursor].iter().rev().take(64).collect()}else{rows.iter().skip(cursor).take(64).collect()};
+    let mut page=Vec::new();let mut bytes=0;
+    for row in candidates {let size=serde_json::to_vec(row).map_err(|_|"History encoding failed")?.len();if size>16*1024*1024{return Err("Recorded question exceeds the 16 MiB source ceiling; open its board".into())}if !page.is_empty()&&bytes+size>256*1024{break}bytes+=size;page.push(row);}
+    let start=if backwards {page.reverse();cursor-page.len()}else{cursor};
+    Ok(json!({"rows":page,"total":rows.len(),"start":start,"next":start+page.len(),"revision":task["revision"],"complete":crate::snapshot::complete(&status)}))
 }
 
 /// The live service status of a registered project: fresh, complete, with a fresh task read and a live pid.
@@ -509,7 +591,7 @@ fn valid_navigation(v:&Value)->bool {
     if v.is_null(){return true;}
     v.is_object()&&v.to_string().len()<=4096
         &&(v["list"].is_null()||v["list"].as_str().is_some_and(|s|["recent","archive"].contains(&s)))
-        &&(v["filter"].is_null()||v["filter"].as_str().is_some_and(|s|["all","new","reply","decision","activity","finished"].contains(&s)))
+        &&(v["filter"].is_null()||v["filter"].as_str().is_some_and(|s|["all","new","needs","reply","decision","activity","finished"].contains(&s)))
         &&(v["search"].is_null()||v["search"].as_str().is_some_and(|s|s.chars().count()<=512))
         &&(v["selected"].is_null()||v["selected"].as_str().is_some_and(crate::setup::owner_id))
         &&(v["listOnly"].is_null()||v["listOnly"].is_boolean())
@@ -534,6 +616,39 @@ mod tests {
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
 
     // #1929 A6: definite refusal releases Send, but uncertain storage never permits a replay.
+    // #2110 A5: unrelated bodies never cross the bridge; selected source/revision and durable bytes survive.
+    #[test]
+    fn lazy_catalog_keeps_totals_and_reads_only_the_requested_revision() {
+        let f=Fixture::new();
+        for count in [600,10_000] {
+            let drafts:BTreeMap<_,_>=(0..count).map(|n|(format!("owner-{n}"),Draft{revision:1,text:"Invented saved Unicode body 🐈".repeat(4),root:"invented".into(),..Draft::default()})).collect();
+            let p=json!({"draft":"","history":[],"conversations":drafts});persist(&f.0,&p).unwrap();
+            let before=fs::read(f.0.join("tray-requests.json")).unwrap();let at=std::time::Instant::now();let index=summary(&f.0);
+            assert_eq!(index["complete"],true,"{index}");assert_eq!(index["items"].as_array().unwrap().len(),count);
+            assert!(index["items"].as_array().unwrap().iter().all(|r|r["lazy"]==true&&r.get("text").is_none()&&r.get("files").is_none()));
+            let read=dialogue(&f.0,&json!({"id":"read","action":"body","conversation":"owner-0","revision":1}));
+            assert_eq!(read["state"],"accepted");assert_eq!(read["value"]["text"],drafts["owner-0"].text);
+            assert_eq!(dialogue(&f.0,&json!({"id":"stale","action":"body","conversation":"owner-0","revision":0}))["state"],"unknown");
+            assert_eq!(fs::read(f.0.join("tray-requests.json")).unwrap(),before,"reads never mutate source or draft");
+            eprintln!("#2110 {count} catalog: {} bytes, {:?}; selected body {} bytes",index.to_string().len(),at.elapsed(),read.to_string().len());
+        }
+    }
+
+    #[test]
+    fn recorded_questions_page_exact_revision_and_registered_source() {
+        let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();
+        fs::write(f.0.join("projects"),format!("{}\n",root.display())).unwrap();
+        let mut history:Vec<_>=(0..100_000).map(|n|json!({"question":{"text":format!("Invented question {n}")},"answered":{"revision":n}})).collect();
+        history[64]["question"]["text"]=json!("Invented Unicode 🐈".repeat(20_000));
+        let path=root.join(".taskq/status.json");let source=json!({"complete":true,"issues":"https://example.org/issues","tasks":[{"n":7,"revision":71,"history":history}]}).to_string();fs::write(&path,&source).unwrap();
+        let mut m=json!({"conversation":"task:https://example.org/issues/7","root":root,"revision":71,"action":"history","start":0});
+        let first=history_page(&f.0,&m).unwrap();assert_eq!(first["rows"].as_array().unwrap().len(),64);assert_eq!(first["total"],100_000);
+        m["start"]=first["next"].clone();let large=history_page(&f.0,&m).unwrap();assert_eq!(large["rows"].as_array().unwrap().len(),1,"one whole Unicode record, never truncation");assert_eq!(large["rows"][0],history[64]);
+        m["before"]=large["next"].clone();let back=history_page(&f.0,&m).unwrap();assert_eq!(back["start"],64);assert_eq!(back["rows"][0],history[64]);
+        m["revision"]=json!(70);assert!(history_page(&f.0,&m).unwrap_err().contains("changed"));m["revision"]=json!(71);m["conversation"]=json!("task:https://other.example/issues/7");assert!(history_page(&f.0,&m).is_err());
+        m["root"]=json!(f.0.join("unregistered"));assert!(history_page(&f.0,&m).unwrap_err().contains("not registered"));assert_eq!(fs::read_to_string(path).unwrap(),source,"read-only paging keeps its exact source");
+    }
+
     #[test]
     fn conversation_1929_reply_refusal_keeps_editable_input() {
         fn never(_: &Path,_: &crate::setup::Request)->Res<std::process::Command> {panic!("no native dispatch")}
@@ -697,7 +812,7 @@ mod tests {
     #[test]
     fn drafts_files_and_launches_keep_immutable_identity_through_failure_and_restart() {
         assert!(valid_navigation(&json!({"scrolls":{"recent":240,"archive":0}})));
-        for filter in ["all","new","reply","decision","activity","finished"] {assert!(valid_navigation(&json!({"filter":filter})));}
+        for filter in ["all","new","needs","reply","decision","activity","finished"] {assert!(valid_navigation(&json!({"filter":filter})));}
         assert!(!valid_navigation(&json!({"filter":"invented"})));
         for scrolls in [json!("invalid"),json!({"recent":-1}),json!({"other":12})] {assert!(!valid_navigation(&json!({"scrolls":scrolls})));}
         let f=Fixture::new();

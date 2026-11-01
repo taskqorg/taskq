@@ -4,9 +4,9 @@ const card=require('./answer-card.js'),composer=require('./pm-composer.js').comp
 
 // §7: both surfaces use this view; the board owns read/decision state, memory holds only an in-flight view.
 const {create,body}=execution.module('reports',{
-create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>({index:0,length:1}),transcript,id=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')}){
+create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>({index:0,length:1}),reading=()=>{},transcript,id=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')}){
  let projects=[],pages=new Map(),pending=new Map(),selected=null,notice='',draft=null,successor=null,readFailure='',readQueue=[],reasonField=null;
- const receipts=new Map(),outcomes=new Map(),key=(root,n)=>root+'#'+n;
+ const textPages=new Map(),bodies=new Map(),receipts=new Map(),outcomes=new Map(),key=(root,n)=>root+'#'+n;
  const saved={},controllers=new Map(),displayedReads=new Set();
  const settled=r=>['accepted','drop','made','answered'].includes(r.decision);
  const namespace=(r,kind)=>'result:'+(projects.find(p=>p.root===r.root)?.issues||r.root)+'#'+r.n+'@'+r.sha+':'+kind;
@@ -19,13 +19,21 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
   if([...pending.values()].some(p=>p.id!==extra.id&&p.root===root&&p.n===extra.n&&p.sha===extra.sha&&(action==='read'||p.action!=='read'))) {resolve?.({state:'unknown',reason:'Another result operation needs readback'});return;}
   const op={id:id(),root,action,...extra};pending.set(op.id,op);send({a:'reports',...op});
   if(resolve)op.resolve=resolve;
-  defer(()=>{if(pending.get(op.id)!==op)return;op.unknown=true;if(op.action==='read'){pending.delete(op.id);readFailure='Result read outcome unknown; waiting for service readback.';}op.resolve?.({state:'unknown',reason:'No bridge receipt received; check the same operation'});op.resolve=null;outcome(op,'Result outcome unknown; waiting for service readback.');api.readNext();draw();},180000);
+  defer(()=>{if(pending.get(op.id)!==op)return;op.unknown=true;if(['read','open'].includes(op.action)){pending.delete(op.id);readFailure='Result read outcome unknown; waiting for service readback.';}op.resolve?.({state:'unknown',reason:'No bridge receipt received; check the same operation'});op.resolve=null;outcome(op,'Result outcome unknown; waiting for service readback.');api.readNext();draw();},action==='open'?30000:180000);
  }
- function readShown(r){const k=receiptKey(r.root,r.n,r.sha);if((r.body||r.kind==='task')&&!r.read&&!displayedReads.has(k)){displayedReads.add(k);request(r.root,'read',{n:r.n,sha:r.sha});}}
+ function cacheBody(r){const k=receiptKey(r.root,r.n,r.sha);bodies.delete(k);bodies.set(k,{root:r.root,n:r.n,sha:r.sha,body:r.body,verdict:r.verdict,tasks:r.tasks,lazy:false});let bytes=0;for(const [key,row]of [...bodies].reverse()){bytes+=new TextEncoder().encode(JSON.stringify(row)).length;if((bodies.size>2||bytes>2*1024*1024)&&!active(row))bodies.delete(key);}for(const [key,c]of controllers)if(controllers.size>16&&!active(c)&&![...pending.values()].some(op=>op.root===c.root&&op.n===c.n&&op.sha===c.sha))controllers.delete(key);}
+ function readShown(r){const k=receiptKey(r.root,r.n,r.sha);if(!r.lazy&&(r.body||r.kind==='task')&&!r.read&&!displayedReads.has(k)){displayedReads.add(k);request(r.root,'read',{n:r.n,sha:r.sha});}}
  function summary(text,heading){
   const lines=(text||'').split('\n'),start=lines.findIndex(l=>l.replace(/^#+\s*/,'').trim().toLowerCase()===heading.toLowerCase());
   if(start<0)return '';
   const rest=lines.slice(start+1),end=rest.findIndex(l=>/^#{1,6}\s/.test(l));return rest.slice(0,end<0?undefined:end).join('\n').trim();
+ }
+ function textPage(r,source){const key=receiptKey(r.root,r.n,r.sha)+':'+source;let page=textPages.get(key);if(!page){const match=new RegExp('^report:'+source+'-(\\d+):').exec(navigation(r).position?.key||'');page={start:match?Number(match[1]):0,open:false};}textPages.delete(key);textPages.set(key,page);while(textPages.size>24)textPages.delete(textPages.keys().next().value);return page;}
+ function textEnd(text,start){let end=Math.min(text.length,start+32768),count=0;for(const match of text.slice(start,end).matchAll(/\n\s*\n/g))if(++count===63){end=start+match.index+match[0].length;break;}if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end++;return end;}
+ function textBody(r,text,source){
+  const page=textPage(r,source),start=page.start,end=textEnd(text,start),key=source+(start?'-'+start:'');
+  const turn=next=>{page.start=next;reading('report:'+source+(next?'-'+next:'')+':0',r);draw();};
+  return [body(text.slice(start,end),key),(start>0||end<text.length)&&h('div',{class:'conversation-tools'},h('span',{class:'meta'},'Text '+(start+1)+'–'+end+' / '+text.length),start>0&&h('button',{onClick:()=>{let before=0;for(let at=0;at<start;){before=at;at=textEnd(text,at);}turn(before);}},'Previous text'),end<text.length&&h('button',{onClick:()=>turn(end)},'Next text'))];
  }
  function field(text,label){const lines=(text||'').split('\n'),start=lines.findIndex(l=>l.startsWith(label+':'));if(start<0)return 'Unknown: not recorded in the accepted hand-in.';const rest=lines.slice(start+1),end=rest.findIndex(l=>/^(Changed|Checks|Open|Report):/.test(l)&&!l.startsWith(label+':'));return [lines[start],...rest.slice(0,end<0?undefined:end)].map(l=>l.startsWith(label+':')?l.slice(label.length+1).trim():l).join('\n');}
  function remember(op,report){
@@ -48,9 +56,10 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
     const incoming=[...(data?.reports||[]),...(data?.history||[])],retained=data?.complete===true?[]:(pages.get(p.root)?.rows||[]).filter(r=>!incoming.some(v=>v.n===r.n));
     pages.set(p.root,{rows:[...incoming,...retained].map(r=>{const k=receiptKey(p.root,r.n,r.sha),won=receipts.get(k);if(Number.isSafeInteger(r.comments_through)&&Number.isSafeInteger(won?.comments_through)&&r.comments_through>=won.comments_through)receipts.delete(k);return receipts.has(k)?{...r,...won}:r;}),unknown:data?.complete!==true,reason:data?.reason||(data?.complete===true?'':'Reports not collected yet')});
    }
-   if(selected){const row=api.rows(true).find(r=>key(r.root,r.n)===key(selected.root,selected.n)&&r.sha===selected.sha);selected=row?{...selected,...row}:null;}
+   if(selected){const row=api.rows(true).find(r=>key(r.root,r.n)===key(selected.root,selected.n)&&r.sha===selected.sha);selected=row?{...selected,...row,...bodies.get(receiptKey(row.root,row.n,row.sha))}:null;}
    for(const op of pending.values())if(op.unknown&&!op.checking&&!pages.get(op.root)?.unknown){const row=pages.get(op.root)?.rows.find(r=>r.n===op.n&&r.sha===op.sha);if(row&&(confirmed(op,{report:row})||settled(row)&&['accept','later','drop','make'].includes(op.action))){op.checking=true;defer(()=>api.receive({id:op.id,root:op.root,report:row}),0);}}
   },
+  bounds(){return {bodySources:bodies.size,bodyBytes:[...bodies.values()].reduce((n,r)=>n+new TextEncoder().encode(JSON.stringify(r)).length,0),controllers:controllers.size,textPages:textPages.size};},
   refresh(){api.sync(projects);draw();},
   rows(history=false){return projects.flatMap(p=>(pages.get(p.root)?.rows||[]).filter(r=>history||r.visible!==false).map(r=>({...r,root:p.root}))).sort((a,b)=>(b.closed||0)-(a.closed||0)||b.n-a.n);},
   unread(){return api.rows().filter(r=>!r.read);},
@@ -70,9 +79,9 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
   },
   // M14: serialize bulk reads through the existing bounded native command queue.
   readNext(){if([...pending.values()].some(p=>p.action==='read'))return;const r=readQueue.shift();if(r)request(r.root,'read',{n:r.n,sha:r.sha});},
-  open(root,n,sha){return execution.action('reports.card.open',()=>{const r=api.rows(true).find(r=>r.root===root&&r.n===n&&(!sha||r.sha===sha));if(!r)return false;selected={...r};displayedReads.delete(receiptKey(root,n,r.sha));const prior=outcomes.get(receiptKey(root,n,r.sha));notice=prior?.notice||'';draft=null;successor=prior?.successor||api.savedSuccessor(r);onOpen?.(selected);draw();readShown(r);return true;})();},
+  open(root,n,sha){return execution.action('reports.card.open',()=>{const r=api.rows(true).find(r=>r.root===root&&r.n===n&&(!sha||r.sha===sha));if(!r)return false;selected={...r,...bodies.get(receiptKey(root,n,r.sha))};if(r.lazy&&!selected.body)request(root,'open',{n,sha:r.sha});displayedReads.delete(receiptKey(root,n,r.sha));const prior=outcomes.get(receiptKey(root,n,r.sha));notice=prior?.notice||'';draft=null;successor=prior?.successor||api.savedSuccessor(r);onOpen?.(selected);draw();readShown(r);return true;})();},
   savedSuccessor(r){const n=Object.values(saved).find(v=>v.request?.root===r.root&&v.request?.n===r.n&&v.request?.sha===r.sha&&v.receipt?.state==='accepted'&&v.successor>0)?.successor;return n?{n,url:r.url?.replace(/\d+$/,String(n))}:null;},
-  focus(root,n){const r=api.rows(true).find(r=>r.root===root&&r.n===n);if(!r||active(r))return;selected={...r};const prior=outcomes.get(receiptKey(root,n,r.sha));notice=prior?.notice||'';successor=prior?.successor||api.savedSuccessor(r);},
+  focus(root,n){const r=api.rows(true).find(r=>r.root===root&&r.n===n);if(!r||active(r))return;selected={...r,...bodies.get(receiptKey(root,n,r.sha))};if(r.lazy&&!selected.body)request(root,'open',{n,sha:r.sha});const prior=outcomes.get(receiptKey(root,n,r.sha));notice=prior?.notice||'';successor=prior?.successor||api.savedSuccessor(r);},
   move(step){onMove?.(step);},
   act(action,text,until){if(!selected)return;outcome(selected,'',null);request(selected.root,action,{n:selected.n,sha:selected.sha,...(text===undefined?{}:{text}),...(until===undefined?{}:{until})});draw();},
   receive(r){
@@ -80,7 +89,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
    const reply={state:r.reason?(r.receipt?.outcome==='rejected'?'rejected':r.receipts?.length?'partial':'unknown'):'accepted',reason:r.reason};
    if(r.report?.n!==op.n||r.report?.sha!==op.sha){reply.state='unknown';reply.reason=r.reason||'No matching result receipt';}
    else if(!r.reason&&!confirmed(op,r)){reply.state='rejected';reply.reason='The displayed action was not confirmed; review the current result decision.';}
-   if(op.action!=='read'&&['unknown','partial'].includes(reply.state))op.unknown=true;else pending.delete(r.id);
+   if(!['read','open'].includes(op.action)&&['unknown','partial'].includes(reply.state))op.unknown=true;else pending.delete(r.id);
    for(const [k,v] of Object.entries(saved))if(v.op?.id===r.id&&v.request?.root===r.root){saved[k]={...v,receipt:reply,...(reply.state==='accepted'&&v.op.text?{draft:''}:{}),...(reply.state==='accepted'&&r.successor>0?{successor:r.successor}:{} )};send({a:'answer-local',key:k,local:saved[k]});}
    op.resolve?.(reply);op.resolve=null;
    for(const c of controllers.values())c.ui.receiveReceipt(c.board,r.id,reply);
@@ -92,18 +101,19 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
     api.readNext();draw();return true;
    }
    if(r.report?.n===op.n&&r.report.sha===op.sha){
-    const p=pages.get(r.root),report=remember(op,r.report);
+    const p=pages.get(r.root),report=remember(op,r.report);if(op.action==='open'&&r.report.body!==undefined){const body={...r.report,root:r.root,lazy:false};cacheBody(body);if(shown)selected={...selected,...body};}
     if(p)p.rows=p.rows.map(row=>row.n!==op.n||row.sha!==op.sha?row:{...row,...report,closed:row.closed});
     if(selected&&selected.sha===op.sha&&key(selected.root,selected.n)===key(r.root,op.n))selected={...selected,...report,closed:selected.closed};
     if(op.action!=='read')outcome(op,report.visible===false?(report.decision==='made'?'Created held drafts: '+(report.tasks_made||[]).map(n=>'#'+n).join(', '):'Report dropped.'):(op.action==='later'?(op.until?'Later: back in Decide on '+op.until.slice(0,10)+'.':'Kept in Reports for later.'):''),undefined,shown);
     if(r.successor>0){outcome(op,'Created held draft. Read it back and start it separately.',{n:r.successor,url:r.successor_url||(typeof r.report.url==='string'?r.report.url.replace(/\d+$/,String(r.successor)):null)},shown);if(shown&&draft===op.action)draft=null;}
     if(op.action==='accept')outcome(op,'Result accepted.',undefined,shown);
    }else {if(op.action==='read')readFailure='Result read receipt unknown; waiting for service readback.';outcome(op,'Report receipt unknown; waiting for service readback.',undefined,shown);}
-   api.readNext();draw();return true;
+   api.readNext();draw();if(op.action==='open'&&shown)readShown(selected);return true;
   },
   click(b,ps){
    const action=b.dataset.report;if(!action)return false;
-   if(action==='open')api.open(b.dataset.root,Number(b.dataset.n));
+   if(action==='source-retry'&&selected){request(selected.root,'open',{n:selected.n,sha:selected.sha});draw();}
+   else if(action==='open')api.open(b.dataset.root,Number(b.dataset.n));
    else if(action==='reason-send')api.reasonSend();
    else if(action==='date-send'&&selected){const k=namespace(selected,'decision');controllers.get(k)?.ui.act(k,selected.n,'submit');}
    else if(action==='date-cancel'&&selected){const k=namespace(selected,'decision');controllers.get(k)?.ui.act(k,selected.n,'cancel-result');}
@@ -122,14 +132,14 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
   capability(r,kind){
    const p=projects.find(p=>p.root===r.root),ops=[...pending.values(),...Object.values(saved).filter(v=>['sending','unknown','partial'].includes(v.receipt?.state)).map(v=>v.request).filter(Boolean)];
    const blocked=ops.some(op=>op.root===r.root&&op.n===r.n&&op.sha===r.sha&&op.action!=='read'&&op.id!==saved[namespace(r,kind)]?.op?.id);
-   const reason=!p?'Registered project unavailable':p.alive===false?'Project observation stale':p.complete===false?'Project observation incomplete':pages.get(r.root)?.unknown?pages.get(r.root).reason:r.reason?'Result unavailable: '+r.reason:blocked?'Another result operation needs readback':kind==='decision'&&settled(r)?'Report already decided':kind==='make'&&!r.tasks?.length?'No follow-up tasks proposed':kind==='make'&&settled(r)?'Report already decided':r.pending_decision==='make'&&kind!=='make'?'Make tasks needs readback':'';
+   const reason=r.lazy&&!bodies.has(receiptKey(r.root,r.n,r.sha))?'Reading the exact result source':!p?'Registered project unavailable':p.alive===false?'Project observation stale':p.complete===false?'Project observation incomplete':pages.get(r.root)?.unknown?pages.get(r.root).reason:r.reason?'Result unavailable: '+r.reason:blocked?'Another result operation needs readback':kind==='decision'&&settled(r)?'Report already decided':kind==='make'&&!r.tasks?.length?'No follow-up tasks proposed':kind==='make'&&settled(r)?'Report already decided':r.pending_decision==='make'&&kind!=='make'?'Make tasks needs readback':'';
    return {answer:!reason,composer:true,reason};
   },
   mount(menu){
    if(!selected)return;
    for(const slot of menu.querySelectorAll('[data-result-card]')){
-    const r={...selected},kind=slot.dataset.resultCard,k=namespace(r,kind),row=api.cardRow(r,kind);let c=controllers.get(k);
-    if(!c){const el=menu.ownerDocument.createElement('div');c={el,board:k,ui:card.mount(el,{newId:id,capability:()=>api.capability(api.rows(true).find(row=>row.root===r.root&&row.n===r.n&&row.sha===r.sha)||r,kind),load:()=>saved[k],save:(_b,_r,local)=>{const prior=saved[k],same=prior?.op?.id===local.op?.id;saved[k]={...local,...(same&&prior?.request?{request:prior.request}:{}),...(same&&prior?.successor?{successor:prior.successor}:{})};send({a:'answer-local',key:k,local:saved[k]});if(local.intent!==draft){draft=local.intent;draw();}},send:(_board,op)=>{
+    const {body,verdict,...r}=selected,kind=slot.dataset.resultCard,k=namespace(r,kind),row=api.cardRow(r,kind);let c=controllers.get(k);
+    if(!c){const el=menu.ownerDocument.createElement('div');c={root:r.root,n:r.n,sha:r.sha,el,board:k,ui:card.mount(el,{newId:id,capability:()=>api.capability(api.rows(true).find(row=>row.root===r.root&&row.n===r.n&&row.sha===r.sha)||r,kind),load:()=>saved[k],save:(_b,_r,local)=>{const prior=saved[k],same=prior?.op?.id===local.op?.id;saved[k]={...local,...(same&&prior?.request?{request:prior.request}:{}),...(same&&prior?.successor?{successor:prior.successor}:{})};send({a:'answer-local',key:k,local:saved[k]});if(local.intent!==draft){draft=local.intent;draw();}},send:(_board,op)=>{
       const action=op.choice?row.question.choices.find(c=>c.id===op.choice)?.action:saved[k]?.intent;
       if(!action)return Promise.resolve({state:'rejected',reason:'Choose the result action first'});
       const current=api.rows(true).find(row=>row.root===r.root&&row.n===r.n&&row.sha===r.sha);
@@ -151,6 +161,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
   dateInput(text){if(selected){const k=namespace(selected,'decision');controllers.get(k)?.ui.input(k,selected.n,text);draw();}},
   section(ps){
    api.sync(ps);const r=selected;if(!r)return h('p',null,api.count()===null?api.reason()||'Results unknown; waiting for collection.':'No results waiting for review.');
+   if(r.lazy&&!bodies.has(receiptKey(r.root,r.n,r.sha)))return h('article',{class:'report-card'},h('p',{role:'status'},notice||'Reading the exact result source…'),h('button',{'data-report':'source-retry',disabled:[...pending.values()].some(active)},'Retry source read'));
    const ordinary=r.kind==='task',nav=navigation(r),k=namespace(r,'correction'),local=saved[k]||card.fresh(api.cardRow(r,'correction')),context=api.cardRow(r,'correction'),cap=api.capability(r,'correction');
    const decision=api.cardRow(r,'decision'),date=saved[namespace(r,'decision')]||card.fresh(decision),dateCap=api.capability(r,'decision'),dateLive=['actionable','changed'].includes(card.status(decision,date,dateCap));
    const [mark,tone,outcome]=dashboard.outcome(r);
@@ -161,8 +172,8 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
     ordinary&&h('p',{class:'meta'},h('span',{class:tone},icons.icon(mark),outcome),r.merged&&h('span',null,' · '+r.merged),time.stamp(time.seconds(r.closed),'Task closed')),
     r.reason&&h('p',{role:'status'},'Result unknown: '+r.reason),
     !ordinary&&h('p',{class:'meta'},'Verdict: '+(r.experiment_verdict||'unknown'),time.stamp(time.seconds(r.closed),'Report closed')),
-    ordinary?[...['Changed','Checks','Open'].map(label=>h('section',{key:label},h('h3',null,label),body(field(r.body,label),label.toLowerCase()))),r.pr&&h('a',{href:r.pr,'data-url':r.pr},'Open PR'),r.verdict&&h('details',{'data-view-key':namespace(r,'verdict')},h('summary',null,'Review and delivery'),body(r.verdict,'verdict'))]:
-     r.body?[h('h3',null,'Question'),body(summary(r.body,'Question'),'question'),h('h3',null,'Recommendation'),body(summary(r.body,'Recommendation'),'recommendation')]:h('p',null,'Report content unknown; waiting for background collection.'),
+    ordinary?[...['Changed','Checks','Open'].map(label=>h('section',{key:label},h('h3',null,label),textBody(r,field(r.body,label),label.toLowerCase()))),r.pr&&h('a',{href:r.pr,'data-url':r.pr},'Open PR'),r.verdict&&h('details',{'data-view-key':namespace(r,'verdict')},h('summary',null,'Review and delivery'),textBody(r,r.verdict,'verdict'))]:
+     r.body?[h('h3',null,'Question'),textBody(r,summary(r.body,'Question'),'question'),h('h3',null,'Recommendation'),textBody(r,summary(r.body,'Recommendation'),'recommendation')]:h('p',null,'Report content unknown; waiting for background collection.'),
     (!ordinary||saved[namespace(r,'decision')]?.op&&['sending','unknown','partial'].includes(saved[namespace(r,'decision')]?.receipt?.state))&&(settled(r)?h('p',{class:'meta'},'Decision recorded: '+r.decision+'. Retained in Finished.'):h('section',null,slot('decision'),date.intent==='later'&&h('div',{class:'result-date'},
      h('label',null,'Revisit on',h('input',{type:'date','data-c-field':'result-date','aria-label':'Revisit date',value:date.draft,min:new Date(Date.now()+86400000).toISOString().slice(0,10),disabled:!dateLive})),
      h('p',{class:'meta'},'The report returns to Decide on this date.'),
@@ -171,7 +182,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
     h('details',{class:'result-other',open:!!local.intent,'data-view-key':namespace(r,'other')},h('summary',null,'Other actions'),slot('correction')),
     local.intent&&composer({id:'result-reason',field:'result-reason',label:(local.intent==='reopen'?'Reopen':'Follow-up')+' reason',placeholder:'What needs to change?',text:local.draft,disabled:!cap.answer||['sending','unknown','partial'].includes(card.status(context,local,cap)),reason:'Creates a linked held successor. The original stays closed. Read it back before separate Start.',tools:h('div',{class:'conversation-tools'},h('button',{'data-report':'reason-send',disabled:!cap.answer||!!card.textProblem(context.question,local.draft)||!['actionable','changed'].includes(card.status(context,local,cap))},'Send'),h('button',{'data-report':'reason-cancel',disabled:['sending','unknown','partial'].includes(card.status(context,local,cap))},'Cancel'))}),
     !ordinary&&Array.isArray(r.tasks)&&h('section',null,h('h3',null,'Proposed tasks'),r.tasks.length?r.tasks.map((t,i)=>h('details',{key:i,'data-view-key':namespace(r,'proposal'+i)},h('summary',null,(i+1)+'. '+t.title),h('p',null,t.goal),h('ul',null,t.acceptance?.map(a=>h('li',null,a))),t.scope?.map(s=>h('p',null,s)))):h('p',null,'No follow-up tasks proposed.'),r.tasks.length>0&&h('p',{class:'meta'},'Make tasks creates held drafts linked to this report. Start them separately.'),r.pending_decision==='make'&&h('p',{role:'status'},'Make tasks is pending. Retry Make tasks to reconcile the original claims.'),(r.tasks.length>0||r.pending_decision==='make')&&!settled(r)&&slot('make')),
-    !ordinary&&r.body&&h('details',{'data-view-key':namespace(r,'full')},h('summary',{'data-reading-key':'report:full'},'Full report'),body(r.body,'full')),
+    !ordinary&&r.body&&h('details',{'data-view-key':namespace(r,'full'),open:textPage(r,'full').open,onToggle:e=>{const page=textPage(r,'full');if(page.open!==e.currentTarget.open){page.open=e.currentTarget.open;draw();}}},h('summary',{'data-reading-key':'report:full',onClick:e=>{e.preventDefault();const page=textPage(r,'full');page.open=!page.open;e.currentTarget.parentElement.open=page.open;draw();}},'Full report'),textPage(r,'full').open&&textBody(r,r.body,'full')),
     transcript?.(r),notice&&h('p',{role:'status'},notice),
     !!(notice||successor||r.tasks_made?.length)&&![...pending.values()].some(op=>active(op)&&op.action!=='read')&&h('div',{class:'conversation-tools result-next'},
      successor&&h('a',{href:successor.url,'data-url':successor.url},'1. Read held draft #'+successor.n+' ★'),

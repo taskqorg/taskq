@@ -9,8 +9,8 @@ module.exports=execution.module('taskDashboard',{
  create:function(view,{menu,present,send,app,owned=false,window=globalThis,document=window.document}){
   const crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;let restore=true,requests=0,heldOffer=null,heldReview=null;const pinReads=new Map();
   const api=execution.module('taskDashboard.instance',{
-   model:function(){const m=view.dashboard||(view.dashboard=views.normalize(null,{taskFilter:view.taskFilter}));m.collapsed=m.collapsed.filter(id=>view.S.projects.some(p=>views.identity(p)===id));return m;},
-   current:function(){return views.current(api.model());},
+   model:function(){const m=view.dashboard||(view.dashboard=views.normalize(null,{taskFilter:view.taskFilter}));if(!owned&&m.selected==='completed'){const c=m.views.find(v=>v.id==='completed')?.working;m.selected=m.views.find(v=>v.id==='running')?.id||'all';send({a:'workspace',open:{page:'conversations',filter:'finished',criteria:c}});}m.collapsed=m.collapsed.filter(id=>view.S.projects.some(p=>views.identity(p)===id));return m;},
+   current:function(){const m=api.model();return owned&&view.completedEditor?m.views.find(v=>v.id==='completed')||views.current(m):views.current(m);},
    criteria:function(){return api.current().working;},
    set:function(patch){Object.assign(api.criteria(),patch);present();},
    projects:function(){return views.scope(view.S.projects,api.criteria());},
@@ -92,14 +92,14 @@ module.exports=execution.module('taskDashboard',{
     h('fieldset',null,h('legend',null,'States'),h('div',{class:'facet-list'},h('button',{'data-a':'all-tasks','aria-pressed':String(!c.states.length)},'All states'),view.S.display.states.map(({id:s,name:n})=>h('button',{'data-a':'view-facet','data-facet':'states','data-value':s,'aria-pressed':String(c.states.includes(s))},h('span',{class:blocks.marks[s][1]||null},icon(blocks.marks[s][0])),n)))));
    },
    actions:function(){const c=api.criteria(),v=api.current();return h(Fragment,null,v.id!=='completed'&&h('fieldset',null,h('legend',null,'Display'),h('div',{class:'options'},[['combined','All together'],['project','By project']].map(([value,label])=>h('button',{'data-a':'view-group','data-value':value,'aria-pressed':String(c.group===value)},label)))),
-    !owned&&api.naming(),h('div',{class:'options'},h('button',{'data-a':'view-save',disabled:!views.dirty(v)},icon('save'),'Save'),h('button',{'data-a':'view-save-as','aria-expanded':String(!!view.naming)},'Save as…'),h('button',{'data-a':'view-reset'},icon('rotate-ccw'),'Reset'),h('button',{'data-a':'popup-close'},'Done')));
+    owned&&v.id==='completed'&&h('button',{'data-a':'completed-open'},'Read finished work'),!owned&&api.naming(),h('div',{class:'options'},h('button',{'data-a':'view-save',disabled:!views.dirty(v)},icon('save'),'Save'),h('button',{'data-a':'view-save-as','aria-expanded':String(!!view.naming)},'Save as…'),h('button',{'data-a':'view-reset'},icon('rotate-ccw'),'Reset'),h('button',{'data-a':'popup-close'},'Done')));
    },
    naming:function(){const v=api.current();return view.naming&&h('div',{class:'view-naming'},h('input',{'data-view-name':'','aria-label':'New view name',value:v.draft,maxLength:80,placeholder:'View name'}),h('button',{'data-a':'view-add',disabled:!v.draft.trim()||api.model().views.length>=64},'Create'),h('button',{'data-a':'view-cancel'},'Cancel'));},
    cancelNaming:function(){view.naming=false;present();menu.querySelector('[data-a="view-save-as"]')?.focus();},
    editor:function(){return h(Fragment,null,h('div',{class:'popover-heading'},h('strong',null,'View'),button('x','Close view editor',{'data-a':'popup-close'})),api.conditions(),api.actions());},
    // P-V1: Delete beside each custom view; the shortcut pin stays a separate control; one persisted Undo receipt.
    presets:function(){const m=api.model();return h(owned?'fieldset':Fragment,null,owned?h('legend',null,'Saved views'):h('div',{class:'popover-heading'},h('strong',null,'Saved views'),button('x','Close saved views',{'data-a':'popup-close'})),
-    m.views.map(v=>h('div',{class:'saved-view',key:v.id},h('button',{'data-a':'view-select','data-id':v.id,'aria-pressed':String(v.id===m.selected)},v.name,views.dirty(v)?' *':''),button(v.pinned?'pin':'pin-off',(v.pinned?'Remove shortcut for ':'Add shortcut for ')+v.name,{'data-a':'view-pin','data-id':v.id,'aria-pressed':String(v.pinned)}),!views.builtin(v.id)&&button('trash-2','Delete view '+v.name,{'data-a':'view-delete','data-id':v.id}))),
+    m.views.map(v=>h('div',{class:'saved-view',key:v.id},h('button',{'data-a':'view-select','data-id':v.id,'aria-pressed':String(v.id===api.current().id)},v.name,views.dirty(v)?' *':''),button(v.pinned?'pin':'pin-off',(v.pinned?'Remove shortcut for ':'Add shortcut for ')+v.name,{'data-a':'view-pin','data-id':v.id,'aria-pressed':String(v.pinned)}),!views.builtin(v.id)&&button('trash-2','Delete view '+v.name,{'data-a':'view-delete','data-id':v.id}))),
     m.undo&&h('div',{class:'view-receipt',role:'status'},'Deleted ',h('strong',null,m.undo.view.name),button('undo-2','Undo deleting '+m.undo.view.name,{'data-a':'view-undo'})),
     owned?api.naming():h(Fragment,null,api.naming(),h('button',{'data-a':'view-save-as','aria-expanded':String(!!view.naming)},'Save as…')),view.viewError&&h('p',{role:'alert'},view.viewError));},
    // #1781: details carry a short question cue; the full question and options read in Conversations (input-scroll 04).
@@ -148,7 +148,9 @@ module.exports=execution.module('taskDashboard',{
     if(d.a==='pin-retry'){api.pinRead({ref:d.ref},true);present();return true;}
     if(d.a==='completed-open'){api.openCompleted();return true;}
     if(d.a==='pin-transcript'){const entry=pinReads.get(d.ref);if(entry?.value?.state==='closed'){api.openCompleted(entry);api.unpin(d.ref);present();}return true;}
-    if(d.a==='view-select'){if(!owned)api.current().scroll=menu.querySelector('.content')?.scrollTop||0;m.selected=d.id;view.popup=null;if(d.id==='completed')api.openCompleted();view.restoreScroll=api.current().scroll;restore=true;present();menu.querySelector('[data-a="view-list"]')?.focus();return true;}
+    if(d.a==='view-select'&&d.id==='completed'&&owned){view.completedEditor=true;present();return true;}
+    if(d.a==='view-select'&&d.id==='completed'){api.close(false);const completed=api.model().views.find(v=>v.id==='completed');send({a:'workspace',open:{page:'conversations',filter:'finished',criteria:completed?.working||api.criteria()}});return true;}
+    if(d.a==='view-select'){view.completedEditor=false;if(!owned)api.current().scroll=menu.querySelector('.content')?.scrollTop||0;m.selected=d.id;view.popup=null;if(d.id==='completed')api.openCompleted();view.restoreScroll=api.current().scroll;restore=true;present();menu.querySelector('[data-a="view-list"]')?.focus();return true;}
     if(d.a==='view-pin'){const v=m.views.find(v=>v.id===d.id);if(v)v.pinned=!v.pinned;present();return true;}
     if(d.a==='view-delete'){if(views.remove(m,d.id)){if(m.selected==='all')view.restoreScroll=api.current().scroll;present();menu.querySelector((owned?'':'#taskq-popover ')+'[data-a="view-undo"]')?.focus();}return true;}
     if(d.a==='view-undo'){views.undo(m);present();menu.querySelector((owned?'':'#taskq-popover ')+'[data-a="view-select"][aria-pressed="true"]')?.focus();return true;}

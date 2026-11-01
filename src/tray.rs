@@ -632,7 +632,10 @@ fn project(install: &Path, root: &str) -> Value {
     let mut tasks = s["tasks"].as_array().cloned().unwrap_or_default();
     let (hosts, tasks_live) = liveness(&s, age, ttl, &mut tasks);
     let page = crate::load(r).ok().and_then(|(c, _)| crate::enrollment::progress_page(install, &c.repo));
-    for task in &mut tasks { task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task); inline_images(r, task); }
+    for task in &mut tasks {
+        task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task);
+        inline_images(r, task);
+    }
     let installation = fs::read_to_string(install.join("installation-id")).ok().filter(|i| i.len() == 64 && i.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
     let id: String = crate::project_name(r).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).take(64).collect();
     let observed_at=s["at"].as_i64().filter(|at|crate::snapshot::live(now()-*at,ttl)).and(age.map(|a|now()-a as i64));
@@ -652,7 +655,17 @@ fn project(install: &Path, root: &str) -> Value {
     // #1819: the stale line compares the board read age with the service poll
     out["poll"] = s["poll"].clone();
     out["reports"] = crate::reports::freshness(crate::reports::stored(r,&s),now(),ttl,bad_report_reason(&s,live));
+    for field in ["reports","history"] {for report in out["reports"][field].as_array_mut().into_iter().flatten(){if let Some(row)=report.as_object_mut(){row.remove("body");row.remove("verdict");row.remove("tasks");row.insert("lazy".into(),json!(true));}}}
+
     out
+}
+
+// History paging reads the source revision; a confirmed answer survives the source's polling lag separately.
+fn history_header(task:&mut Value) {
+    if !task["revision"].is_number() {return;}
+    let rows=match task["history"].take(){Value::Array(rows)=>rows,_=>Vec::new()};let prefix=task["history_source_count"].as_u64().unwrap_or(rows.len() as u64) as usize;
+    task["history_count"]=json!(rows.len());task["history_lazy"]=json!(true);let tail=rows.into_iter().skip(prefix).collect::<Vec<_>>();
+    if tail.is_empty(){task.as_object_mut().map(|t|t.remove("history"));}else{task["history_tail"]=json!(true);task["history"]=json!(tail);}
 }
 
 fn bad_report_reason(s:&Value,live:bool)->Option<&str> {
@@ -1586,13 +1599,18 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             Event::UserEvent(Ev::WorkspaceEvaluated(surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {calls.finish(id,result);}}else if surface==SETTINGS_SURFACE {if let Some(calls)=&mut settings_web {calls.finish(id,result);}}else if surface==VIEWS_SURFACE {if let Some(calls)=&mut views_web {calls.finish(id,result);}}else if let Some((_,_,calls))=detached.get_mut(&surface){calls.finish(id,result);}}
             Event::UserEvent(Ev::Workspace(surface,message)) => {
                 let Ok(input)=serde_json::from_str::<Value>(&message) else {return};
+                if input["a"]=="workspace-origin" && surface=="main" && input["origin"]["surface"]=="settings" {
+                    // TW1: Settings keeps its DOM, route, scroll and focus while the shared review is open.
+                    if let Some((window,_))=&settings_window {window.set_visible(true);window.set_focus();if let Some((window,_))=&workspace {window.set_visible(false);}}
+                    return;
+                }
                 if input["a"]=="conversation-window" {
                     let id=input["conversation"].as_str().unwrap_or("");
                     if !crate::resources::id(id){return;}
                     let action=input["windowAction"].as_str().or_else(||input["action"].as_str()).unwrap_or("");
                     if action=="raise" {if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();}return;}
                     if action=="detach" && surface=="main" && !detached.contains_key(id) {
-                        let saved=crate::conversations::snapshot(&install);
+                        let saved=crate::conversations::summary(&install);
                         let valid=saved["items"].as_array().is_some_and(|rows|rows.iter().any(|c|c["id"]==id&&c["revision"]==input["revision"]));
                         if !valid {return;}
                         let p=proxy.clone();let source=id.to_string();
@@ -1609,7 +1627,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let owner=json!({"workspaceOwner":{"id":"main","detached":detached.keys().collect::<Vec<_>>()}});
                         web_eval(wv,&format!("taskq.receive({owner})"),"tray.web.receive",&proxy,calls);
                         if action=="return" {web_eval(wv,&format!("taskq.receive({});taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync),json!({"open":{"page":"conversations"}})),"tray.web.receive",&proxy,calls);let select=json!({"workspaceOwner":{"id":"main","select":id,"detached":detached.keys().collect::<Vec<_>>()}});web_eval(wv,&format!("taskq.receive({select})"),"tray.web.receive",&proxy,calls);}
-                        else {let r=json!({"conversationReceipt":{"id":input["id"],"state":"accepted","snapshot":crate::conversations::snapshot(&install)}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
+                        else {let r=json!({"conversationReceipt":{"id":input["id"],"state":"accepted","snapshot":crate::conversations::summary(&install)}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
                     }
                     return;
                 }
@@ -1755,6 +1773,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     }
                     "hide" => vw.set_visible(false),
                     "drag" => {let _=vw.drag_window();}
+                    "workspace" => {let _=proxy.send_event(Ev::Ipc(message));}
                     "views-dashboard" if m["dashboard"].is_object() && m["dashboard"].to_string().len()<=65536 => push(&mut web,&ui,&json!({"dashboard":m["dashboard"]})),
                     // ponytail: the View window owns no other action; add arms when it gains one
                     _ => {}
@@ -2263,8 +2282,11 @@ fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
 fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, add: &Value, sync: &mut crate::pending::Pending) -> Value {
     let mut ps: Vec<Value> = roots(install).iter().map(|r| project(install, r)).collect();
     // #1918 one channel: the pending store settles on the board's rows, then applies to them before anything below reads them
+    // Capture the immutable source prefix before the accepted-receipt overlay appends an answer.
+    for p in &mut ps {for t in p["tasks"].as_array_mut().into_iter().flatten() {t["history_source_revision"]=t["revision"].clone();t["history_source_count"]=json!(t["history"].as_array().map_or(0,Vec::len));}}
     sync.observe(&ps, Instant::now());
     sync.apply(&mut ps);
+    for p in &mut ps {for t in p["tasks"].as_array_mut().into_iter().flatten() {history_header(t);}}
     // #1592: the page renders this model; it keeps no counts, order, labels or age of its own
     let observed=now();
     let display = crate::display::model(&mut ps, observed);
@@ -2280,7 +2302,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
         "agentq":onboarding,"messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge, "auto_anchor":s.pin.auto_anchor,
-        "now": observed, "palette":icon::css(dark), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": seen, "workspace_local": requests_file(install)["answers"], "conversations":crate::conversations::snapshot(install), "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "peak":icon::peak(&sum.bins), "svg":icon::svg(&icon::Data {paused:false,..icon_data(&sum)},dark), "since": sum.since},
+        "now": observed, "palette":icon::css(dark), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": seen, "workspace_local": requests_file(install)["answers"], "conversations":crate::conversations::observed(install), "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "peak":icon::peak(&sum.bins), "svg":icon::svg(&icon::Data {paused:false,..icon_data(&sum)},dark), "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
     st["display"] = display;
@@ -4155,6 +4177,19 @@ mod tests {
         let ps = json!([{"issues": "u", "events": []}, {"issues": "v", "events": [], "since": 5}]);
         assert_eq!(summary(&ps.as_array().unwrap()[..1], (0, 1)).since, None, "no events cache: no since");
         assert_eq!(summary(ps.as_array().unwrap(), (0, 1)).since, Some(5));
+    }
+
+    // #2110 C2/CS5: thinning before the accepted-receipt overlay must not hide or lose answered history.
+    #[test]
+    fn history_paging_keeps_the_receipt_tail_across_source_lag() {
+        let old=json!({"question":{"text":"Earlier"},"answered":{"text":"Kept"}});
+        let source=json!([{"root":"invented","tasks":[{"n":7,"state":"ask","revision":30,"ops":[],"question":{"text":"Current"},"history":[old.clone(),old]}]}]);
+        let mut pending=crate::pending::Pending::default();pending.begin(&json!({"root":"invented","op":{"id":"answer","task":7,"revision":30,"text":"Ship"}}),&source);
+        assert!(pending.receipt(&json!({"answerReceipt":{"root":"invented","id":"answer","state":"accepted"},"sync":{"state":"doing","revision":31,"answered":{"by":"owner","text":"Ship"}}})));
+        let mut before=source.clone();before[0]["tasks"][0]["history_count"]=json!(2);before[0]["tasks"][0].as_object_mut().unwrap().remove("history");pending.apply(before.as_array_mut().unwrap());
+        assert_ne!(before[0]["tasks"][0]["history_count"],3,"before: the overlay's answered record was not in the projected total");
+        let mut after=source;after[0]["tasks"][0]["history_source_count"]=json!(2);after[0]["tasks"][0]["history_source_revision"]=json!(30);pending.apply(after.as_array_mut().unwrap());history_header(&mut after[0]["tasks"][0]);
+        let row=&after[0]["tasks"][0];assert_eq!(row["history_count"],3);assert_eq!(row["history_source_revision"],30);assert_eq!(row["history_source_count"],2);assert_eq!(row["history_tail"],true);assert_eq!(row["history"].as_array().unwrap().len(),1);assert_eq!(row["history"][0]["question"]["text"],"Current");assert_eq!(row["history"][0]["answered"]["text"],"Ship");
     }
 
     // Chain: #1712 events file -> project() -> Hour summary. Risk: a second ask of one attempt or a close in the

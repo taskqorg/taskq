@@ -79,9 +79,11 @@ async function historyCase(browser,html,runtime){
  a=await anchor();await settle();await near(a,'prepend');
  assert.equal(await page.locator('.sr-only[role=status]').first().innerText(),'Earlier messages loaded',runtime+': a prepend is announced briefly');
  // A1: font and width changes keep it too
- a=await anchor();await page.evaluate(()=>[...document.querySelectorAll('*')].find(e=>e.style?.getPropertyValue('--size'))?.style.setProperty('--size','20px'));await settle();await near(a,'font 20');
+ a=await anchor();state.font=20;await page.evaluate(s=>taskq.receive(s),state);await settle();assert.equal(await page.locator('.menu').evaluate(e=>getComputedStyle(e).fontSize),'20px');await near(a,'font 20');
+ // Font loading can change metrics without a status snapshot; the same paragraph owner must correct it.
+ a=await anchor();await page.locator('.menu').evaluate(e=>e.style.fontFamily='monospace');await settle();await near(a,'font metrics');await page.locator('.menu').evaluate(e=>e.style.fontFamily='');await settle();await near(a,'font metrics restored');
  a=await anchor();await page.setViewportSize({width:640,height:720});await settle();await near(a,'width 640');
- await page.setViewportSize({width:900,height:720});await page.evaluate(()=>[...document.querySelectorAll('*')].find(e=>e.style?.getPropertyValue('--size'))?.style.setProperty('--size','16px'));await settle();
+ await page.setViewportSize({width:900,height:720});state.font=16;await page.evaluate(s=>taskq.receive(s),state);await settle();
 
  // A2: new output below a reader of older text does not move it; Jump to latest is the visible way back
  a=await anchor();await page.evaluate(()=>history1742.append(6));

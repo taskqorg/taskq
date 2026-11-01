@@ -5,7 +5,7 @@ const now=Date.parse('2026-10-31T12:00:00Z');
 for(const bad of [null,undefined,'',0,-1,NaN,Infinity,{},'1793448000000','2026-10-31','2026-10-31T12:00:00','2026-02-30T12:00:00Z','2026-10-31T24:00:00Z','2026-10-31T12:00:00+25:00'])assert.equal(time.value(bad),null,String(bad));
 assert.equal(time.value('2026-10-31T19:00:00+07:00'),now);
 assert.equal(time.value(now),now);assert.equal(time.seconds(now/1000),now);assert.equal(time.seconds(String(now/1000)),null);
-for(const [delta,want]of [[0,'just now'],[-60000,'1 min. ago'],[-3600000,'1 hr. ago'],[-86399000,'23 hr. ago'],[-86400000,'1 day ago'],[86400000,'in 1 day'],[60000,'in 1 min.'],[1000,'in a moment']])assert.equal(time.label(now+delta,now),want);
+for(const [delta,want]of [[0,'<1m'],[-180000,'3m'],[-7200000,'2h'],[-345600000,'4d'],[-60000,'1m'],[-3600000,'1h'],[-86399000,'23h'],[-86400000,'1d'],[86400000,'in 1d'],[60000,'in 1m'],[1000,'in <1m']])assert.equal(time.label(now+delta,now),want);
 const unknown=time.stamp(null,'Tool','Native record has no timestamp');assert.match(unknown.props['aria-label'],/Tool.*unknown.*Native record/);
 const known=time.stamp('2026-10-31T19:00:00+07:00','Message');assert.equal(known.props['data-time-source'],'2026-10-31T19:00:00+07:00');assert.match(known.props.title,/2026.*\d\d:\d\d:\d\d.*GMT/);
 assert(known.props.title.endsWith(' · '+Intl.DateTimeFormat().resolvedOptions().timeZone));

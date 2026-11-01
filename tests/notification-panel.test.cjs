@@ -16,3 +16,17 @@ assert.equal(panel.groups([series(10,1000),{title:'Unrelated question',at:999},s
 assert.equal(panel.groups([series(11,1000),series(10,999)]).length,2,'invalid ordinal is never a series');
 assert.equal(panel.groups([{title:'Ordinary task',at:1000},{title:'Ordinary task',at:999}]).length,2);
 console.log('PASS M14 exact event/result identities, duplicate boards, read/clear and series boundaries');
+
+// #2110 M14: thread counts are independent of raw events; New and Needs me overlap without addition.
+const q={...project,tasks:[{n:4,title:'Current',state:'ask'}],events:Array.from({length:105},(_,i)=>[i+10,'blocked','run',4])};
+const report={...result,kind:'report',decision:'none'};
+let attention=panel.attention([q],[report],{entries:[]});assert.equal(attention.fresh.size,2);assert.equal(attention.needs.size,2);
+const read=Object.fromEntries(panel.rows([q],[report]).map(r=>[r.id,'cleared']));attention=panel.attention([q],[{...report,read:true}],{entries:[]},read);assert.equal(attention.fresh.size,0);assert.equal(attention.needs.size,2,'read/clear never answers a question or decides a report');
+q.tasks[0].conversation={id:'owner'};attention=panel.attention([q],[{...report,conversation:'owner'}],{entries:[]},{},[{id:'owner'}]);assert.deepEqual([...attention.fresh],['owner:owner']);assert.deepEqual([...attention.needs],['owner:owner'],'linked PM sources have one centre identity');
+// #2110 M14/TW5: a locally archived task leaves the entrance's Recent scope, while board ask truth remains.
+{
+ const p={root:'fixture',issues:'https://example.org/issues',tasks:[{n:7,state:'ask'}],events:[]};
+ const a=panel.attention([p],[],{entries:[{kind:'question',board:p.issues,task:7,archived:true,read:false}]});
+ assert.equal(a.needs.size,0,'archived question cannot produce an empty Needs me entrance');
+ assert.equal(p.tasks[0].state,'ask','local archive never answers the board question');
+}
