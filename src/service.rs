@@ -6333,7 +6333,9 @@ Open: none";
         for host in ["mac", "other"] {
             for role in ["worker", "reviewer"] {
                 let b = Fake::default();
-                let c = cfg("mac");
+                // #2137: quota failures are host-wide; each simulated host needs its own writable store.
+                let mut c = cfg("mac");
+                c.install=std::env::temp_dir().join(format!("taskq-recovered-quota-{}",crate::runtime::uuid()));
                 let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
                 let w = b.comment(n, &format!("taskq: spawn worker claude:s {host}")).unwrap();
                 let a = if role == "reviewer" {
@@ -6353,6 +6355,7 @@ Open: none";
                 assert!(b.comments(n).unwrap().iter().any(|c|c.body.starts_with("taskq: usage-limit attempt")));
                 s.pass().unwrap();
                 assert_eq!(b.comments(n).unwrap().iter().filter(|c|c.body.starts_with("taskq: usage-limit attempt")).count(),1);
+                let _=std::fs::remove_dir_all(&c.install);
             }
         }
     }
