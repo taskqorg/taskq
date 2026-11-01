@@ -675,6 +675,7 @@ pub fn releases_in_use(install: &Path) -> Option<Vec<String>> {
         },|_|"version-unknown");
         match version {Ok(version)=>keep.push(version),Err(_)=>unknown=true}
     }
+    match crate::runtime::protected_app_server::versions_in_use(install) {Ok(versions)=>keep.extend(versions),Err(_)=>unknown=true}
     (!unknown).then_some(keep)
 }
 

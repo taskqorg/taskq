@@ -39,7 +39,7 @@ fn validate(b:&Binding)->Res<()> {
     Ok(())
 }
 
-fn exchange(install:&Path,action:&str,value:&Value)->Res<Value> {
+pub(crate) fn exchange(install:&Path,action:&str,value:&Value)->Res<Value> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot reserve or release external slots".into());}
     if !matches!(action,"reserve"|"observe"|"release") {return Err("slot action must be reserve, observe or release".into());}
     let r:Request=serde_json::from_value(value.clone()).map_err(|_|"invalid local slot request")?;validate(&r.binding)?;
@@ -74,6 +74,27 @@ fn exchange(install:&Path,action:&str,value:&Value)->Res<Value> {
         result["stored_state"]=result["state"].clone();result["state"]=json!("unknown");result["reason"]=json!("fresh matching host readback required; reconcile the same identity");
     }
     Ok(result)
+}
+
+/// Protected launch consumes an already admitted slot; possession of its key grants no filesystem access.
+pub(crate) fn reserved(install:&Path,s:&resources::State,value:&Value,runtime:&str)->Res<String> {
+    let r:Request=serde_json::from_value(value.clone()).map_err(|_|"invalid local slot request")?;
+    validate(&r.binding)?;
+    let key=id(&r.binding);let op=s.ops.get(&key).ok_or("slot identity absent; no launch")?;
+    if r.key.len()!=64||!r.key.bytes().all(|c|c.is_ascii_hexdigit())||bound(op)?!=r.binding
+        ||op.bound["local_slot"]["key_hash"]!=digest(r.key.as_bytes()) {
+        return Err("slot belongs to another caller, payload or release key".into());
+    }
+    let service=host::service_status(install);let at=now()?;
+    if r.binding.runtime!=runtime||op.receipt["state"]!="reserved"||!active(op)||op.bound["local_slot"]["release"]!=false
+        ||service["state"]!="running"||service["fresh"]!=true||service["slots_protocol"]!=1||op.receipt["instance"]!=service["instance"]
+        ||op.receipt["at"].as_u64().is_none_or(|t|at<t||at-t>60)
+        ||crate::platform::boot_time()?.abs_diff(r.binding.boot)>2
+        ||coreq::process::identity(r.binding.pid).map_err(|_|"slot caller liveness unknown")?.as_ref()
+            !=Some(&Identity{pid:r.binding.pid,started:r.binding.started}) {
+        return Err("fresh reserved runtime slot and live caller required; retain occupancy".into());
+    }
+    Ok(key)
 }
 
 pub fn command(args:&crate::Args)->Res<()> {
@@ -325,5 +346,21 @@ mod tests {
         assert!(reconcile(&f.dir,&mut f.h,f.at,Ok(10),|_|Ok(false)).unwrap_err().contains("disappeared"));assert_eq!(f.h.occupied(),1);
         fs::write(&path,&original).unwrap();
         reconcile(&f.dir,&mut f.h,f.at,Ok(f.at as i64),|_|Ok(false)).unwrap();assert_eq!(f.h.occupied(),0);assert_eq!(f.stored()["state"],"released");
+    }
+    // Chain: R9 R12 §3 — protected native launches need authenticated fresh admission, not copied receipt text.
+    #[test]
+    fn protected_launch_keeps_slot_identity_and_unknown_occupancy() {
+        let mut f=Fixture::new();let boot=crate::platform::boot_time().unwrap();f.request["binding"]["boot"]=json!(boot);
+        f.call("reserve");reconcile(&f.dir,&mut f.h,f.at,Ok(boot),|_|Ok(true)).unwrap();
+        let dir=f.dir.clone();let check=|request:&Value|resources::within(&dir,resources::WAIT,|s|reserved(&dir,s,request,"codex"));
+        assert!(check(&f.request).is_ok());let mut changed=f.request.clone();changed["key"]=json!("b".repeat(64));assert!(check(&changed).is_err());
+        changed=f.request.clone();changed["binding"]["started"]=json!("foreign");assert!(check(&changed).is_err());
+        let mut service=crate::data::json(&f.dir.join("service")).unwrap().unwrap();let saved=service.clone();
+        service["instance"]=json!("foreign");fs::write(f.dir.join("service"),service.to_string()).unwrap();assert!(check(&f.request).is_err());
+        fs::write(f.dir.join("service"),saved.to_string()).unwrap();
+        reconcile(&f.dir,&mut f.h,f.at,Ok(boot),|_|Err("native liveness denied".into())).unwrap();
+        assert!(check(&f.request).is_err());assert_eq!(f.h.occupied(),1);
+        reconcile(&f.dir,&mut f.h,f.at,Ok(boot),|_|Ok(true)).unwrap();assert!(check(&f.request).is_ok());
+        f.call("release");assert!(check(&f.request).is_err());assert_eq!(f.h.occupied(),1,"cancellation does not attest tool exit until host readback");
     }
 }

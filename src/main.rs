@@ -106,6 +106,7 @@ const USAGE: &str = "taskq agents
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
  taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]
  taskq service onboard
+ taskq service app-server --action launch|observe|cancel --request JSON
  taskq service slots --identity PID | --action reserve|observe|release --request JSON [--json]
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
@@ -2572,7 +2573,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"channel"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"app-server"|"channel"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -2584,6 +2585,7 @@ fn service(args: &Args) -> Res<()> {
     if matches!(sub,"status"|"list") {return service_report(args);}
     if sub == "capacity" {return capacity_cmd(args);}
     if sub == "slots" {return external_slots::command(args);}
+    if sub == "app-server" {return runtime::protected_app_server::command(args);}
     if sub == "setup" {
         if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot request the host setup session".into());}
         if args.pos.len()!=2||args.all("runtime").len()>1||args.all("client").len()>1||args.flags.keys().any(|key|!["runtime","client","target","json"].contains(&key.as_str())) {

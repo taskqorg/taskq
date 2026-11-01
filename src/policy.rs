@@ -327,6 +327,8 @@ pub fn pin_rollback(install: &Path, version: &str) -> Option<String> {
 
 /// Add, replace or remove (`mode` none) one grant (the caller refuses workers); the revision moves by one; written atomically and read back.
 pub fn grant(install: &Path, rt: &str, mode: &str, project: Option<&Path>, by: &str, at: u64) -> Result<Policy, String> {
+    // Serialize revocation with the protected app-server's final authority check and native input.
+    let _authority = crate::resources::acquire(install, crate::resources::WAIT)?;
     if !crate::service::RUNTIMES.contains(&rt) || !(MODES.contains(&mode) || mode == "none") {
         return Err(format!("unknown runtime or mode: {rt} {mode}; modes: {}, none", MODES.join(", ")));
     }

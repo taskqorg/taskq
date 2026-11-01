@@ -162,7 +162,7 @@ impl Drop for Held {
 #[cfg(test)] pub(crate) const WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The host lock within `wait` (zero: one try); a timeout names the holder pid when `lock.holder` records one.
-fn acquire(install: &Path, wait: std::time::Duration) -> Res<Held> {
+pub(crate) fn acquire(install: &Path, wait: std::time::Duration) -> Res<Held> {
     poll(install, wait).map_err(|e| {
         let holder = fs::read_to_string(dir(install).join("lock.holder")).ok().and_then(|s| s.trim().parse::<u32>().ok()).map_or("holder unknown".into(), |pid| format!("held by pid {pid}"));
         format!("resources lock unavailable: {e}; waited {} ms, {holder}", wait.as_millis())
