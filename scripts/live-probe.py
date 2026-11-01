@@ -4,17 +4,24 @@ The candidate runs from an owned 0700 fixture with its own install and root; the
 grants, trust and client configuration are read, never written. Every file this script writes stays local.
 
   live-probe.py identity --repo CHECKOUT --from-install INSTALL --parent DIR      read-only host and access probe
-  live-probe.py prepare --sha SHA --exe BIN --repo CHECKOUT --from-install INSTALL --parent DIR --name HOST
+  live-probe.py build --sha SHA --repo CHECKOUT --out DIR [--minutes M]     one-job candidate build in an owned clean clone
+  live-probe.py prepare --build DIR --repo CHECKOUT --from-install INSTALL --parent DIR --name HOST
   live-probe.py tasks FIXTURE            admission check, then held add, readback and start by op id (label host-HOST)
   live-probe.py run FIXTURE [--minutes M] [--interrupt-on REGEX]    supervised candidate service, killed at deadline
   live-probe.py tray FIXTURE [--minutes M]                          supervised candidate app on the fixture install
   live-probe.py report FIXTURE           receipts, digests and the unchanged-state proof in FIXTURE/report.json
   live-probe.py cleanup FIXTURE          close fixture tasks, stop fixture runtimes, archive receipts, delete FIXTURE
 
-`prepare` writes FIXTURE/RUNBOOK.txt with this host's exact commands. It refuses when the checkout is not exactly
-SHA and clean, when BIN does not report a version, or when no existing Claude trust entry covers PARENT: it never
-changes trust, login or grants. PARENT must already sit under a trusted root, such as the checkout's `.worktrees`.
+`build` clones CHECKOUT into DIR/src (DIR must be new; the dirty primary checkout is only read), checks out SHA,
+runs `cargo build --release --locked -j 1` under a deadline and writes DIR/build.json: SHA, toolchain, binary path
+and SHA-256. `prepare` writes FIXTURE/RUNBOOK.txt with this host's exact commands. It refuses when the build source
+is not exactly SHA and clean, when the binary digest differs from build.json or it reports no version, or when no
+existing Claude trust entry covers PARENT: it never changes trust, login or grants. PARENT must already sit under a trusted root, such as the checkout's `.worktrees`.
 It also refuses a HOST name that any board heartbeat already carries, so no ordinary host can admit a fixture task.
+`prepare` and `run` first reconcile earlier probes: they refuse while another `probe-*` fixture folder exists under
+PARENT, while any process names one, or while an open board task titled `probe 2094` is listed; earlier
+`*-receipts.tar.gz` archives are listed and kept. Cleanup ownership: the probe ends only processes whose command
+line names its own fixture folder and Claude jobs whose folder is inside it; ordinary services and jobs never match.
 
 Why the ordinary host stays untouched: the fixture install has `claim: labelled` and its own host name, so only
 `host-HOST` tasks reach it and ordinary services skip them; a run outside an install never updates itself.
@@ -94,6 +101,65 @@ def save(d, m):
     json.dump(m, open(os.path.join(d, "probe.json"), "w"), indent=1)
 
 
+def reconcile(parent, repo, own=None):
+    """Earlier probe leftovers that must be resolved (by their own `cleanup`) before a fixture is made or launched."""
+    bad, mine = [], key(own) if own else None
+    for f in sorted(os.listdir(parent)) if os.path.isdir(parent) else []:
+        p = os.path.join(parent, f)
+        if f.startswith("probe-") and f.endswith("-receipts.tar.gz"):
+            print("kept receipts", p)
+        elif f.startswith("probe-") and os.path.isdir(p) and key(p) != mine:
+            bad.append(f"fixture {p} exists; run its `cleanup` first")
+    bad += [f"process {pid} names an earlier fixture: {cmd[:120]}" for pid, cmd in procs({"dir": os.path.join(parent, "probe-")})
+            if not (own and norm(own) in norm(cmd))]
+    try:
+        rows = json.load(open(os.path.join(repo, ".taskq", "status.json"))).get("tasks", [])
+    except (OSError, ValueError) as x:
+        return bad + [f"board task list unknown ({x})"]
+    own_n = set()
+    if own:
+        own_n = {t.get("n") for t in json.load(open(os.path.join(own, "probe.json"))).get("tasks", {}).values()}
+    bad += [f"open board task #{t.get('n')} {t.get('title')}; close it first" for t in rows
+            if str(t.get("title", "")).startswith("probe 2094") and str(t.get("state")).lower() != "closed" and t.get("n") not in own_n]
+    return bad
+
+
+def norm(s):
+    return s.replace("\\", "/").lower() if WIN else s
+
+
+def build(a):
+    out = os.path.abspath(a.out)
+    os.makedirs(out, mode=0o700)
+    src, target = os.path.join(out, "src"), os.path.join(out, "target")
+    subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", os.path.abspath(a.repo), src], check=True)
+    if run(["git", "-C", src, "cat-file", "-e", a.sha + "^{commit}"])[0] != 0:
+        _, origin = run(["git", "-C", a.repo, "remote", "get-url", "origin"])
+        subprocess.run(["git", "-C", src, "fetch", "--quiet", origin, a.sha], check=True)
+    subprocess.run(["git", "-C", src, "checkout", "--quiet", "--detach", a.sha], check=True)
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    e = {k: v for k, v in os.environ.items() if k not in STRIP}
+    e["CARGO_TARGET_DIR"] = target
+    with open(os.path.join(out, "build.log"), "w") as log:
+        p = subprocess.Popen(["cargo", "build", "--release", "--locked", "-j", "1", "--bin", "taskq"], cwd=src, env=e,
+                             stdout=log, stderr=subprocess.STDOUT, start_new_session=not WIN)
+        try:
+            rc = p.wait(a.minutes * 60)
+        except subprocess.TimeoutExpired:
+            kill_tree(p)
+            rc = "deadline"
+    exe = os.path.join(target, "release", "taskq.exe" if WIN else "taskq")
+    _, head = run(["git", "-C", src, "rev-parse", "HEAD"])
+    _, dirty = run(["git", "-C", src, "status", "--porcelain", "--untracked-files=no"])
+    r = {"sha": a.sha, "head": head, "clean": not dirty, "exit": rc, "started": started,
+         "finished": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "rustc": run(["rustc", "-V"])[1],
+         "cargo": run(["cargo", "-V"])[1], "src": src, "exe": exe, "exe_sha256": sha256(exe) if rc == 0 else None}
+    json.dump(r, open(os.path.join(out, "build.json"), "w"), indent=1)
+    print(json.dumps(r, indent=1))
+    if rc != 0 or head != a.sha or dirty:
+        sys.exit("build failed or source not clean at SHA; see build.log")
+
+
 def identity(a):
     _, cv = run(["claude", "--version"])
     _, xv = run(["codex", "--version"])
@@ -117,10 +183,17 @@ def identity(a):
 
 def prepare(a):
     parent, repo, src = os.path.abspath(a.parent), os.path.abspath(a.repo), os.path.abspath(a.from_install)
-    _, head = run(["git", "-C", repo, "rev-parse", "HEAD"])
-    _, dirty = run(["git", "-C", repo, "status", "--porcelain", "--untracked-files=no"])
-    if head != a.sha or dirty:
-        sys.exit(f"checkout is {head}{' with changes' if dirty else ''}, not clean {a.sha}")
+    b = json.load(open(os.path.join(os.path.abspath(a.build), "build.json")))
+    a.sha, a.exe = b["sha"], b["exe"]
+    _, head = run(["git", "-C", b["src"], "rev-parse", "HEAD"])
+    _, dirty = run(["git", "-C", b["src"], "status", "--porcelain", "--untracked-files=no"])
+    if head != a.sha or dirty or b.get("exit") != 0:
+        sys.exit(f"build source is {head}{' with changes' if dirty else ''}, exit {b.get('exit')}, not a clean {a.sha} build")
+    if sha256(a.exe) != b["exe_sha256"]:
+        sys.exit("candidate binary differs from build.json")
+    bad = reconcile(parent, repo)
+    if bad:
+        sys.exit("earlier probe not reconciled, nothing created:\n" + "\n".join(bad))
     rc, version = run([a.exe, "--version"])
     if rc != 0:
         sys.exit(f"candidate --version failed: {version}")
@@ -152,7 +225,7 @@ def prepare(a):
     host.update({"hosts": {socket.gethostname(): a.name}, "claim": "labelled", "limits": {"claude": 1, "codex": 1, "codex-app": 1}})
     json.dump(host, open(os.path.join(inst, "host.json"), "w"), indent=1)
     _, origin = run(["git", "-C", repo, "remote", "get-url", "origin"])
-    subprocess.run(["git", "clone", "--quiet", repo, root], check=True)
+    subprocess.run(["git", "clone", "--quiet", b["src"], root], check=True)
     subprocess.run(["git", "-C", root, "remote", "set-url", "origin", origin], check=True)
     os.makedirs(os.path.join(root, ".taskq"), exist_ok=True)
     open(os.path.join(root, ".taskq", "focus"), "w").write("all\n")
@@ -168,7 +241,7 @@ def prepare(a):
         if os.path.isfile(os.path.join(repo, f)):
             os.makedirs(os.path.dirname(os.path.join(root, f)), exist_ok=True)
             shutil.copyfile(os.path.join(repo, f), os.path.join(root, f))
-    m = {"dir": d, "name": a.name, "sha": a.sha, "exe": exe, "exe_sha256": sha256(exe), "version": version, "root": root,
+    m = {"dir": d, "name": a.name, "sha": a.sha, "exe": exe, "exe_sha256": sha256(exe), "build": b, "version": version, "root": root,
          "repo": repo, "from_install": src, "parent": parent, "trust": hits, "tasks": {}}
     m["before"] = snapshot(m)
     save(d, m)
@@ -176,7 +249,8 @@ def prepare(a):
     q6 = os.path.join(d, "q6")
     setup = (f'$env:TASKQ_INSTALL="{inst}"; $env:TASKQ_HOST="{a.name}"; & "{exe}" service setup --runtime claude --target "{q6}"' if WIN else
              f'env TASKQ_INSTALL="{inst}" TASKQ_HOST={a.name} "{exe}" service setup --runtime claude --target "{q6}"')
-    lines = [f"Fixture {d}", f"Candidate {a.sha} {version} sha256 {m['exe_sha256']}", "",
+    lines = [f"Fixture {d}", f"Candidate {a.sha} {version} sha256 {m['exe_sha256']} ({b['rustc']}, built {b['finished']})",
+             "Cleanup owns only processes whose command line names this fixture folder and Claude jobs inside it.", "",
              f'{me} run {d} --minutes 30 --interrupt-on "#[0-9]+ attempt [0-9]+ access claude"   # terminal 1: Q15 interrupt at the Claude launch, one restart',
              f"{me} tasks {d}                                 # terminal 2, once the fixture heartbeat shows: admission check, held, readback, start",
              "# answer both fixture asks on the board, then in terminal 1:",
@@ -332,6 +406,9 @@ def supervise(d, name, cmd, env, minutes, interrupt=None):
 
 def run_cmd(a):
     d, m, e = load(a.dir)
+    bad = reconcile(m["parent"], m["repo"], own=d)
+    if bad:
+        sys.exit("earlier probe not reconciled, service not launched:\n" + "\n".join(bad))
     supervise(d, "service", [m["exe"], "service", "run"], e, a.minutes, a.interrupt_on)
 
 
@@ -416,7 +493,6 @@ def procs(m):
     else:
         _, out = run(["ps", "-axww", "-o", "pid=,command="])
     # ponytail: command-line match only; a process that names nothing of the fixture is missed, add a cwd scan if one shows up
-    norm = (lambda s: s.replace("\\", "/").lower()) if WIN else (lambda s: s)
     want = norm(m["dir"])
     rows = [l.strip().split(" ", 1) for l in out.splitlines()]
     return [(int(r[0]), r[1]) for r in rows if len(r) == 2 and r[0].isdigit() and int(r[0]) != os.getpid() and want in norm(r[1])]
@@ -486,9 +562,13 @@ for name in ["identity", "prepare"]:
     q.add_argument("--from-install", required=True)
     q.add_argument("--parent", required=True)
     if name == "prepare":
-        q.add_argument("--sha", required=True)
-        q.add_argument("--exe", required=True)
+        q.add_argument("--build", required=True)
         q.add_argument("--name", required=True)
+q = s.add_parser("build")
+q.add_argument("--sha", required=True)
+q.add_argument("--repo", required=True)
+q.add_argument("--out", required=True)
+q.add_argument("--minutes", type=int, default=90)
 for name in ["tasks", "report", "cleanup"]:
     s.add_parser(name).add_argument("dir")
 for name in ["run", "tray"]:
@@ -498,4 +578,4 @@ for name in ["run", "tray"]:
     if name == "run":
         q.add_argument("--interrupt-on")
 a = p.parse_args()
-{"identity": identity, "prepare": prepare, "tasks": tasks, "run": run_cmd, "tray": tray, "report": report, "cleanup": cleanup}[a.cmd](a)
+{"identity": identity, "build": build, "prepare": prepare, "tasks": tasks, "run": run_cmd, "tray": tray, "report": report, "cleanup": cleanup}[a.cmd](a)
