@@ -4073,6 +4073,32 @@ Open: none")).unwrap();
         assert_eq!(host.lock().unwrap().sync(std::path::Path::new("unused"), vec![]), 2);
     }
 
+    // A2: scoped Uninstall drains one project while another retains work and admits its next job.
+    #[test]
+    fn project_uninstall_preserves_other_project_work_and_admission() {
+        let base=std::env::temp_dir().join(format!("taskq-project-uninstall-{}",crate::runtime::uuid()));
+        let policy=crate::host::Policy::parse(json!({"limits":{"claude":2},"load_gate":{"enabled":false}}),"invented").unwrap();
+        let host=std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(policy.clone()))));
+        let (ba,bb)=(Fake::default(),Fake::default());let exits=Exits::default();
+        let mut ca=cfg("invented");ca.root=base.join("a");ca.install=base.clone();let mut cb=ca.clone();cb.root=base.join("b");
+        for root in [&ca.root,&cb.root] {std::fs::create_dir_all(crate::dot(root)).unwrap();}
+        let (mut sa,mut sb)=(service(&ba,&ca,exits.clone()),service(&bb,&cb,exits.clone()));
+        bb.create("Already running","",&[TASK_LABEL.into()]).unwrap();sb.pass().unwrap();
+        let attempt=sb.kids[0].attempt;
+        for s in [&mut sa,&mut sb] {s.host=Some(host.clone());s.reload(Ok(policy.cap.clone()));s.sync_host();}
+        host.lock().unwrap().draining.insert(ca.root.clone());
+        let held=ba.create("Keep queued","",&[TASK_LABEL.into()]).unwrap();sa.pass().unwrap();sa.sync_host();
+        assert!(sa.kids.is_empty()&&crate::drained(&sa,&host.lock().unwrap()));
+        host.lock().unwrap().ready(&ca.root,false);
+        let next=bb.create("Next job","",&[TASK_LABEL.into()]).unwrap();sb.pass().unwrap();sb.sync_host();
+        assert_eq!(sb.kids.len(),2,"unrelated admission stays open: {:?}",sb.waits);
+        assert!(sb.kids.iter().any(|kid|kid.attempt==attempt),"the existing job keeps its attempt");
+        assert!(exits.borrow().iter().all(|(_,exit)|exit.borrow().is_none()),"no job was stopped");
+        assert!(entries(&ba,held).unwrap().iter().all(|entry|!entry.body.starts_with("taskq: spawn")));
+        assert!(entries(&bb,next).unwrap().iter().any(|entry|entry.body.starts_with("taskq: spawn")));
+        drop((sa,sb));std::fs::remove_dir_all(base).unwrap();
+    }
+
     // Chain: § 3 poisoned authority -> each project's retained handles -> verified slot rebuild.
     // Risk: clearing poison early drops another project's occupancy and allows a launch above the host limit.
     #[test]

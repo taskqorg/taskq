@@ -1522,10 +1522,25 @@ fn stage_owner(path: &Path, owner: &Value) -> Res<()> {
     unsafe extern "system" { fn SetFileSecurityW(path: *const u16, info: u32, descriptor: *const u8) -> i32; }
     let descriptor: Vec<u8> = owner.as_array().ok_or("migration ownership unknown")?.iter()
         .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()).ok_or("migration ownership corrupt")).collect::<Result<_, _>>()?;
+    // Self-relative SID slices avoid native pointer reads from a retained migration manifest.
+    fn sid(descriptor:&[u8],field:usize)->Res<&[u8]> {
+        if descriptor.len()<20||descriptor[0]!=1||descriptor[3]&0x80==0 {return Err("migration ownership descriptor corrupt".into());}
+        let offset=u32::from_le_bytes(descriptor[field..field+4].try_into().unwrap()) as usize;
+        if offset==0 {return Ok(&[]);}
+        let header=descriptor.get(offset..offset.saturating_add(8)).filter(|s|offset>=20&&s[0]==1&&s[1]<=15).ok_or("migration ownership SID corrupt")?;
+        descriptor.get(offset..offset.saturating_add(8+4*header[1] as usize)).ok_or_else(||"migration ownership SID truncated".into())
+    }
+    let current=ownership(path)?;
+    if &current==owner {return Ok(());}
+    let current:Vec<u8>=serde_json::from_value(current).map_err(|_|"migration ownership corrupt")?;
+    let mut information=4;
+    for (flag,field) in [(1,4),(2,8)] {
+        if sid(&descriptor,field)?!=sid(&current,field)? {information|=flag;}
+    }
     let control = descriptor.get(2..4).ok_or("migration ownership corrupt")?;
     let protected = u16::from_le_bytes([control[0], control[1]]) & 0x1000 != 0;
     let path: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    if unsafe { SetFileSecurityW(path.as_ptr(), 7 | if protected { 0x80000000 } else { 0x20000000 }, descriptor.as_ptr()) } == 0 {
+    if unsafe { SetFileSecurityW(path.as_ptr(), information | if protected { 0x80000000 } else { 0x20000000 }, descriptor.as_ptr()) } == 0 {
         return Err(format!("migration cannot preserve ownership: {}", std::io::Error::last_os_error()));
     }
     Ok(())
@@ -2490,6 +2505,91 @@ mod tests {
         assert_eq!(ownership(&path).unwrap(), expected);
         assert_eq!(Policy::read(&root).unwrap().cap.limits["codex"], 2);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn modify_only_windows_acl(path:&Path) {
+        // CI failed to load the Security module; use the framework ACL API directly.
+        let code=r#"$ErrorActionPreference='Stop';$p=$env:TASKQ_ACL_FIXTURE;$a=[IO.Directory]::GetAccessControl($p);$a.SetAccessRuleProtection($true,$false);$s=[Security.Principal.WindowsIdentity]::GetCurrent().User;$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($s,'TakeOwnership','ContainerInherit,ObjectInherit','None','Deny'));$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($s,'Modify','ContainerInherit,ObjectInherit','None','Allow'));[IO.Directory]::SetAccessControl($p,$a)"#;
+        let out=crate::platform::command("powershell").args(["-NoProfile","-NonInteractive","-Command",code]).env("TASKQ_ACL_FIXTURE",path).output().unwrap();
+        assert!(out.status.success(),"ACL fixture: {}",String::from_utf8_lossy(&out.stderr));
+    }
+
+    // R9/section 9: an ordinary owner can replace data and DACLs without WRITE_OWNER.
+    // Risk: unconditional owner/group copy rejects a CLI-written registry under a limited service token.
+    #[cfg(windows)]
+    #[test]
+    fn registry_editor_preserves_modify_only_windows_acl() {
+        for protected in [false,true] {
+            let base=temp("registry-modify-acl");let install=base.join("install");
+            let a=base.join("a");let b=base.join("b");
+            for p in [&install,&a,&b] {fs::create_dir_all(p).unwrap();}
+            modify_only_windows_acl(&install);
+            ProjectEdit::new(&install,&a,true).unwrap().commit().unwrap();
+            let path=install.join("projects");
+            if protected {
+                let code=r#"$ErrorActionPreference='Stop';$p=$env:TASKQ_ACL_FIXTURE;$a=[IO.File]::GetAccessControl($p);$a.SetAccessRuleProtection($true,$true);[IO.File]::SetAccessControl($p,$a)"#;
+                let out=crate::platform::command("powershell").args(["-NoProfile","-NonInteractive","-Command",code]).env("TASKQ_ACL_FIXTURE",&path).output().unwrap();
+                assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));
+            }
+            let expected=ownership(&path).unwrap();
+            ProjectEdit::new(&install,&b,true).unwrap().commit().unwrap();
+            assert_eq!(ownership(&path).unwrap(),expected,"registration preserves owner/group/DACL");
+            let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
+            publish_service(&install,&native,"registry-fixture").unwrap();
+            let (capture,guard)=crate::profile::tests::collecting(&install);
+            let request=crate::lifecycle::uninstall_review(&install,"registry-uninstall",Some(&a)).unwrap();
+            let received=crate::lifecycle::submit(&install,&request).unwrap();
+            assert!(crate::lifecycle::finish_project_uninstall(&install,"registry-uninstall","registry-fixture",false).unwrap_err().contains("project drain not observed"));
+            let mode=fs::metadata(&path).unwrap().permissions();let mut readonly=mode.clone();readonly.set_readonly(true);
+            fs::set_permissions(&path,readonly).unwrap();
+            assert!(crate::lifecycle::finish_project_uninstall(&install,"registry-uninstall","registry-fixture",true).is_err());
+            let applied=crate::lifecycle::receipt(&install,"registry-uninstall").unwrap().unwrap();
+            let retained_applied=crate::resources::try_with(&install,|state|Ok(state.ops["registry-uninstall"].receipt.clone())).unwrap();
+            assert_eq!(applied["state"],"applied");assert_eq!(applied["project_drained"],true);
+            assert!(applied.get("observed_receipt").is_none());
+            assert_eq!(projects(&install).unwrap().len(),2,"refused write retains both roots");
+            assert_eq!(ownership(&path).unwrap(),expected);
+            fs::set_permissions(&path,mode).unwrap();
+            crate::lifecycle::finish_project_uninstall(&install,"registry-uninstall","registry-fixture",true).unwrap();
+            assert_eq!(projects(&install).unwrap(),vec![b.canonicalize().unwrap()]);
+            assert_eq!(ownership(&path).unwrap(),expected,"removal preserves owner/group/DACL");
+            let observed=crate::lifecycle::receipt(&install,"registry-uninstall").unwrap().unwrap();
+            assert_eq!(observed["state"],"observed");assert_eq!(observed["unregistered"],true);
+            assert_eq!(observed["received_receipt"],received["received_receipt"]);
+            assert_eq!(crate::lifecycle::submit(&install,&request).unwrap(),observed);
+            // Resume the crash cut after registry commit but before the terminal receipt was saved.
+            crate::resources::with(&install,|state| {
+                state.ops.get_mut("registry-uninstall").unwrap().receipt=retained_applied.clone();Ok(())
+            }).unwrap();
+            let mut changed=expected.clone();changed[3]=json!(changed[3].as_u64().unwrap()^0x10);
+            stage_owner(&path,&changed).unwrap();
+            assert!(crate::lifecycle::finish_project_uninstall(&install,"registry-uninstall","registry-fixture",false).unwrap_err().contains("ownership differs"));
+            assert_eq!(crate::lifecycle::receipt(&install,"registry-uninstall").unwrap().unwrap(),applied,"changed ACL cannot invent observation after registry commit");
+            stage_owner(&path,&expected).unwrap();
+            crate::resources::with(&install,|state| {state.ops.get_mut("registry-uninstall").unwrap().receipt.as_object_mut().unwrap().remove("registry_owner");Ok(())}).unwrap();
+            assert!(crate::lifecycle::finish_project_uninstall(&install,"registry-uninstall","registry-fixture",false).unwrap_err().contains("original registry ownership unknown"));
+            crate::resources::with(&install,|state| {state.ops.get_mut("registry-uninstall").unwrap().receipt["registry_owner"]=expected.clone();Ok(())}).unwrap();
+            crate::lifecycle::finish_project_uninstall(&install,"registry-uninstall","registry-fixture",false).unwrap();
+            assert_eq!(crate::lifecycle::receipt(&install,"registry-uninstall").unwrap().unwrap(),observed);
+            assert!(crate::lifecycle::pending(&install).unwrap().is_none(),"completed project removal releases the lifecycle barrier");
+            capture.flush().unwrap();drop(guard);drop(capture);
+            let reader=coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3")).unwrap();
+            let events=reader.export_kinds(&["command.received","command.applied","command.observed"],0,0,1024).unwrap();
+            for field in ["received_receipt","applied_receipt","observed_receipt"] {
+                assert!(events["events"].as_array().unwrap().iter().any(|e|e["id"]==observed[field]),"missing native {field}");
+            }
+            println!("Windows registry protected={protected}: native owner {} {} receipt {observed}",native.pid,native.started);
+            drop(reader);
+            let mut foreign=expected.as_array().unwrap().clone();let offset=(foreign.len() as u32).to_le_bytes();
+            for (i,byte) in offset.into_iter().enumerate() {foreign[4+i]=json!(byte);}
+            foreign.extend([1,1,0,0,0,0,0,5,18,0,0,0].map(|byte|json!(byte))); // LocalSystem, not the ordinary owner.
+            assert!(stage_owner(&path,&json!(foreign)).is_err(),"a differing owner still requires ownership rights");
+            for i in 4..8 {foreign[i]=json!(255);}
+            assert!(stage_owner(&path,&json!(foreign)).unwrap_err().contains("SID corrupt"));
+            assert_eq!(ownership(&path).unwrap(),expected,"refused or corrupt ownership changes keep protection");
+            fs::remove_dir_all(base).unwrap();
+        }
     }
 
     // Chain A4: unknown or corrupt host policy -> refused launch, never fallback to project copies.
