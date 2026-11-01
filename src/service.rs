@@ -5707,6 +5707,85 @@ Open: none")).unwrap();
         }
     }
 
+    // A7/R12: real service admission -> installed Codex command -> native identity/exit, without a model turn.
+    // Board and capacity are isolated; read existing grants/options/login, never write host policy or submit a prompt.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "installed Codex admission qualification; no prompt/model or live board"]
+    fn fallback_2118_native_admission_without_model() {
+        use std::process::Stdio;
+        let install = crate::platform::default_install();
+        let host = crate::host::Policy::read(&install).unwrap();
+        let agents = crate::runtime::agents(&install);
+        for reviewer in [false, true] {
+            let root = std::env::temp_dir().join(format!("taskq-qualification-fallback-{}", crate::runtime::uuid()));
+            std::fs::create_dir_all(&root).unwrap();
+            let mut c = cfg("qualification");
+            host.apply(&mut c); // preserve actual model/effort/permission options
+            c.root = root.clone(); c.install = root.join("install"); c.external = true; c.labelled = false;
+            c.default_runtime = "claude".into(); // staged preference, not a host policy edit
+            c.limits = BTreeMap::from([("claude".into(), 0), ("codex".into(), 1)]);
+            let env = crate::runtime::Env { context: "", root: &root, exe: std::path::Path::new("taskq"), install: &install,
+                permission_mode: &c.permission_mode, codex: &c.codex, publish: "pr", board_env: &[], jobs: None };
+            let b = Fake::default();
+            let n = b.create("TaskQ Qualification fallback", "", &["taskq".into()]).unwrap();
+            if reviewer {
+                let a = b.comment(n, "taskq: spawn worker claude:qualification qualification").unwrap();
+                b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "isolated candidate")).unwrap();
+                release_execution(&b, n, a, a, "exit").unwrap();
+            }
+            let launches = std::cell::Cell::new(0);
+            let mut s = Service::new(&b, &c, "qualification", Box::new(|l| {
+                launches.set(launches.get() + 1);
+                assert_eq!(l.rt, "codex");
+                let access = crate::runtime::access(&env, &l.rt)?;
+                let mut command = crate::runtime::command(&env, l, &access)?;
+                let output = std::fs::File::create(root.join("native.log")).unwrap();
+                command.stdin(Stdio::piped()).stdout(output).stderr(std::fs::File::create(root.join("native.stderr")).unwrap());
+                // Keep stdin open in Child: launch the actual executor, stop before input/model submission.
+                command.spawn().map(|p| Box::new(p) as Box<dyn Proc>).map_err(|e| crate::runtime::StartError::io(e, Some("codex")))
+            }));
+            s.focus = vec!["all".into()];
+            s.login_status = Some(agents.clone());
+            s.refused_access = crate::policy::report(&install, &root, &c.permission_mode, &c.codex).into_iter()
+                .filter_map(|e| e.refused.map(|r| (e.runtime, r))).collect();
+            for rt in crate::runtime::agent_runtimes() {
+                if let Some(r) = crate::runtime::missing_cli(rt) { s.refused_access.insert(rt.to_string(), r); }
+            }
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                s.pass().unwrap();
+                assert_eq!(s.kids.len(), 1, "{:?}", s.snapshot.as_ref().map(|s| s.tasks.iter().map(|r| r.json()).collect::<Vec<_>>()));
+                let identity = s.kids[0].proc.native_identity().unwrap();
+                assert_eq!(s.kids[0].proc.exited().unwrap(), None);
+                let attempt = task(&b, n).attempt;
+                s.pass().unwrap();
+                assert_eq!(launches.get(), 1, "live execution cannot migrate or duplicate");
+                assert_eq!(task(&b, n).attempt, attempt);
+                let spawn = b.comments(n).unwrap().into_iter().find(|e| Some(e.id) == attempt).unwrap();
+                assert!(spawn.body.contains("fallback:") && spawn.body.contains("selected codex"));
+                let codex = agents.as_array().unwrap().iter().find(|r| r["runtime"] == "codex").unwrap();
+                println!("role={} version={} pid={} creation={:?} grant={} launches=1; {}",
+                    if reviewer {"reviewer"} else {"worker"}, codex["version"], identity.pid, identity,
+                    crate::runtime::access(&env, "codex").unwrap().line(), spawn.body);
+            }));
+            // End this fixture's attempt first (R11), then stop only its owned native process, even after failure.
+            b.comment(n, "taskq: later\nReason: qualification complete").unwrap();
+            for kid in &mut s.kids {
+                let identity = kid.proc.native_identity().unwrap();
+                kid.proc.kill().unwrap();
+                let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                while kid.proc.exited().unwrap().is_none() && std::time::Instant::now() < until { std::thread::sleep(std::time::Duration::from_millis(10)); }
+                assert!(kid.proc.exited().unwrap().is_some(), "native exit unconfirmed");
+                assert_eq!(coreq::process::identity(identity.pid).unwrap(), None);
+                println!("pid={} native exit confirmed; no prompt/model submitted", identity.pid);
+            }
+            drop(s);
+            assert!(std::fs::read(root.join("native.log")).unwrap_or_default().is_empty(), "no turn without input");
+            std::fs::remove_dir_all(root).unwrap();
+            if let Err(panic) = outcome { std::panic::resume_unwind(panic); }
+        }
+    }
+
     // Chain: § 4 Filter, host.json `default_runtime` codex (#1668) -> worker and reviewer claims -> verdict -> close.
     // Risk: a host without claude routes its reviews or unlabelled work to claude and waits forever, a full codex
     // review moves to a free claude slot, or a codex review takes another path to close.
