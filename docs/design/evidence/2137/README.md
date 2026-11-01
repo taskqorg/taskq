@@ -23,7 +23,23 @@ The affected usage-limit/account/golden-admission regressions retain spare/all-a
 
 Affected Settings/navigation/resource component checks and resource/workspace-route browser checks pass. Resource source integrity now uses the existing build-derived workspace manifest instead of committing a changed source hash; the fixture replay and other asset integrity checks remain.
 
-The rule-ID gate passes with the accepted owner notes. New quota admission semantics live under §4 and the existing linked capacity detail; the original §3 account-list text remains unchanged. The canonical Rust/integration/selftest/Node gate is recorded below when complete. PR merge-result CI remains a publication gate under R12.
+The rule-ID gate passes with the accepted owner notes. New quota admission semantics live under §4 and the existing linked capacity detail; the original §3 account-list text remains unchanged. PR merge-result CI remains a publication gate under R12.
+
+### Final local gate
+
+The canonical command `python3 scripts/check.py --base 0d050c51c2e1102c4b1a8d7af401f9beb362e54b` stopped at Rust unit checks after 365.469 seconds (900-second budget): 843 passed, 8 failed, 40 ignored. Seven protected app-server fixtures could not create their temporary `.codex/config.toml`: `PermissionDenied`, `Operation not permitted`. These are **sandbox-blocked**, not PASS. A separately isolated reproduction confirmed the same fixture setup refusal.
+
+The eighth failure expected the old generic `steer attempt` header. The accepted quota continuation now writes `steer quota attempt`; the corrected assertion retains the same attempt, retry, no-`gone` and original-account hold protections. The same `usage_limit` filter passes afterward: 5 passed. Final `balancing_`: 8 passed. Full-suite success remains unclaimed; no sandbox restriction was weakened or bypassed.
+
+The downstream checks that the stopped gate did not reach ran separately against the final source:
+
+- `cargo test --locked --test integration`: 22 passed, 1 ignored, 1 **sandbox-blocked**. The existing read-only telemetry case refused nested `sandbox-exec` with `sandbox_apply: Operation not permitted`.
+- `TASKQ_SELFTEST_OFFLINE=1 cargo run --locked -- selftest`, in a temporary install: PASS, 120 golden traces, formats and 8 committed staged telemetry observations. Board and native tools remain explicitly unknown.
+- All 37 `tests/*.test.cjs` commands, README shot check/update instruments and release-tag/exact-source release instruments: PASS (92.8 seconds for this supplemental selection).
+- Final `tray-resources`, `workspace-route` and `settings-content` browser instruments: PASS; Settings retains all 104 cells.
+- Final contract lint, rule-ID gate and whitespace checks: PASS.
+
+A final terminology readback found the legacy editor's `Edit work mode` button. After changing it to `Edit Balancing`, the resource component check, fixture render assertion and final browser selection pass. The isolated legacy renderer was also visually inspected. The usage-limit documentation now points to same-session recovery rather than the superseded retry behavior.
 
 ## Visual review
 
@@ -31,4 +47,4 @@ Inspected the actual-size dark 320px/18px [Settings](after-settings.png) and [Ba
 
 ## Remaining work
 
-Complete the canonical gate and PR handoff; the reviewer owns merge-result CI. Native subscriptions, OS behavior and telemetry delivery are unverified. Rollback is the unmerged task branch; the record preserves legacy quota aggregate fields, but mixed-version multi-window/probe behavior requires coordinated host adoption.
+Local host restrictions leave eight fixture checks sandbox-blocked; the reviewer owns exact-candidate merge-result CI and publication. Native subscriptions, OS behavior and telemetry delivery are unverified. Rollback is the unmerged task branch; the record preserves legacy quota aggregate fields, but mixed-version multi-window/probe behavior requires coordinated host adoption.

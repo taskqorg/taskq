@@ -191,13 +191,13 @@ Parallel workers on one host share its CPUs for Rust builds. Each cargo run defa
 
 A worker or reviewer whose runtime reports a usage or quota limit before any work starts ends with `usage-limit attempt <id>` (taskq.md § 2) instead of a plain `gone`:
 
-- Detection reads the attempt log from the start. Claude: an `assistant` line with `apiError` `usage_limit_reached` or rejected `quotaLimits`, before any assistant output without an error; the reset is `resetsAt` (epoch seconds) when present. Codex: an `error` or `turn.failed` message naming a usage limit before any `item.*` event; Codex reports no reset that taskq reads.
+- Detection reads the attempt log from the start. Claude: an `assistant` line with `apiError` `usage_limit_reached` or rejected `quotaLimits`, before any assistant output without an error; the reset is `resetsAt` (epoch seconds) when present. Codex: an `error` or `turn.failed` message naming a usage limit before any `item.*` event; A Codex pre-work error may omit its reset; separate structured rate-limit events can provide window/reset facts ([quota windows](#runtime-accounts)).
 - The entry keeps the retry count and adds no limit card. In `doing` the task goes to `ready`; in `review` only the reviewer ends and the result stays. N-1 ignores the event and keeps the attempt live: stop old services and children and upgrade every board host before resuming (§ 9).
 - A host with a spare enabled [runtime account](#runtime-accounts) moves the runtime to that account instead of holding it.
 - Otherwise the service holds that runtime on this host: it has no free slot for claims, reviewers or resumes, so a task that allows another runtime starts there (taskq.md § 4 Filter). The hold ends when board time passes the reset, else the next probe 30 minutes after the limit; the next admission pass then starts the held work without an owner action.
 - The hold is cached per project and rebuilt from release evidence on open tasks after restart; no local task store is added (R1).
 - The heartbeat lists `limit <rt> until <time>` (reported reset) or `limit <rt> probe <time>` (next probe); `taskq status` Hosts shows ` <rt> limit until|probe <time>`, and capacity `reasons` include `usage-limit`.
-- A limit reported after work started keeps the plain `gone` or `failed` path and counts as a retry.
+- A CLI subscription limit after work started preserves its attempt/session/account and waits for verified exit and same-session continuation ([quota windows](#runtime-accounts)); it never spends a code-defect retry. Unsupported native continuation waits without replay or migration.
 
 Release evidence records `usage-limit until <epoch>` or `usage-limit probe <epoch>` before outcome publication. Recovery reuses that deadline; the owning host also classifies its local log if an older release lacks it. Another host preserves the outcome without holding its own runtime.
 

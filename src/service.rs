@@ -6106,7 +6106,7 @@ Open: none";
         s.pass().unwrap();
         let kept = task(&b,only);
         assert_eq!((kept.state,kept.retries),(State::Doing,0),"#2137 A7: mid-work quota keeps work and its attempt");
-        assert!(b.comments(only).unwrap().iter().any(|c|c.body.starts_with("taskq: steer attempt")&&c.body.contains("same task and native session")));
+        assert!(b.comments(only).unwrap().iter().any(|c|c.body.starts_with("taskq: steer quota attempt")&&c.body.contains("same task and native session")));
         assert!(!b.comments(only).unwrap().iter().any(|c|c.body.starts_with("taskq: gone")),"quota is not a code defect");
         assert!(crate::runtime::accounts::Host::read(&c.install).active("claude",reset).is_none(),"expired observed reset uses a bounded unknown-reset probe");
         let _ = std::fs::remove_dir_all(&root);

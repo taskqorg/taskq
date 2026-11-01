@@ -347,7 +347,7 @@ workRender:function(groups, w, cap, now, host) {
       const done = Object.values(ws.each).every(s => s === 'applied' || s === 'rejected');
       return h + (done ? '<button type="button" data-rsc="dismiss">Done</button>' : '') + '</section>';
     }
-    if (st === 'view' || st === 'read-only') return h + '<button type="button" data-rsc="open"' + (st === 'view' ? '' : ' disabled') + '>Edit work mode</button>' +
+    if (st === 'view' || st === 'read-only') return h + '<button type="button" data-rsc="open"' + (st === 'view' ? '' : ' disabled') + '>Edit Balancing</button>' +
       (st === 'read-only' ? '<p class="rsc-muted">' + (sel.length ? 'A selected project is read-only here' : 'Select projects to change') + '</p>' : '') + '</section>';
     if (st === 'review') return h + '<div class="rsc-review" role="alert"><p>' + esc('Apply on ' + (host || 'this host') + '?') + '</p>' +
       sel.map(g => { const r = review(g, d); return '<p>' + esc((g.labels && g.labels.project || g.key) + ': ' + (r.length ? r.join(', ') : 'unchanged')) + '</p>'; }).join('') +
