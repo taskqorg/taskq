@@ -526,25 +526,34 @@ pub(crate) fn cli(rt: &str, access: &crate::policy::Effective, env: &Env) -> Res
 }
 
 pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Result<Command, String> {
-    let mut c = cli(&l.rt, access, env)?;
     let codex = access.codex.as_deref().unwrap_or(env.codex);
     let mode = access.claude.as_deref().unwrap_or(env.permission_mode);
     let build = build_cache_for(&l.rt, access, env);
-    match (l.rt.as_str(), &l.resume) {
-        ("claude", r) => {
-            c.args(["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l, env.jobs, build.as_deref())]);
-            if r.is_some() { c.args(["--resume", &l.session]) } else { c.args(["--session-id", &l.session]) };
-        }
-        (_, None) => {
-            c.args(["exec", "--json"]).args(codex).arg("-C").arg(env.root).arg("-");
-        }
-        (_, Some(_)) => {
-            c.args(["exec", "--json"]).args(codex).args(["resume", &l.session, "-"]);
-        }
-    }
-    environment(env, l, &mut c);
+    let args: Vec<std::ffi::OsString> = if l.rt == "claude" {
+        ["--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l, env.jobs, build.as_deref())].map(Into::into).to_vec()
+    } else { codex.iter().map(Into::into).collect() };
+    let mut c = coreq::agent::command(cli(&l.rt, access, env)?, &spec(env, l, env.root.into(), args));
     if let Some(p) = build { c.env("RUSTC_WRAPPER", p); }
     Ok(c)
+}
+
+/// The CoreQ `agent` turn of launch `l` (§ 8 Spawn and resume): TaskQ's attempt variables, board secrets, compile
+/// jobs and the § 3 account home the attempt log names (`default` keeps the service's own).
+fn spec(env: &Env, l: &Launch, root: PathBuf, args: Vec<std::ffi::OsString>) -> coreq::agent::Spec {
+    let mut vars: Vec<(String, String)> = vec![("TASKQ_TASK".into(), l.task.to_string()), ("TASKQ_ATTEMPT".into(), l.attempt.to_string()),
+        ("TASKQ_ROLE".into(), l.role.clone()), ("TASKQ_ROOT".into(), env.root.to_string_lossy().into())];
+    vars.extend(env.board_env.iter().cloned());
+    if let Some(jobs) = env.jobs { vars.push(("CARGO_BUILD_JOBS".into(), jobs.to_string())); }
+    let home = crate::runtime::accounts::applies(&l.rt).then(|| crate::runtime::accounts::log_home(&l.rt, &log_path(env.root, l))).flatten();
+    coreq::agent::Spec { client: client(&l.rt), root, session: l.session.clone(), resume: l.resume.is_some(), args, home,
+        env: vars.into_iter().map(|(k, v)| (k.into(), v.into())).collect() }
+}
+
+fn client(rt: &str) -> coreq::agent::Client { if of(rt).codex { coreq::agent::Client::Codex } else { coreq::agent::Client::Claude } }
+
+/// A Claude turn spec without TaskQ arguments: native job reads and stops.
+fn claude_spec(root: &Path, home: Option<&Path>) -> coreq::agent::Spec {
+    coreq::agent::Spec { client: coreq::agent::Client::Claude, root: root.into(), session: String::new(), resume: false, args: vec![], home: home.map(Into::into), env: vec![] }
 }
 
 /// Build cache (docs/testing.md#build-cache): `sccache` on the service's PATH, unless the service inherits
@@ -577,22 +586,6 @@ fn build_open(rt: &str, access: &crate::policy::Effective, env: &Env) -> bool {
     let open = !of(rt).codex || codex.iter().any(|a| a == "--dangerously-bypass-approvals-and-sandbox")
         || crate::policy::codex_sandbox(codex) == Some("danger-full-access");
     open && !access.windows && !access.linux
-}
-
-fn environment(env: &Env, l: &Launch, c: &mut Command) {
-    c.current_dir(env.root)
-        .env_remove("CLAUDE_CODE_SESSION_ID")
-        .env_remove("CODEX_THREAD_ID")
-        .env("TASKQ_TASK", l.task.to_string())
-        .env("TASKQ_ATTEMPT", l.attempt.to_string())
-        .env("TASKQ_ROLE", &l.role)
-        .env("TASKQ_ROOT", env.root)
-        .envs(env.board_env.iter().cloned());
-    if let Some(jobs) = env.jobs { c.env("CARGO_BUILD_JOBS", jobs.to_string()); }
-    // § 3 Runtime accounts: the attempt log names the login home; `default` keeps the service's own.
-    if crate::runtime::accounts::applies(&l.rt) {
-        if let Some(home) = crate::runtime::accounts::log_home(&l.rt, &log_path(env.root, l)) { c.env(crate::runtime::accounts::var(&l.rt), home); }
-    }
 }
 
 const FORMATS: &str = "Put each `--text` field on its own line. The commands render and check the taskq.md templates and limits (§ 2 Ask card,\n\
@@ -1428,11 +1421,9 @@ pub(crate) fn claude_agents(root: &Path) -> Result<Vec<serde_json::Value>, Strin
 
 /// Claude's native jobs in a § 3 runtime account's home (`None`: the service's own home).
 fn claude_agents_in(root: &Path, home: Option<&Path>) -> Result<Vec<serde_json::Value>, String> {
-    let root = root.to_str().ok_or("Claude project path is not UTF-8")?;
-    let (ok, out) = probe_in("runtime.agents", &which("claude"), &["agents", "--json", "--all", "--cwd", root], home.map(|h| ("CLAUDE_CONFIG_DIR", h)))
-        .ok_or("Claude agents unavailable or timed out")?;
-    if !ok { return Err(format!("claude agents: {out}")); }
-    serde_json::from_str(&out).map_err(|e| format!("claude agents: {e}"))
+    let budget = observation_left(std::time::Duration::from_secs(10));
+    if budget.is_zero() { return Err("Claude agents unavailable or timed out".into()); }
+    coreq::agent::background_jobs(crate::platform::command(which("claude")), &claude_spec(root, home), budget).map_err(|e| format!("claude agents: {e}"))
 }
 
 pub(crate) fn claude_home() -> Option<PathBuf> {
@@ -1574,9 +1565,11 @@ fn claude_stop(root: &Path, id: &str, known: Option<&coreq::process::Identity>, 
     }
     // An unknown outcome must not prevent requesting native cancellation of the known job.
     if matches!(claude_stopped(row, known),Ok(true)) { return Ok(()); }
-    let (ok, out) = probe_in("runtime.stop", &which("claude"), &["stop", id], home.map(|h| ("CLAUDE_CONFIG_DIR", h)))
-        .ok_or("Claude stop unavailable or timed out; state unknown")?;
-    if !ok { return Err(format!("claude stop: {out}")); }
+    let budget = observation_left(std::time::Duration::from_secs(10));
+    if budget.is_zero() { return Err("Claude stop unavailable or timed out; state unknown".into()); }
+    let spec = claude_spec(root, home);
+    coreq::agent::background_stop(crate::platform::command(which("claude")), &spec, &coreq::agent::BackgroundJob::read(row, &spec, id)?, budget)
+        .map_err(|e| format!("claude stop: {e}"))?;
     // Native stop acknowledges the request first; the service owns later retries/readback.
     let rows = claude_agents_in(root, home)?;
     let row = rows.iter().find(|v| v["id"] == id).ok_or("stopped Claude session disappeared; state unknown")?;
@@ -1659,16 +1652,17 @@ impl ClaudeTurn {
         }
         std::fs::create_dir_all(log.parent().ok_or("missing log directory")?).map_err(|e| e.to_string())?;
         let mut c = executable(which("claude"), access, env)?;
-        environment(env, l, &mut c);
         let (input, input_file, path) = claude_input(&root, text, Some(l))?;
         bind_input(log,l,&path,&input,serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}))?;
-        c.current_dir(&root).arg("--bg");
-        if l.resume.is_some() { c.args(["--resume", &l.session]); }
-        else { c.args(["--settings", &compact_settings(&root, env.install, l, env.jobs, build_cache_for(&l.rt, access, env).as_deref()), "--name", &session_name(l), "--remote-control", &session_name(l), "--permission-mode", permission_mode]); }
-        if l.role == "operator" { for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"] { c.env_remove(k); } }
+        let args = ["--settings", &compact_settings(&root, env.install, l, env.jobs, build_cache_for(&l.rt, access, env).as_deref()), "--name", &session_name(l), "--remote-control", &session_name(l), "--permission-mode", permission_mode];
+        let mut spec = spec(env, l, root.clone(), args.map(Into::into).to_vec());
+        if l.role == "operator" {
+            for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"] { c.env_remove(k); }
+            spec.env.retain(|(k, _)| !["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"].iter().any(|r| k == r));
+        }
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),
             announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, launch_error:None };
-        let out=coreq::process::exchange("runtime.claude-launch", &mut c, turn.input.as_bytes(), std::time::Duration::from_secs(30));
+        let out=coreq::agent::background_launch(c, &spec, &turn.input, std::time::Duration::from_secs(30))?;
         turn.finish_launch(out)?;
         Ok(turn)
     }
@@ -1983,11 +1977,9 @@ impl AppTurn {
 pub(crate) fn app_submit(thread: &str, text: &str) -> Result<(), String> {
     open_link(&thread_url(thread), true).map_err(|e| format!("codex queue failed for thread {thread}: {e}"))?;
     // #1856: the error names the queue call's exit and stderr; the brief itself stays out of it
-    match coreq::process::output("runtime.app-submit", codex_direct().args(["queue", "--thread", thread, "--message", text]), std::time::Duration::from_secs(10)) {
-        Ok(_) => Ok(()),
-        Err(coreq::process::Failure::Exit(o)) => Err(format!("codex queue failed for thread {thread}: {}: {}", o.status, String::from_utf8_lossy(&o.stderr).trim())),
-        Err(e) => Err(format!("codex queue failed for thread {thread}: {e}")),
-    }
+    // ponytail: the queue call has no project; any existing directory serves as its working directory
+    let spec = coreq::agent::Spec { client: coreq::agent::Client::Codex, root: std::env::temp_dir(), session: thread.into(), resume: true, args: vec![], home: None, env: vec![] };
+    coreq::agent::app_queue(codex_direct(), &spec, text, std::time::Duration::from_secs(10)).map(drop).map_err(|e| format!("codex queue failed for thread {thread}: {e}"))
 }
 
 /// Codex without a `cmd` in between: an npm `codex.cmd` shim runs its `codex.js` through `node`, since `cmd` caps a
