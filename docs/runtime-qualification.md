@@ -476,12 +476,13 @@ Historical resume remains unsupported by the current execution protocol: the ori
 
 ### Historical writer refusal: decision draft for #2143
 
-**Proposal only; not contract detail or implemented recovery.** Source request:
+**Approved conditional design; not implemented recovery or contract detail.** Source request:
 [#2143, final steer](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6561990402).
-This draft separates two approvals. Candidate `518daf54` proposes the immediate
-blocked-status rule under R6, §3, §4 and M3.13. The additional protocol below
-requires a separate owner choice; approving status alone grants no legacy recovery.
-Neither choice authorizes changing the original task's receipts or controlling its app.
+The [owner selected option 1](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6562359732):
+the immediate blocked-status candidate `518daf54` under R6, §3, §4 and M3.13,
+plus the conditional protocol below. Its first step is attributable historical
+proof; approval does not supply missing evidence or authorize changing original
+receipts, controlling the app, or implementing a weaker recovery exception.
 
 The historical target is `taskqorg/agentq#190`, attempt `6560385070`, execution
 `6561176475`, input boundary `6561174165`, host `mac`, runtime `codex`, native
@@ -600,6 +601,48 @@ zero model turns. These observations qualify the isolated refusal boundary,
 not this proposed receipt, the installed service or the historical #190 input.
 No merge-group result or real #190 recovery is claimed. Only this decision draft
 is added in this continuation; no legacy recovery code or live action is applied.
+
+#### Proof feasibility after the owner answer
+
+Read-only readback after answer `6562359732` confirmed the original immutable
+board observations: intent `6561176475` at `2026-11-01T17:11:17Z`, input boundary
+`6561174165`, and Exit `6561179427` at `17:11:32Z`. The later PM narrative about
+pre-session refusal is not a native receipt. The exact native history still has
+only the earlier turn (`task_started` at `16:03:52.529Z`, `task_complete` at
+`16:07:33.983Z`); current lock readback names writer PID `10165`. Neither fact
+attributes the failed CLI invocation or proves its input was not submitted.
+
+| Required proof | Available in this worker's permitted sources |
+|---|---|
+| Exact board task/attempt/execution/input boundary and Exit | Confirmed from the original trusted unedited comments |
+| Original thread history and current writer | Read-only native observations; useful context, insufficient for no-start |
+| Contemporaneous execution-to-process launch record, PID creation identity, original account, complete output segment boundaries | Unavailable in the permitted TaskQ checkout and native thread history; a PM narrative and copied command output cannot substitute |
+| Original client artifact digest and matching qualified verifier | Original invocation digest unavailable; the current installed client or an isolated probe cannot establish old artifact identity |
+| Compatible board hosts for receipt consumption | Not established; no cutover or host changes authorized or performed |
+
+The selected option explicitly keeps #190 fenced when a required field cannot
+be established. This feasibility stop precedes implementing the new receipt;
+there is no legacy importer, weakened verifier or fabricated manifest. Existing
+prevention and immediate status remain independently reviewable. Core still
+ignores the proposed `input-refused` kind, so no service gains legacy replay
+authority from this design or from the owner answer.
+
+Concrete safe owner action: make the original preserved host launch evidence
+available for read-only verification of execution `6561176475`, including native
+process creation identity, account, expected thread, complete output range and
+the original client artifact identity. Do not construct those facts from current
+idle/history/lock state. This worker is restricted to the TaskQ project, native
+Codex/Claude state and OS temporary files; it has not opened the sibling project's
+host launch/output files. Their absence has **not** been established. If the
+original evidence cannot be recovered, no same-input retry is authorized by
+this decision; retain the pending answer, tree, session and Exit unchanged.
+
+The seven previously sandbox-blocked protected-adapter tests were retried once
+as a focused module after the owner answer: one passed, seven again failed at
+native boundary setup with `Operation not permitted`. No assertion or sandbox
+policy was changed. This remains sandbox-blocked, not a product pass or a new
+request for permissions. Installed-service recovery and merge-result CI remain
+unknown; the historical proof gap is independent of those sandbox failures.
 
 | Adapter | Existing evidence | What it proves | Missing boundary and smallest change | Unknown and recovery action |
 |---|---|---|---|---|
