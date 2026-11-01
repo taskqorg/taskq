@@ -7,7 +7,7 @@ module.exports=execution.module('taskDashboard',{
  outcome:function(t){return t.outcome==='success'&&typeof t.merged==='string'&&t.merged?['git-merge','review','Merged']:outcomes[t.outcome]||outcomes.unknown;},
  // P-W4: `owned` is the View window surface; the menu sends `views-open` when native offers that window, else keeps the overlay.
  create:function(view,{menu,present,send,app,owned=false,window=globalThis,document=window.document}){
-  const crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;let restore=true,requests=0;const pinReads=new Map();
+  const crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;let restore=true,requests=0,heldOffer=null,heldReview=null;const pinReads=new Map();
   const api=execution.module('taskDashboard.instance',{
    model:function(){const m=view.dashboard||(view.dashboard=views.normalize(null,{taskFilter:view.taskFilter}));m.collapsed=m.collapsed.filter(id=>view.S.projects.some(p=>views.identity(p)===id));return m;},
    current:function(){return views.current(api.model());},
@@ -18,6 +18,13 @@ module.exports=execution.module('taskDashboard',{
    live:function(){return app.unique(view.S.projects.flatMap(app.tasks)).filter(t=>t.state!=='closed');},
    ref:function(t){return t.boardIdentity+'#'+t.n;},
    rows:function(){return app.unique(api.projects().flatMap(app.tasks)).filter(t=>t.state!=='closed'&&views.matches(t,api.criteria().query)).sort(views.compare);},
+   heldScope:function(){
+    const c=api.criteria(),ps=api.projects(),targets=api.rows().filter(t=>t.state==='held').map(t=>({key:t.key,revision:t.revision,label:t.project+' #'+t.n+' '+t.title}));
+    const known=ps.length>0&&ps.every(p=>p.alive===true&&p.complete===true&&p.tasks_live!==false&&!p.partial?.length&&!view.S.display.all.partial.includes(p.name))&&c.projects.every(id=>ps.some(p=>views.identity(p)===id))&&targets.every(t=>Number.isSafeInteger(t.revision));
+    const scope=ps.map(p=>p.name).join(', ')+' · view '+api.current().name+' · '+(c.query?'search “'+c.query+'”':'all searches');
+    return {targets,known,scope,signature:JSON.stringify([api.current().id,c.projects,c.query,targets])};
+   },
+   admissionReview:function(){return heldReview&&h('section',{class:'held-review',role:'region','aria-label':'Review Held admission'},h('strong',null,'Start '+heldReview.targets.length+' held'),h('p',null,heldReview.scope),h('p',{class:'meta'},'Admit only these drafts. Existing focus, search and view stay unchanged.'),h('ul',null,heldReview.targets.map(t=>h('li',{key:t.key},h('a',{href:t.key,'data-url':t.key},t.label),h('span',{class:'meta'},' · revision '+t.revision)))),heldReview.error&&h('p',{role:'alert'},heldReview.error),heldReview.sent&&h('p',{role:'status'},'Start requested once; check each receipt below.'),h('div',{class:'row-actions'},h('button',{'data-a':'held-confirm',disabled:!!heldReview.sent},'Confirm Start '+heldReview.targets.length+' held'),h('button',{'data-a':'held-cancel'},heldReview.sent?'Close Held admission':'Cancel Held admission')));},
    anchor:function(target){const r=target.getBoundingClientRect();return {left:r.left,top:r.top,bottom:r.bottom};},
    // MP13: details open only from click, Enter or Space on the identity (native button activation); `focus` moves focus into them.
    open:function(kind,target,key=null,focus=true){view.popup={kind,key,anchor:api.anchor(target)};if(kind==='task')api.current().open=key;present();if(focus)menu.querySelector('#taskq-question-details,#taskq-popover')?.focus({preventScroll:true});},
@@ -71,7 +78,9 @@ module.exports=execution.module('taskDashboard',{
      const id=views.identity(p),group=rows.filter(t=>t.boardIdentity===id),sources=(loaded.some(q=>views.identity(q)===id)?loaded:ps).filter(q=>views.identity(q)===id),reason=sources.flatMap(q=>[...(q.partial||[]),...(q.complete!==true||q.tasks_live===false?[q.error||'Project snapshot incomplete or stale']:[]),...(view.S.display.all.partial.includes(q.name)?['Project task data incomplete']:[])]).join('; ');
      return group.length?h('section',{class:'all-tasks-project',key:id},api.projectHeader(p,matching.filter(t=>t.boardIdentity===id).length,live.filter(t=>t.boardIdentity===id),reason),h('div',{class:'project-tasks',id:'project-tasks-'+encodeURIComponent(id),hidden:api.model().collapsed.includes(id)},group.map(t=>app.taskRow(t,false)))):null;
     });
-    return h(Fragment,null,api.pins(),api.bar(),h('header',{class:'filter-header tqp'},h('div',{class:'state-filters',dangerouslySetInnerHTML:{__html:blocks.counters(counts.counts,'','Selected projects',partial,c.states,counts.open)}}),rows.filter(t=>t.state==='held').length>1&&h('span',{class:'held-shortcut'},app.startButton(rows))),errors.map(reason=>h('p',{class:'meta',role:'status',key:reason},reason)),app.answerNotices(),rows.length?listing:h('div',{class:'body meta'},!known?'Tasks unknown':'No matching tasks',' ',h('button',{'data-a':'filter-reset'},'Reset')));
+    heldOffer=api.heldScope();const heldCount=heldOffer.known?heldOffer.targets.length:'?';
+    const start={count:heldCount,label:'Start '+heldCount+' held · '+heldOffer.scope,disabled:!heldOffer.known||!heldOffer.targets.length||all.some(t=>t.state==='held'&&app.startPending(t))};
+    return h(Fragment,null,api.pins(),api.bar(),h('header',{class:'filter-header tqp'},h('div',{class:'state-filters',dangerouslySetInnerHTML:{__html:blocks.counters(counts.counts,'','Selected projects',partial,c.states,counts.open,start)}})),api.admissionReview(),errors.map(reason=>h('p',{class:'meta',role:'status',key:reason},reason)),app.answerNotices(),rows.length?listing:h('div',{class:'body meta'},!known?'Tasks unknown':'No matching tasks',' ',h('button',{'data-a':'filter-reset'},'Reset')));
    },
    receive:function(page){const pin=[...pinReads.values()].find(e=>e.id===page.id&&e.root===page.root);if(!pin?.loading)return;ui.cancel(pin.timer);pin.loading=false;pin.reason=page.reason;pin.value=!page.reason&&page.tasks?.[0]?.n===pin.task?page.tasks[0]:null;if(!pin.value&&!pin.reason)pin.reason='Board response omitted the task';present();},
    outcome:function(t){return module.exports.outcome(t);},
@@ -119,6 +128,15 @@ module.exports=execution.module('taskDashboard',{
     if(restore&&view.S&&view.page==='home'){restore=false;const key=api.current().open,trigger=key&&menu.querySelector('[data-a="task-detail"][data-key="'+CSS.escape(key)+'"]');if(!view.popup&&trigger){api.open('task',trigger,key,false);return;}}
     if(view.popup){const selector=view.popup.kind==='task'?'[data-a="task-detail"][data-key="'+CSS.escape(view.popup.key)+'"]':'[data-a="'+(view.popup.kind==='views'?'view-list':'view-editor')+'"]',trigger=menu.querySelector(selector);if(trigger)view.popup.anchor=api.anchor(trigger);}for(const b of menu.querySelectorAll('[data-a="task-detail"]')){b.setAttribute('aria-expanded',String(view.popup?.kind==='task'&&view.popup.key===b.dataset.key));b.setAttribute('aria-controls','taskq-question-details');b.removeAttribute('aria-haspopup');}if(view.popup&&view.popup.kind!=='task')popover.place(menu.querySelector('#taskq-popover'),view.popup.anchor);},
    click:function(e){const link=e.target.closest('[data-pin-open]');if(link&&pinReads.get(link.dataset.pinOpen)?.value?.state==='closed'){api.unpin(link.dataset.pinOpen);ui.defer(present,0);return false;}const b=e.target.closest('button');if(!b||b.disabled)return false;const d=b.dataset,m=api.model();if(d.a==='search-open'){view.searchOpen=!!api.criteria().query||!view.searchOpen;present();menu.querySelector(view.searchOpen?'[data-task-query]':'[data-a=search-open]')?.focus({preventScroll:true});return true;}if(d.a==='search-clear'){api.criteria().query='';view.searchOpen=false;present();menu.querySelector('[data-a=search-open]')?.focus({preventScroll:true});return true;}
+    if(d.a==='held-review'){if(heldOffer?.known&&heldOffer.targets.length){heldReview=structuredClone(heldOffer);present();menu.querySelector('[data-a=held-confirm]')?.focus();}return true;}
+    if(d.a==='held-cancel'){heldReview=null;present();menu.querySelector('[data-a=held-review]')?.focus();return true;}
+    if(d.a==='held-confirm'){
+     if(!heldReview||heldReview.sent)return true;
+     const current=api.heldScope();
+     if(!current.known||current.signature!==heldReview.signature||!app.startHeld(heldReview.targets))heldReview.error='Held targets or scope changed; cancel and review the current drafts.';
+     else heldReview.sent=true;
+     present();return true;
+    }
     if(d.a==='project-collapse'){const closing=!m.collapsed.includes(d.project);m.collapsed=closing?[...m.collapsed,d.project]:m.collapsed.filter(id=>id!==d.project);if(closing&&view.popup?.kind==='task'&&api.live().some(t=>t.key===view.popup.key&&t.boardIdentity===d.project))api.close(false);else present();return true;}
     if(d.a==='task-detail'){if(view.popup?.kind==='task'&&view.popup.key===d.key)api.close();else api.open('task',b,d.key,true);return true;}
     if((d.a==='view-editor'||d.a==='view-list')&&view.viewsWindow){send({a:'views-open'});return true;}

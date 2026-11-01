@@ -32,7 +32,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    }
    const summary=page.locator('.dashboard-status>summary');
    assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>[c.dataset.host,c.querySelector('.host-number').textContent])),[[longFresh,'0'],['hermes-fra1','?'],['mac','1'],[longStale,'?'],['win','1']],'UX30-06 A1: per-host totals, idle 0, stale ?');
-   assert.deepEqual(await summary.locator('.host-runtime-totals [data-runtime]').evaluateAll(es=>es.map(e=>[e.dataset.runtime,e.querySelector('.host-number').textContent])),[['Codex','1+?'],['Claude','1+?']],'A3/A4: execution-only host retains overall uncertainty');
+   assert.deepEqual(await summary.locator('.host-runtime-totals [data-runtime]').evaluateAll(es=>es.map(e=>[e.dataset.runtime,e.querySelector('.host-number').textContent])),[['Codex','≥1'],['Claude','≥1']],'A3/A4: execution-only host retains overall uncertainty');
    assert(await summary.locator('.host-chip').evaluateAll(cs=>cs.every(c=>c.title===c.getAttribute('aria-label')&&c.title.startsWith(c.dataset.host))),'full name, counts and reasons stay accessible');
    assert.deepEqual(await summary.locator('.host-chip strong').allTextContents(),['bui','her','mac','sta','win']);
    const line=await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>{const r=c.getClientRects();return r.length===1&&c.scrollWidth<=c.clientWidth+1;}));
@@ -49,7 +49,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    const attention=summary.locator('.attention');
    assert.equal(await attention.getAttribute('aria-label'),'Attention · 1');
    const a=await attention.boundingBox(),s=await summary.boundingBox();
-   assert(a&&a.width>=20&&a.x+a.width<=s.x+s.width+1,'A2: Attention is visible inside the summary');
+   assert(a&&a.width>=20&&a.x+a.width<=s.x+s.width+1,'A2: Attention is visible inside the summary '+JSON.stringify({width,font,theme,a,s}));
    assert.deepEqual(await summary.locator('.host-chip').evaluateAll((cs,left)=>cs.filter(c=>c.getBoundingClientRect().right>left).map(c=>c.getAttribute('aria-label')),a.x),[],'A2: no host chip runs under Attention');
    assert.equal(await page.locator('.dashboard-status .running-agents').isVisible(),false,'A1: resources stay behind disclosure');
    if(process.env.PANEL_EVIDENCE&&width===320&&font===20&&theme==='dark')await page.screenshot({path:process.env.PANEL_EVIDENCE+'/hosts-collapsed.png'});
@@ -65,7 +65,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    const picks=await page.locator('.view-picks>button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size);
    assert.deepEqual(await overflow(page),[],'A2: menu '+width+' px / '+font+' px / '+theme);
    assert(picks>1,'A1: view picks wrap at '+width+' px / '+font+' px');
-   assert.equal(await page.locator('.filter-header .tqp-counts button').count(),9,'A1: all eight states and All tasks remain');
+   assert.equal(await page.locator('.filter-header .tqp-counts button').count(),10,'A1: all eight states and All tasks remain');
    assert(await page.locator('.filter-header .tqp-counts button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size)>1,'A1: counters wrap');
    assert.deepEqual(await page.locator('.view-picks,.filter-header .tqp-counts').evaluateAll(es=>es.filter(e=>getComputedStyle(e).maskImage!=='none').map(e=>e.className)),[],'A1: no edge mask');
    assert.deepEqual(await page.locator('.viewbar button, .filter-header .tqp-counts button').evaluateAll(bs=>bs.filter(b=>{
@@ -77,9 +77,8 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    assert.deepEqual(await overflow(page),[],'A2: menu task details');
    await page.keyboard.press('Escape');
    await page.locator('[data-a=view-select][data-id=completed]').click();
-   const requests=await page.evaluate(()=>messages.filter(m=>m.a==='completed'));
-   for(const request of requests)await page.evaluate(r=>taskq.receive({completed:{...r,more:false,tasks:[{n:99,title:'Invented completed task',url:'https://example.org/issues/99',closed:950,outcome:'success'}]}}),request);
-   assert.equal(await page.locator('[data-completed]').count(),8,'#1724 A4: Completed remains populated beside long host names');
+   const completed=await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1)?.open);
+   assert.equal(completed.page,'conversations','MP14: Completed uses the current Conversations destination');assert.equal(completed.filter,'finished');
    assert.equal(await summary.locator('.host-chip').count(),5,'#1724 A2: Completed keeps every host');
    assert.deepEqual(await overflow(page),[],'#1724 A4: Completed has no horizontal overflow');
    if(process.env.PANEL_EVIDENCE&&width===320&&font===20&&theme==='dark')await page.screenshot({path:process.env.PANEL_EVIDENCE+'/completed.png'});

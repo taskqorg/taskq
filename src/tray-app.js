@@ -234,7 +234,14 @@ startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
   if(!held.length)return '';
   const label=held.length===1&&rows.length===1?'Start #'+held[0].n:'Start '+held.length+' held';
-  return h('button',{'data-a':'start','data-keys':held.map(t=>t.key).join(' '),title:label,'aria-label':label},icon('play'),h('span',null,label));
+  return h('button',{'data-a':'start','data-targets':JSON.stringify(held.map(({key,revision})=>({key,revision}))),disabled:held.some(api.startPending),title:label,'aria-label':label},icon('play'),h('span',null,label));
+},
+startPending:function(t){return startOperations.startPending(t.key.slice(0,t.key.lastIndexOf('/')),t);},
+startHeld:function(targets){
+  const live=unique(view.S.projects.flatMap(tasks)),rows=targets.map(x=>live.find(t=>t.key===x.key&&t.revision===x.revision&&t.state==='held'));
+  if(!rows.length||rows.some(t=>!t||api.startPending(t)||!Number.isSafeInteger(t.revision)||!view.S.projects.some(p=>p.root===t.root&&p.alive===true&&p.complete===true&&p.tasks_live!==false)))return false;
+  for(const t of rows)ui.effect('task.start',()=>answerSend(t.key.slice(0,t.key.lastIndexOf('/')),{id:'tray.start.'+t.n+'.'+t.revision,task:t.n,revision:t.revision,action:'start'}),()=>{});
+  return true;
 },
 globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);const name=ts[0]?.state_name;return ts.length?h('details',{class:'group','data-view-key':'state:'+st,key:'state:'+st},h('summary',null,h('span',{class:color(st)},name),counter(ts.length,color(st),name)),ts.map(t=>taskRow(t,true))):'';},
 problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+p.age_text+' old: service not running?'):p.error?'service error: '+p.error:'';return e?h('button',{class:'project alert','data-a':'log','data-root':p.root,title:e,disabled:!p.log},h('span',null,icon('circle-alert'),p.name+': '+e),h('span',{class:'meta'},p.log?'Log':''),h('span')):'';},
@@ -419,28 +426,30 @@ controls:function(){
 runningAgents:function(compact=false){
   // #1592: task counts and the board-task identity (`key`, one per board and number) come from the display model.
   const hosts=new Map(),all=view.S.display.all.counts;
-  // #1775 A3/R16: an unread run, or a stale read beside a fresh one, marks only its hosts partial (counts plus ?); a host is
+  // #1775 A3/R16: an unread run, or a stale read beside a fresh one, marks only its hosts partial (confirmed minima); a host is
   // unknown while no fresh project read holds a live heartbeat for it, so a stale read never shows zero. `partial` stays for the board task totals.
   let partial=false;
-  const seen=new Map();
+  const sources=new Set(),seen=new Map();
   const add=(name,why)=>{if(!hosts.has(name))hosts.set(name,{name,age:null,age_text:null,live:false,reasons:new Set(),counts:new Map()});const host=hosts.get(name);if(why)host.reasons.add(why);return host;};
   for(const p of view.S.projects){
     const elapsed=Number.isFinite(p.age)&&p.age>=0&&Number.isFinite(p.tasks_age_seconds)&&p.tasks_age_seconds>=0?p.age+p.tasks_age_seconds:null;
     const fresh=p.complete===true&&p.tasks_live===true&&Number.isFinite(p.observed);
     const read=Array.isArray(p.tasks)&&p.tasks.every(t=>t?.executions==null||Array.isArray(t.executions));
-    const stale=fresh&&read?null:(!read?'missing host/task data':!p.complete?'partial board snapshot':elapsed===null?'missing task observation':'stale task observation')+' ('+(p.name||p.root)+')';
+    const stale=fresh&&read?null:(!read?'missing host/task data':!p.complete?'partial board snapshot':elapsed===null?'missing task observation':'stale task observation')+' ('+(p.name||p.root)+')'+(elapsed===null?' · age unknown':' · '+Math.round(elapsed)+'s old');
     partial ||= !fresh||!Array.isArray(p.hosts)||!Array.isArray(p.tasks);
+    if(stale)sources.add(stale);
+    if(!Array.isArray(p.hosts))sources.add((p.name||'Project')+': host observations missing');
     for(const h of Array.isArray(p.hosts)?p.hosts:[]){
       if(!h||typeof h.name!=='string'||!h.name){partial=true;continue;}
       // #1592: host age and its text come from the display model; #1775: the freshest observation names the host age.
       const age=Number.isFinite(h.age)?h.age:null,host=add(h.name,stale);
-      host.beat=true;host.live ||= h.live===true&&!stale;
+      host.beat=true;host.beatLive ||= h.live===true;host.live ||= h.live===true&&!stale;
       if(age!==null&&(host.age===null||age<host.age))Object.assign(host,{age,age_text:h.age_text});
     }
     for(const t of Array.isArray(p.tasks)?p.tasks:[]){
       if(t.executions!=null&&!Array.isArray(t.executions))partial=true;
       for(const x of Array.isArray(t.executions)?t.executions:[]){
-        if(!x||typeof x.host!=='string'){partial=true;continue;}
+        if(!x||typeof x.host!=='string'){partial=true;sources.add((p.name||'Project')+': invalid execution observation; host unknown');continue;}
         const h=add(x.host||'Unknown host',stale);
         // #1775 R16: a fresh ended or waiting execution is known and not running; only an unknown or stale one marks its host ?
         if(fresh&&['ended','waiting'].includes(x.state))continue;
@@ -476,9 +485,10 @@ runningAgents:function(compact=false){
   }else facts.push('Capacity unknown');
   const alerts=(view.S.agents?.rows||[]).filter(r=>signAlert.includes(r.state)&&r.state!=='check-failed');
   const totals=host=>{const t=new Map([['Claude',0],['Codex',0]]);for(const [rt,c] of host.counts)t.set(family(rt),(t.get(family(rt))||0)+c.worker+c.reviewer);return t;};
+  for(const host of hosts.values())if(!host.live)host.reasons.add(!host.beat?'host observation missing':host.beatLive?'current execution data unavailable':host.age===null?'heartbeat freshness unknown':'stale heartbeat; current runs unknown');
   const known=host=>host.live&&!host.reasons.has('conflicting execution observations');
   const sum=counts=>[...counts.values()].reduce((n,x)=>n+x,0);
-  const value=(n,known,partial)=>!known?'?':partial?n+'+?':String(n);
+  const value=(n,known,partial)=>!known||partial&&!n?'?':partial?'≥'+n:String(n);
   const mark=rt=>rt==='Codex'?'openai':rt==='Claude'?'claude':'bot';
   const runtime=(rt,n,known,partial)=>{const shown=value(n,known,partial),label=rt+': '+(shown==='?'?'unknown':partial?'at least '+n+'; additional agents unknown':n);
     return h('span',{class:'host-runtime','data-runtime':rt,title:label,'aria-label':label},icon(mark(rt)),!['Codex','Claude'].includes(rt)&&h('span',null,rt),h('span',{class:'host-number'},shown));};
@@ -491,9 +501,9 @@ runningAgents:function(compact=false){
       h('summary',{class:'host-breakdown',title:'Heartbeat'+age},h('strong',{class:'host-name'},host.name),
         h('span',{class:'host-runtime-split'},['Codex','Claude',...[...t.keys()].filter(rt=>!['Codex','Claude'].includes(rt))].map(rt=>runtime(rt,t.get(rt)||0,!unknown,partial))),
         h('span',{class:'host-row-total','aria-label':'Total running agents: '+total},h('span',{class:'host-number'},total)),
-        (unknown||partial||warnings.length>0)&&h('span',{class:'host-observation'},unknown?'Status unknown'+age:partial?'Partial observation'+age:'',warnings.length>0&&h('span',{class:'host-warning'},'Sign-in: '+warnings.join(' · ')))),
+        (unknown||partial||warnings.length>0)&&h('span',{class:'host-observation'},unknown?'Status unknown'+age:partial?'Partial observation'+age:'',why&&h('span',null,why),warnings.length>0&&h('span',{class:'host-warning'},'Sign-in: '+warnings.join(' · ')))),
       h('div',{class:'body meta'},'Heartbeat'+age),unknown?h('div',{class:'body meta'},'Unknown: '+(why||'host observation missing or stale')):why&&h('div',{class:'body meta'},'Partial: '+why),
-      !unknown&&(runtimes.length?h('div',{class:'body'},runtimes.map(([rt,c])=>h('div',null,rt+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')))):h('div',{class:'body meta'},'No running agents')),
+      !unknown&&(runtimes.length?h('div',{class:'body'},runtimes.map(([rt,c])=>h('div',null,rt+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')))):h('div',{class:'body meta'},partial?'No confirmed running agents; additional agents unknown':'No running agents')),
       here&&api.resourceMeters(latest),h('details',{'data-view-key':'host-facts:'+host.name},api.disclosure('sliders-horizontal','Resource details'),(here?facts:['CPU and memory: not collected for remote hosts','Slots and reservations: unknown for remote hosts']).map(t=>h('div',{class:'body meta'},t)))));
   }
   // M3.1: only open-heartbeat hosts enter the strip; unobserved local and execution-only hosts stay in details.
@@ -502,16 +512,18 @@ runningAgents:function(compact=false){
   const short=new Map(names.map(n=>{let k=3;while(k<n.length&&names.some(o=>o!==n&&o.slice(0,k)===n.slice(0,k)))k++;return [n,n.slice(0,k)];}));
   const warn=host=>host.name===view.S.host?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
   const text=host=>{const age=host.age!==null&&host.age>=0?host.age_text:'',busy=[...totals(host)].filter(([,n])=>n>0);
-   return [host.name,...(!known(host)?['runs unknown',...(age?[age+' old']:[]),...(host.reasons.size?[[...host.reasons].join('; ')]:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):['idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
+   return [host.name,...(!known(host)?['runs unknown',...(age?[age+' old']:[]),...(host.reasons.size?[[...host.reasons].join('; ')]:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):[host.reasons.size?'no confirmed running agents':'idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
   // UX30-06: host totals precede runtime totals; only nonconflicting fresh hosts establish a minimum.
   const overall=new Map([['Codex',0],['Claude',0]]);let anyKnown=false,uncertain=partial||!sorted.length;
   for(const host of sorted){const t=totals(host);for(const rt of t.keys())if(!overall.has(rt))overall.set(rt,0);uncertain ||= !known(host)||host.reasons.size>0;if(!known(host))continue;anyKnown=true;for(const [rt,n] of t)overall.set(rt,overall.get(rt)+n);}
   const chip=host=>{const shown=value(sum(totals(host)),known(host),host.reasons.size>0),label=text(host)+' · Total running agents: '+shown,w=warn(host);
     return h('span',{class:'host-chip'+(!known(host)?' unknown':''),'data-host':host.name,role:'img','aria-label':label,title:label,key:host.name},h('strong',null,short.get(host.name)),h('span',{class:'host-number'},shown),
       !known(host)&&host.age_text&&h('span',{class:'meta'},host.age_text),w.length>0&&h('span',{class:'host-warning',title:'Sign-in: '+w.join(' · '),'aria-label':'Sign-in: '+w.join(' · ')},icon('circle-alert')));};
-  if(compact)return {label:strip.map(text).join('; ')||'Host unknown',meta:strip.length+' hosts · '+(uncertain?'observations incomplete':'current observations'),strip:h('span',{class:'host-overview'},h('span',{class:'host-strip'},strip.length?strip.map(chip):h('span',{class:'host-chip unknown'},'Hosts ?')),h('span',{class:'host-runtime-totals','aria-label':'All observed hosts · running agents'},[...overall].map(([rt,n])=>runtime(rt,n,anyKnown,uncertain))))};
+  const completeness=anyKnown&&[...overall.values()].some(n=>n>0)?'Partial':'Unknown';
+  const explanation='All observed hosts · running agents'+(uncertain?' · '+completeness+': confirmed counts are lower bounds; additional agents unknown. '+[...sorted.filter(host=>!known(host)||host.reasons.size).map(host=>host.name+' · '+(host.age_text||'age unknown')+' · '+[...host.reasons].join('; ')),...sources].join('; '):' · complete fresh observations');
+  if(compact)return {label:strip.map(text).join('; ')||'Host unknown',meta:strip.length+' hosts · '+(uncertain?'observations incomplete':'current observations'),strip:h('span',{class:'host-overview'},h('span',{class:'host-strip'},strip.length?strip.map(chip):h('span',{class:'host-chip unknown'},'Hosts ?')),h('span',{class:'host-runtime-totals',title:explanation,'aria-label':explanation},[...overall].map(([rt,n])=>runtime(rt,n,anyKnown,uncertain)),uncertain&&h('span',{class:'host-completeness'},completeness)))};
   return h('section',{class:'group running-agents',style:{'--host-number-width':numberWidth},'aria-label':'Running agents'},h('div',{class:'host-grid-head','aria-label':'Host, Codex, Claude, Total running agents'},h('span',null,'Host'),['Codex','Claude','Total'].map(rt=>h('span',{title:rt,'aria-label':rt,role:'img'},icon(mark(rt))))),out,h('div',{class:'body meta'},'Registered project boards · '+(partial||all.some(c=>c.n===null)?'Tasks unknown':'Tasks: '+all.filter(c=>['doing','review'].includes(c.state)).map(c=>c.name+' '+c.n).join(' · '))),
-    h('details',{'data-view-key':'run-definitions'},api.disclosure('info','Count definitions'),h('div',{class:'body meta'},'Running processes, occupied slots, reservations and board tasks are counted apart. Reservations include pending or unconfirmed work; occupied slots can include other projects.')));
+    h('details',{'data-view-key':'run-definitions'},api.disclosure('info','Count definitions'),h('div',{class:'body meta'},'Running processes, occupied slots, reservations and board tasks are counted apart. ≥ means a confirmed minimum; Partial means additional agents are unknown; ? means no confirmed total. Reservations include pending or unconfirmed work; occupied slots can include other projects.')));
 },
 home:function(){
   const faults=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
@@ -809,7 +821,7 @@ ui.listen(menu,'click',e=>{
   if(d.a==='answer-dismiss'){startOperations.dismiss(d.key);return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
   if(d.a==='control'){const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===d.key);if(t&&(t.controls||[]).includes(d.control))ui.effect('task.control',()=>answerSend(t.key.slice(0,-String(t.n).length-1),TaskqTaskControls.op(t,d.control,'tray')),()=>{});present();return;}
-  if(d.a==='start'){for(const key of d.keys.split(' ')){const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===key);if(t&&t.state==='held')ui.effect('task.start',()=>answerSend(t.key.slice(0,-String(t.n).length-1),{id:'tray.start.'+t.n+'.'+t.revision,task:t.n,revision:t.revision,action:'start'}),()=>{});}present();return;}
+  if(d.a==='start'){api.startHeld(JSON.parse(d.targets));present();return;}
   if(d.a==='answer-retry'){startOperations.retry(d.key);present();return;}
   if(d.a==='sync-retry'){send({a:'sync-retry',root:d.root,id:d.id});return;}
   if(d.a==='notify'||d.a==='notify-test'){send({a:d.a,kind:d.kind,value:d.v,root:d.root});return;}

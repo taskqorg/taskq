@@ -151,6 +151,7 @@ hydrate:function(locals){
  }
 },
 retry:function(key){const r=answerFeedback.get(key);if(r)ui.effect('workspace.answer.reconcile',()=>answerSend(r.board,r.op),()=>{});},
+startPending:function(board,t){return [...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&r.op.revision===t.revision&&r.op.action==='start'&&!['failed','stale','rejected'].includes(r.state));},
 dismiss:function(key){answerFeedback.delete(key);if(view.toast===key)view.toast=null;draw();}
  });
  const {answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,answerSend,load,save}=api;

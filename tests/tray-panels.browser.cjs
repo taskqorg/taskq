@@ -35,8 +35,11 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
   await page.evaluate(s=>taskq.receive(s),{...snapshot,page:'home',projects:[{...project,error:'Fixture urgent fault'}]});
   assert.equal(await page.locator('.dashboard-status>summary .host-chip').getAttribute('aria-label'),'mac · Codex 1 · Total running agents: 1','R16 / UX30-06: attention never replaces host totals');
   assert.equal(await page.locator('.dashboard-status>summary .attention').getAttribute('aria-label'),'Attention · 1');
-  await page.getByRole('link',{name:'Open codex session',exact:true}).click();
-  assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='open').at(-1).url),'codex://threads/fixture','R05: runtime activation opens the verified target directly');
+  await page.getByRole('button',{name:'View codex agent #1',exact:true}).click();
+  assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open.task),1,'M3: runtime opens the exact task-agent view');
+  await page.locator('[data-a=task-detail]').first().click();
+  await page.getByRole('link',{name:'Open native session',exact:true}).click();
+  assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='open').at(-1).url),'codex://threads/fixture','M3: separately named native destination keeps the exact recorded URL');
   assert.match(await page.locator('.content').innerText(),/Fixture urgent fault/);
   assert(await page.locator('.alert').first().evaluate(e=>e.compareDocumentPosition(document.querySelector('[data-card]'))&Node.DOCUMENT_POSITION_FOLLOWING));
   // A stale process source never turns Doing into a running figure.
