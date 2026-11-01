@@ -1397,10 +1397,15 @@ impl<'a> Service<'a> {
     }
 
     fn execution_statuses(&self)->Vec<crate::snapshot::ExecutionStatus> {
-        self.observations.iter().map(|((task,_),x)| {
+        let mut statuses:Vec<_>=self.observations.iter().map(|((task,_),x)| {
             let (state,reason)=crate::snapshot::verdict(&self.signals(*task,x));
             crate::snapshot::ExecutionStatus {task:*task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),reason}
-        }).collect()
+        }).collect();
+        if let Some(snapshot)=&self.snapshot {
+            statuses.extend(snapshot.tasks.iter().flat_map(|r|&r.executions).filter(|x|x["host"]==self.cfg.me && x["release"]=="exit")
+                .filter_map(|x|serde_json::from_value(x.clone()).ok()));
+        }
+        statuses
     }
 
     pub fn service_diagnostics(&self)->Value {
@@ -1812,9 +1817,8 @@ impl<'a> Service<'a> {
                 // #1886: name the host step that can resolve it
                 let step = if x.host == me { format!("reboot {me} to prove exit") } else { format!("start the taskq service on {} once, after a reboot if the run had started", x.host) };
                 self.execution_waits.entry(v.issue.number).or_insert_with(|| format!("execution {} on {}: termination unconfirmed; {step}", x.id, x.host));
-            } else if let Some(x) = v.projection.executions.iter()
-                .find(|x| Some(x.attempt) == v.projection.task.attempt && !v.projection.task.inbox.is_empty() && x.release == Some(core::Release::Exit) && !x.accepted) {
-                self.execution_waits.insert(v.issue.number, format!("execution {} on {}: {}", x.id, x.host,crate::runtime::acceptance_action(&x.runtime)));
+            } else if let Some(x) = crate::snapshot::input_recovery(v) {
+                self.execution_waits.insert(v.issue.number, format!("execution {} on {}: agent exited; {}", x.id, x.host,crate::runtime::acceptance_action(&x.runtime)));
             } else if let (Some(a),Some(owner)) = (v.projection.task.attempt,host_of(&v.projection.task)) {
                 if owner != me && matches!(v.projection.task.state,State::Doing|State::Review) && v.projection.task.inbox.iter().any(|id| *id > v.projection.delivered(a).unwrap_or(0)) {
                     self.execution_waits.insert(v.issue.number,format!("input pending on {owner}; await or restore the owning service"));
@@ -2808,6 +2812,54 @@ mod tests {
         s.adopt(Kid { unknown:None, stopping:false, session_url:None,execution,task:n,attempt:a,rt:"codex".into(),proc:Box::new(FakeProc(Rc::new(RefCell::new(None))))}).unwrap();
         assert_eq!(s.kids[0].execution,execution,"pending acceptance does not change native ownership");
         assert_eq!(s.delivered(a),a,"handover does not invent input acceptance");
+    }
+
+    // Chain: R6, §3, §4, #2143: a renewed assignment lease must not hide historical unaccepted Exit from PM observers.
+    #[test]
+    fn historical_unaccepted_exit_reports_blocked_despite_renewed_lease() {
+        let b=Fake::default();let mut c=cfg("mac");
+        let n=b.create("Historical writer refusal","",&[TASK_LABEL.into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker codex:original-thread mac").unwrap();
+        c.root=started_root("historical-writer",n,a);
+        let dirty=c.root.join("dirty.txt");std::fs::write(&dirty,"keep original work").unwrap();
+        accept_execution(&b,n,a,a,None).unwrap();
+        b.comment(n,&core::entry("ask",&[],Some(a),"Done: checked\nProblem: owner action needed")).unwrap();
+        release_execution(&b,n,a,a,"exit").unwrap();
+        let input=b.comment(n,"taskq: answer\noriginal pending input").unwrap();
+        let x=b.comment(n,&core::entry("executing",&[&input.to_string()],Some(a),"")).unwrap();
+        release_execution(&b,n,a,x,"exit").unwrap();
+        let quiet=b.create("Quiet running task","",&[TASK_LABEL.into()]).unwrap();
+        let qa=b.comment(quiet,"taskq: spawn worker codex:quiet mac").unwrap();
+        let lie=json!({"task":n,"attempt":a,"id":x,"through":input,"state":"running","reason":"invented stale running claim"});
+        let host=b.create("taskq host mac",&format!("version test\n#{n} {a}\n#{quiet} {qa}\nexecution {lie}"),&[HOST_LABEL.into()]).unwrap();
+        let mut s=Service::new(&b,&c,"fixture",Box::new(|_|panic!("historical input cannot be resubmitted")));
+        s.pending.insert((n,a));
+        s.kids.push(Kid {task:quiet,attempt:qa,execution:qa,rt:"codex".into(),proc:Box::new(FakeProc(Rc::new(RefCell::new(None)))),unknown:None,stopping:false,session_url:None});
+        for age in [0,60,3*crate::snapshot::STUCK_AFTER] {
+            b.advance(age);if age>0 {b.edit(host,&format!("{}\nat {}",s.heartbeat_body(),b.now().unwrap())).unwrap();}
+            s.pass().unwrap();
+            let snapshot=s.snapshot.as_ref().unwrap();
+            let row=snapshot.tasks.iter().find(|r|r.n==n).unwrap();let data=row.json();
+            assert_eq!(data["stuck"],true,"a fresh lease cannot mask known blocked input, even before one hour");
+            assert_eq!(data["wait"],"Agent exited; input recovery required");
+            assert_eq!(data["executions"][0]["state"],"unknown");
+            assert_eq!(data["executions"][0]["release"],"exit");
+            assert!(data["execution_wait"].as_str().unwrap().contains("inspect the pending input in Codex"));
+            assert!(snapshot.text(&c,&json!({})).unwrap().contains("Stuck:"));
+            assert!(snapshot.tasks.iter().find(|r|r.n==quiet).unwrap().stuck.is_none(),"a quiet live worker is not stuck");
+            let beat=s.heartbeat_body();assert!(beat.lines().any(|l|l==format!("#{n} {a}")),"assignment ownership stays leased");
+            let status=beat.lines().filter_map(|l|l.strip_prefix("execution ")).filter_map(|l|serde_json::from_str::<Value>(l).ok()).find(|r|r["id"]==x).unwrap();
+            assert_eq!(status["state"],"unknown","heartbeat must expose blocked input, not a live worker");
+            let (views,hosts)=views(&b,&mut Default::default(),&mut Default::default(),c.ttl).unwrap();
+            let remote=crate::snapshot::from_views("board",&b,&c,b.now().unwrap(),&views,&hosts);
+            assert_eq!(remote.tasks.iter().find(|r|r.n==n).unwrap().json()["stuck"],true,"the PM's board read agrees with local status");
+            assert_eq!(task(&b,n).attempt,Some(a));assert_eq!(task(&b,n).session.as_deref(),Some("codex:original-thread mac"));
+            assert_eq!(core::delivered(n,&entries(&b,n).unwrap(),a),Some(a));
+            assert_eq!(core::executions(n,&entries(&b,n).unwrap()).iter().find(|e|e.id==x).unwrap().release,Some(core::Release::Exit));
+        }
+        assert_eq!(s.log.iter().filter(|l|l.starts_with(&format!("#{n} event stuck doing "))).count(),1,"one actionable stuck episode, no renewed-lease silence or repeated alert");
+        assert_eq!(std::fs::read_to_string(&dirty).unwrap(),"keep original work");
+        drop(s);std::fs::remove_dir_all(c.root).unwrap();
     }
 
     // R2/R11/R12, #2143: native pre-submit writer refusal must retain input, never replay unknown submission or stop the app.
