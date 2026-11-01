@@ -5,7 +5,7 @@ grants, trust and client configuration are read, never written. Every file this 
 
   live-probe.py identity --repo CHECKOUT --from-install INSTALL --parent DIR      read-only host and access probe
   live-probe.py build --sha SHA --repo CHECKOUT --out DIR [--minutes M]     one-job candidate build in an owned clean clone
-  live-probe.py prepare --build DIR --repo CHECKOUT --from-install INSTALL --parent DIR --name HOST
+  live-probe.py prepare --build DIR --repo CHECKOUT --from-install INSTALL --parent DIR --name HOST [--runtimes claude,codex]
   live-probe.py tasks FIXTURE            admission check, then held add, readback and start by op id (label host-HOST)
   live-probe.py run FIXTURE [--minutes M] [--interrupt-on REGEX]    supervised candidate service, killed at deadline
   live-probe.py tray FIXTURE [--minutes M]                          supervised candidate app on the fixture install
@@ -17,6 +17,8 @@ runs `npm ci` and `cargo build --release --locked -j 1` under one deadline and w
 and SHA-256. `prepare` writes FIXTURE/RUNBOOK.txt with this host's exact commands. It refuses when the build source
 is not exactly SHA and clean, when the binary digest differs from build.json or it reports no version, or when no
 existing Claude trust entry covers PARENT: it never changes trust, login or grants. PARENT must already sit under a trusted root, such as the checkout's `.worktrees`.
+`--runtimes` names the runtimes the fixture may launch; any other gets limit 0 and no fixture task, so a runtime
+the owner has switched off is never started (its qualification stays not tested).
 It also refuses a HOST name that any board heartbeat already carries, so no ordinary host can admit a fixture task.
 `prepare` and `run` first reconcile earlier probes: they refuse while another `probe-*` fixture folder exists under
 PARENT, while any process names one, or while an open board task titled `probe 2094` is listed; earlier
@@ -231,7 +233,7 @@ def prepare(a):
             os.chmod(os.path.join(inst, n), 0o600)
     real = json.load(open(os.path.join(src, "host.json")))
     host = {k: real[k] for k in KEEP if k in real}
-    host.update({"hosts": {socket.gethostname(): a.name}, "claim": "labelled", "limits": {"claude": 1, "codex": 1, "codex-app": 1}})
+    host.update({"hosts": {socket.gethostname(): a.name}, "claim": "labelled", "limits": {r: int(r.split("-")[0] in a.runtimes) for r in ("claude", "codex", "codex-app")}})
     json.dump(host, open(os.path.join(inst, "host.json"), "w"), indent=1)
     _, origin = run(["git", "-C", repo, "remote", "get-url", "origin"])
     subprocess.run(["git", "clone", "--quiet", b["src"], root], check=True)
@@ -250,17 +252,17 @@ def prepare(a):
         if os.path.isfile(os.path.join(repo, f)):
             os.makedirs(os.path.dirname(os.path.join(root, f)), exist_ok=True)
             shutil.copyfile(os.path.join(repo, f), os.path.join(root, f))
-    m = {"dir": d, "name": a.name, "sha": a.sha, "exe": exe, "exe_sha256": sha256(exe), "build": b, "version": version, "root": root,
+    m = {"dir": d, "name": a.name, "runtimes": a.runtimes, "sha": a.sha, "exe": exe, "exe_sha256": sha256(exe), "build": b, "version": version, "root": root,
          "repo": repo, "from_install": src, "parent": parent, "trust": hits, "tasks": {}}
     m["before"] = snapshot(m)
     save(d, m)
     me = f'"{sys.executable}" "{os.path.abspath(__file__)}"'
     q6 = os.path.join(d, "q6")
-    setup = (f'$env:TASKQ_INSTALL="{inst}"; $env:TASKQ_HOST="{a.name}"; & "{exe}" service setup --runtime claude --target "{q6}"' if WIN else
-             f'env TASKQ_INSTALL="{inst}" TASKQ_HOST={a.name} "{exe}" service setup --runtime claude --target "{q6}"')
+    setup = (f'$env:TASKQ_INSTALL="{inst}"; $env:TASKQ_HOST="{a.name}"; & "{exe}" service setup --runtime {a.runtimes[0]} --target "{q6}"' if WIN else
+             f'env TASKQ_INSTALL="{inst}" TASKQ_HOST={a.name} "{exe}" service setup --runtime {a.runtimes[0]} --target "{q6}"')
     lines = [f"Fixture {d}", f"Candidate {a.sha} {version} sha256 {m['exe_sha256']} ({b['rustc']}, built {b['finished']})",
              "Cleanup owns only processes whose command line names this fixture folder and Claude jobs inside it.", "",
-             f'{me} run {d} --minutes 30 --interrupt-on "#[0-9]+ attempt [0-9]+ access claude"   # terminal 1: Q15 interrupt at the Claude launch, one restart',
+             f'{me} run {d} --minutes 30 --interrupt-on "#[0-9]+ attempt [0-9]+ access {a.runtimes[0]}"   # terminal 1: Q15 interrupt at the {a.runtimes[0]} launch, one restart',
              f"{me} tasks {d}                                 # terminal 2, once the fixture heartbeat shows: admission check, held, readback, start",
              "# answer both fixture asks on the board, then in terminal 1:",
              f"{me} run {d} --minutes 45                      # Q1 resume after the answer, same session",
@@ -329,6 +331,8 @@ def tasks(a):
     d, m, e = load(a.dir)
     stamp = os.path.basename(d)
     for rt, q in [("claude", "Q1+Q15 claude"), ("codex", "Q1 codex")]:
+        if rt not in m.get("runtimes", ["claude", "codex"]):
+            continue
         t = m["tasks"].setdefault(rt, {})
         if t.get("started"):
             continue
@@ -572,6 +576,8 @@ for name in ["identity", "prepare"]:
     q.add_argument("--parent", required=True)
     if name == "prepare":
         q.add_argument("--build", required=True)
+        q.add_argument("--runtimes", type=lambda v: [r for r in v.split(",") if r in ("claude", "codex")] or sys.exit("--runtimes: claude and/or codex"),
+                       default=["claude", "codex"])
         q.add_argument("--name", required=True)
 q = s.add_parser("build")
 q.add_argument("--sha", required=True)
