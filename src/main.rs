@@ -3494,7 +3494,7 @@ fn reroute(b: &dyn Board, root: &Path, from: &str, to: &str) -> Res<Vec<Receipt>
             let (issue, task, _) = current(b, n)?;
             let log = entries(b, n)?;
             if !issue.open || task.state != State::Ready { return Err(format!("#{} is {}; reroute only changes open ready tasks", n, task.state.name())); }
-            labels::validate(&issue.labels)?;
+            if pending.is_none() {labels::validate(&issue.labels)?;}
             if !issue.labels.contains(&old) && pending.is_none() { return Err("source runtime pin changed; read the task again".into()); }
             if core::project(n, &log, false).executions.iter().any(|x| x.release.is_none()) { return Err("execution unresolved; preserve its runtime and session".into()); }
             let projection=core::project(n,&log,false);
@@ -4036,6 +4036,7 @@ mod tests {
         assert_eq!(rs.iter().find(|r|r.task==interrupted).unwrap().outcome,"unknown");
         assert!(core::project(interrupted,&entries(&b,interrupted).unwrap(),false).reroute.is_some());
         b.state.borrow_mut().fail_labels=false;
+        b.labels(interrupted,&["run-codex".into()],&[]).unwrap();
         let rs=reroute(&b,&dir,"claude","codex").unwrap();
         assert_eq!(rs.iter().find(|r|r.task==interrupted).unwrap().state,Some("ready"));
         assert_eq!(b.comments(interrupted).unwrap().iter().filter(|c|c.body.starts_with("taskq: reroute ")).count(),1);

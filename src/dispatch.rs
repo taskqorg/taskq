@@ -44,30 +44,72 @@ pub fn current(b: &dyn Board, n: u64) -> Res<(board::Issue, Task, bool)> {
     Ok((issue, fold(n, &log, deps), deps))
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RoutingWriter {
+    machine: String,
+    pid: u32,
+    started: String,
+}
+
+/// A crashed writer may leave an HTTP child; a later boot proves the entire request tree exited.
+fn routing_writer_exited(writer: &RoutingWriter, machine: &str) -> Res<bool> {
+    if machine.is_empty() || writer.machine!=machine {return Err("routing writer belongs to another machine; waiting for its host reconciliation".into());}
+    if writer.pid==0 || writer.started.is_empty() {return Err("routing writer native identity unknown".into());}
+    if crate::platform::started_before_boot(&writer.started).unwrap_or(false) {return Ok(true);}
+    match coreq::process::identity(writer.pid).map_err(|e|format!("routing writer native identity unreadable: {e}"))? {
+        Some(p) if p.started==writer.started => Ok(false),
+        _ => Err("routing writer exited; HTTP child exit unknown; waiting for verified later host boot".into()),
+    }
+}
+
 /// §5: finish the durable owner routing intent, shared by the CLI and automatic service reconciliation.
 pub fn finish_reroute(b: &dyn Board, n: u64) -> Receipt {
     let finish=|| -> Res<Receipt> {
-        let (issue,task,_)=current(b,n)?;
         let log=entries(b,n)?;
         let p=core::project(n,&log,false);
         let (id,from,to)=p.reroute.as_ref().ok_or("routing intent no longer pending")?;
-        if !issue.open || task.state!=State::Ready || p.task.state!=State::Ready || p.executions.iter().any(|x|x.release.is_none()) {
-            return Err("routing intent cannot change a non-ready task or unresolved execution".into());
+        let machine=crate::hostname();
+        if let Some(writing)=p.routing_writer {
+            let writer=log.iter().find(|e|e.id==writing).and_then(|e|e.body.lines().find_map(|s|s.strip_prefix("writer: ")))
+                .and_then(|s|serde_json::from_str::<RoutingWriter>(s).ok()).ok_or("routing writer native identity unknown; fence retained")?;
+            if !routing_writer_exited(&writer,&machine)? {return Err("routing writer still live; fence retained".into());}
+            b.comment(n,&format!("taskq: routing-release {writing}"))?;
         }
-        crate::labels::validate(&issue.labels)?;
-        let (old,new)=(format!("run-{from}"),format!("run-{to}"));
-        if issue.labels.contains(&old) {b.labels(n,std::slice::from_ref(&new),std::slice::from_ref(&old))?;}
-        else if !issue.labels.contains(&new) {return Err("runtime pins changed outside the pending reroute".into());}
-        let (got,t,_)=current(b,n)?;
-        let fresh=core::project(n,&entries(b,n)?,false);
-        if !got.open || t.state!=State::Ready || fresh.reroute!=p.reroute || fresh.executions.iter().any(|x|x.release.is_none())
-            || !got.labels.contains(&new) || got.labels.contains(&old) {
-            return Err("runtime pin/state/execution readback unconfirmed; routing fence retained".into());
-        }
+        if machine.is_empty() {return Err("routing writer machine unknown".into());}
+        let native=coreq::process::identity(std::process::id()).map_err(|e|e.to_string())?.ok_or("routing writer native identity unavailable")?;
+        let writer=serde_json::to_string(&RoutingWriter {machine,pid:native.pid,started:native.started}).map_err(|e|e.to_string())?;
+        let writing=b.comment(n,&format!("taskq: routing-write {id}\nwriter: {writer}"))?;
+        // No label operation may outlive this exclusive board claim, including a paused API call.
+        let write=|| -> Res<()> {
+            let (issue,task,_)=current(b,n)?;
+            let fresh=core::project(n,&entries(b,n)?,false);
+            if fresh.routing_writer!=Some(writing) || fresh.reroute!=p.reroute {return Err("routing writer claim not acquired; no labels changed".into());}
+            if !issue.open || task.state!=State::Ready || fresh.executions.iter().any(|x|x.release.is_none()) {
+                return Err("routing intent cannot change a non-ready task or unresolved execution".into());
+            }
+            let (old,new)=(format!("run-{from}"),format!("run-{to}"));
+            // GitHub can commit the add before a failed remove; only this intent's two pins may overlap.
+            let labels:Vec<_>=issue.labels.iter().filter(|l|**l!=new || !issue.labels.contains(&old)).cloned().collect();
+            crate::labels::validate(&labels)?;
+            if issue.labels.contains(&old) {b.labels(n,std::slice::from_ref(&new),std::slice::from_ref(&old))?;}
+            else if !issue.labels.contains(&new) {return Err("runtime pins changed outside the pending reroute".into());}
+            let (got,t,_)=current(b,n)?;
+            let fresh=core::project(n,&entries(b,n)?,false);
+            if !got.open || t.state!=State::Ready || fresh.routing_writer!=Some(writing) || fresh.reroute!=p.reroute
+                || fresh.executions.iter().any(|x|x.release.is_none()) || !got.labels.contains(&new) || got.labels.contains(&old) {
+                return Err("runtime pin/state/execution readback unconfirmed; routing fence retained".into());
+            }
+            Ok(())
+        };
+        let written=write();
+        // Even a failed label/readback call has finished before this release; a later boot recovers an unconfirmed request tree.
+        b.comment(n,&format!("taskq: routing-release {writing}"))?;
+        written?;
         let done=b.comment(n,&format!("taskq: rerouted {id}"))?;
         let got=b.issue(n)?;
         let log=entries(b,n)?;
         let t=core::fold(n,&log,deps_open(b,n,&got.body,&log));
+        let (old,new)=(format!("run-{from}"),format!("run-{to}"));
         if !core::project(n,&log,false).accepts(done) || !got.labels.contains(&new) || got.labels.contains(&old) {
             return Err("reroute completion readback unconfirmed".into());
         }
@@ -787,6 +829,43 @@ pub fn recover(b: &dyn Board, root: &Path, rows: &[Row]) -> Vec<Receipt> {
 mod tests {
     use super::*;
     use crate::board::Fake;
+
+    // Chain: §5, #2137 A3. Recovery must not steal a live/foreign writer, and must finish a crashed partial label write.
+    #[test]
+    fn balancing_reroute_writer_recovery_preserves_ownership() {
+        let b=Fake::default();
+        let n=b.create("Reroute","",&["taskq".into(),"run-claude".into()]).unwrap();
+        let intent=b.comment(n,"taskq: reroute claude codex\nrouting-fence: 1").unwrap();
+        let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
+        let machine=crate::hostname();
+        let writer=|machine:&str,started:&str|serde_json::to_string(&RoutingWriter {machine:machine.into(),pid:native.pid,started:started.into()}).unwrap();
+        for identity in [writer("invented-remote-host",&native.started),writer(&machine,&native.started),"invalid invented identity".into()] {
+            let claim=b.comment(n,&format!("taskq: routing-write {intent}\nwriter: {identity}")).unwrap();
+            let before=b.comments(n).unwrap().len();
+            let r=finish_reroute(&b,n);
+            assert_eq!(r.outcome,"unknown");assert!(r.reason.contains("writer"));
+            assert_eq!(b.comments(n).unwrap().len(),before,"unknown or live writer cannot be released");
+            assert_eq!(b.issue(n).unwrap().labels,["taskq","run-claude"]);
+            b.comment(n,&format!("taskq: routing-release {claim}")).unwrap();
+        }
+        // Caller absence alone cannot release an orphaned HTTP child.
+        let dead=writer(&machine,"invented-previous-incarnation");
+        let claim=b.comment(n,&format!("taskq: routing-write {intent}\nwriter: {dead}")).unwrap();
+        assert_eq!(finish_reroute(&b,n).outcome,"unknown");
+        b.comment(n,&format!("taskq: routing-release {claim}")).unwrap();
+        // Invented prior-boot identity: only this boundary proves the whole request tree cannot write again.
+        #[cfg(target_os="macos")] let before_boot="1-0";
+        #[cfg(target_os="linux")] let before_boot="00000000-0000-0000-0000-000000000000-1";
+        #[cfg(windows)] let before_boot="1";
+        #[cfg(not(any(target_os="macos",target_os="linux",windows)))] let before_boot="unsupported";
+        let dead=writer(&machine,before_boot);
+        b.comment(n,&format!("taskq: routing-write {intent}\nwriter: {dead}")).unwrap();
+        b.labels(n,&["run-codex".into()],&[]).unwrap();
+        assert!(finish_reroute(&b,n).ok());
+        assert_eq!(b.issue(n).unwrap().labels,["taskq","run-codex"]);
+        let p=core::project(n,&entries(&b,n).unwrap(),false);
+        assert!(p.reroute.is_none()&&p.routing_writer.is_none());assert_eq!(p.task.retries,0);
+    }
 
     // Chain: § 2 ask/answer log -> snapshot history -> conversation. Risk (#1918 A5): a second question replaced the
     // first question and its answer, so the conversation lost earlier decisions.

@@ -176,7 +176,9 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
 Balancing has four sections: Task routing, Runtime availability, Host balancing, Project policies; existing `work` routes and JSON keys remain aliases.
-Owner-only `taskq reroute --from <rt> --to <rt>` changes strict pins only on open ready tasks without unresolved execution. Its board routing fence blocks concurrent admission; new claims bind its revision. Read back labels, state and execution before reporting; unknown completion retains the fence for automatic reconciliation ([detail](docs/design/commands.md#runtime-reroute)). No live attempt or host policy changes.
+Owner-only `taskq reroute --from <rt> --to <rt>` changes strict pins only on open ready tasks without unresolved execution. Its board routing fence blocks concurrent admission; new claims bind its revision.
+An exclusive board writer claim covers every label write; completion waits for release. Recovery releases a crashed writer only after its own host verifies a later boot; caller exit alone does not prove HTTP child exit. Live, remote or unknown writers retain the fence.
+Read back labels, state and execution before reporting; unknown completion retains the fence for automatic reconciliation ([detail](docs/design/commands.md#runtime-reroute)). No live attempt or host policy changes.
 Every command's syntax and effect, op ids, revisions, receipts, task-write acknowledgements and the other formats not listed here: [commands](docs/design/commands.md#contract-detail).
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each; a compact one links its full diagnostic in `.taskq/cli-errors.log`, else keeps raw output (R12).
 - Worker `requeue`, `later`, `failed`: `Reason: <blocker>`, optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each; `--stage` adds `Stages:` (§ 2).

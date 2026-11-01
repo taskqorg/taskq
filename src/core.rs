@@ -279,6 +279,7 @@ pub struct Projection {
     /// §5: latest routing fence, and its unfinished intent. Neither changes task state.
     pub routing_revision: u64,
     pub reroute: Option<(u64, String, String)>,
+    pub routing_writer: Option<u64>,
     accepted: Vec<u64>,
     /// Accepted answers and steers in board order, across all attempts (§ 2).
     pub notes: Vec<u64>,
@@ -527,7 +528,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut answers = vec![];
     let mut executions: Vec<Execution> = vec![];
     let (mut changes, mut queue) = (vec![], vec![]);
-    let (mut routing_revision, mut reroute) = (0, None);
+    let (mut routing_revision, mut reroute, mut routing_writer) = (0, None, None);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
     for e in log {
         if let Some(l) = parse(n, &e.body) {
@@ -547,8 +548,24 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                 }
                 continue;
             }
+            if l.kind == "routing-write" && l.attempt.is_none() && l.args.len() == 1 {
+                if routing_writer.is_none() && reroute.as_ref().is_some_and(|(id,_,_)| l.args[0].parse()==Ok(*id)) {
+                    routing_writer=Some(e.id);
+                    accepted.push(e.id);
+                    last=e.id;
+                }
+                continue;
+            }
+            if l.kind == "routing-release" && l.attempt.is_none() && l.args.len() == 1 {
+                if routing_writer.is_some_and(|id| l.args[0].parse()==Ok(id)) {
+                    routing_writer=None;
+                    accepted.push(e.id);
+                    last=e.id;
+                }
+                continue;
+            }
             if l.kind == "rerouted" && l.attempt.is_none() && l.args.len() == 1 {
-                if reroute.as_ref().is_some_and(|(id,_,_)| l.args[0].parse() == Ok(*id)) {
+                if routing_writer.is_none() && reroute.as_ref().is_some_and(|(id,_,_)| l.args[0].parse() == Ok(*id)) {
                     reroute = None;
                     accepted.push(e.id);
                     last = e.id;
@@ -632,7 +649,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, revision:rev, routing_revision, reroute, accepted, notes, answers, executions, changes, queue }
+    Projection { task:t, revision:rev, routing_revision, reroute, routing_writer, accepted, notes, answers, executions, changes, queue }
 }
 
 /// The board-backed context repeated at every attempt/resume and before hand-in (§ 7).

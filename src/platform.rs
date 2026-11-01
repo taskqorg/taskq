@@ -41,8 +41,11 @@ pub fn write_status(t: &Tool, root: &Path, status: &serde_json::Value) -> Result
 /// #1445: whether a recorded process start (coreq native identity) lies before the current boot; Err: unknown.
 #[cfg(target_os = "linux")]
 pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
+    let (id,_) = started.rsplit_once('-').filter(|(id,ticks)| id.len()==36
+        && id.bytes().enumerate().all(|(i,b)| if [8,13,18,23].contains(&i) {b==b'-'} else {b.is_ascii_hexdigit()})
+        && ticks.parse::<u64>().is_ok()).ok_or_else(|| std::io::Error::other("invalid process start"))?;
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
-    Ok(started.get(..36) != Some(boot.trim()))
+    Ok(id != boot.trim())
 }
 
 #[cfg(target_os = "macos")]
@@ -1122,6 +1125,7 @@ mod tests {
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "temp file removed");
         let me = coreq::process::identity(std::process::id()).unwrap().unwrap();
         assert!(!started_before_boot(&me.started).unwrap(), "this process started in this boot");
+        for invalid in ["", "invented-previous-incarnation"] {assert!(started_before_boot(invalid).is_err(),"malformed start cannot prove a later boot");}
         fs::remove_dir_all(dir).unwrap();
     }
 

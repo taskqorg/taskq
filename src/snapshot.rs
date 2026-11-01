@@ -273,6 +273,8 @@ impl Admission {
     }
 }
 
+pub const ROUTING_WAIT: &str = "runtime reroute pending; service rechecks writer ownership before completion";
+
 /// The board-only admission of a row: `waiting` is the fold's dependency decision, `ready` waits for a host decision
 /// unless its `host-<name>` label names no heartbeat (#1721): no host ever claims it.
 fn board_admission(t: &Task, labels: &[String], deps: &[service::Blocker], hosts: &[board::Issue], observed: i64) -> Option<Admission> {
@@ -386,7 +388,9 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         executions,
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
-        admission: board_admission(&v.projection.task, &v.issue.labels, &v.blockers, hosts, observed),
+        admission: if v.projection.task.state==State::Ready && v.projection.reroute.is_some() {
+            Some(Admission {code:"unknown",reason:ROUTING_WAIT.into(),observed,host:None})
+        } else {board_admission(&v.projection.task, &v.issue.labels, &v.blockers, hosts, observed)},
         answered: crate::dispatch::answered_in(v.issue.number, &v.log, &v.projection, &v.comments),
         history: crate::dispatch::history(v.issue.number, &v.log, &v.projection, &v.comments),
         ops: v.log.iter().rev().filter_map(|e| crate::core::op_id(v.issue.number, &e.body)).take(OPS).map(String::from).collect(),

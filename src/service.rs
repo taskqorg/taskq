@@ -2388,6 +2388,7 @@ impl<'a> Service<'a> {
     }
 
     fn select_runtime(&self, v: &View) -> Result<(String, Option<String>), (&'static str, String)> {
+        if v.projection.reroute.is_some() {return Err(("unknown",crate::snapshot::ROUTING_WAIT.into()));}
         let reviewer = v.projection.task.state == State::Review;
         let default = crate::labels::project_default(&v.issue.labels, reviewer, &self.cfg.routing, &self.cfg.default_runtime);
         crate::labels::select(&v.issue.labels, reviewer, default,
@@ -2433,8 +2434,8 @@ impl<'a> Service<'a> {
         let Some(snapshot) = &mut self.snapshot else { return };
         let observed = snapshot.observed;
         for r in snapshot.tasks.iter_mut().filter(|r| matches!(r.task.state, State::Ready | State::Review)) {
-            // the board's own refusal (a host label no heartbeat names, #1721) holds on every host; keep it
-            if r.admission.as_ref().is_some_and(|a| a.code == "host" && a.host.is_none()) { continue; }
+            // Board-level refusals hold on every host, including an unfinished routing writer.
+            if r.admission.as_ref().is_some_and(|a| a.host.is_none() && (a.code=="host" || a.reason==crate::snapshot::ROUTING_WAIT)) { continue; }
             if let Some((code, reason)) = decided.get(&r.n) {
                 r.admission = Some(crate::snapshot::Admission { code, reason: reason.clone(), observed, host: Some(me.clone()) });
             }
@@ -6912,6 +6913,38 @@ Open: none";
             assert_eq!(exits.borrow().len(),1);assert_eq!(task(&b,n).retries,0);
             std::fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    // Chain: §5, #2137 A3. A paused finisher must not write pins after another service completes and admits work.
+    #[test]
+    fn balancing_reroute_stale_finisher_preserves_live_pins() {
+        let b=Fake::default();let root=std::env::temp_dir().join(format!("taskq-stale-finisher-{}",crate::runtime::uuid()));
+        let mut c=cfg("mac");c.root=root.clone();c.install=root.join("install");
+        c.limits.insert("codex".into(),1);c.limits.insert("antigravity".into(),1);
+        let n=b.create("Reroute","",&["taskq".into(),"run-claude".into()]).unwrap();
+        b.comment(n,"taskq: reroute claude codex\nrouting-fence: 1").unwrap();
+        let exits:Exits=Default::default();
+        let (other,launched)=(c.clone(),exits.clone());
+        b.state.borrow_mut().before_labels=Some(Box::new(move |b,n| {
+            let mut second=service(b,&other,launched);second.focus=vec![];
+            second.pass().unwrap();
+            let pending=second.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().admission.as_ref().unwrap();
+            assert!(pending.reason.contains("reroute"),"pending writer must explain why work waits");
+            crate::reroute(b,&other.root,"codex","antigravity").unwrap();
+            second.focus=vec!["all".into()];second.pass().unwrap();
+        }));
+        let receipt=crate::dispatch::finish_reroute(&b,n);
+        let p=core::project(n,&crate::board::entries(&b,n).unwrap(),false);
+        let pins:Vec<_>=b.issue(n).unwrap().labels.into_iter().filter(|l|l.starts_with("run-")).collect();
+        assert_eq!(pins,[format!("run-{}",rt_of(&p.task).map_or("codex",|r|r.0))],"stale finisher corrupted the live pin");
+        assert!(receipt.ok(),"the sole writer can finish: {}",receipt.text());
+        assert!(exits.borrow().is_empty(),"the second service cannot admit while the first can still write");
+        crate::reroute(&b,&c.root,"codex","antigravity").unwrap();
+        let mut second=service(&b,&c,exits.clone());second.focus=vec!["all".into()];second.pass().unwrap();
+        assert_eq!(rt_of(&task(&b,n)).unwrap().0,"antigravity");
+        assert_eq!(b.issue(n).unwrap().labels.iter().filter(|l|l.starts_with("run-")).cloned().collect::<Vec<_>>(),["run-antigravity"]);
+        assert_eq!(exits.borrow().len(),1);assert_eq!(task(&b,n).retries,0);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // A5/A6: failed quota persistence must fence every project, not select the exhausted default as its own spare.

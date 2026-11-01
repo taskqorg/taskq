@@ -50,7 +50,7 @@ Provider/account quota windows live in the existing host-wide account availabili
 
 ### Balancing cutover
 
-Routing fences and reviewer quota continuation change older folds and require the coordinated project cutover in §8/§9 before new entries are written. This includes fenced `taskq: reroute` intents, `rerouted` completion, claims carrying `routing-revision`, and reviewer `steer quota attempt`. Historical unfenced reroute audits retain their meaning. Soft preferences and project routing also require compatible admission policy on every board host.
+Routing fences and reviewer quota continuation change older folds and require the coordinated project cutover in §8/§9 before new entries are written. This includes fenced `taskq: reroute` intents, `routing-write`/`routing-release` writer ownership, `rerouted` completion, claims carrying `routing-revision`, and reviewer `steer quota attempt`. Historical unfenced reroute audits retain their meaning. Soft preferences and project routing also require compatible admission policy on every board host.
 
 1. Inventory the configured board hosts and open tasks, including pending routing intents, results, retries, quota windows and native execution ownership. Unknown or unreadable ownership blocks replacement; it never proves exit.
 2. Under the existing owner-approved cutover procedure, pause new admissions. Preserve active work until it finishes or a qualified native handover preserves its attempt, session, account and grants. Never replay, migrate or duplicate uncertain execution.
