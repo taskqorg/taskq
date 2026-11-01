@@ -13,7 +13,7 @@ grants, trust and client configuration are read, never written. Every file this 
   live-probe.py cleanup FIXTURE          close fixture tasks, stop fixture runtimes, archive receipts, delete FIXTURE
 
 `build` clones CHECKOUT into DIR/src (DIR must be new; the dirty primary checkout is only read), checks out SHA,
-runs `cargo build --release --locked -j 1` under a deadline and writes DIR/build.json: SHA, toolchain, binary path
+runs `npm ci` and `cargo build --release --locked -j 1` under one deadline and writes DIR/build.json: SHA, toolchain, binary path
 and SHA-256. `prepare` writes FIXTURE/RUNBOOK.txt with this host's exact commands. It refuses when the build source
 is not exactly SHA and clean, when the binary digest differs from build.json or it reports no version, or when no
 existing Claude trust entry covers PARENT: it never changes trust, login or grants. PARENT must already sit under a trusted root, such as the checkout's `.worktrees`.
@@ -142,11 +142,17 @@ def build(a):
     started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     e = {k: v for k, v in os.environ.items() if k not in STRIP}
     e["CARGO_TARGET_DIR"] = target
+    deadline = time.time() + a.minutes * 60
     with open(os.path.join(out, "build.log"), "w") as log:
-        p = subprocess.Popen(["cargo", "build", "--release", "--locked", "-j", "1", "--bin", "taskq"], cwd=src, env=e,
+        # the web bundle in build.rs needs the locked npm packages, installed as release.yml does
+        p = subprocess.Popen(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=src, env=e, shell=WIN,
                              stdout=log, stderr=subprocess.STDOUT, start_new_session=not WIN)
         try:
             rc = p.wait(a.minutes * 60)
+            if rc == 0:
+                p = subprocess.Popen(["cargo", "build", "--release", "--locked", "-j", "1", "--bin", "taskq"], cwd=src, env=e,
+                                     stdout=log, stderr=subprocess.STDOUT, start_new_session=not WIN)
+                rc = p.wait(max(1, deadline - time.time()))
         except subprocess.TimeoutExpired:
             rc = "deadline"
         finally:  # deadline, Ctrl-C or a killed script: the whole cargo group goes with it
