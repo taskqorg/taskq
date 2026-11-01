@@ -94,6 +94,24 @@ mod tests {
             fs::write(f.dir.join("host.json"),json!({"codex":args}).to_string()).unwrap();assert!(f.plan().is_err(),"{args:?}");
         }
     }
+    // Chain: R8 R12 #2135 A2: query errors and permission mismatches remain closed and attributable without private paths.
+    // Risk: treating unknown enforcement as allowed or hiding the native query needed to diagnose containment.
+    #[test]
+    fn protected_sandbox_refusal_names_query_and_result_without_paths() {
+        for (result,errno,denied,observed,expected) in [
+            (-1,Some(22),true,"unknown","denied"),
+            (0,None,true,"allowed","denied"),
+            (1,None,false,"denied","allowed"),
+        ] {
+            let error=sandbox_result("file-write-create","account-config",result,errno,denied).unwrap_err();
+            assert_eq!(error,format!("native sandbox readback: operation=file-write-create category=account-config expected={expected} observed={observed} return={result} errno={}; input refused",errno.map_or("none".into(),|v|v.to_string())));
+            assert!(!error.contains('/')&&!error.contains('\\'),"private paths must not reach diagnostics");
+        }
+        assert!(sandbox_result("file-write-data","workspace-probe",0,None,false).is_ok());
+        assert!(sandbox_result("file-write-unlink","policy-store",1,None,true).is_ok());
+        assert!(sandbox_result("file-write-unlink","policy-store",2,None,true).is_ok());
+        assert!(sandbox_result("file-write-data","workspace-probe",-1,Some(3),false).is_err());
+    }
     // R9/R12 A2/A7: intent precedes spawn; interrupted/unknown/terminal records all consume the same launch.
     // Risk: restarting a supervisor replays an AssetQ operation or a stale PID is treated as live authority.
     #[test]
@@ -277,6 +295,16 @@ fn exact(expected:&coreq::process::Identity,seen:Res<Option<coreq::process::Iden
     if seen?.as_ref()!=Some(expected) {return Err("native incarnation absent or changed; retain slot and reconcile".into());}Ok(())
 }
 
+#[cfg(any(test,target_os="macos"))]
+fn sandbox_result(operation:&str,category:&str,result:i32,errno:Option<i32>,denied:bool)->Res<()> {
+    if result<0||(result!=0)!=denied {
+        let expected=if denied {"denied"}else{"allowed"};
+        let observed=if result<0 {"unknown"}else if result==0 {"allowed"}else{"denied"};
+        let errno=errno.map_or("none".into(),|v|v.to_string());
+        return Err(format!("native sandbox readback: operation={operation} category={category} expected={expected} observed={observed} return={result} errno={errno}; input refused"));
+    }Ok(())
+}
+
 pub(crate) fn versions_in_use(install:&Path)->Res<Vec<String>> {
     resources::try_with(install,|s| {
         s.ops.values().filter(|op|!op.bound["local_slot"]["launch"].is_null()&&op.receipt["occupied"]!=false)
@@ -340,19 +368,22 @@ mod mac {
         if canonical(Path::new(std::ffi::OsStr::from_bytes(&buf[..end])))?!=path {return Err("native executable has not matched the selected image".into());}
         live(id)
     }
-    fn check(pid:u32,operation:&str,path:&Path,denied:bool)->Res<()> {
+    fn check(pid:u32,operation:&str,category:&str,path:&Path,denied:bool)->Res<()> {
         let op=CString::new(operation).map_err(|_|"invalid sandbox operation")?;
         let path=CString::new(path.as_os_str().as_bytes()).map_err(|_|"invalid sandbox path")?;
-        let result=unsafe{sandbox_check(pid as i32,op.as_ptr(),1|SANDBOX_CHECK_NO_REPORT,path.as_ptr())};
-        if result<0||(result!=0)!=denied {return Err("native sandbox readback unknown or mismatched; input refused".into());}Ok(())
+        let result=unsafe{*libc::__error()=0;sandbox_check(pid as i32,op.as_ptr(),1|SANDBOX_CHECK_NO_REPORT,path.as_ptr())};
+        let errno=if result<0 {io::Error::last_os_error().raw_os_error()}else{None};
+        sandbox_result(operation,category,result,errno,denied)
     }
     fn verified(id:&coreq::process::Identity,install:&Path,p:&Plan)->Res<Value> {
         image(id,&p.bin)?;
-        check(id.pid,"file-write-data",&p.root.join(".taskq-app-server-probe"),false)?;
+        check(id.pid,"file-write-data","workspace-probe",&p.root.join(".taskq-app-server-probe"),false)?;
         let outside=p.home.join(".taskq-app-server-outside");
-        let protected=[install.join(policy::FILE),install.join("taskq"),p.bin.clone(),p.home.join(".codex/config.toml"),outside];
-        for path in &protected {for op in ["file-write-data","file-write-create","file-write-unlink"] {check(id.pid,op,path,true)?;}}
+        let protected=[("policy-store",install.join(policy::FILE)),("taskq-launcher",install.join("taskq")),
+            ("native-executable",p.bin.clone()),("account-config",p.home.join(".codex/config.toml")),("outside-workspace",outside)];
+        for (category,path) in &protected {for op in ["file-write-data","file-write-create","file-write-unlink"] {check(id.pid,op,category,path,true)?;}}
         image(id,&p.bin)?;
+        let protected:Vec<_>=protected.iter().map(|(_,path)|path).collect();
         Ok(json!({"state":"verified-effective","scope":"live native image and named effective sandbox queries; native workload qualification separate",
             "workspace_write":true,"protected_write_create_unlink_denied":protected,"reads":"existing profile","network":"existing profile"}))
     }
