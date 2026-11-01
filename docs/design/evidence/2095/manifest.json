@@ -1,0 +1,145 @@
+{
+  "sourceCommit": "13124ca0b67283363771a8c624ae5247ca661832",
+  "sourceTree": "dece3992d700c48382f39364b931306f473c9dde",
+  "captureCommand": "TASKQ_EVIDENCE_2095=docs/design/evidence/2095/after node tests/conversations-centre.browser.cjs",
+  "scope": "Production browser bundles with invented IPC; no live/native qualification",
+  "environment": {
+    "platform": "macOS",
+    "node": "v22.18.0",
+    "playwright": "1.64.1",
+    "theme": "dark",
+    "fontCssPx": 18,
+    "deviceScaleFactor": 1,
+    "captureUtc": "2026-11-01T05:18:31.415074+00:00",
+    "chromium": "156.0.8078.4"
+  },
+  "sourceSha256": {
+    "Cargo.toml": "137a0fe7a7eec53e42cb73f9834043c951396184e94884ec07bdf629975646b4",
+    "package-lock.json": "799adcef2d283062a3f9093fa6c02a80d660a7293df822e391b16b083a5076d9",
+    "package.json": "426ec9c290ba4d4c54abd22e8f9593b75ed635f2aec1c18c7e4d7d9d70d229bc",
+    "src/anchored-popover.js": "107ca8d6b289e661ee5bc609f37a05f88c02c2c7151618fea2bacbb10a3492af",
+    "src/answer-card.css": "48f66124d87c0c4e69cf23ec1d4a760a1e560610d4d5639214ee650727c65314",
+    "src/answer-card.js": "035d4c3f635199c71e1d98cc3e83cc06bb30841f747a2d659e23e08e86f95848",
+    "src/app-shell.css": "4fdc608cfad36ab409128fa98c97ecd4757aa4830618642c9e654b780d34416d",
+    "src/app-shell.js": "69aa242f93a816847a6eb33486fd941a52a4db3f604624511a97a9b6e3bedf21",
+    "src/conversations.css": "f46d4bf4a26aecb8d16177cfc82941ac7f80bc93b288c3dadbe04a9052dc91c8",
+    "src/conversations.js": "efa527d29ef34e637496c0ad7ecc4d31d186e8bb83ca939f1b848c77167aff75",
+    "src/finding-composer.css": "59429c0cf812caf40b3478cd95ab32f4f5e87b2841e9584b9480f9a0304e01c4",
+    "src/finding-composer.js": "4b3133df44a96935e51b8f4f907f586c42a3fecc8fccbbfb6aefa691fb6da42d",
+    "src/notification-panel.js": "c2ef065ca187d0928829f830d545eccf1f7a494a78c5703f75e73a914a24787d",
+    "src/pm-composer.css": "d4df93cbf263022344ffd3c736fe8b7883ddccd727e1a51e6a7ab5232326a856",
+    "src/pm-composer.js": "705885cd63854ffe609f219f0dd9895a6a4ef8474d929d05842be568440df45a",
+    "src/project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0",
+    "src/project-blocks.js": "4ee981d0444b0f5a540c59549bf757a7ad9225c4b603a22f601400a4900f3f53",
+    "src/relative-time.js": "2ef72491f427044ec41233f802487c4f06a2d16b45c69e2e8510780ca22b12d7",
+    "src/reply-files.js": "4cc87209fe6610564c48a5e1f9727fb29e897e02cfcf53b8f0653ea8ce307bb5",
+    "src/reports.js": "55545837484dec8fc1685243ad2f73fb791ed9b9912fa2ccd6d4bf2d90610632",
+    "src/resource-controls.css": "9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907",
+    "src/resource-controls.js": "87b3d7d931ffbef6b11d90ac30da8ec62879c7d6a21e6d909f660e735988aec0",
+    "src/sync-view.js": "a5c20c8e75252d7305d9e29c6ad6191bbc1afbf5dc89fe0f4732c7fd6714707b",
+    "src/task-controls.js": "7c87b84d74030ee821158129c8d2566a06ed2a710f16a402fb3e6451311a2ae2",
+    "src/task-dashboard.css": "7fb0e6f9ced7eb4bbadf3f8b9fb3004d4016db73111dd0eca01bf4a6c80a4c4d",
+    "src/task-dashboard.js": "a430736fbe18ac5097ff57c54b5711beab2fbf29b18b29041dfed2cbbd17c972",
+    "src/task-views.js": "bbeaed25fb1a1d1b5a21408a9f95b638a595d5635b02fdb1262871e349b23806",
+    "src/task-workspace.css": "792f170ce2eb9c484d540cb1fd58fa011b9d82ab2bb5d011e7eaf75a13ed9ede",
+    "src/task-workspace.js": "ac818736f7490c9afd6070c15462b6e74826da6886547cb01eb3ff080282105d",
+    "src/tray-app.js": "189d7b50cf0210b96ae648677a8223a8ff7ca98b0c1be06eea13615196a6ed73",
+    "src/tray-entry.js": "cd9ec55619108bade33a8d6f91f30103f1ba9ded5b6ad14ec3b39a01fa6a8d5c",
+    "src/tray-guard.js": "928daf03b94d2c0ac17589df77ff8913dad0f4c79f0aea42117f81cad8a8f750",
+    "src/tray-view-state.js": "aa0989d9c8b87e6e79c5bd05fcbf420ce9513170adf23f3f8caf6f4e3288f535",
+    "src/tray-web.js": "99f2c573b0189cb5a173cd6737bce2f504ecb3d3d8b7cd76c3fef62388a99259",
+    "src/tray.html": "bc48032c3b05846758f1a483f44ecf174532e0e66ae1ca70eb9630c97c3872be",
+    "src/ui-icons.js": "b5f3542c8d446db6e811f26bf82a3d716b5ee93e830ccd11007f5072f0e26d5a",
+    "src/ui-runtime.js": "84ab02032fba8256b81926aca9198b02ece701b9cbee402f183113bf25fb9a8a",
+    "src/workspace-answers.js": "9e870f2901a9211787d6c8c2cb81d5d3abfad06154f7abfbf94e61646cb71b34",
+    "src/workspace-entry.js": "77b67724f0b548f2cb3df0d132004c2780de2e254f0515495896a7ad19ddadc7",
+    "src/workspace.js": "6fb93ed2cd3fd8ba6c7113bfdd99110f1001b9a2e9e7ac88f96c6a98541d5ea1",
+    "tests/conversations-centre.browser.cjs": "9fe64410d1fe3f6bc4b5ce0f9d0a91c7cc43afd71724ee81e79fd1b7567e337d",
+    "tests/notifications.browser.cjs": "0cb8e40236d99a8b41bc9f992003f89a9bcf40f7b8cfea789f30bde3ecaea804"
+  },
+  "buildSha256": {
+    "build/web/workspace.html": "7914147b2482ff1139c2c4e1fe2fe4729e5f289ad8f54459ebd2f7ddb1df6a4f",
+    "build/web/workspace-entry.js": "178d1ef7dd843380e528ef8af7b2e801c3d5ff62728a4ec0f1cd7c1818b99a33",
+    "build/web/tray.html": "5b57bdb3a284b98cc6c238eb0b32d5ffdd406a7793d86f5e7241eecbb4174ca9",
+    "build/web/tray-entry.js": "a8b2227c80014556d5d5437b3d012b529a7082493f01730ee60f039678c81f3a",
+    "build/web/task-workspace.sources.json": "4a53b421a793b3cd0eb13168431a1b8dd21241ba350b87453073ceb70e2bce98"
+  },
+  "frames": {
+    "after/finished.png": {
+      "sha256": "fb7a66b6b8fe7aedd198c2a2a1fa28607ea497aa6ec91e45bd3c942cd3565bbf",
+      "bytes": 93132,
+      "width": 1000,
+      "height": 700,
+      "format": "PNG"
+    },
+    "after/linked-reviewer.png": {
+      "sha256": "cc8d31209a9a505cd2b69d550531ea9eacc5e293bbc0d63161ae9a6ad2f207a2",
+      "bytes": 84370,
+      "width": 820,
+      "height": 700,
+      "format": "PNG"
+    },
+    "after/new.png": {
+      "sha256": "a52d6c877a336a22fe9ff5a0c4ea1a93eba0fb78ab00f934a8f6dc12e3cd0d78",
+      "bytes": 42047,
+      "width": 1000,
+      "height": 700,
+      "format": "PNG"
+    },
+    "after/reading.png": {
+      "sha256": "67b77faf82b1f5d192af7ca04058b2685adda7be7c7c4849f55abdc748a716aa",
+      "bytes": 212692,
+      "width": 820,
+      "height": 700,
+      "format": "PNG"
+    },
+    "before/news.jpg": {
+      "sha256": "7cf42d4810fbfedd6f4295494f191d50eb60824c7e379640702f45eb2cb6ffab",
+      "bytes": 318814,
+      "height": 1844,
+      "width": 664,
+      "format": "JPEG"
+    },
+    "before/navigation.jpg": {
+      "sha256": "04a4ef2e802c7f8d3ab863ebf5eb06189bb04e335f560097795af8d1f9c83dad",
+      "bytes": 311897,
+      "height": 1200,
+      "width": 1600,
+      "format": "JPEG"
+    },
+    "before/reading.jpg": {
+      "sha256": "1b97e86e5e0b3c99318423b35525bc035329db2822a90fbce84405f6d0f00779",
+      "bytes": 272973,
+      "height": 1200,
+      "width": 1600,
+      "format": "JPEG"
+    },
+    "before/linked-reviewer.jpg": {
+      "sha256": "b94913aead66bc15c724af1a2c38949d97f57024713812dd3b408c38398332d6",
+      "bytes": 196701,
+      "height": 1200,
+      "width": 1600,
+      "format": "JPEG"
+    }
+  },
+  "before": {
+    "packetSha256": "c0c02afff756be78fe46f416f895baf76d9a0cc7a0978d66ad050cba58de0cb4",
+    "packetBytes": 2049935,
+    "inspectedSource": "60c7868ce6d7a97247b65af718a1771605636cb1",
+    "nativeVersion": "4.6.58-dev.1793504549",
+    "nativeBinarySha256": "9646c46949ea61a0383ce0ef4e2de66fd2adf52fdb5aab887483f68817780ad9",
+    "nativeBinaryToSource": "Not established",
+    "fileMap": {
+      "before/news.jpg": "26-notification-return.png",
+      "before/navigation.jpg": "29-filter-previous-escape.png",
+      "before/reading.jpg": "32-report-return-anchor.png",
+      "before/linked-reviewer.jpg": "24-agent-view.png"
+    }
+  },
+  "isolatedSelftestBinary": {
+    "sourceCommit": "13124ca0b67283363771a8c624ae5247ca661832",
+    "sha256": "beda5ccee45e9c25a0aca6b25d38f70a2ba6beb7e6e47ab4e80dce6043a6efa8",
+    "bytes": 47660576,
+    "scope": "Debug build, isolated offline selftest; not installed/native UI acceptance"
+  }
+}
