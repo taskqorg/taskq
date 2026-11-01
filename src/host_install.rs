@@ -440,6 +440,7 @@ pub fn install_project(install:&Path,root:&Path)->Res<String> {
 }
 
 fn preflight(install:&Path,root:&Path)->Res<()> {
+    drop(crate::wake_lock(root)?);
     let (cfg,raw,_)=crate::check_load(root)?;
     let board=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
     board.me()?;
@@ -449,8 +450,8 @@ fn preflight(install:&Path,root:&Path)->Res<()> {
 
 // A3: cancellation can undo only the new membership of this exact live owner, never its execution.
 fn cancellation_registry(install:&Path,p:&Pending)->Res<()> {
-    if !p.attach||p.restore||p.activation.is_some()||!matches!(p.phase.as_str(),"registered"|"cancelling") {
-        return Err("only a registered unused attachment can be cancelled; installation kept".into());
+    if !p.attach||p.restore||p.activation.is_some()||!matches!(p.phase.as_str(),"owned"|"registered"|"cancelling") {
+        return Err("only an owned or registered unused attachment can be cancelled; installation kept".into());
     }
     let original=p.original.as_deref().ok_or("attachment original registry missing; kept")?;
     if project_entries(original)?.iter().any(|(_,root)|root==&p.root) {return Err("attachment root was already registered; cancellation refused".into());}
@@ -461,7 +462,11 @@ fn cancellation_registry(install:&Path,p:&Pending)->Res<()> {
         return Err("attachment changed more than its own membership; kept".into());
     }
     let current=raw_projects(install)?;
-    if current.as_deref()!=Some(p.next.as_str())&&!(p.phase=="cancelling"&&current==p.original) {return Err("attachment registry changed; cancellation refused".into());}
+    let matches=match p.phase.as_str() {
+        "owned"=>current==p.original,"registered"=>current.as_deref()==Some(p.next.as_str()),
+        _=>current==p.original||current.as_deref()==Some(p.next.as_str()),
+    };
+    if !matches {return Err("attachment registry changed; cancellation refused".into());}
     Ok(())
 }
 
@@ -860,6 +865,8 @@ mod tests {
         let result=(||->Res<()> {
             wait_attachment(&mut live,||existing.iter().all(|root|crate::data::json(&crate::dot(root).join("status.json")).ok().flatten().is_some_and(|s|s["host_instance"]=="invented-auth-host")))?;
             coreq::process::output("test.attachment-auth",&mut cmd,std::time::Duration::from_secs(60)).map_err(|e|format!("credential preflight: {e:?}"))?;
+            cmd.env("TASKQ_ATTACHMENT_WAKE_CASE","1");
+            coreq::process::output("test.attachment-wake",&mut cmd,std::time::Duration::from_secs(60)).map_err(|e|format!("wake preflight: {e:?}"))?;
             coreq::write_durable(&install.join("verify-continuity"),"")?;
             wait_attachment(&mut live,||install.join("continuity-ok").exists())
         })();
@@ -927,9 +934,11 @@ mod tests {
         let install=PathBuf::from(std::env::var_os("TASKQ_ATTACHMENT_CASE").unwrap());
         assert!(install.parent().unwrap().file_name().unwrap().to_string_lossy().starts_with("taskq-install-originals-"));
         let root=PathBuf::from(std::env::var_os("TASKQ_ATTACHMENT_ROOT").unwrap());
+        let wake=std::env::var_os("TASKQ_ATTACHMENT_WAKE_CASE").map(|_|crate::wake_lock(&root).unwrap());
         for _ in 0..2 {
             let error=install_project(&install,&root).unwrap_err();
-            assert!(error.contains("no GitLab token"),"missing credential must precede host transition: {error}");
+            if wake.is_some() {assert!(error.contains("wake-lock"),"wake eligibility must precede host transition: {error}");}
+            else {assert!(error.contains("no GitLab token"),"missing credential must precede host transition: {error}");}
             assert!(admission_reason(&install).is_none());
         }
     }
@@ -938,77 +947,97 @@ mod tests {
     // Retain occupied children of other roots, original registry bytes, and every original command receipt.
     #[test]
     fn failed_attachment_cancellation_replays_only_after_owned_empty_drain() {
-        let (install,root,paths)=fixture();let baseline=snapshot(&install,vec![root.clone()],paths).unwrap();
-        let original_bytes=fs::read(manifest(&install)).unwrap();
-        let existing=install.parent().unwrap().join("existing");fs::create_dir(&existing).unwrap();
-        let existing=existing.canonicalize().unwrap();
-        let original=format!("{}\r\n\n",existing.display());
-        let next=format!("{original}{}\n",crate::platform::plain_path(&root).display());
-        let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
-        let _owner=owner(&install).unwrap().unwrap();publish_service(&install,&native,"invented-cancel-host").unwrap();
-        let (capture,guard)=crate::profile::tests::collecting(&install);
-        let span=tracing::info_span!("host.install");let entered=span.enter();
-        let p=Pending {schema:1,id:"invented-failed-attachment".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),
-            original:Some(original.clone()),next:next.clone(),phase:"registered".into(),restore:false,attach:true,
-            owner:Some(InstallOwner {pid:native.pid,started:native.started.clone(),instance:"invented-cancel-host".into()}),activation:None,command:CommandReceipt::current().unwrap().encode()};
-        save(&install,&p).unwrap();fs::write(install.join("projects"),&next).unwrap();
-        record(&install,&p,"received").unwrap();record(&install,&p,"applied").unwrap();
-        let applied=retained(&install,&p).unwrap();
-        fs::create_dir_all(crate::dot(&root)).unwrap();startup_status(&install,&root,"no GitLab token","invented-cancel-host").unwrap();
-        let policy=Policy::parse(json!({"limits":{"codex":4},"load_gate":{"enabled":false}}),"invented").unwrap();
-        let mut h=Host::new(Ok(policy.clone()));h.instance="invented-cancel-host".into();
-        h.sync(&existing,vec![(7,8,"codex".into())]);h.busy.insert(existing.clone(),true);h.rebuilt.insert(existing.clone());
-        h.attach(&root);h.held=admission_reason(&install);
-        assert!(h.reserve(&existing,9,10,"codex",&policy.cap,true,0).is_err());
-        assert!(cancel_install(&install,&root,"wrong-command").unwrap_err().contains("differs"));
-        assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),next);
-        assert_eq!(installation_status(&install,Some(&p.id))["state"],"applied");
-        // Corrupt native recovery, a prior generation, and legacy execution all refuse before cursor mutation.
-        let kids=crate::kids_path(&install,&root).unwrap();fs::create_dir_all(kids.parent().unwrap()).unwrap();
-        fs::write(&kids,"unknown native execution").unwrap();
-        assert!(cancel_install(&install,&root,&p.id).is_err());fs::remove_file(&kids).unwrap();
-        publish_service(&install,&native,"another-host-generation").unwrap();
-        assert!(cancel_install(&install,&root,&p.id).unwrap_err().contains("ownership uncertain"));
-        publish_service(&install,&native,"invented-cancel-host").unwrap();
-        fs::write(crate::dot(&root).join("kids"),"unknown legacy execution").unwrap();
-        assert!(cancel_install(&install,&root,&p.id).unwrap_err().contains("legacy"));fs::remove_file(crate::dot(&root).join("kids")).unwrap();
-        assert_eq!(pending(&install).unwrap().phase,"registered");
-        for _ in 0..2 {
+        for initial in ["registered","owned"] {
+            let committed=initial=="registered";
+            let (install,root,paths)=fixture();let baseline=snapshot(&install,vec![root.clone()],paths).unwrap();
+            let original_bytes=fs::read(manifest(&install)).unwrap();
+            let existing=install.parent().unwrap().join("existing");fs::create_dir(&existing).unwrap();
+            let existing=existing.canonicalize().unwrap();
+            let original=format!("{}\r\n\n",existing.display());
+            let next=format!("{original}{}\n",crate::platform::plain_path(&root).display());
+            let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
+            let _owner=owner(&install).unwrap().unwrap();publish_service(&install,&native,"invented-cancel-host").unwrap();
+            let (capture,guard)=crate::profile::tests::collecting(&install);
+            let span=tracing::info_span!("host.install");let entered=span.enter();
+            let p=Pending {schema:1,id:"invented-failed-attachment".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),
+                original:Some(original.clone()),next:next.clone(),phase:initial.into(),restore:false,attach:true,
+                owner:Some(InstallOwner {pid:native.pid,started:native.started.clone(),instance:"invented-cancel-host".into()}),activation:None,command:CommandReceipt::current().unwrap().encode()};
+            let registry=if committed {&next}else{&original};
+            save(&install,&p).unwrap();fs::write(install.join("projects"),registry).unwrap();
+            record(&install,&p,"received").unwrap();if committed {record(&install,&p,"applied").unwrap();}
+            let applied=retained(&install,&p).unwrap();
+            fs::create_dir_all(crate::dot(&root)).unwrap();startup_status(&install,&root,"no GitLab token","invented-cancel-host").unwrap();
+            let policy=Policy::parse(json!({"limits":{"codex":4},"load_gate":{"enabled":false}}),"invented").unwrap();
+            let mut h=Host::new(Ok(policy.clone()));h.instance="invented-cancel-host".into();
+            h.sync(&existing,vec![(7,8,"codex".into())]);h.busy.insert(existing.clone(),true);h.rebuilt.insert(existing.clone());
+            h.attach(&root);h.held=admission_reason(&install);
+            assert!(h.reserve(&existing,9,10,"codex",&policy.cap,true,0).is_err());
+            assert!(cancel_install(&install,&root,"wrong-command").unwrap_err().contains("differs"));
+            assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),*registry);
+            assert_eq!(installation_status(&install,Some(&p.id))["state"],if committed {"applied"}else{"queued"});
+            fs::write(install.join("projects"),if committed {&original}else{&next}).unwrap();
+            assert!(cancel_install(&install,&root,&p.id).unwrap_err().contains("registry changed"));
+            fs::write(install.join("projects"),registry).unwrap();
+            // Corrupt native recovery, a prior generation, and legacy execution all refuse before cursor mutation.
+            let kids=crate::kids_path(&install,&root).unwrap();fs::create_dir_all(kids.parent().unwrap()).unwrap();
+            fs::write(&kids,"unknown native execution").unwrap();
+            assert!(cancel_install(&install,&root,&p.id).is_err());fs::remove_file(&kids).unwrap();
+            publish_service(&install,&native,"another-host-generation").unwrap();
+            assert!(cancel_install(&install,&root,&p.id).unwrap_err().contains("ownership uncertain"));
+            publish_service(&install,&native,"invented-cancel-host").unwrap();
+            fs::write(crate::dot(&root).join("kids"),"unknown legacy execution").unwrap();
+            assert!(cancel_install(&install,&root,&p.id).unwrap_err().contains("legacy"));fs::remove_file(crate::dot(&root).join("kids")).unwrap();
+            assert_eq!(pending(&install).unwrap().phase,initial);
+            for _ in 0..2 {
+                assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancellation requested"));
+                assert_eq!(pending(&install).unwrap().command,p.command);
+                assert_eq!(projects(&install).unwrap(),vec![existing.clone()]);
+                assert_eq!(install_acknowledgement(&install,&root,"invented-cancel-host"),None);
+                assert!(!acknowledge(&install,&p).unwrap());
+                assert!(finish_cancellation(&install,&h,false).unwrap_err().contains("drain/execution"));
+                assert_eq!(h.occupied(),1,"existing child remains owned and supervised");
+            }
+            h.detached(&root);
+            assert!(!h.rebuilding,"the removed startup failure cannot strand original occupancy recovery");
+            assert!(finish_cancellation(&install,&h,true).is_err(),"cached membership/thread still fences retirement");
+            h.sync(&root,vec![(11,12,"codex".into())]);
+            assert!(finish_cancellation(&install,&h,false).is_err(),"unknown occupied execution refuses removal");
+            h.sync(&root,vec![]);
+            // Crash after restoring registry: same cursor and command must finish the remaining audit writes.
+            if committed {replace_owned(&install.join("projects"),&next,&original).unwrap();}
+            assert!(admission_reason(&install).is_some());
+            finish_cancellation(&install,&h,false).unwrap();
+            assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),original);
+            assert_eq!(fs::read(manifest(&install)).unwrap(),original_bytes);
+            let failed=installation_status(&install,Some(&p.id));
+            assert_eq!(failed["state"],"failed");assert!(failed.get("observed_receipt").is_none());
+            assert_eq!(failed["received_receipt"],applied["received_receipt"]);assert_eq!(failed["applied_receipt"],applied["applied_receipt"]);
+            if !committed {assert!(failed.get("applied_receipt").is_none(),"uncommitted cancellation never fabricates application");}
+            assert_eq!(failed["cancelled_attachment"]["original"],original);assert_eq!(failed["cancelled_attachment"]["command"],p.command);
+            // Crash after the terminal receipt but before cursor retirement still needs host reconciliation.
+            let cancelled:Pending=serde_json::from_value(failed["cancelled_attachment"].clone()).unwrap();save(&install,&cancelled).unwrap();
             assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancellation requested"));
-            assert_eq!(pending(&install).unwrap().command,p.command);
-            assert_eq!(projects(&install).unwrap(),vec![existing.clone()]);
-            assert_eq!(install_acknowledgement(&install,&root,"invented-cancel-host"),None);
-            assert!(!acknowledge(&install,&p).unwrap());
-            assert!(finish_cancellation(&install,&h,false).unwrap_err().contains("drain/execution"));
-            assert_eq!(h.occupied(),1,"existing child remains owned and supervised");
+            assert!(admission_reason(&install).is_some());finish_cancellation(&install,&h,false).unwrap();
+            for _ in 0..2 {assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancelled"));}
+            assert_eq!(crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap(),1);
+            h.reload_admission(Ok(policy.clone()),admission_reason(&install),std::slice::from_ref(&existing));
+            assert!(h.reserve(&existing,9,10,"codex",&policy.cap,true,0).is_ok(),"unrelated project can launch after cancellation");
+            assert_eq!(h.occupied(),2,"the prior child keeps its slot");
+            drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);drop(_owner);
+            fs::remove_dir_all(install.parent().unwrap()).unwrap();
         }
-        h.detached(&root);
-        assert!(!h.rebuilding,"the removed startup failure cannot strand original occupancy recovery");
-        assert!(finish_cancellation(&install,&h,true).is_err(),"cached membership/thread still fences retirement");
-        h.sync(&root,vec![(11,12,"codex".into())]);
-        assert!(finish_cancellation(&install,&h,false).is_err(),"unknown occupied execution refuses removal");
-        h.sync(&root,vec![]);
-        // Crash after restoring registry: same cursor and command must finish the remaining audit writes.
-        replace_owned(&install.join("projects"),&next,&original).unwrap();
-        assert!(admission_reason(&install).is_some());
-        finish_cancellation(&install,&h,false).unwrap();
-        assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),original);
-        assert_eq!(fs::read(manifest(&install)).unwrap(),original_bytes);
-        let failed=installation_status(&install,Some(&p.id));
-        assert_eq!(failed["state"],"failed");assert!(failed.get("observed_receipt").is_none());
-        assert_eq!(failed["received_receipt"],applied["received_receipt"]);assert_eq!(failed["applied_receipt"],applied["applied_receipt"]);
-        assert_eq!(failed["cancelled_attachment"]["original"],original);assert_eq!(failed["cancelled_attachment"]["command"],p.command);
-        // Crash after the terminal receipt but before cursor retirement still needs host reconciliation.
-        let cancelled:Pending=serde_json::from_value(failed["cancelled_attachment"].clone()).unwrap();save(&install,&cancelled).unwrap();
-        assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancellation requested"));
-        assert!(admission_reason(&install).is_some());finish_cancellation(&install,&h,false).unwrap();
-        for _ in 0..2 {assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancelled"));}
-        assert_eq!(crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap(),1);
-        h.reload_admission(Ok(policy.clone()),admission_reason(&install),std::slice::from_ref(&existing));
-        assert!(h.reserve(&existing,9,10,"codex",&policy.cap,true,0).is_ok(),"unrelated project can launch after cancellation");
-        assert_eq!(h.occupied(),2,"the prior child keeps its slot");
-        drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);drop(_owner);
-        fs::remove_dir_all(install.parent().unwrap()).unwrap();
+    }
+
+    // Chain: §8 Project attachment: reject known WSL UNC paths before any filesystem or native lock probe.
+    #[cfg(windows)]
+    #[test]
+    fn wsl_unc_attachment_refuses_before_native_wake() {
+        let install=std::env::temp_dir().join(format!("taskq-unc-preflight-{}",crate::runtime::uuid()));
+        for path in [r"\\wsl.localhost\InventedDistro\project",r"\\WSL$\InventedDistro\project",r"\\?\UNC\wsl.localhost\InventedDistro\project",r"\\?\UNC\WSL$\InventedDistro\project"] {
+            let error=install_project(&install,Path::new(path)).unwrap_err();
+            assert!(error.contains("unsupported on Windows WSL UNC"),"{error}");
+            assert!(!install.exists(),"no installation hold or receipt can precede path eligibility");
+        }
     }
     pub(super) fn interrupt(install:&Path,phase:&str)->Res<()> {
         if std::env::var("TASKQ_INSTALL_INTERRUPT").ok().as_deref()!=Some(phase) {return Ok(());}
