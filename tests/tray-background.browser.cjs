@@ -54,7 +54,7 @@ function inspect(){
   assert.equal(await page.getByLabel('Readability backing').count(),0);
   await background.focus();await page.keyboard.press('End');assert.deepEqual(await page.evaluate(()=>{const {context,...message}=messages.filter(m=>m.a==='set').at(-1);return message;}),{a:'set',background_opacity:100});
   await page.getByRole('button',{name:'Whole window',exact:true}).click();assert.deepEqual(await page.evaluate(()=>{const {context,...message}=messages.filter(m=>m.a==='set').at(-1);return message;}),{a:'set',opacity_mode:'whole'});
-  assert.equal(await background.isDisabled(),true);assert.equal(await page.locator('#menu-opacity').isDisabled(),false);
+  assert.equal(await background.count(),0,'M1.2 / F06: inactive fields are absent');assert.equal(await page.locator('#menu-opacity').isDisabled(),false);
   await page.getByRole('button',{name:'Background only',exact:true}).click();assert.deepEqual(await page.evaluate(()=>{const {context,...message}=messages.filter(m=>m.a==='set').at(-1);return message;}),{a:'set',opacity_mode:'background'});
   for(const background_opacity of [0,50])for(const route of ['home','appearance','settings','agents','notifications','services','about','projects','attention']){
    await page.evaluate(s=>taskq.receive(s),{...s,page:route,background_opacity});

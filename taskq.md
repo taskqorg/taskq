@@ -222,6 +222,7 @@ Looks/sound: one line each (R13).
 - UI: Preact/Signals/Wouter O1–O3; [UI30 targets](docs/design/ui-polish.md): palette A, exact counts, event stack A; no Custom. Native proof pending (R12).
 - Conversations preserves scope, visible selection and reading context; [Details and sidebar](docs/design/tray-workspace.md#conversations-sidebar-1808).
 - Closed pins: unpin after first open or 24 h; [P-W1](docs/design/menu-product.md#windows-and-task-pins).
+- Settings retains twelve destinations with bounded scope/count/exception summaries, active-only transparency fields, useful Work mode/Recovery state and direct existing reviews; client facts appear once, project details stay available ([M8/M12](docs/design/menu.md#m8-implementation-boundary)).
 - Menu/View/Settings wrap, no horizontal scroll; compact rows, growing input; M2 rail; M3/M1.2 opaque sticky Home host strip and filter row.
 - Standalone: [onboarding](docs/design/standalone-onboarding.md); [telemetry](docs/design/standalone-telemetry.md): local SQLite/WAL, 30 days, async only under revocable `taskq-telemetry/1`. `profile export`: analysis; `guide`: agents. Migration keeps legacy rows (R1).
 - README: header, setup phrase, purpose, three visual examples, shots, disclosures and final line: [README rules](docs/design/readme-plan.md#contract-detail).
