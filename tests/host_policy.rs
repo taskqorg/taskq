@@ -215,3 +215,37 @@ fn project_run_waits_for_the_host_owner() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+// Chain: R1 R3 R9 R12 §3 — actual local CLI preserves one operation, authenticates release and requires host readback.
+// Risk: argument/installation wiring bypasses the store or a worker/foreign key releases another turn.
+#[test]
+fn external_slot_cli_reconciles_without_a_task_or_scheduler() {
+    use crate::Bounded;
+    let stamp=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let dir=std::env::temp_dir().join(format!("taskq-slot-cli-{}-{stamp}",std::process::id()));fs::create_dir_all(&dir).unwrap();
+    let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
+    let now=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    fs::write(dir.join("service"),json!({"schema":1,"pid":native.pid,"started":native.started,"instance":"fixture-slots","at":now,"version":"fixture","slots_protocol":1}).to_string()).unwrap();
+    let run=|args:&[&str],worker:bool| {
+        let mut cmd=Command::new(env!("CARGO_BIN_EXE_taskq"));cmd.args(args).current_dir(&dir).env("TASKQ_INSTALL",&dir)
+            .env_remove("TASKQ_ROOT").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT").env("TASKQ_INCIDENT_REPORTS","off");
+        if worker {cmd.env("TASKQ_ATTEMPT","1");}cmd.bounded()
+    };
+    let out=run(&["service","slots","--identity",&native.pid.to_string(),"--json"],false);assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));
+    let identity:Value=serde_json::from_slice(&out.stdout).unwrap();assert_eq!(identity["pid"],native.pid);assert_eq!(identity["started"],native.started);assert!(identity["boot"].as_i64().unwrap()>0);
+    let mut request=json!({"binding":{"schema":"taskq.slots/1","caller":"pilotq","op_id":"fixture-turn","root":dir,"runtime":"codex","pid":native.pid,"started":native.started,"boot":identity["boot"],"expires_at":now+300},"key":"a".repeat(64)});
+    let call=|action:&str,value:&Value,worker|run(&["service","slots","--action",action,"--request",&value.to_string(),"--json"],worker);
+    for _ in 0..2 {
+        let out=call("reserve",&request,false);assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));
+        let value:Value=serde_json::from_slice(&out.stdout).unwrap();assert_eq!(value["state"],"unknown");assert_eq!(value["stored_state"],"queued");assert_eq!(value["occupied"],false);
+        assert!(!String::from_utf8_lossy(&out.stdout).contains(&"a".repeat(64)),"release key leaked");
+    }
+    let path=dir.join("resource-state/state.json");let state:Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();assert_eq!(state["ops"].as_object().unwrap().len(),1);
+    request["key"]=json!("b".repeat(64));let out=call("release",&request,false);assert!(!out.status.success());assert!(String::from_utf8_lossy(&out.stderr).contains("release key"));
+    assert_eq!(serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),state);
+    request["key"]=json!("a".repeat(64));let out=call("release",&request,true);assert!(!out.status.success());assert!(String::from_utf8_lossy(&out.stderr).contains("a worker cannot"));
+    assert_eq!(serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),state);
+    let out=call("release",&request,false);assert!(out.status.success());let value:Value=serde_json::from_slice(&out.stdout).unwrap();assert_eq!(value["stored_state"],"cancelling");
+    assert!(!dir.join("host.json").exists());assert!(!dir.join("projects").exists());assert!(!dir.join(".taskq").exists());
+    fs::remove_dir_all(dir).unwrap();
+}

@@ -432,10 +432,12 @@ fn replace_owned(path:&Path, original:&str, next:&str)->Res<()> {
 pub(crate) const INSTALL_PENDING:&str="projects.installing";
 
 pub type Shared = Arc<Mutex<Host>>;
-type Slot = (PathBuf, u64, u64);
+#[derive(Clone,Debug,PartialEq,Eq,PartialOrd,Ord)]
+enum Claim {Task(u64,u64),External(String)}
+type Slot = (PathBuf, Claim);
 fn slot(project: &Path, task: u64, attempt: u64) -> Slot {
     // Before claim there is no fencing token; only that provisional slot uses the issue number.
-    (project.into(), if attempt == 0 { task } else { 0 }, attempt)
+    (project.into(), Claim::Task(if attempt == 0 { task } else { 0 }, attempt))
 }
 pub enum Maintenance {Update(Option<String>),Installation(String)}
 
@@ -509,7 +511,7 @@ impl Host {
     }
 
     pub fn sync(&mut self, project: &Path, held: Vec<crate::admission::Res>) -> usize {
-        self.slots.retain(|(p, _, _), _| p != project);
+        self.slots.retain(|(p, claim), _| p != project || matches!(claim,Claim::External(_)));
         for (n, a, rt) in held { self.slots.insert(slot(project, n, a), rt); }
         self.slots.len()
     }
@@ -517,7 +519,7 @@ impl Host {
     /// A poisoned table is unusable until every active project reports its still-owned handles and pending grants.
     pub fn rebuild_slots(&mut self, project: &Path, held: Vec<crate::admission::Res>) -> bool {
         if !self.rebuilding {
-            self.rebuilding = true; self.rebuilt.clear(); self.slots.clear(); self.ready.clear();
+            self.rebuilding = true; self.rebuilt.clear(); self.slots.retain(|(_,claim),_|matches!(claim,Claim::External(_))); self.ready.clear();
             self.gate = Gate::default(); self.last = Some(self.elapsed());
         }
         self.sync(project, held);
@@ -547,7 +549,7 @@ impl Host {
         self.restart && !self.rebuilding && self.held.is_none()&&self.updating.is_none()
             &&(!self.stopping||(self.slots.is_empty()&&self.busy.values().all(|busy|!*busy)))
             && self.busy.keys().all(|root|self.prepared.contains(root))
-            && self.slots.keys().all(|(root,_,_)|self.prepared.contains(root))
+            && self.slots.keys().all(|(root,_)|self.prepared.contains(root))
     }
 
     pub fn handoff_wait(&self)->Option<crate::lifecycle::HandoffWait> {
@@ -556,7 +558,7 @@ impl Host {
         else if self.stopping&&!self.slots.is_empty() {Some(Execution)}
         else if self.rebuilding||self.held.is_some() {Some(Recovery)}
         else if self.stopping&&self.busy.values().any(|busy|*busy)
-            ||self.busy.keys().chain(self.slots.keys().map(|(root,_,_)|root)).any(|root|!self.prepared.contains(root))
+            ||self.busy.keys().chain(self.slots.keys().map(|(root,_)|root)).any(|root|!self.prepared.contains(root))
             ||self.updating.is_none()&&!self.passing.is_empty() {Some(Project)}
         else if self.updating.is_some() {Some(Maintenance)}
         else {None}
@@ -575,7 +577,7 @@ impl Host {
         // A pass that never reported (an error or panic) leaves no acknowledgment.
         if self.passing.remove(root) {self.prepared.remove(root);}
         if self.handoff_settled() || self.stopping && self.prepared.contains(root)
-            && self.busy.get(root)==Some(&false) && !self.slots.keys().any(|(project,_,_)|project==root) {return false;}
+            && self.busy.get(root)==Some(&false) && !self.slots.keys().any(|(project,_)|project==root) {return false;}
         self.passing.insert(root.into());
         self.recovered.remove(root);
         self.busy.insert(root.into(),true);
@@ -591,12 +593,17 @@ impl Host {
     /// The § 3 grant under the host policy.
     #[allow(clippy::too_many_arguments)]
     pub fn reserve(&mut self, project: &Path, n: u64, a: u64, rt: &str, cap: &Capacity, queue: bool, now: u64) -> Res<usize> {
+        self.reserve_key(slot(project,n,a),rt,cap,queue,now)
+    }
+
+    fn reserve_key(&mut self,key:Slot,rt:&str,cap:&Capacity,queue:bool,now:u64)->Res<usize> {
+        let project=&key.0;
         let p = self.policy.clone()?;
         if self.rebuilding {return Err("host occupancy recovery pending".into());}
         if let Some(reason) = &self.held { return Err(reason.clone()); }
         if self.draining.contains(project) && queue { return Err("project draining".into()); }
         if self.restart { return Err("host restart pending".into()); }
-        if self.slots.contains_key(&slot(project, n, a)) {
+        if self.slots.contains_key(&key) {
             if p.cap.limits.get(rt) == Some(&0) || cap.limits.get(rt) == Some(&0) { return Err("runtime disabled".into()); }
             return Ok(self.slots.len());
         }
@@ -604,17 +611,41 @@ impl Host {
             let next = self.ready.iter().find(|p| self.turn.as_ref().is_none_or(|t| *p > t)).or_else(|| self.ready.first());
             if next.is_some_and(|p| p != project) { return Err("round-robin: another project is ready".into()); }
         }
-        if !self.gate.may_launch(now) || self.last.is_some_and(|t| now.saturating_sub(t) < 30) { return Err("host load gate or 30 s launch spacing".into()); }
+        if let Some(left)=self.last.and_then(|t|30u64.checked_sub(now.saturating_sub(t))).filter(|left|*left>0) {
+            return Err(format!("host load gate: 30 s launch spacing ({left} s remaining)"));
+        }
+        if !self.gate.may_launch(now) {
+            let (state,reasons)=self.gate.state(now);
+            let reason=if reasons.is_empty() {"waiting for post-launch sample".into()}else{reasons.into_iter().map(|(_,text)|text).collect::<Vec<_>>().join("; ")};
+            return Err(format!("host load gate {state}: {reason}"));
+        }
         let used = self.slots.values().filter(|r| *r == rt).count();
-        let own = self.slots.iter().filter(|((root, _, _), r)| root == project && *r == rt).count();
-        if p.cap.max.is_some_and(|m| self.slots.len() >= m as usize)
-            || p.cap.limits.get(rt).is_some_and(|m| used >= *m as usize)
-            || cap.limits.get(rt).is_some_and(|m| own >= *m as usize) { return Err("host or project capacity full".into()); }
-        self.slots.insert(slot(project, n, a), rt.into());
+        let own = self.slots.iter().filter(|((root, _), r)| root == project && *r == rt).count();
+        if p.cap.max.is_some_and(|m| self.slots.len() >= m as usize) {return Err("host aggregate capacity full".into());}
+        if p.cap.limits.get(rt).is_some_and(|m| used >= *m as usize) {return Err(format!("{rt} host capacity full"));}
+        if cap.limits.get(rt).is_some_and(|m| own >= *m as usize) {return Err(format!("{rt} project capacity full"));}
         if queue { self.turn = Some(project.into()); }
+        self.slots.insert(key, rt.into());
         self.last = Some(now);
         self.gate.launch(now);
         Ok(self.slots.len())
+    }
+
+    pub(crate) fn external_held(&self,id:&str)->bool {
+        self.slots.keys().any(|(_,claim)|matches!(claim,Claim::External(key) if key==id))
+    }
+
+    pub(crate) fn external_known(&self,known:&BTreeSet<String>)->bool {
+        self.slots.keys().all(|(_,claim)|match claim {Claim::External(id)=>known.contains(id),_=>true})
+    }
+
+    pub(crate) fn external_sync(&mut self, id:&str, project:&Path, runtime:&str, held:bool) {
+        let key=(project.into(),Claim::External(id.into()));
+        if held {self.slots.insert(key,runtime.into());}else{self.slots.remove(&key);}
+    }
+
+    pub(crate) fn external_reserve(&mut self,id:&str,project:&Path,runtime:&str,cap:&Capacity,now:u64)->Res<()> {
+        self.reserve_key((project.into(),Claim::External(id.into())),runtime,cap,true,now).map(|_|())
     }
 
     pub fn claimed(&mut self, project: &Path, n: u64, a: u64) {
@@ -627,7 +658,7 @@ impl Host {
         let host = (p.cap.limits.get(rt).copied().unwrap_or(u32::MAX) as usize)
             .saturating_sub(self.slots.values().filter(|r| *r == rt).count());
         let own = (cap.limits.get(rt).copied().unwrap_or(u32::MAX) as usize)
-            .saturating_sub(self.slots.iter().filter(|((root, _, _), r)| root == project && *r == rt).count());
+            .saturating_sub(self.slots.iter().filter(|((root, _), r)| root == project && *r == rt).count());
         let max = (p.cap.max.unwrap_or(u32::MAX) as usize).saturating_sub(self.slots.len());
         host.min(own).min(max)
     }
@@ -648,6 +679,7 @@ impl Host {
 #[serde(deny_unknown_fields)]
 struct ServiceRecord {
     schema:u8,pid:u32,started:String,instance:String,at:u64,version:String,
+    #[serde(default)] slots_protocol:Option<u8>,
     #[serde(default)] restart_protocol:Option<u8>,
     #[serde(default)] stop_protocol:Option<u8>,
     #[serde(default,skip_serializing_if="Option::is_none")] full_stop_protocol:Option<u8>,
@@ -672,14 +704,14 @@ fn service_record(install:&Path)->Res<Option<OwnerRecord>> {
     }
     let r:ServiceRecord=serde_json::from_str(&text).map_err(|_|"host service owner unknown: malformed record")?;
     if r.schema!=1||r.pid==0||r.pid>i32::MAX as u32||r.started.is_empty()||r.started.len()>128
-        ||!r.started.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-')||!crate::resources::id(&r.instance)||r.version.is_empty()||r.version.len()>80||r.restart_protocol.is_some_and(|v|v!=1)||r.stop_protocol.is_some_and(|v|v!=1&&v!=2)||r.full_stop_protocol.is_some_and(|v|v!=1)||r.uninstall_protocol.is_some_and(|v|v!=1)||r.install_protocol.is_some_and(|v|v!=1) {
+        ||!r.started.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-')||!crate::resources::id(&r.instance)||r.version.is_empty()||r.version.len()>80||r.restart_protocol.is_some_and(|v|v!=1)||r.stop_protocol.is_some_and(|v|v!=1&&v!=2)||r.full_stop_protocol.is_some_and(|v|v!=1)||r.uninstall_protocol.is_some_and(|v|v!=1)||r.install_protocol.is_some_and(|v|v!=1)||r.slots_protocol.is_some_and(|v|v!=1) {
         return Err("host service owner unknown: unsupported record; kept".into());
     }
     Ok(Some(OwnerRecord::Current(r)))
 }
 
 fn publish_service(install:&Path,native:&coreq::process::Identity,instance:&str)->Res<()> {
-    let record=ServiceRecord {schema:1,pid:native.pid,started:native.started.clone(),instance:instance.into(),at:wall()?,version:crate::platform::VERSION.into(),restart_protocol:Some(1),stop_protocol:Some(2),full_stop_protocol:cfg!(target_os="macos").then_some(1),uninstall_protocol:Some(1),install_protocol:Some(1)};
+    let record=ServiceRecord {schema:1,pid:native.pid,started:native.started.clone(),instance:instance.into(),at:wall()?,version:crate::platform::VERSION.into(),slots_protocol:Some(1),restart_protocol:Some(1),stop_protocol:Some(2),full_stop_protocol:cfg!(target_os="macos").then_some(1),uninstall_protocol:Some(1),install_protocol:Some(1)};
     crate::platform::write_synced(&install.join("service"),&(serde_json::to_string(&record).map_err(|e|e.to_string())?+"\n"))
 }
 
@@ -732,7 +764,7 @@ pub fn service_status(install:&Path)->Value {
         let age=wall()?.checked_sub(r.at);
         let fresh=live&&age.is_some_and(|age|age<=60);
         Ok(json!({"state":if live {"running"}else{"exited"},"pid":r.pid,"started":r.started,"instance":r.instance,"version":r.version,
-            "at":r.at,"age_seconds":age,"fresh":fresh,"restart_protocol":r.restart_protocol,"stop_protocol":r.stop_protocol,"full_stop_protocol":r.full_stop_protocol,"uninstall_protocol":r.uninstall_protocol,"install_protocol":r.install_protocol,"reason":if !live {Some("recorded host process exited; worker outcomes remain separate")}else if !fresh {Some("host observation stale or clock unknown")}else{None}}))
+            "at":r.at,"age_seconds":age,"slots_protocol":r.slots_protocol,"fresh":fresh,"restart_protocol":r.restart_protocol,"stop_protocol":r.stop_protocol,"full_stop_protocol":r.full_stop_protocol,"uninstall_protocol":r.uninstall_protocol,"install_protocol":r.install_protocol,"reason":if !live {Some("recorded host process exited; worker outcomes remain separate")}else if !fresh {Some("host observation stale or clock unknown")}else{None}}))
     },|_|"owner-unknown");
     result.unwrap_or_else(|reason|json!({"state":"unknown","fresh":false,"reason":reason}))
 }
@@ -884,6 +916,7 @@ pub fn run(install: &Path) -> Res<()> {
                     if p.origin()!=instance {h.held=Some(format!("Stop {} belongs to an ended host generation; dropped after its expiry",p.id()));}
                 } else if p.action()==crate::lifecycle::Action::Restart&&p.origin()==instance {h.restart=true;}
             }
+            if let Err(error)=crate::external_slots::tick(install,&mut h) {h.held=Some(format!("external slots unknown: {error}"));}
             let now = h.elapsed();
             if h.gate.last.is_none_or(|l| now.saturating_sub(l.0) >= 30) {
                 h.gate.host_mem = crate::platform::host_memory();

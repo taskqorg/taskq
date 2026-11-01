@@ -91,7 +91,7 @@ pub struct Op {
     pub sent: bool,
 }
 
-fn local(o:&Op)->bool {o.bound.get("local_capacity").is_some()||o.bound.get("local_restart").is_some()||o.bound.get("local_stop").is_some()||o.bound.get("local_uninstall").is_some()||o.bound.get("local_install").is_some()}
+fn local(o:&Op)->bool {o.bound.get("local_slot").is_some()||o.bound.get("local_capacity").is_some()||o.bound.get("local_restart").is_some()||o.bound.get("local_stop").is_some()||o.bound.get("local_uninstall").is_some()||o.bound.get("local_install").is_some()}
 
 /// Never `resources`: with it, macOS reads `<install>` (`.../taskq` holding `taskq`) as a bundle, the launcher's signature
 /// stops validating and TCC can never match its Screen Recording grant (#1395). An old store moves once; a failed move
@@ -641,6 +641,7 @@ pub(crate) fn prepare(s: &mut State, install: &Path, now: u64) -> Res<()> {
         o.sent = false;
     }
     s.ops.retain(|_,o|now<o.expires_at.saturating_add(RETAIN)
+        ||o.bound.get("local_slot").is_some()
         ||((o.bound.get("local_restart").is_some()||(o.bound.get("local_stop").is_some()||o.bound.get("local_uninstall").is_some()))&&o.receipt["state"]!="observed")
         ||(o.bound.get("local_install").is_some()&&!matches!(o.receipt["state"].as_str(),Some("observed"|"failed"))));
     readback(s, install, now);
