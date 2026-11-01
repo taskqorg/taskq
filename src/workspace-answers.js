@@ -5,11 +5,11 @@ const {create}=execution.module('workspace.answers',{
 create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed,steer,read=(p,t)=>t,historyText}){
  const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={},steers={};
  const api=execution.module('workspace.answers.instance',{
-project:function(board,root=view.answer?.board===board?view.answer.root:null){return view.S?.projects.find(p=>p.issues===board&&(!root||p.root===root));},
+project:function(board,root=view.answer?.board===board?view.answer.root:null){const matches=view.S?.projects.filter(p=>p.issues===board&&(!root||p.root===root))||[];return matches.length===1?matches[0]:null;},
 answerCapability:function(board,row){const p=api.project(board);return {manage:true,files:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board',composer,paged:composer&&(row?.question?.text||row?.card||'').length>32768};},
 // #1662 A3: the workspace's shared composer reads and drives the mounted card; the card keeps draft, op and receipt
 answerCompose:function(board,row){return component().compose(row,saved[board+'#'+row.n]||component().fresh(row),answerCapability(board,row));},
-answerInput:function(board,n,text,caret){answerCards.get(board+'/'+n)?.ui.input(board,n,text,caret);},
+answerInput:function(board,n,text,caret){if(text==null&&JSON.stringify(saved[board+'#'+n]?.caret)===JSON.stringify(caret))return;answerCards.get(board+'/'+n)?.ui.input(board,n,text,caret);},
 answerAct:function(board,n,type){answerCards.get(board+'/'+n)?.ui.act(board,n,type);},
 answerSetFiles:function(board,n,files){const row={n},prior=saved[board+'#'+n];if(!prior)return;if(!answerCards.get(board+'/'+n)?.ui.files(board,n,files))save(board,row,{...prior,files});draw();},
 answerFiles:function(board,n,files){if(!saved[board+'#'+n]){const row=api.project(board)?.tasks.find(t=>t.n===n);if(!row)return;save(board,row,component().fresh(row));}replyFiles.read(files,file=>{const current=saved[board+'#'+n]?.files||[];if(file.pending||current.some(f=>f.id===file.id))api.answerSetFiles(board,n,[...current.filter(f=>f.id!==file.id),file]);});},
@@ -80,8 +80,8 @@ answerHistory:function(t,root){
   return (t.history||[]).map(({question:q,answered:a},i)=>{
    const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:a?.revision||0,question:{choices:[],evidence:[],...q}},key=a?.revision??i;
    const paged=!!historyText&&(q?.text||'').length>32768;
-   return [h('section',{key:'asked:'+key,class:'thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+((t.history_start||0)+i+1)+' of #'+t.n},time.stamp(null,'Recorded question','Question timestamp unavailable in the history adapter'),paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question'})}})),
-    h('p',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'body answered',role:'status'},won({answered:a||{}}),time.stamp(null,'Recorded answer','Answer timestamp unavailable in the history adapter'))];
+   return [h('section',{key:'asked:'+key,class:'dialogue-item thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+((t.history_start||0)+i+1)+' of #'+t.n},h('p',{class:'meta document-author'},'Worker',time.stamp(q?.updated,'Recorded question','Question timestamp unavailable in the history adapter')),paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question'})}})),
+    h('section',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'dialogue-item body answered',role:'status'},h('p',{class:'meta document-author'},a?.by||'Author unknown',time.stamp(a?.updated,'Recorded answer','Answer timestamp unavailable in the history adapter')),h('div',{class:'conversation-text'},a?.text||'Answer text unavailable'))];
   });
 },
 readingAnchors:function(el,t){if(el)for(const [i,node]of [...el.querySelectorAll('.qac-done,.qac-problem,.qac-detail,.qac-context>summary,.qac-images,.qac-evidence,.qac-text,[data-choice]')].entries())node.dataset.readingKey='report:question-'+t.n+'-'+t.revision+'-'+i;},
@@ -97,7 +97,7 @@ answerSteerComposer:function(board,t){
   const problem=replyFiles.problem(files),receiptKey=p?.root+'#'+local?.op?.id;
   return h('section',{class:'answer-composer','aria-label':'Steer #'+t.n},steer({text,disabled,id:'steer-draft',field:'steer',label:'Message the worker',placeholder:'Tell the working agent what to change',reason:problem||reason,...api.fileEvents(board,t.n,disabled),files:api.fileControls(board,t.n,disabled),
    tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:disabled||changed||!!problem||!text.trim()&&!files.length},'Send'),unknown&&h('button',{'data-a':'answer-retry','data-key':receiptKey},'Check delivery')),
-   onInput:e=>{steers[key]=e.currentTarget.value;save(board,t,{...(saved[key]||component().fresh(t)),draft:e.currentTarget.value,steerAttempt:t.attempt});draw();}}));
+   onInput:e=>{steers[key]=e.currentTarget.value;save(board,t,{...(saved[key]||component().fresh(t)),draft:e.currentTarget.value,caret:[e.currentTarget.selectionStart,e.currentTarget.selectionEnd],steerAttempt:t.attempt});draw();}}));
 },
 answerSteer:function(board,t){
   const key=board+'#'+t.n,text=(steers[key]??saved[key]?.draft??'').trim();
@@ -144,6 +144,12 @@ answerSend:function(board,op){
   return promise;
 },
 
+recovery:function(){return saved;},
+restoreRecovery:function(locals){
+ for(const key of Object.keys(locals||{})){delete saved[key];delete steers[key];const at=key.lastIndexOf('#'),id=key.slice(0,at)+'/'+key.slice(at+1),card=answerCards.get(id);if(card){card.ui.update([]);card.el.remove();answerCards.delete(id);}}
+ api.hydrate(locals);
+},
+steerCaret:function(board,n,caret){const local=saved[board+'#'+n];if(local&&JSON.stringify(local.caret)!==JSON.stringify(caret))save(board,{n},{...local,caret});},
 bounds:function(){return {controllers:answerCards.size,protectedSources:Object.keys(saved).length,protectedBytes:new TextEncoder().encode(JSON.stringify(saved)).length};},
 load:function(board,row){return saved[board+'#'+row.n];},
 save:function(board,row,local){const prior=saved[board+'#'+row.n],projectRoot=prior?.op?.id&&prior.op.id===local.op?.id?prior.projectRoot:api.project(board)?.root;saved[board+'#'+row.n]=JSON.parse(JSON.stringify({...local,projectRoot}));send({a:'answer-local',key:board+'#'+row.n,local:saved[board+'#'+row.n]});changed?.();},
@@ -151,8 +157,8 @@ hydrate:function(locals){
  for(const [key,local] of Object.entries(locals||{}))if(!Object.hasOwn(saved,key)&&local&&typeof local.draft==='string'){
   saved[key]={...local,confirmClose:false};
   if(local.op&&['sending','unknown'].includes(local.receipt?.state))saved[key].receipt={state:'unknown',reason:'Workspace reopened; delivery needs readback',next:'Check delivery with the same operation'};
-  const board=key.slice(0,key.lastIndexOf('#')),p=api.project(board,local.projectRoot);
-  if(local.op&&p&&saved[key].receipt)answerFeedback.set(p.root+'#'+local.op.id,{board,op:local.op,about:local.about,...saved[key].receipt});
+  const board=key.slice(0,key.lastIndexOf('#')),root=api.project(board,local.projectRoot)?.root||local.projectRoot;
+  if(local.op&&root&&saved[key].receipt)answerFeedback.set(root+'#'+local.op.id,{board,op:local.op,about:local.about,...saved[key].receipt});
  }
 },
 retry:function(key){const r=answerFeedback.get(key);if(r)ui.effect('workspace.answer.reconcile',()=>answerSend(r.board,r.op),()=>{});},

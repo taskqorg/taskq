@@ -35,6 +35,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('Progress 24'));
    assert(await reader.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'D4: follows while at the end');
    await panel.locator('[data-key="90:0"]').scrollIntoViewIfNeeded();
+   await reader.dispatchEvent('scroll'); // explicit instrument intent; programmatic layout scroll is otherwise ignored
    await page.waitForFunction(()=>!!document.querySelector('[data-c=worker-latest]'));
    const anchor=await panel.locator('[data-key="90:0"]').boundingBox();m=await read();await reply(m,{items:[{at:300,i:0,role:'assistant',text:'New while reading above'}],end:310});
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('New while reading above'));

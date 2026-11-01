@@ -6,6 +6,8 @@ This package specifies the target; it does not authorize deployment or claim bac
 
 ## Current integration entry
 
+Conversations recovery follows P-W3/TW2/TW5/C2/C7/D4: native framing and independent safe Reload preserve the existing single centre. Source/receipt recovery and the common worker/question/answer document are reviewed in [#2140 evidence](evidence/2140/report.md). Unaffected reference geometry and functions remain pinned.
+
 [UI30 reconciliation](ui-polish.md) is the implementation and acceptance map for #1924 and #1926–#1933. It applies scoped owner corrections to current main and extends the 72-group ledger; historical snapshots are not replacement files. [Report #1924](../research/1924.md) records provenance, conflicts and evidence limits. Earlier instructions to create tasks, keep #1738 held, restore archive guards, use answer caps or rebuild completed slices are historical. Current contracts and this reconciliation govern the affected targets. #1918 alone owns the shared state/history changes; no competing overlay or event stream is authorized. No application code, task start, PM message, installation or grant is authorized by this documentation.
 
 ## Current review revision

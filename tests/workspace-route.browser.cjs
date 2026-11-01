@@ -43,7 +43,17 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture'
   const report=await page.evaluate(()=>sent.filter(m=>m.a==='route-error'));
   assert.equal(report.length,1);assert.equal(report[0].route,'conversations');assert.equal(report[0].error,'TypeError');assert.match(report[0].site,/^[\w$.]+(:\d+:\d+)?$/);
   assert(!JSON.stringify(report).includes('example.org'),'report carries no content');
-  await page.locator('.shell-overflow summary').click();await page.locator('[data-route=conversations]').click();
+  await page.getByRole('button',{name:'Back',exact:true}).click();
+  await page.getByRole('region',{name:'Conversations recovery'}).waitFor();
+  assert(await page.getByRole('region',{name:'Conversations recovery'}).isVisible(),'Back must leave a failed data projection for an independent safe view');
+  assert.match(await page.locator('main').innerText(),/previous reader is unavailable/);
+  await page.evaluate(s=>taskq.receive({...s,messages:{complete:true,count:1,entries:{}}}),snapshot);
+  assert(await page.getByRole('region',{name:'Conversations recovery'}).isVisible(),'automatic status cannot reopen the failed projection');
+  if(evidence)await page.screenshot({path:path.join(evidence,'safe-view.png')});
+  assert.equal(await page.evaluate(()=>sent.filter(m=>['answer','ai-send','reports','message-action','conversation-action'].includes(m.a)).length),0,'safe Back must not write or replay');
+  await page.evaluate(()=>taskq.receive({open:{page:'conversations',thread:'recovery'}}));
+  assert(await page.getByRole('region',{name:'Conversations recovery'}).isVisible(),'native Safe view also avoids the failed selection callback');
+  await page.locator('.shell-overflow summary').click();await page.locator('.shell-overflow [data-route=conversations]').click();
   assert.equal(await page.locator('h1').innerText(),'Conversations','safe navigation leaves the failing route');
   assert.deepEqual(errors,[]);
   // #1698 A1/A3: Settings opens each operation review while the tray forwards a Completed history page and an agentq
@@ -71,6 +81,19 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture'
   await page.getByRole('button',{name:'Workspace home'}).click();assert.equal(await page.locator('h1').innerText(),'Conversations','Home leaves the failing route');
   await page.keyboard.press('Escape');assert(await page.evaluate(()=>sent.some(m=>m.a==='hide')),'Escape closes the workspace');
   assert.deepEqual(errors,[]);
+  // #2140: native Safe view is installed before snapshot, checkpoint and detached owner callbacks.
+  const safe=await browser.newPage({viewport:{width:900,height:720}});
+  try{
+   await safe.evaluate(()=>{window.taskqNativeFrame=true;window.taskqSafeRecovery=true;});
+   await safe.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
+   await safe.evaluate(s=>{window.sent=[];window.ipc={postMessage:t=>sent.push(JSON.parse(t))};taskq.receive({...s,messages:{complete:true,count:1,entries:{}}});taskq.receive({workspaceOwner:{id:'detached-fixture',conversation:'owner-request-1680',detached:[]}});},snapshot);
+   assert(await safe.getByRole('region',{name:'Conversations recovery'}).isVisible(),'native safe boot cannot resolve the failed selected thread');
+   assert.equal(await safe.getByText('Interface error',{exact:false}).count(),0,'safe owner restore must not trip the page guard');
+   await safe.evaluate(()=>taskq.receive({workspaceRecoveryReady:true}));
+   const handoff=await safe.evaluate(()=>sent.filter(m=>['workspace-recovered','workspace-checkpoint'].includes(m.a)));
+   assert.equal(handoff.at(-2)?.a,'workspace-recovered','handoff acknowledges restoration before its checkpoint');
+   assert.equal(handoff.at(-1)?.a,'workspace-checkpoint');
+  }finally{await safe.close();}
   console.log('PASS persisted-shape Conversations open, scoped request status, failing route keeps Home and Close');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

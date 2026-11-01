@@ -1,0 +1,126 @@
+# Conversations recovery and working document
+
+Implements [#2140](https://github.com/taskqorg/taskq/issues/2140) on baseline `fbc17b53acd043510ce0da4cad32433606ed5631`. The task preserves the owner's request verbatim. Applied R13 before implementation: Product, P-W3, R-UI3, TW2/TW5 and C2/C7/D4 permit dependable Conversations recovery chrome and retain the accepted single centre. R1/R9 preserve board authority; R12 separates source/browser evidence from installed acceptance; §7 governs publication.
+
+## Before and causes
+
+The independent installed Mac before packet has SHA-256 `7b0853cf38d0a0d5b0c50ae2684a9f9168bc8dc193d161d34545876685153957`. N01 records Work sessions / In progress → coreq #112 → whole-workspace Interface error; Escape did not recover. N02 records repeated workspace-save refusals. That episode's exact source error and disk condition were not captured; neither an unattributed log line nor the following reproductions establishes its original cause.
+
+The task inbox also corroborates eight failed `taskq.operation.tray.web.receive` terminals (`script-error`) on the installed Mac 4.6.59-dev.1793542075. Its unsupported-workspace-action observation lacks time attribution and an action payload; it is not the diagnosed cause. The owner-selected native screenshot independently confirms the whole-window error and absent recovery controls.
+
+Three isolated failures establish repairable causes:
+
+- An accepted transcript reply with no item array throws in `workerSettle`; the early guard hides the workspace. The actual-bundle regression fails before with “an invalid accepted local-source page must not replace the whole workspace”. The shared transcript check now reports source unknown inside the reader, retaining the same board/task/root/attempt and retrying reads only.
+- A 32-entry Back stack with large disclosure sets exceeds the native 65,536-byte limit. `tray-view-state.test.cjs` fails before with “workspace Back state exceeds native 64 KiB”. Oldest Back entries now leave the serialized window until it fits; current source, focus and scroll remain exact. A current entry that cannot fit refuses explicitly. Native validation/write/readback failures preserve prior navigation and name their class.
+- The old independent fault notice has no recovery controls. `tray-web.test.cjs` fails before with an empty action list. Reload safely, Back to list and Close now call only the native recovery bridge, even if the product API has failed. Native framing and the native application/tray menu also work outside that document's renderer.
+
+The workspace also lacked forwarding for its existing `completed` reader operation. It now reaches the existing registered-root adapter rather than the unsupported-action fence. This is a source defect, not proof of the original N01 cause.
+
+## Candidate and preservation
+
+Native reload recreates only the targeted Conversations WebView in its existing window. A generation stamp from the native closure fences retired IPC, read replies and evaluation callbacks. Main and detached readers retain their identities; reopening a faulted reader recreates it, while healthy Close hides it. Native title/drag/close/enlarge replace duplicate custom framing; navigation, Always on top, resize and task features remain.
+
+The native process retains a bounded recovery checkpoint across reader recreation: dirty local draft text/files/caret, inert local-only queued storage work, original pending operation identity, exact selection, reading anchors and focus. Recovery does not dispatch any conversation action, including local storage changes. The interrupted operation remains unknown under its original ID until explicit reconciliation/retry. Sends, answers, watches, admissions and report decisions are excluded from replay. Existing native stores retain their immutable receipts; unknown operations require explicit same-ID Check delivery. Source changes keep recovered text/files explicit and block Send. Ordinary saves still own durable restart recovery; failed storage is never claimed durable. Total recovery checkpoints are limited to 32 MiB; overflow is explicit and refuses reload rather than discarding current edits.
+
+Worker text uses the existing bounded transcript renderer as a document, without an outer reader disclosure. Recorded questions retain their source card, evidence, read-only numbered choices and answer order, with consistent author/time spacing. Missing authors/times remain explicit. Historical question content no longer floats a linked task heading into its history. Current questions/actions stay primary; one Earlier history disclosure retains old events/questions and grouped tools retain their inspectors. No adapters, counts, icons, semantic colors, compact-time rules or source paging budgets change.
+
+## Verification
+
+| Acceptance | Evidence and boundary |
+|---|---|
+| A1 | Native before inspected; isolated source/fallback/save failures reproduced and traced above. Original installed episode attribution remains unknown. Specs amended before implementation. |
+| A2 | Actual bundle opens revision-lazy local Codex/Claude workers with exact root/board/task/attempt, validates malformed accepted pages, and preserves explicit refusal. Rust save/reload storage and generation test; existing worker native-source refusal tests retained. |
+| A3 | Three reader faults per matrix cell; independent fallback Close/Reload without product JS; native menu/framing/recreation compiled and source-reviewed. Actual OS click/raise/repeated recovery is Not tested. |
+| A4 | Dirty text, owned file reference, caret and focus restored across destroyed browser realms. Pending same-ID steer remains unknown without automatic answer/send/report/read actions. Existing full-flow unknown-receipt tests retain explicit same-input checks and paragraph anchors. |
+| A5–A6 | Existing source-reusing worker and historical question/answer rendering; worker tool folding, lazy source bounds, Latest follow, scroll/selection and advanced inspectors retained. Current reader captures visually inspected. |
+| A7 | Chromium: Codex/Claude × dark/light × 18/20 px × 380/900 px, 16 cells, three faults each. Existing worker, question, attention, time and flow checks retained. Browser proof does not qualify installed clients. |
+| A8 | Exact-source Codex review and selected canonical gate recorded below. Merge-result CI is a publication gate, not a worker wait. Installed Mac/Windows acceptance remains separate. |
+
+The worker scroll instrument initially timed out waiting for Latest after programmatic `scrollIntoViewIfNeeded`. The existing protection correctly ignores layout-generated scroll. The fixture now dispatches its explicit instrument intent; it keeps the same append/anchor/Latest/attempt assertions. Real wheel intent remains covered by the full-flow instrument. The historical answer assertion changes only presentation matching: author and exact text still follow their original question, all choices stay read-only, and the next open card stays last.
+
+## Limits retained
+
+Earlier #2110 measurements remain failures: 10k interaction p95 134.5 ms against 100 ms; frame p95 Claude/Codex 83/67 ms against 32 ms, with static/blank controls 66.7 ms. The additional Claude delay and longer engine-heap plateau remain unqualified. No threshold is lowered. Source/browser success does not accept the installed Mac or Windows product. No live PM message, task answer, report decision, real Held admission, production fault injection, installation, restart or host policy change was performed.
+
+## Review set
+
+- [Original installed Mac failure](before-native.png): independent before evidence, not a candidate pass.
+- [Worker document](worker-document.png): browser with native-frame content mode, same source and explicit unknown receipt; no OS titlebar is simulated.
+- [Safe view](safe-view.png): Back after a failed projection remains usable across automatic status; source unavailability stays explicit.
+- [Recovered local draft](recovered-draft.png): retained file, text and caret after repeated reader recreation.
+- [Recorded question document](question-history.png): existing question renderer, author/time and read-only choices beneath the current task context.
+
+Latest mixed-fixture run retained functional bounds but failed the 100 ms interaction budget: 600/10k p95 382.4/307.2 ms; projection 178.2/148.9 ms, mount 439/1707 ms. It overlapped browser recovery and native compilation on this Mac; load was present, but causality is not established. These are failures, not a qualified performance pass. Fifty-tour engine plateau remains unqualified.
+
+## Exact-source review correction
+
+Independent Codex review of `cc88367e2c4ee3549dc4095413a69d1e3249405f` found P1: recovery omitted `pending` and immediately submitted recovered local save/attach/remove work with new IDs. The strengthened actual-bundle check fails before because the checkpoint omits the original pending save ID. The fix checkpoints the immutable pending request before submission, restores it as unknown, keeps recovered local work inert, and forbids every automatic `conversation-action` during recreation. The same 16-cell/three-fault matrix passes after. Existing same-ID delivery checks remain explicit.
+
+The first canonical run selected full checks after the one rebase. It stopped sandbox-blocked: 832 Rust units passed, 7 protected-app-server cases failed with `PermissionDenied: Operation not permitted`, 40 ignored; 490.195 s / 900 s. The protected-app-server enforcement paths are outside this change; later candidate changes have focused checks below. No sandbox-blocked test is a PASS. Offline selftest, Node/shell checks and affected browsers are checked separately; Cargo process suites after the failed unit step were not run; the whole gate remains sandbox-blocked. The pinned contract lint was unavailable in the trimmed local rule cache; the same lint from verified specq `39e6024037fb69e68a84180c04fb7ac53eddb9f9` was fetched read-only and passes separately: 54,486 bytes, 274 lines, 0 errors, headroom warnings retained.
+
+The second review of `f8dd97a8b51a38089c7a387cec9db0fdc1d595eb` found that a successful explicit retry could drain other recovered local mutations. The before bundle reproduces `2 !== 1` after one save retry. Recovered actions now use a separate paused queue: one explicit retry cannot dispatch its successor; the successor receives its own named action. Recovered edit versions also remain newer than the interrupted save, so a late save/snapshot cannot overwrite the recovered caret or text. The final 16-cell matrix retains both protections.
+
+A focused route check caught a stale route-fault marker intercepting a later Settings Back. Successful projection clears that marker; Back from an actually failed projection opens an independent recovery view that does not depend on the failed data. The source remains explicitly unavailable. Native Back is named Safe view accordingly. The strengthened browser assertion then failed on `eedc9d9d`: Back called ordinary deselection, whose callback read the same broken thread projection before rendering the safe view. Safe navigation now retains the selection without that callback; automatic status updates cannot leave the safe view. The actual-bundle test passes for Back and the native Safe view message, with zero writes/replay; ordinary navigation and Settings-origin Back retain their checks.
+
+Separate remainder: offline selftest PASS (113 golden traces); 37 Node suites and four shell/release fixtures PASS. The initial route-browser failure is fixed and rerun. The initially absent WebKit test engine was downloaded only to temporary test storage; compact-time checks pass Chromium and WebKit, 18 cells each. The worker/source/attention/flow instruments pass. The focused native recovery storage/generation test passes; subsequent native handoff changes retain that focused check. None of this changes the sandbox-blocked canonical verdict or qualifies installed window interaction.
+
+
+Final native-path review found two additional gaps: detached recovery ignored the Safe view flag, and a new renderer could replace the retained native checkpoint with its empty boot checkpoint before `ready`. Safe state is now installed before the renderer starts and skips source resolution during owner/checkpoint restoration. Detached refresh cannot reopen its projection automatically. A generation-local handoff gate ignores boot/intermediate checkpoints until snapshot, recovery, navigation and ownership complete in one evaluation; a failed evaluation cannot acknowledge restoration. The renderer then acknowledges and forces a fresh checkpoint after resetting its dedupe value.
+
+The native checkpoint-store regression retains unsaved text/caret for both main and detached identities through boot, interim snapshot and a second generation; only acknowledged hydration can replace it. This is an adapter-helper check, not an OS recreation test. The strengthened browser native-order fixture fails before with `TypeError: object is not iterable` in the owner-selection callback and passes after for safe boot, malformed snapshot, detached ownership and ordered acknowledgement/checkpoint. The native overwrite race was established by source/IPC-order review; it was not injected into an installed app. Original no-replay and same-operation protections remain.
+
+
+Before the first handoff, independent Codex source review of `1f966897864e07363a00ab6fdb591b60498eb37f`: PASS, no actionable findings. It checked the main/detached safe route, ordered handoff, checkpoint retention and generation fence. This report-only addition does not change the reviewed source. The final focused Rust test passes (1 test), as do the actual-bundle route/safe-boot fixture and 16-cell recovery matrix. Publication still requires green merge-result CI; installed Mac/Windows interaction and the original N01 cause remain unknown (R12, §7).
+
+## Requeued A4 correction
+
+The reviewer rejected `be2a875e8365cf8e1a3b6ca66a598c32ed385ec9` under A4 and R13/C2/C7. The actual-bundle regression reproduces both lost task drafts before this correction: after an invented `answer-local` disk refusal, Reload restores `Old disk text` instead of `Unsaved answer draft` or `Unsaved steer draft`. Recovery during catalog loading also drops the owner draft from the next checkpoint. These are isolated fixtures, not production fault injection.
+
+The recovery checkpoint now includes task answer/steer text, owned file references, caret, focus, storage failure and immutable operation/receipt metadata before a local save is dispatched. Restore replaces stale card-local state, converts interrupted delivery to explicit unknown and sends no storage or board action. An unchanged restored caret does not trigger another save. Project metadata arriving later restores the original receipt's explicit Check delivery control without submitting it. Exact root, board, task, attempt/revision and operation payload remain fenced by the existing adapters.
+
+Owner edits whose source has not loaded remain in the bounded native checkpoint through another renderer recreation. The reader reports the unavailable source, then overlays those edits only after revision-bound catalog/body readback. A changed sent-source revision retains its warning across successive recoveries; it never becomes an ordinary sendable draft because the second reload forgot its original binding. The existing 32 MiB native checkpoint ceiling still refuses overflow explicitly. Failed disk saves are not durable restart recovery.
+
+The formerly intermittent Remove assertion assumed no caret Save could precede Remove. The instrument now explicitly retries each checkpointed action in order and checks exactly one submission per click and no successor submission from its receipt. All original no-replay, immutable retry, stale-save text/caret and same-source assertions remain. No accepted rule or protection was removed; this correction implements the existing C2/C7 decision.
+
+Focused validation and exact-source review for this correction are recorded below. Original N01 attribution, installed Mac/Windows interaction, long heap plateau and the performance failures above remain open. No live messages, task answers, report decisions, Held admission, installation/restart or policy changes were performed.
+
+## Prior candidate checks
+
+The rejected source `be2a875e8365cf8e1a3b6ca66a598c32ed385ec9` was also rebuilt from a Git archive in temporary storage with the unchanged pinned dependencies. Running the strengthened `tests/conversations-recovery.browser.cjs` against that exact baseline bundle fails for all three original losses: answer text, steer text and the deferred owner checkpoint. The same instrument passes against final source `b3c97adf27ef511ae0066bc7262b8e313621f931`.
+
+Worker Codex source review of `c93d15e4e810199e57125194ad21332b2085dcf8` caught receipt hydration resurrecting a dismissed notice on status refresh. Its isolated check failed before, then passed after `b3c97adf27ef511ae0066bc7262b8e313621f931`; the persistent shared-answer test retains that protection alongside late-project, same-ID, no-replay checks. Worker Codex review of the final source found no further actionable gaps in checkpoint ordering, task draft/controller replacement, late owner-source binding, source-mismatch retention, caret/focus restoration and explicit receipt reconciliation. The task reviewer owns subsequent acceptance/publication.
+
+Validation on this Mac with Node 22.18.0, Python 3.14.8 and Cargo 1.98.1:
+
+- `python3 scripts/check.py --base e6555153df9515974d7b5ec3c93af7cb5a9c481f`, started on `c93d15e4`: sandbox-blocked, 832 Rust tests passed, 7 protected-app-server tests failed with `PermissionDenied: Operation not permitted`, 40 ignored; 316.622 s / 900 s. Process suites, offline selftest and Node/browser steps after that failure did not run in this invocation. No Rust/native source changed in the subsequent receipt correction.
+- `python3 scripts/check.py --base c93d15e4e810199e57125194ad21332b2085dcf8`, final source `b3c97adf`: selected web gate passed, 11 core tests, all 37 Node suites and all four shell/release-script checks; 140.585 s / 900 s. Both invocations report the pinned contract lint unknown because its checkout is absent; CI owns that check. The final code was rebuilt by this gate; later commits change evidence only.
+- `node tests/conversations-recovery.browser.cjs`: passed 16 runtime/theme/font/width cells and three faults per cell. Additional cases pass for refused task answer/steer saves, files/caret/focus, explicit save-error retention, late owner catalog/body hydration across repeated recreations, repeated changed-source warnings, and immutable explicit reconciliation. Every recovered queued action still needs its own click; a receipt never drains its successor.
+- `node tests/workspace-route.browser.cjs` and `node tests/workspace-communication.browser.cjs`: passed safe Back/boot, ordered recovery acknowledgement, detached ownership, draft/caret restoration and immutable explicit answer retry.
+- `node tests/conversations-source.browser.cjs`, `node tests/worker-panel.browser.cjs` and `node tests/conversations-flow.browser.cjs`: passed missing/replaced source refusal, exact cursors, explicit Latest, worker/attempt/remote-host fences, long draft/history and same-ID recovery.
+- `node tests/conversations-bounds.browser.cjs`: functional bounds passed for 600/10k sources, full-scope counts, bounded paging/body caches, late-reply isolation and saved draft restoration. In this separate fixture, interaction p95 was 73.1/69.7 ms against 100 ms; Playwright driver p95 was 233/281 ms and includes auto-wait. This does not replace the mixed-fixture performance failures above. Five heap tours do not establish a long plateau. [Raw observations](bounds-requeue.json).
+
+The [unavailable-source screen](unresolved-draft.png) was visually inspected at 380 px, 20 px type, light theme: the retained-edit warning is visible in the existing status area and window controls remain reachable. The final dark worker document and recovered owner draft were also inspected; existing single-centre layout, file chip and explicit unknown delivery remain visible. This adds one distinct gap screen to the review set, with no theme/size variants committed.
+
+The full native gate is still sandbox-blocked. Merge-result CI remains the publication gate. Installed Mac/Windows window interaction, original N01 attribution and long heap plateau remain unknown; known performance failures remain failures. No service restart, app install or live conversation/decision action was used to obtain this evidence.
+
+## Saved-navigation caret correction
+
+The reviewer rejected `467aa66038f4a80bf1ce8e8e3abacd147229da61` under A4 and R13/C2/C7: after a refused `answer-local` save, recovery kept task text but lost the selection when saved navigation had already mounted the composer. Rebuilding that exact source and extending the existing recovery instrument with `workspace_navigation.current.answer`, `conversations.navigation.selected` and `conversations.navigation.threads.selected` reproduces answer `[20,20]` and steer `[19,19]` instead of the checkpoint's `[3,9]`.
+
+The renderer cached the field's DOM identity during the initial disk-backed draw, so the later checkpoint skipped its new-field caret restoration. Source `ae22b52bbe1ed638d6ae85407f731b47aa8f7ff8` invalidates that cached identity when recovery replaces task state. The existing draw reapplies the checkpoint caret to the mounted field, then restores focus through the existing navigation path. No product decision changes; this implements the existing C2/C7 requirement.
+
+The existing fixture now exercises answer and steer with and without saved task navigation. It retains the text, file, focus, explicit storage-error, same-root/board/operation and zero automatic save/send assertions. The earlier fixture started without persisted navigation, so its field first mounted after checkpoint hydration and missed this loading order. The correction adds that missing order without changing the protected result.
+
+Worker Codex source review of frozen `ae22b52bbe1ed638d6ae85407f731b47aa8f7ff8` found no further actionable findings in the requested fix or its direct effects. The invalidation occurs only on explicit checkpoint hydration; ordinary redraws keep the user's current selection. Main and detached workspaces reuse this renderer. This is worker source review, not installed native acceptance or the task reviewer's publication decision.
+
+Validation for this correction:
+
+- `node tests/conversations-recovery.browser.cjs`: FAIL before on rebuilt `467aa660`, PASS after on `ae22b52b`: both saved-navigation regressions, the original recovery cases and all 16 runtime/theme/font/width cells with three faults each. Files, caret/focus, explicit refusal and same-ID/no-replay checks remain protected.
+- `node tests/workspace-communication.browser.cjs` and `node tests/workspace-route.browser.cjs`: PASS ordinary answer restart/selection, immutable explicit retry, safe route/boot and detached ownership.
+- `python3 scripts/check.py --base 467aa66038f4a80bf1ce8e8e3abacd147229da61`: PASS on frozen source `ae22b52b`, selected web delta, 11 core tests, 37 Node suites, four script fixtures and the updated recovery browser instrument; 232.874 s / 900 s on this Mac. The pinned contract lint remains explicitly unknown locally; CI runs it. The final follow-up changes this evidence report only.
+- The final fixture clarification in `d7e6e787110e5967c8cc2b4aa5a3c705802aba49` includes the top-level `navigation.selected` explicitly named by the requeue alongside `threads.selected`. The implementation remains unchanged. Running that exact fixture against a separately archived and rebuilt `467aa660` reproduces both failed selections. Worker Codex review of the one-line fixture clarification found no further findings.
+- `python3 scripts/check.py --base f463d80d53567ad80d827b1aa4e3e26792a5b218`: PASS on frozen `d7e6e787`, 11 core tests, 37 Node suites, four script fixtures and the final recovery browser; 164.117 s / 900 s. This repeat was required by the fixture change. Contract lint remains unknown locally; the remaining follow-up changes evidence only.
+
+Visual inspection of the gate-generated recovered-answer screen confirms the selected text, file chip and explicit storage failure remain visible in the existing composer and status area (dark, 20 px, 1280×720). The worker-document screen remains readable at 900 px / 20 px with the existing current-action and unknown-delivery controls. No new layout, icon or palette decision was introduced; the automated matrix still checks both themes and narrow/wide sizes. These are isolated browser images, not native OS-window evidence.
+
+The earlier full native gate's sandbox-blocked verdict, contract-lint gap, original N01 attribution, installed Mac/Windows acceptance, long heap plateau and recorded performance failures remain unchanged. No live input, task decisions, admission, production fault injection, installation/restart or policy change was performed.
