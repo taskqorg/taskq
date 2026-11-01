@@ -13,6 +13,12 @@ Task: [#2131](https://github.com/taskqorg/taskq/issues/2131). Base: `aebc4f167be
 
 `cargo test --locked --bin taskq protected_` passed 6 focused cases on Windows after restoring the shared authority lock and using the existing isolated test environment. The initial Windows selected gate passed in 446.328s (822 unit and 20 integration cases, offline selftest and Node/packaging checks); digest-binding and release-retention corrections supersede that candidate, so a new frozen-candidate gate is required. Portable checks cover strict requests, explicit project Workspace authority, missing/corrupt/stale/duplicate grants, wrong account/path, unsupported OS, launch consumption, cancellation, host generation, receipt/native/supervisor tampering, unknown liveness, durable interruption and retained slot ownership. They do not qualify native Mac enforcement.
 
+Final code candidate: `30872daf08ebb010e1300116f5a471febf7df7a4`; source tree `37c7bcb29fc21ec7db0cc33cb546d9037ea03a80`.
+
+`python scripts/check.py --base f05783d08017f943b51ce8b2b32d1fb83ca19f2e` passed on Windows in 335.485s / 900s, with no retries: 823 unit cases passed (42 ignored), 20 integration cases passed (1 ignored), 113 fold traces, offline selftest, rule gate R8/R9, pinned contract lint, Node and packaging checks. The four new adapter/lock/retention checks and the new slot check passed in that gate. Read-only Astra review found no remaining binding defect. Only this evidence page was completed after the code gate; source/tests/dependencies remain identical.
+
+Windows staged debug selftest artifact SHA-256: `18bc46c97cbbac6e653984cfe4f5debd536fbbc2e6c1a87b354624920950fd14`. This is a local Windows build checksum, not a Mac artifact, distributed release or native containment proof; the adapter refuses on Windows.
+
 ## Native and publication gates
 
 Mac build/linking, the existing AssetQ Workspace grant, actual native image/sandbox readback, non-generating handshake, filesystem/network/child probes and outside write/delete/rename remain unverified. No Mac artifact or native receipt is claimed. PM must run the bounded sequence on the exact candidate; no ordinary installation of unmerged code is permitted.
