@@ -148,8 +148,9 @@ def build(a):
         try:
             rc = p.wait(a.minutes * 60)
         except subprocess.TimeoutExpired:
-            kill_tree(p)
             rc = "deadline"
+        finally:  # deadline, Ctrl-C or a killed script: the whole cargo group goes with it
+            kill_tree(p)
     exe = os.path.join(target, "release", "taskq.exe" if WIN else "taskq")
     _, head = run(["git", "-C", src, "rev-parse", "HEAD"])
     _, dirty = run(["git", "-C", src, "status", "--porcelain", "--untracked-files=no"])
