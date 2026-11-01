@@ -47,11 +47,11 @@ pub fn current(b: &dyn Board, n: u64) -> Res<(board::Issue, Task, bool)> {
 /// §5: finish the durable owner routing intent, shared by the CLI and automatic service reconciliation.
 pub fn finish_reroute(b: &dyn Board, n: u64) -> Receipt {
     let finish=|| -> Res<Receipt> {
-        let (issue,_,_)=current(b,n)?;
+        let (issue,task,_)=current(b,n)?;
         let log=entries(b,n)?;
         let p=core::project(n,&log,false);
         let (id,from,to)=p.reroute.as_ref().ok_or("routing intent no longer pending")?;
-        if !issue.open || p.task.state!=State::Ready || p.executions.iter().any(|x|x.release.is_none()) {
+        if !issue.open || task.state!=State::Ready || p.task.state!=State::Ready || p.executions.iter().any(|x|x.release.is_none()) {
             return Err("routing intent cannot change a non-ready task or unresolved execution".into());
         }
         crate::labels::validate(&issue.labels)?;

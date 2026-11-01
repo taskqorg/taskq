@@ -4036,6 +4036,11 @@ mod tests {
         let rs=reroute(&b,&dir,"claude","codex").unwrap();
         assert_eq!(rs.iter().find(|r|r.task==interrupted).unwrap().state,Some("ready"));
         assert_eq!(b.comments(interrupted).unwrap().iter().filter(|c|c.body.starts_with("taskq: reroute ")).count(),1);
+        let dependency=b.create("Dependency","",&[]).unwrap();
+        let waiting=b.create("Dependency reopened during reroute",&format!("Depends on #{dependency}"),&labels).unwrap();
+        b.comment(waiting,"taskq: reroute claude codex\nrouting-fence: 1").unwrap();
+        assert_eq!(dispatch::finish_reroute(&b,waiting).outcome,"unknown");
+        assert!(b.issue(waiting).unwrap().labels.contains(&"run-claude".into()),"dependency blocking still binds during reconciliation");
         let _=std::fs::remove_dir_all(dir);
     }
 
