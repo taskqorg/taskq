@@ -107,8 +107,11 @@ pub fn github(install: &Path, root: Option<&Path>) -> Option<bool> {
 /// Every tool row of this host: (line, failed). Not needed tools (gh on a GitLab-only host) are left out.
 pub fn rows(install: &Path, root: Option<&Path>) -> Vec<(String, bool)> {
     let default_runtime = crate::host::Policy::read(install).ok().map(|p| p.default_runtime);
+    let selected = default_runtime.as_deref().and_then(|rt| crate::labels::select(&[], false, rt, |candidate| {
+        crate::runtime::missing_cli(candidate).map_or_else(|| Ok(candidate.to_string()), |why| Err(("capability", why)))
+    }).ok().map(|(rt, _)| rt));
     let github = github(install, root);
-    needs(github, default_runtime.as_deref()).into_iter().map(|(n, req)| {
+    needs(github, selected.as_deref().or(default_runtime.as_deref())).into_iter().map(|(n, req)| {
         match check(&n, &crate::runtime::which(n.tool), req) { Ok(l) => (l, false), Err(l) => (l, true) }
     }).collect()
 }

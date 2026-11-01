@@ -523,6 +523,7 @@ impl Row {
         match (a.code, &a.host) {
             ("capacity", _) => Some(format!("{} · {}", WAIT_TEXTS[0], a.reason)),
             ("host", None) => Some(a.reason.replacen("no host", "No host", 1)),
+            ("login" | "usage-limit" | "access" | "capability", _) => Some(a.reason.clone()),
             _ => None,
         }
     }

@@ -102,6 +102,11 @@ for rev, listed in [('bf4a2be9', {'changed': ['M3'], 'tests': ['R12']}), ('ecb1e
     assert unnamed(found, 'Fix a typo.'), rev
     task = ' '.join(found['changed'] + found['tests'] + [f'{k} -> none' for k in found['removed']])
     assert unnamed(found, task) == [], (rev, unnamed(found, task))
+# #2118: preserve plural section citations without approving unnamed sections, rows or subsections.
+plural = {'changed': ['§4', '§9', '§3', '§4.1', '§4 Profiling'], 'removed': [], 'tests': []}
+assert unnamed(plural, 'sections 4 Filter and 9') == ['§3 (changed)', '§4.1 (changed)', '§4 Profiling (changed)']
+assert unnamed(plural, 'sections 4 and 90') == ['§9 (changed)', '§3 (changed)', '§4.1 (changed)', '§4 Profiling (changed)']
+assert unnamed(plural, 'sections 4 Profiling and 9') == ['§4 (changed)', '§3 (changed)', '§4.1 (changed)']
 print('PASS replays of bf4a2be9 and ecb1e57d fail unnamed and pass named')
 
 
