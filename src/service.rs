@@ -1439,6 +1439,7 @@ impl<'a> Service<'a> {
     /// § 3 Runtime accounts, every pass: holds of runtimes with several accounts follow the account record, and each
     /// change of a runtime's active account goes to the service log and telemetry.
     fn account_pass(&mut self, now: i64) {
+        if let Err(e)=crate::runtime::accounts::recover_pending(&self.cfg.install) {self.log.push(format!("account quota recovery unknown: {e}"));}
         let h = crate::runtime::accounts::Host::read(&self.cfg.install);
         for rt in h.policy.keys().chain(h.state.keys()).collect::<BTreeSet<_>>() {
             match (h.active(rt, now), h.hold(rt, now)) {
@@ -1561,6 +1562,16 @@ impl<'a> Service<'a> {
         let me = self.cfg.me.clone();
         let ttl = self.cfg.ttl;
         let (mut views, mut hosts) = views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
+        // §5: an interrupted owner reroute remains fenced and finishes without a second owner request.
+        let mut rerouted=false;
+        for v in &views {
+            if v.projection.reroute.is_some() {
+                let receipt=crate::dispatch::finish_reroute(self.board,v.issue.number);
+                if receipt.ok() {self.cache.remove(&v.issue.number);rerouted=true;}
+                else {self.log.push(receipt.text());}
+            }
+        }
+        if rerouted {(views,hosts)=self::views(self.board,&mut self.cache,&mut self.deps,self.cfg.ttl)?;}
         if self.release_before_boot(&views) { (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?; }
         // § 4 step 5 (#1950): a task reopened here is listed again before its live attempt could read as gone below
         let open: HashSet<u64> = views.iter().map(|v| v.issue.number).collect();
@@ -2462,8 +2473,16 @@ impl<'a> Service<'a> {
             self.unseen.remove(&n);
         }
         if core::executions(n, &before).iter().any(|x| x.release.is_none()) { return Ok(None); }
+        let routing=core::project(n,&before,false);
+        if routing.reroute.is_some() {return Ok(None);}
+        // Read labels after the routing revision: a completed reroute invalidates a stale runtime selection.
+        if routing.routing_revision!=0 {
+            let fresh=self.board.issue(n)?;
+            if fresh.labels.iter().filter(|l|!l.starts_with("q-")).collect::<BTreeSet<_>>() != v.issue.labels.iter().filter(|l|!l.starts_with("q-")).collect::<BTreeSet<_>>() || !fresh.open {self.cache.remove(&n);return Ok(None);}
+        }
         let session = crate::runtime::new_session(rt);
-        let id = self.post(n, core::entry("spawn", &[role, &format!("{rt}:{session}"), &self.cfg.me], None, reason))?;
+        let reason=if routing.routing_revision==0 {reason.to_string()} else {format!("{reason}\nrouting-revision: {}",routing.routing_revision)};
+        let id = self.post(n, core::entry("spawn", &[role, &format!("{rt}:{session}"), &self.cfg.me], None, &reason))?;
         let comments = self.board.comments(n)?;
         let seen = comments.iter().any(|c| c.id == id);
         if !seen {
@@ -6866,6 +6885,61 @@ Open: none";
         }
         std::fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    // #2137 A3: stale service selections and concurrent spawns cannot cross a board routing fence.
+    #[test]
+    fn balancing_reroute_fences_stale_service_claims() {
+        for concurrent in [false,true] {
+            let b=Fake::default();let root=std::env::temp_dir().join(format!("taskq-route-fence-{}",crate::runtime::uuid()));
+            let mut c=cfg("mac");c.root=root.clone();c.install=root.join("install");
+            c.limits.insert("codex".into(),1);
+            let n=b.create("Reroute","",&["taskq".into(),"run-claude".into()]).unwrap();
+            let v=views(&b,&mut Default::default(),&mut Default::default(),300).unwrap().0.remove(0);
+            let exits:Exits=Default::default();let mut s=service(&b,&c,exits.clone());
+            if concurrent {b.state.borrow_mut().race=Some("taskq: reroute claude codex\nrouting-fence: 1".into());}
+            else {
+                b.comment(n,"taskq: reroute claude codex\nrouting-fence: 1").unwrap();
+                assert!(crate::dispatch::finish_reroute(&b,n).ok());
+            }
+            s.claim(&v,"worker","claude","").unwrap();
+            assert!(exits.borrow().is_empty());assert_eq!(task(&b,n).state,State::Ready);
+            s.pass().unwrap();s.pass().unwrap();
+            assert_eq!(rt_of(&task(&b,n)).unwrap().0,"codex","automatic pending-intent reconciliation selects the new pin");
+            assert_eq!(exits.borrow().len(),1);assert_eq!(task(&b,n).retries,0);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    // A5/A6: failed quota persistence must fence every project, not select the exhausted default as its own spare.
+    #[test]
+    fn balancing_quota_write_failure_fences_other_projects() {
+        let root=std::env::temp_dir().join(format!("taskq-quota-save-{}",crate::runtime::uuid()));
+        let install=root.join("install");std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(install.join(crate::runtime::accounts::FILE),r#"{"claude":[{"label":"default","enabled":true},{"label":"work","enabled":true}]}"#).unwrap();
+        // A directory at the atomic writer's temporary path fails the save after a valid state read.
+        let failed=install.join(format!("{}.{}.tmp",crate::runtime::accounts::STATE,std::process::id()));
+        std::fs::create_dir(&failed).unwrap();
+        let b=Fake::default();let mut c=cfg("mac");c.root=root.join("a");c.install=install.clone();
+        let n=b.create("Quota","",&["taskq".into(),"run-claude".into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker claude:owned mac").unwrap();
+        let t=task(&b,n);let log=crate::runtime::attempt_log(&c.root,"worker",n,a);
+        std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+        std::fs::write(&log,"{\"type\":\"taskq.account\",\"account\":\"default\"}\n").unwrap();
+        let mut s=service(&b,&c,Default::default());
+        assert!(s.account_limit(n,&t,a,"claude",(18000,true),10).0.is_none());
+        // Once the failing aggregate path disappears, an unsaved observation must still be fenced.
+        std::fs::remove_dir(failed).unwrap();
+        let mut other=c.clone();other.root=root.join("b");
+        let s2=service(&b,&other,Default::default());
+        assert!(s2.admit_runtime("claude",false).is_err(),"another project must not select the exhausted default");
+        assert!(crate::runtime::accounts::claim(&install,"claude",None,10,&root.join("probe")).is_err());
+        drop(s);drop(s2);
+        let mut restarted=service(&b,&other,Default::default());restarted.account_pass(10);
+        let accounts=crate::runtime::accounts::Host::read(&install);
+        assert_eq!(accounts.active("claude",10).as_deref(),Some("work"),"recover the journal, preserving the exhausted default and spare account: {:?}; {:?}",accounts.error,restarted.log);
+        assert_eq!(accounts.state["claude"]["default"].until,Some(18000));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // #2137 A2/A3/A8: real admission and status share routing, disabled pins and account quota evidence.

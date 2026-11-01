@@ -276,6 +276,9 @@ pub struct Execution {
 pub struct Projection {
     pub task: Task,
     pub revision: u64,
+    /// §5: latest routing fence, and its unfinished intent. Neither changes task state.
+    pub routing_revision: u64,
+    pub reroute: Option<(u64, String, String)>,
     accepted: Vec<u64>,
     /// Accepted answers and steers in board order, across all attempts (§ 2).
     pub notes: Vec<u64>,
@@ -524,11 +527,35 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut answers = vec![];
     let mut executions: Vec<Execution> = vec![];
     let (mut changes, mut queue) = (vec![], vec![]);
+    let (mut routing_revision, mut reroute) = (0, None);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
     for e in log {
         if let Some(l) = parse(n, &e.body) {
             // § 2: a repeated op id is ignored; a stale revision is the writer's to undo (dispatch::act)
             if l.op.is_some_and(|o| !ops.insert(o)) {
+                continue;
+            }
+            // §5: serialize pin changes with admission in board order, including stale selections after completion.
+            if l.kind == "reroute" && l.attempt.is_none() && l.args.len() == 2 && l.args[0] != l.args[1]
+                && l.args.iter().all(|rt| crate::runtime::CLI_RUNTIMES.contains(rt))
+                && l.text.lines().last() == Some("routing-fence: 1") {
+                if reroute.is_none() && t.state == State::Ready && executions.iter().all(|x| x.release.is_some()) {
+                    routing_revision = e.id;
+                    reroute = Some((e.id, l.args[0].to_string(), l.args[1].to_string()));
+                    accepted.push(e.id);
+                    last = e.id;
+                }
+                continue;
+            }
+            if l.kind == "rerouted" && l.attempt.is_none() && l.args.len() == 1 {
+                if reroute.as_ref().is_some_and(|(id,_,_)| l.args[0].parse() == Ok(*id)) {
+                    reroute = None;
+                    accepted.push(e.id);
+                    last = e.id;
+                }
+                continue;
+            }
+            if l.kind == "spawn" && (reroute.is_some() || routing_revision != 0 && !l.text.lines().any(|line| line == format!("routing-revision: {routing_revision}"))) {
                 continue;
             }
             let before = t.clone();
@@ -605,7 +632,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, revision:rev, accepted, notes, answers, executions, changes, queue }
+    Projection { task:t, revision:rev, routing_revision, reroute, accepted, notes, answers, executions, changes, queue }
 }
 
 /// The board-backed context repeated at every attempt/resume and before hand-in (§ 7).

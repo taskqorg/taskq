@@ -3482,24 +3482,34 @@ fn reroute(b: &dyn Board, root: &Path, from: &str, to: &str) -> Res<Vec<Receipt>
     let (old, new) = (format!("run-{from}"), format!("run-{to}"));
     b.ensure_labels(std::slice::from_ref(&new))?;
     let mut out = vec![];
-    for issue in b.issues(None)?.into_iter().filter(|i| i.open && service::is_task(i) && i.labels.contains(&old)) {
+    for issue in b.issues(None)?.into_iter().filter(|i| i.open && service::is_task(i)) {
         let n = issue.number;
-        let change = || -> Res<Receipt> {
+        let pending=core::project(n,&entries(b,n)?,false).reroute;
+        if !issue.labels.contains(&old) && !pending.as_ref().is_some_and(|(_,source,target)| source==from && target==to) {continue;}
+        let mut submitted=pending.is_some();
+        let mut change = || -> Res<Receipt> {
             let (issue, task, _) = current(b, n)?;
             let log = entries(b, n)?;
             if !issue.open || task.state != State::Ready { return Err(format!("#{} is {}; reroute only changes open ready tasks", n, task.state.name())); }
             labels::validate(&issue.labels)?;
-            if !issue.labels.contains(&old) { return Err("source runtime pin changed; read the task again".into()); }
+            if !issue.labels.contains(&old) && pending.is_none() { return Err("source runtime pin changed; read the task again".into()); }
             if core::project(n, &log, false).executions.iter().any(|x| x.release.is_none()) { return Err("execution unresolved; preserve its runtime and session".into()); }
-            b.comment(n, &format!("taskq: reroute {from} {to}\nStrict runtime pin: {old} -> {new}; no active execution moved."))?;
-            let (fresh, now, _) = current(b, n)?;
-            if !fresh.open || now.state != State::Ready || !fresh.labels.contains(&old) { return Err("task changed before reroute; no labels changed".into()); }
-            b.labels(n, std::slice::from_ref(&new), std::slice::from_ref(&old))?;
-            let got = b.issue(n)?;
-            if !got.labels.contains(&new) || got.labels.contains(&old) { return Err("runtime pin readback unconfirmed; inspect the task before retrying".into()); }
-            Ok(Receipt { reason: format!("{old} -> {new}"), ..Receipt::accepted(n, &Op::default(), State::Ready, core::revision(n, &log)) })
+            let projection=core::project(n,&log,false);
+            if let Some((_,source,target))=&projection.reroute {
+                if source!=from || target!=to {return Err("another reroute is pending; wait for its readback".into());}
+            } else {
+                submitted=true;
+                let id=b.comment(n, &format!("taskq: reroute {from} {to}\nStrict runtime pin: {old} -> {new}\nrouting-fence: 1"))?;
+                let fresh=core::project(n,&entries(b,n)?,false);
+                if fresh.reroute.as_ref().map(|r|r.0)!=Some(id) {return Err("routing fence not acquired; no labels changed".into());}
+            }
+            Ok(dispatch::finish_reroute(b,n))
         };
-        out.push(change().unwrap_or_else(|e| Receipt::rejected(n, &Op::default(), e)).wake(root));
+        out.push(change().unwrap_or_else(|e| {
+            let mut r=Receipt::rejected(n,&Op::default(),e);
+            if submitted {r.outcome="unknown";r.next="The service reconciles pending routing intents; retry the same command for readback.".into();}
+            r
+        }).wake(root));
     }
     Ok(out)
 }
@@ -4006,9 +4016,26 @@ mod tests {
         for keep in ["taskq","host-mac","prefer-antigravity"] {assert!(got.contains(&keep.into()));}
         assert_eq!(current(&b,doing).unwrap().1.attempt,Some(spawn));
         assert!(b.issue(doing).unwrap().labels.contains(&"run-claude".into()));
-        assert_eq!(b.comments(ready).unwrap().iter().filter(|c|c.body.starts_with("taskq: reroute")).count(),1);
+        assert_eq!(b.comments(ready).unwrap().iter().filter(|c|c.body.starts_with("taskq: reroute ")).count(),1);
         assert!(reroute(&b,&dir,"codex-app","codex").is_err());
         assert!(reroute(&b,&dir,"codex","codex").is_err());
+        // A spawn winning before the routing fence must keep both its pin and its live identity.
+        let race=b.create("Concurrent spawn","",&labels).unwrap();
+        b.state.borrow_mut().race=Some("taskq: spawn worker claude:concurrent mac".into());
+        let rs=reroute(&b,&dir,"claude","codex").unwrap();
+        assert!(!rs.iter().find(|r|r.task==race).unwrap().ok());
+        assert!(b.issue(race).unwrap().labels.contains(&"run-claude".into()));
+        assert_eq!(current(&b,race).unwrap().1.state,State::Doing);
+        // Lost label/completion readback retains a durable intent; retry returns fresh facts without a second fence.
+        let interrupted=b.create("Interrupted reroute","",&labels).unwrap();
+        b.state.borrow_mut().fail_labels=true;
+        let rs=reroute(&b,&dir,"claude","codex").unwrap();
+        assert_eq!(rs.iter().find(|r|r.task==interrupted).unwrap().outcome,"unknown");
+        assert!(core::project(interrupted,&entries(&b,interrupted).unwrap(),false).reroute.is_some());
+        b.state.borrow_mut().fail_labels=false;
+        let rs=reroute(&b,&dir,"claude","codex").unwrap();
+        assert_eq!(rs.iter().find(|r|r.task==interrupted).unwrap().state,Some("ready"));
+        assert_eq!(b.comments(interrupted).unwrap().iter().filter(|c|c.body.starts_with("taskq: reroute ")).count(),1);
         let _=std::fs::remove_dir_all(dir);
     }
 

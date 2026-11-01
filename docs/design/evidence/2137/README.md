@@ -48,3 +48,20 @@ Inspected the actual-size dark 320px/18px [Settings](after-settings.png) and [Ba
 ## Remaining work
 
 Local host restrictions leave eight fixture checks sandbox-blocked; the reviewer owns exact-candidate merge-result CI and publication. Native subscriptions, OS behavior and telemetry delivery are unverified. Rollback is the unmerged task branch; the record preserves legacy quota aggregate fields, but mixed-version multi-window/probe behavior requires coordinated host adoption.
+
+
+## Review corrections
+
+The review of `4896de1a` found three gaps. These corrections retain the accepted A1–A8 scope and the existing ownership, strict-pin, account and retry protections (R8/R12/R13, §5, §7).
+
+- **A1, before:** `node tests/tray-resources.test.cjs` failed at `Home Balancing false: Task routing`. Home's workspace handoff reached a separate resource editor with none of the four sections. **After:** Home, Settings and the workspace resource review share the same four-section renderer. The component regression and actual Home click/handoff browser checks pass; opening changes no policy. Existing host meters/editor, advanced access/routing details and project controls remain available.
+- **A3, before:** `cargo test --locked --bin taskq golden_traces` failed because a spawn concurrent with reroute entered Doing. **After:** durable routing intents reserve a board-ordered fence without changing task state. Matching completion releases it; every later claim binds the routing revision. Golden traces cover concurrent/stale claims, competing intents, active attempts, correct completion and legacy unfenced audits. CLI/service regressions also retain strict pins for an earlier winning spawn, reconcile interrupted writes, refresh stale selections and preserve retries. Receipts derive state from the final log rather than assuming Ready. Unknown writes retain the intent for automatic service reconciliation. No real board reroute was run.
+- **A5/A6/A7, before:** `cargo test --locked --bin taskq balancing_quota_write_failure` failed at `another project must not select the exhausted default`. **After:** write-ahead quota observations and a shared in-process failure fence prevent admission from every project until persistence succeeds. Regressions force an aggregate-save failure after a valid read, retain the exhausted account and spare, replay a journal with process memory removed, and refuse starts when the journal itself cannot be written. Repeated identical observations retain the prior no-op behavior. New launches also require writable quota storage; limits/accounts/grants are never rewritten.
+
+The affected Balancing filter passes 11 tests; usage-limit passes 5. These are model/service instruments, not native provider proof. The final candidate gate and its remaining gaps are recorded below.
+
+### Follow-up visual inspection
+
+Inspected the actual Home-to-workspace destination at 280px/20px in both themes: [dark top](home-balancing-dark-top.png), [dark bottom](home-balancing-dark-bottom.png), [light top](home-balancing-light-top.png), [light bottom](home-balancing-light-bottom.png). All four sections, meters, editor and project controls are present in the shared scroll; large text wraps without horizontal overflow. The existing operation-review title and navigation are retained. The eight resource-browser cells include four actual Home handoffs, and the Settings instrument retains 104 cells. Screenshots and synthetic IPC do not qualify installed/native execution.
+
+Compatibility: all board hosts must adopt routing-fence support before reroute is used. Older folds do not enforce it. No deployment or live policy changes were performed.

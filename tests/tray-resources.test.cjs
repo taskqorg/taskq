@@ -49,3 +49,12 @@ const call=(name,...args)=>context[name](...args),plain=x=>JSON.parse(JSON.strin
   assert.equal(call('resourceCapability',call('resourceGroup',project)).edit,false,'legacy projections remain read-only in native tray');
   console.log('PASS typed host IPC, original expiry/revision replay, exact receipt, stale/legacy refusal and global host scope');
 })().catch(e=>{console.error(e);process.exit(1);});
+
+// #2137 A1: every Balancing entry has the same four sections; the Home editor must not bypass them.
+for(const workspace of [false,true]){
+ const c={...context,operationController:workspace,S:{...context.S,host:'mac',projects:[project]}};
+ require('./tray-harness.cjs').install(c);
+ const text=c.workPage(project.root),headings=['Task routing','Runtime availability','Host balancing','Project policies'];
+ let pos=-1;for(const heading of headings){const next=text.indexOf(heading);assert(next>pos,`Home Balancing ${workspace}: ${heading}`);pos=next;}
+ assert.match(text,/run-\* pins stay strict/);assert.match(text,/Quota holds never change configured limits/);
+}

@@ -543,16 +543,7 @@ routeBody:function(){
     case 'notifications':return h('button',{'data-a':'workspace','data-page':'conversations','data-filter':'new'},'Open New in Conversations');
     case 'notification-settings':return notifications();
     case 'agents':return agents();
-    case 'work':{
-      const availability=p=>p.capacity?.reasons?.filter(r=>['usage-limit','login','capability','access'].includes(r.code)).map(r=>r.text||r.code).join(' · ')||(p.alive===true&&Array.isArray(p.capacity?.reasons)?'':'Availability unknown');
-      const exceptions=view.S.projects.filter(p=>availability(p));
-      return f(h('div',{class:'body',role:'status'},api.admissionText(view.S.projects,true)),
-      api.heading('Task routing','focus'),h('div',{class:'body meta'},'run-* pins stay strict. prefer-* and project routing are soft preferences; eligible subscription CLIs provide fallback.'),
-      h('details',{'data-view-key':'balancing-routing'},api.disclosure('focus','Project routing · '+view.S.projects.length+' projects'),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+' · '+(Array.isArray(p.routing)?p.routing.length?p.routing.map(r=>r.labels.join(' + ')+' → '+r.prefer).join('; '):'Host default':'Routing unknown')))),
-      api.heading('Runtime availability','bot'),exceptions.length?exceptions.map(p=>h('div',{class:'body meta'},p.name+' · '+availability(p))):h('div',{class:'body meta'},'No reported availability blockers · '+view.S.projects.length+' projects'),h('details',{'data-view-key':'balancing-access'},api.disclosure('info','Runtime access details'),api.accessFacts()),
-      api.heading('Host balancing','focus'),h('div',{class:'body meta'},'Host '+(view.S.host||'unknown')+' · limits and load gate affect all registered projects. Quota holds never change configured limits. Current tasks continue.'),view.S.projects.some(p=>p.resources)?api.operationLauncher('resources',null,'Review host limits…'):h('div',{class:'body meta'},'Capacity unavailable: no supported host projection.'),
-      api.heading('Project policies','folder'),api.operationLauncher('admission',null,'Review project admission…'),
-      h('details',{'data-view-key':'settings-admission'},api.disclosure('focus','Project admission details'),h('div',{class:'body meta'},api.admissionText()),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+' · '+(modeText(p)||'Intake unknown')+' · '+(p.capacity?.reasons?.map(r=>r.text||r.code).join(' · ')||(p.alive===true&&Array.isArray(p.capacity?.reasons)?'No reported blockers':'Admission observation unknown'))))));}
+    case 'work':return f(h('div',{class:'body',role:'status'},api.admissionText(view.S.projects,true)),api.balancingSections());
     case 'stop':return api.stopPanel();
     case 'recovery':return f(api.heading('Hold on '+(view.S.host||'unknown host'),'rotate-ccw'),h('div',{class:'body',role:'status'},view.S.stop_hold?'Admission held · '+(view.S.stop_hold.mode||'mode unknown')+(view.S.stop_hold.selected_count!=null?' · '+view.S.stop_hold.selected_count+' selected':''):'No emergency hold reported'),api.hostService(),h('div',{class:'body meta'},'Recovery is for selected local tasks. Ordinary Resume cannot clear an emergency hold; unknown effects stay held.'),api.recoveryPanel());
     case 'services':return f(api.heading(view.S.host||'This host','activity'),api.hostService(),view.S.projects.map(p=>problem(p)),api.operationLauncher('service',null,'Host maintenance in workspace…'),h('details',{'data-view-key':'service-projects'},api.disclosure('folder','Project observations · '+view.S.projects.length),view.S.projects.map(p=>[incidentNotice(p),service(p,false)])),view.S.agentq&&api.heading('AgentQ','bot'),view.S.agentq&&api.agentq(true));
@@ -574,8 +565,22 @@ capacity:function(p){if(!ports.workspace)return p.resources?api.operationLaunche
   if(!p.resources)return '';
   return h('details',{class:'group','data-view-key':'capacity:'+p.root},h('summary',null,icon('sliders-horizontal'),'Capacity ',h('span',{class:'meta'},(p.cap_host||'this host')+' · '+require('./resource-controls.js').headline(resourceGroup(p),view.S.now))),h('div',{'data-resources':p.root}));},
 workEntry:function(root){return view.S.projects.some(p=>p.resources)?h('button',{class:'project','data-a':'work','data-root':root||null},icon('focus'),'Balancing…'):'';},
-workPage:function(root){if(!ports.workspace)return api.operationLauncher('resources',Object.keys(view.working||{})[0]||null,'Review host limits in workspace…');const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>p.root===root||view.working?.[p.root])||ps[0],run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
-  return f(h('div',{class:'body',role:'status'},'Admission · '+api.admissionText()),bulk(run,held),api.resourceMeters(p),h('details',{'data-view-key':'admission-reasons'},h('summary',null,'Admission details'),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+': '+(p.capacity?.reasons?.map(r=>r.text||r.code).join(' · ')||'No reported reasons')))),p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('div',{'data-work':''}),api.accessFacts());},
+balancingSections:function(hostControls,projectControls){
+      const availability=p=>p.capacity?.reasons?.filter(r=>['usage-limit','login','capability','access'].includes(r.code)).map(r=>r.text||r.code).join(' · ')||(p.alive===true&&Array.isArray(p.capacity?.reasons)?'':'Availability unknown');
+      const exceptions=view.S.projects.filter(p=>availability(p));
+      return f(
+      api.heading('Task routing','focus'),h('div',{class:'body meta'},'run-* pins stay strict. prefer-* and project routing are soft preferences; eligible subscription CLIs provide fallback.'),
+      h('details',{'data-view-key':'balancing-routing'},api.disclosure('focus','Project routing · '+view.S.projects.length+' projects'),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+' · '+(Array.isArray(p.routing)?p.routing.length?p.routing.map(r=>r.labels.join(' + ')+' → '+r.prefer).join('; '):'Host default':'Routing unknown')))),
+      api.heading('Runtime availability','bot'),exceptions.length?exceptions.map(p=>h('div',{class:'body meta'},p.name+' · '+availability(p))):h('div',{class:'body meta'},'No reported availability blockers · '+view.S.projects.length+' projects'),h('details',{'data-view-key':'balancing-access'},api.disclosure('info','Runtime access details'),api.accessFacts()),
+      api.heading('Host balancing','focus'),h('div',{class:'body meta'},'Host '+(view.S.host||'unknown')+' · limits and load gate affect all registered projects. Quota holds never change configured limits. Current tasks continue.'),hostControls||(view.S.projects.some(p=>p.resources)?api.operationLauncher('resources',null,'Review host limits…'):h('div',{class:'body meta'},'Capacity unavailable: no supported host projection.')),
+      api.heading('Project policies','folder'),projectControls,api.operationLauncher('admission',null,'Review project admission…'),
+      h('details',{'data-view-key':'settings-admission'},api.disclosure('focus','Project admission details'),h('div',{class:'body meta'},api.admissionText()),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+' · '+(modeText(p)||'Intake unknown')+' · '+(p.capacity?.reasons?.map(r=>r.text||r.code).join(' · ')||(p.alive===true&&Array.isArray(p.capacity?.reasons)?'No reported blockers':'Admission observation unknown'))))));
+},
+workPage:function(root){
+  const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>p.root===root||view.working?.[p.root])||ps[0],run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
+  const editor=ports.workspace?f(api.resourceMeters(p),p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('div',{'data-work':''})):api.operationLauncher('resources',Object.keys(view.working||{})[0]||null,'Review host limits in workspace…');
+  return f(h('div',{class:'body',role:'status'},'Admission · '+api.admissionText()),api.balancingSections(editor,bulk(run,held)));
+},
 admissionText:function(ps=view.S.projects,compact=false){
   if(!ps.length)return 'No projects';
   // R32: capacity reasons describe observed work in this project, not every runtime on the host.

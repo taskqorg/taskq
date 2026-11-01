@@ -44,6 +44,38 @@ pub fn current(b: &dyn Board, n: u64) -> Res<(board::Issue, Task, bool)> {
     Ok((issue, fold(n, &log, deps), deps))
 }
 
+/// §5: finish the durable owner routing intent, shared by the CLI and automatic service reconciliation.
+pub fn finish_reroute(b: &dyn Board, n: u64) -> Receipt {
+    let finish=|| -> Res<Receipt> {
+        let (issue,_,_)=current(b,n)?;
+        let log=entries(b,n)?;
+        let p=core::project(n,&log,false);
+        let (id,from,to)=p.reroute.as_ref().ok_or("routing intent no longer pending")?;
+        if !issue.open || p.task.state!=State::Ready || p.executions.iter().any(|x|x.release.is_none()) {
+            return Err("routing intent cannot change a non-ready task or unresolved execution".into());
+        }
+        crate::labels::validate(&issue.labels)?;
+        let (old,new)=(format!("run-{from}"),format!("run-{to}"));
+        if issue.labels.contains(&old) {b.labels(n,std::slice::from_ref(&new),std::slice::from_ref(&old))?;}
+        else if !issue.labels.contains(&new) {return Err("runtime pins changed outside the pending reroute".into());}
+        let (got,t,_)=current(b,n)?;
+        let fresh=core::project(n,&entries(b,n)?,false);
+        if !got.open || t.state!=State::Ready || fresh.reroute!=p.reroute || fresh.executions.iter().any(|x|x.release.is_none())
+            || !got.labels.contains(&new) || got.labels.contains(&old) {
+            return Err("runtime pin/state/execution readback unconfirmed; routing fence retained".into());
+        }
+        let done=b.comment(n,&format!("taskq: rerouted {id}"))?;
+        let got=b.issue(n)?;
+        let log=entries(b,n)?;
+        let t=core::fold(n,&log,deps_open(b,n,&got.body,&log));
+        if !core::project(n,&log,false).accepts(done) || !got.labels.contains(&new) || got.labels.contains(&old) {
+            return Err("reroute completion readback unconfirmed".into());
+        }
+        Ok(Receipt {reason:format!("{old} -> {new}"),..Receipt::accepted(n,&Op::default(),if got.open {t.state} else {State::Closed},core::revision(n,&log))})
+    };
+    finish().unwrap_or_else(|e|Receipt {outcome:"unknown",next:"The service reconciles the routing intent; retry the same reroute command for readback.".into(),..Receipt::rejected(n,&Op::default(),e)})
+}
+
 /// `--op-id` and `--revision` of one command (§ 5).
 #[derive(Clone, Default)]
 pub struct Op {

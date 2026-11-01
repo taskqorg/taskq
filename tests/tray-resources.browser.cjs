@@ -19,6 +19,29 @@ const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
       await page.evaluate(s=>taskq.receive(s),modeState);
       await page.evaluate(()=>taskq.receive({open:{page:'operations',operation:'resources'}}));
       assert.match(await page.locator('.content [role=status]').first().innerText(),/^Admission · Blocked work: taskq \(access\).*Intake: 1 configured/,'R32: actual Balancing leads with scoped blockers before the load gate');
+      assert.match(await page.locator('.content').innerText(),/Task routing[\s\S]*Runtime availability[\s\S]*Host balancing[\s\S]*Project policies/,'#2137 A1: the Home entry preserves all four Balancing sections');
+      await fits();await shot('balancing');
+      if(font===20){
+        const home=await browser.newPage({viewport:{width,height:900},colorScheme:theme});
+        home.on('pageerror',e=>errors.push(e.message));
+        await home.setContent(fs.readFileSync('build/web/tray.html','utf8'));
+        await home.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>messages.push(JSON.parse(s))};});
+        await home.evaluate(s=>taskq.receive({...s,page:'home'}),{...modeState,display:require('./fixtures/display-model.json').display});
+        await home.locator('.dashboard-status > summary').click();
+        await home.locator('[data-a=work]').click();
+        const open=await home.evaluate(()=>messages.find(m=>m.a==='workspace')?.open);
+        assert.equal(open?.operation,'resources','Home Balancing keeps its existing workspace destination');
+        await page.evaluate(open=>taskq.receive({open}),open);
+        assert.match(await page.locator('.content').innerText(),/Task routing[\s\S]*Runtime availability[\s\S]*Host balancing[\s\S]*Project policies/,'#2137 A1: actual Home click reaches the same sections');
+        assert.equal(await home.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+        if(process.env.TASKQ_TEST_ARTIFACTS&&width===280){
+          await page.screenshot({path:path.join(process.env.TASKQ_TEST_ARTIFACTS,'home-balancing-'+theme+'-top.png')});
+          await page.locator('.content').evaluate(e=>e.scrollTop=e.scrollHeight);
+          await page.screenshot({path:path.join(process.env.TASKQ_TEST_ARTIFACTS,'home-balancing-'+theme+'-bottom.png')});
+        }
+        assert.deepEqual(await home.evaluate(()=>messages.filter(m=>['capacity','focus','control'].includes(m.a))),[],'opening Balancing changes no policy');
+        await home.close();
+      }
       assert.equal(await page.locator('.resource-meter meter').count(),2,'R28: resource meters retain percent units');
       assert(!await page.locator('.content').innerText().then(t=>t.includes(root)),'exact target paths start disclosed');
       const over=structuredClone(modern.groups[0]);over.targets[0].runtime_usage=[{runtime_id:'codex',used:3,limit:1,limit_kind:'ceiling'}];
