@@ -3,6 +3,7 @@ const time=require('./relative-time.js');
 const {h}=require('preact'),{icon}=require('./ui-icons.js'),{execution}=require('./ui-runtime.js');
 const kinds={ask:'Question',close:'Finished',failed:'Failed',gone:'Attempt ended',blocked:'Blocked'};
 const api=execution.module('notificationPanel',{
+ kinds,
  // M14: result SHA owns result reads; local event markers never become queue/decision state.
  rows:function(projects=[],results=[],marks={}){
   const seen=new Set(),rows=[],ids=new Set(),closed=new Set(results.map(r=>r.root+'#'+r.n));

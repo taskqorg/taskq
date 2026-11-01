@@ -1,6 +1,5 @@
 // #1940 owner expansion / §7 Results: one cached result flow on Menu and Conversations.
 // Risk: ordinary completions are invisible, navigation fetches a board, or Reopen loses its reason/readback.
-const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 // RC1/RC4: replaces obsolete menu result-engine assertions. Card/receipt/refusal/matrix protection remains in reports.browser.cjs and reports-cache.test.cjs; centre protects entry/scope/history.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const board='https://example.org/fixture/issues',sha='a'.repeat(40);

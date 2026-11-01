@@ -22,7 +22,7 @@ const state={...fx.state,font:18,theme:'dark',projects:[{...fx.state.projects[0]
  assert.equal(await page.locator('[data-report=open][data-n="2000"]').count(),0,'future Later remains inspectable outside due attention');
  await page.locator('[data-report=previous]').click();
  assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-n'),'2021','Previous uses filtered sidebar order');
- await open(2022);
+ await open(2022);await page.locator('.conversation-row[aria-current=page]').focus();await page.keyboard.press('ArrowUp');assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-n'),'2021','keyboard uses the same filtered order');await page.keyboard.press('ArrowDown');assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-n'),'2022');
  const full=page.locator('.report-card details').filter({has:page.getByText('Full report',{exact:true})});await full.locator('summary').click();
  const passage=page.locator('[data-reading-key]').filter({hasText:/^Passage 30:/}).first();
  await passage.evaluate(e=>{const r=e.closest('.conversation-reader');r.scrollTop+=e.getBoundingClientRect().top-r.getBoundingClientRect().top+7;r.dispatchEvent(new Event('scroll'));});
@@ -32,7 +32,7 @@ const state={...fx.state,font:18,theme:'dark',projects:[{...fx.state.projects[0]
  await page.evaluate(()=>taskq.receive(fixture));assert(Math.abs(await offset()-before)<2,'snapshot keeps passage');
  await page.setViewportSize({width:820,height:700});await page.waitForTimeout(100);assert(Math.abs(await offset()-before)<2,'reflow keeps passage');
  await shot('reading');await page.evaluate(board=>taskq.receive({open:{page:'conversations',root:'fixture',board,task:256}}),board);
- assert.equal(await page.locator('.conversation-row[aria-current=page]').count(),1,'external task selection is visible');assert.match(await page.locator('.conversation-scope').innerText(),/outside|linked/i);
+ assert.equal(await page.locator('.conversation-row[aria-current=page]').count(),1,'external task selection is visible');assert.match(await page.locator('.conversation-scope').innerText(),/outside|linked/i);assert.equal(await page.locator('.conversation-view>summary').innerText(),'Decisions · 2','temporary linked source is outside the saved matching count');
  assert.equal(await page.locator('[data-c-field=steer]').count(),0,'reviewers stay read-only');await shot('linked-reviewer');
  await page.locator('[data-c=scope-return]').click();assert.equal(await page.locator('[data-c=result-filter][data-filter=decision]').getAttribute('aria-pressed'),'true');
  assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-n'),'2022');
