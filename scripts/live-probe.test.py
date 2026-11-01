@@ -40,8 +40,8 @@ class Inventory(unittest.TestCase):
                                      [(100 + i, cmd) for i, cmd in enumerate(commands[:4])])
 
     def test_reconcile_keeps_sibling_process_after_excluding_own(self):
-        own = "/invented/probe-2094"
-        with patch.object(probe, "WIN", False), patch.object(probe.os.path, "isdir", return_value=False), \
+        own = probe.os.path.join("/invented", "probe-2094")
+        with patch.object(probe.os.path, "isdir", return_value=False), \
                 patch("builtins.open", mock_open(read_data="{}")), patch.object(probe, "run", return_value=(0,
                     f'123 "{own}/taskq" service run\n124 "{own}-other/taskq" service run')):
             bad = probe.reconcile("/invented", "/repo", own=own)
