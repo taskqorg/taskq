@@ -45,6 +45,15 @@ pub struct Config {
     pub host_setup: Option<String>,
 }
 
+impl Config {
+    /// §4: only an explicit operator disable permits the project auto_reroute exception.
+    pub fn runtime_disabled(&self, rt: &str, limits: Option<&BTreeMap<String, u32>>) -> bool {
+        self.allowed_runtimes.as_ref().is_some_and(|a| !a.iter().any(|r| r == rt))
+            || limits.is_some_and(|l| l.get(rt) == Some(&0))
+            || { let a = crate::runtime::accounts::Host::read(&self.install); a.error.is_none() && a.off(rt) }
+    }
+}
+
 pub const HOST_LABEL: &str = "taskq-host";
 /// The capacity reason of an empty focus (§ 4).
 pub const FOCUS_OFF: &str = "focus off: nothing admitted; set `taskq service focus all|<label..>`";
@@ -2499,9 +2508,7 @@ impl<'a> Service<'a> {
     }
 
     fn runtime_disabled(&self,rt:&str) -> bool {
-        self.cfg.allowed_runtimes.as_ref().is_some_and(|a|!a.iter().any(|r|r==rt))
-            || self.cap.as_ref().is_ok_and(|c|c.limits.get(rt)==Some(&0))
-            || {let a=crate::runtime::accounts::Host::read(&self.cfg.install);a.error.is_none() && a.off(rt)}
+        self.cfg.runtime_disabled(rt, self.cap.as_ref().ok().map(|c| &c.limits))
     }
 
     fn balancing(&self) -> Balancing {

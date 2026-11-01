@@ -2762,17 +2762,21 @@ fn host_setup(cfg: &Config) -> Option<String> {
 /// `agents` rows, the § 8 Access report, the open tasks' labels and the board's PR route (`None`: not read).
 fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<String, String>, agents: &Value, access: &[policy::Effective],
     open: Option<Vec<(u64, Vec<String>)>>, pr_route: Option<check::Probe>) -> Vec<check::Item> {
-    // A healthy fallback removes the preferred CLI as a setup prerequisite; explicit pins still expose its gaps.
-    let selected = labels::select(&[], false, &cfg.default_runtime, |rt| {
+    // A healthy fallback removes the preferred CLI prerequisite; project-disabled pins follow the same exception as admission.
+    let disabled = |rt: &str| cfg.runtime_disabled(rt, Some(limits));
+    let selected = labels::select_project(&[], false, &cfg.default_runtime, cfg.auto_reroute, disabled, |rt| {
         let login = agents.as_array().into_iter().flatten().find(|r| r["runtime"] == rt).and_then(|r| r["login"].as_str());
         let allowed = access.iter().any(|e| e.runtime == rt && e.refused.is_none() && !e.grant.starts_with("none") && e.grant != "unknown");
-        if limits.get(rt) != Some(&0) && login == Some("logged in") && allowed { Ok(rt.into()) }
+        if !disabled(rt) && login == Some("logged in") && allowed { Ok(rt.into()) }
         else { Err(("access", format!("{rt} not ready"))) }
     }).ok().map(|(rt, _)| rt);
+    // If no runtime is ready, keep the first enabled candidate's setup gaps visible.
+    let selected = selected.or_else(|| labels::candidates(&[], false, &cfg.default_runtime).into_iter().find(|rt| !disabled(rt)));
     let fallback = selected.as_ref().is_some_and(|rt| rt != &cfg.default_runtime);
-    let pinned = |rt: &str| open.as_ref().is_some_and(|tasks| tasks.iter().any(|(_, labels)| labels.iter().any(|l| l.strip_prefix("run-") == Some(rt))));
+    let pinned = |rt: &str| !(cfg.auto_reroute && runtime::CLI_RUNTIMES.contains(&rt) && disabled(rt))
+        && open.as_ref().is_some_and(|tasks| tasks.iter().any(|(_, labels)| labels.iter().any(|l| l.strip_prefix("run-") == Some(rt))));
     let runtimes = runtime::agent_runtimes().iter().filter(|rt| {
-        let in_use = match limits.get(**rt) { Some(n) => *n > 0, None => selected.as_ref().unwrap_or(&cfg.default_runtime) == *rt };
+        let in_use = !disabled(rt) && match limits.get(**rt) { Some(n) => *n > 0, None => selected.as_ref().unwrap_or(&cfg.default_runtime) == *rt };
         pinned(rt) || in_use && !(fallback && **rt == cfg.default_runtime)
     })
         .map(|rt| {
@@ -4342,6 +4346,45 @@ mod tests {
             assert!(items.iter().any(|i| i.id == "access codex"));
         }
 
+    }
+
+    // #2138 A3/R8/§4: readiness must honor disabled-pin rerouting without hiding strict pins or access/login gaps.
+    #[test]
+    fn balancing_setup_readiness_uses_project_execution_policy() {
+        let mut c = cfg();
+        c.install = std::env::temp_dir().join(format!("taskq-setup-balancing-{}", runtime::uuid()));
+        fs::create_dir_all(&c.install).unwrap();
+        let grant = |rt: &str| policy::Effective { runtime: rt.into(), requested: String::new(), grant: "fixture owner grant".into(), mode: "full".into(),
+            enforcement: String::new(), profile: None, linux: false, windows: false, claude: None, codex: None, refused: None };
+        let agents = json!([{"runtime":"claude","login":"not installed"},{"runtime":"codex","login":"logged in"}]);
+        for (cause, reroute, expected_pin) in [("limit",true,false),("excluded",true,false),("accounts",true,false),
+            ("limit",false,true),("excluded",false,true),("accounts",false,true),("login",true,true),("access",true,true),("quota",true,true)] {
+            c.default_runtime = "codex".into();
+            c.auto_reroute = reroute;
+            c.allowed_runtimes = (cause == "excluded").then(||vec!["codex".into()]);
+            let limits = [("claude".into(),if cause == "limit" {0}else{2}),("codex".into(),2)].into_iter().collect();
+            fs::write(c.install.join(runtime::accounts::FILE), if cause == "accounts" {r#"{"claude":[{"label":"default","enabled":false}]}"#} else {"{}"}).unwrap();
+            fs::write(c.install.join(runtime::accounts::STATE), if cause == "quota" {r#"{"claude":{"default":{"limited":1,"until":4102444800}}}"#} else {"{}"}).unwrap();
+            let mut claude = grant("claude");
+            if cause == "access" {claude.refused = Some("fixture access refusal".into());}
+            let items = setup_items(&c, &limits, Ok("auto-merge".into()), &agents, &[claude,grant("codex")],
+                Some(vec![(1,vec!["run-claude".into()])]), None);
+            assert_eq!(items.iter().any(|i|i.id == "cli claude"),expected_pin,"{cause}, auto_reroute={reroute}: {items:?}");
+            assert!(items.iter().any(|i|i.id == "access codex"));
+        }
+        // Allowed runtimes also narrow unpinned readiness even with a positive host limit and a healthy excluded default.
+        c.default_runtime = "claude".into();
+        c.allowed_runtimes = Some(vec!["codex".into()]);
+        let limits = [("claude".into(),2),("codex".into(),2)].into_iter().collect();
+        let agents = json!([{"runtime":"claude","login":"logged in"},{"runtime":"codex","login":"logged in"}]);
+        let items = setup_items(&c, &limits, Ok("auto-merge".into()), &agents, &[grant("claude"),grant("codex")], Some(vec![]), None);
+        assert!(!items.iter().any(|i|i.id.ends_with(" claude")),"{items:?}");
+        assert!(items.iter().any(|i|i.id == "access codex"));
+        let agents = json!([{"runtime":"claude","login":"logged in"},{"runtime":"codex","login":"not logged in"}]);
+        let items = setup_items(&c, &BTreeMap::new(), Ok("auto-merge".into()), &agents, &[grant("claude"),grant("codex")], Some(vec![]), None);
+        assert!(!items.iter().any(|i|i.id.ends_with(" claude")),"{items:?}");
+        assert!(items.iter().any(|i|i.id.ends_with(" codex") && i.status == "gap"),"an unavailable allowed fallback must remain visible: {items:?}");
+        fs::remove_dir_all(&c.install).unwrap();
     }
 
     // Chain: #1661 A2 AS5 Checking. Risk: a probe in progress has no service signal, or the mark drops prior rows.
