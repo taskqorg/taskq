@@ -466,6 +466,7 @@ fn task_body(install:&Path,m:&Value)->Res<Value> {
     };
     if !m["source_revision"].is_number()||row["revision"]!=m["source_revision"] {return Err("Task body revision changed; refresh before reading".into());}
     if !row["error"].is_null(){return Err("Task source incomplete; refresh or open its board".into());}
+    #[cfg(any(target_os = "macos", windows))]
     crate::tray::inline_images(root,&mut row);
     row["history_source_revision"]=row["revision"].clone();row["history_source_count"]=json!(row["history"].as_array().map_or(0,Vec::len));row["history_thin"]=json!(true);row.as_object_mut().map(|r|r.remove("history"));
     let key=format!("{board}#{n}");let local=preferences(install)?["answers"][&key].clone();

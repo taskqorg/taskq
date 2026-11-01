@@ -76,11 +76,11 @@ answerWon:function(board,t){
 },
 // #1918 A5: the conversation is append-only: every answered question stays as it was asked, read-only, then its
 // answer line, in board order; an open question follows as the live card
-answerHistory:function(t){
+answerHistory:function(t,root){
   return (t.history||[]).map(({question:q,answered:a},i)=>{
    const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:a?.revision||0,question:{choices:[],evidence:[],...q}},key=a?.revision??i;
    const paged=!!historyText&&(q?.text||'').length>32768;
-   return [h('section',{key:'asked:'+key,class:'thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+((t.history_start||0)+i+1)+' of #'+t.n},time.stamp(null,'Recorded question','Question timestamp unavailable in the history adapter'),paged&&historyText(row,q.text,'history-'+key),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question'})}})),
+   return [h('section',{key:'asked:'+key,class:'thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+((t.history_start||0)+i+1)+' of #'+t.n},time.stamp(null,'Recorded question','Question timestamp unavailable in the history adapter'),paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question'})}})),
     h('p',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'body answered',role:'status'},won({answered:a||{}}),time.stamp(null,'Recorded answer','Answer timestamp unavailable in the history adapter'))];
   });
 },

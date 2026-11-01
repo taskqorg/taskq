@@ -35,26 +35,27 @@ const api=execution.module('notificationPanel',{
   const archived=new Set(owners.filter(c=>c.archived).map(c=>'owner:'+c.id));for(const id of Object.keys(sidebar.archived||{}))archived.add(id);for(const r of messages.entries||[])if(r.archived&&r.kind==='question'&&!links.has(r.board+'/'+r.task))archived.add(key(r.board,r.task));
   const add=(set,id)=>{if(!archived.has(id))set.add(id);};
   for(const r of api.rows(projects,results,marks))if(!r.read){const p=projects.find(p=>p.root===r.root);add(fresh,key(p?.issues||r.root,r.n));}
-  for(const r of messages.entries||[])if(!r.archived){const id=r.kind==='question'?key(r.board,r.task):'owner:'+r.id;if(!r.read)add(fresh,id);}
+  for(const r of messages.entries||[])if(!r.archived&&marks[JSON.stringify(['message',r.key])]!=='cleared'){const id=r.kind==='question'?key(r.board,r.task):'owner:'+r.id;if(!r.read)add(fresh,id);}
   for(const p of projects)for(const t of p.tasks||[])if(t.state==='ask')add(needs,key(p.issues||p.root,t.n));
   for(const r of results)if(r.kind!=='task'&&r.visible!==false&&!r.pending_decision&&(!r.decision||r.decision==='none'||r.decision==='later'&&!(Date.parse(r.later_until)>Date.now()))){const p=projects.find(p=>p.root===r.root);add(needs,key(p?.issues||r.root,r.n));}
-  return {fresh,needs};
+  return {fresh,needs,key};
  },
- create:function({view,reports,send,draw}){
+ create:function({view,reports,send,draw,messages}){
   let notice='';const historyViews=new Map();
   const model=execution.module('notificationPanel.view',{
    rows(){return api.rows(view.S.projects||[],reports.rows(),view.S.notify?.inbox||{});},
    reasons(){return [...new Set([...(reports.count()===null?['Results incomplete; check result collection.']:[]),...(view.S.projects||[]).flatMap(p=>p.events_error||p.alive===false?[p.name+': '+(p.events_error||'project observation stale')]:[])])];},
-   attention(){const sets=api.attention(view.S.projects||[],reports.rows(),view.S.messages,view.S.notify?.inbox||{},view.S.conversations?.items||[],view.S.conversations?.sidebar||{}),reasons=[...model.reasons(),...(view.S.messages?.complete!==true?['Message collection incomplete']:[]),...(view.S.conversations?.complete!==true?['Conversation collection incomplete']:[])];return {...sets,reasons};},
+   messages(){return (view.S.messages?.entries||[]).filter(r=>!r.archived&&view.S.notify?.inbox?.[JSON.stringify(['message',r.key])]!=='cleared');},
+   attention(sidebar=view.S.conversations?.sidebar||{}){const sets=api.attention(view.S.projects||[],reports.rows(),view.S.messages,view.S.notify?.inbox||{},view.S.conversations?.items||[],sidebar),reasons=[...model.reasons(),...(view.S.messages?.complete!==true?['Message collection incomplete']:[]),...(view.S.conversations?.complete!==true?['Conversation collection incomplete']:[])];return {...sets,reasons};},
    label(a=model.attention()){return 'Conversations · '+a.fresh.size+(a.reasons.length?' loaded New':' New')+' · '+a.needs.size+(a.reasons.length?' loaded Needs me':' Needs me')+(a.reasons.length?' · Partial: '+a.reasons.join('; '):'');},
    entry(){const a=model.attention(),label=model.label(a),badge=(kind,n,mark)=>h('span',{class:'communication-count '+kind,title:kind+': '+n,'aria-label':kind+': '+n},icon(mark),h('span',{'aria-hidden':'true'},a.reasons.length?(n?'≥'+(n>99?'99':n):'?'):n>99?'99+':String(n)));
     return h('button',{class:'conversations-entry',type:'button','data-a':'workspace','data-page':'conversations','data-thread':'centre',title:label,'aria-label':label},icon('messages-square'),badge('New',a.fresh.size,'inbox'),badge('Needs me',a.needs.size,'message-circle-question'),a.reasons.length>0&&h('span',{class:'notification-warning'},icon('circle-alert')));},
    bell(){return model.entry();},
    save(action,rows){if(rows.length)send({a:'notification-state',action,ids:rows.map(r=>r.id)});},
-   read(rows){model.save('read',rows.filter(r=>r.source!=='result'&&!r.read));reports.markRead(rows.filter(r=>r.source==='result'&&!r.read));},
+   read(rows,entries=[]){if(entries.length)messages?.('read',entries.filter(r=>!r.read));model.save('read',rows.filter(r=>r.source!=='result'&&!r.read));reports.markRead(rows.filter(r=>r.source==='result'&&!r.read));},
    receive(r){notice=r.reason||'';draw();},
-   click(b){const action=b.dataset.notification;if(!action)return false;const rows=model.rows();if(action==='read')model.read(rows);else if(action==='clear')model.save('clear',rows.filter(r=>r.read));return true;},
-   tools(){const rows=model.rows();return h('div',{class:'news-tools'},h('div',{class:'conversation-tools'},h('button',{'data-notification':'read',disabled:!rows.some(r=>!r.read)},'Mark all read'),h('button',{'data-notification':'clear',disabled:!rows.some(r=>r.read)},'Clear read')),notice&&h('p',{role:'alert'},notice),reports.readFailure()&&h('p',{role:'status'},reports.readFailure()),model.reasons().map(reason=>h('p',{role:'status',class:'meta',key:reason},reason)));},
+   click(b){const action=b.dataset.notification;if(!action)return false;const rows=model.rows();if(action==='read')model.read(rows,model.messages());else if(action==='clear')model.save('clear',[...rows.filter(r=>r.read),...model.messages().filter(r=>r.read).map(r=>({id:JSON.stringify(['message',r.key])}))]);return true;},
+   tools(){const rows=[...model.rows(),...model.messages()];return h('div',{class:'news-tools'},h('div',{class:'conversation-tools'},h('button',{'data-notification':'read',disabled:!!view.messageBusy||!rows.some(r=>!r.read)},'Mark all read'),h('button',{'data-notification':'clear',disabled:!rows.some(r=>r.read)},'Clear read')),notice&&h('p',{role:'alert'},notice),reports.readFailure()&&h('p',{role:'status'},reports.readFailure()),model.reasons().map(reason=>h('p',{role:'status',class:'meta',key:reason},reason)));},
    history(rows=[],extra,key=rows[0]?.root+'#'+rows[0]?.n){
     if(!rows.length&&!extra)return null;
     const state=historyViews.get(key)||{open:false,start:0};historyViews.delete(key);historyViews.set(key,state);while(historyViews.size>24)historyViews.delete(historyViews.keys().next().value);
