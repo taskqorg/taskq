@@ -3482,9 +3482,12 @@ fn reroute(b: &dyn Board, root: &Path, from: &str, to: &str) -> Res<Vec<Receipt>
     let (old, new) = (format!("run-{from}"), format!("run-{to}"));
     b.ensure_labels(std::slice::from_ref(&new))?;
     let mut out = vec![];
-    for issue in b.issues(None)?.into_iter().filter(|i| i.open && service::is_task(i)) {
+    for issue in b.issues(None)?.into_iter().filter(|i| i.open && service::is_task(i) && (i.labels.contains(&old) || i.labels.contains(&new))) {
         let n = issue.number;
-        let pending=core::project(n,&entries(b,n)?,false).reroute;
+        let pending=match entries(b,n) {
+            Ok(log)=>core::project(n,&log,false).reroute,
+            Err(e)=>{out.push(Receipt {outcome:"unknown",..Receipt::rejected(n,&Op::default(),e)}.wake(root));continue;}
+        };
         if !issue.labels.contains(&old) && !pending.as_ref().is_some_and(|(_,source,target)| source==from && target==to) {continue;}
         let mut submitted=pending.is_some();
         let mut change = || -> Res<Receipt> {
@@ -4041,6 +4044,13 @@ mod tests {
         b.comment(waiting,"taskq: reroute claude codex\nrouting-fence: 1").unwrap();
         assert_eq!(dispatch::finish_reroute(&b,waiting).outcome,"unknown");
         assert!(b.issue(waiting).unwrap().labels.contains(&"run-claude".into()),"dependency blocking still binds during reconciliation");
+        let partial=Fake::default();
+        let unreadable=partial.create("Unreadable","",&labels).unwrap();
+        let next=partial.create("Readable","",&labels).unwrap();
+        partial.state.borrow_mut().fail_comment_reads=1;
+        let rs=reroute(&partial,&dir,"claude","codex").unwrap();
+        assert_eq!(rs.iter().find(|r|r.task==unreadable).unwrap().outcome,"unknown");
+        assert!(rs.iter().find(|r|r.task==next).unwrap().ok(),"one read failure keeps every other receipt");
         let _=std::fs::remove_dir_all(dir);
     }
 
