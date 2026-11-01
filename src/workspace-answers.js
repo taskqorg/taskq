@@ -157,10 +157,8 @@ hydrate:function(locals){
  for(const [key,local] of Object.entries(locals||{}))if(!Object.hasOwn(saved,key)&&local&&typeof local.draft==='string'){
   saved[key]={...local,confirmClose:false};
   if(local.op&&['sending','unknown'].includes(local.receipt?.state))saved[key].receipt={state:'unknown',reason:'Workspace reopened; delivery needs readback',next:'Check delivery with the same operation'};
- }
- for(const [key,local]of Object.entries(saved)){
-  const board=key.slice(0,key.lastIndexOf('#')),p=api.project(board,local.projectRoot),id=p?.root+'#'+local.op?.id;
-  if(local.op&&p&&local.receipt&&!answerFeedback.has(id))answerFeedback.set(id,{board,op:local.op,about:local.about,...local.receipt});
+  const board=key.slice(0,key.lastIndexOf('#')),root=api.project(board,local.projectRoot)?.root||local.projectRoot;
+  if(local.op&&root&&saved[key].receipt)answerFeedback.set(root+'#'+local.op.id,{board,op:local.op,about:local.about,...saved[key].receipt});
  }
 },
 retry:function(key){const r=answerFeedback.get(key);if(r)ui.effect('workspace.answer.reconcile',()=>answerSend(r.board,r.op),()=>{});},

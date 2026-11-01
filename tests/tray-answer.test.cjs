@@ -16,14 +16,14 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   context.S.projects=[];const recoveredAt=sent.length;
   call('restoreRecovery',{[recoveredKey]:{draft:'Unsaved text',caret:[3,9],files:[],projectRoot:'project',op:recoveredOp,receipt:{state:'sending'}}});
   assert.equal(sent.length,recoveredAt);
-  context.S.projects=[project];call('hydrate',{});
+  context.S.projects=[project];project.tasks=[];call('hydrate',{});
   assert.deepEqual(call('load',board,{n:2140}).op,recoveredOp);
   assert.equal(call('load',board,{n:2140}).receipt.state,'unknown');
   assert.equal(sent.length,recoveredAt,'late source hydration never dispatches');
   call('retry','project#'+recoveredOp.id);await new Promise(setImmediate);
   assert.deepEqual(sent.at(-1).op,recoveredOp,'explicit recovered check keeps the same operation');
   call('answerReceipt',{root:'project',id:recoveredOp.id,state:'accepted'});
-  call('dismiss','project#'+recoveredOp.id);sent.length=recoveredAt;timers.clear();
+  call('dismiss','project#'+recoveredOp.id);call('hydrate',{});assert(!call('answerNotices').includes(recoveredOp.id),'refresh must not resurrect a dismissed receipt');sent.length=recoveredAt;timers.clear();
 
   for(const state of ['doing','review','ready','later','waiting','blocked']) assert.equal(call('answerSlot',{state,key:'task',card:'Old question',question:{parsed:true}}),'',state+' must not mount an answer card');
   assert(call('answerSlot',{state:'ask',key:'task'}).includes('data-answer'));
