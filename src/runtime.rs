@@ -2609,6 +2609,13 @@ pub fn agents(install: &Path) -> serde_json::Value {
     serde_json::Value::Array(rows)
 }
 
+/// The heartbeat's CLI versions (§ 4): one per installed binary of `agents` rows; an unread version is `unknown` (R12).
+pub fn clis_versions(rows: &serde_json::Value) -> std::collections::BTreeMap<String, String> {
+    rows.as_array().into_iter().flatten().filter(|r| r["path"].is_string())
+        .filter_map(|r| Some((of(r["runtime"].as_str()?).bin.to_string(), r["version"].as_str().unwrap_or("unknown").to_string())))
+        .filter(|(bin, _)| !bin.is_empty()).collect()
+}
+
 /// The menu and status line of a row: `<runtime> <version> · <account>` or `· not logged in` etc.
 pub fn agent_text(r: &serde_json::Value) -> String {
     let rt = r["runtime"].as_str().unwrap_or("?");

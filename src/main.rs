@@ -1465,6 +1465,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             agents = Some((Instant::now(), json!({"at": s.wall, "rows": runtime::agents(&cfg.install)})));
             // #1429: a logged-out runtime admits nothing until a probe reads it logged in
             s.logged_out = agents.as_ref().map(|a| login_holds(&a.1["rows"])).unwrap_or_default();
+            s.clis = runtime::clis_versions(&agents.as_ref().map_or(Value::Null, |a| a.1["rows"].clone()));
         }
         let r = if reduced { s.reduced().and_then(|_| Err(panics.reason.clone().unwrap_or_default())) } else if observe { s.observe() } else { s.pass() };
         s.sync_host();
