@@ -533,6 +533,14 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             }
             let before = t.clone();
             step(&mut t, &mut resume, e.id, &l, last == 0);
+            // §2.12: only the owning service's quota continuation may deliver to a released reviewer.
+            if before.state == State::Review && before.role.as_deref() == Some("reviewer")
+                && l.kind == "steer" && l.args == ["quota"] && l.attempt.is_some() && l.attempt == before.attempt
+                && executions.iter().all(|x| x.release.is_some())
+                && executions.iter().rev().find(|x| Some(x.attempt) == before.attempt)
+                    .is_some_and(|x| x.accepted && x.release == Some(Release::Exit)) {
+                t.inbox.push(e.id);
+            }
             // § 2: a pick belongs to the card it was made on
             if t.card != before.card || t.state != State::Ask {
                 t.pick = None;

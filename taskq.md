@@ -74,7 +74,7 @@ Prompts/inbox show goal, acceptance and all notes. Optional last lines `op-id: <
 | `doing`, `review` | `requeue [main-moved] attempt` | `ready` | reason/fixes; `main-moved` keeps retries, else +1; 3rd: `ask` with the limit card | 9 |
 | `doing`, `review` | `gone attempt` | `ready` / `review` | service: child exited or lease expired; emergency recovery (§ 4); `retries += 1`; 2nd: `ask` with the limit card | 10 |
 | `doing`, `review` | `usage-limit attempt` | `ready` / `review` | pre-work quota/dead login; keep retries/review result | 11 |
-| `doing` | `steer` | `doing` | text for the worker | 12 |
+| `doing`, `review` | `steer [quota]` | same | worker text; reviewer: service-only `quota attempt`, after accepted execution verified exited and all executions released; same session/account/grants, never general steering | 12 |
 | `review` | `spawn reviewer <rt>:<session> <host>` | `review` | no live reviewer/pending publication; attempt = this id | 13 |
 | `review` | `ask attempt` | `ask` | reviewer's card; result kept | 14 |
 | `review` | `publish [attempt]` | `review` | save `publication` verdict, end reviewer; service publishes; ignore duplicate | 15 |
@@ -144,11 +144,8 @@ Only completion attested with the same release key or a verified later boot rele
 Queued expired/dead callers never start; terminal receipts have bounded retention.
 [Consumer protocol](docs/design/external-slots.md#contract-detail).
 ### Runtime accounts
-Each host keeps, per CLI runtime (`claude`, `codex`; Antigravity observes its native default account), an ordered list of named login homes in `<install>/accounts.json`, each enabled or disabled; no list means one `default` account, the runtime's own home.
-A new start uses the first enabled account that is not usage-limited; a resume, recovery or running child keeps the account its attempt log names.
+Each host keeps, per CLI runtime (`claude`, `codex`), an ordered list of named login homes in `<install>/accounts.json`, each enabled or disabled; no list means one `default` account, the runtime's own home. A new start uses the first enabled account that is not usage-limited; a resume, recovery or running child keeps the account its attempt log names.
 A usage limit before work (§ 2 `usage-limit`) on one account moves the runtime to the next enabled account on that host without spending a retry; the § 4 usage-limit hold applies only when none is left. Every switch goes to the service log and telemetry.
-Host-wide persisted quota windows are independent: a short reset never clears a weekly hold. Unknown reset uses one bounded probe per account; corrupt availability holds new launches as unknown.
-Mid-work quota preserves the attempt/session and work until verified execution release and same-session continuation, never a blind restart.
 `taskq accounts` lists every host's accounts; enable, disable, reorder and add (a device login into a new TaskQ-owned home) write only the local host, never copy a login and never print a token. An account email is read only on its own host; the heartbeat carries labels and state, never email. [Detail](docs/design/capacity.md#runtime-accounts).
 ## 4. Service
 `taskq service run`: one host process for `<install>/projects`, one loop thread per root; `service install` registers a project and persists the process (§ 8). Project panics restart only that thread and reattach children; 3 in 10 min quarantine it (reap, heartbeat, `status.json` only) until `service restart`. Exits log why. Loop:
@@ -167,6 +164,7 @@ Conflicting `prefer-*` labels are ignored, one log line/pass; `add` refuses them
 Unpinned work and review try the preferred CLI first, then remaining `claude`, `codex`, `antigravity` in that order when unavailable (capacity 0/full, missing CLI/login, quota hold or runtime refusal); never implicit `codex-app`. Each candidate independently passes grants, capabilities, model/effort constraints and capacity; strict pins and explicit disable remain binding.
 Common focus/load/Stop and unresolved-execution gates still bind. Select before a new spawn only; resume/active work keeps its runtime (R2/R9/R11).
 Spawn and admission report the actual runtime and factual fallback reason; if none is eligible, expose every blocker and recheck each pass. Subscription quota holds are separate from operator capacity: never rewrite limits/accounts/permissions to represent quotas; keep observed reset/probe facts and preserve active attempts.
+Host-wide persisted quota windows are independent: a short reset never clears a weekly hold; unknown reset uses a bounded account probe, corrupt availability holds launches as unknown. Mid-work quota waits for verified exit and same-session/account continuation, never blind restart ([detail](docs/design/capacity.md#runtime-accounts)).
 Also: `assignee-only`; every `needs-*` in `has` (`needs-gate`: §7; `needs-gui`: [GUI](docs/runtime-qualification.md#gui-eligibility-contract-detail)); `codex-app`: §9 opt-in.
 - Focus: `taskq service focus all|off|<label..> [--request TEXT]` writes `<root>/.taskq/focus`: `all`, one of the labels or `p0` passes; none or `off` (default) admits nothing, heartbeats and updates go on; capacity reason `focus` and the heartbeat say so. `service install` writes `off` if the file is missing, else keeps it. Focus requests and printing: [service detail](docs/design/host-service.md#contract-detail).
 - Pause: `service pause` saves the focus to `focus.paused` and writes `off`; resume restores it, never `all` by default. Emergency (E1–E5): under the § 3 hold the loop still reaps, stops replaced children and beats; unknown liveness never becomes `gone`; `service recover` proposes and `--apply` writes fenced `gone` ops. [Detail](docs/design/emergency-recovery.md#contract-detail).
