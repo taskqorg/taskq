@@ -1,0 +1,33 @@
+{
+  "schema": "taskq.launchd-authorized-host-observation/1",
+  "source_sha": "b18b14f7caa2e92c605f6e36bfdb8d83329a7035",
+  "report_sha": "5630d008a7da7e7d97c694ed656451b23e5d6e83",
+  "authority_note": "https://github.com/taskqorg/taskq/issues/2151#issuecomment-6564944210",
+  "native_dispatch_by_this_worker": false,
+  "session_domain_finding": "GUI domain accepted the prepared Aqua job; user domain rejected it with launchd session error 134",
+  "bootstrap_return": 0,
+  "kickstart_return": 0,
+  "isolated_coalition_differs_from_controller": true,
+  "root_exited_while_detached_setsid_leaf_live": true,
+  "same_bound_boot_and_coalition": true,
+  "accounting_on_root_start": {
+    "return": 0,
+    "started": 3,
+    "exited": 2
+  },
+  "accounting_while_leaf_live": {
+    "return": 0,
+    "started": 5,
+    "exited": 4
+  },
+  "leaf_stop_cause": "controller",
+  "bootout_return": 0,
+  "post_bootout_print_return": 113,
+  "post_bootout_accounting": {
+    "return": -1,
+    "errno": 3
+  },
+  "whole_operation_completion": "NOT_QUALIFIED; ESRCH is unknown, never empty",
+  "product_supervisor_singleton_completion": "NOT_RUN; new source candidate requires scoped PM qualification",
+  "private_receipts": "kept private; no native identities, roots, homes, keys or labels copied"
+}

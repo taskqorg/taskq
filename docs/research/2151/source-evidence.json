@@ -1,0 +1,137 @@
+{
+  "schema": "taskq.scope-source-evidence/1",
+  "coreq_checked_main": "55ec4176372b7832790c6d6e59d1b149b79e4dfb",
+  "coreq_checked_main_process_blob": "35c82203f111b64f5a77c95180f7d706e57da6c2",
+  "sources": [
+    {
+      "id": "coreq-locked",
+      "repository": "taskqorg/coreq",
+      "revision": "e84761cdab43723b871a42b3021e9c39afcd9484",
+      "path": "src/process.rs",
+      "blob": "35c82203f111b64f5a77c95180f7d706e57da6c2",
+      "immutable_blob_url": "https://api.github.com/repos/taskqorg/coreq/git/blobs/35c82203f111b64f5a77c95180f7d706e57da6c2",
+      "excerpts": [
+        {
+          "first": 22,
+          "last": 37,
+          "text": "pub fn identity(pid: u32) -> io::Result<Option<Identity>> {\n    crate::telemetry::capture::poll(\"process.identity\", pid.into(), || {\n        if pid == 0 || pid > i32::MAX as u32 { return Err(io::Error::new(io::ErrorKind::InvalidInput,\"invalid process id\")); }\n        identity_inner(pid).map(|started| started.map(|started| Identity {pid,started}))\n    }, |result| match result {\n        Ok(Some(_)) => \"present\", Ok(None) => \"missing\",\n        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => \"denied\", Err(_) => \"process-identity\",\n    })\n}\n\n/// Request termination of an already-authorized execution, never signal a reused PID or infer exit.\npub fn terminate(expected:&Identity)->io::Result<()> {\n    crate::telemetry::capture::operation(\"process.terminate\", || terminate_inner(expected), |_|\"process-termination\")\n}\n\n#[cfg(target_os=\"macos\")]"
+        },
+        {
+          "first": 280,
+          "last": 300,
+          "text": "}\nimpl Drop for Guard {\n    fn drop(&mut self) {\n        let Some(mut child) = self.child.take() else { return };\n        let wait = child.try_wait();\n        if matches!(wait, Ok(Some(_))) && self.input.is_none() { return; }\n        let span = crate::telemetry::capture::detached_span(\"process.cleanup\");\n        span.record(\"process_id\", u64::from(child.id()));\n        if wait.is_err() { span.record(\"coreq_error\", \"cleanup-wait\"); }\n        if !matches!(wait, Ok(Some(_))) && child.kill().is_err() && !matches!(child.try_wait(), Ok(Some(_))) {\n            span.record(\"coreq_error\", \"cleanup-kill\");\n        }\n        let owned = Owned { child, input: self.input.take(), span, _permit: self.permit.take().unwrap() };\n        // Every queued child retains a permit, so this bounded queue has room for this owner.\n        if let Err(error) = self.reaper.send(owned) {\n            error.0.span.record(\"coreq_error\", \"cleanup-owner\");\n            let _ = writeln!(io::stderr(), \"Process cleanup: unknown (owner unavailable)\");\n            // Fail closed: retain the handle and capacity until process exit if the owner dies.\n            let Owned { child, input, span, _permit } = error.0;\n            drop(span);\n            UNREAPED.lock().unwrap_or_else(|e| e.into_inner()).push((child, input, _permit));"
+        }
+      ]
+    },
+    {
+      "id": "coreq-contract",
+      "repository": "taskqorg/coreq",
+      "revision": "e84761cdab43723b871a42b3021e9c39afcd9484",
+      "path": "docs/design/process.md",
+      "blob": "540c38363075bb788e84475b522a47afd6fc1cec",
+      "immutable_blob_url": "https://api.github.com/repos/taskqorg/coreq/git/blobs/540c38363075bb788e84475b522a47afd6fc1cec",
+      "excerpts": [
+        {
+          "first": 24,
+          "last": 41,
+          "text": "\n- `process::identity(pid)` reads a PID plus its native creation identity: Linux boot ID/start ticks, macOS creation seconds/microseconds, Windows process creation FILETIME. Missing PID returns None.\n- On Windows, a signaled process handle also returns None even while another handle keeps the exited process object accessible; zero-time native wait errors remain unknown.\n- Invalid PID, denied access, an existing process whose creation identity is unavailable (including hidden/zombie cases), malformed native data and unsupported OS return an error.\n- Equality identifies one native process, not its descendants or external effects. Consumers persist only identities needed for their existing recovery records and must use owned handles/native exit evidence for control.\n- Telemetry records the operation/outcome, never raw identity values. TaskQ is the first consumer; existing command APIs remain unchanged.\n- Target OS qualification is required before relying on the read for recovery.\n\n## Process termination\n\n- `process::terminate(&Identity)` requests termination only through a native mechanism that binds the signal to the verified process incarnation. Success confirms the request, never exit or descendant termination.\n- macOS reads the native PID version, verifies the saved creation identity, and uses the kernel audit-token signal check.\n- Linux opens a pidfd before checking the saved boot/start identity, signals through that descriptor, and closes it on every outcome.\n- Windows opens a handle with query, synchronization and termination rights, compares the saved creation FILETIME and live state through that same handle, then calls TerminateProcess on it; PID reuse cannot retarget the request.\n- Denied, missing, changed or unsupported native capabilities return an error without a PID-only fallback. Other targets currently return unsupported.\n- Consumers must still read native exit before releasing capacity. Operation telemetry excludes identity and token payloads.\n- Target-platform checks qualify each mechanism separately.\n"
+        }
+      ]
+    },
+    {
+      "id": "xnu-track",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "bsd/kern/kern_event.c",
+      "blob": "ab090688b319d60951ee8148f1b4102111c16f4b",
+      "immutable_blob_url": "https://api.github.com/repos/apple-oss-distributions/xnu/git/blobs/ab090688b319d60951ee8148f1b4102111c16f4b",
+      "excerpts": [
+        {
+          "first": 1100,
+          "last": 1111,
+          "text": "{\n\tstruct proc *p;\n\n\tassert(PID_MAX < NOTE_PDATAMASK);\n\n\tif ((kn->kn_sfflags & (NOTE_TRACK | NOTE_TRACKERR | NOTE_CHILD)) != 0) {\n\t\tknote_set_error(kn, ENOTSUP);\n\t\treturn 0;\n\t}\n\n\tp = proc_find((int)kn->kn_id);\n\tif (p == NULL) {"
+        }
+      ]
+    },
+    {
+      "id": "xnu-spawn",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "bsd/kern/kern_exec.c",
+      "blob": "47420f9f8f620233f112e87a51ed8f576caa3546",
+      "immutable_blob_url": "https://api.github.com/repos/apple-oss-distributions/xnu/git/blobs/47420f9f8f620233f112e87a51ed8f576caa3546",
+      "excerpts": [
+        {
+          "first": 4480,
+          "last": 4504,
+          "text": "\t\t/*\n\t\t * Because of POSIX_SPAWN_SETEXEC, we need to handle this after image\n\t\t * activation, else when image activation fails (before the point of no\n\t\t * return) would leave the parent process in a modified state.\n\t\t */\n\t\tif (px_sa.psa_flags & POSIX_SPAWN_SETPGROUP) {\n\t\t\tstruct setpgid_args spga;\n\t\t\tspga.pid = proc_getpid(p);\n\t\t\tspga.pgid = px_sa.psa_pgroup;\n\t\t\t/*\n\t\t\t * Effectively, call setpgid() system call; works\n\t\t\t * because there are no pointer arguments.\n\t\t\t */\n\t\t\tif ((error = setpgid(p, &spga, ival)) != 0) {\n\t\t\t\tgoto bad_px_sa;\n\t\t\t}\n\t\t}\n\n\t\tif (px_sa.psa_flags & POSIX_SPAWN_SETSID) {\n\t\t\terror = setsid_internal(p);\n\t\t\tif (error != 0) {\n\t\t\t\tgoto bad_px_sa;\n\t\t\t}\n\t\t}\n"
+        }
+      ]
+    },
+    {
+      "id": "xnu-coalition",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "bsd/kern/sys_coalition.c",
+      "blob": "cb348caa5aeeeb538709aa6baef61e51a9471b74",
+      "immutable_blob_url": "https://api.github.com/repos/apple-oss-distributions/xnu/git/blobs/cb348caa5aeeeb538709aa6baef61e51a9471b74",
+      "excerpts": [
+        {
+          "first": 221,
+          "last": 244,
+          "text": " * Returns EPERM if the calling process is not privileged to make this call.\n */\nint\ncoalition(proc_t p, struct coalition_args *cap, __unused int32_t *retval)\n{\n\tuint32_t operation = cap->operation;\n\tuser_addr_t cidp = cap->cid;\n\tuint32_t flags = cap->flags;\n\tint error = 0;\n\tint type = COALITION_CREATE_FLAGS_GET_TYPE(flags);\n\n\tif (!task_is_in_privileged_coalition(proc_task(p), type)) {\n\t\treturn EPERM;\n\t}\n\n\tswitch (operation) {\n\tcase COALITION_OP_CREATE:\n\t\terror = coalition_create_syscall(cidp, flags);\n\t\tbreak;\n\tcase COALITION_OP_REAP:\n\t\terror = coalition_reap_syscall(cidp, flags);\n\t\tbreak;\n\tcase COALITION_OP_TERMINATE:\n\t\terror = coalition_request_terminate_syscall(cidp, flags);"
+        }
+      ]
+    },
+    {
+      "id": "xnu-census",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "bsd/kern/kern_proc.c",
+      "blob": "a08362b2e777ee607e226d869131efd5e164e526",
+      "immutable_blob_url": "https://api.github.com/repos/apple-oss-distributions/xnu/git/blobs/a08362b2e777ee607e226d869131efd5e164e526",
+      "excerpts": [
+        {
+          "first": 4023,
+          "last": 4147,
+          "text": "void\nproc_iterate(\n\tunsigned int flags,\n\tproc_iterate_fn_t callout,\n\tvoid *arg,\n\tproc_iterate_fn_t filterfn,\n\tvoid *filterarg)\n{\n\tpidlist_t pid_list, *pl = pidlist_init(&pid_list);\n\tu_int pid_count_available = 0;\n\n\tassert(callout != NULL);\n\n\t/* allocate outside of the proc_list_lock */\n\tfor (;;) {\n\t\tproc_list_lock();\n\t\tpid_count_available = nprocs + 1; /* kernel_task not counted in nprocs */\n\t\tassert(pid_count_available > 0);\n\t\tif (pidlist_nalloc(pl) >= pid_count_available) {\n\t\t\tbreak;\n\t\t}\n\t\tproc_list_unlock();\n\n\t\tpidlist_alloc(pl, pid_count_available);\n\t}\n\tpidlist_set_active(pl);\n\n\t/* filter pids into the pid_list */\n\n\tu_int pid_count = 0;\n\tif (flags & PROC_ALLPROCLIST) {\n\t\tproc_t p;\n\t\tALLPROC_FOREACH(p) {\n\t\t\t/* ignore processes that are being forked */\n\t\t\tif (p->p_stat == SIDL || proc_is_shadow(p)) {\n\t\t\t\tcontinue;\n\t\t\t}\n\t\t\tif ((filterfn != NULL) && (filterfn(p, filterarg) == 0)) {\n\t\t\t\tcontinue;\n\t\t\t}\n\t\t\tpidlist_add_pid(pl, proc_pid(p));\n\t\t\tif (++pid_count >= pid_count_available) {\n\t\t\t\tbreak;\n\t\t\t}\n\t\t}\n\t}\n\n\tif ((pid_count < pid_count_available) &&\n\t    (flags & PROC_ZOMBPROCLIST)) {\n\t\tproc_t p;\n\t\tZOMBPROC_FOREACH(p) {\n\t\t\tif (proc_is_shadow(p)) {\n\t\t\t\tcontinue;\n\t\t\t}\n\t\t\tif ((filterfn != NULL) && (filterfn(p, filterarg) == 0)) {\n\t\t\t\tcontinue;\n\t\t\t}\n\t\t\tpidlist_add_pid(pl, proc_pid(p));\n\t\t\tif (++pid_count >= pid_count_available) {\n\t\t\t\tbreak;\n\t\t\t}\n\t\t}\n\t}\n\n\tproc_list_unlock();\n\n\t/* call callout on processes in the pid_list */\n\n\tconst pidlist_entry_t *pe;\n\tSLIST_FOREACH(pe, &(pl->pl_head), pe_link) {\n\t\tfor (u_int i = 0; i < pe->pe_nused; i++) {\n\t\t\tconst pid_t pid = pe->pe_pid[i];\n\t\t\tproc_t p = proc_find(pid);\n\t\t\tif (p) {\n\t\t\t\tif ((flags & PROC_NOWAITTRANS) == 0) {\n\t\t\t\t\tproc_transwait(p, 0);\n\t\t\t\t}\n\t\t\t\tconst int callout_ret = callout(p, arg);\n\n\t\t\t\tswitch (callout_ret) {\n\t\t\t\tcase PROC_RETURNED_DONE:\n\t\t\t\t\tproc_rele(p);\n\t\t\t\t\tOS_FALLTHROUGH;\n\t\t\t\tcase PROC_CLAIMED_DONE:\n\t\t\t\t\tgoto out;\n\n\t\t\t\tcase PROC_RETURNED:\n\t\t\t\t\tproc_rele(p);\n\t\t\t\t\tOS_FALLTHROUGH;\n\t\t\t\tcase PROC_CLAIMED:\n\t\t\t\t\tbreak;\n\t\t\t\tdefault:\n\t\t\t\t\tpanic(\"%s: callout =%d for pid %d\",\n\t\t\t\t\t    __func__, callout_ret, pid);\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t} else if (flags & PROC_ZOMBPROCLIST) {\n\t\t\t\tp = proc_find_zombref(pid);\n\t\t\t\tif (!p) {\n\t\t\t\t\tcontinue;\n\t\t\t\t}\n\t\t\t\tconst int callout_ret = callout(p, arg);\n\n\t\t\t\tswitch (callout_ret) {\n\t\t\t\tcase PROC_RETURNED_DONE:\n\t\t\t\t\tproc_drop_zombref(p);\n\t\t\t\t\tOS_FALLTHROUGH;\n\t\t\t\tcase PROC_CLAIMED_DONE:\n\t\t\t\t\tgoto out;\n\n\t\t\t\tcase PROC_RETURNED:\n\t\t\t\t\tproc_drop_zombref(p);\n\t\t\t\t\tOS_FALLTHROUGH;\n\t\t\t\tcase PROC_CLAIMED:\n\t\t\t\t\tbreak;\n\t\t\t\tdefault:\n\t\t\t\t\tpanic(\"%s: callout =%d for zombie %d\",\n\t\t\t\t\t    __func__, callout_ret, pid);\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\nout:\n\tpidlist_free(pl);"
+        }
+      ]
+    },
+    {
+      "id": "python-spawn",
+      "repository": "python/cpython",
+      "revision": "v3.14.0",
+      "path": "Lib/subprocess.py",
+      "blob": "54c2eb515b60dafec986af59fc74fda796b1ee47",
+      "immutable_blob_url": "https://api.github.com/repos/python/cpython/git/blobs/54c2eb515b60dafec986af59fc74fda796b1ee47",
+      "excerpts": [
+        {
+          "first": 1795,
+          "last": 1808,
+          "text": "\n            if file_actions:\n                kwargs['file_actions'] = file_actions\n\n            self.pid = os.posix_spawn(executable, args, env, **kwargs)\n            self._child_created = True\n\n            self._close_pipe_fds(p2cread, p2cwrite,\n                                 c2pread, c2pwrite,\n                                 errread, errwrite)\n\n        def _execute_child(self, args, executable, preexec_fn, close_fds,\n                           pass_fds, cwd, env,\n                           startupinfo, creationflags, shell,"
+        },
+        {
+          "first": 1839,
+          "last": 1862,
+          "text": "\n            if (_USE_POSIX_SPAWN\n                    and os.path.dirname(executable)\n                    and preexec_fn is None\n                    and (not close_fds or _HAVE_POSIX_SPAWN_CLOSEFROM)\n                    and not pass_fds\n                    and cwd is None\n                    and (p2cread == -1 or p2cread > 2)\n                    and (c2pwrite == -1 or c2pwrite > 2)\n                    and (errwrite == -1 or errwrite > 2)\n                    and not start_new_session\n                    and process_group == -1\n                    and gid is None\n                    and gids is None\n                    and uid is None\n                    and umask < 0):\n                self._posix_spawn(args, executable, env, restore_signals, close_fds,\n                                  p2cread, p2cwrite,\n                                  c2pread, c2pwrite,\n                                  errread, errwrite)\n                return\n\n            orig_executable = executable\n"
+        }
+      ]
+    },
+    {
+      "id": "rust-spawn",
+      "repository": "rust-lang/rust",
+      "revision": null,
+      "path": "library/std/src/sys/process/unix/unix.rs",
+      "blob": "d1262ba3e2e6ecde26e42f6061ba0ca3c515b96b",
+      "immutable_blob_url": "https://api.github.com/repos/rust-lang/rust/git/blobs/d1262ba3e2e6ecde26e42f6061ba0ca3c515b96b",
+      "excerpts": [
+        {
+          "first": 830,
+          "last": 848,
+          "text": "            let mut p = Process::new(0, -1);\n\n            let spawn_res = spawn_fn(\n                &mut p.pid,\n                self.get_program_cstr().as_ptr(),\n                file_actions.0.get(),\n                attrs.0.get(),\n                self.get_argv().as_ptr() as *const _,\n                envp as *const _,\n            );\n\n            #[cfg(any(target_os = \"nto\", target_os = \"qnx\"))]\n            let spawn_res = spawn_res?;\n\n            cvt_nz(spawn_res)?;\n            Ok(Some(p))\n        }\n    }\n"
+        }
+      ]
+    }
+  ]
+}

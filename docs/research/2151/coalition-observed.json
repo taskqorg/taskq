@@ -1,0 +1,41 @@
+{
+  "schema": "taskq.scope-investigation/1",
+  "tracking": [
+    {
+      "flags": "NOTE_FORK|NOTE_EXIT",
+      "state": "available"
+    },
+    {
+      "flags": "NOTE_FORK|NOTE_EXIT|NOTE_TRACK",
+      "state": "refused",
+      "errno": 45
+    }
+  ],
+  "escape_traces": [
+    {
+      "mode": "setsid",
+      "root_reaped": true,
+      "original_group_absent": true,
+      "exact_descendant_live": true,
+      "descendant_escaped_group": true,
+      "resource_coalition_inherited": true,
+      "root_or_group_absence_proves_completion": false,
+      "counter_readback": "monotonic; shared scope, not isolated completion"
+    },
+    {
+      "mode": "posix_spawn",
+      "root_reaped": true,
+      "original_group_absent": true,
+      "exact_descendant_live": true,
+      "descendant_escaped_group": true,
+      "resource_coalition_inherited": true,
+      "root_or_group_absence_proves_completion": false,
+      "counter_readback": "monotonic; shared scope, not isolated completion"
+    }
+  ],
+  "invalid_coalition_query": {
+    "return": -1,
+    "errno": 3
+  },
+  "group_narrowing": "rejected by owner; not rerun"
+}

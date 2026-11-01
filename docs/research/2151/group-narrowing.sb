@@ -1,0 +1,4 @@
+; Rejected research candidate: do not append to any TaskQ profile or qualify it.
+; Retained as negative evidence; the owner requires native tool API compatibility.
+(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid) (with errno 1))
+(deny syscall-unix (syscall-number SYS_posix_spawn) (with errno 78))

@@ -50,6 +50,7 @@ pub(crate) fn exchange(install:&Path,action:&str,value:&Value)->Res<Value> {
         if let Some(op)=s.ops.get_mut(&key) {
             if bound(op)?!=r.binding||op.bound["local_slot"]["key_hash"]!=hash {return Err("slot belongs to another caller, payload or release key".into());}
             if action=="release"&&!matches!(op.receipt["state"].as_str(),Some("released"|"denied")) {
+                crate::runtime::protected_app_server::release_ready(op)?;
                 // Cancellation is durable before acknowledgment; even queued release cannot later admit a turn.
                 op.bound["local_slot"]["release"]=json!(true);
                 op.receipt["state"]=json!(if active(op) {"releasing"}else{"cancelling"});
@@ -160,6 +161,10 @@ fn reconcile(install:&Path,h:&mut host::Host,at:u64,boot:Res<i64>,mut live:impl 
                 continue;
             }
             if op.bound["local_slot"]["release"]==true {
+                if crate::runtime::protected_app_server::release_ready(op).is_err()
+                    &&!boot.as_ref().is_ok_and(|boot|*boot>op.receipt["granted_at"].as_i64().unwrap_or(i64::MAX)) {
+                    outcome(op,"unknown","protected native completion unknown; original slot retained",&h.instance,at);continue;
+                }
                 // Only the exact immutable binding and release key can persist this completion attestation.
                 outcome(op,"released","consumer confirmed entire turn ended",&h.instance,at);
                 resources::save(install,s)?;h.external_sync(&key,&b.root,&b.runtime,false);continue;

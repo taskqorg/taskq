@@ -1,0 +1,46 @@
+{
+  "schema": "taskq.launchd-scope-probe/1",
+  "source_sha": "b18b14f7caa2e92c605f6e36bfdb8d83329a7035",
+  "authority": "https://github.com/taskqorg/taskq/issues/2151#issuecomment-6564524511",
+  "platform": {
+    "darwin": "27.2.0",
+    "macos": "27.2",
+    "build": "26B123"
+  },
+  "bootstrap": {
+    "attempts": 1,
+    "return": 5,
+    "diagnostic": "Bootstrap failed: 5: Input/output error",
+    "state": "sandbox-blocked; registration outcome unknown"
+  },
+  "worker_sandbox_query": {
+    "operation": "job-creation",
+    "category": "temporary-user-job",
+    "expected": "allowed for approved disposable fixture",
+    "observed": "denied",
+    "return": 1,
+    "errno": 0
+  },
+  "exact_target_readback": {
+    "return": 113,
+    "diagnostic": "Bad request. Could not find service <fixture> in domain for uid <fixture>",
+    "absence_classifier": "NOT_QUALIFIED; not completion or never-started proof"
+  },
+  "kickstart_attempts": 0,
+  "go_marker_written": false,
+  "root_receipt_present": false,
+  "leaf_receipt_present": false,
+  "isolated_scope": "NOT_RUN",
+  "descendant_survival": "NOT_RUN",
+  "whole_operation_completion": "UNKNOWN",
+  "crash_recovery": "NOT_RUN",
+  "bootout_attempts": 0,
+  "job_cleanup": "UNKNOWN; no verified matching registration to remove",
+  "private_original_intent_and_receipts": "retained in owner-only OS temporary directory; not published",
+  "retry_or_new_generation": false,
+  "slot_operation": false,
+  "task_attempt_bindings_preserved": true,
+  "runtime_or_grant_changes": false,
+  "model_or_paid_turn": false,
+  "verdict": "inconclusive; approved transient-job effect is blocked in this worker; no isolated scope/completion PASS"
+}
