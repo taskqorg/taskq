@@ -18,12 +18,12 @@ const {create}=execution.module('workspace',{
   const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),checkpoint:()=>api.checkpoint(),navigate:(...args)=>api.navigate(...args),onSelect:id=>{if(view.safe)return;if(view.result?.conversation!==id)view.result=null;const row=api.threads().find(t=>t.id===id);view.answer=row?.task?{root:row.root,board:row.board,task:row.task,revision:row.revision}:null;view.message=row?.event&&!row.task?row.event.key:null;}});
   const reports=require('./reports.js').create({draw:()=>api.draw(),onMove:step=>conversations.move(step),navigation:r=>conversations.navigation(r),reading:(key,r)=>conversations.reading(key,r),transcript:r=>conversations.closed(r),onOpen:r=>{if(r.next){const next=conversations.nextUnresolved(api.threads());if(next?.report)reports.open(next.root,next.report);else if(next)conversations.select(next.id,false);else{view.threadNotice={thread:'list',text:'No unresolved items in this view. Choose All to continue.'};api.draw();}return;}if(r.conversation&&conversations.ids().includes(r.conversation)){conversations.reveal(r.conversation,false,true);view.result={root:r.root,n:r.n,sha:r.sha,conversation:r.conversation};}else api.openTask(r.board||view.S.projects.find(p=>p.root===r.root)?.issues,r.n,r.root);}});
   const operationView=require('./tray-app.js').createState();
-  const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
-  const {session,keyed}=execution.module('workspace.links',{session:function(url){return !!url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url);},
-   // Disclosures, islands and cards keep their DOM node when a notice above them appears or goes; empty text holes become null.
-   keyed:function(v){if(Array.isArray(v))return v.map(keyed);if(!v?.props)return v===''?null:v;const p=v.props;if(v.key==null)v.key=p['data-answer']||p['data-resources']||p['data-card']||p['data-view-key']||p.id;if(p.children!=null)p.children=keyed(p.children);return v;}});
+  const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw(),navigate:(page,context)=>api.navigate(page,context)});
+  const session=url=>!!url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url);
+  // Disclosures, islands and cards keep their DOM node when a notice above them appears or goes; empty text holes become null.
+  function keyed(v){if(Array.isArray(v))return v.map(keyed);if(!v?.props)return v===''?null:v;const p=v.props;if(v.key==null)v.key=p['data-answer']||p['data-resources']||p['data-card']||p['data-view-key']||p.id;if(p.children!=null)p.children=keyed(p.children);return v;}
   // A1: each route returns its Preact vnodes; called directly, since signal-aware components skip renders when only the plain view changes.
-  const pages=execution.module('workspace.routes',{
+  const pages={
    conversations:function(){
     conversations.task(null,null);
     const threads=api.threads(),id=conversations.sync(threads,view.answer?'task:'+view.answer.board+'/'+view.answer.task:view.message?'event:'+view.message:null),row=threads.find(t=>t.id===id),selected=row?.id;
@@ -92,8 +92,8 @@ const {create}=execution.module('workspace',{
    },
    operations:function(){return operations.operationBody(view.operation);},
    sessions:function(){return pages.conversations();}
-  });
-  const api=execution.module('workspace.instance',{
+  };
+  const api={
    // the notice stays on the thread that asked; an archived thread leaves the list, so its notice and Undo go to the list footer
    messageAction:function(action,keys,thread){
     if(view.messageBusy||!keys.length)return;
@@ -169,6 +169,7 @@ const {create}=execution.module('workspace',{
    },
    answerContext:function(){return view.answer||(view.pmTask?.conversation===conversations.current()?.id?view.pmTask:null);},
    answerAct:function(type){const c=api.answerContext();if(c)answers.answerAct(c.board,c.task,type);},
+   ...execution.module('workspace.instance',{
    draw:function(){
     conversations.capture();view.disclosures={...view.disclosures,...state.groups()};
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
@@ -290,7 +291,7 @@ const {create}=execution.module('workspace',{
      if(b.dataset.a==='toast-dismiss'){view.toast=null;api.draw();}
      else if(b.dataset.route)api.navigate(b.dataset.route,{section:'conversations'});
      // #1699 A2/A7: selecting a thread acknowledges nothing; its draft, caret and scroll stay with it
-     else if(b.dataset.a==='workspace'){api.navigate('conversations',{board:b.dataset.board,root:b.dataset.root,task:+b.dataset.task});}else if(b.dataset.a==='thread'){
+     else if(b.dataset.a==='workspace'){if(b.dataset.page==='operations')api.navigate('operations',{operation:b.dataset.operation,root:b.dataset.root||null});else api.navigate('conversations',{board:b.dataset.board,root:b.dataset.root,task:+b.dataset.task});}else if(b.dataset.a==='thread'){
       const row=api.threads().find(t=>t.id===b.dataset.thread);if(!row)return;conversations.flush();
       if(row.task)conversations.remember(row.id,row.root,true);conversations.select(row.id,false);
       view.restoreScroll=0;api.draw();state.flush();
@@ -333,7 +334,8 @@ const {create}=execution.module('workspace',{
     ui.listen(menu,'keydown',e=>{if(e.target.dataset.a==='workspace-resize'&&['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();ui.send({a:'workspace-window',action:'size',width:window.innerWidth+(e.key==='ArrowRight'?20:e.key==='ArrowLeft'?-20:0),height:window.innerHeight+(e.key==='ArrowDown'?20:e.key==='ArrowUp'?-20:0)});}});
     ui.send({a:'ready'});
    }
-  });
+   })
+  };
   return api;
  }
 });

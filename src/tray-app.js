@@ -7,10 +7,10 @@ const {icon,button}=require('./ui-icons.js');
 const syncView=require('./sync-view.js');
 
 const {createState,create}=execution.module("tray",{
-createState:function(snapshot=null){return {dashboard:null,popup:null,manualSize:null,agentqRuntime:null,agentqError:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
+createState:function(snapshot=null){return {open:null,dashboard:null,popup:null,manualSize:null,agentqRuntime:null,agentqError:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
-const api=execution.module("tray.create",{
-
+const api={
+...execution.module("tray.create",{mode:function(p){return p.mode;}}),
 operationLauncher:function(operation,root,label){return h('button',{class:'project','data-a':'workspace','data-page':'operations','data-origin':ports.settings?view.page:undefined,'data-operation':operation,'data-root':root||null},label);},
 operationTarget:function(d){return ({work:'resources',confirm:'admission','pause-all':'admission','resume-all':'admission',pause:'admission',resume:'admission',focus:'admission',pick:'admission',add:'setup','add-ask':'setup','add-install':'setup','add-setup':'setup','add-cancel':'setup','stop-review':'stop',stop:'stop','stop-full':'stop',restart:'service',uninstall:'service',update:'update','recovery-read':'recovery','recovery-apply':'recovery','recovery-reconcile':'recovery','recovery-pending':'recovery'})[d.a];},
 operationBody:function(context){
@@ -33,6 +33,13 @@ operationBody:function(context){
   return f(heading,actionNotices(),body);
 },
 operationAction:function(d){
+  if(d.a==='work'||d.a==='workspace'&&d.page==='operations'){
+    const next={operation:d.a==='work'?'resources':d.operation,root:d.root||null};
+    if(ports.navigate)ports.navigate('operations',next);
+    else if(ports.workspace){view.open={page:'operations',...next};present();}
+    else return false;
+    return true;
+  }
   if(d.a==='agentq-runtime'){view.agentqRuntime=d.runtime;present();return true;}
   if(d.a==='agentq-dismiss'||d.a==='agentq-check'){send({a:d.a});return true;}
   if(d.a==='agentq-setup'){
@@ -219,7 +226,6 @@ tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,boardI
 blockProject:function(p){return {id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},counts:p.counts,partial:p.partial,tasks:tasks(p)};},
 // #1592: the display model marks every repeat registration of a board task `dup`; rows come in model order.
 unique:function(ts){return ts.filter(t=>!t.dup).sort((a,b)=>require('./task-views.js').compare(a,b));},
-mode:function(p){return p.mode;},
 counter:function(v,kind,label){return h('span',{class:'counter '+(v>0?kind+' filled':'zero'),'aria-label':label+': '+v,title:label},v);},
 known:function(){return !view.S.display.all.partial.length;},
 // O1: identity anchors details/actions; title remains a full-width issue link.
@@ -825,7 +831,7 @@ ui.listen(menu,'click',e=>{
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
   if(d.a==='hide')viewState.flush();
   if(d.a==='home'){const root=ports.settings?'settings':'home';if(view.page!==root||view.taskFilter||view.working)navigate(root);return;}
-  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'conversations',...(d.thread!==undefined?{thread:d.thread}:{}),...(d.filter?{filter:d.filter}:{}),operation:d.operation||null,...(ports.settings?{origin:{surface:'settings',page:view.page}}:{}),root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null,...(d.fresh==='true'?{fresh:true}:{})}});return;}
+  if(d.a==='workspace'){if(ports.workspace&&api.operationAction(d))return;viewState.flush();send({a:'workspace',open:{page:d.page||'conversations',...(d.thread!==undefined?{thread:d.thread}:{}),...(d.filter?{filter:d.filter}:{}),operation:d.operation||null,...(ports.settings?{origin:{surface:'settings',page:view.page}}:{}),root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null,...(d.fresh==='true'?{fresh:true}:{})}});return;}
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){startOperations.dismiss(d.key);return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
@@ -834,7 +840,7 @@ ui.listen(menu,'click',e=>{
   if(d.a==='answer-retry'){startOperations.retry(d.key);present();return;}
   if(d.a==='sync-retry'){send({a:'sync-retry',root:d.root,id:d.id});return;}
   if(d.a==='notify'||d.a==='notify-test'){send({a:d.a,kind:d.kind,value:d.v,root:d.root});return;}
-  if(d.a==='work'){navigate(view.page,null,d.root?{[d.root]:true}:{});return;}
+  if(d.a==='work'){if(ports.workspace&&api.operationAction(d))return;navigate(view.page,null,d.root?{[d.root]:true}:{});return;}
   if(d.a==='back'){back();return;}
   if(d.set==='period'&&d.v==='custom'){const H=view.S.history;view.draft={start:local(H.start,H.tz),end:local(H.end,H.tz),tz:H.tz,error:''};present();return;}
   if(d.set){view.S[d.set]=['font','opacity','background_opacity'].includes(d.set)?Number(d.v):d.v;if(d.set==='period')view.draft=null;send({a:'set',[d.set]:view.S[d.set]});present();return;}
@@ -862,7 +868,7 @@ ui.listen(menu,'toggle',()=>fit(),true);
 ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
-});
+};
 const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,tasks,blockProject,unique,mode,counter,known,taskRow,taskOrder,startButton,globalGroup,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
 function resourceSend(g,op){
