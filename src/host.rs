@@ -2482,7 +2482,8 @@ mod tests {
 
     #[cfg(windows)]
     fn modify_only_windows_acl(path:&Path) {
-        let code=r#"$ErrorActionPreference='Stop';$p=$env:TASKQ_ACL_FIXTURE;$a=Get-Acl -LiteralPath $p;$a.SetAccessRuleProtection($true,$false);$s=[Security.Principal.WindowsIdentity]::GetCurrent().User;$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($s,'TakeOwnership','ContainerInherit,ObjectInherit','None','Deny'));$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($s,'Modify','ContainerInherit,ObjectInherit','None','Allow'));Set-Acl -LiteralPath $p -AclObject $a"#;
+        // CI failed to load the Security module; use the framework ACL API directly.
+        let code=r#"$ErrorActionPreference='Stop';$p=$env:TASKQ_ACL_FIXTURE;$a=[IO.Directory]::GetAccessControl($p);$a.SetAccessRuleProtection($true,$false);$s=[Security.Principal.WindowsIdentity]::GetCurrent().User;$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($s,'TakeOwnership','ContainerInherit,ObjectInherit','None','Deny'));$a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($s,'Modify','ContainerInherit,ObjectInherit','None','Allow'));[IO.Directory]::SetAccessControl($p,$a)"#;
         let out=crate::platform::command("powershell").args(["-NoProfile","-NonInteractive","-Command",code]).env("TASKQ_ACL_FIXTURE",path).output().unwrap();
         assert!(out.status.success(),"ACL fixture: {}",String::from_utf8_lossy(&out.stderr));
     }
@@ -2500,7 +2501,7 @@ mod tests {
             ProjectEdit::new(&install,&a,true).unwrap().commit().unwrap();
             let path=install.join("projects");
             if protected {
-                let code=r#"$ErrorActionPreference='Stop';$a=Get-Acl -LiteralPath $env:TASKQ_ACL_FIXTURE;$a.SetAccessRuleProtection($true,$true);Set-Acl -LiteralPath $env:TASKQ_ACL_FIXTURE -AclObject $a"#;
+                let code=r#"$ErrorActionPreference='Stop';$p=$env:TASKQ_ACL_FIXTURE;$a=[IO.File]::GetAccessControl($p);$a.SetAccessRuleProtection($true,$true);[IO.File]::SetAccessControl($p,$a)"#;
                 let out=crate::platform::command("powershell").args(["-NoProfile","-NonInteractive","-Command",code]).env("TASKQ_ACL_FIXTURE",&path).output().unwrap();
                 assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));
             }

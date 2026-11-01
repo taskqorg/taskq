@@ -69,3 +69,40 @@ repaired and never becomes a fabricated failed or observed receipt (R12).
 Older lifecycle readers refuse records carrying this field, including retained
 terminal records; rollback requires a compatible reader and preserved evidence.
 No root-contract decision or R-number was amended (R13).
+
+## Merge-candidate fixture repair
+
+[Merge-group run 41306809372](https://github.com/taskqorg/taskq/actions/runs/41306809372/job/124848843242)
+tested merge SHA `3b50a8df259701c6641a615af5524aaaa33ebd2a` with PR head
+`e6f50ab5f2f8951c7eebe5a7f9641b82f5520f58`. The Windows unit run had
+815 passes and one failure: this registry regression stopped in fixture setup
+because `Get-Acl` found `Microsoft.PowerShell.Security` but could not load it.
+The log does not establish why module loading failed. Linux, macOS and the
+Windows GNU loader check passed; the merge gate failed (R12, section 7).
+
+The fixture now calls the Windows PowerShell framework's directory/file
+`GetAccessControl` and `SetAccessControl` methods directly. Every ACL rule and
+assertion remains: Modify with denied WRITE_OWNER, inherited/protected DACLs,
+exact ownership, refused foreign ownership, uncertain-write and same-ID recovery,
+receipt readback, selective drain and unrelated admission. Production code and
+the contract are unchanged by this repair.
+
+A one-time local probe ran both exact fixture scripts with `Get-Acl` and
+`Set-Acl` replaced by throwing functions. Both original scripts failed; both
+framework scripts passed. This proves independence from those cmdlets, not the
+cause of the CI module failure. Altering only the local module search path did
+not reproduce that failure. The actual before failure is the merge-group log.
+
+After repair, the focused command above passed all 14 checks in 3.03 seconds
+after a 57.44-second warm Windows build, with the same one owned helper ignored.
+Fresh native observer PID `33260`, creation identity `134380104981123042`,
+instance `registry-fixture`, retained these read-back receipts:
+
+| DACL | Received | Applied | Observed |
+|---|---|---|---|
+| Inherited | `87641d491a2eec5022471b7a79184dff` | `05cfae0ce1192563e5bd0656a2d0520b` | `b0c09ec34ef38917bcea9508997a35a3` |
+| Protected | `b22a39beb1bec71879e83756f1d95eb0` | `5e3721b1999b62ed4747a9e91a46a822` | `0e3e9b26fdd59112dcf3163a16a2a62f` |
+
+These remain isolated ordinary-token filesystem/receipt observations. Under
+owner note `6557913806`, installed Scheduler-host verification is deferred to
+post-merge release; no ordinary service restart, deployment or grant was made.
