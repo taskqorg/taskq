@@ -3,6 +3,12 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.58
+
+Board-only project roots support PM commands with `taskq.json` and the host's board token, while `service install` and `cleanup` refuse without a checkout (#2093). Report rows settle only after a comment read beyond the board list lag, so accepted reports leave Decide (#2091). Bell/news, questions, reports, Completed and task activity share Conversations, preserving scope, selection and reading context (#2095).
+
+No board format change or open-issue migration. Older binaries do not gain the board-only checkout refusals. Publication and installed verification follow the [release handoff](docs/release-2102.md).
+
 ## v4.6.57
 
 Report decisions no longer stay in Decide when the board issue list lags: every full report read overlaps the previous one by the list lag, and an older cache relists once (#2087). Host heartbeat writes no longer bill the open-issue probe, the admission scan or reports collection (#2083). Heartbeats count billed requests per board API host and `taskq status` shows the GitHub share and the core quota line (#2084); issue, comment and event reads share ETags across processes (#1985). The service provisions task worktrees and a project's declared `host_setup` outside the worker sandbox, and `service check`, `service status` and `taskq doctor` show a host-setup gap until it runs (#2079). Held shows circle-dashed and Later circle-pause (#2082). Conversations design for reports and finished work is recorded (#1993).
