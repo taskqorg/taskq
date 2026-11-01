@@ -1,0 +1,38 @@
+{
+  "schema": "taskq.scope-investigation/1",
+  "tracking": [
+    {
+      "flags": "NOTE_FORK|NOTE_EXIT",
+      "state": "available"
+    },
+    {
+      "flags": "NOTE_FORK|NOTE_EXIT|NOTE_TRACK",
+      "state": "refused",
+      "errno": 45
+    }
+  ],
+  "escape_traces": [
+    {
+      "mode": "setsid",
+      "root_reaped": true,
+      "original_group_absent": true,
+      "exact_descendant_live": true,
+      "descendant_escaped_group": true,
+      "root_or_group_absence_proves_completion": false
+    },
+    {
+      "mode": "posix_spawn",
+      "root_reaped": true,
+      "original_group_absent": true,
+      "exact_descendant_live": true,
+      "descendant_escaped_group": true,
+      "root_or_group_absence_proves_completion": false
+    }
+  ],
+  "group_narrowing": {
+    "state": "sandbox-blocked",
+    "operation": "sandbox_init",
+    "return": -1,
+    "error": "Operation not permitted"
+  }
+}
