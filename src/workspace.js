@@ -212,7 +212,7 @@ const {create}=execution.module('workspace',{
     if(page==='conversations'){
      const r=context?.key&&snapshot.value?.messages?.entries?.find(r=>r.key===context.key);
      if(context?.thread==='centre'){if(snapshot.value?.conversations?.loading)view.centrePending=true;else if(!conversations.hasContext()){const a=notifications.attention();conversations.filter(a.needs.size?'needs':a.fresh.size?'new':'all');}}
-     if(context?.thread==='recovery'){view.safe=true;view.answer=null;view.message=null;view.result=null;conversations.select(null,false);}
+     if(context?.thread==='recovery'){view.safe=true;view.answer=null;view.message=null;view.result=null;}
      if(context?.filter)conversations.filter(context.filter,context.criteria);
      if(context?.thread==='unread')api.unread();
      else if(context?.board&&context?.task){const matches=snapshot.value.projects.filter(p=>p.issues===context.board&&(!context.root||p.root===context.root)),root=matches.length===1?matches[0].root:context.root;if(context.sha){conversations.enter('task:'+context.board+'/'+Number(context.task));if(!reports.open(root,Number(context.task),context.sha)){view.answer=null;view.result=null;conversations.select(null,false);view.threadNotice={thread:'list',text:'The requested result SHA is unavailable. Choose the current result to review it; nothing was acknowledged.'};}}else api.openTask(context.board,context.task,root,true);}
@@ -223,7 +223,7 @@ const {create}=execution.module('workspace',{
     if(page==='conversations'&&context?.fresh)conversations.fresh({root:context.root||undefined});
     api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
    },
-   back:function(){if(view.routeFault){view.routeFault=null;view.safe=true;view.answer=null;view.message=null;view.result=null;conversations.select(null,false);view.page='conversations';renderer.clear();api.draw();return;}if(view.page==='operations'&&view.operationOrigin){const origin=view.operationOrigin;view.operationOrigin=null;ui.send({a:'workspace-origin',origin});const prior=renderer.pop();if(prior){state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);}api.draw();return;}const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
+   back:function(){if(view.routeFault){view.routeFault=null;view.safe=true;view.answer=null;view.message=null;view.result=null;view.page='conversations';renderer.clear();api.draw();return;}if(view.page==='operations'&&view.operationOrigin){const origin=view.operationOrigin;view.operationOrigin=null;ui.send({a:'workspace-origin',origin});const prior=renderer.pop();if(prior){state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);}api.draw();return;}const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
    receive:function(s){
     threadProjection=null;
     if(Array.isArray(s.projects))s.index_spare=Math.max(0,16*1024*1024-new TextEncoder().encode(JSON.stringify(s)).length);
@@ -256,7 +256,7 @@ const {create}=execution.module('workspace',{
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
     if(!Array.isArray(s.projects))return;
-    view.safe=false;const first=snapshot.value===null;reports.hydrate(s.workspace_local);reports.sync(s.projects,s.index_spare);snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
+    const first=snapshot.value===null;reports.hydrate(s.workspace_local);reports.sync(s.projects,s.index_spare);snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;
     // #1680 A4: request status lives on its conversation (handoff), never on other pages

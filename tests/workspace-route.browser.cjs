@@ -47,7 +47,13 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture'
   await page.getByRole('region',{name:'Conversations recovery'}).waitFor();
   assert(await page.getByRole('region',{name:'Conversations recovery'}).isVisible(),'Back must leave a failed data projection for an independent safe view');
   assert.match(await page.locator('main').innerText(),/previous reader is unavailable/);
-  await page.locator('.shell-overflow summary').click();await page.locator('[data-route=conversations]').click();
+  await page.evaluate(s=>taskq.receive({...s,messages:{complete:true,count:1,entries:{}}}),snapshot);
+  assert(await page.getByRole('region',{name:'Conversations recovery'}).isVisible(),'automatic status cannot reopen the failed projection');
+  if(evidence)await page.screenshot({path:path.join(evidence,'safe-view.png')});
+  assert.equal(await page.evaluate(()=>sent.filter(m=>['answer','ai-send','reports','message-action','conversation-action'].includes(m.a)).length),0,'safe Back must not write or replay');
+  await page.evaluate(()=>taskq.receive({open:{page:'conversations',thread:'recovery'}}));
+  assert(await page.getByRole('region',{name:'Conversations recovery'}).isVisible(),'native Safe view also avoids the failed selection callback');
+  await page.locator('.shell-overflow summary').click();await page.locator('.shell-overflow [data-route=conversations]').click();
   assert.equal(await page.locator('h1').innerText(),'Conversations','safe navigation leaves the failing route');
   assert.deepEqual(errors,[]);
   // #1698 A1/A3: Settings opens each operation review while the tray forwards a Completed history page and an agentq

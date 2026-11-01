@@ -6,6 +6,8 @@ Implements [#2140](https://github.com/taskqorg/taskq/issues/2140) on baseline `f
 
 The independent installed Mac before packet has SHA-256 `7b0853cf38d0a0d5b0c50ae2684a9f9168bc8dc193d161d34545876685153957`. N01 records Work sessions / In progress → coreq #112 → whole-workspace Interface error; Escape did not recover. N02 records repeated workspace-save refusals. That episode's exact source error and disk condition were not captured; neither an unattributed log line nor the following reproductions establishes its original cause.
 
+The task inbox also corroborates eight failed `taskq.operation.tray.web.receive` terminals (`script-error`) on the installed Mac 4.6.59-dev.1793542075. Its unsupported-workspace-action observation lacks time attribution and an action payload; it is not the diagnosed cause. The owner-selected native screenshot independently confirms the whole-window error and absent recovery controls.
+
 Three isolated failures establish repairable causes:
 
 - An accepted transcript reply with no item array throws in `workerSettle`; the early guard hides the workspace. The actual-bundle regression fails before with “an invalid accepted local-source page must not replace the whole workspace”. The shared transcript check now reports source unknown inside the reader, retaining the same board/task/root/attempt and retrying reads only.
@@ -44,6 +46,7 @@ Earlier #2110 measurements remain failures: 10k interaction p95 134.5 ms against
 
 - [Original installed Mac failure](before-native.png): independent before evidence, not a candidate pass.
 - [Worker document](worker-document.png): browser with native-frame content mode, same source and explicit unknown receipt; no OS titlebar is simulated.
+- [Safe view](safe-view.png): Back after a failed projection remains usable across automatic status; source unavailability stays explicit.
 - [Recovered local draft](recovered-draft.png): retained file, text and caret after repeated reader recreation.
 - [Recorded question document](question-history.png): existing question renderer, author/time and read-only choices beneath the current task context.
 
@@ -57,6 +60,6 @@ The first canonical run selected full checks after the one rebase. It stopped sa
 
 The second review of `f8dd97a8b51a38089c7a387cec9db0fdc1d595eb` found that a successful explicit retry could drain other recovered local mutations. The before bundle reproduces `2 !== 1` after one save retry. Recovered actions now use a separate paused queue: one explicit retry cannot dispatch its successor; the successor receives its own named action. Recovered edit versions also remain newer than the interrupted save, so a late save/snapshot cannot overwrite the recovered caret or text. The final 16-cell matrix retains both protections.
 
-A focused route check caught a stale route-fault marker intercepting a later Settings Back. Successful projection clears that marker; Back from an actually failed projection opens an independent recovery view that does not depend on the failed data. The source remains explicitly unavailable. Native Back is named Safe view accordingly.
+A focused route check caught a stale route-fault marker intercepting a later Settings Back. Successful projection clears that marker; Back from an actually failed projection opens an independent recovery view that does not depend on the failed data. The source remains explicitly unavailable. Native Back is named Safe view accordingly. The strengthened browser assertion then failed on `eedc9d9d`: Back called ordinary deselection, whose callback read the same broken thread projection before rendering the safe view. Safe navigation now retains the selection without that callback; automatic status updates cannot leave the safe view. The actual-bundle test passes for Back and the native Safe view message, with zero writes/replay; ordinary navigation and Settings-origin Back retain their checks.
 
 Separate remainder: offline selftest PASS (113 golden traces); 37 Node suites and four shell/release fixtures PASS. The initial route-browser failure is fixed and rerun. The initially absent WebKit test engine was downloaded only to temporary test storage; compact-time checks pass Chromium and WebKit, 18 cells each. The worker/source/attention/flow instruments pass. The final native recovery storage/generation test passes after the native menu-label adjustment. None of this changes the sandbox-blocked canonical verdict or qualifies installed window interaction.
