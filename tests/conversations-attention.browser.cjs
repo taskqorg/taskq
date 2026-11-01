@@ -34,6 +34,53 @@ const fx=require('./fixtures/task-workspace.json'),board='https://example.org/is
  await page.evaluate(()=>{fixture.messages.entries[0].read=false;fixture.messages.entries[0].archived=true;delete fixture.projects[0].tasks[0].conversation;fixture.projects[0].events=[];fixture.conversations.items=[];taskq.receive(fixture);});
  await count(0);await entrance(0);
  if(process.env.TASKQ_ATTENTION_EVIDENCE){fs.mkdirSync(process.env.TASKQ_ATTENTION_EVIDENCE,{recursive:true});await page.screenshot({path:process.env.TASKQ_ATTENTION_EVIDENCE+'/attention.png'});}
+ // Reviewer regression: thread read must capture every message revision as well as its event,
+ // without touching another board/task or a message that arrives while readback is pending.
+ const thread=await browser.newPage({viewport:{width:800,height:700}});thread.on('pageerror',e=>errors.push(e.message));
+ await thread.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
+ const threadState=structuredClone(state);threadState.messages.entries=[question(7),{...question(7),key:'invented-previous-7',revision:70},question(8),{...question(7),key:'invented-other-board-7',board:'https://other.example.org/issues'}];
+ threadState.projects[0].events=[[1,'ask','71',7],[2,'ask','72',8]];
+ await thread.evaluate(s=>{window.fixture=s;window.sent=[];window.pendingRead=null;window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='message-action')pendingRead=m;if(m.a==='notification-state'){for(const id of m.ids)fixture.notify.inbox[id]=m.action==='clear'?'cleared':'read';queueMicrotask(()=>taskq.receive(fixture));}}};taskq.receive(s);taskq.receive({open:{page:'conversations',board:s.projects[0].issues,task:7,filter:'new'}});},threadState);
+ const threadCount=async n=>assert.equal((await thread.locator('.conversation-view>summary').innerText()).replace(/\s+/g,' '),'New · '+n);
+ await threadCount(3);
+ const history=thread.locator('.thread-events');await history.locator('summary').click();
+ const readThread=thread.getByRole('button',{name:'Mark thread read',exact:true});await readThread.click();
+ assert.deepEqual(await thread.evaluate(()=>pendingRead?.keys),['invented-question-7','invented-previous-7'],'thread read includes all exact message sources');
+ assert(await readThread.isDisabled(),'pending read cannot be resubmitted');
+ assert.equal(await thread.evaluate(()=>fixture.messages.entries[0].read),false,'submission is not readback');
+ assert.deepEqual(await thread.evaluate(()=>sent.filter(m=>m.a==='notification-state').flatMap(m=>m.ids).map(id=>JSON.parse(id)[2])),[7],'other task events stay unread');
+ await thread.evaluate(()=>taskq.receive({messageReceipt:{id:pendingRead.id,reason:'Invented thread read refusal',outcomes:[]}}));
+ assert(await readThread.isEnabled(),'message refusal keeps thread read available after its event was read');
+ if(process.env.TASKQ_ATTENTION_EVIDENCE)await thread.screenshot({path:process.env.TASKQ_ATTENTION_EVIDENCE+'/thread-read.png'});
+ await readThread.click();
+ await thread.evaluate(q=>{fixture.messages.entries.push({...q,key:'invented-later-7',revision:72});taskq.receive(fixture);taskq.receive({messageReceipt:{id:pendingRead.id,outcomes:pendingRead.keys.map(key=>({key,action:'read',state:'accepted'}))}});},question(7));
+ assert(await readThread.isEnabled(),'later revision remains unread');await threadCount(3);
+ assert.deepEqual(await thread.evaluate(()=>fixture.messages.entries.filter(r=>!r.read).map(r=>r.key)),['invented-question-8','invented-other-board-7','invented-later-7']);
+ await readThread.click();assert.deepEqual(await thread.evaluate(()=>pendingRead.keys),['invented-later-7']);
+ await thread.evaluate(()=>taskq.receive({messageReceipt:{id:pendingRead.id,outcomes:pendingRead.keys.map(key=>({key,action:'read',state:'accepted'}))}}));
+ assert.equal(await readThread.count(),0,'button disappears only after all captured thread sources are read');await threadCount(2);
+ await menu.evaluate(s=>taskq.receive(s),await thread.evaluate(()=>fixture));assert.match(await menu.locator('.conversations-entry').getAttribute('aria-label'),/2 New · 1 Needs me/);
+ assert.equal(await thread.evaluate(()=>fixture.projects[0].tasks[0].state),'ask','read never answers a question');
+ // No event row is required for the thread-level action.
+ await thread.evaluate(()=>{fixture.projects[0].events=[];fixture.messages.entries[0].read=false;taskq.receive(fixture);});
+ await readThread.click();assert.deepEqual(await thread.evaluate(()=>pendingRead.keys),['invented-question-7'],'message-only thread has the same exact read action');
+ await thread.evaluate(()=>taskq.receive({messageReceipt:{id:pendingRead.id,outcomes:pendingRead.keys.map(key=>({key,action:'read',state:'accepted'}))}}));
+ assert.equal(await readThread.count(),0);assert.equal(await thread.evaluate(()=>fixture.messages.entries[2].read),false);
+ // Linked PM cards use the same read scope, including their event sources.
+ await thread.evaluate(()=>{fixture.messages.entries[0].read=false;fixture.projects[0].events=[[1,'ask','71',7]];fixture.notify.inbox={};fixture.conversations.items=[{id:'owner',root:'fixture',revision:1,text:'Saved draft',files:[],sent:{root:'fixture',text:'Original',files:[]}}];fixture.projects[0].tasks[0].conversation={id:'owner',brief:'Invented brief'};taskq.receive(fixture);});
+ await thread.locator('[data-c=select][data-id=owner]').click();
+ const linkedHistory=thread.locator('.linked-task .thread-events');await linkedHistory.locator('summary').click();await readThread.click();
+ assert.deepEqual(await thread.evaluate(()=>pendingRead.keys),['invented-question-7']);
+ assert.equal(await thread.evaluate(()=>sent.filter(m=>m.a==='notification-state').length),2,'linked card reads its event as well as its message');
+ await thread.evaluate(()=>taskq.receive({messageReceipt:{id:pendingRead.id,outcomes:pendingRead.keys.map(key=>({key,action:'read',state:'accepted'}))}}));await threadCount(2);
+ // A finished task may still have unread question news; result reads remain SHA-bound.
+ await thread.evaluate(()=>{fixture.conversations.items=[];delete fixture.projects[0].tasks[0].conversation;fixture.projects[0].tasks[0].state='closed';fixture.messages.entries[0].read=false;fixture.projects[0].reports.reports=[{n:7,sha:'a'.repeat(40),kind:'task',title:'Finished question 7',closed:3,read:false,visible:true,body:'Changed: Invented completion\nChecks: fixture\nOpen: none'}];taskq.receive(fixture);taskq.receive({open:{page:'conversations',board:fixture.projects[0].issues,task:7}});});
+ const resultHistory=thread.locator('.thread-events');if(!await readThread.isVisible())await resultHistory.locator('summary').click();
+ await readThread.click();assert.deepEqual(await thread.evaluate(()=>pendingRead.keys),['invented-question-7']);
+ const resultRead=await thread.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='read').at(-1));assert.equal(resultRead.sha,'a'.repeat(40));assert.equal(resultRead.n,7);
+ await thread.evaluate(m=>{const report=fixture.projects[0].reports.reports[0];report.read=true;taskq.receive({reportReceipt:{id:m.id,root:m.root,report}});taskq.receive({messageReceipt:{id:pendingRead.id,outcomes:pendingRead.keys.map(key=>({key,action:'read',state:'accepted'}))}});},resultRead);
+ await threadCount(2);assert.equal(await readThread.count(),0);
+ assert(await thread.evaluate(()=>sent.filter(m=>['answer','conversation-action','start'].includes(m.a)).every(m=>m.a==='conversation-action'&&m.action==='save'&&m.draft.text==='Saved draft')),'only the unchanged fixture draft may be saved; no send, answer or admission');await thread.close();
  assert.equal(await page.evaluate(()=>sent.filter(m=>['answer','conversation-action','start'].includes(m.a)).length),0);
  assert.deepEqual(errors,[]);console.log('PASS #2110 shared New, message/event reads, refusal, later arrivals, owner coalescing and archive; no live writes');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
