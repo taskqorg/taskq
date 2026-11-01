@@ -551,8 +551,10 @@ pub struct Service<'a> {
     /// ponytail: in memory per project thread; a restart forgets it and the next limited attempt holds again
     pub limited: BTreeMap<String, (i64, bool)>,
     /// Runtimes whose last probe read `not logged in` (§ 5 `agents`, #1429): no claim, resume or reviewer until a
-    /// probe reads them logged in again; unknown login admits as before.
+    /// probe reads them logged in again; new admission also requires the local login observation below.
     pub logged_out: BTreeSet<String>,
+    /// Latest local probe, required for new admission; absent only in injected service fixtures.
+    pub login_status: Option<Value>,
     /// § 3 Runtime accounts: the active account of each listed runtime at the last pass (switch record).
     pub accounts: BTreeMap<String, Option<String>>,
     pub gui_checked: Option<std::time::Instant>,
@@ -811,7 +813,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), login_status: None, accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1581,7 +1583,8 @@ impl<'a> Service<'a> {
                 || label(&v.issue, "host-").is_some_and(|h| h != me)
                 || t.attempt.is_some() && host_of(t) != Some(me.as_str())
                 || self.kids.iter().any(|k| k.task == v.issue.number) { continue; }
-            let rt = rt_of(t).map(|(rt, _)| rt.to_string()).unwrap_or_else(|| route(&v.issue, t.state == State::Review, &self.cfg.default_runtime));
+            let rt = rt_of(t).map(|(rt, _)| rt.to_string()).unwrap_or_else(|| self.select_runtime(v).map(|(rt, _)| rt)
+                .unwrap_or_else(|_| route(&v.issue, t.state == State::Review, &self.cfg.default_runtime)));
             if let Some(reason) = self.gui_reason(&v.issue, Some(&rt)) {
                 self.waits.insert(v.issue.number, reason);
             }
@@ -2098,7 +2101,7 @@ impl<'a> Service<'a> {
         }
         // reviews before ready tasks, then priority and number within each (§ 4 step 6)
         queue.sort_by_key(|v| (v.projection.task.state != State::Review, priority(&v.issue), v.issue.number));
-        let ready = queue.iter().any(|v| self.free(&route(&v.issue, v.projection.task.state == State::Review, &self.cfg.default_runtime), needs_gui(&v.issue)).is_some());
+        let ready = queue.iter().any(|v| self.select_runtime(v).is_ok());
         if let Some(host) = &self.host {
             if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, ready); }
         }
@@ -2111,8 +2114,10 @@ impl<'a> Service<'a> {
                 continue;
             }
             let role = if v.projection.task.state == State::Review { "reviewer" } else { "worker" };
-            let rt = if role == "reviewer" { self.reviewer_free(v) } else { self.worker_free(v) };
-            let rt = match rt { Ok(rt) => rt, Err(r) => { decided.insert(n, r); continue; } };
+            if role == "worker" && label(&v.issue, "run-").is_none() && v.issue.labels.iter().filter(|l| l.starts_with("prefer-")).count() > 1 {
+                self.log.push(format!("#{n}: conflicting prefer-* labels; preference ignored"));
+            }
+            let (rt, fallback) = match self.select_runtime(v) { Ok(rt) => rt, Err(r) => { decided.insert(n, r); continue; } };
             if !self.reserve(n, 0, &rt) {
                 let r = self.launch_refusal(n).unwrap_or_else(|| self.refused.as_ref()
                     .map_or(("unknown", crate::snapshot::ADMISSION_UNKNOWN[2].into()), |(c, t)| refusal_admission(c, t)));
@@ -2120,8 +2125,9 @@ impl<'a> Service<'a> {
                 refused = Some(r);
                 continue;
             }
-            self.claim(v, role, &rt)?;
-            decided.insert(n, ("admitted", format!("claimed on {rt}")));
+            self.claim(v, role, &rt, fallback.as_deref().unwrap_or_default())?;
+            let reason = fallback.map_or_else(|| format!("claimed on {rt}"), |why| { self.log.push(format!("#{n} {why}")); why });
+            decided.insert(n, ("admitted", reason));
         }
         self.decided(decided);
         Ok(())
@@ -2337,19 +2343,9 @@ impl<'a> Service<'a> {
         }
     }
 
-    fn reviewer_free(&self, v: &View) -> Result<String, (&'static str, String)> {
-        self.admit_runtime(&route(&v.issue, true, &self.cfg.default_runtime), needs_gui(&v.issue))
-    }
-
-    fn worker_free(&mut self, v: &View) -> Result<String, (&'static str, String)> {
-        if label(&v.issue, "run-").is_none() && v.issue.labels.iter().filter(|l| l.starts_with("prefer-")).count() > 1 {
-            self.log.push(format!("#{}: conflicting prefer-* labels; preference ignored", v.issue.number));
-        }
-        self.admit_runtime(&route(&v.issue, false, &self.cfg.default_runtime), needs_gui(&v.issue))
-    }
-
-    fn free(&self, rt: &str, gui: bool) -> Option<String> {
-        self.admit_runtime(rt, gui).ok()
+    fn select_runtime(&self, v: &View) -> Result<(String, Option<String>), (&'static str, String)> {
+        crate::labels::select(&v.issue.labels, v.projection.task.state == State::Review, &self.cfg.default_runtime,
+            |rt| self.admit_runtime(rt, needs_gui(&v.issue)))
     }
 
     /// `rt` when it has free capacity: `limits.<rt>` minus live children of it (§ 3), else the #1616 admission code
@@ -2362,12 +2358,18 @@ impl<'a> Service<'a> {
         if let Some(r) = self.refused_access.get(rt) { return Err(("access", format!("{rt}: {r}"))); }
         if self.limited.contains_key(rt) { return Err(("usage-limit", format!("{rt}: {}", self.limit_line(rt)))); }
         if self.logged_out.contains(rt) { return Err(("login", format!("{rt}: not logged in"))); }
+        if let Some(rows) = &self.login_status {
+            let login = rows.as_array().into_iter().flatten().find(|r| r["runtime"] == rt)
+                .and_then(|r| r["login"].as_str()).unwrap_or("unknown");
+            if login != "logged in" { return Err(("login", format!("{rt}: login {login}"))); }
+        }
         if crate::runtime::accounts::Host::read(&self.cfg.install).off(rt) { return Err(("capability", format!("{rt}: every account disabled on this host"))); }
         if gui && !self.full.contains(rt) { return Err(("capability", format!("needs-gui: {rt} has no effective Full grant"))); }
         let c = self.cap.as_ref().map_err(|_| ("unknown", crate::snapshot::ADMISSION_UNKNOWN[1].to_string()))?;
         // Auto: a runtime without a limit has no count ceiling (§ 9); Fixed: only listed runtimes
         let n = if c.auto { RUNTIMES.contains(&rt).then(|| c.limits.get(rt).copied().unwrap_or(u32::MAX)).ok_or(("capability", format!("{rt} unknown runtime")))? }
             else { *c.limits.get(rt).ok_or(("capacity", format!("{rt} not in limits")))? };
+        if n == 0 { return Err(("capacity", format!("{rt} disabled (limit 0)"))); }
         let mut left = (n as usize).saturating_sub(self.entry().held.iter().filter(|r| r.2 == rt).count());
         if let Some(host) = &self.host {
             let h = host.lock().map_err(|_| ("unknown", crate::snapshot::ADMISSION_UNKNOWN[2].to_string()))?;
@@ -2398,9 +2400,9 @@ impl<'a> Service<'a> {
     }
 
     /// Post `spawn`, re-read, start the child only if `fold` accepted this spawn (§ 3 claim).
-    fn claim(&mut self, v: &View, role: &str, rt: &str) -> Result<(), String> {
+    fn claim(&mut self, v: &View, role: &str, rt: &str, reason: &str) -> Result<(), String> {
         let (n, began) = (v.issue.number, std::time::Instant::now());
-        let r = crate::profile::measure("dispatch", || self.claim_inner(v, role, rt));
+        let r = crate::profile::measure("dispatch", || self.claim_inner(v, role, rt, reason));
         let held = self.held.iter().find(|l| l.task == n).map(|l| l.attempt);
         let (a, outcome, err) = match &r {
             Ok(Some((l, _))) => (l.attempt, "ok", "none"),
@@ -2414,7 +2416,7 @@ impl<'a> Service<'a> {
         }
     }
 
-    fn claim_inner(&mut self, v: &View, role: &str, rt: &str) -> Result<Option<(Launch, Vec<core::Entry>)>, String> {
+    fn claim_inner(&mut self, v: &View, role: &str, rt: &str, reason: &str) -> Result<Option<(Launch, Vec<core::Entry>)>, String> {
         let n = v.issue.number;
         let before = self.seen_log(v)?;
         // #1903: a spawn the readback missed stays unknown; claiming again would post a spawn every pass
@@ -2424,7 +2426,7 @@ impl<'a> Service<'a> {
         }
         if core::executions(n, &before).iter().any(|x| x.release.is_none()) { return Ok(None); }
         let session = crate::runtime::new_session(rt);
-        let id = self.post(n, core::entry("spawn", &[role, &format!("{rt}:{session}"), &self.cfg.me], None, ""))?;
+        let id = self.post(n, core::entry("spawn", &[role, &format!("{rt}:{session}"), &self.cfg.me], None, reason))?;
         let comments = self.board.comments(n)?;
         let seen = comments.iter().any(|c| c.id == id);
         if !seen {
@@ -4509,7 +4511,7 @@ Open: none")).unwrap();
             let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |_| Err(crate::runtime::StartError::io(Error::new(kind, "private failure text"), None))));
             s.agent_status = json!([{"runtime": "claude", "path": path, "login": login}]);
             let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
-            s.claim(&v, "worker", "claude").unwrap();
+            s.claim(&v, "worker", "claude", "").unwrap();
             assert_eq!(task(&b, n).state, State::Ready);
             assert!(b.comments(n).unwrap().last().unwrap().body.contains("start failed: private failure text"));
             assert_eq!(crate::incident::take_detected(), if reports { vec!["dispatch.start"] } else { vec![] });
@@ -4537,7 +4539,7 @@ Open: none")).unwrap();
                 Err(crate::runtime::over_cap(std::path::Path::new("/nonexistent"), 128 * 1024 + 5))
             }));
             let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
-            s.claim(&v, role, "claude").unwrap();
+            s.claim(&v, role, "claude", "").unwrap();
             let t = task(&b, n);
             let a = t.attempt.unwrap();
             assert_eq!((t.state, t.retries, *starts.borrow()), (State::Ask, 0, 1), "{role}: one start, no gone retry");
@@ -4630,7 +4632,7 @@ Open: none")).unwrap();
             b.state.borrow_mut().hide_latest_comment = missing;
             let c = cfg("local");
             let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
-            s.claim(&v, "worker", "claude").unwrap();
+            s.claim(&v, "worker", "claude", "").unwrap();
             assert!(s.kids.is_empty());
             assert_eq!(crate::incident::take_detected(), if missing { vec!["adapter.read_after_write"] } else { vec![] });
         }
@@ -5369,7 +5371,7 @@ Open: none")).unwrap();
         win.pass().unwrap();
         let r = task(&b, n).attempt.unwrap();
         let (labels, comments) = (b.issue(n).unwrap().labels, b.comments(n).unwrap().len());
-        mac.claim(&stale, "reviewer", "claude").unwrap();
+        mac.claim(&stale, "reviewer", "claude", "").unwrap();
         // Fresh ownership read prevents even a losing spawn for the stale view.
         assert_eq!((b.issue(n).unwrap().labels, b.comments(n).unwrap().len(), mac.kids.len(), em.borrow().len()), (labels, comments, 0, 0));
         assert_eq!((task(&b, n).attempt, task(&b, n).state), (Some(r), State::Review));
@@ -5538,7 +5540,7 @@ Open: none")).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // Chain: § 4 Filter, worker runtime admission over tests/golden/admit.json. Risk: unlabeled work moves to codex while claude is full; a legacy preference beats run-*.
+    // Chain: § 4 Filter, worker runtime admission over tests/golden/admit.json. Risk: unpinned work stalls with free Codex, or fallback overrides an owner pin.
     #[test]
     fn any_runtime_admission_follows_golden_traces() {
         let traces: Vec<serde_json::Value> = serde_json::from_str(include_str!("../tests/golden/admit.json")).unwrap();
@@ -5578,24 +5580,25 @@ Open: none")).unwrap();
         assert!(first_free_fails, "the traces must reject the first-free rule");
     }
 
-    // Chain: § 4 worker result to reviewer claim. Risk: a review runs on codex, or moves to codex while claude is full.
+    // Chain: §4 worker result to unpinned review. Risk: reviews stall on unavailable Claude or override explicit pins.
     #[test]
-    fn reviewer_runs_on_claude_and_waits_for_it() {
+    fn reviewer_prefers_claude_and_falls_back_to_codex() {
         for (worker, claude, expected) in [
             ("codex", 1, Some("claude")),
-            ("codex", 0, None),
+            ("codex", 0, Some("codex")),
             ("claude", 1, Some("claude")),
             ("codex-app", 1, Some("claude")),
-            ("codex-app", 0, None),
+            ("codex-app", 0, Some("codex")),
         ] {
             let b = Fake::default();
-            let n = b.create("T", "", &["taskq".into(), format!("run-{worker}")]).unwrap();
+            let n = b.create("T", "", &["taskq".into()]).unwrap();
             let mut c = cfg("mac");
-            // codex and the worker's runtime keep free slots: a review must not fall back to them
+            // The worker preference is separate from the subsequent unpinned review preference.
             c.limits = BTreeMap::from([(worker.into(), 1), ("codex".into(), 1), ("claude".into(), claude.max(u32::from(worker == "claude")))]);
             c.has = vec!["codex-app".into()];
             let e: Exits = Default::default();
             let mut s = service(&b, &c, e.clone());
+            s.cfg.default_runtime = worker.into();
             s.pass().unwrap();
             let t = task(&b, n);
             if worker == "codex-app" && !cfg!(any(target_os = "macos", windows)) {
@@ -5604,6 +5607,7 @@ Open: none")).unwrap();
                 continue;
             }
             assert_eq!(rt_of(&t).unwrap().0, worker);
+            s.cfg.default_runtime = "claude".into();
             // A losing spawn must not change which runtime actually did the work.
             b.comment(n, &core::entry("spawn", &["worker", if worker == "claude" { "codex:ignored" } else { "claude:ignored" }, "mac"], None, "")).unwrap();
             b.comment(n, &core::entry("result", &["0123456789abcdef0123456789abcdef01234567"], t.attempt, "ok")).unwrap();
@@ -5622,6 +5626,87 @@ Open: none")).unwrap();
         }
     }
 
+    // Defect #2118 (R8/R12/R13, §4/§9): unavailable Claude stalls new work/review despite eligible Codex.
+    // Protection: use the actual admission/claim/snapshot chain; pins, grants, common gates and live ownership bind.
+    #[test]
+    fn fallback_2118_isolated_admission() {
+        for reviewer in [false, true] {
+            for why in ["disabled", "full", "quota", "login", "missing", "unknown-login", "both", "pin", "grant", "focus", "stop", "load", "gui", "gui-grant", "gui-ok", "codex-unknown", "unresolved"] {
+                let b = Fake::default();
+                let root = std::env::temp_dir().join(format!("taskq-2118-{}", crate::runtime::uuid()));
+                std::fs::create_dir_all(&root).unwrap();
+                let mut c = cfg("mac");
+                c.root = root.clone(); c.install = root.join("install");
+                c.limits = BTreeMap::from([("claude".into(), 0), ("codex".into(), 1)]);
+                let mut labels = vec!["taskq".into()];
+                if why == "pin" { labels.push("run-claude".into()); }
+                if why.starts_with("gui") { labels.push("needs-gui".into()); }
+                let n = b.create("Invented isolated admission", "", &labels).unwrap();
+                if reviewer {
+                    let a = b.comment(n, "taskq: spawn worker claude:invented mac").unwrap();
+                    b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "fixture candidate")).unwrap();
+                    release_execution(&b, n, a, a, "exit").unwrap();
+                }
+                let exits: Exits = Default::default();
+                let mut s = service(&b, &c, exits.clone());
+                s.login_status = Some(json!([{"runtime":"claude","login":"logged in"},{"runtime":"codex","login":"logged in"}]));
+                match why {
+                    "quota" => { s.limited.insert("claude".into(), (i64::MAX, true)); }
+                    "login" => { s.logged_out.insert("claude".into()); }
+                    "unknown-login" => { s.login_status.as_mut().unwrap()[0]["login"] = json!("unknown"); }
+                    "missing" => { s.refused_access.insert("claude".into(), "claude CLI not found on the service PATH".into()); }
+                    "both" => { s.logged_out.insert("codex".into()); }
+                    "grant" => { s.refused_access.insert("codex".into(), "no operator grant".into()); }
+                    "focus" => s.focus.clear(),
+                    "codex-unknown" => { s.login_status.as_mut().unwrap()[1]["login"] = json!("unknown"); }
+                    "stop" => { std::fs::create_dir_all(&c.install).unwrap(); std::fs::write(c.install.join("hold"), "fixture stop").unwrap(); }
+                    "load" => { s.reload(Ok(Capacity::fixed(c.limits.clone(), on()))); }
+                    "gui-grant" | "gui-ok" => {
+                        s.gui_probe = Ok(()); s.gui_checked = Some(std::time::Instant::now());
+                        s.full.insert(if why == "gui-ok" { "codex" } else { "claude" }.into());
+                    }
+                    "unresolved" => {
+                        let a = b.comment(n, &format!("taskq: spawn {} claude:invented elsewhere", if reviewer {"reviewer"} else {"worker"})).unwrap();
+                        b.comment(n, &core::entry("requeue", &[], None, "fixture unknown owner")).unwrap();
+                        assert!(a > 0);
+                    }
+                    "full" => {
+                        s.cap.as_mut().unwrap().limits.insert("claude".into(), 1);
+                        let busy = b.create("Invented active work", "", &["taskq".into()]).unwrap();
+                        let a = b.comment(busy, "taskq: spawn worker claude:busy mac").unwrap();
+                        s.kids.push(Kid { unknown: None, stopping: false, session_url: None, execution: a, task: busy,
+                            attempt: a, rt: "claude".into(), proc: Box::new(FakeProc(Rc::new(RefCell::new(None)))) });
+                    }
+                    _ => {}
+                }
+                s.pass().unwrap();
+                let blocked = ["both", "pin", "grant", "focus", "stop", "load", "gui", "gui-grant", "codex-unknown", "unresolved"].contains(&why);
+                assert_eq!(exits.borrow().len(), usize::from(!blocked), "{reviewer} {why}");
+                if !blocked {
+                    let t = task(&b, n);
+                    assert_eq!(rt_of(&t).unwrap().0, "codex", "{reviewer} {why}");
+                    assert_eq!(t.role.as_deref(), Some(if reviewer {"reviewer"} else {"worker"}));
+                    let spawn = b.comments(n).unwrap().into_iter().find(|e| Some(e.id) == t.attempt).unwrap();
+                    assert!(spawn.body.contains("fallback:") && spawn.body.contains("selected codex"), "{}", spawn.body);
+                    let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+                    assert_eq!(row["admission"]["code"], "admitted");
+                    assert!(row["admission"]["reason"].as_str().unwrap().contains("selected codex"));
+                    s.pass().unwrap();
+                    assert_eq!(task(&b, n).attempt, t.attempt, "no duplicate or migration");
+                    assert_eq!(exits.borrow().len(), 1);
+                } else if why == "both" || why == "grant" {
+                    let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+                    let reason = row["admission"]["reason"].as_str().unwrap();
+                    assert!(reason.contains("claude") && reason.contains("codex"), "{reason}");
+                    s.logged_out.clear(); s.refused_access.clear();
+                    s.pass().unwrap();
+                    assert_eq!(rt_of(&task(&b, n)).unwrap().0, "codex", "automatic re-evaluation");
+                }
+                drop(s); std::fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+
     // Chain: § 4 Filter, host.json `default_runtime` codex (#1668) -> worker and reviewer claims -> verdict -> close.
     // Risk: a host without claude routes its reviews or unlabelled work to claude and waits forever, a full codex
     // review moves to a free claude slot, or a codex review takes another path to close.
@@ -5629,8 +5714,8 @@ Open: none")).unwrap();
     fn codex_default_host_runs_work_and_review_on_codex() {
         for (labels, codex, worker, expected) in [
             (vec![], 1, "codex", Some("codex")),
-            (vec!["run-claude".to_string()], 1, "claude", Some("codex")),
-            (vec!["run-claude".to_string()], 0, "claude", None),
+            (vec!["run-claude".to_string()], 1, "claude", Some("claude")),
+            (vec!["run-claude".to_string()], 0, "claude", Some("claude")),
         ] {
             let b = Fake::default();
             let n = b.create("T", "", &[vec!["taskq".to_string()], labels.clone()].concat()).unwrap();
@@ -5775,9 +5860,7 @@ Open: none";
         assert_eq!((task(&b, any).state, task(&b, any).retries), (State::Ready, 0), "A2: the gone budget stays");
         assert_eq!(core::executions(any,&entries(&b,any).unwrap()).last().unwrap().usage_hold,Some((reset,true)),"release persists the deadline before outcome publication");
         s.pass().unwrap();
-        assert_eq!((task(&b, any).state, e.borrow().len()), (State::Ready, 1), "§ 4 Filter: unlabeled work waits for claude, never moves");
-        b.labels(any, &["run-codex".into()], &[]).unwrap();
-        s.pass().unwrap();
+        assert_eq!((task(&b, any).state, e.borrow().len()), (State::Doing, 2), "§4: released unpinned work automatically falls back to Codex");
         assert!(task(&b, any).session.unwrap().starts_with("codex:"), "A4: work for another runtime starts");
         assert_eq!((task(&b, only).state, e.borrow().len()), (State::Ready, 2), "a claude-only task waits for the reset");
         let cap = s.capacity_json();
@@ -6444,7 +6527,7 @@ Open: none";
             s.full.insert("claude".into());
             s.hold = Some("fixture load hold".into());
             let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
-            s.claim(&v, "worker", "claude").unwrap();
+            s.claim(&v, "worker", "claude", "").unwrap();
             let a = task(&b, n).attempt.unwrap();
             assert_eq!(s.held.len(), 1);
             s.hold = None;
@@ -6564,7 +6647,7 @@ Open: none";
         assert!(e.borrow().is_empty(), "no reviewer slot");
         let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
         assert_eq!((&row["state"], &row["admission"]["code"], &row["admission"]["host"]), (&json!("review"), &json!("capacity"), &json!("mac")));
-        assert_eq!(row["wait"], "Waiting for a free slot · claude slots full");
+        assert_eq!(row["wait"], "Waiting for a free slot · claude disabled (limit 0); codex not in limits");
     }
 
     // Chain: `host-<name>` label -> heartbeat names -> board admission -> status wait text (R6). Risk (#1721): a task

@@ -1453,6 +1453,15 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         // #1819: a tray write rereads its task at once: no cached comments, no unchanged-board shortcut
         let reread = take_reread(&d);
         if !reread.is_empty() { s.board.forget(); reread.into_iter().for_each(|t| s.reread(t)); }
+        // § 4: runtime probes at most every 5 minutes
+        if !quiet && agents.as_ref().is_none_or(|(t, _)| t.elapsed().as_secs() >= 300) {
+            mark_checking(&platform::tool(&cfg.install), &cfg.root, s.wall as u64);
+            agents = Some((Instant::now(), json!({"at": s.wall, "rows": runtime::agents(&cfg.install)})));
+            // #1429: a logged-out runtime admits nothing until a probe reads it logged in
+            s.logged_out = agents.as_ref().and_then(|a| a.1["rows"].as_array().cloned()).unwrap_or_default().iter()
+                .filter(|r| r["login"] == "not logged in").filter_map(|r| r["runtime"].as_str().map(String::from)).collect();
+        }
+        s.login_status = Some(agents.as_ref().map_or(json!([]), |a| a.1["rows"].clone()));
         let r = if reduced { s.reduced().and_then(|_| Err(panics.reason.clone().unwrap_or_default())) } else if observe { s.observe() } else { s.pass() };
         s.sync_host();
         for l in s.log.drain(..) {
@@ -1499,14 +1508,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             json!({"task": k.task, "attempt": k.attempt, "rt": k.rt, "pid": k.proc.id(), "live": live, "reason": unknown})
         }).collect();
         let request = fs::read_to_string(d.join("focus.request")).ok();
-        // § 4: runtime probes at most every 5 minutes
-        if !quiet && agents.as_ref().is_none_or(|(t, _)| t.elapsed().as_secs() >= 300) {
-            mark_checking(&platform::tool(&cfg.install), &cfg.root, at);
-            agents = Some((Instant::now(), json!({"at": at, "rows": runtime::agents(&cfg.install)})));
-            // #1429: a logged-out runtime admits nothing until a probe reads it logged in
-            s.logged_out = agents.as_ref().and_then(|a| a.1["rows"].as_array().cloned()).unwrap_or_default().iter()
-                .filter(|r| r["login"] == "not logged in").filter_map(|r| r["runtime"].as_str().map(String::from)).collect();
-        }
         // docs/design/enrollment.md: delivery runs on its own thread; its failure never fails or delays the pass
         let local = enrollment::Local { host: cfg.me.clone(), service: Some(s.instance.clone()), ttl: cfg.ttl.max(0) as u64, agents: agents.as_ref().map_or(Value::Null, |a| a.1.clone()),
             progress: s.snapshot.as_ref().map(|x| enrollment::progress(x, &cfg.root, &cfg.me)).unwrap_or_default() };
@@ -2707,8 +2708,19 @@ fn host_setup(cfg: &Config) -> Option<String> {
 /// `agents` rows, the § 8 Access report, the open tasks' labels and the board's PR route (`None`: not read).
 fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<String, String>, agents: &Value, access: &[policy::Effective],
     open: Option<Vec<(u64, Vec<String>)>>, pr_route: Option<check::Probe>) -> Vec<check::Item> {
-    // in use: a limit above 0, or the default runtime that routes reviews unless its limit is 0
-    let runtimes = runtime::agent_runtimes().iter().filter(|rt| match limits.get(**rt) { Some(n) => *n > 0, None => **rt == cfg.default_runtime })
+    // A healthy fallback removes the preferred CLI as a setup prerequisite; explicit pins still expose its gaps.
+    let fallback = labels::select(&[], false, &cfg.default_runtime, |rt| {
+        let login = agents.as_array().into_iter().flatten().find(|r| r["runtime"] == rt).and_then(|r| r["login"].as_str());
+        let allowed = access.iter().any(|e| e.runtime == rt && e.refused.is_none() && !e.grant.starts_with("none") && e.grant != "unknown");
+        if limits.get(rt) != Some(&0) && login == Some("logged in") && allowed { Ok(rt.into()) }
+        else { Err(("access", format!("{rt} not ready"))) }
+    }).ok().is_some_and(|(_, reason)| reason.is_some());
+    let pinned = |rt: &str| open.as_ref().is_some_and(|tasks| tasks.iter().any(|(_, labels)| labels.iter().any(|l| l.strip_prefix("run-") == Some(rt))));
+    let candidates = labels::candidates(&[], false, &cfg.default_runtime);
+    let runtimes = runtime::agent_runtimes().iter().filter(|rt| {
+        let in_use = match limits.get(**rt) { Some(n) => *n > 0, None => candidates.iter().any(|candidate| candidate == *rt) };
+        pinned(rt) || in_use && !(fallback && **rt == cfg.default_runtime)
+    })
         .map(|rt| {
             let e = access.iter().find(|e| e.runtime == *rt);
             check::Runtime {
@@ -3484,12 +3496,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             // § 1 task body: Goal, Acceptance, Scope, dependencies; limits checked before any write
             let title = a.pos.get(1).filter(|t| !t.trim().is_empty()).ok_or("title missing")?;
             let deps: Vec<u64> = a.all("deps").iter().flat_map(|d| d.split([',', ' '])).filter(|d| !d.is_empty()).map(|d| d.trim_start_matches('#').parse().map_err(|_| format!("bad --deps {d}"))).collect::<Res<_>>()?;
-            // § 9: work waits for its runtime; a soft preference is retired
+            // §4: only an explicit --runtime adds a binding pin; type never adds one.
             if a.flags.contains_key("later") {
                 return Err("--later is retired: every add is held (§ 1); park it with `taskq later N`".into());
             }
             if a.flags.contains_key("prefer") {
-                return Err("--prefer is retired; use --runtime codex for design, UI, visual and image work (none: claude)".into());
+                return Err("--prefer is retired; use --runtime only for an owner pin (none: host preference with eligible fallback)".into());
             }
             // a repeated single-value flag is refused before any write; `one` would keep only the last value
             let mut repeated: Vec<_> = a.flags.iter().filter(|(f, v)| v.len() > 1 && !["acceptance", "scope", "deps", "evidence"].contains(&f.as_str())).map(|(f, _)| format!("--{f}")).collect();
@@ -4161,6 +4173,17 @@ mod tests {
         assert_eq!(ids(&[("codex", 0), ("claude", 2)]), [("access claude".to_string(), "gap")], "limit 0 is off");
         let items = setup_items(&c, &BTreeMap::new(), Ok("auto-merge".into()), &Value::Null, &access, None, None);
         assert_eq!(items.iter().find(|i| i.id == "pr-route").unwrap().status, "unknown", "an unread board stays unknown (R12)");
+        // #2118: a healthy fallback removes the mandatory Claude prerequisite, but never hides an explicit pin.
+        c.default_runtime = "claude".into();
+        let mut codex = refused("codex"); codex.refused = None; codex.grant = "fixture owner grant".into();
+        let agents = json!([{"runtime":"claude","login":"not installed"},{"runtime":"codex","login":"logged in"}]);
+        for pin in [false, true] {
+            let items = setup_items(&c, &BTreeMap::new(), Ok("auto-merge".into()), &agents, &[codex.clone()],
+                Some(if pin { vec![(1, vec!["run-claude".into()])] } else { vec![] }), None);
+            assert_eq!(items.iter().any(|i| i.id == "cli claude"), pin);
+            assert!(items.iter().any(|i| i.id == "access codex"));
+        }
+
     }
 
     // Chain: #1661 A2 AS5 Checking. Risk: a probe in progress has no service signal, or the mark drops prior rows.
@@ -4401,7 +4424,7 @@ mod tests {
         assert!(c.board.issues(None).unwrap().pop().unwrap().labels.contains(&"run-codex-app".into()));
         command(&c, "add", &args(&["--priority", "0", "--hold"])).unwrap();
         assert_eq!(c.board.issues(None).unwrap().pop().unwrap().labels, vec!["q-held", "p0"]);
-        assert!(command(&c, "add", &args(&["--prefer", "codex"])).is_err_and(|e| e.contains("--runtime codex")), "§ 9: --prefer refused with the --runtime hint");
+        assert!(command(&c, "add", &args(&["--prefer", "codex"])).is_err_and(|e| e.contains("--runtime only for an owner pin")), "§ 9: --prefer refused with the --runtime hint");
         for extra in [&["--priority", "3"][..], &["--runtime", "any"], &["--type", "code", "--type", "docs"], &["--host", "win,mac"], &["--prefer", "codex-app"], &["--prefer", "codex", "--prefer", "claude"]] {
             assert!(command(&c, "add", &args(extra)).is_err());
         }

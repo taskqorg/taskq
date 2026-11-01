@@ -7,14 +7,40 @@ pub fn canonical(name: &str) -> &str {
     match name { "q-waiting" => "q-blocked", "priority-1" => "p1", "priority-2" => "p2", _ => name }
 }
 
-/// § 4 Filter: reviewers the host's `default_runtime`; workers `run-*`, else a lone legacy `prefer-codex` as `run-codex`,
-/// else `default_runtime`. The task waits for a slot of this runtime; it never moves to another.
+/// §4: explicit owner pins bind both roles; without a pin, route returns a preference.
 pub fn route(labels: &[String], reviewer: bool, default: &str) -> String {
+    if let Some(rt) = labels.iter().find_map(|l| l.strip_prefix("run-")) { return rt.into(); }
     if reviewer { return default.into(); }
     let prefer: Vec<&str> = labels.iter().filter_map(|l| l.strip_prefix("prefer-")).collect();
     let legacy = crate::runtime::preferred(&prefer);
-    labels.iter().find_map(|l| l.strip_prefix("run-").map(String::from))
-        .unwrap_or_else(|| if legacy == crate::runtime::OWNER { default } else { legacy }.into())
+    if legacy == crate::runtime::OWNER { default } else { legacy }.into()
+}
+
+/// Ordered policy candidates; owner pins and non-Claude preferences have no implicit alternative.
+pub fn candidates(labels: &[String], reviewer: bool, default: &str) -> Vec<String> {
+    let preferred = route(labels, reviewer, default);
+    let fallback = preferred == crate::runtime::RUNTIMES[0] && !labels.iter().any(|l| l.starts_with("run-"));
+    let mut candidates = vec![preferred];
+    if fallback { candidates.push(crate::runtime::RUNTIMES[1].into()); }
+    candidates
+}
+
+/// §4/§9 admission policy; the caller checks each candidate independently before claiming anything.
+pub fn select(labels: &[String], reviewer: bool, default: &str,
+    mut eligible: impl FnMut(&str) -> std::result::Result<String, (&'static str, String)>) -> std::result::Result<(String, Option<String>), (&'static str, String)> {
+    let candidates = candidates(labels, reviewer, default);
+    match eligible(&candidates[0]) {
+        Ok(rt) => Ok((rt, None)),
+        Err(first) if candidates.len() > 1 && first.0 != "unknown" => {
+            let fallback = &candidates[1];
+            match eligible(fallback) {
+                Ok(rt) => Ok((rt, Some(format!("fallback: {}; selected {fallback}", first.1)))),
+                Err(second) if second.0 == "unknown" => Err(second),
+                Err(second) => Err((first.0, format!("{}; {}", first.1, second.1))),
+            }
+        }
+        Err(e) => Err(e),
+    }
 }
 
 pub fn matches(labels: &[String], filter: &str) -> bool {
@@ -91,7 +117,7 @@ mod tests {
         let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         for default in ["claude", "codex"] {
             assert_eq!(route(&l(&["p1"]), true, default), default, "reviewer");
-            assert_eq!(route(&l(&["run-claude"]), true, default), default, "reviewer ignores run-*");
+            assert_eq!(route(&l(&["run-claude"]), true, default), "claude", "explicit pin binds review");
             assert_eq!(route(&l(&[]), false, default), default, "worker without run-*");
             assert_eq!(route(&l(&["prefer-claude"]), false, default), default);
             assert_eq!(route(&l(&["prefer-codex", "prefer-claude"]), false, default), default);

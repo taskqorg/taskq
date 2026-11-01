@@ -74,6 +74,10 @@ Preserve [PR #1267 at `3a19ecc3d96f39db81a1f9c25c65cd84f432d5a6`](https://github
 | Codex CLI | Supported | Full tools; configured sandbox; real edit/check and continuation passed on macOS | macOS, Linux, Windows; effective sandbox and network are independent |
 | codex-app | Opt-in worker/reviewer | No separate app operator | macOS, Windows (#989: handshake, shell-opened thread, 21 KB queue, one `task_complete` live); app policy and login differ from handshake environment |
 
+### New-attempt runtime selection
+
+[§4 Filter](../taskq.md#4-service) owns preference, explicit owner pins and Claude-to-Codex fallback for workers/reviewers. Both candidates use the existing admission/grant boundary; runtime adapters and operator-session routing stay unchanged. A fallback is a new claim, never migration of active or unknown execution. Isolated service traces cover disabled/full Claude, CLI/login/quota refusals, both unavailable, pins and common gates; source/model proof does not qualify a native runtime. Staged admission uses a disposable board and installation, never a placeholder production task or host capacity edit. Dev delivery uses the existing green merge-result CI route; tested and deployed are separate claims (R12).
+
 <a id="required-platform-runs"></a>
 
 ## Platform coverage and selected runs

@@ -239,7 +239,7 @@ pub const ADMISSION_CODES: [(&str, &str); 13] = [
     ("focus", "the host focus excludes the task or admits nothing"),
     ("capacity", "runtime, project or host slots are full or another project has the turn"),
     ("load-gate", "the load gate or launch spacing holds launches"),
-    ("login", "the routed runtime is not logged in"),
+    ("login", "the routed runtime login is unavailable or unknown"),
     ("usage-limit", "the routed runtime is held after a usage limit"),
     ("access", "the routed runtime refused its access grant"),
     ("unknown", "no decision is known; reason names why"),
@@ -523,6 +523,7 @@ impl Row {
         match (a.code, &a.host) {
             ("capacity", _) => Some(format!("{} · {}", WAIT_TEXTS[0], a.reason)),
             ("host", None) => Some(a.reason.replacen("no host", "No host", 1)),
+            ("login" | "usage-limit" | "access" | "capability", _) => Some(a.reason.clone()),
             _ => None,
         }
     }

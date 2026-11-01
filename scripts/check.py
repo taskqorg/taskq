@@ -116,6 +116,8 @@ def id_pattern(rule):
 
 def cited(text, rules):
     """IDs cited in text; a longer ID's match never also cites a shorter one (`§2 Ask card` is not `§2`)."""
+    # Owners also cite paired sections, e.g. "sections 4 Filter and 9"; keep any subsection title for longest-match fencing.
+    text = re.sub(r'\bsections\s+(\d+(?:\s+[A-Za-z]+)?)\s+and\s+(\d+)\b', r'section \1 and section \2', text, flags=re.I)
     found = set()
     for rule in sorted(rules, key=len, reverse=True):
         pattern = id_pattern(rule)
