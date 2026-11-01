@@ -451,6 +451,7 @@ pub struct Host {
     last: Option<u64>,
     /// Registered ready projects, rotated only after a grant.
     ready: BTreeSet<PathBuf>,
+    external_ready: BTreeMap<String,PathBuf>,
     turn: Option<PathBuf>,
     pub held: Option<String>,
     pub restart: bool,
@@ -480,7 +481,7 @@ pub struct Host {
 impl Host {
     pub fn new(policy: Res<Policy>) -> Self {
         Self { instance:crate::runtime::uuid(),policy, capacity_command:None, slots: BTreeMap::new(), gate: Gate::default(), began: Instant::now(), last: None,
-            ready: BTreeSet::new(), turn: None, held: None, restart: false, restart_woken:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), passing: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
+            ready: BTreeSet::new(), external_ready:BTreeMap::new(), turn: None, held: None, restart: false, restart_woken:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), passing: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
             request_since: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()), hour_start: crate::requests::totals(), last_hour: None,
             hosts_start: crate::requests::host_totals(), hosts_last_hour: None,
             rebuilding: false, rebuilt: BTreeSet::new(), published: BTreeMap::new() }
@@ -607,8 +608,9 @@ impl Host {
             if p.cap.limits.get(rt) == Some(&0) || cap.limits.get(rt) == Some(&0) { return Err("runtime disabled".into()); }
             return Ok(self.slots.len());
         }
-        if queue && !self.ready.is_empty() {
-            let next = self.ready.iter().find(|p| self.turn.as_ref().is_none_or(|t| *p > t)).or_else(|| self.ready.first());
+        let ready:BTreeSet<_>=self.ready.iter().chain(self.external_ready.values()).collect();
+        if queue && !ready.is_empty() {
+            let next = ready.iter().copied().find(|p| self.turn.as_ref().is_none_or(|t| *p > t)).or_else(|| ready.first().copied());
             if next.is_some_and(|p| p != project) { return Err("round-robin: another project is ready".into()); }
         }
         if let Some(left)=self.last.and_then(|t|30u64.checked_sub(now.saturating_sub(t))).filter(|left|*left>0) {
@@ -640,12 +642,18 @@ impl Host {
     }
 
     pub(crate) fn external_sync(&mut self, id:&str, project:&Path, runtime:&str, held:bool) {
+        self.external_ready.remove(id);
         let key=(project.into(),Claim::External(id.into()));
         if held {self.slots.insert(key,runtime.into());}else{self.slots.remove(&key);}
     }
 
+    pub(crate) fn external_reset_ready(&mut self) {self.external_ready.clear();}
+
     pub(crate) fn external_reserve(&mut self,id:&str,project:&Path,runtime:&str,cap:&Capacity,now:u64)->Res<()> {
-        self.reserve_key((project.into(),Claim::External(id.into())),runtime,cap,true,now).map(|_|())
+        self.external_ready.insert(id.into(),project.into());
+        self.reserve_key((project.into(),Claim::External(id.into())),runtime,cap,true,now)?;
+        self.external_ready.remove(id);
+        Ok(())
     }
 
     pub fn claimed(&mut self, project: &Path, n: u64, a: u64) {
@@ -2351,6 +2359,36 @@ mod tests {
         h.sync(Path::new("a"), vec![]);
         assert!(h.reserve(Path::new("a"), 2, 2, "codex", &cap, true, 30).is_err());
         assert!(h.reserve(Path::new("b"), 1, 1, "codex", &cap, true, 30).is_ok());
+    }
+
+    // Chain: R9 R12 §3 A3 — external demand survives task passes and rotates with a worker backlog.
+    // Risk: PilotQ starves, overrides worker fairness or leaves stale demand after admission/cancellation.
+    #[test]
+    fn external_demand_rotates_without_task_pass_ownership() {
+        for (manager,worker) in [("a","b"),("b","a"),("a","a")] {
+            let (manager,worker)=(Path::new(manager),Path::new(worker));
+            let p=policy();let cap=p.cap.clone();let mut h=Host::new(Ok(p));
+            h.ready(worker,true);
+            let first=h.external_reserve("turn-1",manager,"codex",&cap,0);
+            if manager>worker {
+                assert!(first.unwrap_err().contains("round-robin"));
+                // A project pass with no task demand cannot remove the external request.
+                h.ready(manager,false);
+                assert!(h.reserve(worker,1,77,"codex",&cap,true,0).is_ok());
+                h.sync(worker,vec![]);
+                assert!(h.reserve(worker,2,78,"codex",&cap,true,30).unwrap_err().contains("round-robin"));
+                assert!(h.external_reserve("turn-1",manager,"codex",&cap,30).is_ok());
+            } else {assert!(first.is_ok());}
+            assert_eq!(h.occupied(),1);
+            h.external_sync("turn-1",manager,"codex",false);
+            assert!(h.external_ready.is_empty(),"admission removes only its own demand");
+            assert!(h.reserve(worker,3,79,"codex",&cap,true,60).is_ok());
+            h.sync(worker,vec![]);
+            // The next host reconciliation rebuilds demand from surviving eligible requests only.
+            assert!(h.external_reserve("turn-2",manager,"codex",&cap,60).is_err());
+            h.external_reset_ready();
+            assert!(h.reserve(worker,4,80,"codex",&cap,true,90).is_ok());
+        }
     }
 
     // Chain A4: six effective copies -> preflight -> durable originals -> all readbacks -> repeat.

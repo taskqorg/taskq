@@ -123,6 +123,8 @@ fn reconcile(install:&Path,h:&mut host::Host,at:u64,boot:Res<i64>,mut live:impl 
             if active(op) {h.external_sync(key,&b.root,&b.runtime,true);}
         }
         if !h.external_known(&known) {return Err("previous slot disappeared from storage; occupancy retained".into());}
+        // Rebuild eligible external demand under the host mutex; task passes own only task readiness.
+        h.external_reset_ready();
         for key in ids {
             let op=s.ops.get_mut(&key).unwrap();let b=bound(op)?;
             let state=op.receipt["state"].as_str().unwrap().to_owned();
@@ -219,6 +221,22 @@ mod tests {
             let cap=h.policy.as_ref().unwrap().cap.clone();assert!(h.reserve(&f.root,2,78,"codex",&cap,false,60).is_err());
             assert_eq!(fs::read(f.dir.join("host.json")).unwrap(),policy);assert_eq!(fs::read_to_string(f.root.join(".taskq/focus")).unwrap(),"off");
         }
+    }
+    // Chain: R9 R12 §3 A3 — a queued manager gets a round-robin turn despite a worker backlog.
+    // Risk: project readiness updates erase external demand and starve PilotQ until its deadline.
+    #[test]
+    fn queued_slot_is_admitted_with_a_ready_worker_project() {
+        let mut f=Fixture::new();
+        let worker=f.root.join("worker");
+        f.h.ready(&worker,true);
+        f.call("reserve");
+        f.h.ready(&f.root,false);
+        f.tick(Ok(true));
+        let out=f.stored();
+        assert_eq!(out["state"],"reserved","queued external demand must join round-robin: {out}");
+        assert_eq!(f.h.occupied(),1);
+        let cap=f.h.policy.as_ref().unwrap().cap.clone();
+        assert!(f.h.reserve(&worker,1,77,"codex",&cap,true,30).unwrap_err().contains("capacity full"));
     }
     // Chain: R9 R12 §3 — a valid host.json cannot clear the host loop's legacy/startup barrier.
     // Risk: reconciling PilotQ admission also enables workers later in the same host pass.

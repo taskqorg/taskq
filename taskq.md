@@ -129,7 +129,7 @@ Reserve/observe/release reconcile that identity; mismatched input or release aut
 No grant, limit, permission, focus or model changes.
 Workers cannot submit.
 The service alone admits a slot through the same runtime/project/host limits, load gate, spacing, emergency hold, draining and recovery barriers as workers/reviewers.
-External manager admission is independent of task focus; it neither changes focus nor admits tasks.
+External manager admission is independent of task focus; it neither changes focus nor admits tasks. Eligible pending external roots share project round-robin; task passes cannot clear their demand.
 Durable readback precedes `reserved`; only a fresh matching host-generation receipt permits a turn.
 Release attests that the consumer has ended its entire turn, including tools; it is irreversible, idempotent and acknowledged only after the service removes the slot.
 Caller exit, silence, expiry after admission and service restart never prove execution release.

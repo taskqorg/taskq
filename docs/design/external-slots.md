@@ -39,7 +39,7 @@ Responses carry `schema`, `caller`, `op_id`, `state`, `occupied`, `reason`, host
 
 ## Recovery and bounds
 
-Reserve/release and host admission use the existing locked, durable resource operation store; host grants share the worker/reviewer mutex. No consumer writes host.json or reconstructs capacity. All recovered external grants enter occupancy before any new grant; project sync cannot remove them.
+Reserve/release and host admission use the existing locked, durable resource operation store; host grants share the worker/reviewer mutex. No consumer writes host.json or reconstructs capacity. All recovered external grants enter occupancy before any new grant; project sync cannot remove them. Eligible pending external roots join the existing project round-robin independently of task readiness. A task pass cannot clear their demand; admission, cancellation or denial removes it.
 
 Admission expiry or a confirmed dead caller before admission denies a queued request. After admission, caller death, liveness errors, deadline expiry and service restart retain the slot; descendants might still run. The original key holder may reconcile and attest completion after checking its own native runtime ownership. A verified boot later than `granted_at` also proves the old turn ended. Missing boot/liveness stays unknown; time alone never frees a grant. TaskQ never kills a consumer process.
 
