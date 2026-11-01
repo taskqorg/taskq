@@ -74,6 +74,8 @@ pub trait Proc {
     /// The exit code once the child has exited; `Err` is an unknown read (§ 4 reconciliation), never an exit.
     fn exited(&mut self) -> Result<Option<i32>, String>;
     fn exit_error(&self) -> Option<&'static str> { None }
+    /// Definitive native pre-submission refusal, only after independently observed nonzero exit.
+    fn refused(&self, _task:u64, _attempt:u64, _execution:u64, _code:i32) -> Option<String> { None }
     /// Request termination; success is not exit. The owner retains this handle until `exited` confirms it.
     fn kill(&mut self) -> Result<(), String>;
     fn id(&self) -> u32;
@@ -446,6 +448,32 @@ impl CliTurn {
 }
 
 impl Proc for CliTurn {
+    fn refused(&self,task:u64,attempt:u64,execution:u64,code:i32)->Option<String> {
+        use std::io::{Seek,SeekFrom};
+        if code==0 || self.accepted || self.read_error.is_some() {return None;}
+        let mut file=File::open(&self.log).ok()?;
+        file.seek(SeekFrom::Start(self.start)).ok()?;
+        let mut text=String::new();file.take(1024*1024+1).read_to_string(&mut text).ok()?;
+        if text.len()>1024*1024 || !text.ends_with('\n') {return None;}
+        let mut lines=text.lines();
+        let binding:serde_json::Value=serde_json::from_str(lines.next()?).ok()?;
+        let thread=binding["native"]["session"].as_str().filter(|s|plain_thread(s))?;
+        if task==0 || attempt==0 || execution<=attempt || binding["type"]!="taskq.input" || binding["runtime"]!="codex"
+            || binding["task"].as_u64()!=Some(task) || binding["attempt"].as_u64()!=Some(attempt)
+            || binding["execution"].as_u64()!=Some(execution) || binding["input"].as_str()?.is_empty() {return None;}
+        let conflict=format!("thread {thread} already has an active writer");
+        let create=format!("Failed to create session: thread-store conflict: {conflict}");
+        let persistence=format!("failed to initialize thread persistence: thread-store conflict: {conflict}");
+        let refusal=format!("Error: thread/resume: thread/resume failed: {conflict} (code -32600)");
+        let mut created=false;let mut refused=false;
+        for line in lines.filter(|l|!l.is_empty()) {
+            if refused {return None;}
+            if line==refusal {refused=true;}
+            else if line.split_once(" ERROR codex_core::session: ").is_some_and(|(_,message)|message==create) {created=true;}
+            else if !line.split_once(" ERROR codex_core::session::session: ").is_some_and(|(_,message)|message==persistence) {return None;}
+        }
+        (created&&refused).then(||format!("Codex writer refused; let active turn finish, then close that thread in Codex ({thread})"))
+    }
     fn job(&self)->Option<String> {self.proc.job()}
     fn checkpoint(&mut self,cfg:&crate::service::Config,l:&Launch,execution:u64)->Result<(),String> {
         if !of(&l.rt).child || of(&l.rt).remote { return Ok(()) }
@@ -1380,11 +1408,20 @@ pub fn start_command(command: &mut Command, root: &Path, text: &str) -> Result<B
     coreq::telemetry::capture::operation("runtime.launch", || {
         let (path, _input) = turn_input(root, text, None).map_err(StartError::from)?;
         let input = File::open(path).map_err(|e| StartError::io(e, None))?;
-        coreq::telemetry::capture::inherit_context(command);
-        command.stdin(input);
-        #[cfg(windows)] {windows_process::Execution::spawn(command).map(|child|Box::new(child) as Box<dyn Proc>)}
-        #[cfg(not(windows))] {command.spawn().map(|child|Box::new(child) as Box<dyn Proc>).map_err(|e|StartError::io(e,None))}
+        start_file(command,input)
     }, |_| "launch")
+}
+
+fn start_file(command:&mut Command,input:File)->Result<Box<dyn Proc>,StartError> {
+    coreq::telemetry::capture::inherit_context(command);
+    command.stdin(input);
+    #[cfg(windows)] {windows_process::Execution::spawn(command).map(|child|Box::new(child) as Box<dyn Proc>)}
+    #[cfg(not(windows))] {command.spawn().map(|child|Box::new(child) as Box<dyn Proc>).map_err(|e|StartError::io(e,None))}
+}
+
+pub fn acceptance_action(rt:&str)->&'static str {
+    if rt=="codex" {"input acceptance unknown; inspect the pending input in Codex; let any active turn finish before closing that thread; reconcile acceptance before retry"}
+    else {"input acceptance unknown; reconcile native input"}
 }
 
 /// § 8 Access of `rt` here, resolved again for every start and resume; a refusal starts nothing.
@@ -1463,6 +1500,14 @@ fn start(env: &Env, l: &Launch, log: &Path, text: &str, access: &crate::policy::
     let err = out.try_clone().map_err(|e| StartError::io(e, None))?;
     let mut c = command(env, l, access).map_err(StartError::from)?;
     let text = stdin_text(&l.rt, text);
+    if l.rt=="codex" && l.task>0 && l.resume.is_some() {
+        let (path,_input)=turn_input(env.root,&text,Some(l))?;
+        bind_input(log,l,&path,&text,serde_json::json!({"session":l.session}))?;
+        return coreq::telemetry::capture::operation("runtime.launch",|| {
+            let input=File::open(path).map_err(|e|StartError::io(e,None))?;
+            start_file(c.stdout(out).stderr(err),input)
+        },|_|"launch");
+    }
     start_command(c.stdout(out).stderr(err), env.root, &text)
 }
 
@@ -2599,6 +2644,73 @@ pub fn agents_line(r: &serde_json::Value) -> String {
 mod tests {
     use std::process::Stdio;
     use super::*;
+
+    // R12, #2143: qualify the refusal against an owned native writer without auth, a model turn or app control.
+    #[cfg(unix)]
+    #[test]
+    #[ignore="installed Codex writer probe; isolated home, no model"]
+    fn native_codex_writer_refusal_before_submission() {
+        let root=std::env::temp_dir().join(format!("taskq-writer-{}",uuid()));std::fs::create_dir_all(&root).unwrap();
+        let native=codex_native(which("codex")).unwrap();
+        let script=r#"
+import json,os,pathlib,selectors,subprocess,sys,time,uuid
+home=pathlib.Path(sys.argv[2]);home.mkdir();thread=str(uuid.uuid4())
+sessions=home/'sessions/2026/11/02';sessions.mkdir(parents=True)
+rollout=sessions/f'rollout-2026-11-02T00-00-00-{thread}.jsonl'
+rollout.write_text(json.dumps({'timestamp':'2026-11-02T00:00:00Z','type':'session_meta','payload':{'id':thread,'timestamp':'2026-11-02T00:00:00Z','cwd':sys.argv[3],'originator':'taskq-2143-fixture','cli_version':'0.159.3','source':'cli','model_provider':'openai'}})+'\n')
+p=subprocess.Popen([sys.argv[1],'app-server'],env=dict(os.environ,CODEX_HOME=str(home)),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1)
+def call(i,method,params):
+ p.stdin.write(json.dumps({'id':i,'method':method,'params':params})+'\n');p.stdin.flush()
+ sel=selectors.DefaultSelector();sel.register(p.stdout,selectors.EVENT_READ);until=time.monotonic()+15
+ while time.monotonic()<until:
+  if not sel.select(max(0,until-time.monotonic())):break
+  row=json.loads(p.stdout.readline())
+  if row.get('id')==i:
+   assert 'error' not in row,row
+   return row['result']
+ raise RuntimeError('native read deadline')
+try:
+ call(1,'initialize',{'clientInfo':{'name':'taskq-2143-probe','version':'1'}})
+ call(2,'thread/resume',{'threadId':thread,'cwd':sys.argv[3]})
+ print(thread,flush=True);sys.stdin.readline()
+ row=call(3,'thread/read',{'threadId':thread,'includeTurns':True})['thread']
+ assert not row['turns'],row
+ print('writer retained; no turns submitted',flush=True)
+finally:
+ p.stdin.close()
+ try:p.wait(timeout=10)
+ except subprocess.TimeoutExpired:p.terminate();p.wait(timeout=10)
+"#;
+        let home=root.join("codex-home");
+        let mut owner=Command::new("python3").args(["-c",script]).arg(&native).arg(&home).arg(&root)
+            .env_remove("OPENAI_API_KEY").env_remove("CODEX_API_KEY")
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().unwrap();
+        let mut reader=BufReader::new(owner.stdout.take().unwrap());let mut thread=String::new();reader.read_line(&mut thread).unwrap();
+        let thread=thread.trim();assert!(plain_thread(thread));
+        let mut l=Launch {files:String::new(),execution:Some(44),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:"codex".into(),session:thread.into(),url:String::new(),resume:Some("retained fixture input".into())};
+        let log=root.join("turn.log");
+        for execution in [44,45] {
+            l.execution=Some(execution);
+            let start=std::fs::metadata(&log).map_or(0,|m|m.len());
+            let text="TASKQ_2143_NO_AUTH_FIXTURE";
+            let (path,_input)=turn_input(&root,text,Some(&l)).unwrap();
+            bind_input(&log,&l,&path,text,serde_json::json!({"session":thread})).unwrap();
+            let out=File::options().append(true).open(&log).unwrap();
+            let mut cmd=Command::new(&native);cmd.env("CODEX_HOME",&home).args(["exec","--json","--skip-git-repo-check","resume",thread,"-"])
+                .env_remove("OPENAI_API_KEY").env_remove("CODEX_API_KEY")
+                .current_dir(&root).stdout(out.try_clone().unwrap()).stderr(out);
+            let proc=start_file(&mut cmd,File::open(&path).unwrap()).unwrap();
+            let mut turn=CliTurn {proc,log:log.clone(),pos:start,start,stopping:false,accepted:false,read_error:None,session:None,native:None,recovery:None};
+            let until=std::time::Instant::now()+std::time::Duration::from_secs(20);
+            let code=loop {if let Some(code)=turn.exited().unwrap() {break code;} assert!(std::time::Instant::now()<until,"native refusal timed out");std::thread::sleep(std::time::Duration::from_millis(10));};
+            assert_ne!(code,0);assert_eq!(turn.accepted(),Ok(false));assert!(turn.refused(l.task,l.attempt,execution,code).is_some());
+            assert_eq!(std::fs::read_to_string(path).unwrap(),text);
+        }
+        drop(owner.stdin.take());let mut reply=String::new();reader.read_line(&mut reply).unwrap();
+        assert_eq!(reply.trim(),"writer retained; no turns submitted");assert!(owner.wait().unwrap().success());
+        println!("native writer retained through two refused resumes; original inputs preserved; acceptance false; no model turns");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     // A2/A4, R9/R12: agy must receive its own protocol and literal brief, never Codex/Claude policy flags.
     #[test]
