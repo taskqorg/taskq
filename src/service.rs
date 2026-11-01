@@ -1696,7 +1696,8 @@ impl<'a> Service<'a> {
                 retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
                 released.insert(k.execution);
                 // This pass's view predates release; it cannot authorize a continuation before acceptance is resolved.
-                if no_start || !matches!(accepted,Ok(Some(_))) {touched.insert(k.task);}
+                if by_n.get(&k.task).is_some_and(|v|v.projection.task.attempt==Some(k.attempt))
+                    && (no_start || !matches!(accepted,Ok(Some(_)))) {touched.insert(k.task);}
                 if !no_start {exited.push((k.task, k.attempt, code, k.proc.exit_error()));}
                 false
             }
