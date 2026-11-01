@@ -1310,6 +1310,12 @@ fn adopt(s: &mut Service, install:&Path, root: &Path) -> Res<()> {
     Ok(())
 }
 
+// §4: only a confirmed logout holds admission; an unknown probe keeps its existing meaning.
+fn login_holds(rows: &Value) -> std::collections::BTreeSet<String> {
+    rows.as_array().into_iter().flatten().filter(|r| r["login"] == "not logged in")
+        .filter_map(|r| r["runtime"].as_str().map(String::from)).collect()
+}
+
 fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let cfg = &c.cfg;
     let exe = launcher(&cfg.install);
@@ -1458,10 +1464,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             mark_checking(&platform::tool(&cfg.install), &cfg.root, s.wall as u64);
             agents = Some((Instant::now(), json!({"at": s.wall, "rows": runtime::agents(&cfg.install)})));
             // #1429: a logged-out runtime admits nothing until a probe reads it logged in
-            s.logged_out = agents.as_ref().and_then(|a| a.1["rows"].as_array().cloned()).unwrap_or_default().iter()
-                .filter(|r| r["login"] == "not logged in").filter_map(|r| r["runtime"].as_str().map(String::from)).collect();
+            s.logged_out = agents.as_ref().map(|a| login_holds(&a.1["rows"])).unwrap_or_default();
         }
-        s.login_status = Some(agents.as_ref().map_or(json!([]), |a| a.1["rows"].clone()));
         let r = if reduced { s.reduced().and_then(|_| Err(panics.reason.clone().unwrap_or_default())) } else if observe { s.observe() } else { s.pass() };
         s.sync_host();
         for l in s.log.drain(..) {

@@ -551,10 +551,8 @@ pub struct Service<'a> {
     /// ponytail: in memory per project thread; a restart forgets it and the next limited attempt holds again
     pub limited: BTreeMap<String, (i64, bool)>,
     /// Runtimes whose last probe read `not logged in` (§ 5 `agents`, #1429): no claim, resume or reviewer until a
-    /// probe reads them logged in again; new admission also requires the local login observation below.
+    /// probe reads them logged in again; unknown login admits as before.
     pub logged_out: BTreeSet<String>,
-    /// Latest local probe, required for new admission; absent only in injected service fixtures.
-    pub login_status: Option<Value>,
     /// § 3 Runtime accounts: the active account of each listed runtime at the last pass (switch record).
     pub accounts: BTreeMap<String, Option<String>>,
     pub gui_checked: Option<std::time::Instant>,
@@ -813,7 +811,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), login_status: None, accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -2358,11 +2356,6 @@ impl<'a> Service<'a> {
         if let Some(r) = self.refused_access.get(rt) { return Err(("access", format!("{rt}: {r}"))); }
         if self.limited.contains_key(rt) { return Err(("usage-limit", format!("{rt}: {}", self.limit_line(rt)))); }
         if self.logged_out.contains(rt) { return Err(("login", format!("{rt}: not logged in"))); }
-        if let Some(rows) = &self.login_status {
-            let login = rows.as_array().into_iter().flatten().find(|r| r["runtime"] == rt)
-                .and_then(|r| r["login"].as_str()).unwrap_or("unknown");
-            if login != "logged in" { return Err(("login", format!("{rt}: login {login}"))); }
-        }
         if crate::runtime::accounts::Host::read(&self.cfg.install).off(rt) { return Err(("capability", format!("{rt}: every account disabled on this host"))); }
         if gui && !self.full.contains(rt) { return Err(("capability", format!("needs-gui: {rt} has no effective Full grant"))); }
         let c = self.cap.as_ref().map_err(|_| ("unknown", crate::snapshot::ADMISSION_UNKNOWN[1].to_string()))?;
@@ -5649,16 +5642,16 @@ Open: none")).unwrap();
                 }
                 let exits: Exits = Default::default();
                 let mut s = service(&b, &c, exits.clone());
-                s.login_status = Some(json!([{"runtime":"claude","login":"logged in"},{"runtime":"codex","login":"logged in"}]));
+                let mut probes = json!([{"runtime":"claude","login":"logged in"},{"runtime":"codex","login":"logged in"}]);
                 match why {
                     "quota" => { s.limited.insert("claude".into(), (i64::MAX, true)); }
                     "login" => { s.logged_out.insert("claude".into()); }
-                    "unknown-login" => { s.login_status.as_mut().unwrap()[0]["login"] = json!("unknown"); }
+                    "unknown-login" => { probes[0]["login"] = json!("unknown"); s.cap.as_mut().unwrap().limits.insert("claude".into(), 1); }
                     "missing" => { s.refused_access.insert("claude".into(), "claude CLI not found on the service PATH".into()); }
                     "both" => { s.logged_out.insert("codex".into()); }
                     "grant" => { s.refused_access.insert("codex".into(), "no operator grant".into()); }
                     "focus" => s.focus.clear(),
-                    "codex-unknown" => { s.login_status.as_mut().unwrap()[1]["login"] = json!("unknown"); }
+                    "codex-unknown" => { probes[1]["login"] = json!("unknown"); }
                     "stop" => { std::fs::create_dir_all(&c.install).unwrap(); std::fs::write(c.install.join("hold"), "fixture stop").unwrap(); }
                     "load" => { s.reload(Ok(Capacity::fixed(c.limits.clone(), on()))); }
                     "gui-grant" | "gui-ok" => {
@@ -5679,21 +5672,39 @@ Open: none")).unwrap();
                     }
                     _ => {}
                 }
+                s.logged_out.extend(crate::login_holds(&probes));
                 s.pass().unwrap();
-                let blocked = ["both", "pin", "grant", "focus", "stop", "load", "gui", "gui-grant", "codex-unknown", "unresolved"].contains(&why);
+                let blocked = ["both", "pin", "grant", "focus", "stop", "load", "gui", "gui-grant", "unresolved"].contains(&why);
                 assert_eq!(exits.borrow().len(), usize::from(!blocked), "{reviewer} {why}");
                 if !blocked {
                     let t = task(&b, n);
-                    assert_eq!(rt_of(&t).unwrap().0, "codex", "{reviewer} {why}");
+                    assert_eq!(rt_of(&t).unwrap().0, if why == "unknown-login" { "claude" } else { "codex" }, "{reviewer} {why}");
                     assert_eq!(t.role.as_deref(), Some(if reviewer {"reviewer"} else {"worker"}));
                     let spawn = b.comments(n).unwrap().into_iter().find(|e| Some(e.id) == t.attempt).unwrap();
-                    assert!(spawn.body.contains("fallback:") && spawn.body.contains("selected codex"), "{}", spawn.body);
+                    if why == "unknown-login" {
+                        assert!(!spawn.body.contains("fallback:"), "unknown login alone must not change runtime");
+                    } else {
+                        assert!(spawn.body.contains("fallback:") && spawn.body.contains("selected codex"), "{}", spawn.body);
+                    }
+                    if why == "unknown-login" || why == "codex-unknown" {
+                        assert!(crate::runtime::login_lines(&probes).iter().any(|line| line.contains("login unknown")), "probe must stay unknown");
+                    }
                     let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
                     assert_eq!(row["admission"]["code"], "admitted");
-                    assert!(row["admission"]["reason"].as_str().unwrap().contains("selected codex"));
+                    assert!(row["admission"]["reason"].as_str().unwrap().contains(if why == "unknown-login" { "claimed on claude" } else { "selected codex" }));
                     s.pass().unwrap();
                     assert_eq!(task(&b, n).attempt, t.attempt, "no duplicate or migration");
                     assert_eq!(exits.borrow().len(), 1);
+                    if why == "unknown-login" || why == "codex-unknown" {
+                        b.comment(n, &core::entry("ask", &[], t.attempt, "fixture pause")).unwrap();
+                        *exits.borrow()[0].1.borrow_mut() = Some(0);
+                        s.pass().unwrap();
+                        b.comment(n, &core::entry("answer", &[], None, "continue")).unwrap();
+                        s.pass().unwrap();
+                        assert_eq!(task(&b, n).attempt, t.attempt, "unknown login must preserve the attempt on resume");
+                        assert_eq!(task(&b, n).session, t.session, "unknown login must preserve the session/runtime on resume");
+                        assert_eq!(exits.borrow().len(), 2, "the ended turn resumes once");
+                    }
                 } else if why == "both" || why == "grant" {
                     let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
                     let reason = row["admission"]["reason"].as_str().unwrap();
@@ -5717,6 +5728,7 @@ Open: none")).unwrap();
         let install = crate::platform::default_install();
         let host = crate::host::Policy::read(&install).unwrap();
         let agents = crate::runtime::agents(&install);
+        assert!(agents.as_array().unwrap().iter().any(|r| r["runtime"] == "codex" && r["login"] == "logged in"), "native proof requires a confirmed Codex login");
         for reviewer in [false, true] {
             let root = std::env::temp_dir().join(format!("taskq-qualification-fallback-{}", crate::runtime::uuid()));
             std::fs::create_dir_all(&root).unwrap();
@@ -5746,7 +5758,7 @@ Open: none")).unwrap();
                 command.spawn().map(|p| Box::new(p) as Box<dyn Proc>).map_err(|e| crate::runtime::StartError::io(e, Some("codex")))
             }));
             s.focus = vec!["all".into()];
-            s.login_status = Some(agents.clone());
+            s.logged_out = crate::login_holds(&agents);
             s.refused_access = crate::policy::report(&install, &root, &c.permission_mode, &c.codex).into_iter()
                 .filter_map(|e| e.refused.map(|r| (e.runtime, r))).collect();
             for rt in crate::runtime::agent_runtimes() {
@@ -5771,13 +5783,13 @@ Open: none")).unwrap();
             // End this fixture's attempt first (R11), then stop only its owned native process, even after failure.
             b.comment(n, "taskq: later\nReason: qualification complete").unwrap();
             for kid in &mut s.kids {
-                let identity = kid.proc.native_identity().unwrap();
+                let identity = kid.proc.native_identity().ok();
                 kid.proc.kill().unwrap();
                 let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
                 while kid.proc.exited().unwrap().is_none() && std::time::Instant::now() < until { std::thread::sleep(std::time::Duration::from_millis(10)); }
                 assert!(kid.proc.exited().unwrap().is_some(), "native exit unconfirmed");
-                assert_eq!(coreq::process::identity(identity.pid).unwrap(), None);
-                println!("pid={} native exit confirmed; no prompt/model submitted", identity.pid);
+                if let Some(identity) = identity { assert_eq!(coreq::process::identity(identity.pid).unwrap(), None); }
+                println!("pid={} native exit confirmed; no prompt/model submitted", kid.proc.id());
             }
             drop(s);
             assert!(std::fs::read(root.join("native.log")).unwrap_or_default().is_empty(), "no turn without input");

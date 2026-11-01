@@ -38,7 +38,7 @@
     },
     {
       "code": "login",
-      "meaning": "the routed runtime login is unavailable or unknown"
+      "meaning": "the routed runtime is not logged in"
     },
     {
       "code": "usage-limit",

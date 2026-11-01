@@ -239,7 +239,7 @@ pub const ADMISSION_CODES: [(&str, &str); 13] = [
     ("focus", "the host focus excludes the task or admits nothing"),
     ("capacity", "runtime, project or host slots are full or another project has the turn"),
     ("load-gate", "the load gate or launch spacing holds launches"),
-    ("login", "the routed runtime login is unavailable or unknown"),
+    ("login", "the routed runtime is not logged in"),
     ("usage-limit", "the routed runtime is held after a usage limit"),
     ("access", "the routed runtime refused its access grant"),
     ("unknown", "no decision is known; reason names why"),
