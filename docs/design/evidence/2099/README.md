@@ -43,6 +43,6 @@ Additional distinct states: [named stale-host details](host-details.png), [froze
 
 Native macOS/Windows acceptance remains **Not tested**, independently in the owner chat. Merge-result `merge_group` CI remains the publication gate (R12, §7); browser and source checks do not replace it. No installation, service restart, grants, capacity changes, owner answers or live batch admission were performed.
 
-## Rule-gate blocker
+## Rule-gate authorization
 
-The read-only rule comparison reports changed `Product`, `M3.1` and `M3.24`. A1 explicitly requests the M3 Running agents correction, but the literal rule-ID gate recognizes only `Product` and reports `M3.1 (changed)` and `M3.24 (changed)` as unnamed. No guard was weakened and the task body was not edited. Owner authorization must name those two IDs before the gate can pass; the implementation is not accepted or publishable while it fails (R13, rule-ids contract).
+The first canonical run stopped after 4.026s: A1 named M3 Running agents, but the literal rule-ID gate required `M3.1` and `M3.24`. The [owner answer](https://github.com/taskqorg/taskq/issues/2099#issuecomment-6554541300) explicitly authorizes both IDs and requests resumed checks and normal review/publication. No guard or task body was changed. The repeated canonical run includes the full implementation diff against `dd695b8d1ad2fec03853ea4c6edff3d66faf7acb`; its result is recorded in the PR and task result (R12/R13, §7).
