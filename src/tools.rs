@@ -91,6 +91,7 @@ pub fn check(need: &Need, bin: &Path, required: bool) -> Result<String, String> 
     match version(tool, bin) {
         Err(e) => Err(fail(format!("version unknown ({e})"))),
         Ok(v) if below(&v, min) => Err(fail(format!("found {v}"))),
+        Ok(v) if min.is_empty() => Ok(format!("{tool}: {v}; minimum version unqualified")),
         Ok(v) => Ok(format!("{tool}: {v} (minimum {min}) PASS")),
     }
 }
@@ -195,6 +196,6 @@ mod tests {
         assert_eq!((req("claude", None, Some("claude")), req("codex", None, Some("claude")), req("claude", None, None)), (Some(true), Some(false), Some(false)));
         assert_eq!((req("codex", None, Some("codex")), req("claude", None, Some("codex"))), (Some(true), Some(false)));
         let rows: Vec<_> = needs(None, None).into_iter().map(|n| (n.0.tool, n.0.min)).collect();
-        assert_eq!(&rows[2..], [("gh", "2.5.1"), ("claude", "2.1.296"), ("codex", "0.159.3")], "one row per CLI binary");
+        assert_eq!(&rows[2..], [("gh", "2.5.1"), ("claude", "2.1.296"), ("codex", "0.159.3"), ("agy", "")], "one row per CLI binary");
     }
 }

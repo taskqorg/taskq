@@ -34,7 +34,7 @@ Proposed CLI, run in the project's root:
 
 ```text
 taskq service capacity [--host H]
-taskq service capacity --host H --claude N --codex N
+taskq service capacity --host H --claude N --codex N --antigravity N
 taskq service capacity --host H --load-gate on --cpu-max P --memory-min P
 taskq service capacity --host H --load-gate off
 ```
@@ -135,7 +135,7 @@ The compact contract sets the decisions; this note supplies rationale and exampl
 -  writes `<root>/.taskq/status.json` (state, open tasks with labels, `request`, `update`: a newer version the last check found and did not install, else null, `events_since`) for `service status` and the tray.
 +  writes `<root>/.taskq/status.json` (state, open tasks with labels, `request`, `update`: a newer version the last check found and did not install, else null, `events_since`) for `service status` and the tray; `capacity` adds effective `limits`, live-child `used`, effective `load_gate`, `gate` (off/open/held/unknown), all `reasons`, CPU/available-memory percentages, `sample_at`, monotonic `sample_age_seconds`; unknown readings are null, missing/stale (>60 s) capacity is unknown. Publish capacity on sample/launch/reap/reload; remote usage needs a local snapshot, else it is unknown. Reload capacity before admission; bad config holds launches, children continue.
 @@ §5 Commands: insert before selftest @@
-+| `taskq service capacity [--host H] [--claude N] [--codex N] [--load-gate on\|off] [--cpu-max P] [--memory-min P]` | read: local host default; write: explicit known host, owner instruction (menu confirms named old/new values first, R9). Same atomic JSON-preserving operation; detect concurrent edits; read back saved config, poke locally, say applied only after fresh matching effective service readback. Other hosts: saved only, no remote deployment. |
++| `taskq service capacity [--host H] [--claude N] [--codex N] [--antigravity N] [--load-gate on\|off] [--cpu-max P] [--memory-min P]` | read: local host default; write: explicit known host, owner instruction (menu confirms named old/new values first, R9). Same atomic JSON-preserving operation; detect concurrent edits; read back saved config, poke locally, say applied only after fresh matching effective service readback. Other hosts: saved only, no remote deployment. |
 @@ §9 Config: insert after hosts/has/limits @@
 +- `capacity_hosts` optional resolved-host map: partial `limits` override existing per-project defaults, absent runtime = disabled; optional host `load_gate` replaces the top-level default object. Gate fields: `enabled` false, `cpu_max` 85, `memory_min` 15 when omitted. Validate limits 0..u32::MAX, CPU 10..100, memory 1..95 (integer percentages); preserve other keys. Absent new keys preserve behavior; no auto-migration/enabling. Use new fields only on verified compatible hosts; older rollback loses enforcement and needs compatible restoration or owner-approved pause before admission.
 ```
@@ -212,7 +212,7 @@ A Codex worker whose turn fails on a transient model error mid-work continues in
 
 ## Runtime login
 
-`taskq agents` (taskq.md § 5) prints, per startable runtime (`claude`, `codex`; macOS/Windows `codex-app` on Codex's login), limit 0 too: binary or `not installed`, version, login, account, kind, last refresh; read-only; no login, token value or board; unreadable: `unknown` (R12); `not logged in` admits nothing.
+`taskq agents` (taskq.md § 5) prints, per startable runtime (`claude`, `codex`, `antigravity`; macOS/Windows `codex-app` on Codex's login), limit 0 too: binary or `not installed`, version, login, account, kind, last refresh; read-only; no login, token value or board; unreadable: `unknown` (R12); `not logged in` admits nothing.
 
 The service probes each startable runtime's login at most every 5 minutes (taskq.md § 5 `taskq agents`):
 
@@ -251,3 +251,9 @@ Detail of [taskq.md § 3 Runtime accounts](../../taskq.md#runtime-accounts); it 
 - The writes act on this host only and are refused under a worker or reviewer (`TASKQ_ROLE`). They never read or print a token value.
 
 The service login probe and `taskq agents` keep reading the `default` home ([runtime login](#runtime-login)).
+
+### Antigravity availability
+
+`limits.antigravity` and the `--antigravity N` capacity flag count Antigravity workers, reviewers and resumes across registered projects through the same host budget; project limits only lower it. Limit zero is an owner disable, never a quota estimate. Native `agy` sign-in/account probing is unqualified and reports unknown; TaskQ does not run Codex login commands against it.
+
+AgentQ supplies Antigravity quota observations through the existing `runtime::usage_limit` boundary. A pre-work quota refusal uses the existing `usage-limit` hold, reported reset or bounded next-probe time, and keeps retries. It does not change capacity or move an active attempt. Multiple provider/account quota windows and their recovery belong to [subscription quota windows](https://github.com/taskqorg/taskq/issues/2137#issuecomment-6560063367); one observed reset never proves a longer window recovered. Antigravity currently uses its native default login; TaskQ's named account login commands remain Claude/Codex only.

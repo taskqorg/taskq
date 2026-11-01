@@ -209,6 +209,8 @@ pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
 
 /// The session's transcript (D1): Claude `projects/*/<id>.jsonl`, Codex `sessions/**/rollout-*-<id>.jsonl`.
 pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
+    let a = super::of(runtime);
+    if !a.codex && !a.remote { return Err(format!("runtime {runtime:?}: native transcript adapter unqualified")); }
     if super::of(runtime).codex {
         codex_transcript_in(&super::codex_home().ok_or("transcript unknown: no home folder")?, session)
     } else {

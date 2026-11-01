@@ -41,5 +41,9 @@ page=render([{...project,hosts:[{name:'<img>',live:true}],tasks:[]}]);assert(pag
 render([{...project,hosts:['mac','macbook','hermes-fra1','hermes-win','win'].map(name=>({name,live:true}))}]);assert.deepEqual([...strip().matchAll(/<strong>([^<]*)<\/strong>/g)].map(m=>m[1]),['hermes-f','hermes-w','mac','macb','win']);assert(strip().includes('title="hermes-fra1 · idle · Total running agents: 0"'));
 c.S.agents={fresh:true,rows:[{runtime:'codex',state:'expired'},{runtime:'claude',state:'check-failed'}]};page=render([{...project,sample_age_text:'2m',capacity:{...project.capacity,cpu_percent:41.6,memory_available_percent:62.2}}]);assert.equal(host('mac'),'2');assert.deepEqual(totals(),{Codex:'2',Claude:'1'});assert(page.includes('Sign-in: Codex expired'));assert(page.includes('CPU 42% busy · memory 62% available · sampled 2m ago'));assert(strip().includes('class="host-warning"'));
 page=render([]);assert.equal(host('mac'),undefined,'#1967 A4: no named strip chip without an open heartbeat');assert(strip().includes('Hosts ?'));assert.deepEqual(totals(),{Codex:'?',Claude:'?'});assert(page.includes('Capacity unknown'));
+// #2136 A2/R6: count the third runtime independently and retain the known/unknown distinction.
+render([{...project,tasks:[...project.tasks,{n:12,executions:[execution(22,'mac','antigravity','reviewer')]}]}]);
+assert.equal(host('mac'),'3');assert.deepEqual(totals(),{Codex:'2',Claude:'1',Antigravity:'1'});
+assert(c.runningAgents().includes('antigravity: 0 workers · 1 reviewer'));
 module.exports={project};
 console.log('PASS UX30-06 / A1–A5: host/family totals, idle/partial/stale/conflict/duplicate/ended/runtime cases; roles, resources, source and sign-in preserved');

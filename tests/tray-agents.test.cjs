@@ -18,3 +18,10 @@ assert(page.includes('win · heartbeat unknown: no host row'),'host seen only in
 assert(page.includes('Codex · unknown: hermes-fra1 heartbeat publishes no client version, sign-in, account or access'),'remote client facts name the missing source');
 assert(page.includes('Expiry unknown')&&page.includes('not an expiry'),'refresh time is never an expiry');
 console.log('PASS agents page: off/unknown AgentQ without setup prompt; remote client facts unknown with source; expiry only when sourced');
+
+// #2136 A2/R12: the third subscription has its own visible name and never borrows Codex sign-in facts.
+context.S.agents.rows.push({runtime:'antigravity',version:'unknown',state:'check-failed'});
+const ag=context.agents();
+assert(ag.includes('Antigravity unknown'));
+assert(ag.includes('Antigravity · unknown: hermes-fra1 heartbeat publishes no client version, sign-in, account or access'));
+console.log('PASS Antigravity labels and unknown sign-in');

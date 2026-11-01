@@ -163,7 +163,7 @@ Shared fixtures cover legacy and Auto modes, mixed targets, zero/absent limits, 
 - Work mode (#954, [menu M12](menu.md#m12-shared-work-mode)): native host policy uses the same single host editor as Capacity, with an explicit all-registered-projects review and no project-selection controls implying narrower scope. Project ceilings remain read-only. Legacy `workFields`, `workStatus`, `workStep`, `workRender` and `mountWork` retain selected-project fixture behavior for compatible consumers; they refuse host-capacity groups. Their existing fixtures cover Mixed, untouched/unselected fields, partial failure, conflict and same-ID retry. They do not qualify a native project writer or a remote host profile.
 - Release: `taskq-<version>-resource-controls.js`, `.css` and `-fixtures.json` ship in each release, listed in `SHA256SUMS`. Checksums of this source, checked by the node test:
 
-`src/resource-controls.js` SHA-256: `87b3d7d931ffbef6b11d90ac30da8ec62879c7d6a21e6d909f660e735988aec0`
+`src/resource-controls.js` SHA-256: `4576eb2931c269ff8afe282c162bd2cab13394d26921c4afe4d51a76dd1637ee`
 `src/resource-controls.css` SHA-256: `9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907`
 `tests/fixtures/resource-controls.json` SHA-256: `a1637498fa9fcc346c7280186386b7a3d9d96aa09c38f8c27bd9a81e8d6fcbe9`
 

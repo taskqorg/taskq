@@ -334,7 +334,7 @@ Preservation readback: working `worker-policy.json` and native auth hashes match
 
 ## Runtime adapters
 
-Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `codex`, `codex-app`) is one `crate::runtime::Adapter` in `src/runtime.rs`, found by `crate::runtime::of(name)`.
+Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `codex`, `antigravity`, `codex-app`) is one `crate::runtime::Adapter` in `src/runtime.rs`, found by `crate::runtime::of(name)`.
 
 - The adapter owns everything that differs by runtime: launch and resume, the command line, policy and sandbox arguments, the session link, process identity, auth and login hints.
 - The runtime module keeps that code; other modules ask the adapter (binary, client name, home, CLI child, Remote Control session, app turn, Codex family, setup access) and never compare runtime names.
@@ -344,7 +344,7 @@ Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `cod
 - Kid adoption (`crate::runtime::adopt`), handover waits (`handover_waits`), the worker default runtime (`preferred`) and the Claude process lookup go through the adapter.
 - Allowed exceptions: the sandbox files (`src/linux_sandbox.rs`, `src/windows_sandbox*`) and tests.
 - `scripts/check.py` refuses, anywhere else in non-test Rust including `src/main.rs`, a runtime name literal and the native names `claude.exe`, `.claude.json`, `CODEX_HOME` and `CODEX_THREAD_ID`.
-- Behavior does not change with the move: golden traces and existing tests stay unchanged.
+- New runtime policy changes update the golden admission traces; existing pin, grant and ownership protections remain binding.
 
 ## Contract detail
 
@@ -364,7 +364,7 @@ Linked from `taskq.md` [§ 8](../taskq.md#8-runtimes-and-deployment); this text 
 
 ### AgentQ runtime
 
-AgentQ owns shared native runtime mechanics through `agentq_runtime::agent`, pinned to published source `513193c8a96f3de1c71a86291a679230817ce0b2` (`agentq-runtime` 0.1.0). CoreQ retains process, telemetry, update and host primitives; its frozen agent compatibility API remains available to older consumers. TaskQ owns board state, attempts, capacity, accounts, permissions, model/effort, focus, briefs, tool grants and protected recovery persistence (R3/R8/R9/R13). Worker, reviewer and owner/operator start/resume paths use the same shared API, including Claude background/Remote Control and Codex app. Native identities, checkpoints and usage attribution retain their existing meaning.
+AgentQ owns shared native runtime mechanics through `agentq_runtime::agent`, pinned to published source `9be735b5a82f5a526cd8b1757196387956c3b5d0` (`agentq-runtime` 0.1.0). CoreQ retains process, telemetry, update and host primitives; its frozen agent compatibility API remains available to older consumers. TaskQ owns board state, attempts, capacity, accounts, permissions, model/effort, focus, briefs, tool grants and protected recovery persistence (R3/R8/R9/R13). Worker, reviewer and owner/operator start/resume paths use the same shared API, including Claude background/Remote Control and Codex app. Native identities, checkpoints and usage attribution retain their existing meaning.
 
 Optimizer installation is optional. A launch inherits `AGENTQ_OPTIMIZATION=inherit|off|on` (absent: inherit); invalid intent refuses before submission. AgentQ resolves the account's actual client home and optional installation read-only. Each launch reports intent, effective on/off/unknown and reason in the private service/launch diagnostic. `on` never enables a disabled integration; `off` applies only to the child/provider request. Configuration at launch never proves actual compression. No host/global configuration is written; app handshakes and queued turns remain separate observations. Claude starts merge only optimizer environment keys into existing per-session settings; background resumes pass only those keys as a settings overlay before the shared resume command. Permission/model settings remain native-owned; the overlay transport and same-session effect still need native qualification. Active sessions remain unchanged.
 
@@ -374,13 +374,22 @@ Forward: adopt the immutable dependency and run the selected Windows/portable ga
 
 | Runtime | spawn (child of service) | resume |
 |---|---|---|
+| Antigravity | `agy --input-format stream-json --output-format stream-json`; one JSON user event on stdin, conversation ID from AgentQ session parsing | Same command with `--conversation <id>` and the fresh user event; retain attempt/session |
 | Codex | `codex exec --json <codex opts> -C <root> -`, brief on stdin; session from the first `thread.started` line | `codex exec --json resume <id> -` |
 | Claude | `claude --bg --remote-control <name> --permission-mode <mode>`, brief in a per-turn file; short read-file instruction on stdin; native ID from `agents --json` | After stop readback: `claude --bg --resume <id>`, fresh brief as at spawn; saved native options, same ID required |
 | Codex app | Codex's spawn with a handshake brief; then `open codex://threads/<id>` and `codex queue --thread <id> --message <brief>` | `open` and `codex queue --thread <id> --message <text>` |
 
+### Antigravity boundary
+
+The TaskQ adapter uses `agy` on the service PATH and AgentQ command/session/usage/terminal-event mechanics. Native `agentapi` background-server launches are not qualified for TaskQ and are not selected as a substitute for `agy`. Command construction, stream transport and admission checks are adapter/process evidence only; actual Antigravity subscription work, reviewer continuation, permissions and each supported OS need native qualification (R12). No minimum client version is qualified yet; tools report this explicitly.
+
+Antigravity requires its own operator-owned runtime/project grant. macOS Workspace wraps the CLI in the existing Seatbelt boundary and adds only its native state home `~/.gemini/antigravity` to that runtime's writable set; it does not change other grants. Unsupported containment refuses; no implicit Full fallback. Host model/effort and permission options for other clients never become Antigravity options. Its native defaults remain unchanged. Login/account probes report unknown until a native read-only protocol is qualified. Named account creation and owner/operator sessions are unchanged.
+
+The CLI execution keeps its native process identity and log offset through protected recovery. Only attributed input events confirm acceptance; a successful launcher exit alone does not. Unknown liveness, missing native identity or session ID keeps the attempt fenced; resume never creates a replacement conversation.
+
 ### Child environment, briefs and logs
 
-Child environment drops `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, adds `TASKQ_TASK`, `TASKQ_ATTEMPT`, `TASKQ_ROLE`, [`CARGO_BUILD_JOBS`](design/capacity.md#compile-jobs) = host CPUs / occupied host slots, on GitHub the host board token and, with `sccache`, a [build cache](testing.md#build-cache). Briefs never pass through a shell. App turns need an owner-provisioned `gh` token, never injected by taskq. Logs: `<root>/.taskq/<T|R><N>-<attempt>.log`.
+Child environment drops `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `ANTIGRAVITY_CONVERSATION_ID`, adds `TASKQ_TASK`, `TASKQ_ATTEMPT`, `TASKQ_ROLE`, [`CARGO_BUILD_JOBS`](design/capacity.md#compile-jobs) = host CPUs / occupied host slots, on GitHub the host board token and, with `sccache`, a [build cache](testing.md#build-cache). Briefs never pass through a shell. App turns need an owner-provisioned `gh` token, never injected by taskq. Logs: `<root>/.taskq/<T|R><N>-<attempt>.log`.
 
 ## Windows large background input (#1223)
 

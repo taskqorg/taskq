@@ -20,5 +20,9 @@
   {"name": "both full leave work ready", "limits": {"claude": 0, "codex": 0}, "running": {}, "tasks": 1,
    "expect": [null]},
   {"name": "code type does not create a pin", "limits": {"claude": 0, "codex": 1}, "running": {}, "tasks": 1, "labels": ["code"],
-   "expect": ["codex"]}
+   "expect": ["codex"]},
+  {"name": "third subscription supplies work after both others fill", "limits": {"claude": 1, "codex": 1, "antigravity": 1}, "running": {}, "tasks": 4, "expect": ["claude", "codex", "antigravity", null]},
+  {"name": "antigravity pin respects its slot ceiling", "limits": {"claude": 2, "codex": 2, "antigravity": 1}, "running": {}, "tasks": 2, "labels": ["run-antigravity"], "expect": ["antigravity", null]},
+  {"name": "disabled antigravity cannot take fallback", "limits": {"claude": 0, "codex": 0, "antigravity": 0}, "running": {}, "tasks": 1, "expect": [null]},
+  {"name": "full antigravity default falls back to claude", "default": "antigravity", "limits": {"claude": 1, "codex": 1, "antigravity": 1}, "running": {"antigravity": 1}, "tasks": 1, "expect": ["claude"]}
 ]

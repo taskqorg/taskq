@@ -424,7 +424,7 @@ const root=globalThis;
   const STATES = ['view', 'editing', 'review', 'conflict', 'sending', 'saved', 'applied', 'rejected', 'unknown', 'read-only','superseded'];
   const FRESH = 60;
   const {esc}=execution.module("resource-controls",{esc:s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]))});
-  const {rtName}=execution.module("resource-controls",{rtName:rt => ({claude: 'Claude', codex: 'Codex', 'codex-app': 'Codex app'}[rt] || rt)});
+  const {rtName}=execution.module("resource-controls",{rtName:rt => ({claude: 'Claude', codex: 'Codex', 'codex-app': 'Codex app', antigravity: 'Antigravity'}[rt] || rt)});
   const BLOCKERS = {cpu: 'CPU', memory: 'memory', pressure: 'memory pressure', sample: 'no fresh sample', config: 'invalid config', cooldown: 'recovery',
     spacing: 'host spacing', max: 'host maximum', version: 'old service', host: 'host hold', runtime_disabled: 'runtime disabled', pause: 'paused',
     focus: 'focus', dependency: 'dependency', routing: 'routing', access: 'access', provider: 'provider limit', unknown: 'unknown reason'};

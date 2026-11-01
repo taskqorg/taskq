@@ -1,7 +1,7 @@
 //! Shared board catalog; label spellings do not change the fold.
 use crate::board::Result;
 
-pub const FIXED: &[&str] = &["taskq", "taskq-host", "q-held", "q-ready", "q-blocked", "q-doing", "q-review", "q-ask", "q-later", "q-failed", "p0", "p1", "p2", "code", "docs", "research", "asset", "run-codex", "run-claude", "run-codex-app", "prefer-codex", "prefer-claude", "assignee-only", "verdict-confirmed", "verdict-refuted", "verdict-inconclusive"];
+pub const FIXED: &[&str] = &["taskq", "taskq-host", "q-held", "q-ready", "q-blocked", "q-doing", "q-review", "q-ask", "q-later", "q-failed", "p0", "p1", "p2", "code", "docs", "research", "asset", "run-codex", "run-claude", "run-codex-app", "run-antigravity", "prefer-codex", "prefer-claude", "assignee-only", "verdict-confirmed", "verdict-refuted", "verdict-inconclusive"];
 
 pub fn canonical(name: &str) -> &str {
     match name { "q-waiting" => "q-blocked", "priority-1" => "p1", "priority-2" => "p2", _ => name }
@@ -16,31 +16,29 @@ pub fn route(labels: &[String], reviewer: bool, default: &str) -> String {
     if legacy == crate::runtime::OWNER { default } else { legacy }.into()
 }
 
-/// Ordered policy candidates; owner pins and non-Claude preferences have no implicit alternative.
+/// §4/R13: preferred CLI, then the other subscriptions; strict pins and the app never fall back.
 pub fn candidates(labels: &[String], reviewer: bool, default: &str) -> Vec<String> {
     let preferred = route(labels, reviewer, default);
-    let fallback = preferred == crate::runtime::RUNTIMES[0] && !labels.iter().any(|l| l.starts_with("run-"));
-    let mut candidates = vec![preferred];
-    if fallback { candidates.push(crate::runtime::RUNTIMES[1].into()); }
+    let legacy_pin = !reviewer && labels.iter().any(|l| l == "prefer-codex") && !labels.iter().any(|l| l == "prefer-claude");
+    let fallback = crate::runtime::CLI_RUNTIMES.contains(&preferred.as_str()) && !legacy_pin && !labels.iter().any(|l| l.starts_with("run-"));
+    let mut candidates = vec![preferred.clone()];
+    if fallback { candidates.extend(crate::runtime::CLI_RUNTIMES.iter().filter(|rt| **rt != preferred).map(|rt| rt.to_string())); }
     candidates
 }
 
 /// §4/§9 admission policy; the caller checks each candidate independently before claiming anything.
 pub fn select(labels: &[String], reviewer: bool, default: &str,
     mut eligible: impl FnMut(&str) -> std::result::Result<String, (&'static str, String)>) -> std::result::Result<(String, Option<String>), (&'static str, String)> {
-    let candidates = candidates(labels, reviewer, default);
-    match eligible(&candidates[0]) {
-        Ok(rt) => Ok((rt, None)),
-        Err(first) if candidates.len() > 1 && first.0 != "unknown" => {
-            let fallback = &candidates[1];
-            match eligible(fallback) {
-                Ok(rt) => Ok((rt, Some(format!("fallback: {}; selected {fallback}", first.1)))),
-                Err(second) if second.0 == "unknown" => Err(second),
-                Err(second) => Err((first.0, format!("{}; {}", first.1, second.1))),
-            }
+    let mut failures = vec![];
+    let mut code = "unknown";
+    for candidate in candidates(labels, reviewer, default) {
+        match eligible(&candidate) {
+            Ok(rt) => return Ok((rt, (!failures.is_empty()).then(|| format!("fallback: {}; selected {candidate}", failures.join("; "))))),
+            Err(e) if e.0 == "unknown" => return Err(e),
+            Err(e) => { if failures.is_empty() { code = e.0; } failures.push(e.1); }
         }
-        Err(e) => Err(e),
     }
+    Err((code, failures.join("; ")))
 }
 
 pub fn matches(labels: &[String], filter: &str) -> bool {
@@ -65,7 +63,7 @@ pub fn definition(name: &str) -> Option<(&'static str, String)> {
         "code" | "docs" | "research" | "asset" => ("D5D9DE", "Result type; no admission restriction", "edit issue labels"),
         "verdict-confirmed" | "verdict-refuted" | "verdict-inconclusive" => ("D5D9DE", "Experiment verdict; read by Decide", "taskq close"),
         "assignee-only" => ("BAC7D3", "Board account must be an assignee", "edit assignees/labels"),
-        "run-codex" | "run-claude" | "run-codex-app" => ("BAC7D3", "Requires this enabled runtime", "edit issue labels"),
+        "run-codex" | "run-claude" | "run-codex-app" | "run-antigravity" => ("BAC7D3", "Requires this enabled runtime", "edit issue labels"),
         "prefer-codex" | "prefer-claude" => ("BAC7D3", "Legacy: prefer-codex reads as run-codex; prefer-claude as none", "edit issue labels"),
         n if n.starts_with("host-") && n.len() > 5 => ("BAC7D3", "Requires this host", "edit issue labels"),
         n if n.starts_with("needs-") && n.len() > 6 => ("BAC7D3", "Requires this capability; all needs must match", "edit issue labels/host has"),
@@ -95,6 +93,28 @@ pub fn validate(labels: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // A3/A4, R9/R13: subscription fallback must include Antigravity without overriding pins or unknown ownership.
+    #[test]
+    fn antigravity_fallback_keeps_pins_and_all_blockers() {
+        for reviewer in [false, true] {
+            for default in ["claude", "codex", "antigravity"] {
+                let (rt, why) = select(&[], reviewer, default, |rt| if rt == "antigravity" { Ok(rt.into()) } else { Err(("usage-limit", format!("{rt} quota"))) }).unwrap();
+                assert_eq!(rt, "antigravity");
+                assert_eq!(why.is_none(), default == "antigravity");
+                for pin in ["claude", "codex", "antigravity", "codex-app"] {
+                    assert_eq!(candidates(&[format!("run-{pin}")], reviewer, default), [pin]);
+                }
+            }
+            let error = select(&[], reviewer, "claude", |rt| Err(("capacity", format!("{rt} disabled")))).unwrap_err();
+            for rt in ["claude", "codex", "antigravity"] { assert!(error.1.contains(rt), "{error:?}"); }
+            let mut tried = vec![];
+            assert!(select(&[], reviewer, "claude", |rt| { tried.push(rt.to_string()); Err(("unknown", "host policy unreadable".into())) }).is_err());
+            assert_eq!(tried, ["claude"], "unknown common state must not permit fallback");
+        }
+        assert_eq!(candidates(&["prefer-codex".into()], false, "antigravity"), ["codex"], "§1 legacy worker pin remains strict");
+        assert!(definition("run-antigravity").is_some());
+    }
+
     // Chain: § 1 task labels on add. Risk: conflicting priority, runtime or host labels accepted.
     #[test]
     fn catalog_and_aliases() {
@@ -115,7 +135,7 @@ mod tests {
     #[test]
     fn route_uses_the_host_default_runtime_unless_run_names_one() {
         let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        for default in ["claude", "codex"] {
+        for default in crate::runtime::CLI_RUNTIMES {
             assert_eq!(route(&l(&["p1"]), true, default), default, "reviewer");
             assert_eq!(route(&l(&["run-claude"]), true, default), "claude", "explicit pin binds review");
             assert_eq!(route(&l(&[]), false, default), default, "worker without run-*");

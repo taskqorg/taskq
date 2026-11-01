@@ -14,7 +14,7 @@ TaskQ names: lowercase, hyphen-separated, no emoji. Priority shorthand: `p0/p1/p
 | Состояние | `q-ready`, `q-blocked`, `q-doing`, `q-review`, `q-ask`, `q-later`, `q-failed` | Проекция журнала; ровно одно у открытой задачи |
 | Приоритет | `p0`, `p1`, `p2` | меньше — выше; отсутствие = 2; `p0` — срочная задача: проходит любой focus на любом хосте (taskq.md § 4, #790) |
 | Результат | `code`, `docs`, `research`, `asset` | Один тип; префикс `type-` не нужен |
-| Runtime | `run-codex`, `run-claude` | Не более одного ограничения; отсутствие = любой разрешённый |
+| Runtime | `run-codex`, `run-claude`, `run-antigravity`, `run-codex-app` | Не более одного ограничения; отсутствие = любой разрешённый |
 | Хост | `host-<name>` | Не более одного ограничения; отсутствие = любой подходящий |
 | Возможности | `needs-<capability>` | Все указанные требования обязательны |
 | Область | `area-<name>` | Подсистема, фильтры; несколько допустимы |

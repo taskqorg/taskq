@@ -96,7 +96,7 @@ fn typed(v: &Value) -> Result<Submit, &'static str> {
         || r.target.installation_id.len() != 64
         || !r.target.installation_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         || r.target.generation == 0 || r.target.project_id.as_deref().is_some_and(|s| !id(s))
-        || r.target.runtime_id.as_deref().is_some_and(|s| !["claude", "codex", "codex-app"].contains(&s))
+        || r.target.runtime_id.as_deref().is_some_and(|s| !["claude", "codex", "codex-app", "antigravity"].contains(&s))
         || (r.target.runtime_id.is_some() && r.target.project_id.is_none())
         || r.expires_at <= r.issued_at || r.expires_at - r.issued_at > 300 || r.changes.is_empty()
     { return Err("invalid"); }
