@@ -1100,7 +1100,7 @@ fn closed_row(b: &dyn Board, i: &board::Issue, closed: Option<i64>, gitlab: bool
     let verdict = verdict.as_deref();
     let next = verdict.and_then(display::successor).map(|m| dispatch::current(b, m).map_or("unknown", |(i, t, _)| if i.open { t.state.name() } else { "closed" }));
     let close = log.is_ok().then(|| display::close_outcome(verdict, next));
-    json!({"n": i.number, "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "history":history,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err()})
+    json!({"n": i.number,"revision":log.as_ref().ok().map(|log|core::revision(i.number,log)), "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "history":history,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err()})
 }
 
 fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {

@@ -518,15 +518,15 @@ mod tests {
         pages
     }
 
-    // #1742 Q-A5: 10,000 variable-height visible records of both native renderers. Defect: a bounded or out-of-order
+    // #2110 A5 / Q-A5: 100,000 variable-height visible records of both native renderers. Defect: a bounded or out-of-order
     // read omits or repeats a record, splits one, or stops at a page of only ignored records. Risk kept: every record
     // is reached from either end with the same identity, at most ITEMS items per page.
     #[test]
-    fn ten_thousand_records_traverse_both_ways_in_any_order() {
+    fn hundred_thousand_records_traverse_both_ways_in_any_order() {
         let dir = tmp();
         for codex in [false, true] {
             let path = dir.join(format!("{codex}.jsonl"));
-            let want = transcript(codex, &path, 10_000, 300_000, 1500, 600 * 1024);
+            let want = transcript(codex, &path, 100_000, 300_000, 1500, 600 * 1024);
             let pages = back(codex, &path);
             assert!(pages.iter().all(|p| p.items.len() <= ITEMS), "bounded pages");
             assert!(pages.iter().any(|p| p.items.is_empty() && p.start > 0), "a page of ignored records still leads earlier");
@@ -543,7 +543,8 @@ mod tests {
             let mut order: Vec<usize> = (0..pages.len()).collect();
             order.sort_by_key(|i| (i * 7919) % pages.len());
             for i in order { let p = before(codex, &path, Some(pages[i].end)).unwrap(); assert_eq!((p.start, &p.items), (pages[i].start, &pages[i].items)); }
-            for p in &pages[1..] { let a = after(codex, &path, p.start).unwrap(); assert_eq!(a.items.first(), p.items.first(), "a saved record cursor reloads its range"); }
+            // An ignored prefix can exceed CHUNK: the saved anchor is the visible record offset, not the page boundary.
+            for item in pages.iter().skip(1).filter_map(|p|p.items.first()) {let a=after(codex,&path,item["at"].as_u64().unwrap()).unwrap();assert_eq!(a.items.first(),Some(item),"a saved record cursor reloads its range");}
         }
         fs::remove_dir_all(dir).unwrap();
     }

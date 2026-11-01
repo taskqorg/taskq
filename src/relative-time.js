@@ -1,6 +1,6 @@
 'use strict';
 const {h}=require('preact'),ui=require('./ui-runtime.js'),{execution}=ui;
-const mounted=new WeakSet(),relative=new Intl.RelativeTimeFormat('en',{numeric:'always',style:'short'});
+const mounted=new WeakSet();
 let zone,exact;
 // D-A19: callers convert declared seconds; native byte cursors never enter this renderer.
 const time=execution.module('relative-time',{
@@ -14,9 +14,8 @@ const time=execution.module('relative-time',{
  seconds:function(raw){return typeof raw==='number'?time.value(raw*1000):null;},
  label:function(ms,now=Date.now()){
   const delta=(ms-now)/1000,age=Math.abs(delta);
-  if(age<60)return delta>0?'in a moment':'just now';
-  const [unit,size]=age<3600?['minute',60]:age<86400?['hour',3600]:['day',86400];
-  return relative.format(Math.sign(delta)*Math.floor(age/size),unit);
+  const [unit,size]=age<3600?['m',60]:age<86400?['h',3600]:['d',86400];
+  return (delta>0?'in ':'')+(age<60?'<1m':Math.floor(age/size)+unit);
  },
  detail:function(ms,context){
   const current=Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -25,7 +24,7 @@ const time=execution.module('relative-time',{
  },
  stamp:function(raw,context='Time',reason,focus=true){
   const ms=time.value(raw),full=ms===null?context+' · Time unknown: '+(reason||(raw==null?'Source timestamp unavailable':'Source timestamp invalid or missing a time zone')):time.detail(ms,context);
-  return h(ms===null?'span':'time',{class:'relative-time'+(ms===null?' time-unknown':''),...(ms===null?{}:{dateTime:new Date(ms).toISOString(),'data-time-ms':ms,'data-time-source':raw,'data-time-context':context}),title:full,'aria-label':full,tabIndex:focus?0:undefined},ms===null?'Time unknown':time.label(ms));
+  return h(ms===null?'span':'time',{class:'relative-time'+(ms===null?' time-unknown':ms>Date.now()?' time-future':''),...(ms===null?{}:{dateTime:new Date(ms).toISOString(),'data-time-ms':ms,'data-time-source':raw,'data-time-context':context}),title:full,'aria-label':full,tabIndex:focus?0:undefined},ms===null?'Time unknown':time.label(ms));
  },
  refresh:function(root,now=Date.now()){
   for(const el of root.querySelectorAll('time[data-time-ms]')){const next=time.label(Number(el.dataset.timeMs),now);if(el.textContent!==next)el.textContent=next;}

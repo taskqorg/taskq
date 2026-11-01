@@ -2,13 +2,13 @@
 const ui=require('./ui-runtime.js'),{execution}=ui,{h}=require('preact');
 const replyFiles=require('./reply-files.js'),time=require('./relative-time.js');
 const {create}=execution.module('workspace.answers',{
-create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed,steer}){
+create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed,steer,read=(p,t)=>t,historyText}){
  const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={},steers={};
  const api=execution.module('workspace.answers.instance',{
 project:function(board,root=view.answer?.board===board?view.answer.root:null){return view.S?.projects.find(p=>p.issues===board&&(!root||p.root===root));},
-answerCapability:function(board){const p=api.project(board);return {manage:true,files:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board',composer};},
+answerCapability:function(board,row){const p=api.project(board);return {manage:true,files:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board',composer,paged:composer&&(row?.question?.text||row?.card||'').length>32768};},
 // #1662 A3: the workspace's shared composer reads and drives the mounted card; the card keeps draft, op and receipt
-answerCompose:function(board,row){return component().compose(row,saved[board+'#'+row.n]||component().fresh(row),answerCapability(board));},
+answerCompose:function(board,row){return component().compose(row,saved[board+'#'+row.n]||component().fresh(row),answerCapability(board,row));},
 answerInput:function(board,n,text,caret){answerCards.get(board+'/'+n)?.ui.input(board,n,text,caret);},
 answerAct:function(board,n,type){answerCards.get(board+'/'+n)?.ui.act(board,n,type);},
 answerSetFiles:function(board,n,files){const row={n},prior=saved[board+'#'+n];if(!prior)return;if(!answerCards.get(board+'/'+n)?.ui.files(board,n,files))save(board,row,{...prior,files});draw();},
@@ -76,13 +76,15 @@ answerWon:function(board,t){
 },
 // #1918 A5: the conversation is append-only: every answered question stays as it was asked, read-only, then its
 // answer line, in board order; an open question follows as the live card
-answerHistory:function(t){
+answerHistory:function(t,root){
   return (t.history||[]).map(({question:q,answered:a},i)=>{
    const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:a?.revision||0,question:{choices:[],evidence:[],...q}},key=a?.revision??i;
-   return [h('section',{key:'asked:'+key,class:'thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+(i+1)+' of #'+t.n},time.stamp(null,'Recorded question','Question timestamp unavailable in the history adapter'),h('div',{dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,reason:'Recorded question'})}})),
+   const paged=!!historyText&&(q?.text||'').length>32768;
+   return [h('section',{key:'asked:'+key,class:'thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+((t.history_start||0)+i+1)+' of #'+t.n},time.stamp(null,'Recorded question','Question timestamp unavailable in the history adapter'),paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question'})}})),
     h('p',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'body answered',role:'status'},won({answered:a||{}}),time.stamp(null,'Recorded answer','Answer timestamp unavailable in the history adapter'))];
   });
 },
+readingAnchors:function(el,t){if(el)for(const [i,node]of [...el.querySelectorAll('.qac-done,.qac-problem,.qac-detail,.qac-context>summary,.qac-images,.qac-evidence,.qac-text,[data-choice]')].entries())node.dataset.readingKey='report:question-'+t.n+'-'+t.revision+'-'+i;},
 // ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
 answerSteerComposer:function(board,t){
   const key=board+'#'+t.n,local=saved[key],text=steers[key]??local?.draft??'',files=local?.files||[];
@@ -113,14 +115,16 @@ answerToast:function(){
   return r?h('div',{class:'toast',role:'status'},'#'+r.op.task+' · '+(r.note?'task note saved':r.answered?'already answered':{start:'started',stop:'stopped',later:'parked',retry:'requeued',steer:'steer sent'}[r.op.action]||'answer accepted')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),h('button',{'data-a':'toast-dismiss','aria-label':'Dismiss',title:'Dismiss'},'×')):null;
 },
 mountAnswers:function(){
+  for(const [key,c]of answerCards)if(!c.el.isConnected){c.ui.update([]);answerCards.delete(key);}
   for(const slot of menu.querySelectorAll('[data-answer]')){
-    const t=unique(view.S.projects.filter(p=>!view.answer?.root||p.root===view.answer.root).flatMap(tasks)).find(t=>t.key===slot.dataset.answer);
-    if(!t)continue;
+    const key=slot.dataset.answer,at=key.lastIndexOf('/'),p=api.project(key.slice(0,at)),row=p?.tasks.find(t=>t.n===Number(key.slice(at+1)));
+    if(!row)continue;
+    const t=read(p,{...row,key,url:row.url||p.issues+'/'+row.n});if(t.body_lazy)continue;
     let card=answerCards.get(t.key);
     if(!card){const el=document.createElement('div');card={el,ui:component().mount(el,{capability:answerCapability,send:answerSend,load:load,save:save})};answerCards.set(t.key,card);}
     if(card.el.parentNode!==slot)slot.append(card.el);
-    const p=api.project(t.key.slice(0,t.key.lastIndexOf('/')));
     card.ui.update([{board:p.issues,row:t}]);
+    api.readingAnchors(card.el,t);
     for(const d of slot.querySelectorAll('details')){const key='answer:'+t.key+':'+d.className;if(d.dataset.viewKey!==key)d.dataset.viewKey=key;}
   }
 
@@ -140,6 +144,7 @@ answerSend:function(board,op){
   return promise;
 },
 
+bounds:function(){return {controllers:answerCards.size,protectedSources:Object.keys(saved).length,protectedBytes:new TextEncoder().encode(JSON.stringify(saved)).length};},
 load:function(board,row){return saved[board+'#'+row.n];},
 save:function(board,row,local){const prior=saved[board+'#'+row.n],projectRoot=prior?.op?.id&&prior.op.id===local.op?.id?prior.projectRoot:api.project(board)?.root;saved[board+'#'+row.n]=JSON.parse(JSON.stringify({...local,projectRoot}));send({a:'answer-local',key:board+'#'+row.n,local:saved[board+'#'+row.n]});changed?.();},
 hydrate:function(locals){

@@ -84,7 +84,7 @@ render:function(board, row, local, cap) {
     h += '<p class="qac-head" id="' + id + '-t"><span class="qac-mark" aria-hidden="true">?</span> <a href="' + href(row.url) + '" target="_blank" rel="noopener">#' + esc(row.n) + '</a> ' + esc(row.title) + '</p>';
     if(own&&cap?.files&&st!=='read-only')h+=replyFiles.markup(local.files,!live);
     if (manageable(row, cap)) {
-      h += q.parsed ? lines(q) + images(q) : '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';
+      h += cap?.paged?images(q):q.parsed ? lines(q) + images(q) : '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';
       if (own) h += q.parsed ? '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="2" aria-label="Your answer" placeholder="What you did"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(q, local.draft,local.files) ? '' : ' disabled') + '>Send</button>' + hint(id, live && textProblem(q, local.draft,local.files)) + '</form>'
         : '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(REQUEUE, local.draft,local.files) ? '' : ' disabled') + '>Requeue</button>' + hint(id, live && textProblem(REQUEUE, local.draft,local.files)) + '</form>';
       // an owner action answers with text above; its requeue reason is the same draft, sent as an action
@@ -93,9 +93,9 @@ render:function(board, row, local, cap) {
       h += retry(st, local.receipt && local.receipt.reason);
       return h + '</section>';
     }
-    if (!q.parsed) return h + '<pre class="qac-text">' + esc(q.text) + '</pre>' + receipt(st, st === 'read-only' ? 'This card has no answer form here' : local.receipt && local.receipt.reason, row.url, id, null, false, what) +
+    if (!q.parsed) return h + (cap?.paged?'':'<pre class="qac-text">' + esc(q.text) + '</pre>') + receipt(st, st === 'read-only' ? 'This card has no answer form here' : local.receipt && local.receipt.reason, row.url, id, null, false, what) +
       retry(st, local.receipt && local.receipt.reason) + '</section>';
-    h += lines(q) + images(q);
+    h += (cap?.paged?'':lines(q)) + images(q);
     if (q.choices.length) h += '<div class="qac-choices" role="group" aria-label="Choices">';
     for (const c of q.choices) {
       const off = !live || c.consequential || !!local.files?.length, why = c.consequential ? 'Answer on the board: this choice closes or publishes the task, or approves its result' : local.files?.length?'Send files with a text reply, or remove them to choose an option':'';

@@ -56,8 +56,14 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture'
    assert.equal(await page.locator('main [role=alert]').count(),0,operation+' route failed: '+JSON.stringify(await page.evaluate(()=>sent.filter(m=>m.a==='route-error'))));
   }
   if(evidence)await page.screenshot({path:path.join(evidence,'work-mode.png')});
-  // #1698 A2: a content failure inside Operation review keeps the shell; Back, Home and Escape still act.
-  await page.evaluate(s=>{taskq.receive({...s,projects:[{...s.projects[0],focus:null}]});taskq.receive({open:{page:'operations',operation:'admission'}});},snapshot);
+  // #2110 R03/TW1: Settings review Back carries the origin and preserves the preceding Conversations context.
+  await page.evaluate(()=>{taskq.receive({open:{page:'conversations'}});taskq.receive({open:{page:'operations',operation:'resources',origin:{surface:'settings',page:'work'}}});});
+  await page.getByRole('button',{name:'Back',exact:true}).click();
+  assert.deepEqual(await page.evaluate(()=>sent.filter(m=>m.a==='workspace-origin').at(-1).origin),{surface:'settings',page:'work'});
+  assert.equal(await page.locator('h1').innerText(),'Conversations');
+  // #1698 A2: invalid labels are reached only after the local choose-labels action; focus:null is now handled as unknown. A content failure inside Operation review keeps the shell; Back, Home and Escape still act.
+  await page.evaluate(s=>{taskq.receive({...s,projects:[{...s.projects[0],mode:'watch',focus:null,saved:false,labels:null}]});taskq.receive({open:{page:'operations',operation:'admission'}});},snapshot);
+  await page.locator('[data-a=pick]').click();
   assert.equal(await fence(),0,'an operation route failure tripped the page-wide fence');
   assert.match(await page.locator('main [role=alert]').innerText(),/could not be shown/);
   for(const name of ['Workspace home','Close workspace'])assert(await page.getByRole('button',{name}).isVisible(),name);

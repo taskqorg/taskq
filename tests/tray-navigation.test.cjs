@@ -68,7 +68,7 @@ console.log('PASS actual resize listeners release once after capture loss');
 
 // A2/A4: header destinations and content-fit modes preserve the user's width.
 // R09: one Conversations entry replaces the separate Inbox and Conversations buttons.
-assert.equal(sizing.head().match(/data-a="workspace"/g).length,2,'M14: news bell and Conversations enter the same workspace independently');assert.match(sizing.head(),/Conversations · /);assert.doesNotMatch(sizing.head(),/Inbox/);assert.match(sizing.head(),/data-route="settings"/);
+assert.equal(sizing.head().match(/data-a="workspace"/g).length,1,'M14: one canonical communications entrance');assert.match(sizing.head(),/Conversations · /);assert.doesNotMatch(sizing.head(),/Inbox/);assert.match(sizing.head(),/data-route="settings"/);
 for(const mode of ['bottom','top']){sizing.S.size_anchor=mode;sizing.fit();assert.equal(sizing.sent.at(-1).h,422);assert.equal(sizing.sent.at(-1).w,500);}
 sizing.S.size_anchor='fixed';sizing.fit();assert.equal(sizing.sent.at(-1).h,300);
 console.log('PASS A2/A4 header navigation and fixed/content-fit modes');

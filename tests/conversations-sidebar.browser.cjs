@@ -48,11 +48,13 @@ s.conversations.items.push({...draft('native-b','alpha',null),sent:{text:'Start'
  await page.locator('[data-c=search-open]').click();await page.locator('[data-c-field=search]').fill('Choose');assert.equal(await page.locator('[data-thread="task:'+a+'/12"]').count(),1,'search reveals collapsed task group');await shot('02-search');
  await page.locator('[data-c=clear-search]').click();assert.equal(await page.locator('[data-thread="task:'+a+'/12"]').count(),0,'clear restores collapse');
  await page.getByRole('button',{name:'Alpha 2',exact:true}).click();await page.locator('[data-thread="task:'+a+'/12"]').waitFor();
- // A task update raises its project; polling the same state and selection does not create activity.
- s.projects[0].tasks[0].updated=2100;await page.evaluate(s=>taskq.receive(s),s);assert.deepEqual(await groupOrder(),['Pinned','Alpha','Beta','Other']);assert.equal(await input.inputValue(),'Retained current draft');
+ // #2110 CS2: arrivals do not move rows under the pointer while reading; explicit view changes can re-sort.
+ const frozen=await groupOrder();
+ s.projects[0].tasks[0].updated=2100;await page.evaluate(s=>taskq.receive(s),s);assert.deepEqual(await groupOrder(),frozen);assert.equal(await input.inputValue(),'Retained current draft');
  const target=row('owner-b').getByRole('button',{name:'Pin',exact:true});await target.focus();s.conversations.items.find(c=>c.id==='owner-b').updated=2200000;await page.evaluate(s=>taskq.receive(s),s);assert.equal(await target.evaluate(e=>e===document.activeElement),true,'focus follows the same row when groups reorder');
- s.conversations.items.find(c=>c.id==='owner-b').updated=2000000;await page.evaluate(s=>taskq.receive(s),s);assert.deepEqual(await groupOrder(),['Pinned','Alpha','Beta','Other']);
- nativeAt=2400000;await page.waitForFunction(()=>document.querySelectorAll('[data-conversation-group]')[1].getAttribute('aria-label')==='Beta',{},{timeout:15000});assert.equal(await input.inputValue(),'Retained current draft','new native message reorders the group without stealing the draft');
+ s.conversations.items.find(c=>c.id==='owner-b').updated=2000000;await page.evaluate(s=>taskq.receive(s),s);assert.deepEqual(await groupOrder(),frozen);
+ nativeAt=2400000;await page.waitForFunction(()=>sent.some(m=>m.action==='activity'));assert.deepEqual(await groupOrder(),frozen);assert.equal(await input.inputValue(),'Retained current draft','new native message reorders the group without stealing the draft');
+ s.conversations.items.find(c=>c.id==='owner-b').updated=2500000;await page.evaluate(s=>taskq.receive(s),s);assert.deepEqual(await groupOrder(),frozen);await page.locator('.conversation-view>summary').click();await page.locator('[data-c=result-filter][data-filter=all]').click();assert.deepEqual(await groupOrder(),['Pinned','Beta','Alpha','Other'],'explicit view refresh applies source recency');await page.locator('[data-c=select][data-id=pm-a]').click();
  const before=await groupOrder();await page.evaluate(s=>taskq.receive(s),s);assert.deepEqual(await groupOrder(),before);
  pause=true;await click('global','Pin');await page.getByText('Invented write refusal',{exact:false}).first().waitFor();assert(!s.conversations.sidebar.pins.includes('global'));pause=false;
  await page.evaluate(()=>taskq.receive({workspaceOwner:{id:'main',detached:['owner-a']}}));

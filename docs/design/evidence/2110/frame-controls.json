@@ -1,0 +1,138 @@
+{
+  "budget_ms": 32,
+  "status": "Fail",
+  "runs": [
+    {
+      "source": "33eda27f77847dd98fecf8f52a75abf25a0b4ba8",
+      "budget_ms": 32,
+      "status": "Fail",
+      "method": "Actual source DOM and CSS; paired script-free static clone and blank page, same Chromium run. Native acceptance Not tested.",
+      "samples": [
+        {
+          "runtime": "claude",
+          "records": 10000,
+          "items": 15000,
+          "reads": 115,
+          "mounted_max": 671,
+          "load_render_ms": {
+            "median": 15,
+            "p95": 20,
+            "max": 29
+          },
+          "longtasks": {
+            "count": 1,
+            "max_ms": 65
+          },
+          "controls": {
+            "static_clone_p95": 66.70000000000005,
+            "empty_p95": 66.69999999999982,
+            "budget_ms": 32,
+            "product_budget": "Fail"
+          },
+          "wheel_frame_ms": {
+            "frames": 90,
+            "median": 33,
+            "p95": 67,
+            "max": 83
+          },
+          "result": "Pass: browser model; timings measured, not asserted"
+        },
+        {
+          "runtime": "codex",
+          "records": 10000,
+          "items": 10000,
+          "reads": 88,
+          "mounted_max": 657,
+          "load_render_ms": {
+            "median": 16,
+            "p95": 22,
+            "max": 46
+          },
+          "longtasks": {
+            "count": 0,
+            "max_ms": 0
+          },
+          "controls": {
+            "static_clone_p95": 66.70000000000005,
+            "empty_p95": 66.69999999999982,
+            "budget_ms": 32,
+            "product_budget": "Fail"
+          },
+          "wheel_frame_ms": {
+            "frames": 100,
+            "median": 33,
+            "p95": 67,
+            "max": 67
+          },
+          "result": "Pass: browser model; timings measured, not asserted"
+        }
+      ]
+    },
+    {
+      "source": "4ab0782e2aed5430653534a50061a88d7ebd0383",
+      "budget_ms": 32,
+      "status": "Fail",
+      "method": "Actual source DOM and CSS; paired script-free static clone and blank page, same Chromium run. Native acceptance Not tested.",
+      "samples": [
+        {
+          "runtime": "claude",
+          "records": 10000,
+          "items": 15000,
+          "reads": 115,
+          "mounted_max": 671,
+          "load_render_ms": {
+            "median": 17,
+            "p95": 24,
+            "max": 40
+          },
+          "longtasks": {
+            "count": 0,
+            "max_ms": 0
+          },
+          "controls": {
+            "static_clone_p95": 66.69999999999982,
+            "empty_p95": 66.69999999999982,
+            "budget_ms": 32,
+            "product_budget": "Fail"
+          },
+          "wheel_frame_ms": {
+            "frames": 93,
+            "median": 50,
+            "p95": 83,
+            "max": 83
+          },
+          "result": "Pass: browser model; timings measured, not asserted"
+        },
+        {
+          "runtime": "codex",
+          "records": 10000,
+          "items": 10000,
+          "reads": 88,
+          "mounted_max": 657,
+          "load_render_ms": {
+            "median": 16,
+            "p95": 22,
+            "max": 25
+          },
+          "longtasks": {
+            "count": 0,
+            "max_ms": 0
+          },
+          "controls": {
+            "static_clone_p95": 66.70000000000027,
+            "empty_p95": 66.70000000000073,
+            "budget_ms": 32,
+            "product_budget": "Fail"
+          },
+          "wheel_frame_ms": {
+            "frames": 101,
+            "median": 33,
+            "p95": 67,
+            "max": 67
+          },
+          "result": "Pass: browser model; timings measured, not asserted"
+        }
+      ]
+    }
+  ]
+}

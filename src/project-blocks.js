@@ -16,7 +16,7 @@ counters:function(counts,project='',label='All projects',partial=[],selected=nul
       const value=Number.isSafeInteger(n)&&n>=0?n:'?';
       const title=label+' · '+name+': '+(value==='?'?'unknown':value);
       const filter='<button type="button" class="'+kind+'" data-tqp="tasks" data-project="'+esc(project)+'" data-state="'+state+'"'+(selected===null?'':' aria-pressed="'+selected.includes(state)+'"')+' aria-label="'+esc(title)+'" title="'+esc(title)+'">'+icon(mark)+(n===0?'':'<span class="tqp-count">'+value+'</span>')+'</button>';
-      return state==='held'&&heldStart?'<span class="held-control" role="group" aria-label="Held filter and admission">'+filter+'<button type="button" class="good" data-a="held-review" title="'+esc(heldStart.label)+'" aria-label="'+esc(heldStart.label)+'"'+(heldStart.disabled?' disabled':'')+'>'+icon('play')+'<span>Start '+esc(heldStart.count)+'</span></button></span>':filter;
+      return state==='held'&&heldStart?'<span class="held-control" role="group" aria-label="Held filter and admission">'+filter+'<button type="button" class="good" data-a="held-review" title="'+esc(heldStart.label)+'" aria-label="'+esc(heldStart.label)+'"'+(heldStart.disabled?' disabled':'')+'>'+icon('play')+'</button></span>':filter;
     }).join('');
     return (partial.length?'<small class="tqp-partial" title="'+esc(partial.join(', '))+'">Partial: '+esc(partial.join(', '))+'</small>':'')+(items?'<div class="tqp-counts" aria-label="'+esc(label)+' counters">'+items+(selected===null?'':'<button type="button" data-a="all-tasks" aria-pressed="'+!selected.length+'" aria-label="All tasks: '+(total==='?'?'unknown':total)+' open" title="All projects · open tasks">All tasks '+total+'</button>')+'</div>':'');
   },

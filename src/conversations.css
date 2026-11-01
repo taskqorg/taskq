@@ -83,6 +83,7 @@
 .thread-title{font:inherit;font-weight:600;margin:4px 0}.thread-head>.thread-title{flex:1;min-width:0}
 .owner-title{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .thread-card .qac-head{display:none}
+.thread-card.asked .qac-receipt.qac-read-only{display:none}
 .conversation-detail .qac{margin:0;padding:6px}
 .conversation-detail .qac-problem{margin:4px 0}
 
@@ -183,7 +184,7 @@
 .conversation-reader.long-draft .composer-bottom{position:fixed;left:var(--composer-left);bottom:var(--composer-bottom);width:var(--composer-width)}
 .conversation-reader.long-draft .conversation-composer{padding-bottom:var(--composer-tools-height)}
 /* D-A19: stable timestamp geometry keeps minute ticks from rewrapping the reading anchor. */
-.relative-time{display:inline-block;inline-size:14ch;white-space:nowrap;text-align:end;font-variant-numeric:tabular-nums;font-size:inherit;color:var(--muted);margin-inline-start:.5em;flex:none}
+.relative-time{display:inline-block;inline-size:5ch;white-space:nowrap;text-align:end;font-variant-numeric:tabular-nums;font-size:inherit;color:var(--muted);margin-inline-start:.5em;flex:none}
 .relative-time:focus-visible{outline:2px solid var(--work);outline-offset:2px}
 .time-tooltip{position:fixed;z-index:10000;max-width:calc(100vw - 8px);padding:6px 8px;border:1px solid var(--edge);border-radius:4px;background:var(--surface);color:var(--text);font:inherit;overflow-wrap:anywhere;pointer-events:none}
 .dialogue-tool{display:flex;align-items:baseline;gap:4px;overflow:visible;white-space:normal}
@@ -198,3 +199,13 @@
 .conversation-item .conversation-row>span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .conversation-scope,.news-tools,.completed-scope{margin:0;padding:0 6px;font-size:.85em}.conversation-scope button{margin-top:4px}
 .news-tools button{font-size:.85em}.news-tools p:empty{display:none}.conversation-row>small{line-height:1.25}
+
+/* RC1/CS5: JS owns one coordinated paragraph correction; native wheel scrolling remains unchanged. */
+.conversation-reader,.conversation-rows{overflow-anchor:none;scroll-behavior:auto}
+.conversation-scope{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.conversation-scope button{margin:0}
+.conversation-view>summary,.conversation-view .result-filters>button{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.conversation-view>summary .view-count{margin-left:auto;font-variant-numeric:tabular-nums}
+.conversation-view .result-filters .view-count{margin-left:auto}.conversation-mode-icon{display:inline-flex;flex:none}
+.thread-events>summary{font-size:.85em;color:var(--muted)}.event-tools{display:flex;flex-wrap:wrap;gap:4px}
+
+
+.relative-time.time-unknown{inline-size:auto;white-space:normal}.relative-time.time-future{inline-size:9ch}
