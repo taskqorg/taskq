@@ -38,7 +38,7 @@ import argparse, hashlib, json, os, platform, re, shutil, signal, socket, subpro
 COPY = ["token", "gitlab-token", "worker-policy.json", "accounts.json"]
 KEEP = ["permission_mode", "codex", "has", "default_runtime", "channel"]
 STRIP = ("TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE", "TASKQ_ROOT", "TASKQ_INSTALL", "TASKQ_HOST", "CODEX_THREAD_ID")
-LIVE = ("running", "working", "idle", "waiting")
+LIVE = ("running", "working", "idle", "waiting", "blocked")
 HOME = os.path.expanduser("~")
 WIN = os.name == "nt"
 
@@ -433,6 +433,8 @@ def tray(a):
 
 def jobs(m):
     """Claude background jobs whose folder is inside the fixture (`claude agents`, read-only)."""
+    if "claude" not in m.get("runtimes", ["claude", "codex"]):
+        return []
     dirs = [m["root"], os.path.join(m["dir"], "q6")]
     for base in [os.path.join(m["root"], ".worktrees"), os.path.join(m["dir"], "install", "setup")]:
         dirs += [os.path.join(base, x) for x in (os.listdir(base) if os.path.isdir(base) else []) if os.path.isdir(os.path.join(base, x))]
@@ -440,11 +442,17 @@ def jobs(m):
     for c in dirs:
         rc, out = run(["claude", "agents", "--json", "--all", "--cwd", c], timeout=30)
         try:
-            got = json.loads(out) if rc == 0 else []
-        except ValueError:
-            got = []
-        for r in got if isinstance(got, list) else got.get("agents", []):
-            if key(str(r.get("cwd") or c)).startswith(key(m["dir"])):
+            if rc != 0:
+                raise ValueError("Claude inventory failed")
+            got = json.loads(out)
+            got = got if isinstance(got, list) else got["agents"]
+            if not isinstance(got, list) or any(not isinstance(r, dict) or not r.get("id") or
+                    r.get("state") not in (*LIVE, "done", "failed", "crashed", "stopped") for r in got):
+                raise ValueError("Claude inventory has unknown jobs")
+        except (ValueError, KeyError, TypeError):
+            sys.exit("Claude job inventory unknown; fixture kept, no cleanup allowed")
+        for r in got:
+            if key(str(r.get("cwd") or c)).startswith(key(m["dir"]) + "/"):
                 rows[r.get("id")] = r
     return list(rows.values())
 
@@ -502,9 +510,11 @@ def report(a):
 def procs(m):
     """Processes, other than this one, whose command line names the fixture folder (codex exec, app server, children)."""
     if WIN:
-        _, out = run(["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process | % { \"$($_.ProcessId) $($_.CommandLine)\" }"])
+        rc, out = run(["powershell", "-NoProfile", "-Command", "$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process | % { \"$($_.ProcessId) $($_.CommandLine)\" }"])
     else:
-        _, out = run(["ps", "-axww", "-o", "pid=,command="])
+        rc, out = run(["ps", "-axww", "-o", "pid=,command="])
+    if rc != 0 or not out:
+        sys.exit("Process inventory unknown; no fixture launch or cleanup allowed")
     # ponytail: command-line match only; a process that names nothing of the fixture is missed, add a cwd scan if one shows up
     want = norm(m["dir"])
     rows = [l.strip().split(" ", 1) for l in out.splitlines()]
@@ -567,30 +577,35 @@ def cleanup(a):
     print(f"receipts {arc}; removed {d}")
 
 
-p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-s = p.add_subparsers(dest="cmd", required=True)
-for name in ["identity", "prepare"]:
-    q = s.add_parser(name)
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    s = p.add_subparsers(dest="cmd", required=True)
+    for name in ["identity", "prepare"]:
+        q = s.add_parser(name)
+        q.add_argument("--repo", required=True)
+        q.add_argument("--from-install", required=True)
+        q.add_argument("--parent", required=True)
+        if name == "prepare":
+            q.add_argument("--build", required=True)
+            q.add_argument("--runtimes", type=lambda v: [r for r in v.split(",") if r in ("claude", "codex")] or sys.exit("--runtimes: claude and/or codex"),
+                           default=["claude", "codex"])
+            q.add_argument("--name", required=True)
+    q = s.add_parser("build")
+    q.add_argument("--sha", required=True)
     q.add_argument("--repo", required=True)
-    q.add_argument("--from-install", required=True)
-    q.add_argument("--parent", required=True)
-    if name == "prepare":
-        q.add_argument("--build", required=True)
-        q.add_argument("--runtimes", type=lambda v: [r for r in v.split(",") if r in ("claude", "codex")] or sys.exit("--runtimes: claude and/or codex"),
-                       default=["claude", "codex"])
-        q.add_argument("--name", required=True)
-q = s.add_parser("build")
-q.add_argument("--sha", required=True)
-q.add_argument("--repo", required=True)
-q.add_argument("--out", required=True)
-q.add_argument("--minutes", type=int, default=90)
-for name in ["tasks", "report", "cleanup"]:
-    s.add_parser(name).add_argument("dir")
-for name in ["run", "tray"]:
-    q = s.add_parser(name)
-    q.add_argument("dir")
-    q.add_argument("--minutes", type=int, default=30)
-    if name == "run":
-        q.add_argument("--interrupt-on")
-a = p.parse_args()
-{"identity": identity, "build": build, "prepare": prepare, "tasks": tasks, "run": run_cmd, "tray": tray, "report": report, "cleanup": cleanup}[a.cmd](a)
+    q.add_argument("--out", required=True)
+    q.add_argument("--minutes", type=int, default=90)
+    for name in ["tasks", "report", "cleanup"]:
+        s.add_parser(name).add_argument("dir")
+    for name in ["run", "tray"]:
+        q = s.add_parser(name)
+        q.add_argument("dir")
+        q.add_argument("--minutes", type=int, default=30)
+        if name == "run":
+            q.add_argument("--interrupt-on")
+    a = p.parse_args()
+    {"identity": identity, "build": build, "prepare": prepare, "tasks": tasks, "run": run_cmd, "tray": tray, "report": report, "cleanup": cleanup}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    main()
