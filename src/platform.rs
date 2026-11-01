@@ -41,13 +41,19 @@ pub fn write_status(t: &Tool, root: &Path, status: &serde_json::Value) -> Result
 /// #1445: whether a recorded process start (coreq native identity) lies before the current boot; Err: unknown.
 #[cfg(target_os = "linux")]
 pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
+    let (id,_) = started.rsplit_once('-').filter(|(id,ticks)| id.len()==36
+        && id.bytes().enumerate().all(|(i,b)| if [8,13,18,23].contains(&i) {b==b'-'} else {b.is_ascii_hexdigit()})
+        && ticks.parse::<u64>().is_ok()).ok_or_else(|| std::io::Error::other("invalid process start"))?;
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
-    Ok(started.get(..36) != Some(boot.trim()))
+    Ok(id != boot.trim())
 }
 
 #[cfg(target_os = "macos")]
 pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
-    let secs: i64 = started.split('-').next().and_then(|s| s.parse().ok()).ok_or_else(|| std::io::Error::other("invalid process start"))?;
+    let secs = started.split_once('-').and_then(|(secs,micros)| {
+        Some((secs.parse::<i64>().ok()?,micros.parse::<u32>().ok()?))
+    }).filter(|(secs,micros)| *secs>0 && *micros<1_000_000).map(|(secs,_)|secs)
+        .ok_or_else(|| std::io::Error::other("invalid process start"))?;
     let mut boot = libc::timeval { tv_sec: 0, tv_usec: 0 };
     let mut size = std::mem::size_of::<libc::timeval>();
     // SAFETY: kern.boottime fills one timeval of the given size.
@@ -62,7 +68,7 @@ pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
 pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
     #[link(name = "kernel32")]
     unsafe extern "system" { fn GetTickCount64() -> u64; fn GetSystemTimeAsFileTime(time: *mut u64); }
-    let created: u64 = started.parse().map_err(|_| std::io::Error::other("invalid process start"))?;
+    let created = started.parse::<u64>().ok().filter(|t|*t>0).ok_or_else(|| std::io::Error::other("invalid process start"))?;
     let mut now = 0u64;
     // SAFETY: FILETIME is two u32 words; a u64 holds it with stricter alignment.
     let up = unsafe { GetSystemTimeAsFileTime(&mut now); GetTickCount64() };
@@ -684,7 +690,7 @@ pub fn releases_in_use(install: &Path) -> Option<Vec<String>> {
 pub fn sweep(install: &Path, shim: &Path) {
     let keep = releases_in_use(install);
     let owned = |n: &str| {
-        ["releases", "current", "previous", "projects", "token", "gitlab-token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "taskqw.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off", "accounts.json", "accounts-state.json"].contains(&n)
+        ["releases", "current", "previous", "projects", "token", "gitlab-token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "taskqw.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off", "accounts.json", "accounts-state.json", "accounts-state.pending.json", "accounts-state.lock"].contains(&n)
             ||["setup","messages.json","messages.tmp"].contains(&n)
             ||n==crate::host::INSTALL_PENDING||n.strip_suffix(".pending")==Some(crate::host::INSTALL_PENDING)
             || n.ends_with(".log") || n.ends_with(".tmp") || n.starts_with("tray") || (n.starts_with("TaskQ-") && n.ends_with(".xml"))
@@ -1122,6 +1128,7 @@ mod tests {
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "temp file removed");
         let me = coreq::process::identity(std::process::id()).unwrap().unwrap();
         assert!(!started_before_boot(&me.started).unwrap(), "this process started in this boot");
+        for invalid in ["", "0", "0-0", "1-invalid", "invented-previous-incarnation"] {assert!(started_before_boot(invalid).is_err(),"malformed start cannot prove a later boot");}
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1610,7 +1617,8 @@ mod tests {
         let protected=[("host.json","{\"limits\":{\"codex\":2},\"owner_field\":\"keep\"}"),
             ("host.json.pending","interrupted policy; preserve"),("service","123"),("service.lock",""),("poke","wake"),
             ("restart","restart requested"),("update","update requested"),("projects.lock",""),("link-key","host link key; keep"),
-            ("gitlab-token","invented-gitlab-token\n")];
+            ("gitlab-token","invented-gitlab-token\n"),
+            ("accounts-state.pending.json","pending quota observation; preserve"),("accounts-state.lock","quota writer lock; preserve")];
         for (name,text) in protected {fs::write(install.join(name),text).unwrap();}
         fs::create_dir_all(install.join("host-policy-migration")).unwrap();
         fs::write(install.join("host-policy-migration/original.json"),"original configuration").unwrap();

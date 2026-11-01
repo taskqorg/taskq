@@ -59,7 +59,7 @@ M3.3 Approved navigation/header and view-only multi-select targets: [UI01–UI04
 
 - M3.4 Header outside the scrolling content ([MP12](menu-product.md#dashboard-decisions-1573), P-W3, #1660): one stable action row: Home, then the Board link and Emergency stop when present, one Conversations entry with the deduplicated new-event count, Settings, Keep menu open, Always on top and close ×. Back, breadcrumbs and a title that does not fit use the row below, whole words only. Settings opens or raises its own window; no menu Enlarge; the footer is the version and the corner grip. Its slightly contrasting strip never moves during scroll bounce.
 - M3.5 Moderate rounded corners on every side except the edge attached to the menu bar or taskbar in popover mode; pinned windows round every corner.
-- M3.6 Home: fixed controls, Work mode, Attention, short Ask AI composer, project shortcuts and Settings. Target (TW2/TW3): panels with live figures, then tasks, then setting links; the composer moves to the workspace.
+- M3.6 Home: fixed controls, Balancing, Attention, short Ask AI composer, project shortcuts and Settings. Target (TW2/TW3): panels with live figures, then tasks, then setting links; the composer moves to the workspace.
 - M3.7 Attention contains decisions, failed tasks and actionable service/admission problems under [A2](adaptive-menu.md#a2-explain-the-queue). Ordinary waits remain neutral.
 - M3.8 Project header: Back, name, Board link and compact nonzero counters. Target (TW1): one fixed bar with Back, title and actions, breadcrumbs `Projects › <project>`. Add is a plus in the Projects header.
 - M3.9 Task row: the state icon occupies one centered slot before the board-provider mark and issue number; the runtime mark (plus the remote mark for proven remote execution) and current-stage elapsed follow. The ask icon keeps its question shortcut. Forge and full title open the exact issue; the number toggles inline details; runtime opens the exact task-agent view in Conversations. Native session and remote read-only progress remain separately named, adapter-supplied destinations. Global rows also identify project. The full title starts on the second row and wraps across the block width, never truncated. Current-stage elapsed counts from the board time of the entry behind the last logged state change (`since` in the status row; Waiting and Held derive outside the log and keep it) in short units (`<1m`, `5m`, `2h`, `3d`); without a logged change it shows `?` with the reason. The age text comes from the display model (`src/display.rs`), the same text the CLI prints; open menus take each changed model push (2 s tick) and patch the text in place, without a page age timer. Metadata may wrap when space is exhausted; links remain separate controls. UI30 targets await implementation/qualification.
@@ -124,7 +124,7 @@ M3.26 A refresh publishes one complete menu view. The menu never shows content t
 
 ## M8 Implementation boundary
 
-WS11 first slice (#976, accepted split): native Home / Projects / Attention / Settings and its twelve destinations reuse the existing snapshot and action bridge. Back restores the calling route, disclosure state and scroll; refresh keeps the current route. Existing Work mode and Ask AI remain accessible; no new backend authority. Appearance exposes the currently supported view/font controls and reports the system theme.
+WS11 first slice (#976, accepted split): native Home / Projects / Attention / Settings and its twelve destinations reuse the existing snapshot and action bridge. Back restores the calling route, disclosure state and scroll; refresh keeps the current route. Existing Balancing and Ask AI remain accessible; no new backend authority. Appearance exposes the currently supported view/font controls and reports the system theme.
 
 Settings keeps all twelve destinations. Root widgets use short scope/count/exception summaries; complete project readback stays in detail. Appearance uses one active transparency pane; Notifications uses compact event/mode rows, one shared legend and project overrides. Hosts retain comparable runtime counts and freshness. Agents lists client versions/accounts once and compares project/runtime access without repeating versions. Projects keeps compact overview/forge/folder shortcuts with intake intent/readback in detail. Delivery explains each preset, with revision secondary. Services shows the host process once, project exceptions first and complete observations/actions on demand. About keeps exact installed/running/available versions and update/rollback review. No presentation changes operational policy or authority.
 
@@ -133,7 +133,7 @@ Settings keeps all twelve destinations. Root widgets use short scope/count/excep
 `src/tray-view-state.js` owns navigation state for every tray route. Routes declare
 valid identities and parents; common keys apply automatically. Views never access
 storage. The module captures route (`page`), selected state filters (`taskFilter`,
-OR; an empty array means all tasks), selected project (`aiRoot`), Work mode scope
+OR; an empty array means all tasks), selected project (`aiRoot`), Balancing scope
 (`working`), expanded groups keyed by stable `data-view-key`, and content scroll.
 It keeps up to 32 Back entries with the same keys. It never persists task truth,
 confirmation, pending operations, recovery selections, answer text or command drafts.
@@ -151,7 +151,7 @@ snapshot. Later snapshots reconcile validity without overwriting live navigation
 Restore only registered projects, declared routes, known task states, finite
 nonnegative scroll and boolean disclosure values. Drop invalid keys and obsolete
 Back entries. A missing settings child falls back to Settings; a removed project
-to Projects; an unknown route to Home. Drop a removed selected project or Work mode
+to Projects; an unknown route to Home. Drop a removed selected project or Balancing
 scope. Missing groups keep their default; scroll clamps to the available content.
 A bad/unsupported navigation schema defaults to Home without resetting other
 settings. Snapshot capture explicitly overrides navigation and does not save it.
@@ -214,7 +214,7 @@ Native sizing, scroll ownership and cadence rendering follow [R-UI1–R-UI6](ren
 
 ## M9 Settings and maintenance
 
-- Categories: Appearance, Activity history, Agents, Services and About. Work mode remains a direct entry, not a second editor.
+- Categories: Appearance, Activity history, Agents, Services and About. Balancing remains a direct entry, not a second editor.
 - Appearance contains view/font; Activity history contains M6 presets/custom range; Agents retains host probes; proposed permission controls follow [P1–P9](worker-permissions.md), pending authority/enforcement approval.
 - Services lists targets with freshness, incidents, log/folder, restart, stop with its native restart condition, and nested uninstall confirmation. Retain Resources access to the existing external monitor and incident consent controls. No repeated service sections on home.
 - Stale status does not prove a dead process. Known logs remain accessible during failure; unknown log paths are explained.
@@ -242,9 +242,13 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 - Remote sessions remain informational; tmux is research, not a delivery promise.
 - Emergency stop is required; mechanism and I6 overflow/rebin candidates require implementation qualification.
 
-## M12 Shared Work mode
+<a id="m12-shared-work-mode"></a>
 
-- Settings Work mode shows current host admission, project exceptions, saved intake/readback and direct admission/host-limit reviews. Recovery shows the current hold and service observation plus direct selected-recovery review. Neither is a launch-only page. Entering applies nothing; operation confirmations and unsupported/refusal reasons remain in the existing workspace. Back restores the invoking Settings context.
+## M12 Shared Balancing
+
+The visible name is Balancing; existing `work` routes and JSON keys remain compatible. Four sections appear in order: Task routing (soft preferences and strict pins), Runtime availability (account quotas/reset/probes and factual blockers), Host balancing (host limits and load gate), Project policies (focus and lower-only ceilings). Opening changes nothing.
+
+- Settings Balancing shows current host admission, project exceptions, saved intake/readback and direct admission/host-limit reviews. Recovery shows the current hold and service observation plus direct selected-recovery review. Neither is a launch-only page. Entering applies nothing; operation confirmations and unsupported/refusal reasons remain in the existing workspace. Back restores the invoking Settings context.
 - One editor from home/settings/project; project entry preselects that project. Open it in the existing workspace (approved Workspace review), preserving menu navigation and drafts. Recovery uses the same workspace route.
 - Named host; host limits and load guard affect all its registered projects. Project focus/filter/ceiling edits name their own selected projects and review; that selection never narrows a host edit.
 - Selection defines project change targets, not registered observations. Unchecking leaves that project's focus/ceilings unchanged; host edits separately name their wider effect.
@@ -252,7 +256,7 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 - Different current focus displays Mixed. Opening does not overwrite it. Change only explicitly edited fields.
 - Review exact project/host old→new changes; current attempts continue. Cancel preserves settings; readback is per project, including partial failure.
 - Preserve CPU/memory gate controls and saved-vs-applied distinction from the current UI. Gate semantics remain in taskq.md.
-- Native tray (#954): Work mode exposes one host editor for maximum, runtime limits and load gate, without project-selection controls that could imply a narrower effect. Project entry retains that project's observation context. Fixed remains legacy-only. Use the [shared resource controls](shared-resource-controls.md#shared-component-930); project focus/filter/ceiling work remains a separate target until its contracts and backends are qualified.
+- Native tray (#954): Balancing exposes one host editor for maximum, runtime limits and load gate, without project-selection controls that could imply a narrower effect. Project entry retains that project's observation context. Fixed remains legacy-only. Use the [shared resource controls](shared-resource-controls.md#shared-component-930); project focus/filter/ceiling work remains a separate target until its contracts and backends are qualified.
 
 ## M13 Pinned window
 

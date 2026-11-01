@@ -29,6 +29,7 @@ pub struct Config {
     pub labelled: bool,
     /// host.json `default_runtime` (§ 9): the runtime of reviewers and of workers without `run-*` (§ 4).
     pub default_runtime: String,
+    pub routing: Vec<crate::labels::Routing>,
     pub permission_mode: String,
     pub codex: Vec<String>,
     pub ttl: i64,
@@ -556,7 +557,7 @@ pub struct Service<'a> {
     pub refused_access: BTreeMap<String, String>,
     /// Runtimes held after a usage limit, with board time the hold ends and whether the runtime reported it
     /// ([usage limit](docs/design/capacity.md#usage-limit)): no claim, resume or reviewer until then.
-    /// ponytail: in memory per project thread; a restart forgets it and the next limited attempt holds again
+    /// Rebuilt from host-wide account windows and execution release evidence after restart.
     pub limited: BTreeMap<String, (i64, bool)>,
     /// Runtimes whose last probe read `not logged in` (§ 5 `agents`, #1429): no claim, resume or reviewer until a
     /// probe reads them logged in again; unknown login admits as before.
@@ -1200,6 +1201,8 @@ impl<'a> Service<'a> {
         reasons.extend(self.limited.keys().map(|rt| ("usage-limit", format!("{rt}: {}", self.limit_line(rt)))));
         reasons.extend(self.logged_out.iter().map(|rt| ("login", format!("{rt}: not logged in; {}", crate::runtime::relogin(rt)))));
         let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
+        if accounts.error.is_some() { gate="unknown"; }
+        reasons.extend(accounts.heartbeat(self.board.now().unwrap_or(self.wall)).into_iter().filter(|l|l.starts_with("quota ")).map(|l|("usage-limit",l)));
         reasons.extend(accounts.policy.keys().filter(|rt| accounts.off(rt)).map(|rt| ("capability", format!("{rt}: every account disabled on this host"))));
         let res =|r: &Res, state: &str| json!({"task": r.0, "attempt": r.1, "rt": r.2, "state": state});
         let reservations: Vec<Value> = self.kids.iter().map(|k| res(&(k.task, k.attempt, k.rt.clone()), "held"))
@@ -1313,6 +1316,11 @@ impl<'a> Service<'a> {
             let next = next.map(|l| format!("; next account {l}")).unwrap_or_default();
             let reason = format!("Usage limit: {rt} {} {}{next}", if reported { "until" } else { "probe" }, crate::board::stamp(at));
             self.gone(n, t, a, &["usage-limit"], &reason)
+        } else if local && matches!(t.state,State::Doing|State::Review) && rt_of(t).is_some_and(|(rt,_)| crate::runtime::CLI_RUNTIMES.contains(&rt))
+            && !crate::runtime::quota_windows(&crate::runtime::attempt_log(&self.cfg.root,t.role.as_deref().unwrap_or_default(),n,a)).is_empty() {
+            let rt = rt_of(t).unwrap().0;
+            self.account_limit(n,t,a,rt,(now+USAGE_PROBE,false),now);
+            self.post(n,core::entry("steer",&["quota"],Some(a),"Continue this same task and native session after the original account quota hold; preserve completed work."))
         } else if let Some((bin, reason)) = local.then(|| rt_of(t).map(|(rt, _)| crate::runtime::of(rt)).filter(|r| r.codex)
             .and_then(|r| crate::runtime::auth_rejected(&crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a)).map(|e| (r.bin, e)))).flatten() {
             // #1446: a rejected login holds Codex here at once and releases the attempt like a usage limit, retries kept
@@ -1424,27 +1432,30 @@ impl<'a> Service<'a> {
     /// § 3 Runtime accounts: records attempt `a`'s usage limit on the account its log names. Returns the spare account
     /// the next start takes, else the hold: the earliest limit end of an enabled account when there are several.
     fn account_limit(&mut self, n: u64, t: &Task, a: u64, rt: &str, hold: (i64, bool), now: i64) -> (Option<String>, (i64, bool)) {
-        if !crate::runtime::accounts::applies(rt) { return (None, hold); }
+        if !crate::runtime::CLI_RUNTIMES.contains(&rt) { return (None, hold); }
         let log = crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a);
         let label = crate::runtime::accounts::of_log(&log);
         let (end, reported) = hold;
         let seen = if reported { now } else { end - USAGE_PROBE };
-        if let Err(e) = crate::runtime::accounts::record_limit(&self.cfg.install, rt, &label, seen, reported.then_some(end)) {
+        let mut windows = crate::runtime::quota_windows(&log);
+        if windows.is_empty() { windows.push(("unknown".into(),reported.then_some(end))); }
+        if let Err(e) = crate::runtime::accounts::record_windows(&self.cfg.install, rt, &label, seen, &windows) {
             self.log.push(format!("account {rt} {label} limit not saved: {e}"));
         }
         let h = crate::runtime::accounts::Host::read(&self.cfg.install);
         match h.spare(rt, now) {
             Some(next) => (Some(next), hold),
-            None => (None, h.multi(rt).then(|| h.hold(rt, now)).flatten().unwrap_or(hold)),
+            None => (None, h.hold(rt, now).unwrap_or(hold)),
         }
     }
 
     /// § 3 Runtime accounts, every pass: holds of runtimes with several accounts follow the account record, and each
     /// change of a runtime's active account goes to the service log and telemetry.
     fn account_pass(&mut self, now: i64) {
+        if let Err(e)=crate::runtime::accounts::recover_pending(&self.cfg.install) {self.log.push(format!("account quota recovery unknown: {e}"));}
         let h = crate::runtime::accounts::Host::read(&self.cfg.install);
-        for rt in h.policy.keys().filter(|rt| h.multi(rt)) {
-            match (h.spare(rt, now), h.hold(rt, now)) {
+        for rt in h.policy.keys().chain(h.state.keys()).collect::<BTreeSet<_>>() {
+            match (h.active(rt, now), h.hold(rt, now)) {
                 (None, Some(hold)) => { self.limited.insert(rt.clone(), hold); }
                 _ => { self.limited.remove(rt); }
             }
@@ -1564,6 +1575,16 @@ impl<'a> Service<'a> {
         let me = self.cfg.me.clone();
         let ttl = self.cfg.ttl;
         let (mut views, mut hosts) = views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
+        // §5: an interrupted owner reroute remains fenced and finishes without a second owner request.
+        let mut rerouted=false;
+        for v in &views {
+            if v.projection.reroute.is_some() {
+                let receipt=crate::dispatch::finish_reroute(self.board,v.issue.number);
+                if receipt.ok() {self.cache.remove(&v.issue.number);rerouted=true;}
+                else {self.log.push(receipt.text());}
+            }
+        }
+        if rerouted {(views,hosts)=self::views(self.board,&mut self.cache,&mut self.deps,self.cfg.ttl)?;}
         if self.release_before_boot(&views) { (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?; }
         // § 4 step 5 (#1950): a task reopened here is listed again before its live attempt could read as gone below
         let open: HashSet<u64> = views.iter().map(|v| v.issue.number).collect();
@@ -1674,6 +1695,14 @@ impl<'a> Service<'a> {
         let needs_stop=self.kids.iter().any(|k|!by_n.get(&k.task).is_some_and(|v|v.projection.task.attempt==Some(k.attempt)));
         let observation_until=if needs_stop {std::time::Instant::now()+native_until.saturating_duration_since(std::time::Instant::now())/2} else {native_until};
         let mut deferred=None;
+        let quota:Vec<_> = self.kids.iter().filter_map(|k| {
+            let log=crate::runtime::attempt_log(&self.cfg.root,by_n.get(&k.task)?.projection.task.role.as_deref().unwrap_or_default(),k.task,k.attempt);
+            let windows=crate::runtime::quota_windows(&log);
+            (!windows.is_empty()).then(||(k.rt.clone(),crate::runtime::accounts::of_log(&log),windows))
+        }).collect();
+        for (rt,label,windows) in quota {
+            if let Err(e)=crate::runtime::accounts::record_windows(&self.cfg.install,&rt,&label,now,&windows) {self.log.push(format!("account {rt} {label} quota unknown: {e}"));}
+        }
         self.kids.retain_mut(|k| {
             if std::time::Instant::now()>=observation_until {
                 deferred.get_or_insert(k.execution);
@@ -1713,6 +1742,12 @@ impl<'a> Service<'a> {
         for (task,attempt,execution,native) in retired.drain(..) { self.retired(task,attempt,execution,native); }
         for (n, a, code, failure) in exited {
             self.ended(n, a, by_n.get(&n).copied(), failure);
+            if code == 0 && let Some(v) = by_n.get(&n) && let Some((rt,_)) = rt_of(&v.projection.task) {
+                let log = crate::runtime::attempt_log(&self.cfg.root,v.projection.task.role.as_deref().unwrap_or_default(),n,a);
+                if crate::runtime::quota_windows(&log).is_empty() && let Err(e) = crate::runtime::accounts::confirm_probe(&self.cfg.install,rt,&crate::runtime::accounts::of_log(&log),&log) {
+                    self.log.push(format!("account {rt} recovery unknown: {e}"));
+                }
+            }
             if let Some(v) = by_n.get(&n)
                 && v.projection.task.attempt == Some(a)
                 && matches!(v.projection.task.state, State::Doing | State::Review)
@@ -2043,6 +2078,12 @@ impl<'a> Service<'a> {
                 }
                 continue;
             };
+            let quota = new.iter().any(|c| c.body.lines().next() == Some(core::entry("steer", &["quota"], Some(a), "").as_str()));
+            if quota && v.projection.executions.iter().rev().find(|x| x.attempt == a).is_some_and(|x| x.release == Some(core::Release::NoStart)) {
+                self.execution_waits.insert(n,"quota continuation unavailable; recover the original native session without replay or migration".into());
+                pending.insert((n,a));
+                continue;
+            }
             // #1946: a never-started attempt has no session to resume; the reply to its start refusal starts afresh
             let runs: Vec<_> = v.projection.executions.iter().filter(|x| x.attempt == a).collect();
             let refused:Vec<_>=runs.iter().filter(|x|x.through==last && x.release==Some(core::Release::NoStart)).collect();
@@ -2076,7 +2117,9 @@ impl<'a> Service<'a> {
                 pending.insert((n,a));
                 continue;
             }
-            if self.refused_access.contains_key(&l.rt) || self.limited.contains_key(&l.rt) || self.logged_out.contains(&l.rt) || self.gui_refused(&v.issue, &l.rt) || !self.reserve(n, a, &l.rt) {
+            let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
+            let account = crate::runtime::accounts::of_log(&crate::runtime::log_path(&self.cfg.root,&l));
+            if accounts.error.is_some() || accounts.state.get(&l.rt).and_then(|m|m.get(&account)).is_some_and(|q|q.end() > now) || self.refused_access.contains_key(&l.rt) || self.limited.contains_key(&l.rt) || self.logged_out.contains(&l.rt) || self.gui_refused(&v.issue, &l.rt) || !self.reserve(n, a, &l.rt) {
                 pending.insert((n, a)); // the inbox stays undelivered
                 continue;
             }
@@ -2369,7 +2412,10 @@ impl<'a> Service<'a> {
     }
 
     fn select_runtime(&self, v: &View) -> Result<(String, Option<String>), (&'static str, String)> {
-        crate::labels::select(&v.issue.labels, v.projection.task.state == State::Review, &self.cfg.default_runtime,
+        if v.projection.reroute.is_some() {return Err(("unknown",crate::snapshot::ROUTING_WAIT.into()));}
+        let reviewer = v.projection.task.state == State::Review;
+        let default = crate::labels::project_default(&v.issue.labels, reviewer, &self.cfg.routing, &self.cfg.default_runtime);
+        crate::labels::select(&v.issue.labels, reviewer, default,
             |rt| self.admit_runtime(rt, needs_gui(&v.issue)))
     }
 
@@ -2381,9 +2427,16 @@ impl<'a> Service<'a> {
             return Err(("capability", format!("{rt} not in has")));
         }
         if let Some(r) = self.refused_access.get(rt) { return Err(("access", format!("{rt}: {r}"))); }
+        let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
+        if let Some(e) = &accounts.error { return Err(("unknown", format!("account availability unknown: {e}"))); }
+        if accounts.off(rt) {return Err(("capability",format!("{rt}: every account disabled on this host")));}
+        if accounts.active(rt, self.board.now().map_err(|e| ("unknown",e))?).is_none() {
+            if let Some(hold) = accounts.hold(rt, self.board.now().map_err(|e| ("unknown",e))?) {
+                return Err(("usage-limit",format!("{rt}: {} {}; account quotas {}", if hold.1 {"until"} else {"probe"},crate::board::stamp(hold.0),accounts.heartbeat(self.board.now().unwrap_or(0)).join("; "))));
+            }
+        }
         if self.limited.contains_key(rt) { return Err(("usage-limit", format!("{rt}: {}", self.limit_line(rt)))); }
         if self.logged_out.contains(rt) { return Err(("login", format!("{rt}: not logged in"))); }
-        if crate::runtime::accounts::Host::read(&self.cfg.install).off(rt) { return Err(("capability", format!("{rt}: every account disabled on this host"))); }
         if gui && !self.full.contains(rt) { return Err(("capability", format!("needs-gui: {rt} has no effective Full grant"))); }
         let c = self.cap.as_ref().map_err(|_| ("unknown", crate::snapshot::ADMISSION_UNKNOWN[1].to_string()))?;
         // Auto: a runtime without a limit has no count ceiling (§ 9); Fixed: only listed runtimes
@@ -2405,8 +2458,8 @@ impl<'a> Service<'a> {
         let Some(snapshot) = &mut self.snapshot else { return };
         let observed = snapshot.observed;
         for r in snapshot.tasks.iter_mut().filter(|r| matches!(r.task.state, State::Ready | State::Review)) {
-            // the board's own refusal (a host label no heartbeat names, #1721) holds on every host; keep it
-            if r.admission.as_ref().is_some_and(|a| a.code == "host" && a.host.is_none()) { continue; }
+            // Board-level refusals hold on every host, including an unfinished routing writer.
+            if r.admission.as_ref().is_some_and(|a| a.host.is_none() && (a.code=="host" || a.reason==crate::snapshot::ROUTING_WAIT)) { continue; }
             if let Some((code, reason)) = decided.get(&r.n) {
                 r.admission = Some(crate::snapshot::Admission { code, reason: reason.clone(), observed, host: Some(me.clone()) });
             }
@@ -2445,8 +2498,16 @@ impl<'a> Service<'a> {
             self.unseen.remove(&n);
         }
         if core::executions(n, &before).iter().any(|x| x.release.is_none()) { return Ok(None); }
+        let routing=core::project(n,&before,false);
+        if routing.reroute.is_some() {return Ok(None);}
+        // Read labels after the routing revision: a completed reroute invalidates a stale runtime selection.
+        if routing.routing_revision!=0 {
+            let fresh=self.board.issue(n)?;
+            if fresh.labels.iter().filter(|l|!l.starts_with("q-")).collect::<BTreeSet<_>>() != v.issue.labels.iter().filter(|l|!l.starts_with("q-")).collect::<BTreeSet<_>>() || !fresh.open {self.cache.remove(&n);return Ok(None);}
+        }
         let session = crate::runtime::new_session(rt);
-        let id = self.post(n, core::entry("spawn", &[role, &format!("{rt}:{session}"), &self.cfg.me], None, reason))?;
+        let reason=if routing.routing_revision==0 {reason.to_string()} else {format!("{reason}\nrouting-revision: {}",routing.routing_revision)};
+        let id = self.post(n, core::entry("spawn", &[role, &format!("{rt}:{session}"), &self.cfg.me], None, &reason))?;
         let comments = self.board.comments(n)?;
         let seen = comments.iter().any(|c| c.id == id);
         if !seen {
@@ -2619,6 +2680,12 @@ impl<'a> Service<'a> {
                 // without a fresh fold a gone could park the task on a card without options: post nothing, report the
                 // read error; the next pass reconciles the no-start proof and posts the limit card (#1123).
                 let log = crate::board::entries(self.board, l.task).map_err(|r| format!("#{} {text}; gone not posted: {r}", l.task))?;
+                if l.resume.is_some() && log.iter().any(|e| t.inbox.contains(&e.id)
+                    && e.body.lines().next() == Some(core::entry("steer", &["quota"], Some(l.attempt), "").as_str())) {
+                    self.execution_waits.insert(l.task,format!("quota continuation unavailable: {e}; preserve original session/account"));
+                    self.pending.insert((l.task,l.attempt));
+                    return self.beat();
+                }
                 // #1946 (pilotq#170): the cap refusal repeats until the contract shrinks, so one ask replaces gone retries
                 if e.class() == "rules-cap" {
                     let card = refused_card(l.task, &e.to_string());
@@ -3200,6 +3267,7 @@ mod tests {
             has: vec![],
             labelled: false,
             default_runtime: "claude".into(),
+            routing: vec![],
             permission_mode: "dontAsk".into(),
             codex: vec![],
             ttl: 300,
@@ -6127,13 +6195,13 @@ Open: none";
 
     // Chain: usage limit before work -> `usage-limit` -> held runtime -> reset -> admission (#1279). Risk: a
     // limit spends the gone budget (#1276), another eligible runtime waits, the hold outlives its reset or hides
-    // from status, or a limit after work started skips its retry.
+    // from status, or a limit after work destroys its attempt/session instead of waiting for quota.
     #[test]
     fn usage_limit_holds_the_runtime_until_reset_and_keeps_retries() {
         let root = std::env::temp_dir().join(format!("taskq-usage-limit-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let b = Fake::default();
-        let mut c = Config { root: root.clone(), ..cfg("mac") };
+        let mut c = Config { root: root.clone(), install: root.join("install"), ..cfg("mac") };
         c.limits = BTreeMap::from([("claude".to_string(), 1), ("codex".to_string(), 1)]);
         let reset = 1000;
         // the next launch's log: before-work limit, after-work limit, or plain work
@@ -6179,10 +6247,11 @@ Open: none";
         assert!(s.limited.is_empty());
         *e.borrow()[2].1.borrow_mut() = Some(1);
         s.pass().unwrap();
-        let gone = b.comments(only).unwrap().into_iter().rfind(|c| c.body.starts_with("taskq: gone")).unwrap().body;
-        assert!(gone.starts_with("taskq: gone attempt ") && gone.contains("\nexit 1"), "A6: {gone}");
-        assert_eq!(task(&b, only).retries, 1, "A6: a limit after work started counts");
-        assert!(s.limited.is_empty(), "a limit after work started holds nothing");
+        let kept = task(&b,only);
+        assert_eq!((kept.state,kept.retries),(State::Doing,0),"#2137 A7: mid-work quota keeps work and its attempt");
+        assert!(b.comments(only).unwrap().iter().any(|c|c.body.starts_with("taskq: steer quota attempt")&&c.body.contains("same task and native session")));
+        assert!(!b.comments(only).unwrap().iter().any(|c|c.body.starts_with("taskq: gone")),"quota is not a code defect");
+        assert!(crate::runtime::accounts::Host::read(&c.install).active("claude",reset).is_none(),"expired observed reset uses a bounded unknown-reset probe");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -6205,11 +6274,12 @@ Open: none";
         let reset = 1000;
         let e: Exits = Default::default();
         let (seen, r, inst) = (e.clone(), root.clone(), install.clone());
+        let clock=&b;
         let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |l: &Launch| {
             let flag = Rc::new(RefCell::new(None));
             seen.borrow_mut().push((l.task, flag.clone()));
             // the runtime adapter's start line (spawn_inner) before the native output: the account a new start takes
-            let account = crate::runtime::accounts::Host::read(&inst).pick("claude", 1).unwrap();
+            let account = crate::runtime::accounts::Host::read(&inst).pick("claude", clock.now().unwrap()).unwrap();
             let limit = format!("{{\"type\":\"assistant\",\"apiError\":\"usage_limit_reached\",\"quotaLimits\":{{\"status\":\"rejected\",\"resetsAt\":{reset}}}}}\n");
             let log = crate::runtime::log_path(&r, l);
             std::fs::create_dir_all(log.parent().unwrap()).unwrap();
@@ -6387,7 +6457,9 @@ Open: none";
         for host in ["mac", "other"] {
             for role in ["worker", "reviewer"] {
                 let b = Fake::default();
-                let c = cfg("mac");
+                // #2137: quota failures are host-wide; each simulated host needs its own writable store.
+                let mut c = cfg("mac");
+                c.install=std::env::temp_dir().join(format!("taskq-recovered-quota-{}",crate::runtime::uuid()));
                 let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
                 let w = b.comment(n, &format!("taskq: spawn worker claude:s {host}")).unwrap();
                 let a = if role == "reviewer" {
@@ -6407,6 +6479,7 @@ Open: none";
                 assert!(b.comments(n).unwrap().iter().any(|c|c.body.starts_with("taskq: usage-limit attempt")));
                 s.pass().unwrap();
                 assert_eq!(b.comments(n).unwrap().iter().filter(|c|c.body.starts_with("taskq: usage-limit attempt")).count(),1);
+                let _=std::fs::remove_dir_all(&c.install);
             }
         }
     }
@@ -6898,6 +6971,160 @@ Open: none";
         s.pass().unwrap();
         assert_eq!((focus(&s), task(&b, t).state), (None, State::Doing));
         assert!(!s.snapshot.as_ref().unwrap().text(&c, &Value::Null).unwrap().contains("focus"));
+    }
+
+    // #2137 A7: a mid-work quota preserves ownership; restart waits, then resumes only the same native session.
+    #[test]
+    fn balancing_midwork_quota_resumes_same_session_after_restart() {
+        for (reviewer,refuse) in [(false,false),(true,false),(false,true),(true,true)] {
+        let b=Fake::default();let root=std::env::temp_dir().join(format!("taskq-midwork-quota-{}",crate::runtime::uuid()));
+        let mut c=cfg("mac");c.root=root.clone();c.install=root.join("install");
+        let n=b.create("Keep work","",&["taskq".into(),"run-claude".into()]).unwrap();
+        if reviewer {let a=b.comment(n,"taskq: spawn worker claude:worker mac").unwrap();b.comment(n,&format!("taskq: result {} attempt {a}","a".repeat(40))).unwrap();b.comment(n,&format!("taskq: released {a} exit attempt {a}")).unwrap();}
+        let calls=Rc::new(RefCell::new(vec![]));let exits:Exits=Default::default();
+        let starter=|| {
+            let (calls,exits,root)=(calls.clone(),exits.clone(),root.clone());
+            Box::new(move |l:&Launch| {
+                calls.borrow_mut().push((l.attempt,l.session.clone(),l.resume.is_some()));
+                let log=crate::runtime::log_path(&root,l);std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+                if l.resume.is_none() {std::fs::write(&log,json!({"type":"system","subtype":"init","session_id":l.session}).to_string()+"\n"+concat!(
+                    "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\"}]}}\n",
+                    "{\"type\":\"assistant\",\"apiError\":\"usage_limit_reached\",\"quotaLimits\":{\"status\":\"rejected\",\"resetsAt\":18000}}\n")).unwrap();}
+                else {if refuse {return Err("native continuation unavailable; no replacement".into());} crate::runtime::rules_line(&log,"resume","fixture").unwrap();}
+                let flag=Rc::new(RefCell::new(None));exits.borrow_mut().push((l.task,flag.clone()));
+                Ok(Box::new(FakeProc(flag)) as Box<dyn Proc>)
+            }) as Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>,crate::runtime::StartError>>
+        };
+        let mut s=Service::new(&b,&c,"fixture",starter());s.focus=vec!["all".into()];s.pass().unwrap();
+        let a=task(&b,n).attempt.unwrap();*exits.borrow()[0].1.borrow_mut()=Some(1);s.pass().unwrap();
+        assert_eq!((task(&b,n).state,task(&b,n).attempt,task(&b,n).retries),(if reviewer {State::Review} else {State::Doing},Some(a),0));
+        drop(s);
+        let mut s=Service::new(&b,&c,"fixture",starter());s.focus=vec!["all".into()];
+        s.pass().unwrap();assert_eq!(calls.borrow().len(),1,"restart cannot retry the exhausted account");
+        b.state.borrow_mut().clock=18000;let _=s.pass();
+        assert_eq!(calls.borrow().len(),2);assert_eq!(calls.borrow()[1],(a,calls.borrow()[0].1.clone(),true));
+        assert_eq!(task(&b,n).attempt,Some(a));
+        if refuse {
+            for _ in 0..3 {let _=s.pass();}
+            assert_eq!(calls.borrow().len(),2,"unavailable continuation never replays or migrates");
+            assert_eq!((task(&b,n).attempt,task(&b,n).retries),(Some(a),0));
+            assert!(s.execution_waits[&n].contains("quota continuation unavailable"));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    // #2137 A3: stale service selections and concurrent spawns cannot cross a board routing fence.
+    #[test]
+    fn balancing_reroute_fences_stale_service_claims() {
+        for concurrent in [false,true] {
+            let b=Fake::default();let root=std::env::temp_dir().join(format!("taskq-route-fence-{}",crate::runtime::uuid()));
+            let mut c=cfg("mac");c.root=root.clone();c.install=root.join("install");
+            c.limits.insert("codex".into(),1);
+            let n=b.create("Reroute","",&["taskq".into(),"run-claude".into()]).unwrap();
+            let v=views(&b,&mut Default::default(),&mut Default::default(),300).unwrap().0.remove(0);
+            let exits:Exits=Default::default();let mut s=service(&b,&c,exits.clone());
+            if concurrent {b.state.borrow_mut().race=Some("taskq: reroute claude codex\nrouting-fence: 1".into());}
+            else {
+                b.comment(n,"taskq: reroute claude codex\nrouting-fence: 1").unwrap();
+                assert!(crate::dispatch::finish_reroute(&b,n).ok());
+            }
+            s.claim(&v,"worker","claude","").unwrap();
+            assert!(exits.borrow().is_empty());assert_eq!(task(&b,n).state,State::Ready);
+            s.pass().unwrap();s.pass().unwrap();
+            assert_eq!(rt_of(&task(&b,n)).unwrap().0,"codex","automatic pending-intent reconciliation selects the new pin");
+            assert_eq!(exits.borrow().len(),1);assert_eq!(task(&b,n).retries,0);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    // Chain: §5, #2137 A3. A paused finisher must not write pins after another service completes and admits work.
+    #[test]
+    fn balancing_reroute_stale_finisher_preserves_live_pins() {
+        let b=Fake::default();let root=std::env::temp_dir().join(format!("taskq-stale-finisher-{}",crate::runtime::uuid()));
+        let mut c=cfg("mac");c.root=root.clone();c.install=root.join("install");
+        c.limits.insert("codex".into(),1);c.limits.insert("antigravity".into(),1);
+        let n=b.create("Reroute","",&["taskq".into(),"run-claude".into()]).unwrap();
+        b.comment(n,"taskq: reroute claude codex\nrouting-fence: 1").unwrap();
+        let exits:Exits=Default::default();
+        let (other,launched)=(c.clone(),exits.clone());
+        b.state.borrow_mut().before_labels=Some(Box::new(move |b,n| {
+            let mut second=service(b,&other,launched);second.focus=vec![];
+            second.pass().unwrap();
+            let pending=second.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().admission.as_ref().unwrap();
+            assert!(pending.reason.contains("reroute"),"pending writer must explain why work waits");
+            crate::reroute(b,&other.root,"codex","antigravity").unwrap();
+            second.focus=vec!["all".into()];second.pass().unwrap();
+        }));
+        let receipt=crate::dispatch::finish_reroute(&b,n);
+        let p=core::project(n,&crate::board::entries(&b,n).unwrap(),false);
+        let pins:Vec<_>=b.issue(n).unwrap().labels.into_iter().filter(|l|l.starts_with("run-")).collect();
+        assert_eq!(pins,[format!("run-{}",rt_of(&p.task).map_or("codex",|r|r.0))],"stale finisher corrupted the live pin");
+        assert!(receipt.ok(),"the sole writer can finish: {}",receipt.text());
+        assert!(exits.borrow().is_empty(),"the second service cannot admit while the first can still write");
+        crate::reroute(&b,&c.root,"codex","antigravity").unwrap();
+        let mut second=service(&b,&c,exits.clone());second.focus=vec!["all".into()];second.pass().unwrap();
+        assert_eq!(rt_of(&task(&b,n)).unwrap().0,"antigravity");
+        assert_eq!(b.issue(n).unwrap().labels.iter().filter(|l|l.starts_with("run-")).cloned().collect::<Vec<_>>(),["run-antigravity"]);
+        assert_eq!(exits.borrow().len(),1);assert_eq!(task(&b,n).retries,0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // A5/A6: failed quota persistence must fence every project, not select the exhausted default as its own spare.
+    #[test]
+    fn balancing_quota_write_failure_fences_other_projects() {
+        let root=std::env::temp_dir().join(format!("taskq-quota-save-{}",crate::runtime::uuid()));
+        let install=root.join("install");std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(install.join(crate::runtime::accounts::FILE),r#"{"claude":[{"label":"default","enabled":true},{"label":"work","enabled":true}]}"#).unwrap();
+        // A directory at the atomic writer's temporary path fails the save after a valid state read.
+        let failed=install.join(format!("{}.{}.tmp",crate::runtime::accounts::STATE,std::process::id()));
+        std::fs::create_dir(&failed).unwrap();
+        let b=Fake::default();let mut c=cfg("mac");c.root=root.join("a");c.install=install.clone();
+        let n=b.create("Quota","",&["taskq".into(),"run-claude".into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker claude:owned mac").unwrap();
+        let t=task(&b,n);let log=crate::runtime::attempt_log(&c.root,"worker",n,a);
+        std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+        std::fs::write(&log,"{\"type\":\"taskq.account\",\"account\":\"default\"}\n").unwrap();
+        let mut s=service(&b,&c,Default::default());
+        assert!(s.account_limit(n,&t,a,"claude",(18000,true),10).0.is_none());
+        // Once the failing aggregate path disappears, an unsaved observation must still be fenced.
+        std::fs::remove_dir(failed).unwrap();
+        let mut other=c.clone();other.root=root.join("b");
+        let s2=service(&b,&other,Default::default());
+        assert!(s2.admit_runtime("claude",false).is_err(),"another project must not select the exhausted default");
+        assert!(crate::runtime::accounts::claim(&install,"claude",None,10,&root.join("probe")).is_err());
+        drop(s);drop(s2);
+        let mut restarted=service(&b,&other,Default::default());restarted.account_pass(10);
+        let accounts=crate::runtime::accounts::Host::read(&install);
+        assert_eq!(accounts.active("claude",10).as_deref(),Some("work"),"recover the journal, preserving the exhausted default and spare account: {:?}; {:?}",accounts.error,restarted.log);
+        assert_eq!(accounts.state["claude"]["default"].until,Some(18000));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // #2137 A2/A3/A8: real admission and status share routing, disabled pins and account quota evidence.
+    #[test]
+    fn balancing_service_routing_and_blockers() {
+        let b=Fake::default();let root=std::env::temp_dir().join(format!("taskq-balancing-service-{}",crate::runtime::uuid()));
+        std::fs::create_dir_all(root.join("install")).unwrap();
+        let mut c=cfg("mac");c.root=root.clone();c.install=root.join("install");
+        c.limits=BTreeMap::from([("claude".into(),0),("codex".into(),1),("antigravity".into(),1)]);
+        c.routing=crate::labels::routing(&json!({"routing":[{"labels":["ui"],"prefer":"claude"}]})).unwrap();
+        let soft=b.create("UI","",&["taskq".into(),"ui".into()]).unwrap();
+        let pinned=b.create("Disabled strict pin","",&["taskq".into(),"run-claude".into()]).unwrap();
+        let quota=b.create("Quota strict pin","",&["taskq".into(),"run-antigravity".into()]).unwrap();
+        crate::runtime::accounts::record_windows(&c.install,"antigravity","default",0,&[("seven_day".into(),Some(604800))]).unwrap();
+        let exits:Exits=Default::default();let mut s=service(&b,&c,exits.clone());s.focus=vec!["all".into()];
+        for _ in 0..3 {s.pass().unwrap();}
+        assert_eq!(rt_of(&task(&b,soft)).unwrap().0,"codex");
+        assert_eq!(task(&b,pinned).state,State::Ready);assert_eq!(task(&b,quota).state,State::Ready);
+        assert_eq!(exits.borrow().len(),1,"no repeated failed starts for exhausted accounts");
+        let snap=s.snapshot.as_ref().unwrap();
+        for (n,code) in [(pinned,"capacity"),(quota,"usage-limit")] {assert_eq!(snap.tasks.iter().find(|r|r.n==n).unwrap().admission.as_ref().unwrap().code,code);}
+        let report=snap.text(&c,&Value::Null).unwrap();
+        assert!(report.contains("claude disabled (limit 0)"),"{report}");
+        assert!(report.contains("account default window seven_day"),"{report}");
+        assert_eq!(s.cfg.limits,c.limits,"quota observations do not edit owner capacity");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // Chain: § 4 step 6 admission -> snapshot rows -> status.json and taskq-board/1 (#1616). Risk: DashQ or the tray

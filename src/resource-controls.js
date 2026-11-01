@@ -333,8 +333,8 @@ workStep:function(groups, w, cap, ev, newId, now) {
 workRender:function(groups, w, cap, now, host) {
     const ws = workStatus(groups, w, cap, now), st = ws.state, sel = picked(groups, w), d = w.draft;
     const busy = st === 'review' || st === 'receipts';
-    let h = '<section class="rsc rsc-work" data-rsc-state="' + st + '" aria-label="' + esc('Work mode on ' + (host || 'this host')) + '">';
-    h += '<p class="rsc-row"><span>Work mode</span><span class="rsc-muted">' + esc((host || 'this host') + ' · selected projects') + '</span></p>';
+    let h = '<section class="rsc rsc-work" data-rsc-state="' + st + '" aria-label="' + esc('Balancing on ' + (host || 'this host')) + '">';
+    h += '<p class="rsc-row"><span>Balancing</span><span class="rsc-muted">' + esc((host || 'this host') + ' · selected projects') + '</span></p>';
     h += '<fieldset class="rsc-scope"><legend>Projects</legend>' + groups.map(g => '<label><input type="checkbox" data-rsc-select="' + esc(g.key) + '"' + (w.selected[g.key] ? ' checked' : '') + (busy ? ' disabled' : '') + '>' + esc(g.labels && g.labels.project || g.key) + '</label>').join('') +
       '<p class="rsc-muted">Other projects remain unchanged.</p></fieldset>';
     if (sel.length) h += '<p class="rsc-muted">' + esc(sel.map(g => (g.labels && g.labels.project || g.key) + ': ' + policy(g)).join(' · ')) + '</p>';
@@ -347,7 +347,7 @@ workRender:function(groups, w, cap, now, host) {
       const done = Object.values(ws.each).every(s => s === 'applied' || s === 'rejected');
       return h + (done ? '<button type="button" data-rsc="dismiss">Done</button>' : '') + '</section>';
     }
-    if (st === 'view' || st === 'read-only') return h + '<button type="button" data-rsc="open"' + (st === 'view' ? '' : ' disabled') + '>Edit work mode</button>' +
+    if (st === 'view' || st === 'read-only') return h + '<button type="button" data-rsc="open"' + (st === 'view' ? '' : ' disabled') + '>Edit Balancing</button>' +
       (st === 'read-only' ? '<p class="rsc-muted">' + (sel.length ? 'A selected project is read-only here' : 'Select projects to change') + '</p>' : '') + '</section>';
     if (st === 'review') return h + '<div class="rsc-review" role="alert"><p>' + esc('Apply on ' + (host || 'this host') + '?') + '</p>' +
       sel.map(g => { const r = review(g, d); return '<p>' + esc((g.labels && g.labels.project || g.key) + ': ' + (r.length ? r.join(', ') : 'unchanged')) + '</p>'; }).join('') +
@@ -492,14 +492,14 @@ const root=globalThis;
 
 
 
-  // One editor field: label then control; Mixed (Work mode) shows no common value until the field is touched.
+  // One editor field: label then control; Mixed (Balancing) shows no common value until the field is touched.
 
 
   // Browser binding: one element per group. adapter = {capability(group) -> {edit, reason, note}, send(group, op) ->
   // Promise<{state, reason}>, now() -> seconds, newId?()}. update(group) keeps the draft, focus and caret.
 
 
-  // Work mode (menu M12): one draft over explicitly selected project groups of one host. A field whose selected
+  // Balancing (menu M12): one draft over explicitly selected project groups of one host. A field whose selected
   // values differ shows Mixed; only touched fields travel, each group keeps its own untouched values and gets its own
   // operation and receipt (partial failure stays per project). Unselected groups are never sent.
   const {RANK}=execution.module("resource-controls",{RANK:k => k.startsWith('host.') ? 0 : k.startsWith('rt:') ? 1 : 2});
@@ -517,10 +517,10 @@ const root=globalThis;
 
 
 
-  // Browser binding of Work mode: adapter as in `mount`, plus `host`. update(groups) keeps selection, draft and focus.
+  // Browser binding of Balancing: adapter as in `mount`, plus `host`. update(groups) keeps selection, draft and focus.
 
 
-  // Work mode conformance replay: case `{groups, now, capability, selected, events}`; refresh {groups: [i..]} replaces
+  // Balancing conformance replay: case `{groups, now, capability, selected, events}`; refresh {groups: [i..]} replaces
   // the observed groups; check returns {status, each, html, sent}.
 
 

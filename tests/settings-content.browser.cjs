@@ -32,14 +32,14 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    const layout=await p.locator('.settings-widget').evaluateAll(es=>es.map(e=>{const a=e.children[1].getBoundingClientRect(),b=e.querySelector('.meta').getBoundingClientRect();return {label:e.children[1].textContent,display:getComputedStyle(e).display,overlap:Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1};}));
    assert.deepEqual(layout.filter(x=>x.display!=='grid'||x.overlap),[],'F05: Settings owns its grid; label and summary never overlap');
    const widgets=await p.locator('.settings-widget').evaluateAll(es=>es.map(e=>({label:e.children[1].textContent,meta:e.querySelector('.meta').textContent,cut:[...e.children].some(c=>c.scrollWidth>c.clientWidth+1)})));
-   assert.deepEqual(widgets.map(w=>w.label),['Appearance','Notifications','Activity history','Hosts and resources','Work mode','Agents and access','Projects','Delivery','Services and support','Emergency stop','Recovery','About and updates']);
+   assert.deepEqual(widgets.map(w=>w.label),['Appearance','Notifications','Activity history','Hosts and resources','Balancing','Agents and access','Projects','Delivery','Services and support','Emergency stop','Recovery','About and updates']);
    // #1775 R43: route marks follow the visual-style control icon table, not near-miss substitutes
    assert.deepEqual(await p.locator('.settings-widget').evaluateAll(es=>es.map(e=>e.querySelector('.ui-icon svg')?.getAttribute('class').replace('lucide lucide-',''))),['type','bell','chart-no-axes-column','network','focus','bot','folder','git-pull-request','activity','octagon-x','rotate-ccw','info']);
    assert.deepEqual(widgets.filter(w=>w.cut).map(w=>w.label),[],'no clipped widget text');
    assert.equal(widgets.find(w=>w.label==='Hosts and resources').meta,'3 hosts · observations incomplete','a global count is never one host; #1729 zero counts hide');
    assert.equal(widgets.find(w=>w.label==='Agents and access').meta,'Claude signed in · Codex expired');
    assert.equal(widgets.find(w=>w.label==='Delivery').meta,'3 projects · 1 policy','equal values group');
-   assert.equal(widgets.find(w=>w.label==='Work mode').meta,'3 projects · 3 unknown · capacity unavailable','R32: admission first, capacity apart');
+   assert.equal(widgets.find(w=>w.label==='Balancing').meta,'3 projects · 3 unknown · capacity unavailable','R32: admission first, capacity apart');
    // R16/R17: one line per host, Claude and Codex apart; stale never 0; this host's expansion holds units and age
    await go('hosts');
    const lines=await p.locator('.host-line > summary').evaluateAll(es=>es.map(e=>[e.querySelector('.host-name').textContent,...e.querySelectorAll('.host-number')].map(x=>typeof x==='string'?x:x.textContent)));
@@ -71,7 +71,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
     await s.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
     const current={...state,theme,projects:[{...alpha,resources}]};
     await s.evaluate(snapshot=>taskq.receive(snapshot),current);
-    for(const [label,route,operation] of [['Work mode','work',resources?'resources':'admission'],['Recovery','recovery','recovery'],['Agents and access','agents'],['Services and support','services'],['About and updates','about']]){
+    for(const [label,route,operation] of [['Balancing','work',resources?'resources':'admission'],['Recovery','recovery','recovery'],['Agents and access','agents'],['Services and support','services'],['About and updates','about']]){
      await s.evaluate(()=>{messages.length=0;});
      await s.locator('.settings-widget').getByText(label,{exact:true}).click();
      assert.equal(await s.locator('.head h1').innerText(),label,'#1713: inner title equals list label');
@@ -84,7 +84,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
 
      if(operation){
       await s.locator('[data-a=workspace][data-operation='+operation+']').click();
-      assert.deepEqual(await s.evaluate(()=>messages.filter(m=>m.a==='workspace').map(m=>m.open)),[{page:'operations',operation,root:null,board:null,task:null,revision:null}],'explicit review keeps the existing operation destination');
+      assert.deepEqual(await s.evaluate(()=>messages.filter(m=>m.a==='workspace').map(m=>m.open)),[{page:'operations',operation,origin:{surface:'settings',page:route},root:null,board:null,task:null,revision:null}],'explicit review keeps the existing operation destination');
      }
      await s.locator('.head [data-a=back]').click();
      assert.equal(await s.locator('.head h1').innerText(),'Settings');
@@ -163,7 +163,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
      assert.match(await p.locator('.content').innerText(),/board observation unavailable|10m/);
      assert.equal(await p.locator('[data-a=log]').count()>=11,true,'logs remain available');
     }
-    if(route==='work')assert.match(await p.locator('.content').innerText(),/Admission on mac[\s\S]*11 projects[\s\S]*Review project admission[\s\S]*Review host limits/);
+    if(route==='work')assert.match(await p.locator('.content').innerText(),/11 projects[\s\S]*Task routing[\s\S]*Runtime availability[\s\S]*Host balancing[\s\S]*Host mac[\s\S]*Review host limits[\s\S]*Project policies[\s\S]*Review project admission/);
     if(route==='recovery')assert.match(await p.locator('.content').innerText(),/Admission held · drain[\s\S]*Unknown effects|Admission held · drain[\s\S]*unknown effects/);
     if(out&&theme==='dark'&&font===18&&width===320&&['settings','appearance','work','recovery','notification-settings','agents','services'].includes(route)){
      await p.locator('.content details').evaluateAll(es=>es.forEach(e=>e.open=false));
@@ -176,9 +176,9 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    // Entry -> native operation-review handoff -> Settings Back preserves context without applying anything.
    for(const route of ['work','recovery']){
     await go('settings');await p.locator('[data-route='+route+']').click();
-    assert.equal(await p.locator('.head h1').innerText(),route==='work'?'Work mode':'Recovery');
+    assert.equal(await p.locator('.head h1').innerText(),route==='work'?'Balancing':'Recovery');
     await p.evaluate(()=>messages.length=0);
-    await p.locator('[data-a=workspace]').first().click();
+    await p.locator('[data-a=workspace][data-operation='+(route==='work'?'admission':'recovery')+']').click();
     assert.deepEqual(await p.evaluate(()=>messages.filter(m=>!['web-observation','size','set'].includes(m.a)).map(m=>[m.a,m.open?.operation])),[['workspace',route==='work'?'admission':'recovery']]);
     await p.locator('.head [data-a=back]').click();assert.equal(await p.locator('.head h1').innerText(),'Settings');
     assert.equal(await p.evaluate(()=>document.activeElement.dataset.route),route);

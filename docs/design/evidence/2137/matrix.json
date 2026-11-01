@@ -1,0 +1,730 @@
+[
+  {
+    "route": "settings",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "appearance",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "notification-settings",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "cadence",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "hosts",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "work",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "agents",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "projects",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "delivery",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "services",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "stop",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "recovery",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "about",
+    "width": 320,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "settings",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "appearance",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "notification-settings",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "cadence",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "hosts",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "work",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "agents",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "projects",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "delivery",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "services",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "stop",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "recovery",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "about",
+    "width": 560,
+    "font": 18,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "settings",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "appearance",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "notification-settings",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "cadence",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "hosts",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "work",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "agents",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "projects",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "delivery",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "services",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "stop",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "recovery",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "about",
+    "width": 320,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "settings",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "appearance",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "notification-settings",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "cadence",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "hosts",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "work",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "agents",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "projects",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "delivery",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "services",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "stop",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "recovery",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "about",
+    "width": 560,
+    "font": 20,
+    "theme": "light",
+    "result": "Pass"
+  },
+  {
+    "route": "settings",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "appearance",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "notification-settings",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "cadence",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "hosts",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "work",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "agents",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "projects",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "delivery",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "services",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "stop",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "recovery",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "about",
+    "width": 320,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "settings",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "appearance",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "notification-settings",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "cadence",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "hosts",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "work",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "agents",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "projects",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "delivery",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "services",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "stop",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "recovery",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "about",
+    "width": 560,
+    "font": 18,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "settings",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "appearance",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "notification-settings",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "cadence",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "hosts",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "work",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "agents",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "projects",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "delivery",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "services",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "stop",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "recovery",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "about",
+    "width": 320,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "settings",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "appearance",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "notification-settings",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "cadence",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "hosts",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "work",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "agents",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "projects",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "delivery",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "services",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "stop",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "recovery",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  },
+  {
+    "route": "about",
+    "width": 560,
+    "font": 20,
+    "theme": "dark",
+    "result": "Pass"
+  }
+]

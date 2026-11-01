@@ -638,10 +638,10 @@ fn project(install: &Path, root: &str) -> Value {
         Some(e)
     }).collect();
     // the local host's saved capacity, for `Edit limits` and its readback (§ 4 Capacity)
-    let (cap_host, cap_saved, cap_revision,board_kind, project_limits) = match crate::load(r) {
+    let (cap_host, cap_saved, cap_revision,board_kind, project_limits,routing) = match crate::load(r) {
         Ok((c, raw)) => {let policy=crate::host::Policy::read(install);let rev=policy.as_ref().ok().and_then(|p|p.revision().ok());let host=policy.as_ref().map(|p|json!(p.me)).unwrap_or(Value::Null);
-            (host, policy.map(|p|p.cap.json()).unwrap_or_else(|e| json!({"error": e})),json!(rev), json!(c.board.name), if raw["limits"].is_null() {json!({})} else {raw["limits"].clone()})},
-        Err(e) => (Value::Null, json!({"error": e}), Value::Null,Value::Null, Value::Null),
+            (host, policy.map(|p|p.cap.json()).unwrap_or_else(|e| json!({"error": e})),json!(rev), json!(c.board.name), if raw["limits"].is_null() {json!({})} else {raw["limits"].clone()}, raw.get("routing").cloned().unwrap_or_else(||json!([])))},
+        Err(e) => (Value::Null, json!({"error": e}), Value::Null,Value::Null, Value::Null,Value::Null),
     };
     let mut tasks = s["tasks"].as_array().cloned().unwrap_or_default();
     let (hosts, tasks_live) = liveness(&s, age, ttl, &mut tasks);
@@ -664,6 +664,7 @@ fn project(install: &Path, root: &str) -> Value {
         "hosts": hosts, "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "tasks_live": tasks_live, "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"], "access": s["access"],
         "incident": s["incident"], "incident_line": s.get("incident").map(crate::incident::line), "incident_notice": s["incident_notice"],
         "incident_repo": crate::platform::RELEASE_REPO});
+    out["routing"] = routing;
     out["events_error"] = json!(events_error);
     out["incoming"] = s["incoming"].clone();
     // #1819: the stale line compares the board read age with the service poll

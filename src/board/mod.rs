@@ -1088,6 +1088,8 @@ pub struct FakeState {
     pub fail_task_prs: bool,
     pub fail_issue_read: Option<(u64, usize)>,
     pub fail_labels: bool,
+    /// Pause a label writer while another service reconciles the same task.
+    pub before_labels: Option<Box<dyn FnOnce(&Fake, u64)>>,
     /// The next this many `comment` calls fail like a board rate-limit pause.
     pub fail_comments: usize,
     /// The write commits, but its response is lost.
@@ -1257,6 +1259,8 @@ impl Board for Fake {
     }
     fn summaries(&self) -> bool { self.state.borrow().summaries }
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> {
+        let paused = self.state.borrow_mut().before_labels.take();
+        if let Some(run) = paused { run(self, n); }
         let mut st = self.state.borrow_mut();
         if std::mem::take(&mut st.fail_labels) { return Err("label write failed".into()); }
         let t = st.tick();

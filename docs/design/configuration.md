@@ -35,3 +35,26 @@ An agent reads entries from the board's version to the new one, plans each open 
 `antigravity` uses the `agy` streaming CLI for workers and reviewers. Host/project `limits.antigravity`, `default_runtime: "antigravity"`, `taskq add --runtime antigravity` and `taskq service capacity --host H --antigravity N` use the same admission and lower-only project limits as other CLI runtimes. Zero disables; an absent host limit has no ceiling. No configuration edit creates a permission grant or login.
 
 Unpinned work follows [§4](../../taskq.md#4-service): preferred CLI, then eligible Claude, Codex and Antigravity in that order. Strict `run-*` pins never fall back; `codex-app` stays explicit. Each candidate retains its own model/effort settings and grant; Codex options are never translated into Antigravity options. Quota observations hold availability separately from operator capacity and never rewrite limits. Owner/operator sessions keep their existing routing.
+
+## Balancing
+
+Balancing separates Task routing, Runtime availability, Host balancing and Project policies. Existing `work` route/JSON aliases remain supported.
+
+Optional project `routing` is an ordered array, for example `[{"labels":["ui"],"prefer":"codex"},{"labels":["code","3d"],"prefer":"antigravity"}]`. Each rule needs a non-empty list of labels and one CLI runtime preference. All listed labels must match; the first matching rule wins. A single `prefer-claude`, `prefer-codex` or `prefer-antigravity` task label overrides these rules for workers. Reviews use the host default. Explicit `run-*` pins override both for both roles. All soft preferences retain subscription fallback and each candidate's grants, capabilities, model/effort and capacity checks. Conflicting preference labels on an existing board task are ignored with one log line per pass; new task creation refuses them. Invalid routing refuses new admission.
+
+**Compatibility:** `prefer-codex` used to be a strict worker pin and `prefer-claude` was ignored. Upgraded hosts treat both as soft preferences; existing tasks can therefore use another eligible CLI. No board labels are rewritten. To retain a strict choice, the owner uses `run-codex` or `run-claude` before mixed-version admission; older hosts do not understand project routing or `prefer-antigravity`. Coordinate host updates before relying on those policies. Active attempts keep their runtime/account.
+
+Owner-only `taskq reroute --from claude --to codex` changes matching strict pins on open ready tasks without unresolved execution, reporting each readback/refusal. It does not change focus, limits, accounts, grants or models and does not migrate work.
+
+Provider/account quota windows live in the existing host-wide account availability record, separate from operator enable/disable and slot limits. Retain overlapping observed windows; unknown reset uses bounded probes, never an inferred weekly reset. Every project excludes exhausted accounts; a spare account precedes runtime fallback. All exhausted means automatic wait with account/window/reset or next-probe evidence. Restart retains holds and probe ownership; missing or corrupt observations remain unknown. No paid API fallback, login creation or credential copying.
+
+### Balancing cutover
+
+Routing fences and reviewer quota continuation change older folds and require the coordinated project cutover in §8/§9 before new entries are written. This includes fenced `taskq: reroute` intents, `routing-write`/`routing-release` writer ownership, `rerouted` completion, claims carrying `routing-revision`, and reviewer `steer quota attempt`. Historical unfenced reroute audits retain their meaning. Soft preferences and project routing also require compatible admission policy on every board host.
+
+1. Inventory the configured board hosts and open tasks, including pending routing intents, results, retries, quota windows and native execution ownership. Unknown or unreadable ownership blocks replacement; it never proves exit.
+2. Under the existing owner-approved cutover procedure, pause new admissions. Preserve active work until it finishes or a qualified native handover preserves its attempt, session, account and grants. Never replay, migrate or duplicate uncertain execution.
+3. Upgrade and verify compatible CLI readers and services on every board host before allowing the new entries. Do not run mixed readers. Preserve strict pins, focus, configured limits, accounts, permissions, independent quota windows and pending probe ownership; no label rewrite or live policy change is implicit.
+4. Resume in the existing approved order only after all hosts read the new model and retained state correctly. Read back new claims and continuations against the accepted golden traces; qualify actual native behavior separately under R12.
+
+After these entries exist, rollback requires a compatible reader. Retain board logs, pending routing intents, quota journals and execution evidence; never delete or edit them to make an old fold appear compatible. Unknown completion stays fenced and follows the existing §9 repair procedure. Documentation and portable checks do not prove a live cutover.

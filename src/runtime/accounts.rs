@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 pub const FILE: &str = "accounts.json";
 /// The service's limit record per runtime and label, in `<install>`.
 pub const STATE: &str = "accounts-state.json";
+const PENDING: &str = "accounts-state.pending.json";
+// Retain failed observations across project threads even when the journal itself cannot be written.
+static UNSAVED: std::sync::Mutex<BTreeMap<PathBuf, Vec<Value>>> = std::sync::Mutex::new(BTreeMap::new());
 /// The runtime's own home.
 pub const DEFAULT: &str = "default";
 /// The folder under the default home that holds the other accounts' homes.
@@ -33,7 +36,7 @@ pub struct Limit {
 
 impl Limit {
     /// When the limit ends: the reported reset, else the probe after it.
-    pub fn end(&self) -> i64 { self.until.unwrap_or(self.at + PROBE) }
+    pub fn end(&self) -> i64 { self.until.unwrap_or(self.at.saturating_add(PROBE)) }
 }
 
 pub type Policy = BTreeMap<String, Vec<Entry>>;
@@ -83,19 +86,150 @@ fn write_policy(install: &Path, p: &Policy) -> Result<(), String> {
     crate::platform::write_synced(&install.join(FILE), &format!("{:#}\n", policy_json(p)))
 }
 
-/// The limit record; unreadable reads as none (a failed start records the limit again).
-pub fn read_state(install: &Path) -> BTreeMap<String, Limits> {
-    let Ok(Some(v)) = crate::data::json(&install.join(STATE)) else { return BTreeMap::new() };
-    v.as_object().into_iter().flatten().map(|(rt, m)| (rt.clone(), m.as_object().into_iter().flatten().filter_map(|(label, l)|
-        Some((label.clone(), Limit { at: l["limited"].as_i64()?, until: l["until"].as_i64() }))).collect())).collect()
+/// Validate availability independently of capacity; unknown state must never enable a launch.
+fn state_value(install: &Path) -> Result<Value, String> {
+    let v = crate::data::json(&install.join(STATE)).map_err(|_| "host account quota state unreadable")?.unwrap_or_else(|| json!({}));
+    for (rt, accounts) in v.as_object().ok_or("account quota state must be an object")? {
+        if !crate::runtime::CLI_RUNTIMES.contains(&rt.as_str()) {return Err("quota runtime unknown".into());}
+        for (label, q) in accounts.as_object().ok_or("account quota state must list accounts")? {
+            if !valid_label(label) {return Err("quota account label invalid".into());}
+            parse_limit(q)?;
+            if let Some(windows) = q.get("windows") {
+                for w in windows.as_array().filter(|w| !w.is_empty()).ok_or("quota windows must be a non-empty array")? {
+                    if w["window"].as_str().is_none_or(|w| w.is_empty() || w.len()>40 || !w.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')) { return Err("quota window unknown".into()); }
+                    parse_limit(w)?;
+                }
+                let largest = windows.as_array().unwrap().iter().map(parse_limit).collect::<Result<Vec<_>,_>>()?.into_iter().max_by_key(Limit::end).unwrap();
+                if parse_limit(q)? != largest { return Err("quota summary does not match windows".into()); }
+            }
+        }
+    }
+    Ok(v)
 }
 
-/// Records a usage limit of `rt` account `label` seen at board time `at`.
+fn parse_limit(v: &Value) -> Result<Limit, String> {
+    let at = v["limited"].as_i64().ok_or("quota observation time unknown")?;
+    let until = match v.get("until") { Some(Value::Null) => None, Some(v) => Some(v.as_i64().ok_or("quota reset unknown")?), None => return Err("quota reset field missing".into()) };
+    if at < 0 || until.is_some_and(|t| t < 0) { return Err("quota time invalid".into()); }
+    Ok(Limit { at, until })
+}
+
+fn windows(q: &Value) -> Vec<Value> {
+    q["windows"].as_array().cloned().unwrap_or_else(|| {
+        parse_limit(q).ok().map(|l| vec![json!({"window":"unknown", "limited":l.at,"until":l.until})]).unwrap_or_default()
+    })
+}
+
+fn pack(w: Vec<Value>) -> Value {
+    let l = w.iter().filter_map(|w| parse_limit(w).ok()).max_by_key(Limit::end).unwrap();
+    json!({"limited":l.at,"until":l.until,"windows":w})
+}
+
+fn save_state(install: &Path, v: &Value) -> Result<(), String> { crate::platform::write_synced(&install.join(STATE), &format!("{v:#}\n")) }
+
+fn summaries(v: &Value) -> BTreeMap<String, Limits> {
+    v.as_object().into_iter().flatten().map(|(rt,m)| (rt.clone(), m.as_object().into_iter().flatten()
+        .filter_map(|(label,l)| parse_limit(l).ok().map(|l| (label.clone(),l))).collect())).collect()
+}
+
+/// Merge independent observed windows, retaining every still-active hold. The lock covers all project threads.
+pub fn record_windows(install: &Path, rt: &str, label: &str, at: i64, observed: &[(String, Option<i64>)]) -> Result<(), String> {
+    if !observed.is_empty() && pending_error(install).is_none() && state_value(install).is_ok_and(|v| {
+        let saved=windows(&v[rt][label]);
+        observed.iter().all(|(window,until)|saved.iter().any(|w|w["window"]==*window && w["until"]==json!(until.filter(|t|*t>at)) && parse_limit(w).is_ok_and(|l|l.end()>at)))
+    }) {return Ok(());}
+    let observation=json!({"runtime":rt,"account":label,"at":at,"windows":observed});
+    {
+        let mut unsaved=UNSAVED.lock().map_err(|_| "quota observation lock poisoned")?;
+        let pending=unsaved.entry(install.to_path_buf()).or_default();
+        if !pending.iter().any(|p|p["runtime"]==observation["runtime"] && p["account"]==observation["account"] && p["windows"]==observation["windows"]) {pending.push(observation);}
+    }
+    recover_pending(install)?;
+    crate::profile::measure_counted("account.quota", || ((), [format!("runtime:{rt}"),format!("account:{label}")].into_iter().chain(observed.iter().map(|(w,reset)|format!("window:{w}:{}:{}",if reset.is_some(){"until"}else{"probe"},reset.unwrap_or(at.saturating_add(PROBE))))).map(|k|(k,1)).collect()));
+    Ok(())
+}
+
+/// Replay write-ahead observations before admission, also after a service restart.
+pub fn recover_pending(install: &Path) -> Result<(), String> {
+    if pending_error(install).is_none() {return Ok(());}
+    std::fs::create_dir_all(install).map_err(|e|e.to_string())?;
+    let _lock=coreq::file_lock::try_lock(&install.join("accounts-state.lock")).map_err(|e|format!("quota state busy or unavailable: {e}"))?;
+    let mut pending=match crate::data::json(&install.join(PENDING))? {
+        Some(v)=>v["observations"].as_array().cloned().ok_or("quota journal invalid")?,None=>vec![]
+    };
+    let memory=UNSAVED.lock().map_err(|_| "quota observation lock poisoned")?.get(install).cloned().unwrap_or_default();
+    for observation in memory {if !pending.contains(&observation) {pending.push(observation);}}
+    if pending.is_empty() {return Err("quota journal observations missing".into());}
+    crate::platform::write_synced(&install.join(PENDING),&json!({"observations":pending}).to_string())?;
+    let mut v=state_value(install)?;
+    for observation in &pending {
+        let rt=observation["runtime"].as_str().filter(|rt|crate::runtime::CLI_RUNTIMES.contains(rt)).ok_or("quota journal runtime invalid")?;
+        let label=observation["account"].as_str().filter(|l|valid_label(l)).ok_or("quota journal account invalid")?;
+        let at=observation["at"].as_i64().filter(|at|*at>=0).ok_or("quota journal time invalid")?;
+        let observed:Vec<(String,Option<i64>)>=serde_json::from_value(observation["windows"].clone()).map_err(|_|"quota journal windows invalid")?;
+        if observed.is_empty() {return Err("quota observation missing".into());}
+        if v.get(rt).is_none() {v[rt]=json!({});}
+        let mut w:Vec<_>=windows(&v[rt][label]).into_iter().filter(|w|w["window"]!="probe" && parse_limit(w).is_ok_and(|l|l.end()>at)).collect();
+        for (window,until) in observed {
+            if window.is_empty() || window.len()>40 || !window.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'_' || b==b'-') || until.is_some_and(|t|t<0) {return Err("quota journal window invalid".into());}
+            let until=until.filter(|t|*t>at);
+            if !w.iter().any(|w|w["window"]==window && w["until"]==json!(until)) {w.push(json!({"window":window,"limited":at,"until":until}));}
+        }
+        v[rt][label]=pack(w);
+    }
+    save_state(install,&v)?;
+    std::fs::remove_file(install.join(PENDING)).map_err(|e|e.to_string())?;
+    let mut unsaved=UNSAVED.lock().map_err(|_|"quota observation lock poisoned")?;
+    if let Some(memory)=unsaved.get_mut(install) {memory.retain(|o|!pending.contains(o));if memory.is_empty(){unsaved.remove(install);}}
+    Ok(())
+}
+
+fn pending_error(install: &Path) -> Option<String> {
+    let memory=UNSAVED.lock().map(|m|m.get(install).is_some_and(|p|!p.is_empty()));
+    match (memory,std::fs::symlink_metadata(install.join(PENDING))) {
+        (Ok(false),Err(e)) if e.kind()==std::io::ErrorKind::NotFound=>None,
+        _=>Some("host account quota observation pending durable save".into())
+    }
+}
+
 pub fn record_limit(install: &Path, rt: &str, label: &str, at: i64, until: Option<i64>) -> Result<(), String> {
-    let mut s = read_state(install);
-    s.entry(rt.into()).or_default().insert(label.into(), Limit { at, until });
-    let v: Value = Value::Object(s.iter().map(|(rt, m)| (rt.clone(), Value::Object(m.iter().map(|(l, x)| (l.clone(), json!({"limited": x.at, "until": x.until}))).collect()))).collect());
-    crate::platform::write_synced(&install.join(STATE), &format!("{v:#}\n"))
+    record_windows(install, rt, label, at, &[("unknown".into(),until)])
+}
+
+/// Atomically reserve a due probe. No second project may probe this account during the bounded interval.
+/// A resume supplies its original label; a new launch selects the first available enabled account.
+pub fn claim(install: &Path, rt: &str, label: Option<&str>, now: i64, owner: &Path) -> Result<String, String> {
+    std::fs::create_dir_all(install).map_err(|e| e.to_string())?;
+    let _lock = coreq::file_lock::try_lock(&install.join("accounts-state.lock")).map_err(|e| format!("quota state busy or unavailable: {e}"))?;
+    let h = Host::read(install);
+    if let Some(e) = h.error { return Err(e); }
+    let label = match label { Some(l) if h.free(rt,l,now) => l.to_string(), Some(_) => return Err(format!("{rt}: original account quota hold")), None => h.active(rt,now).ok_or_else(|| format!("{rt}: no available enabled account"))? };
+    let mut v = state_value(install)?;
+    let probe=parse_limit(&v[rt][&label]).is_ok_and(|l| l.end() <= now);
+    if probe {
+        v[rt][&label] = pack(vec![json!({"window":"probe","limited":now,"until":null})]);
+        v[rt][&label]["probe_owner"] = json!(owner);
+    }
+    save_state(install,&v)?;
+    drop(_lock);
+    if probe {
+        crate::profile::measure_counted("account.quota-probe", || ((),[format!("runtime:{rt}"),format!("account:{label}")].into_iter().map(|k|(k,1)).collect()));
+    }
+    Ok(label)
+}
+
+/// Confirm only this execution's due probe after native successful completion; newer observations remain intact.
+pub fn confirm_probe(install: &Path, rt: &str, label: &str, owner: &Path) -> Result<(), String> {
+    if state_value(install)?[rt][label]["probe_owner"] != json!(owner) { return Ok(()); }
+    let _lock = coreq::file_lock::try_lock(&install.join("accounts-state.lock")).map_err(|e| format!("quota state busy or unavailable: {e}"))?;
+    let mut v = state_value(install)?;
+    if v[rt][label]["probe_owner"] == json!(owner) {
+        v[rt].as_object_mut().ok_or("quota accounts unknown")?.remove(label);
+        save_state(install,&v)?;
+        drop(_lock);
+        crate::profile::measure_counted("account.quota-recovered", || ((),[format!("runtime:{rt}"),format!("account:{label}")].into_iter().map(|k|(k,1)).collect()));
+    }
+    Ok(())
 }
 
 /// One host's accounts: the owner's lists and the limit record.
@@ -103,14 +237,19 @@ pub fn record_limit(install: &Path, rt: &str, label: &str, at: i64, until: Optio
 pub struct Host {
     pub policy: Policy,
     pub state: BTreeMap<String, Limits>,
-    /// Why the owner's file did not read; its lists then read as `default` only.
+    pub observations: Value,
+    /// Unknown policy or availability holds every new launch.
     pub error: Option<String>,
 }
 
 impl Host {
     pub fn read(install: &Path) -> Host {
-        let (policy, error) = match read_policy(install) { Ok(p) => (p, None), Err(e) => (Policy::new(), Some(e)) };
-        Host { policy, state: read_state(install), error }
+        let (policy, error) = match read_policy(install) { Ok(p) => (p, None), Err(_) => (Policy::new(), Some("host account policy unreadable".into())) };
+        let error=error.or_else(||pending_error(install));
+        match state_value(install) {
+            Ok(observations) => Host { policy, state: summaries(&observations), observations, error },
+            Err(e) => Host { policy, error: Some(error.unwrap_or(e)), ..Default::default() },
+        }
     }
 
     /// The list of `rt`, in priority order.
@@ -122,12 +261,12 @@ impl Host {
 
     /// The first enabled account whose limit has ended.
     pub fn active(&self, rt: &str, now: i64) -> Option<String> {
-        self.list(rt).into_iter().find(|e| e.enabled && self.free(rt, &e.label, now)).map(|e| e.label)
+        self.list(rt).into_iter().find(|e| self.error.is_none() && e.enabled && self.free(rt, &e.label, now)).map(|e| e.label)
     }
 
     /// The account a new start takes: the active one, else the first enabled one; None when all are disabled.
     pub fn pick(&self, rt: &str, now: i64) -> Option<String> {
-        self.active(rt, now).or_else(|| self.list(rt).into_iter().find(|e| e.enabled).map(|e| e.label))
+        self.active(rt, now)
     }
 
     /// A runtime with more than one account: failover and its hold apply; one account keeps the plain § 4 hold.
@@ -149,11 +288,21 @@ impl Host {
 
     /// Heartbeat lines of the listed runtimes: labels and state only, never an email, path or token.
     pub fn heartbeat(&self, now: i64) -> Vec<String> {
-        self.policy.keys().flat_map(|rt| {
+        let mut lines: Vec<String> = self.policy.keys().chain(self.state.keys()).collect::<BTreeSet<_>>().into_iter().flat_map(|rt| {
             let active = self.active(rt, now);
-            self.list(rt).into_iter().map(move |e| line(rt, &e, active.as_deref() == Some(e.label.as_str()), self.limit(rt, &e.label)))
-                .collect::<Vec<_>>()
-        }).collect()
+            self.list(rt).into_iter().map(move |e| line(rt, &e, active.as_deref() == Some(e.label.as_str()), self.limit(rt, &e.label))).collect::<Vec<_>>()
+        }).collect();
+        if let Some(e) = &self.error { lines.push(format!("quota unknown: {e}")); }
+        for (rt, accounts) in self.observations.as_object().into_iter().flatten() {
+            for (label, q) in accounts.as_object().into_iter().flatten() {
+                for w in windows(q) {
+                    if let Ok(l) = parse_limit(&w) {
+                        lines.push(format!("quota {rt} account {label} window {} {}{}",w["window"].as_str().unwrap_or("unknown"), reset(&l), if l.end() <= now {"; probe due"}else{""}));
+                    }
+                }
+            }
+        }
+        lines
     }
 
     /// The local rows of `taskq accounts`; `email` reads each home's login (None: unknown).
@@ -292,17 +441,18 @@ impl Switch {
 /// without a switch.
 pub fn switches(h: &Host, now: i64, seen: &mut BTreeMap<String, Option<String>>) -> Vec<Switch> {
     let mut out = vec![];
-    for rt in h.policy.keys() {
+    for rt in crate::runtime::CLI_RUNTIMES {
         let to = h.active(rt, now);
-        match seen.insert(rt.clone(), to.clone()) {
+        match seen.insert(rt.to_string(), to.clone()) {
             Some(from) if from != to => {
                 let reason = match &from {
+                    _ if h.error.is_some() => "unknown",
                     Some(f) if !h.free(rt, f, now) => "limit",
                     // a limit that ended brings back an account ahead of the current one
                     _ if to.as_ref().is_some_and(|t| h.limit(rt, t).is_some()) => "reset",
                     _ => "policy",
                 };
-                out.push(Switch { runtime: rt.clone(), from, to, reason });
+                out.push(Switch { runtime: rt.to_string(), from, to, reason });
             }
             _ => {}
         }
@@ -387,11 +537,74 @@ pub fn add(install: &Path, rt: &str, label: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    // #2137 A5/A7: journal replay survives loss of all process memory; a failed journal fences all project threads.
+    #[test]
+    fn balancing_quota_journal_restart_and_unwritable_storage() {
+        let dir=std::env::temp_dir().join(format!("taskq-quota-journal-{}",crate::runtime::uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let failed=dir.join(format!("{STATE}.{}.tmp",std::process::id()));
+        std::fs::create_dir(&failed).unwrap();
+        assert!(record_limit(&dir,"claude","default",10,Some(18000)).is_err());
+        UNSAVED.lock().unwrap().remove(&dir); // Restart: only the on-disk journal survives.
+        assert!(Host::read(&dir).error.is_some());
+        std::fs::remove_dir(failed).unwrap();
+        recover_pending(&dir).unwrap();
+        assert_eq!(Host::read(&dir).state["claude"]["default"].until,Some(18000));
+        std::fs::create_dir(dir.join(PENDING)).unwrap();
+        assert!(record_limit(&dir,"codex","default",10,Some(604800)).is_err());
+        std::fs::remove_dir(dir.join(PENDING)).unwrap();
+        assert!(Host::read(&dir).active("codex",20).is_none(),"memory fence survives a journal write failure");
+        assert!(claim(&dir,"codex",None,20,&dir.join("owner")).is_err());
+        recover_pending(&dir).unwrap();
+        assert_eq!(Host::read(&dir).state["codex"]["default"].until,Some(604800));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     fn host(policy: &[(&str, &[(&str, bool)])], limits: &[(&str, &str, i64, Option<i64>)]) -> Host {
         let mut h = Host::default();
         for (rt, list) in policy { h.policy.insert(rt.to_string(), list.iter().map(|(l, e)| Entry { label: l.to_string(), enabled: *e }).collect()); }
         for (rt, l, at, until) in limits { h.state.entry(rt.to_string()).or_default().insert(l.to_string(), Limit { at: *at, until: *until }); }
         h
+    }
+
+    // #2137 A5-A8: one account probe across projects/restart, independent windows and unknown-state fencing.
+    #[test]
+    fn balancing_quota_windows_and_bounded_probes() {
+        let dir = std::env::temp_dir().join(format!("taskq-quota-probes-{}",crate::runtime::uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        record_windows(&dir,"claude","default",0,&[("five_hour".into(),Some(18000)),("seven_day".into(),Some(604800))]).unwrap();
+        let h=Host::read(&dir);
+        assert!(h.active("claude",18001).is_none());
+        assert!(h.heartbeat(18001).iter().any(|l|l.contains("account default window seven_day until")));
+        let (first,second)=(dir.join("attempt-one"),dir.join("attempt-two"));
+        assert!(claim(&dir,"claude",None,18001,&first).is_err());
+        assert_eq!(claim(&dir,"claude",None,604801,&first).unwrap(),"default");
+        assert!(claim(&dir,"claude",None,604802,&second).is_err(),"restart must retain the claimed probe");
+        confirm_probe(&dir,"claude","default",&second).unwrap();
+        assert!(Host::read(&dir).active("claude",604802).is_none(),"another execution cannot clear the probe");
+        confirm_probe(&dir,"claude","default",&first).unwrap();
+        assert_eq!(Host::read(&dir).active("claude",604802).as_deref(),Some("default"));
+        record_limit(&dir,"codex","default",100,None).unwrap();
+        assert!(claim(&dir,"codex",None,1899,&first).is_err());
+        assert!(claim(&dir,"codex",None,1900,&first).is_ok());
+        assert!(claim(&dir,"codex",None,1901,&second).is_err());
+        std::fs::write(dir.join(STATE),"corrupt").unwrap();
+        assert!(Host::read(&dir).error.is_some());
+        assert!(claim(&dir,"codex",None,999999,&first).is_err(),"unknown is never available");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #2137 A5/A7: a shorter quota window must not erase a longer hold across restart.
+    #[test]
+    fn balancing_overlapping_quota_survives_restart() {
+        let dir = std::env::temp_dir().join(format!("taskq-quota-overlap-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        record_limit(&dir, "codex", "default", 0, Some(604800)).unwrap();
+        record_limit(&dir, "codex", "default", 1, Some(18000)).unwrap();
+        let h = Host::read(&dir);
+        assert_eq!(h.active("codex", 18001), None, "a five-hour reset cannot clear a weekly window");
+        assert_eq!(h.hold("codex", 18001), Some((604800, true)));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     // Chain: §3 Runtime accounts (#2043 A3, A4): order and disable pick the start account; a limit moves to the next
@@ -416,7 +629,7 @@ mod tests {
         let h = host(&[("codex", &[("default", true), ("work", true), ("spare", false)])], &[("codex", "default", 100, Some(9000)), ("codex", "work", 150, None)]);
         assert_eq!(h.spare("codex", 200), None, "every enabled account limited: no spare");
         assert_eq!(h.hold("codex", 200), Some((150 + PROBE, false)), "the hold ends at the earliest enabled limit end");
-        assert_eq!(h.pick("codex", 200).as_deref(), Some("default"), "a start during the hold still names an enabled account");
+        assert_eq!(h.pick("codex", 200), None, "an exhausted account cannot start");
         assert!(!h.off("codex"));
         let h = host(&[("claude", &[("default", false)])], &[]);
         assert!(h.off("claude") && h.pick("claude", 0).is_none(), "all disabled: the runtime admits nothing");
@@ -475,8 +688,8 @@ mod tests {
         assert!(home("codex", "work").is_some_and(|h| h.ends_with(Path::new(HOMES).join("work"))));
         record_limit(&dir, "codex", "work", 5, None).unwrap();
         record_limit(&dir, "codex", "default", 6, Some(9)).unwrap();
-        assert_eq!(read_state(&dir)["codex"]["work"], Limit { at: 5, until: None });
-        assert_eq!(read_state(&dir)["codex"]["default"].end(), 9);
+        assert_eq!(Host::read(&dir).state["codex"]["work"], Limit { at: 5, until: None });
+        assert_eq!(Host::read(&dir).state["codex"]["default"].end(), 9);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

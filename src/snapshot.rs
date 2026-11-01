@@ -277,6 +277,8 @@ impl Admission {
     }
 }
 
+pub const ROUTING_WAIT: &str = "runtime reroute pending; service rechecks writer ownership before completion";
+
 /// The board-only admission of a row: `waiting` is the fold's dependency decision, `ready` waits for a host decision
 /// unless its `host-<name>` label names no heartbeat (#1721): no host ever claims it.
 fn board_admission(t: &Task, labels: &[String], deps: &[service::Blocker], hosts: &[board::Issue], observed: i64) -> Option<Admission> {
@@ -398,7 +400,9 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         executions,
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
-        admission: board_admission(&v.projection.task, &v.issue.labels, &v.blockers, hosts, observed),
+        admission: if v.projection.task.state==State::Ready && v.projection.reroute.is_some() {
+            Some(Admission {code:"unknown",reason:ROUTING_WAIT.into(),observed,host:None})
+        } else {board_admission(&v.projection.task, &v.issue.labels, &v.blockers, hosts, observed)},
         answered: crate::dispatch::answered_in(v.issue.number, &v.log, &v.projection, &v.comments),
         history: crate::dispatch::history(v.issue.number, &v.log, &v.projection, &v.comments),
         ops: v.log.iter().rev().filter_map(|e| crate::core::op_id(v.issue.number, &e.body)).take(OPS).map(String::from).collect(),
@@ -425,7 +429,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         version: h.body.lines().find_map(|l| l.strip_prefix("version ")).unwrap_or("?").to_string(),
         updated: h.updated,
         focus: h.body.lines().find_map(|l| l.strip_prefix("focus ")).map(str::to_string),
-        limits: h.body.lines().filter_map(|l| l.strip_prefix("limit ")).map(str::to_string).collect(),
+        limits: h.body.lines().filter_map(|l| l.strip_prefix("limit ").map(str::to_string).or_else(|| l.starts_with("quota ").then(||l.to_string()))).collect(),
         tray: h.body.lines().find_map(|l| l.strip_prefix("tray ")).map(str::to_string),
         requests: h.body.lines().find_map(|l| l.strip_prefix("requests ")?.strip_suffix("/h")?.parse::<u64>().ok()),
         github: h.body.lines().find_map(|l| l.strip_prefix("requests api.github.com ")?.strip_suffix("/h")?.parse::<u64>().ok()),
@@ -799,7 +803,7 @@ impl Snapshot {
         // #1625: a heartbeat older than ttl reads stale, so a stopped service shows within ttl of its last beat
         let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}{}", h.name, h.version, age(self.observed - h.updated),
             if live(self.observed - h.updated, cfg.ttl) { "" } else { " stale" }, h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
-            + &h.limits.iter().map(|l| l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))).collect::<String>()
+            + &h.limits.iter().map(|l| if l.starts_with("quota ") {format!(" {l}")} else {l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))}).collect::<String>()
             + &h.tray.as_ref().map(|code| format!(" tray {code}")).unwrap_or_default()
             + &h.requests.as_ref().map(|n| format!(" {n} req/h{}", h.github.map(|g| format!(" (github.com {g})")).unwrap_or_default())).unwrap_or_default())).collect();
         if !hs.is_empty() {

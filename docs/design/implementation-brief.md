@@ -47,7 +47,7 @@ Read the live project contract first. This package was prepared in a dirty desig
 | Icons and copy | One free monochrome outline action set (Lucide), bundled provider identity assets, shared tokens and concise labels. Avoid repeated state words, platform-dependent Unicode/emoji and redrawn near-matching glyphs. Preserve accessible names and usable targets. Visual style, D rules, CI1–CI5. |
 | Window | Always reachable Close. Restore last user mode; first actual drag automatically pins. Auto grows in the actual native opening direction from actual anchor placement, never an OS constant. Explicit Auto/Down/Up/Fixed choices have immediately animated miniatures; respect reduced motion. Pin/drag preserve direction/overrides. M13. |
 | Footer/resize | Useful fixed status/version footer outside content scroll; unknown version stays explicit. Resize affordance is integrated into the corner, without a square button; preserve pointer target and keyboard access. M13. |
-| Settings | Visible choices/previews for short sets; actual-size tray preview and shared Icon/Summary/Custom renderer. Separate local appearance/window preferences from operational policy and grants. The overview cannot replace MP2's full rule/snapshot Work mode editor. |
+| Settings | Visible choices/previews for short sets; actual-size tray preview and shared Icon/Summary/Custom renderer. Separate local appearance/window preferences from operational policy and grants. The overview cannot replace MP2's full rule/snapshot Balancing editor. |
 | Conversations | Matching operator workspace: list left, transcript/composer right; New/search/archive, context, attachments, history and explicit detach. Enlarge/restore, Pin/Close and corner resize; narrow List/Back keeps the composer reachable. Owner chats and worker/reviewer sessions remain separate. C1–C9. |
 | Continuity | Preserve filters, view, query, selection, scroll, context and independent drafts across navigation and ordinary refresh. Restore recoverable state after restart. Closing never archives, cancels or sends. C2/C7 and F3. |
 | Safe actions | One active request per conversation, next drafting allowed; active/unresolved archive guards. Cancellation needs acknowledgement. Reopen/retry/confirm cannot duplicate sends or applied effects. Attachments and stale/partial outcomes retain their existing contracts. MP3/MP4, C4–C9. |
@@ -79,7 +79,7 @@ Use [the existing backlog](refactoring-backlog.md) as the single work breakdown 
 - File coherent user-outcome tasks with Goal, numbered observable Acceptance, scope, specification/reference links, dependencies and exact evidence requirements. Avoid one task per cosmetic detail and duplicate open work.
 - Keep newly created implementation tasks held; explicit execution/start remains a separate owner decision. The PM handoff itself is planning, not a worker implementation task. PM does not implement (R3).
 - Link all child tasks back to the handoff, record coverage and bring the bounded unresolved choices as `ask` with options/recommendation before dependent work.
-- Include shared tokens/icons/menu/popover components, navigation and persistence, task filtering/lifecycle, settings/window and Conversations; preserve Work mode, resources, projects/services/support and remote/headless routes from the inventory.
+- Include shared tokens/icons/menu/popover components, navigation and persistence, task filtering/lifecycle, settings/window and Conversations; preserve Balancing, resources, projects/services/support and remote/headless routes from the inventory.
 - Review the exact rendered candidate against D/M/MP/C/F requirements before presenting it. Record Pass/Fail/Not tested with revision-specific evidence. A functional check alone does not prove readable layout; a screenshot alone does not prove usable flow.
 - Native/platform, adapter and end-to-end qualification are separate from prototype checks. Required runtime gates remain `cargo test --locked` and `cargo run -- selftest` plus affected native scenarios. Do not run unrelated rollout or permission changes under this handoff.
 
@@ -124,8 +124,8 @@ Apply [product principles](../product-principles.md) to every slice. Preserve ex
 
 - Fixed view/admission/pause/Controls strip, attention-first content, pinned/recent project access.
 - Flowing issue/title rows, nonzero symbol counters, board links in headers, verified local session links and remote-host indicators.
-- Approved Workspace review: Work mode and emergency recovery open in the existing workspace; menu remains the quick controller.
-- One shared Work mode editor; per-project/host/runtime limits, explicit change targets, mixed values preserved.
+- Approved Workspace review: Balancing and emergency recovery open in the existing workspace; menu remains the quick controller.
+- One shared Balancing editor; per-project/host/runtime limits, explicit change targets, mixed values preserved.
 - Short AI composer with attachments; one main workspace with Conversations and Work sessions. Explicit detached conversations; reopen raises the existing owner window.
 - System type, restrained palette, consistent icons; Icon / Summary / Custom. Summary and Custom use one configured renderer; preserve the fixed two-level square summary geometry.
 
@@ -149,7 +149,7 @@ Permissions: discuss [P1–P9](worker-permissions.md) before changing R9; reconc
 | Contracts/data | Conversation/request/attachment identity, operation receipts, attempt metadata and URL allowlist | Executable state traces, retry/stale/partial outcomes |
 | Navigation | Stable menu, attention, flowing rows, settings categories and current-function parity | M-A1–M-A21 plus inventory reconciliation |
 | AI workspace | Conversation routing, drafts, windows, attachments, history and work-session browser | C-A1–C-A10; no cross-conversation context leaks |
-| Work mode | One editor plus natural-language review under approved filter semantics | UC-04/UC-05; untouched fields preserved |
+| Balancing | One editor plus natural-language review under approved filter semantics | UC-04/UC-05; untouched fields preserved |
 | Tray assets | Calibrated q/summary rendering and pause states | I5 native sheets; overflow decisions |
 | Qualification | Both OSes, accessibility, large type, short windows, live service round trips | Evidence per platform/artifact SHA, limitations explicit |
 
