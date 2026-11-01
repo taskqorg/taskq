@@ -5,15 +5,16 @@ grants, trust and client configuration are read, never written. Every file this 
 
   live-probe.py identity --repo CHECKOUT --from-install INSTALL --parent DIR      read-only host and access probe
   live-probe.py prepare --sha SHA --exe BIN --repo CHECKOUT --from-install INSTALL --parent DIR --name HOST
-  live-probe.py tasks FIXTURE            add and start the Q1/Q15 fixture tasks (board writes, label host-HOST)
+  live-probe.py tasks FIXTURE            admission check, then held add, readback and start by op id (label host-HOST)
   live-probe.py run FIXTURE [--minutes M] [--interrupt-on REGEX]    supervised candidate service, killed at deadline
   live-probe.py tray FIXTURE [--minutes M]                          supervised candidate app on the fixture install
   live-probe.py report FIXTURE           receipts, digests and the unchanged-state proof in FIXTURE/report.json
-  live-probe.py cleanup FIXTURE          stop fixture-owned Claude jobs, then delete FIXTURE
+  live-probe.py cleanup FIXTURE          close fixture tasks, stop fixture runtimes, archive receipts, delete FIXTURE
 
 `prepare` writes FIXTURE/RUNBOOK.txt with this host's exact commands. It refuses when the checkout is not exactly
 SHA and clean, when BIN does not report a version, or when no existing Claude trust entry covers PARENT: it never
 changes trust, login or grants. PARENT must already sit under a trusted root, such as the checkout's `.worktrees`.
+It also refuses a HOST name that any board heartbeat already carries, so no ordinary host can admit a fixture task.
 
 Why the ordinary host stays untouched: the fixture install has `claim: labelled` and its own host name, so only
 `host-HOST` tasks reach it and ordinary services skip them; a run outside an install never updates itself.
@@ -23,7 +24,7 @@ the probe never runs. The tray's one-per-host lock lives in the OS temp folder, 
 its own temp folder; its Conversations act on TASKQ_INSTALL, the fixture install. `report` compares digests of the
 ordinary install files, client settings, the trusted-folder list and the checkout's focus and runtime settings
 against the `prepare` snapshot and names each one unchanged or CHANGED."""
-import argparse, hashlib, json, os, platform, re, shutil, signal, socket, subprocess, sys, time
+import argparse, hashlib, json, os, platform, re, shutil, signal, socket, subprocess, sys, tarfile, time
 
 COPY = ["token", "gitlab-token", "worker-policy.json", "accounts.json"]
 KEEP = ["permission_mode", "codex", "has", "default_runtime", "channel"]
@@ -126,6 +127,14 @@ def prepare(a):
     hits, _ = trusted(parent)
     if not isinstance(hits, list) or not hits:
         sys.exit(f"no existing Claude trust entry covers the parent folder ({hits}); trust is never changed here")
+    # a `host-NAME` task is admitted only by the host of that name, so NAME must be new to every heartbeat on the board
+    try:
+        st = json.load(open(os.path.join(repo, ".taskq", "status.json")))
+        known = {h.get("name") for h in st.get("hosts", [])} | {st.get("host")}
+    except (OSError, ValueError) as x:
+        sys.exit(f"cannot read the board's host names from the checkout status ({x}); fixture name unverified")
+    if a.name in known:
+        sys.exit(f"host name {a.name} already heartbeats on the board; an ordinary host would admit the fixture tasks")
     d = os.path.join(parent, f"probe-{a.name}-{int(time.time())}")
     os.makedirs(d, mode=0o700)
     os.chmod(d, 0o700)
@@ -168,12 +177,12 @@ def prepare(a):
     setup = (f'$env:TASKQ_INSTALL="{inst}"; $env:TASKQ_HOST="{a.name}"; & "{exe}" service setup --runtime claude --target "{q6}"' if WIN else
              f'env TASKQ_INSTALL="{inst}" TASKQ_HOST={a.name} "{exe}" service setup --runtime claude --target "{q6}"')
     lines = [f"Fixture {d}", f"Candidate {a.sha} {version} sha256 {m['exe_sha256']}", "",
-             f"{me} tasks {d}",
-             f'{me} run {d} --minutes 30 --interrupt-on "#[0-9]+ attempt [0-9]+ access claude"   # Q1 + Q15 interrupted launch, one restart',
-             "# answer both fixture asks on the board, then:",
-             f"{me} run {d} --minutes 45                      # Q1 resume after answer, same session",
-             f"{me} tray {d} --minutes 45                     # Q6: in a second terminal; Conversations of the fixture install only",
-             f"{setup}   # Q6 setup request; continue it from the fixture app's Conversations while run is live",
+             f'{me} run {d} --minutes 30 --interrupt-on "#[0-9]+ attempt [0-9]+ access claude"   # terminal 1: Q15 interrupt at the Claude launch, one restart',
+             f"{me} tasks {d}                                 # terminal 2, once the fixture heartbeat shows: admission check, held, readback, start",
+             "# answer both fixture asks on the board, then in terminal 1:",
+             f"{me} run {d} --minutes 45                      # Q1 resume after the answer, same session",
+             f"{me} tray {d} --minutes 45                     # terminal 2: Q6, Conversations of the fixture install only",
+             f"{setup}   # terminal 3: Q6 setup request; continue it from the fixture app's Conversations",
              f"{me} report {d}", f"{me} cleanup {d}"]
     if WIN:
         task = f"TaskQ-probe-{a.name}"
@@ -188,19 +197,84 @@ GOAL = ("Live probe fixture for taskq#2094 ({q}). Before editing anything, ask o
         "After the answer, write the chosen word to probe-answer.txt in your worktree without committing and hand in `later` for one day.")
 
 
+def receipt(m, e, args, tries=3):
+    """One task write with a fixed op id; an `unknown` outcome retries the identical call, which only reads back."""
+    for i in range(tries):
+        _, out = run([m["exe"], *args, "--json"], e, cwd=m["root"])
+        try:
+            r = json.loads(out.splitlines()[-1])
+        except (ValueError, IndexError):
+            r = {"outcome": "unknown", "reason": out[-300:]}
+        if r.get("outcome") != "unknown":
+            return r
+        time.sleep(10 * (i + 1))
+    return r
+
+
+def issue(m, e, n):
+    _, out = run([m["exe"], "issue", str(n)], e, cwd=m["root"])
+    try:
+        i = json.loads(out)
+    except ValueError:
+        sys.exit(f"issue #{n} readback failed: {out[-300:]}")
+    return i, {l if isinstance(l, str) else l.get("name") for l in i.get("labels", [])}
+
+
+def admission(m, rt):
+    """Reasons the fixture service would not admit RT now, from its own fresh status; nothing is inferred or granted."""
+    try:
+        st = json.load(open(os.path.join(m["root"], ".taskq", "status.json")))
+        host = json.load(open(os.path.join(m["dir"], "install", "host.json")))
+    except (OSError, ValueError) as x:
+        return [f"fixture status unknown ({x}); start `run` first"]
+    cap = st.get("capacity") or {}
+    acc = next((r for r in st.get("access") or [] if r.get("runtime") == rt), None)
+    bad = [] if time.time() - (st.get("at") or 0) < 180 else ["fixture status older than 180 s; is `run` live?"]
+    bad += [] if st.get("host") == m["name"] else [f"fixture service reports host {st.get('host')}"]
+    bad += [] if m["name"] in {h.get("name") for h in st.get("hosts", [])} else ["no board heartbeat for the fixture host yet"]
+    bad += [] if host.get("claim") == "labelled" else ["fixture claim is not labelled"]
+    bad += [] if "all" in (st.get("focus") or []) else [f"fixture focus {st.get('focus')}"]
+    bad += [] if (cap.get("limits") or {}).get(rt, 0) >= 1 and cap.get("gate") == "open" else [f"fixture capacity {rt}: limit {(cap.get('limits') or {}).get(rt)}, gate {cap.get('gate')}"]
+    bad += [f"access {rt} refused: {acc.get('refused')}"] if acc and acc.get("refused") else [] if acc else [f"access {rt} unknown"]
+    m.setdefault("access", {})[rt] = acc
+    return bad
+
+
 def tasks(a):
+    """Per runtime: admission check, held add, label readback, start at the read revision, start readback. Run it
+    while `run` is live, since `add --host` needs the fixture's own heartbeat. Rerunning resumes at the first open step."""
     d, m, e = load(a.dir)
+    stamp = os.path.basename(d)
     for rt, q in [("claude", "Q1+Q15 claude"), ("codex", "Q1 codex")]:
-        if rt in m["tasks"]:
+        t = m["tasks"].setdefault(rt, {})
+        if t.get("started"):
             continue
-        rc, out = run([m["exe"], "add", f"probe 2094 {q} {m['name']}", "--goal", GOAL.format(q=q),
-                       "--acceptance", "Asks before editing; the answer resumes the same session", "--host", m["name"], "--runtime", rt], e, cwd=m["root"])
-        n = re.search(r"#(\d+)", out)
-        if rc != 0 or not n:
-            sys.exit(f"add {rt}: {out}")
-        m["tasks"][rt] = int(n.group(1))
+        bad = admission(m, rt)
         save(d, m)
-        print(run([m["exe"], "start", n.group(1)], e, cwd=m["root"])[1])
+        if bad:
+            sys.exit(f"{rt}: not admitted, nothing written: " + "; ".join(bad))
+        if not t.get("n"):
+            r = receipt(m, e, ["add", f"probe 2094 {q} {m['name']}", "--goal", GOAL.format(q=q), "--acceptance",
+                               "Asks before editing; the answer resumes the same session", "--host", m["name"], "--runtime", rt,
+                               "--op-id", f"{stamp}-{rt}-add"])
+            if r.get("outcome") != "accepted" or r.get("state") != "held" or not r.get("task"):
+                save(d, m)
+                sys.exit(f"{rt} add: {r}; rerun `tasks` to retry the same op id")
+            t.update(n=r["task"], revision=r.get("revision"))
+            save(d, m)
+        i, labels = issue(m, e, t["n"])
+        want = {"q-held", f"host-{m['name']}", f"run-{rt}"}
+        if not want <= labels or "taskq" in labels:
+            sys.exit(f"#{t['n']} labels {sorted(labels)}, want {sorted(want)} without taskq; not started")
+        rev = ["--revision", str(t["revision"])] if t.get("revision") is not None else []
+        r = receipt(m, e, ["start", str(t["n"]), "--op-id", f"{stamp}-{rt}-start", *rev])
+        if r.get("outcome") != "accepted":
+            sys.exit(f"#{t['n']} start: {r}; rerun `tasks` to retry the same op id")
+        _, labels = issue(m, e, t["n"])
+        if "taskq" not in labels or f"host-{m['name']}" not in labels:
+            sys.exit(f"#{t['n']} start readback labels {sorted(labels)}")
+        t.update(started=True, revision=r.get("revision"), state=r.get("state"))
+        save(d, m)
     print(json.dumps(m["tasks"]))
 
 
@@ -224,6 +298,7 @@ def supervise(d, name, cmd, env, minutes, interrupt=None):
     deadline = time.time() + min(minutes, 120) * 60
     log = os.path.join(d, "logs", f"{name}.log")
     dispatch = os.path.join(d, "root", ".taskq", "dispatch.log")
+    pidfile = os.path.join(d, "logs", f"{name}.pid")
     e = {k: v for k, v in os.environ.items() if k not in STRIP}
     e.update(env)
     starts = 0
@@ -235,6 +310,7 @@ def supervise(d, name, cmd, env, minutes, interrupt=None):
             out.flush()
             p = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT, env=e, cwd=os.path.join(d, "root"),
                                  start_new_session=not WIN, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if WIN else 0)
+        open(pidfile, "w").write(f"{os.getpid()}\n")
         hit = False
         try:
             while p.poll() is None and time.time() < deadline and not hit:
@@ -250,6 +326,7 @@ def supervise(d, name, cmd, env, minutes, interrupt=None):
         if not hit:
             break
         time.sleep(5)
+    os.remove(pidfile)
     print(f"{name}: {starts} start(s); log {log}")
 
 
@@ -321,7 +398,8 @@ def report(a):
         agents = "unknown"
     r = {"candidate": m["sha"], "exe_sha256": m["exe_sha256"], "exe unchanged": sha256(m["exe"]) == m["exe_sha256"], "version": m["version"],
          "os": platform.platform(), "claude": run(["claude", "--version"])[1], "codex": run(["codex", "--version"])[1], "tasks": m["tasks"],
-         "inbox": {rt: run([m["exe"], "inbox", str(n), "--json"], e, cwd=m["root"])[1][-4000:] for rt, n in m["tasks"].items()},
+         "inbox": {rt: run([m["exe"], "inbox", str(t["n"]), "--json"], e, cwd=m["root"])[1][-4000:] for rt, t in m["tasks"].items() if t.get("n")},
+         "access": m.get("access"),
          "receipts": receipts(m), "status agents": agents, "fixture claude jobs": jobs(m),
          "unchanged": {k: ("unchanged" if after.get(k) == v else "CHANGED") for k, v in m["before"].items()},
          "dispatch": [l.rstrip() for l in open(dispatch, errors="replace")][-200:] if os.path.exists(dispatch) else []}
@@ -331,18 +409,73 @@ def report(a):
         print(f, json.dumps(v))
 
 
+def procs(m):
+    """Processes, other than this one, whose command line names the fixture folder (codex exec, app server, children)."""
+    if WIN:
+        _, out = run(["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_Process | % { \"$($_.ProcessId) $($_.CommandLine)\" }"])
+    else:
+        _, out = run(["ps", "-axww", "-o", "pid=,command="])
+    # ponytail: command-line match only; a process that names nothing of the fixture is missed, add a cwd scan if one shows up
+    norm = (lambda s: s.replace("\\", "/").lower()) if WIN else (lambda s: s)
+    want = norm(m["dir"])
+    rows = [l.strip().split(" ", 1) for l in out.splitlines()]
+    return [(int(r[0]), r[1]) for r in rows if len(r) == 2 and r[0].isdigit() and int(r[0]) != os.getpid() and want in norm(r[1])]
+
+
 def cleanup(a):
+    """In order, stopping at the first step that cannot be read back, with the fixture kept: no live supervisor;
+    a fresh report; each fixture task closed by op id and read back closed; every fixture Claude job stopped; every
+    other fixture process ended; receipts archived next to the fixture; only then the fixture deleted."""
     d, m, e = load(a.dir)
-    for r in jobs(m):
-        if str(r.get("state")) in LIVE:
+    for name in ["service", "tray"]:
+        f = os.path.join(d, "logs", f"{name}.pid")
+        if os.path.exists(f):
+            sys.exit(f"`{name}` supervisor may still run (pid {open(f).read().strip()}); stop it with Ctrl-C first")
+    report(a)
+    for rt, t in m["tasks"].items():
+        if not t.get("n") or t.get("closed"):
+            continue
+        r = receipt(m, e, ["close", str(t["n"]), "--text", "Probe fixture for taskq#2094; receipts kept by the PM", "--op-id", f"{os.path.basename(d)}-{rt}-close"])
+        i, _ = issue(m, e, t["n"])
+        if str(i.get("state")).lower() not in ("closed", "close"):
+            sys.exit(f"#{t['n']} close: {r.get('outcome')} {r.get('reason')}; issue still {i.get('state')}; fixture kept")
+        t["closed"] = True
+        save(d, m)
+    for _ in range(3):
+        live = [r for r in jobs(m) if str(r.get("state")) in LIVE]
+        for r in live:
             print("stop", r.get("id"), run(["claude", "stop", str(r.get("id"))], timeout=30)[1])
-    left = [r.get("id") for r in jobs(m) if str(r.get("state")) in LIVE]
-    if left:
-        sys.exit(f"fixture jobs still live: {left}; fixture kept")
-    for n in m["tasks"].values():
-        print(f"close fixture task #{n}: taskq close {n} --text \"probe fixture\"")
+        if not live:
+            break
+        time.sleep(5)
+    if [r for r in jobs(m) if str(r.get("state")) in LIVE]:
+        sys.exit("fixture Claude jobs still live; fixture kept")
+    for p, cmd in procs(m):
+        print("end", p, cmd[:120])
+        if WIN:
+            subprocess.run(["taskkill", "/PID", str(p), "/T", "/F"], capture_output=True)
+        else:
+            try:
+                os.kill(p, signal.SIGTERM)
+            except OSError:
+                pass
+    time.sleep(5)
+    if procs(m):
+        sys.exit(f"fixture processes still live: {[p for p, _ in procs(m)]}; fixture kept")
+    keep = [os.path.join(d, x) for x in ["probe.json", "report.json", "RUNBOOK.txt", "logs", os.path.join("install", "setup")]]
+    q = os.path.join(m["root"], ".taskq")
+    keep += [os.path.join(q, f) for f in (os.listdir(q) if os.path.isdir(q) else []) if f.endswith(".log") or f in ("status.json", "events")]
+    arc = d + "-receipts.tar.gz"
+    with tarfile.open(arc, "w:gz") as tar:
+        for p in keep:
+            if os.path.exists(p):
+                tar.add(p, arcname=os.path.relpath(p, d))
+    os.chmod(arc, 0o600)
+    with tarfile.open(arc) as tar:
+        if "report.json" not in tar.getnames():
+            sys.exit(f"{arc} lacks report.json; fixture kept")
     shutil.rmtree(d)
-    print(f"removed {d}")
+    print(f"receipts {arc}; removed {d}")
 
 
 p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
