@@ -29,7 +29,8 @@ impl Cache {
             .filter_map(|r|r["n"].as_u64().map(|n|(n,(r["updated"].as_i64().unwrap_or(-1),r["proof"].as_i64().unwrap_or(0),Some(r.clone()))))).collect();
         // A restart resumes the stored cursor; rows keep their read proof, so only issues that moved re-read comments.
         // #2087: a cache written without the list-lag overlap may have missed an update for good; list it once in full.
-        let verified=value["verified"].as_i64().filter(|_|value["overlap"]==LIST_LAG);
+        // #2091: rows read before a settled proof was required may hold a lagging comment read for good; same once-only relist.
+        let verified=value["verified"].as_i64().filter(|_|value["overlap"]==LIST_LAG&&value["settle"]==LIST_LAG);
         Self{entries,value,verified,full:None,cursor:None}
     }
     pub fn collect(&mut self,b:&dyn Board) {
@@ -51,8 +52,9 @@ impl Cache {
             let mut next=if self.verified.is_none(){Default::default()}else{self.entries.clone()};let mut errors=Vec::new();
             for (i,closed) in issues {
                 let old=self.entries.get(&i.number);
-                // Board timestamps have second precision. A read in that same second needs one settled re-read.
-                let reusable=i.updated>0 && old.is_some_and(|(at,proof,row)|*at==i.updated && *proof>i.updated && row.as_ref().is_none_or(|r|r["kind"]=="task"||r["reason"].is_null()||r["missing"]==true));
+                // Board timestamps have second precision, and #2091: a comment list read soon after the update may still lag
+                // it (a decision read 66 s after it was missing). Only a read LIST_LAG after the update settles the row.
+                let reusable=i.updated>0 && old.is_some_and(|(at,proof,row)|*at==i.updated && *proof>i.updated+LIST_LAG && row.as_ref().is_none_or(|r|r["kind"]=="task"||r["reason"].is_null()||r["missing"]==true));
                 // #1973: open, untrusted or non-task issues (heartbeats, live tasks) never project; reading their comments
                 // each time they move cost most of the board budget.
                 let row=if reusable {
@@ -96,7 +98,7 @@ impl Cache {
             let mut rows:Vec<Value>=self.entries.values().filter_map(|(at,proof,r)|r.clone().map(|mut r|{r["updated"]=json!(at);r["proof"]=json!(proof);r})).collect();
             rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
             let visible:Vec<_>=rows.iter().filter(|r|r["visible"]==true).collect();let archived:Vec<_>=rows.iter().filter(|r|r["visible"]!=true).collect();
-            Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now(),"verified":self.verified,"overlap":LIST_LAG}))
+            Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now(),"verified":self.verified,"overlap":LIST_LAG,"settle":LIST_LAG}))
         },|_|"board-read");
         match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(reason);}}
     }
@@ -674,6 +676,7 @@ mod tests {
         b.raw(n,&format!("taskq: report-later {sha}"),true,false);
         b.state.borrow_mut().issues.iter_mut().find(|i|i.number==n).unwrap().updated=updated;
         b.advance(2);cache.collect(&b);assert_eq!(cache.value["reports"][0]["decision"],"later");
+        b.advance(LIST_LAG+1);cache.collect(&b);
         let reads=b.state.borrow().comment_reads;
         cache.collect(&b);assert_eq!(b.state.borrow().comment_reads,reads,"settled unchanged projections reuse comments");
         b.raw(n,&format!("taskq: report-drop {sha}"),true,false);cache.collect(&b);
@@ -682,7 +685,7 @@ mod tests {
 
     // #1985: dev installs restart the service every few minutes; a restart must not re-read every closed task's comments.
     #[test] fn restart_reuses_settled_rows_without_comment_reads() {
-        let (b,_,_,_)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(2);cache.collect(&b);
+        let (b,_,_,_)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(LIST_LAG+1);cache.collect(&b);
         let reads=b.state.borrow().comment_reads;
         let mut restarted=Cache::retaining(cache.value.clone());b.advance(2);restarted.collect(&b);
         assert_eq!(b.state.borrow().comment_reads,reads,"restart resumes the cursor");
@@ -695,7 +698,7 @@ mod tests {
     // #2087 A1: a decision whose issue update a lagging list left out must still leave Decide, before and after a restart,
     // and a cache stored before the list-lag overlap must heal once. Risk: a dropped report stays in Decide for good.
     #[test] fn lagging_list_never_hides_a_decision_for_good() {
-        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(2);cache.collect(&b);
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(LIST_LAG+1);cache.collect(&b);
         let list=b.state.borrow().issues.clone();b.raw(n,&format!("taskq: report-drop {sha}"),true,false);b.state.borrow_mut().stale_list=Some(list);
         b.advance(FULL_SCAN);cache.collect(&b);
         assert_eq!(cache.value["reports"][0]["n"],n,"the lagging reply still shows the report");
@@ -703,7 +706,7 @@ mod tests {
         assert!(cache.value["reports"].as_array().unwrap().is_empty(),"the next full read overlaps the lag");
         assert_eq!(cache.value["history"][0]["decision"],"drop");
         // The same miss just before a restart heals in the retained cache's first pass.
-        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(2);cache.collect(&b);
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(LIST_LAG+1);cache.collect(&b);
         let list=b.state.borrow().issues.clone();b.raw(n,&format!("taskq: report-drop {sha}"),true,false);b.state.borrow_mut().stale_list=Some(list);
         b.advance(FULL_SCAN);cache.collect(&b);assert_eq!(cache.value["reports"][0]["n"],n);
         let mut restarted=Cache::retaining(cache.value.clone());b.advance(60);restarted.collect(&b);
@@ -714,10 +717,28 @@ mod tests {
         assert_eq!(healed.value["overlap"],LIST_LAG);
     }
 
+    // #2091 A2: a comment read soon after an accept can lag it; the cache then held the report at the issue's current update
+    // with a fresh-looking proof, so no later pass re-read it. Risk: an accepted report stays in Decide for good.
+    #[test] fn lagging_comment_read_never_keeps_an_accepted_report() {
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(LIST_LAG+1);cache.collect(&b);
+        b.raw(n,&format!("taskq: report-accept {sha}"),true,false);let at=b.issue(n).unwrap().updated;
+        // The stored cache as the PDS host (4.6.57) wrote it: the row carries the accept's update, read 66 s later without it.
+        let mut stale=cache.value.clone();stale.as_object_mut().unwrap().remove("settle");stale["reports"][0]["updated"]=json!(at);stale["reports"][0]["proof"]=json!(at+66);
+        b.advance(600);stale["verified"]=json!(b.now().unwrap()-60);
+        let mut healed=Cache::retaining(stale);healed.collect(&b);
+        assert!(healed.value["reports"].as_array().unwrap().is_empty(),"the stored lagging read heals without a reset");
+        assert_eq!(healed.value["history"][0]["decision"],"accepted");
+        // A live read inside the lag window stays unsettled: the next pass that lists the issue reads its comments again.
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(LIST_LAG+1);cache.collect(&b);
+        b.raw(n,&format!("taskq: report-accept {sha}"),true,false);let at=b.issue(n).unwrap().updated;
+        {let e=cache.entries.get_mut(&n).unwrap();e.0=at;e.1=at+66;}b.advance(126);cache.collect(&b);
+        assert!(cache.value["reports"].as_array().unwrap().is_empty(),"a read 60 s after the update is not settled proof");
+    }
+
     // #1973 A1: open tasks and host heartbeats move every minute but never project; they must cost no comment read.
     #[test] fn open_and_heartbeat_updates_skip_comment_reads() {
         // The second pass settles the closed fixture's same-second read before counting.
-        let (b,_,_,_)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(2);cache.collect(&b);
+        let (b,_,_,_)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(LIST_LAG+1);cache.collect(&b);
         let open=b.create("Live task","",&["taskq".into(),"code".into()]).unwrap();
         let beat=b.create("Host heartbeat","",&["taskq-host".into()]).unwrap();b.close(beat).unwrap();
         let reads=b.state.borrow().comment_reads;
@@ -735,7 +756,7 @@ mod tests {
         let mut cache=Cache::default();cache.collect(&b);
         assert_eq!(cache.value["complete"],true);assert!(cache.verified.is_some(),"a settled 404 advances the cursor");
         assert!(cache.value["reports"][0]["reason"].as_str().unwrap().contains("HTTP 404"));
-        b.advance(2);cache.collect(&b);let reads=b.state.borrow().comment_reads;
+        b.advance(LIST_LAG+1);cache.collect(&b);let reads=b.state.borrow().comment_reads;
         // A source read would now succeed; staying settled proves no pass fetches it again.
         b.state.borrow_mut().report_sources.push(source);b.advance(2);cache.collect(&b);
         assert_eq!(b.state.borrow().comment_reads,reads,"settled rows reuse comments");
