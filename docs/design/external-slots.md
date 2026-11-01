@@ -8,7 +8,7 @@ Minimum consumer API version: `taskq.slots/1`, advertised by a fresh `taskq serv
 
 ## Call and readback
 
-Run the installed `taskq` CLI as the existing host OS account, using its existing installation. The install/store permissions are the local trust boundary, as for owner CLI commands; `TASKQ_ATTEMPT` callers are refused. No enrollment, new grant, board write or service restart is needed. This grants capacity only. PilotQ remains responsible for its existing runtime permissions and process ownership.
+Run the installed `taskq` CLI as the existing host OS account, using its existing installation. The install/store permissions are the local trust boundary, as for owner CLI commands; `TASKQ_ATTEMPT` callers are refused. No enrollment, new grant, board write or service restart is needed. For a protected app-server launch, authenticated release additionally requires its host-verified native descendant completion/cleanup; unknown or legacy unproved completion refuses and retains occupancy. This grants capacity only. PilotQ remains responsible for its existing runtime permissions and process ownership.
 
 1. Persist a unique `caller`/`op_id` and a cryptographically random 64-hex `key` for each turn before sending anything. Never reuse an ID for another turn. Keep the key private; it is release authority, not a board token. TaskQ stores its hash and never echoes the key.
 2. Read the long-lived PilotQ owner's exact native identity and host boot with `taskq service slots --identity <PID> --json`. Save those fields with the operation. A restarted PilotQ reconciles the saved binding; it must not replace its PID or start another operation to resolve a lost response.

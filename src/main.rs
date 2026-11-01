@@ -107,7 +107,7 @@ const USAGE: &str = "taskq agents
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
  taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]
  taskq service onboard
- taskq service app-server --action launch|observe|cancel --request JSON
+ taskq service app-server --action prepare|launch|observe|cancel|reconcile --request JSON
  taskq service slots --identity PID | --action reserve|observe|release --request JSON [--json]
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]

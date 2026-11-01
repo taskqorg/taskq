@@ -5,9 +5,9 @@ use serde_json::{Value, json};
 use std::{fs, io::Read, path::{Path, PathBuf}};
 
 const SCHEMA:&str="taskq.app-server/1";
-#[derive(Clone,Deserialize)]
+#[derive(Clone,Deserialize,serde::Serialize)]
 #[serde(deny_unknown_fields)]
-struct Request {schema:String,slot:Value,policy_revision:u64,account:String}
+struct Request {schema:String,slot:Value,policy_revision:u64,account:String,#[serde(default)] preparation:String}
 impl Request {
     fn parse(text:&str)->Res<Self> {
         if text.len()>16384 {return Err("app-server request exceeds 16384 bytes".into());}
@@ -25,6 +25,88 @@ impl Request {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Chain: R8 R9 R12 R13 #2151 A1/A2 — a launch receipt cannot create its own expected authority.
+    // Risk: a missing independent preparation is accepted before native dispatch.
+    #[test]
+    fn protected_unprepared_launch_refuses_before_intent() {
+        let r=Request{schema:SCHEMA.into(),slot:json!({"binding":{"runtime":"codex"}}),policy_revision:29,account:"default".into(),preparation:String::new()};
+        let id=coreq::process::Identity{pid:42,started:"invented-creation".into()};
+        let mut s=resources::State::default();
+        s.ops.insert("slot".into(),resources::Op{bound:json!({"local_slot":{}}),receipt:json!({"occupied":true,"instance":"invented-host"}),expires_at:1,saved_at:None,writing:false,sent:true});
+        let before=s.clone();
+        assert!(consume(&mut s,"slot",&r,&json!({"invented":"authority"}),&id).is_err(),"missing independent preparation must refuse before launch intent");
+        assert_eq!(s,before);
+    }
+    fn model()->(resources::State,Request,Value,coreq::process::Identity) {
+        let authority=json!({"project":"invented-project","saved":{"revision":29,"grant":{"by":"invented-operator","mode":"workspace"}},"account":"default","account_home":"invented-home","executable_sha256":"invented-native","profile_sha256":"invented-profile","adapter":"invented-adapter"});
+        let mut r=Request{schema:SCHEMA.into(),slot:json!({"binding":{"caller":"invented-consumer","op_id":"invented-effect","runtime":"codex","pid":17,"started":"invented-consumer-start","boot":10}}),policy_revision:29,account:"default".into(),preparation:String::new()};
+        let pre=preparation(&r,&authority,&json!("invented-host"));r.preparation=digest(pre.to_string().as_bytes());
+        let mut s=resources::State::default();
+        s.ops.insert("slot".into(),resources::Op{bound:json!({"local_slot":{"binding":r.slot["binding"],"key_hash":"invented-private-hash","prepared":pre}}),receipt:json!({"occupied":true,"instance":"invented-host"}),expires_at:1,saved_at:None,writing:false,sent:true});
+        (s,r,authority,coreq::process::Identity{pid:42,started:"invented-supervisor-start".into()})
+    }
+    // Chain: R8 R9 R12 R13 #2151 A1/A2/A5 — preparation is independent, immutable and bound to caller/artifacts/grant.
+    // Risk: prepare/launch drift or a copied launch receipt supplies its own authority.
+    #[test]
+    fn protected_preparation_model_drift_and_recovery() {
+        let (s,r,authority,id)=model();
+        for field in ["project","saved","account","account_home","executable_sha256","profile_sha256","adapter"] {
+            let mut changed=authority.clone();changed[field]=json!("changed-or-revoked");let mut trial=s.clone();let before=trial.clone();
+            assert!(consume(&mut trial,"slot",&r,&changed,&id).is_err(),"{field}");assert_eq!(trial,before);
+        }
+        for field in ["pid","started","boot","op_id"] {
+            let mut changed=r.clone();changed.slot["binding"][field]=json!("changed-incarnation");
+            assert!(consume(&mut s.clone(),"slot",&changed,&authority,&id).is_err(),"{field}");
+        }
+        let mut changed=s.clone();changed.ops.get_mut("slot").unwrap().receipt["instance"]=json!("new-host");
+        assert!(consume(&mut changed,"slot",&r,&authority,&id).is_err());
+        let mut started=s.clone();consume(&mut started,"slot",&r,&authority,&id).unwrap();
+        let restored:resources::State=serde_json::from_str(&serde_json::to_string(&started).unwrap()).unwrap();
+        for state in ["unknown","verified-effective","cancelled","completed"] {
+            let mut trial=restored.clone();trial.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"]["state"]=json!(state);let before=trial.clone();
+            assert!(consume(&mut trial,"slot",&r,&authority,&id).is_err());assert_eq!(trial,before);
+            assert!(release_ready(&trial.ops["slot"]).is_err());
+        }
+    }
+    // Chain: R8 R9 R12 R13 #2151 A3/A4/A5 — cancellation/root exit is not descendant completion or slot release.
+    // Risk: crashes, PID reuse, reordered observations or a cleanup intent release uncertain work.
+    #[test]
+    fn protected_completion_model_survivors_crashes_and_no_replay() {
+        let (mut s,r,a,id)=model();consume(&mut s,"slot",&r,&a,&id).unwrap();
+        assert!(release_ready(&s.ops["slot"]).is_err());
+        cancel(&mut s,"slot",&r).unwrap();assert!(release_ready(&s.ops["slot"]).is_err());
+        let binding=json!({"boot":10,"coalition":101});
+        let launch=&mut s.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"];
+        launch["native"]=json!({"pid":43,"started":"invented-native-start"});
+        launch["input_closed"]=json!(true);launch["scope"]=json!({"binding":binding,"dispatch_ack":true,"cleanup_intent":false,"cleanup_verified":false});
+        // Native root exited; two surviving detached descendants plus the sealed sentinel remain.
+        assert!(!certify(&mut s,"slot",&r,&id,&binding,[9,6]).unwrap());assert!(release_ready(&s.ops["slot"]).is_err());
+        let before=s.clone();
+        for (supervisor,binding,counts) in [(coreq::process::Identity{pid:42,started:"reused-pid".into()},binding.clone(),[9,8]),(id.clone(),json!({"boot":11,"coalition":101}),[9,8]),(id.clone(),binding.clone(),[8,8]),(id.clone(),binding.clone(),[9,10])] {
+            assert!(certify(&mut s,"slot",&r,&supervisor,&binding,counts).is_err());assert_eq!(s,before);
+        }
+        s=serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert!(certify(&mut s,"slot",&r,&id,&binding,[9,8]).unwrap());
+        let mut late_input=s.clone();late_input.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"]["cancel_requested"]=json!(false);
+        assert!(input_gate(&late_input,"slot",&r).is_err(),"a sealed input cannot reopen after cancellation changes");
+        let certified=s.clone();assert!(certify(&mut s,"slot",&r,&id,&binding,[9,8]).unwrap());assert_eq!(s,certified);
+        assert!(certify(&mut s,"slot",&r,&id,&binding,[9,7]).is_err());assert_eq!(s,certified);
+        assert!(certify(&mut s,"slot",&r,&id,&binding,[10,9]).is_err());assert_eq!(s,certified);
+        assert!(release_ready(&s.ops["slot"]).is_err(),"native certificate alone is not cleanup acknowledgment");
+        s.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"]["scope"]["cleanup_intent"]=json!(true);
+        assert!(release_ready(&s.ops["slot"]).is_err(),"crash before/after bootout without acknowledgment stays occupied");
+        s.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"]["scope"]["bootout_ack"]=json!(true);
+        assert!(release_ready(&s.ops["slot"]).is_err(),"acknowledged bootout still needs exact supervisor exit");
+        s.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"]["scope"]["cleanup_verified"]=json!(true);
+        release_ready(&s.ops["slot"]).unwrap();
+        assert_eq!(s.ops["slot"].bound["local_slot"]["binding"],r.slot["binding"]);
+        assert_eq!(s.ops["slot"].bound["local_slot"]["key_hash"],"invented-private-hash");
+        assert!(consume(&mut s,"slot",&r,&a,&id).is_err());
+        for field in ["native","supervisor","input_closed","scope"] {
+            let mut corrupt=s.clone();corrupt.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"][field]=Value::Null;
+            assert!(release_ready(&corrupt.ops["slot"]).is_err(),"{field}");
+        }
+    }
     struct Fixture {dir:PathBuf,root:PathBuf,home:PathBuf,bin:PathBuf,r:Request,p:policy::Policy}
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.dir);}}
     impl Fixture {
@@ -38,7 +120,7 @@ mod tests {
             fs::write(dir.join("projects"),format!("{}\n",root.display())).unwrap();
             fs::write(dir.join("host.json"),json!({"codex":["-s","danger-full-access","-m","invented-model","-c","model_reasoning_effort=high"]}).to_string()).unwrap();
             let p=policy::Policy{revision:29,grants:vec![policy::Grant{runtime:"codex".into(),mode:"workspace".into(),project:Some(root.to_str().unwrap().into()),by:"invented-operator".into(),at:1}]};
-            let r=Request{schema:SCHEMA.into(),slot:json!({"binding":{"root":root,"runtime":"codex"}}),policy_revision:29,account:"default".into()};
+            let r=Request{schema:SCHEMA.into(),slot:json!({"binding":{"root":root,"runtime":"codex","caller":"invented-consumer","op_id":"invented-operation"}}),policy_revision:29,account:"default".into(),preparation:String::new()};
             let f=Self{dir,root,home,bin,r,p};f.save();f
         }
         fn save(&self){fs::write(self.dir.join(policy::FILE),serde_json::to_vec(&self.p).unwrap()).unwrap();}
@@ -175,8 +257,10 @@ mod tests {
     // Risk: restarting a supervisor replays an AssetQ operation or a stale PID is treated as live authority.
     #[test]
     fn protected_interruption_never_replays_and_unknown_identity_refuses() {
-        let f=Fixture::new();let p=f.plan().unwrap();let id=coreq::process::Identity{pid:42,started:"invented-creation".into()};
+        let mut f=Fixture::new();let p=f.plan().unwrap();let id=coreq::process::Identity{pid:42,started:"invented-creation".into()};
         let mut s=resources::State::default();s.ops.insert("slot".into(),resources::Op{bound:json!({"local_slot":{}}),receipt:json!({"occupied":true,"instance":"invented-host"}),expires_at:1,saved_at:None,writing:false,sent:true});
+        let pre=preparation(&f.r,&p.authority,&s.ops["slot"].receipt["instance"]);
+        f.r.preparation=digest(pre.to_string().as_bytes());s.ops.get_mut("slot").unwrap().bound["local_slot"]["prepared"]=pre;
         consume(&mut s,"slot",&f.r,&p.authority,&id).unwrap();
         input_gate(&s,"slot",&f.r).unwrap();
         let original=s.clone();
@@ -239,6 +323,71 @@ mod tests {
 }
 fn canonical(p:&Path)->Res<PathBuf> {p.canonicalize().map_err(|_|"protected launch path identity unknown".into())}
 fn digest(bytes:&[u8])->String {ring::digest::digest(&ring::digest::SHA256,bytes).as_ref().iter().map(|b|format!("{b:02x}")).collect()}
+fn slot_id(r:&Request)->Res<String> {
+    let b=&r.slot["binding"];
+    Ok(format!("slot-{}",digest(format!("{}\0{}",b["caller"].as_str().ok_or("slot caller unknown")?,b["op_id"].as_str().ok_or("slot operation unknown")?).as_bytes())))
+}
+fn scope_directory(install:&Path,r:&Request)->Res<PathBuf> {
+    // A short socket name under the existing protected install; collisions refuse creation, never replace a scope.
+    Ok(install.join("native-scopes").join(&slot_id(r)?[5..37]))
+}
+fn preparation(r:&Request,authority:&Value,instance:&Value)->Value {
+    json!({"schema":"taskq.app-server-preparation/1","binding":r.slot["binding"],"authority":authority,"host_instance":instance})
+}
+fn prepared(s:&resources::State,key:&str,r:&Request,authority:&Value)->Res<()> {
+    let op=s.ops.get(key).ok_or("slot absent; preparation unknown")?;
+    let expected=preparation(r,authority,&op.receipt["instance"]);
+    if r.preparation.is_empty()||op.bound["local_slot"]["prepared"]!=expected
+        ||r.preparation!=digest(expected.to_string().as_bytes()) {
+        return Err("independent preparation missing, stale or changed; no native dispatch/input".into());
+    }Ok(())
+}
+
+fn certified(launch:&Value)->Res<()> {
+    let scope=&launch["scope"];let cert=&scope["certificate"];
+    if launch["input_closed"]!=true||scope["dispatch_ack"]!=true
+        ||cert["schema"]!="taskq.native-completion/1"||cert["scope"]!=scope["binding"]
+        ||cert["native"]!=launch["native"]||cert["supervisor"]!=launch["supervisor"]
+        ||cert["counts"][0].as_u64().zip(cert["counts"][1].as_u64()).is_none_or(|(a,b)|a.checked_sub(b)!=Some(1))
+        ||native(&cert["supervisor"]).is_err()||native(&cert["native"]).is_err()
+        ||scope["binding"]["coalition"].as_u64().is_none_or(|v|v==0)||scope["binding"]["boot"].as_i64().is_none_or(|v|v<=0) {
+        return Err("protected descendant completion unproved; retain original slot".into());
+    }Ok(())
+}
+/// R9/R12: an authenticated consumer still cannot release unproved protected descendants.
+pub(crate) fn release_ready(op:&resources::Op)->Res<()> {
+    let launch=&op.bound["local_slot"]["launch"];
+    if launch.is_null() {return Ok(());}
+    certified(launch)?;
+    if op.bound["local_slot"]["binding"]["boot"].as_i64().zip(launch["scope"]["binding"]["boot"].as_i64()).is_none_or(|(a,b)|a<=0||a.abs_diff(b)>2) {
+        return Err("protected slot/scope boot binding unknown; retain original slot".into());
+    }
+    if launch["scope"]["cleanup_intent"]!=true||launch["scope"]["bootout_ack"]!=true||launch["scope"]["cleanup_verified"]!=true {
+        return Err("protected scope cleanup unproved; retain original slot".into());
+    }Ok(())
+}
+fn certify(s:&mut resources::State,key:&str,r:&Request,supervisor:&coreq::process::Identity,binding:&Value,counts:[u64;2])->Res<bool> {
+    launch_record(s,key,r)?;
+    let launch=&mut s.ops.get_mut(key).unwrap().bound["local_slot"]["launch"];
+    let mine=json!({"pid":supervisor.pid,"started":supervisor.started});
+    if launch["supervisor"]!=mine||launch["scope"]["binding"]!=*binding||launch["input_closed"]!=true
+        ||launch["scope"]["dispatch_ack"]!=true||counts[0].checked_sub(counts[1]).is_none() {
+        return Err("scope identity/input seal unknown; completion refused".into());
+    }
+    let old=&launch["scope"]["last_counts"];
+    if !old.is_null()&&(old[0].as_u64().is_none_or(|n|n>counts[0])||old[1].as_u64().is_none_or(|n|n>counts[1])) {
+        return Err("scope counters regressed; completion unknown".into());
+    }
+    if !launch["scope"]["certificate"].is_null() {
+        if launch["scope"]["certificate"]["counts"]!=json!(counts) {return Err("sealed scope changed after certification; retain original receipt".into());}
+        return Ok(true);
+    }
+    if counts[0]-counts[1]==1 {native(&launch["native"])?;}
+    launch["scope"]["last_counts"]=json!(counts);
+    if counts[0]-counts[1]!=1 {return Ok(false);}
+    launch["scope"]["certificate"]=json!({"schema":"taskq.native-completion/1","scope":binding,"supervisor":mine,"native":launch["native"],"counts":counts});
+    Ok(true)
+}
 fn file_digest(path:&Path)->Res<String> {
     let mut file=fs::File::open(path).map_err(|_|"protected executable unreadable")?;
     let mut hash=ring::digest::Context::new(&ring::digest::SHA256);let mut bytes=[0;65536];
@@ -324,6 +473,8 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
     for path in [home.join(".local/bin"),home.join(".cargo/bin"),PathBuf::from("/opt/homebrew/bin"),PathBuf::from("/usr/local/bin")] {
         if path.is_dir() {access.profile.as_mut().unwrap().push_str(&format!("(deny file-write* (subpath {}))\n",serde_json::to_string(&canonical(&path)?.to_string_lossy()).map_err(|_|"invalid host executable directory")?));}
     }
+    let control=scope_directory(&install,r)?;
+    access.profile.as_mut().unwrap().push_str(&format!("(deny file* (subpath {}))\n",serde_json::to_string(&control).map_err(|_|"invalid scope control path")?));
     // App-server takes config options, not exec's sandbox/model switches. Preserve only known host requests.
     let mut args=vec!["-c".into(),"sandbox_mode=\"danger-full-access\"".into(),"-c".into(),"approval_policy=\"never\"".into()];
     let mut it=host.codex.iter();
@@ -339,7 +490,7 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
         "requested":access.requested,"saved":{"revision":p.revision,"grant":g},"resolved":access.json(),
         "executable":bin,"executable_identity":stamp(&bin)?,"executable_sha256":file_digest(&bin)?,
         "adapter":{"executable":adapter,"identity":stamp(&adapter)?,"sha256":file_digest(&adapter)?,"version":crate::platform::VERSION},
-        "account":r.account,"account_home":account,"args":args});
+        "account":r.account,"account_home":account,"args":args,"scope_directory":control});
     let mut plan=Plan{authority,access,args,root,home,bin,queries:vec![]};
     for (category,path,denied) in query_paths(&install,&plan) {
         let mut q=SandboxQuery{category,path,denied,identity:Value::Null};
@@ -358,17 +509,18 @@ fn launch_record<'a>(s:&'a resources::State,key:&str,r:&Request)->Res<&'a Value>
     }Ok(launch)
 }
 fn consume(s:&mut resources::State,key:&str,r:&Request,authority:&Value,supervisor:&coreq::process::Identity)->Res<()> {
+    prepared(s,key,r,authority)?;
     let op=s.ops.get_mut(key).ok_or("slot absent; no launch")?;
     if !op.bound["local_slot"]["launch"].is_null() {return Err("slot launch already consumed; observe the same operation, never replay".into());}
     op.bound["local_slot"]["launch"]=json!({"schema":SCHEMA,"policy_revision":r.policy_revision,"account":r.account,
         "authority":authority,"supervisor":{"pid":supervisor.pid,"started":supervisor.started},"state":"unknown",
-        "host_instance":op.receipt["instance"],"cancel_requested":false,
+        "host_instance":op.receipt["instance"],"cancel_requested":false,"input_closed":false,
         "reason":"launch intent consumed; native execution not yet verified"});
     Ok(())
 }
 fn input_gate(s:&resources::State,key:&str,r:&Request)->Res<()> {
     let launch=launch_record(s,key,r)?;
-    if launch["cancel_requested"]!=false||launch["host_instance"].as_str().filter(|v|!v.is_empty()).is_none()
+    if launch["cancel_requested"]!=false||launch["input_closed"]!=false||launch["host_instance"].as_str().filter(|v|!v.is_empty()).is_none()
         ||launch["host_instance"]!=s.ops[key].receipt["instance"] {
         return Err("launch cancelled or host generation changed; input refused, retain slot".into());
     }Ok(())
@@ -414,24 +566,27 @@ pub(crate) fn versions_in_use(install:&Path)->Res<Vec<String>> {
 pub fn command(args:&crate::Args)->Res<()> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot launch or control external app servers".into());}
     if args.pos.len()!=2||args.flags.iter().any(|(k,v)|!["action","request"].contains(&k.as_str())||v.len()!=1) {
-        return Err("usage: service app-server --action launch|observe|cancel --request JSON".into());
+        return Err("usage: service app-server --action prepare|launch|observe|cancel|reconcile --request JSON".into());
     }
-    let r=Request::parse(args.need("request")?)?;
-    #[cfg(target_os="macos")] {mac::command(args.need("action")?,&r)}
-    #[cfg(not(target_os="macos"))] {let _=r;Err("protected app-server supports qualified macOS Codex only; no Full fallback".into())}
+    #[cfg(target_os="macos")] {mac::dispatch(args.need("action")?,args.need("request")?)}
+    #[cfg(not(target_os="macos"))] {Err("protected app-server supports qualified macOS Codex only; no Full fallback".into())}
 }
+
+#[cfg(target_os="macos")]
+#[path="protected_scope.rs"]
+mod scope;
 
 #[cfg(target_os="macos")]
 mod mac {
     use super::*;
     use crate::external_slots;
-    use std::{ffi::{CStr,CString},io::{self,Write},os::{fd::AsRawFd,unix::ffi::OsStrExt},process::Stdio,sync::mpsc,time::{Duration,Instant}};
+    use std::{ffi::{CStr,CString},io::{self,Write},os::{fd::AsRawFd,unix::ffi::OsStrExt},process::Stdio,time::{Duration,Instant}};
 
     // Sandbox SPI declarations match WebKit's Source/WTF/wtf/spi/darwin/SandboxSPI.h.
     #[link(name="sandbox")]
     unsafe extern "C" {fn sandbox_check(pid:i32,operation:*const libc::c_char,filter:i32,...)->i32;static SANDBOX_CHECK_NO_REPORT:i32;}
 
-    fn host_paths()->Res<(PathBuf,PathBuf)> {
+    pub(super) fn host_paths()->Res<(PathBuf,PathBuf)> {
         let mut pwd=std::mem::MaybeUninit::<libc::passwd>::uninit();let mut result=std::ptr::null_mut();let mut buf=vec![0u8;65536];
         let status=unsafe{libc::getpwuid_r(libc::geteuid(),pwd.as_mut_ptr(),buf.as_mut_ptr().cast(),buf.len(),&mut result)};
         if status!=0||result.is_null() {return Err("host account identity unknown".into());}
@@ -444,13 +599,13 @@ mod mac {
         }
         Ok((install,home))
     }
-    fn executable(home:&Path)->Res<PathBuf> {
+    pub(super) fn executable(home:&Path)->Res<PathBuf> {
         // shortcut: standard host CLI locations; use host-owned runtime resolution if custom installations need support.
         let defaults=std::ffi::OsStr::new("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
         let path=runtime::user_bin_path(defaults,Some(home.as_os_str())).unwrap_or_else(||defaults.to_os_string());
         runtime::codex_native(runtime::which_in("codex",&path))
     }
-    fn live(id:&coreq::process::Identity)->Res<()> {exact(id,coreq::process::identity(id.pid).map_err(|_|"native liveness unknown".into()))}
+    pub(super) fn live(id:&coreq::process::Identity)->Res<()> {exact(id,coreq::process::identity(id.pid).map_err(|_|"native liveness unknown".into()))}
     fn child_of(id:&coreq::process::Identity,supervisor:&coreq::process::Identity)->Res<()> {
         live(id)?;live(supervisor)?;
         let mut info=std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();let size=std::mem::size_of::<libc::proc_bsdinfo>() as i32;
@@ -458,7 +613,7 @@ mod mac {
         if n!=size||unsafe{info.assume_init()}.pbi_ppid!=supervisor.pid {return Err("native child ownership unknown or mismatched; slot retained".into());}
         live(id)?;live(supervisor)
     }
-    fn image(id:&coreq::process::Identity,path:&Path)->Res<()> {
+    pub(super) fn image(id:&coreq::process::Identity,path:&Path)->Res<()> {
         live(id)?;let mut buf=[0u8;4096];
         let n=unsafe{libc::proc_pidpath(id.pid as i32,buf.as_mut_ptr().cast(),buf.len() as u32)};
         if n<=0 {return Err("native executable readback unknown".into());}
@@ -475,30 +630,64 @@ mod mac {
             Ok((result,errno))
         })
     }
-    fn verified(id:&coreq::process::Identity,p:&Plan)->Res<Value> {
+    fn verified(id:&coreq::process::Identity,p:&Plan,scope:&Value)->Res<Value> {
         image(id,&p.bin)?;
         for q in &p.queries {for &op in if q.denied {&["file-write-data","file-write-create","file-write-unlink"][..]}else{&["file-write-data"][..]} {check(id.pid,op,q)?;}}
+        let control=SandboxQuery{category:"scope-control",path:PathBuf::from(p.authority["scope_directory"].as_str().ok_or("scope control unknown")?),denied:true,identity:scope["directory_identity"].clone()};
+        for op in ["file-read-data","file-write-data","file-write-create","file-write-unlink"] {check(id.pid,op,&control)?;}
+        scope::membership(id,&scope["binding"])?;
         image(id,&p.bin)?;
         let protected:Vec<_>=p.queries.iter().filter(|q|q.denied).map(|q|&q.path).collect();
         Ok(json!({"state":"verified-effective","scope":"live native image and named effective sandbox queries; native workload qualification separate",
             "workspace_write":true,"protected_write_create_unlink_denied":protected,"reads":"existing profile","network":"existing profile"}))
     }
-    fn refresh(install:&Path,home:&Path,r:&Request,original:&Value)->Res<Plan> {
+    pub(super) fn refresh(install:&Path,home:&Path,r:&Request,original:&Value)->Res<Plan> {
         let bin=executable(home)?;let p=resolve(install,home,r,"macos",&bin)?;
         if p.authority!=*original {return Err("bound project/profile/account/executable authority changed; native input refused".into());}Ok(p)
     }
     fn key(install:&Path,r:&Request)->Res<String> {
         resources::within(install,resources::WAIT,|s|external_slots::reserved(install,s,&r.slot,"codex"))
     }
+    pub(super) fn dispatch(action:&str,text:&str)->Res<()> {
+        if action=="scope-run" {return scope::run(text);}
+        if action=="prepare" {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Prepare {schema:String,slot:Value}
+            if text.len()>16384 {return Err("preparation request exceeds 16384 bytes".into());}
+            let input:Prepare=serde_json::from_str(text).map_err(|_|"invalid preparation request")?;
+            if input.schema!=SCHEMA {return Err("unsupported preparation schema".into());}
+            let (install,home)=host_paths()?;
+            let result=resources::within(&install,resources::WAIT,|s| {
+                let account=runtime::accounts::Host::read(&install).active("codex",runtime::accounts::now()).ok_or("active account unknown")?;
+                let r=Request{schema:input.schema.clone(),slot:input.slot.clone(),policy_revision:policy::load(&install)?.revision,account,preparation:String::new()};
+                let key=external_slots::reserved(&install,s,&r.slot,"codex")?;
+                let p=resolve(&install,&home,&r,"macos",&executable(&home)?)?;
+                let op=s.ops.get_mut(&key).ok_or("slot absent")?;
+                if !op.bound["local_slot"]["launch"].is_null() {return Err("launch already consumed; never derive expected authority from a launch receipt".into());}
+                let value=preparation(&r,&p.authority,&op.receipt["instance"]);
+                let old=&op.bound["local_slot"]["prepared"];
+                if !old.is_null()&&old!=&value {return Err("original preparation changed; retain operation, no native launch".into());}
+                op.bound["local_slot"]["prepared"]=value.clone();
+                Ok(json!({"schema":SCHEMA,"state":"prepared","preparation":digest(value.to_string().as_bytes()),"policy_revision":r.policy_revision,"account":r.account,"prepared":value}))
+            })?;println!("{result}");return Ok(());
+        }
+        command(action,&Request::parse(text)?)
+    }
     pub(super) fn command(action:&str,r:&Request)->Res<()> {
-        if !["launch","observe","cancel"].contains(&action) {return Err("app-server action must be launch, observe or cancel".into());}
+        if !["launch","observe","cancel","reconcile"].contains(&action) {return Err("app-server action must be prepare, launch, observe, cancel or reconcile".into());}
         let (install,home)=host_paths()?;
         // Existing slot authentication, including exact payload/key, occurs before any native action.
         let observed=external_slots::exchange(&install,"observe",&r.slot)?;
-        let slot_key=format!("slot-{}",digest(format!("{}\0{}",observed["caller"].as_str().ok_or("slot caller unknown")?,observed["op_id"].as_str().ok_or("slot operation unknown")?).as_bytes()));
-        if action=="launch" {return launch(&install,&home,r,&slot_key);}
-        let record=resources::within(&install,resources::WAIT,|s|if action=="cancel" {cancel(s,&slot_key,r)}else{Ok(launch_record(s,&slot_key,r)?.clone())})?;
+        let slot_key=slot_id(r)?;let _=observed;
+        if action=="launch" {return scope::launch(&install,&home,r,&slot_key);}
+        if action=="reconcile" {let result=scope::reconcile(&install,r,&slot_key)?;println!("{result}");return Ok(());}
+        let (record,completed)=resources::within(&install,resources::WAIT,|s| {
+            let record=if action=="cancel" {cancel(s,&slot_key,r)?}else{launch_record(s,&slot_key,r)?.clone()};
+            Ok((record,release_ready(s.ops.get(&slot_key).ok_or("slot absent")?).is_ok()))
+        })?;
         let mut receipt=json!({"schema":SCHEMA,"operation":r.slot["binding"]["op_id"],"caller":r.slot["binding"]["caller"],"launch":record,"state":"unknown"});
+        if completed {receipt["state"]=json!("completed");println!("{receipt}");return Ok(());}
         let id=match native(&record["native"]) {
             Ok(id)=>id,Err(reason)=>{receipt["reason"]=json!(if action=="cancel" {"cancellation saved before native identity; input remains closed".into()}else{reason});println!("{receipt}");return Ok(());}
         };
@@ -513,7 +702,7 @@ mod mac {
                 key(&install,r)?;let p=refresh(&install,&home,r,&record["authority"])?;
                 let supervisor=native(&record["supervisor"])?;live(&supervisor)?;
                 child_of(&id,&supervisor)?;
-                let effective=verified(&id,&p)?;
+                let effective=verified(&id,&p,&record["scope"])?;
                 resources::within(&install,resources::WAIT,|s|bound_gate(s,&slot_key,r,&p.authority,&id,&supervisor,Some(&effective)))?;
                 receipt["verified_effective"]=effective;
                 if record["state"]!="verified-effective" {return Err("launch receipt uncommitted; execution unknown".into());}Ok(())})();
@@ -521,13 +710,11 @@ mod mac {
         }
         println!("{receipt}");Ok(())
     }
-    fn launch(install:&Path,home:&Path,r:&Request,key:&str)->Res<()> {
-        let bin=executable(home)?;let p=resolve(install,home,r,"macos",&bin)?;
-        let supervisor=coreq::process::identity(std::process::id()).map_err(|_|"supervisor identity unknown")?.ok_or("supervisor identity absent")?;
-        resources::within(install,resources::WAIT,|s| {
-            if external_slots::reserved(install,s,&r.slot,"codex")?!=key {return Err("slot changed".into());}
-            refresh(install,home,r,&p.authority)?;consume(s,key,r,&p.authority,&supervisor)
-        })?;
+    pub(super) fn launch_native(install:&Path,home:&Path,r:&Request,key:&str,mut transport:std::io::BufReader<std::os::unix::net::UnixStream>,stderr:std::os::unix::net::UnixStream)->Res<()> {
+        let original=resources::within(install,resources::WAIT,|s|Ok(launch_record(s,key,r)?.clone()))?;
+        let p=refresh(install,home,r,&original["authority"])?;
+        let supervisor=coreq::process::identity(std::process::id()).map_err(|_|"supervisor identity unknown")?.ok_or("supervisor absent")?;
+        resources::within(install,resources::WAIT,|s| {prepared(s,key,r,&p.authority)?;input_gate(s,key,r)})?;
         let exe=std::env::current_exe().map_err(|_|"adapter executable unknown")?;
         let env=runtime::Env{context:"",root:&p.root,exe:&exe,install,permission_mode:"",codex:&p.args,publish:"",board_env:&[],jobs:None};
         let mut cmd=runtime::executable(p.bin.clone(),&p.access,&env)?;
@@ -537,12 +724,13 @@ mod mac {
         let spec=runtime::optimized(agentq_runtime::agent::Spec{client:agentq_runtime::agent::Client::Codex,root:p.root.clone(),session:"-".into(),
             resume:false,args:p.args.iter().map(Into::into).collect(),home:Some(PathBuf::from(p.authority["account_home"].as_str().ok_or("account home unknown")?)),env:vec![]})?;
         let mut cmd=agentq_runtime::agent::app_server_command(cmd,&spec)?;
-        cmd.stdin(Stdio::piped()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        cmd.stdin(Stdio::piped()).stdout(Stdio::from(std::os::fd::OwnedFd::from(transport.get_ref().try_clone().map_err(|_|"scope stdout unavailable")?)))
+            .stderr(Stdio::from(std::os::fd::OwnedFd::from(stderr)));
         resources::within(install,resources::WAIT,|s|{external_slots::reserved(install,s,&r.slot,"codex")?;input_gate(s,key,r)})?;
         let mut child=cmd.spawn().map_err(|_|"native spawn outcome unknown; intent retained, never replay")?;
         let id=coreq::process::identity(child.id()).map_err(|_|"spawned native identity unknown; retain intent")?.ok_or("spawned native absent; retain intent")?;
         resources::within(install,resources::WAIT,|s| {
-            launch_record(s,key,r)?;
+            launch_record(s,key,r)?;scope::membership(&id,&original["scope"]["binding"])?;
             let launch=&mut s.ops.get_mut(key).unwrap().bound["local_slot"]["launch"];
             launch["native"]=json!({"pid":id.pid,"started":id.started});Ok(())
         })?;
@@ -555,7 +743,7 @@ mod mac {
             resources::within(install,resources::WAIT,|s| {
                 external_slots::reserved(install,s,&r.slot,"codex")?;refresh(install,home,r,&p.authority)?;
                 bound_gate(s,key,r,&p.authority,&id,&supervisor,None)?;child_of(&id,&supervisor)?;
-                let effective=verified(&id,&p)?;
+                let effective=verified(&id,&p,&original["scope"])?;
                 let launch=&mut s.ops.get_mut(key).ok_or("slot disappeared")?.bound["local_slot"]["launch"];
                 launch["verified_effective"]=effective;launch["state"]=json!("verified-effective");launch["reason"]=Value::Null;Ok(())
             })
@@ -563,21 +751,22 @@ mod mac {
         if let Err(e)=gate {drop(input);let _=coreq::process::terminate(&id);return Err(e);}
         let flags=unsafe{libc::fcntl(input.as_raw_fd(),libc::F_GETFL)};
         if flags<0||unsafe{libc::fcntl(input.as_raw_fd(),libc::F_SETFL,flags|libc::O_NONBLOCK)}<0 {return Err("bounded native input unavailable; intent retained".into());}
-        let (tx,rx)=mpsc::sync_channel(1);
-        std::thread::spawn(move||{let mut stdin=io::stdin().lock();loop {let mut bytes=vec![0;65536];match stdin.read(&mut bytes) {
-            Ok(0)=>{let _=tx.send(Ok(Vec::new()));break;},Ok(n)=>{bytes.truncate(n);if tx.send(Ok(bytes)).is_err(){break;}},
-            Err(e)=>{let _=tx.send(Err(e.to_string()));break;}
-        }}});
+        transport.get_ref().set_read_timeout(Some(Duration::from_millis(250))).map_err(|_|"bounded scope input unavailable")?;
         loop {
             if let Some(status)=child.try_wait().map_err(|_|"native liveness unknown; slot retained")? {
                 return if status.success(){Ok(())}else{Err("native app-server exited; turn outcome unproved, slot retained".into())};
             }
-            let bytes=match rx.recv_timeout(Duration::from_millis(250)) {Ok(bytes)=>bytes?,Err(mpsc::RecvTimeoutError::Timeout)=>continue,
-                Err(_)=>return Err("consumer input interrupted; native outcome unknown, slot retained".into())};
-            if bytes.is_empty() {drop(input);return Err("consumer input ended; native/descendant completion unproved, slot retained".into());}
+            resources::within(install,resources::WAIT,|s| {external_slots::reserved(install,s,&r.slot,"codex")?;input_gate(s,key,r)})?;
+            let mut bytes=vec![0;65536];
+            let count=match transport.read(&mut bytes) {
+                Ok(n)=>n,Err(e) if matches!(e.kind(),io::ErrorKind::WouldBlock|io::ErrorKind::TimedOut|io::ErrorKind::Interrupted)=>continue,
+                Err(_)=>return Err("consumer input interrupted; retain native scope".into()),
+            };
+            if count==0 {drop(input);return Err("consumer input ended; retain native scope until descendants finish".into());}
+            bytes.truncate(count);
             resources::within(install,resources::WAIT,|s| {
-                external_slots::reserved(install,s,&r.slot,"codex")?;refresh(install,home,r,&p.authority)?;let effective=verified(&id,&p)?;
-                bound_gate(s,key,r,&p.authority,&id,&supervisor,Some(&effective))?;child_of(&id,&supervisor)?;
+                external_slots::reserved(install,s,&r.slot,"codex")?;refresh(install,home,r,&p.authority)?;let effective=verified(&id,&p,&original["scope"])?;
+                bound_gate(s,key,r,&p.authority,&id,&supervisor,Some(&effective))?;child_of(&id,&supervisor)?;scope::membership(&id,&original["scope"]["binding"])?;
                 let until=Instant::now()+Duration::from_secs(1);let mut left=bytes.as_slice();
                 while !left.is_empty() {match input.write(left) {
                     Ok(0)=>return Err("native input disconnected; delivery unknown, never replay".into()),Ok(n)=>left=&left[n..],
