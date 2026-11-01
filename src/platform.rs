@@ -684,7 +684,7 @@ pub fn releases_in_use(install: &Path) -> Option<Vec<String>> {
 pub fn sweep(install: &Path, shim: &Path) {
     let keep = releases_in_use(install);
     let owned = |n: &str| {
-        ["releases", "current", "previous", "projects", "token", "gitlab-token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "taskqw.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off", "accounts.json", "accounts-state.json"].contains(&n)
+        ["releases", "current", "previous", "projects", "token", "gitlab-token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "taskqw.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off", "accounts.json", "accounts-state.json", "accounts-state.pending.json", "accounts-state.lock"].contains(&n)
             ||["setup","messages.json","messages.tmp"].contains(&n)
             ||n==crate::host::INSTALL_PENDING||n.strip_suffix(".pending")==Some(crate::host::INSTALL_PENDING)
             || n.ends_with(".log") || n.ends_with(".tmp") || n.starts_with("tray") || (n.starts_with("TaskQ-") && n.ends_with(".xml"))
@@ -1610,7 +1610,8 @@ mod tests {
         let protected=[("host.json","{\"limits\":{\"codex\":2},\"owner_field\":\"keep\"}"),
             ("host.json.pending","interrupted policy; preserve"),("service","123"),("service.lock",""),("poke","wake"),
             ("restart","restart requested"),("update","update requested"),("projects.lock",""),("link-key","host link key; keep"),
-            ("gitlab-token","invented-gitlab-token\n")];
+            ("gitlab-token","invented-gitlab-token\n"),
+            ("accounts-state.pending.json","pending quota observation; preserve"),("accounts-state.lock","quota writer lock; preserve")];
         for (name,text) in protected {fs::write(install.join(name),text).unwrap();}
         fs::create_dir_all(install.join("host-policy-migration")).unwrap();
         fs::write(install.join("host-policy-migration/original.json"),"original configuration").unwrap();
