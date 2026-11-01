@@ -241,7 +241,7 @@ Looks/sound: one line each (R13).
 - Home agent totals show confirmed lower bounds with one explained Partial/Unknown group state; host details retain age and cause. Held filter and scoped Start are sibling segments of one wrapping control; review freezes task keys/revisions before admission ([M3](docs/design/menu.md#running-agents), [K-A3/K-A6](docs/design/task-counters.md)).
 - Menu/View/Settings wrap, no horizontal scroll; compact rows, growing input; M2 rail; M3/M1.2 opaque sticky Home host strip and filter row.
 - Standalone: [onboarding](docs/design/standalone-onboarding.md); [telemetry](docs/design/standalone-telemetry.md): local SQLite/WAL, 30 days, async only under revocable `taskq-telemetry/1`. `profile export`: analysis; `guide`: agents. Migration keeps legacy rows (R1).
-- README: header, setup phrase, purpose, three visual examples, shots, disclosures and final line: [README rules](docs/design/readme-plan.md#contract-detail).
+- README: header, three-part setup (install phrase; repository and Issues-as-board permission, existing or new private; optional SDD request), purpose, three visual examples, shots, disclosures and final line: [README rules](docs/design/readme-plan.md#contract-detail).
 ### [menu]
 [menu]: docs/design/menu.md#contract-detail "Menu, tray, history JSON, events"
 ## Linked detail
