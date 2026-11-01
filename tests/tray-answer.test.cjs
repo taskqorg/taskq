@@ -11,6 +11,20 @@ const {html}=require('./tray-harness.cjs'),call=(name,...args)=>{const r=context
 const plain=x=>JSON.parse(JSON.stringify(x));
 (async()=>{
   assert.equal(call('answerCapability',board).answer,true);
+  // A4/C2/C7: restore before project hydration keeps the immutable receipt, without any automatic replay.
+  const recoveredOp={id:'invented-recovered',task:2140,revision:71,action:'steer',text:'Immutable worker input'},recoveredKey=board+'#2140';
+  context.S.projects=[];const recoveredAt=sent.length;
+  call('restoreRecovery',{[recoveredKey]:{draft:'Unsaved text',caret:[3,9],files:[],projectRoot:'project',op:recoveredOp,receipt:{state:'sending'}}});
+  assert.equal(sent.length,recoveredAt);
+  context.S.projects=[project];call('hydrate',{});
+  assert.deepEqual(call('load',board,{n:2140}).op,recoveredOp);
+  assert.equal(call('load',board,{n:2140}).receipt.state,'unknown');
+  assert.equal(sent.length,recoveredAt,'late source hydration never dispatches');
+  call('retry','project#'+recoveredOp.id);await new Promise(setImmediate);
+  assert.deepEqual(sent.at(-1).op,recoveredOp,'explicit recovered check keeps the same operation');
+  call('answerReceipt',{root:'project',id:recoveredOp.id,state:'accepted'});
+  call('dismiss','project#'+recoveredOp.id);sent.length=recoveredAt;timers.clear();
+
   for(const state of ['doing','review','ready','later','waiting','blocked']) assert.equal(call('answerSlot',{state,key:'task',card:'Old question',question:{parsed:true}}),'',state+' must not mount an answer card');
   assert(call('answerSlot',{state:'ask',key:'task'}).includes('data-answer'));
   project.complete=false;assert.equal(call('answerCapability',board).answer,false);

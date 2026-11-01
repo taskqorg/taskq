@@ -71,3 +71,15 @@ The native checkpoint-store regression retains unsaved text/caret for both main 
 
 
 Final independent Codex source review of `1f966897864e07363a00ab6fdb591b60498eb37f`: PASS, no actionable findings. It checked the main/detached safe route, ordered handoff, checkpoint retention and generation fence. This report-only addition does not change the reviewed source. The final focused Rust test passes (1 test), as do the actual-bundle route/safe-boot fixture and 16-cell recovery matrix. Publication still requires green merge-result CI; installed Mac/Windows interaction and the original N01 cause remain unknown (R12, §7).
+
+## Requeued A4 correction
+
+The reviewer rejected `be2a875e8365cf8e1a3b6ca66a598c32ed385ec9` under A4 and R13/C2/C7. The actual-bundle regression reproduces both lost task drafts before this correction: after an invented `answer-local` disk refusal, Reload restores `Old disk text` instead of `Unsaved answer draft` or `Unsaved steer draft`. Recovery during catalog loading also drops the owner draft from the next checkpoint. These are isolated fixtures, not production fault injection.
+
+The recovery checkpoint now includes task answer/steer text, owned file references, caret, focus, storage failure and immutable operation/receipt metadata before a local save is dispatched. Restore replaces stale card-local state, converts interrupted delivery to explicit unknown and sends no storage or board action. An unchanged restored caret does not trigger another save. Project metadata arriving later restores the original receipt's explicit Check delivery control without submitting it. Exact root, board, task, attempt/revision and operation payload remain fenced by the existing adapters.
+
+Owner edits whose source has not loaded remain in the bounded native checkpoint through another renderer recreation. The reader reports the unavailable source, then overlays those edits only after revision-bound catalog/body readback. A changed sent-source revision retains its warning across successive recoveries; it never becomes an ordinary sendable draft because the second reload forgot its original binding. The existing 32 MiB native checkpoint ceiling still refuses overflow explicitly. Failed disk saves are not durable restart recovery.
+
+The formerly intermittent Remove assertion assumed no caret Save could precede Remove. The instrument now explicitly retries each checkpointed action in order and checks exactly one submission per click and no successor submission from its receipt. All original no-replay, immutable retry, stale-save text/caret and same-source assertions remain. No accepted rule or protection was removed; this correction implements the existing C2/C7 decision.
+
+Focused validation and exact-source review for this correction are recorded below. Original N01 attribution, installed Mac/Windows interaction, long heap plateau and the performance failures above remain open. No live messages, task answers, report decisions, Held admission, installation/restart or policy changes were performed.
