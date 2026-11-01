@@ -55,10 +55,43 @@ def stamp(pid):
     return value.id
 
 
+def coalition(pid):
+    """Read the pinned XNU 40-byte PROC_PIDCOALITIONINFO layout."""
+    value = (ctypes.c_uint64 * 5)()
+    libproc = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+    n = libproc.proc_pidinfo(pid, 20, ctypes.c_uint64(0), ctypes.byref(value), ctypes.sizeof(value))
+    assert n == 40 and value[0] > 0, 'owned resource coalition unavailable'
+    return value[0]
+
+
+def accounting(cid):
+    # Only the two-counter prefix is read; the wrapper returns status, not byte count.
+    class Prefix(ctypes.Structure):
+        _fields_ = [('before', ctypes.c_uint64), ('started', ctypes.c_uint64),
+                    ('exited', ctypes.c_uint64), ('after', ctypes.c_uint64)]
+    value = Prefix(0x123456789abcdef0, 0xaaaaaaaaaaaaaaaa,
+                   0xbbbbbbbbbbbbbbbb, 0xfedcba9876543210)
+    lib = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)
+    query = lib.coalition_info_resource_usage
+    query.argtypes = [ctypes.c_uint64, ctypes.c_void_p, ctypes.c_size_t]
+    query.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    rc = query(cid, ctypes.byref(value, 8), 16)
+    error = ctypes.get_errno()
+    assert value.before == 0x123456789abcdef0 and value.after == 0xfedcba9876543210
+    if rc != 0:
+        assert value.started == 0xaaaaaaaaaaaaaaaa and value.exited == 0xbbbbbbbbbbbbbbbb
+        return {'return': rc, 'errno': error}
+    assert value.started != 0xaaaaaaaaaaaaaaaa and value.exited != 0xbbbbbbbbbbbbbbbb
+    assert value.started >= value.exited
+    return {'return': rc, 'started': value.started, 'exited': value.exited}
+
+
 def descendant(ready, release):
     # The controller owns this private pipe; no exit depends on a model or a service.
     send(ready, {'pid': os.getpid(), 'unique': stamp(os.getpid()),
-                 'group': os.getpgrp(), 'session': os.getsid(0)})
+                 'group': os.getpgrp(), 'session': os.getsid(0),
+                 'coalition': coalition(os.getpid())})
     os.close(ready)
     if not select.select([release], [], [], BUDGET)[0]:
         os._exit(4)
@@ -68,6 +101,8 @@ def descendant(ready, release):
 
 
 def escape(mode):
+    cid = coalition(os.getpid())
+    before = accounting(cid)
     ready_r, ready_w = os.pipe()
     release_r, release_w = os.pipe()
     root = os.fork()
@@ -101,6 +136,10 @@ def escape(mode):
         wait(root)
         reaped = True
         assert stamp(observed['pid']) == observed['unique']
+        assert observed['coalition'] == cid == coalition(observed['pid'])
+        assert stamp(observed['pid']) == observed['unique'], 'owned descendant changed during readback'
+        during = accounting(cid)
+        assert during['return'] == 0 and during['started'] > during['exited']
         assert observed['group'] != root and observed['session'] == observed['pid']
         group_absent = False
         try:
@@ -110,6 +149,7 @@ def escape(mode):
         assert group_absent, 'fixture original group must be empty'
         result = {'mode': mode, 'root_reaped': True, 'original_group_absent': True,
                   'exact_descendant_live': True, 'descendant_escaped_group': True,
+                  'resource_coalition_inherited': True,
                   'root_or_group_absence_proves_completion': False}
     finally:
         os.close(ready_r)
@@ -128,6 +168,12 @@ def escape(mode):
                 select.select([], [], [], 0.01)
             else:
                 raise TimeoutError('owned descendant teardown unconfirmed')
+    after = accounting(cid)
+    for earlier, later in ((before, during), (during, after)):
+        assert earlier['return'] == later['return'] == 0
+        assert later['started'] >= earlier['started'] and later['exited'] >= earlier['exited']
+    assert during['started'] > before['started'] and after['exited'] > before['exited']
+    result['counter_readback'] = 'monotonic; shared scope, not isolated completion'
     return result
 
 
@@ -193,9 +239,12 @@ def main():
     if sys.platform != 'darwin':
         print(json.dumps({'state': 'unsupported', 'reason': 'macOS process investigation only'}))
         return
+    invalid = accounting(0)
+    assert invalid == {'return': -1, 'errno': errno.ESRCH}
     print(json.dumps({'schema': 'taskq.scope-investigation/1', 'tracking': tracking(),
                       'escape_traces': [escape('setsid'), escape('posix_spawn')],
-                      'group_narrowing': profile_candidate()}, indent=2))
+                      'invalid_coalition_query': invalid,
+                      'group_narrowing': 'rejected by owner; not rerun'}, indent=2))
 
 
 if __name__ == '__main__':

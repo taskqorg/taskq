@@ -1,0 +1,149 @@
+{
+  "schema": "taskq.coalition-source-evidence/1",
+  "qualification": "source only; not an exact running-kernel claim",
+  "sources": [
+    {
+      "id": "xnu-doc",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "doc/observability/coalitions.md",
+      "blob": "d7be7f5b8d770fbe578fa33e131b82a3df1688ad",
+      "url": "https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/doc/observability/coalitions.md",
+      "first": 7,
+      "last": 34,
+      "text": "\nA coalition is a group of related processes.\n\nCurrently there are two types of coalition: *resource coalitions* and *jetsam coalitions*. Each process on the system is a member of one of each.\n\nCoalition membership is preserved across `fork`, `exec` and `posix_spawn`, and cannot be changed after a process is created.\n\n`launchd` is responsible for creating, destroying and reaping coalitions (via `coalition_create`, `coalition_terminate` and `coalition_reap`). It's also responsible for spawning process into specific coalitions via `posix_spawn`+`posix_spawnattr_setcoalition_np`. These interfaces are for `launchd`'s use only (or unit testing XNU itself). Fundamentally, a coalition is intended to represent a `launchd` job.\n\n\nEach coalition has a 64-bit ID (both resource and jetsam coalitions share the same ID space). ID 1 includes the `kernel_task` and `launchd`.\n\nCoalition IDs are not re-used (they are assigned monotonically by the kernel). However, since empty coalitions are valid, `launchd` tries to keep a single coalition per loaded service and spawn into an existing coalition rather than create a new one each time the service restarts. Apps usually get a fresh coalition on each launch.\n\nEach process occupies a *role* in its coalition: one process is tagged as the `COALITION_TASKROLE_LEADER`, XPC services have `COALITION_TASKROLE_XPC`, and app extensions have `COALITION_TASKROLE_EXT`, etc.\n\n`launchd` additionally stores a name string for each coalition; this can be obtained via XPC. This comes from the `Label` plist key / bundle ID / App name depending on the type of process. Jetsam coalitions, unlike resource coalitions, have a short/pretty name passed into `DEVELOPMENT` kernels. This is for quick debugging of thread groups and must not be used for any decisions on device.\n\n## Resource Coalitions\n\nResource coalitions are used by things like Activity Monitor to aggregate CPU usage, energy consumption, I/O etc. The idea is we can make statements like 'Safari is using 50% CPU' even if Safari has 10 different processes using 5% CPU each.\n\nEvery few minutes, powerlog samples the resource usage of each coalition on the system. This data ultimately feeds into the Battery UI that's displayed to users.\n\nWe also use resource coalitions to drive the 'significant energy usage' report in macOS.\n\nUnlike jetsam coalitions, App extensions (which usually have a different vendor to their host app) are spawned into their own resource coalition for separate tracking.\n"
+    },
+    {
+      "id": "xnu-counters",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "osfmk/kern/coalition.c",
+      "blob": "c60f8beba078602ef6b561b5faa997171d976228",
+      "url": "https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/osfmk/kern/coalition.c",
+      "first": 759,
+      "last": 789,
+      "text": "coalition_resource_usage_internal(coalition_t coal, struct coalition_resource_usage *cru_out)\n{\n\tkern_return_t kr;\n\tledger_amount_t credit, debit;\n\tint i;\n\n\tif (coal->type != COALITION_TYPE_RESOURCE) {\n\t\treturn KERN_INVALID_ARGUMENT;\n\t}\n\n\t/* Return KERN_INVALID_ARGUMENT for Corpse coalition */\n\tfor (i = 0; i < COALITION_NUM_TYPES; i++) {\n\t\tif (coal == corpse_coalition[i]) {\n\t\t\treturn KERN_INVALID_ARGUMENT;\n\t\t}\n\t}\n\n\tledger_t sum_ledger = ledger_instantiate(coalition_task_ledger_template, LEDGER_CREATE_ACTIVE_ENTRIES);\n\tif (sum_ledger == LEDGER_NULL) {\n\t\treturn KERN_RESOURCE_SHORTAGE;\n\t}\n\n\tcoalition_lock(coal);\n\n\t/*\n\t * Start with the coalition's ledger, which holds the totals from all\n\t * the dead tasks.\n\t */\n\tledger_rollup(sum_ledger, coal->r.ledger);\n\tuint64_t bytesread = coal->r.bytesread;\n\tuint64_t byteswritten = coal->r.byteswritten;"
+    },
+    {
+      "id": "xnu-counter-lock",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "osfmk/kern/coalition.c",
+      "blob": "c60f8beba078602ef6b561b5faa997171d976228",
+      "url": "https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/osfmk/kern/coalition.c",
+      "first": 886,
+      "last": 910,
+      "text": "\tkr = ledger_get_balance(sum_ledger, task_ledgers.energy_billed_to_others, (int64_t *)&energy_billed_to_others);\n\tif (kr != KERN_SUCCESS || energy_billed_to_others < 0) {\n\t\tenergy_billed_to_others = 0;\n\t}\n\n\tkr = ledger_get_balance(sum_ledger, task_ledgers.swapins, (int64_t *)&swapins);\n\tif (kr != KERN_SUCCESS || swapins < 0) {\n\t\tswapins = 0;\n\t}\n\n\t/* collect information from the coalition itself */\n\tcru_out->tasks_started = coal->r.task_count;\n\tcru_out->tasks_exited = coal->r.dead_task_count;\n\n\tuint64_t time_nonempty = coal->r.time_nonempty;\n\tuint64_t last_became_nonempty_time = coal->r.last_became_nonempty_time;\n\n\tcru_out->gpu_energy_nj = os_atomic_load(&coal->r.gpu_energy_nj, relaxed);\n\tcru_out->gpu_energy_nj_billed_to_me = os_atomic_load(&coal->r.gpu_energy_nj_billed_to_me, relaxed);\n\tcru_out->gpu_energy_nj_billed_to_others = os_atomic_load(&coal->r.gpu_energy_nj_billed_to_others, relaxed);\n\n\tcoalition_unlock(coal);\n\n\t/* Copy the totals out of sum_ledger */\n\tkr = ledger_get_entries(sum_ledger, task_ledgers.cpu_time,"
+    },
+    {
+      "id": "xnu-read",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "bsd/kern/sys_coalition.c",
+      "blob": "cb348caa5aeeeb538709aa6baef61e51a9471b74",
+      "url": "https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/sys_coalition.c",
+      "first": 355,
+      "last": 418,
+      "text": "out:\n\treturn error;\n}\n\nint\ncoalition_info(proc_t p, struct coalition_info_args *uap, __unused int32_t *retval)\n{\n\tuser_addr_t cidp = uap->cid;\n\tuser_addr_t buffer = uap->buffer;\n\tuser_addr_t bufsizep = uap->bufsize;\n\tuser_size_t bufsize;\n\tuint32_t flavor = uap->flavor;\n\tint error;\n\tuint64_t cid;\n\tcoalition_t coal;\n\n\terror = copyin(cidp, &cid, sizeof(cid));\n\tif (error) {\n\t\treturn error;\n\t}\n\n\tcoal = coalition_find_by_id(cid);\n\tif (coal == COALITION_NULL) {\n\t\treturn ESRCH;\n\t}\n\t/* TODO: priv check? EPERM or ESRCH? */\n\n\tif (IS_64BIT_PROCESS(p)) {\n\t\tuser64_size_t size64;\n\t\terror = copyin(bufsizep, &size64, sizeof(size64));\n\t\tbufsize = (user_size_t)size64;\n\t} else {\n\t\tuser32_size_t size32;\n\t\terror = copyin(bufsizep, &size32, sizeof(size32));\n\t\tbufsize = (user_size_t)size32;\n\t}\n\tif (error) {\n\t\tgoto bad;\n\t}\n\n\tswitch (flavor) {\n\tcase COALITION_INFO_RESOURCE_USAGE:\n\t\terror = coalition_info_resource_usage(coal, buffer, bufsize);\n\t\tbreak;\n\tcase COALITION_INFO_SET_NAME:\n\t\terror = coalition_info_set_name_internal(coal, buffer, bufsize);\n\t\tbreak;\n\tcase COALITION_INFO_SET_EFFICIENCY:\n\t\terror = coalition_info_efficiency(coal, buffer, bufsize);\n\t\tbreak;\n#if DEVELOPMENT || DEBUG\n\tcase COALITION_INFO_GET_DEBUG_INFO:\n\t\terror = coalition_info_get_debug_info(coal, buffer, bufsize);\n\t\tbreak;\n#endif /* DEVELOPMENT || DEBUG */\n\tdefault:\n\t\terror = EINVAL;\n\t}\n\nbad:\n\tcoalition_release(coal);\n\treturn error;\n}\n"
+    },
+    {
+      "id": "xnu-spawn-authority",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "bsd/kern/kern_exec.c",
+      "blob": "47420f9f8f620233f112e87a51ed8f576caa3546",
+      "url": "https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_exec.c",
+      "first": 4042,
+      "last": 4132,
+      "text": "\t * which is one of the most expensive things about using fork()\n\t * and execve().\n\t */\n\tif (imgp->ip_px_sa == NULL || !(px_sa.psa_flags & POSIX_SPAWN_SETEXEC)) {\n\t\t/* Set the new task's coalition, if it is requested.  */\n\t\tcoalition_t coal[COALITION_NUM_TYPES] = { COALITION_NULL };\n#if CONFIG_COALITIONS\n\t\tint i, ncoals;\n\t\tkern_return_t kr = KERN_SUCCESS;\n\t\tstruct _posix_spawn_coalition_info coal_info;\n\t\tint coal_role[COALITION_NUM_TYPES];\n\n\t\tif (imgp->ip_px_sa == NULL || !px_args.coal_info) {\n\t\t\tgoto do_fork1;\n\t\t}\n\n\t\tmemset(&coal_info, 0, sizeof(coal_info));\n\n\t\tif (px_args.coal_info_size > sizeof(coal_info)) {\n\t\t\tpx_args.coal_info_size = sizeof(coal_info);\n\t\t}\n\t\terror = copyin(px_args.coal_info,\n\t\t    &coal_info, px_args.coal_info_size);\n\t\tif (error != 0) {\n\t\t\tgoto bad;\n\t\t}\n\n\t\tncoals = 0;\n\t\tfor (i = 0; i < COALITION_NUM_TYPES; i++) {\n\t\t\tuint64_t cid = coal_info.psci_info[i].psci_id;\n\t\t\tif (cid != 0) {\n\t\t\t\t/*\n\t\t\t\t * don't allow tasks which are not in a\n\t\t\t\t * privileged coalition to spawn processes\n\t\t\t\t * into coalitions other than their own\n\t\t\t\t */\n\t\t\t\tif (!task_is_in_privileged_coalition(proc_task(p), i) &&\n\t\t\t\t    !IOTaskHasEntitlement(proc_task(p), COALITION_SPAWN_ENTITLEMENT)) {\n\t\t\t\t\tcoal_dbg(\"ERROR: %d not in privilegd \"\n\t\t\t\t\t    \"coalition of type %d\",\n\t\t\t\t\t    proc_getpid(p), i);\n\t\t\t\t\tspawn_coalitions_release_all(coal);\n\t\t\t\t\terror = EPERM;\n\t\t\t\t\tgoto bad;\n\t\t\t\t}\n\n\t\t\t\tcoal_dbg(\"searching for coalition id:%llu\", cid);\n\t\t\t\t/*\n\t\t\t\t * take a reference and activation on the\n\t\t\t\t * coalition to guard against free-while-spawn\n\t\t\t\t * races\n\t\t\t\t */\n\t\t\t\tcoal[i] = coalition_find_and_activate_by_id(cid);\n\t\t\t\tif (coal[i] == COALITION_NULL) {\n\t\t\t\t\tcoal_dbg(\"could not find coalition id:%llu \"\n\t\t\t\t\t    \"(perhaps it has been terminated or reaped)\", cid);\n\t\t\t\t\t/*\n\t\t\t\t\t * release any other coalition's we\n\t\t\t\t\t * may have a reference to\n\t\t\t\t\t */\n\t\t\t\t\tspawn_coalitions_release_all(coal);\n\t\t\t\t\terror = ESRCH;\n\t\t\t\t\tgoto bad;\n\t\t\t\t}\n\t\t\t\tif (coalition_type(coal[i]) != i) {\n\t\t\t\t\tcoal_dbg(\"coalition with id:%lld is not of type:%d\"\n\t\t\t\t\t    \" (it's type:%d)\", cid, i, coalition_type(coal[i]));\n\t\t\t\t\tspawn_coalitions_release_all(coal);\n\t\t\t\t\terror = ESRCH;\n\t\t\t\t\tgoto bad;\n\t\t\t\t}\n\t\t\t\tcoal_role[i] = coal_info.psci_info[i].psci_role;\n\t\t\t\tncoals++;\n\t\t\t}\n\t\t}\n\t\tif (ncoals < COALITION_NUM_TYPES) {\n\t\t\t/*\n\t\t\t * If the user is attempting to spawn into a subset of\n\t\t\t * the known coalition types, then make sure they have\n\t\t\t * _at_least_ specified a resource coalition. If not,\n\t\t\t * the following fork1() call will implicitly force an\n\t\t\t * inheritance from 'p' and won't actually spawn the\n\t\t\t * new task into the coalitions the user specified.\n\t\t\t * (also the call to coalitions_set_roles will panic)\n\t\t\t */\n\t\t\tif (coal[COALITION_TYPE_RESOURCE] == COALITION_NULL) {\n\t\t\t\tspawn_coalitions_release_all(coal);\n\t\t\t\terror = EINVAL;\n\t\t\t\tgoto bad;\n\t\t\t}\n\t\t}"
+    },
+    {
+      "id": "xnu-wrapper",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "libsyscall/wrappers/coalition.c",
+      "blob": "8bfe1fdaa2d1699901ed8f9800462cf4c7d08fc2",
+      "url": "https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/libsyscall/wrappers/coalition.c",
+      "first": 54,
+      "last": 57,
+      "text": "coalition_info_resource_usage(uint64_t cid, struct coalition_resource_usage *cru, size_t sz)\n{\n\treturn __coalition_info(COALITION_INFO_RESOURCE_USAGE, &cid, cru, &sz);\n}"
+    },
+    {
+      "id": "xnu-proc-layout",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "bsd/sys/proc_info_private.h",
+      "blob": "ab56b8134c391727e476dcd848c2595aefac1ce9",
+      "url": "https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/proc_info_private.h",
+      "first": 63,
+      "last": 68,
+      "text": "struct proc_pidcoalitioninfo {\n\tuint64_t coalition_id[COALITION_NUM_TYPES];\n\tuint64_t reserved1;\n\tuint64_t reserved2;\n\tuint64_t reserved3;\n};"
+    },
+    {
+      "id": "launchd-plist-332",
+      "repository": "alexey-lysiuk/macos-sdk",
+      "revision": "896cd40df984b847d486723edce50e247385617e",
+      "path": "MacOSX26.5.sdk/usr/share/man/man5/launchd.plist.5",
+      "blob": "560b9be98702a09b31cb6fde51e719bfe9147ba6",
+      "url": "https://github.com/alexey-lysiuk/macos-sdk/blob/896cd40df984b847d486723edce50e247385617e/MacOSX26.5.sdk/usr/share/man/man5/launchd.plist.5",
+      "first": 332,
+      "last": 338,
+      "text": ".It Sy RunAtLoad <boolean>\nThis optional key is used to control whether your job is launched once at the\ntime the job is loaded. The default is false. This key should be avoided, as\nspeculative job launches have an adverse effect on system-boot and user-login\nscenarios.\n.It Sy RootDirectory <string>\nThis optional key is used to specify a directory to"
+    },
+    {
+      "id": "launchd-plist-609",
+      "repository": "alexey-lysiuk/macos-sdk",
+      "revision": "896cd40df984b847d486723edce50e247385617e",
+      "path": "MacOSX26.5.sdk/usr/share/man/man5/launchd.plist.5",
+      "blob": "560b9be98702a09b31cb6fde51e719bfe9147ba6",
+      "url": "https://github.com/alexey-lysiuk/macos-sdk/blob/896cd40df984b847d486723edce50e247385617e/MacOSX26.5.sdk/usr/share/man/man5/launchd.plist.5",
+      "first": 609,
+      "last": 615,
+      "text": ".It Sy AbandonProcessGroup <boolean>\nWhen a job dies,\n.Nm launchd\nkills any remaining processes with the same process group ID as the job. Setting\nthis key to true disables that behavior.\n.It Sy LowPriorityIO <boolean>\nThis optional key specifies whether the kernel should consider this daemon to be"
+    },
+    {
+      "id": "launchd-plist-629",
+      "repository": "alexey-lysiuk/macos-sdk",
+      "revision": "896cd40df984b847d486723edce50e247385617e",
+      "path": "MacOSX26.5.sdk/usr/share/man/man5/launchd.plist.5",
+      "blob": "560b9be98702a09b31cb6fde51e719bfe9147ba6",
+      "url": "https://github.com/alexey-lysiuk/macos-sdk/blob/896cd40df984b847d486723edce50e247385617e/MacOSX26.5.sdk/usr/share/man/man5/launchd.plist.5",
+      "first": 629,
+      "last": 635,
+      "text": ".It Sy LaunchOnlyOnce <boolean>\nThis optional key specifies whether the job can only be run once and only once.\nIn other words, if the job cannot be safely respawned without a full machine\nreboot, then set this key to be true.\n.It Sy MachServices <dictionary of booleans or a dictionary of dictionaries>\nThis optional key is used to specify Mach services to be registered with the\nMach bootstrap namespace. Each key in this dictionary should be the name of a"
+    },
+    {
+      "id": "es-authority-636",
+      "repository": "alexey-lysiuk/macos-sdk",
+      "revision": "896cd40df984b847d486723edce50e247385617e",
+      "path": "MacOSX26.5.sdk/usr/include/EndpointSecurity/ESClient.h",
+      "blob": "bd8c6518709660405339c6218ca97e5cc665cc39",
+      "url": "https://github.com/alexey-lysiuk/macos-sdk/blob/896cd40df984b847d486723edce50e247385617e/MacOSX26.5.sdk/usr/include/EndpointSecurity/ESClient.h",
+      "first": 636,
+      "last": 642,
+      "text": " *             The memory for the given es_message_t is NOT owned by clients and it must not be freed.\n *             For out of order responding the handler must retain the message with es_retain_message.\n *             Callers are required to be entitled with com.apple.developer.endpoint-security.client.\n *             The application calling this interface must also be approved by users via Transparency, Consent & Control\n *             (TCC) mechanisms using the Privacy Preferences pane and adding the application to Full Disk Access.\n *             When a new client is successfully created, all cached results are automatically cleared.\n *"
+    },
+    {
+      "id": "xnu-prefix",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "osfmk/mach/coalition.h",
+      "blob": "8e807e074ea5062a381f316bc27c6244933ec287",
+      "url": "https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/osfmk/mach/coalition.h",
+      "first": 113,
+      "last": 117,
+      "text": "struct coalition_resource_usage {\n\tuint64_t tasks_started;\n\tuint64_t tasks_exited;\n\tuint64_t time_nonempty;\n\tuint64_t cpu_time; /* mach_absolute_time units */"
+    },
+    {
+      "id": "xnu-proc-flavor",
+      "repository": "apple-oss-distributions/xnu",
+      "revision": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+      "path": "bsd/sys/proc_info_private.h",
+      "blob": "ab56b8134c391727e476dcd848c2595aefac1ce9",
+      "url": "https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/proc_info_private.h",
+      "first": 155,
+      "last": 156,
+      "text": "#define PROC_PIDCOALITIONINFO           20\n#define PROC_PIDCOALITIONINFO_SIZE      (sizeof(struct proc_pidcoalitioninfo))"
+    }
+  ]
+}
