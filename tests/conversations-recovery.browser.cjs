@@ -43,8 +43,11 @@ const browserTask=runtime=>({n:112,title:'Existing local worker',revision:71,sta
    const field=page.locator('[data-c-field=text]');await field.fill('Unsaved local recovery draft');
    await field.evaluate(e=>{e.focus();e.setSelectionRange(3,9);e.dispatchEvent(new Event('select',{bubbles:true}));});
    await page.waitForFunction(()=>checkpoint?.conversation.drafts.some(d=>d.text==='Unsaved local recovery draft'&&d.caret[0]===3));
-   const checkpoint=await page.evaluate(()=>window.checkpoint);
+   const checkpoint=await page.evaluate(()=>window.checkpoint),originalSave=await page.evaluate(()=>sent.find(m=>m.a==='conversation-action'&&m.action==='save'));
+   assert.equal(checkpoint.conversation.pending?.id,originalSave.id,'checkpoint must retain the original pending native-save ID');
+   checkpoint.conversation.localQueue.push({conversation:draft.id,action:'remove',file:'invented-file'});
    for(let fault=0;fault<3;fault++){
+    await page.evaluate(()=>{window.sent=[];});
     // Independent guard still works after product taskq itself has failed.
     await page.evaluate(()=>{window.taskqWebFault('script',{error:'TypeError',site:'invented:1:1'});window.taskq=null;});
     assert.equal(await page.locator('.workspace').evaluate(e=>getComputedStyle(e).display),'none');
@@ -52,10 +55,12 @@ const browserTask=runtime=>({n:112,title:'Existing local worker',revision:71,sta
     await page.getByRole('button',{name:'Close',exact:true}).click();
     await page.getByRole('button',{name:'Reload safely',exact:true}).click();
     assert(await page.evaluate(()=>sent.some(m=>m.a==='hide')&&sent.some(m=>m.a==='workspace-reload')));
-    assert.equal(await page.evaluate(()=>sent.filter(m=>['answer','ai-send','reports','message-action'].includes(m.a)||m.a==='conversation-action'&&['send','reply','watch','unwatch'].includes(m.action)).length),0,'recovery must not send, decide or acknowledge');
+    assert.equal(await page.evaluate(()=>sent.filter(m=>['answer','ai-send','reports','message-action','conversation-action'].includes(m.a)).length),0,'recovery must not send, decide or acknowledge');
     await mount(checkpoint);await field.waitFor();assert.equal(await field.inputValue(),'Unsaved local recovery draft');
     assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),[3,9]);
     assert.match(await page.locator('.conversation-files').innerText(),/notes.md/);
+    assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-action').length),0,'mount/recovery must not replay even local storage actions');
+    assert.equal((await page.evaluate(()=>window.checkpoint)).conversation.pending?.id,checkpoint.conversation.pending?.id,'retain the original pending operation ID');
    }
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'ordinary text must not create horizontal scroll');
    if(process.env.TASKQ_EVIDENCE_2140&&runtime==='codex'&&theme==='dark'&&font===20&&width===900){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2140,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2140+'/recovered-draft.png'});}
