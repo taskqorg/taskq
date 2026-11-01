@@ -6,11 +6,11 @@ The [UI30 target](ui-polish.md) selects event stack A over the earlier closed-on
 
 One Rust SVG renderer owns the 22 pt-high Summary (minimum width 22 pt), its counters and chart group. Menu bar and running Dock rasterize it once at target scale; picker and History embed its vector groups. All four surfaces share the selected History period, default 24 hours. Icon remains the compact Q. [Custom is removed](custom-icon.md); saved Custom resolves to Summary, preserving unrelated settings.
 
-Work = doing + review, Ask = ask, third count = ready + blocked. Hide each known zero; unknown is a dash. Preserve existing compact-Q fallback and pause/hold identity. Current counts are not event totals.
+Left to right: Ready+Blocked = ready + blocked, Ask = ask, Work = doing + review. Hide each known zero; unknown is a dash. Preserve existing compact-Q fallback and pause/hold identity. Current counts are not event totals.
 
 ## I2 Type
 
-System sans serif, weight 500, nominal 9 pt, baseline y = 9. Show 1–99 exactly and 100 or more as `99+`. Align measured glyph ink from preferred origins x = 1, 8.1, 15.4; retain ordinary lining numerals and native font curves. Preserve those origins when the ink fits. Reclaim hidden-zero cells before widening the menu-bar slot; keep at least 1.5 pt between visible counters and 1 pt at either edge. Never shrink menu-bar type or overlap counters or the chart. Dock fits the complete shared composition into its square canvas. Tooltip/menu counts remain exact.
+System sans serif, weight 500, nominal 9 pt, baseline y = 9. Show 1–99 exactly and 100 or more as `99+`. Align measured glyph ink for Ready+Blocked / Ask / Work from preferred origins x = 1, 8.1, 15.4; retain ordinary lining numerals and native font curves. Preserve those origins when the ink fits. Reclaim hidden-zero cells before widening the menu-bar slot; keep at least 1.5 pt between visible counters and 1 pt at either edge. Never shrink menu-bar type or overlap counters or the chart. Dock fits the complete shared composition into its square canvas. Tooltip/menu counts remain exact.
 
 ## I3 Geometry
 
@@ -50,6 +50,6 @@ Use the frozen day/hour fixtures with unavailable New and retained known series,
 
 Share vector geometry, data and palette; calibrate SF/Segoe ink and actual OS slot/DPI separately. Preserve Windows availability until native qualification. No repeated PNG resizing, width rebinning or dropped bins. Native/runtime gaps remain unknown under R12.
 
-Counter order remains Work / Ask / Ready+Blocked, oldest-left/newest-right. Keep I1/I2 exact 1–99 and 99+, hidden-zero space reclamation and native slot widening from #1789. The older snapshot’s fixed square and 9+/+ wording are not adopted.
+Counter order is Ready+Blocked / Ask / Work; history remains oldest-left/newest-right. Keep I1/I2 exact 1–99 and 99+, hidden-zero space reclamation and native slot widening from #1789. The older snapshot’s fixed square and 9+/+ wording are not adopted.
 
 Implementation checks and remaining native gaps: [#1931 evidence](evidence/1931/README.md).

@@ -247,7 +247,7 @@ Looks/sound: one line each (R13).
 - One [Conversations](docs/design/reports.md) entrance shows independent canonical-thread New and Needs me counts; current content leads grouped history, scoped paging is bounded, and ordinary completions need no Accept.
 - [Promo A](docs/video-experiments/planning-802/approval.md).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 first, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
-- UI: Preact/Signals/Wouter O1–O3; [UI30 targets](docs/design/ui-polish.md): palette A, exact counts, event stack A; no Custom. Native proof pending (R12).
+- UI: Preact/Signals/Wouter O1–O3; [UI30 targets](docs/design/ui-polish.md): palette A, exact counts ordered Ready+Blocked / Ask / Work, event stack A; no Custom. Native proof pending (R12).
 - Conversations preserves scope, visible selection and reading context; [Details and sidebar](docs/design/tray-workspace.md#conversations-sidebar-1808).
 - Closed pins: unpin after first open or 24 h; [P-W1](docs/design/menu-product.md#windows-and-task-pins).
 - Settings retains twelve destinations with bounded scope/count/exception summaries, active-only transparency fields, useful Work mode/Recovery state and direct existing reviews; client facts appear once, project details stay available ([M8/M12](docs/design/menu.md#m8-implementation-boundary)).
