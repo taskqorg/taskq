@@ -219,6 +219,9 @@ Brief names an existing contract; forbids searching `/` or `~`; tray folder acce
 5. `service install` registers the exact root and [hands over](docs/design/host-service.md#migration): immutable binary replacement, preserved work and host ownership before rollback-floor recording. Unknown liveness forbids removal/reload; work uses protected handover. Idle Stop preparation stays latched. Windows setup and macOS signing: [service detail](docs/design/host-service.md#contract-detail).
 **Compatibility N/N-1.** `usage-limit` and publication need §9 cutover; otherwise N-1 must fold identically. N-1 reads op-id/revision as text, ignores `gate`/`approve`; `needs-gate` blocks its spawns, not owner close. N-1 parses only local `Depends on #N`: cross-repo dependencies stay held (`add`) until every board host supports them, then start (CHANGELOG Board).
 Otherwise independent host updates.
+### Project attachment
+Before attachment or admission holds, `service install` preflights filesystem wake/lock eligibility and board credentials/access without implicit login, token copy or grants. Windows refuses WSL UNC wake paths before native locking. Only complete, error-free project readback observes the original command.
+`service install --cancel ID` reconciles an exact unused attachment before or after registry publication, following verified ownership and project drain, including joined failures before execution. Preserve original registry bytes and audit receipts; unknown execution refuses removal ([detail](docs/design/host-service.md#contract-detail)).
 ### Install and signing
 Target, not in force until its installer tasks ship (R8, R12). Install is one click: one downloaded installer per OS installs the binary, host service and tray, sets up the signing step and ends with `service check` (§ 6).
 It needs no agent session, onboarding conversation or terminal step; the only other clicks are prompts the OS itself requires. Adding a project stays § 6.

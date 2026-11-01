@@ -399,11 +399,32 @@ fn poke(root: &Path) -> Res<()> {
 }
 
 fn wake_lock(root: &Path) -> Res<coreq::file_lock::Lock> {
+    #[cfg(windows)] wake_filesystem(root)?;
     coreq::telemetry::capture::operation("wake.lock", || {
         fs::create_dir_all(dot(root)).map_err(|error| ("wake-directory", error))?;
         let file = fs::OpenOptions::new().write(true).create(true).truncate(false).open(dot(root).join("poke")).map_err(|error| ("wake-open", error))?;
         coreq::file_lock::try_lock_file(file).map_err(|error| ("wake-lock", std::io::Error::from(error)))
     }, |(class, _)| *class).map_err(|(class, error)| format!("service wake failed ({class}: {error}); check service status"))
+}
+
+#[cfg(windows)]
+fn wake_filesystem(root:&Path)->Res<()> {
+    use std::path::{Component,Prefix};
+    let wsl=|path:&Path|match path.components().next() {
+        Some(Component::Prefix(p))=>match p.kind() {
+            Prefix::UNC(server,_)|Prefix::VerbatimUNC(server,_)=>{
+                let server=server.to_string_lossy();server.eq_ignore_ascii_case("wsl.localhost")||server.eq_ignore_ascii_case("wsl$")
+            },_=>false,
+        },_=>false,
+    };
+    for path in [root.to_path_buf(),dot(root),dot(root).join("poke")] {
+        if wsl(&path) {return Err("service wake unsupported on Windows WSL UNC; use a native Windows checkout".into());}
+        match path.canonicalize() {
+            Ok(actual) if wsl(&actual)=>return Err("service wake unsupported on Windows WSL UNC; use a native Windows checkout".into()),
+            Ok(_)=>{},Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(format!("service wake filesystem unknown: {e}")),
+        }
+    }
+    Ok(())
 }
 
 #[tracing::instrument(name="poke",skip_all)]
@@ -1723,13 +1744,14 @@ fn mark_checking(tool: &coreq::Tool, root: &Path, at: u64) {
 
 fn publish_status(tool: &coreq::Tool, root: &Path, status: &Value, host: Option<&host::Shared>) -> bool {
     let mut status=status.clone();
+    let complete=snapshot::complete(&status)&&status["error"].is_null()&&status["focus_error"].is_null();
     if let Some(host)=host {
         status["host_instance"]=host.lock().map(|h|json!(h.instance)).unwrap_or(Value::Null);
-        status["host_install"]=status["host_instance"].as_str().and_then(|instance|host::install_acknowledgement(&tool.install,root,instance)).map_or(Value::Null,|id|json!(id));
+        status["host_install"]=if complete {status["host_instance"].as_str().and_then(|instance|host::install_acknowledgement(&tool.install,root,instance)).map_or(Value::Null,|id|json!(id))}else{Value::Null};
     }
     let written = platform::write_status(tool, root, &status);
     if let Err(e) = &written { log!("status publication failed: {e}; observed state unknown"); }
-    let qualified = written.is_ok() && snapshot::complete(&status) && status["error"].is_null() && status["focus_error"].is_null();
+    let qualified = written.is_ok() && complete;
     if let Some(host) = host { if let Ok(mut h) = host.lock() { h.publication(root, qualified); } }
     qualified
 }
@@ -2674,6 +2696,10 @@ fn service(args: &Args) -> Res<()> {
             }else{recover_cmd(&root,args.flags.contains_key("apply"),args.flags.contains_key("json"))}
         },
         "install" => {
+            if let Some(id)=args.one("cancel") {
+                if args.pos.len()!=2||args.flags.len()!=1 {return Err("usage: taskq service install --cancel ID".into());}
+                println!("{}",host::cancel_install(&platform::default_install(),&root,id)?);return Ok(());
+            }
             // § 5 Board-only root: a served root gets workers, and a worker needs a checkout
             needs_checkout(&root, "service install")?;
             let (cfg, _, _) = check_load(&root)?;

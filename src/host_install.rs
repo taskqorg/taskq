@@ -49,7 +49,7 @@ fn read_cursor(install:&Path,path:&Path)->Res<Pending> {
     if !meta.is_file()||meta.len()>1<<20 {return Err("projects.installing unsupported; recovery evidence kept".into());}
     let p:Pending=serde_json::from_slice(&fs::read(path).map_err(|e|e.to_string())?).map_err(|_|"projects.installing retained; installation binding unknown")?;
     if p.schema!=1||!crate::resources::id(&p.id)||!p.root.is_absolute()||p.version.is_empty()||p.version.contains("..")||!p.version.bytes().all(|b|b.is_ascii_alphanumeric()||b".-".contains(&b))
-        ||!matches!(p.phase.as_str(),"initial"|"prepared"|"activated"|"starting"|"owned"|"registered")
+        ||!matches!(p.phase.as_str(),"initial"|"prepared"|"activated"|"starting"|"owned"|"registered"|"cancelling")
         ||[&p.baseline,&p.candidate].iter().any(|s|s.len()!=64||!s.bytes().all(|b|b.is_ascii_hexdigit()&&!b.is_ascii_uppercase())) {
         return Err("projects.installing unsupported; installation binding kept".into());
     }
@@ -135,6 +135,12 @@ for phase in required {if op.receipt.get(format!("{phase}_receipt")).is_none() {
 for phase in ["received","applied","observed","failed"] {
     if let Some(value)=op.receipt.get(format!("{phase}_receipt")) {if *value!=command.event_id(phase)? {return Err("installation phase identity differs".into());}}
 }
+if let Some(cursor)=op.receipt.get("cancelled_attachment") {
+    let p:Pending=serde_json::from_value(cursor.clone()).map_err(|_|"cancelled attachment evidence corrupt")?;
+    if op.receipt["state"]!="failed"||p.phase!="cancelling"||!p.attach||p.restore||p.original.is_none()||binding(&p)!=op.bound {
+        return Err("cancelled attachment binding differs; evidence kept".into());
+    }
+}
     Ok(&op.receipt)
 }
 
@@ -155,6 +161,10 @@ pub fn installation_status(install:&Path,id:Option<&str>)->Value {
 
 pub(super) fn registered_projects(install:&Path)->Res<Option<String>> {
     let p=pending(install)?;
+    if p.phase=="cancelling" {
+        cancellation_registry(install,&p)?;
+        return Ok(p.original);
+    }
     if p.phase!="registered"||raw_projects(install)?.as_deref()!=Some(p.next.as_str()) {
         return Err("projects.installing retained; project membership unknown".into());
     }
@@ -391,6 +401,7 @@ pub(super) fn recover(install:&Path)->Res<String> {
     let p=pending(install)?;
     let context=coreq::telemetry::capture::TraceContext::decode(&context(&p)?)?;
     let _context=context.span().entered();
+    if p.attach&&!matches!(p.phase.as_str(),"registered"|"cancelling") {preflight(install,&p.root)?;}
     install_bound(install,&p.root,Some(&p.id))
 }
 
@@ -422,8 +433,135 @@ fn acknowledge(install:&Path,expected:&Pending)->Res<bool> {
 
 #[tracing::instrument(name="host.install",skip_all)]
 pub fn install_project(install:&Path,root:&Path)->Res<String> {
+    if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot install the host service".into());}
+    preflight(install,root)?;
     upgrade(install,root)?;
     install_bound(install,root,None)
+}
+
+fn preflight(install:&Path,root:&Path)->Res<()> {
+    drop(crate::wake_lock(root)?);
+    let (cfg,raw,_)=crate::check_load(root)?;
+    let board=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
+    board.me()?;
+    board.issues(None)?;
+    Ok(())
+}
+
+// A3: cancellation can undo only the new membership of this exact live owner, never its execution.
+fn cancellation_registry(install:&Path,p:&Pending)->Res<()> {
+    if !p.attach||p.restore||p.activation.is_some()||!matches!(p.phase.as_str(),"owned"|"registered"|"cancelling") {
+        return Err("only an owned or registered unused attachment can be cancelled; installation kept".into());
+    }
+    let original=p.original.as_deref().ok_or("attachment original registry missing; kept")?;
+    if project_entries(original)?.iter().any(|(_,root)|root==&p.root) {return Err("attachment root was already registered; cancellation refused".into());}
+    let mut next=original.to_string();if !next.is_empty()&&!next.ends_with('\n') {next.push('\n');}
+    next.push_str(crate::platform::plain_path(&p.root).to_str().ok_or("attachment root is not UTF-8")?);next.push('\n');
+    // Older cursors may store the canonical Windows prefix; compare identities without changing original bytes.
+    if !project_entries(&next)?.into_iter().map(|(_,root)|root).eq(project_entries(&p.next)?.into_iter().map(|(_,root)|root)) {
+        return Err("attachment changed more than its own membership; kept".into());
+    }
+    let current=raw_projects(install)?;
+    let matches=match p.phase.as_str() {
+        "owned"=>current==p.original,"registered"=>current.as_deref()==Some(p.next.as_str()),
+        _=>current==p.original||current.as_deref()==Some(p.next.as_str()),
+    };
+    if !matches {return Err("attachment registry changed; cancellation refused".into());}
+    Ok(())
+}
+
+fn cancellation_guard(install:&Path,p:&Pending)->Res<()> {
+    cancellation_registry(install,p)?;
+    verify_originals(install)?;
+    let owner=p.owner.as_ref().ok_or("attachment owner missing; kept")?;
+    let service=service_status(install);
+    let expected=coreq::process::Identity {pid:owner.pid,started:owner.started.clone()};
+    if native_owner(install)?.as_ref()!=Some(&expected)||service["fresh"]!=true||service["instance"]!=owner.instance {
+        return Err("attachment ownership uncertain; cancellation refused".into());
+    }
+    match coreq::file_lock::try_lock(&install.join("service.lock")) {
+        Err(std::fs::TryLockError::WouldBlock)=>{},_=>return Err("attachment host ownership lock unobserved; kept".into()),
+    }
+    empty_attachment_execution(install,&p.root,&expected)?;
+    let receipt=retained(install,p)?;
+    if receipt["state"]=="observed" {return Err("attachment already observed; use project Uninstall".into());}
+    Ok(())
+}
+
+fn empty_attachment_execution(install:&Path,root:&Path,owner:&coreq::process::Identity)->Res<()> {
+    match fs::symlink_metadata(crate::dot(root).join("kids")) {
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},_=>return Err("legacy project execution uncertain; attachment kept".into()),
+    }
+    let path=crate::kids_path(install,root)?;
+    match fs::symlink_metadata(&path) {
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},
+        Ok(meta) if meta.is_file()&&meta.len()<=crate::data::KIDS_MAX=>{
+            let (recorded,kids)=crate::data::kids(&fs::read_to_string(&path).map_err(|e|e.to_string())?)?;
+            if &recorded!=owner||!kids.is_empty() {return Err("project execution or recovery ownership uncertain; attachment kept".into());}
+        },
+        _=>return Err("project execution evidence unreadable; attachment kept".into()),
+    }
+    if let Some(status)=crate::data::json(&crate::dot(root).join("status.json"))? {
+        if status["pid"]!=owner.pid||status["host_instance"]!=service_status(install)["instance"] {
+            return Err("project ownership uncertain; attachment kept".into());
+        }
+    }
+    Ok(())
+}
+
+pub fn cancel_install(install:&Path,root:&Path,id:&str)->Res<String> {
+    if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot cancel host installation".into());}
+    if !crate::resources::id(id) {return Err("invalid installation ID".into());}
+    let _update=crate::platform::update_lock_within(install,crate::resources::WAIT)?;
+    let _projects=coreq::file_lock::try_lock(&install.join("projects.lock")).map_err(|e|format!("project registry busy: {e}"))?;
+    let root=root.canonicalize().map_err(|e|e.to_string())?;
+    let receipt=installation_status(install,Some(id));
+    if receipt["state"]=="failed"&&receipt["root"]==json!(root)&&receipt.get("cancelled_attachment").is_some()
+        &&!install.join(INSTALL_PENDING).try_exists().map_err(|e|e.to_string())? {
+        return Ok(format!("Install receipt {id} cancelled; original registry restored"));
+    }
+    let mut p=pending(install)?;
+    if p.id!=id||p.root!=root {return Err("installation ID/root differs; cancellation refused".into());}
+    cancellation_guard(install,&p)?;
+    if service_status(install)["install_cancel_protocol"]!=1 {return Err("running host cannot reconcile attachment cancellation; installation kept".into());}
+    p.phase="cancelling".into();save(install,&p)?;
+    retain_reason(install,&p,"attachment cancellation pending; host must join its unused project thread")?;
+    coreq::write_durable(&install.join("poke"),"")?;
+    Ok(format!("Install receipt {id} cancellation requested; check service status --request {id}"))
+}
+
+pub(super) fn cancelling_root(install:&Path)->Option<PathBuf> {
+    pending(install).ok().filter(|p|p.phase=="cancelling").map(|p|p.root)
+}
+
+pub(super) fn finish_cancellation(install:&Path,h:&mut Host,served:bool)->Res<()> {
+    let _update=coreq::file_lock::try_lock(&install.join("update.lock")).map_err(|e|e.to_string())?;
+    let _projects=coreq::file_lock::try_lock(&install.join("projects.lock")).map_err(|e|e.to_string())?;
+    let p=pending(install)?;
+    if p.phase!="cancelling"||p.owner.as_ref().is_none_or(|o|o.pid!=std::process::id()||o.instance!=h.instance) {
+        return Err("attachment cancellation belongs to another host; kept".into());
+    }
+    if served||h.slots.keys().any(|(root,_)|root==&p.root) {
+        return Err("attachment project drain/execution unconfirmed; kept".into());
+    }
+    cancellation_guard(install,&p)?;
+    let original=p.original.as_deref().ok_or("attachment original registry missing")?;
+    if raw_projects(install)?.as_deref()!=Some(original) {replace_owned(&install.join("projects"),&p.next,original)?;}
+    if raw_projects(install)?.as_deref()!=Some(original) {return Err("attachment cancellation registry readback differs; kept".into());}
+    let context=coreq::telemetry::capture::TraceContext::decode(&context(&p)?)?;
+    let _context=context.span().entered();
+    record(install,&p,"failed")?;
+    crate::resources::within(install,crate::resources::WAIT,|state| {
+        let op=state.ops.get_mut(&p.id).ok_or("installation receipt missing")?;
+        if op.bound!=binding(&p) {return Err("installation cancellation binding changed".into());}
+        checked_receipt(op)?;
+        op.receipt["cancelled_attachment"]=json!(p);
+        op.receipt["reason"]=json!("attachment cancelled; exact original registry restored; project thread joined without execution");
+        Ok(())
+    })?;
+    coreq::write_durable(&install.join("poke"),"")?;
+    h.detached(&p.root);
+    fs::remove_file(install.join(INSTALL_PENDING)).map_err(|e|e.to_string())
 }
 
 fn receive_initial(install:&Path,p:&mut Pending)->Res<()> {
@@ -538,7 +676,7 @@ fn adopt_upgrade(install:&Path,root:&Path,running:&str)->Res<Option<Pending>> {
     Ok(upgrade_intent(install)?.filter(|p|p.root==root&&p.version==running&&installation_status(install,Some(&p.id))["state"]=="queued"))
 }
 
-fn install_bound(install:&Path,root:&Path,expected:Option<&str>)->Res<String> {
+pub(super) fn install_bound(install:&Path,root:&Path,expected:Option<&str>)->Res<String> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot install the host service".into());}
     // the installer waits for the re-exec'd host's update steps; host recovery (`expected`) must not block its loop
     let _update=crate::platform::update_lock_within(install,if expected.is_none() {crate::resources::WAIT} else {std::time::Duration::ZERO})?;
@@ -553,6 +691,7 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>)->Res<String> {
             None=>return if installation_status(install,Some(id))["state"]=="observed" {Ok(format!("Install receipt {id} already observed"))}else{Err("original installation cursor absent; recovery cannot start a command".into())},
         }
     }
+    if replay.as_ref().is_some_and(|p|p.phase=="cancelling") {return Err("attachment cancellation pending; host project drain required".into());}
     let (edit,mut p)=if let Some(p)=replay {
         if !p.attach&&p.version!=tool.version {return Err("installation candidate version differs; use the original installer to reconcile".into());}
         if p.root!=root {return Err("another installation owns projects.installing; reconcile its exact root".into());}
@@ -698,6 +837,278 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>)->Res<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Chain: §8 Project attachment (A1/A4, H-A5): missing GitLab credentials cannot hold the healthy host.
+    #[test]
+    fn unauthenticated_gitlab_attachment_preserves_running_host() {
+        let (install,root,paths)=fixture();snapshot(&install,vec![root.clone()],paths).unwrap();
+        fs::write(root.join("taskq.json"),json!({"board":"gitlab","repo":"invented/project","host":"gitlab.invalid"}).to_string()).unwrap();
+        let existing=[install.parent().unwrap().join("existing-a"),install.parent().unwrap().join("existing-b")];
+        for root in &existing {fs::create_dir_all(crate::dot(root)).unwrap();fs::write(root.join("taskq.json"),"{}").unwrap();fs::write(crate::dot(root).join("focus"),"off").unwrap();}
+        // Existing GitHub loops use in-memory boards; their worker environment gets only this invented value.
+        fs::write(install.join("token"),"invented-fixture-not-a-credential").unwrap();
+        #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;fs::set_permissions(install.join("token"),fs::Permissions::from_mode(0o600)).unwrap();}
+        let original=existing.iter().map(|root|format!("{}\n",root.display())).collect::<String>();
+        fs::write(install.join("projects"),&original).unwrap();
+        let mut live=std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","host::installation::tests::attachment_live_host_actor","--ignored","--nocapture"])
+            .env("TASKQ_ATTACHMENT_CASE",&install).env("TASKQ_INSTALL",&install)
+            .env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROOT").env_remove("COREQ_TRACE_CONTEXT")
+            .stdout(fs::File::create(install.join("fixture-host.log")).unwrap()).stderr(std::process::Stdio::inherit()).spawn().unwrap();
+        let mut cmd=std::process::Command::new(std::env::current_exe().unwrap());
+        cmd.args(["--exact","host::installation::tests::unauthenticated_attachment_actor","--ignored","--nocapture"])
+            .env("TASKQ_ATTACHMENT_CASE",&install).env("TASKQ_ATTACHMENT_ROOT",&root)
+            .env("TASKQ_INSTALL",&install).env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROOT")
+            .env_remove("GITLAB_TOKEN").env_remove("GLAB_TOKEN").env_remove("TASKQ_TOKEN").env_remove("COREQ_TRACE_CONTEXT");
+        // Exclude CLI login fallback while retaining Cargo's runtime DLL directories.
+        let path=std::env::join_paths(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .filter(|dir|!dir.join(if cfg!(windows) {"glab.exe"}else{"glab"}).is_file())).unwrap();
+        cmd.env("PATH",path);
+        let result=(||->Res<()> {
+            wait_attachment(&mut live,||existing.iter().all(|root|crate::data::json(&crate::dot(root).join("status.json")).ok().flatten().is_some_and(|s|s["host_instance"]=="invented-auth-host")))?;
+            coreq::process::output("test.attachment-auth",&mut cmd,std::time::Duration::from_secs(60)).map_err(|e|format!("credential preflight: {e:?}"))?;
+            cmd.env("TASKQ_ATTACHMENT_WAKE_CASE","1");
+            coreq::process::output("test.attachment-wake",&mut cmd,std::time::Duration::from_secs(60)).map_err(|e|format!("wake preflight: {e:?}"))?;
+            coreq::write_durable(&install.join("verify-continuity"),"")?;
+            wait_attachment(&mut live,||install.join("continuity-ok").exists())
+        })();
+        fs::write(install.join("exit-fixture"),"").unwrap();
+        let stopped=wait_attachment(&mut live,||install.join("fixture-joined").exists());
+        if stopped.is_err()&&live.try_wait().unwrap().is_none() {live.kill().unwrap();}
+        let exit=live.wait().unwrap();
+        assert!(result.is_ok()&&stopped.is_ok()&&exit.success(),"attachment: {result:?}; drain: {stopped:?}; host: {exit}\n{}",fs::read_to_string(install.join("fixture-host.log")).unwrap());
+        assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),original);
+        assert!(!install.join(INSTALL_PENDING).exists()&&!install.join(UPGRADE_INTENT).exists());
+        assert!(!crate::dot(&root).join("focus").exists());
+        assert_eq!(service_status(&install)["instance"],"invented-auth-host");
+        fs::remove_dir_all(install.parent().unwrap()).unwrap();
+    }
+    fn wait_attachment(child:&mut std::process::Child,ready:impl Fn()->bool)->Res<()> {
+        let until=Instant::now()+std::time::Duration::from_secs(60);
+        while !ready() {
+            if let Some(exit)=child.try_wait().map_err(|e|e.to_string())? {return Err(format!("attachment fixture exited: {exit}"));}
+            if Instant::now()>=until {return Err("attachment fixture completion signal expired".into());}
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Ok(())
+    }
+    // A4 process boundary: real multi-project loops, in-memory boards; no native manager or agent launches.
+    #[test]
+    #[ignore="owned live attachment fixture host"]
+    fn attachment_live_host_actor() {
+        let install=PathBuf::from(std::env::var_os("TASKQ_ATTACHMENT_CASE").unwrap());
+        assert!(install.parent().unwrap().file_name().unwrap().to_string_lossy().starts_with("taskq-install-originals-"));
+        let _owner=owner(&install).unwrap().unwrap();let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
+        let policy=Policy::parse(json!({"limits":{"codex":4},"load_gate":{"enabled":false}}),"invented").unwrap();
+        let mut h=Host::new(Ok(policy.clone()));h.instance="invented-auth-host".into();let shared=Arc::new(Mutex::new(h));
+        let roots=projects(&install).unwrap();let mut threads=vec![];
+        for root in &roots {
+            shared.lock().unwrap().attach(root);
+            let (root,install,host,policy)=(root.clone(),install.clone(),shared.clone(),policy.clone());
+            threads.push(std::thread::spawn(move || {
+                enter(&root,&install);let mut cfg=crate::tests::cfg();cfg.root=root;cfg.install=install;cfg.poll=1;policy.apply(&mut cfg);
+                crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(crate::board::Fake::default())},Some(host))
+            }));
+        }
+        let until=Instant::now()+std::time::Duration::from_secs(120);
+        loop {
+            publish_service(&install,&native,"invented-auth-host").unwrap();
+            let mut h=shared.lock().unwrap();h.held=admission_reason(&install);
+            if let Some(index)=threads.iter().position(|t|t.is_finished()) {panic!("existing project loop stopped: {:?}",threads.swap_remove(index).join());}
+            if install.join("verify-continuity").exists()&&!install.join("continuity-ok").exists()&&h.publications_ready(&roots) {
+                h.reserve(&roots[0],99,100,"codex",&policy.cap,true,0).unwrap();
+                h.sync(&roots[0],vec![]);
+                coreq::write_durable(&install.join("continuity-ok"),"").unwrap();
+            }
+            if install.join("exit-fixture").exists() {h.draining.extend(roots.iter().cloned());drop(h);for root in &roots {crate::poke(root).unwrap();}break;}
+            assert!(Instant::now()<until,"live attachment fixture expired");drop(h);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for thread in threads {
+            while !thread.is_finished() {assert!(Instant::now()<until,"project fixture drain expired");std::thread::sleep(std::time::Duration::from_millis(10));}
+            assert_eq!(thread.join().unwrap().unwrap_err(),"project drained");
+        }
+        coreq::write_durable(&install.join("fixture-joined"),"").unwrap();
+    }
+    #[test]
+    #[ignore="owned credential-less attachment process"]
+    fn unauthenticated_attachment_actor() {
+        let install=PathBuf::from(std::env::var_os("TASKQ_ATTACHMENT_CASE").unwrap());
+        assert!(install.parent().unwrap().file_name().unwrap().to_string_lossy().starts_with("taskq-install-originals-"));
+        let root=PathBuf::from(std::env::var_os("TASKQ_ATTACHMENT_ROOT").unwrap());
+        let wake=std::env::var_os("TASKQ_ATTACHMENT_WAKE_CASE").map(|_|crate::wake_lock(&root).unwrap());
+        for _ in 0..2 {
+            let error=install_project(&install,&root).unwrap_err();
+            if wake.is_some() {assert!(error.contains("wake-lock"),"wake eligibility must precede host transition: {error}");}
+            else {assert!(error.contains("no GitLab token"),"missing credential must precede host transition: {error}");}
+            assert!(admission_reason(&install).is_none());
+        }
+    }
+
+    // Chain: §8 Project attachment (A2/A3, H-A5): registered failure -> cancel -> joined -> restored -> failed -> replay.
+    // Retain occupied children of other roots, original registry bytes, and every original command receipt.
+    #[test]
+    fn failed_attachment_cancellation_replays_only_after_owned_empty_drain() {
+        for initial in ["registered","owned"] {
+            let committed=initial=="registered";
+            let (install,root,paths)=fixture();let baseline=snapshot(&install,vec![root.clone()],paths).unwrap();
+            let original_bytes=fs::read(manifest(&install)).unwrap();
+            let existing=install.parent().unwrap().join("existing");fs::create_dir(&existing).unwrap();
+            let existing=existing.canonicalize().unwrap();
+            let original=format!("{}\r\n\n",existing.display());
+            let next=format!("{original}{}\n",crate::platform::plain_path(&root).display());
+            let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
+            let _owner=owner(&install).unwrap().unwrap();publish_service(&install,&native,"invented-cancel-host").unwrap();
+            let (capture,guard)=crate::profile::tests::collecting(&install);
+            let span=tracing::info_span!("host.install");let entered=span.enter();
+            let p=Pending {schema:1,id:"invented-failed-attachment".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),
+                original:Some(original.clone()),next:next.clone(),phase:initial.into(),restore:false,attach:true,
+                owner:Some(InstallOwner {pid:native.pid,started:native.started.clone(),instance:"invented-cancel-host".into()}),activation:None,command:CommandReceipt::current().unwrap().encode()};
+            let registry=if committed {&next}else{&original};
+            save(&install,&p).unwrap();fs::write(install.join("projects"),registry).unwrap();
+            record(&install,&p,"received").unwrap();if committed {record(&install,&p,"applied").unwrap();}
+            let applied=retained(&install,&p).unwrap();
+            fs::create_dir_all(crate::dot(&root)).unwrap();startup_status(&install,&root,"no GitLab token","invented-cancel-host").unwrap();
+            let policy=Policy::parse(json!({"limits":{"codex":4},"load_gate":{"enabled":false}}),"invented").unwrap();
+            let mut h=Host::new(Ok(policy.clone()));h.instance="invented-cancel-host".into();
+            h.sync(&existing,vec![(7,8,"codex".into())]);h.busy.insert(existing.clone(),true);h.rebuilt.insert(existing.clone());
+            h.attach(&root);h.held=admission_reason(&install);
+            assert!(h.reserve(&existing,9,10,"codex",&policy.cap,true,0).is_err());
+            assert!(cancel_install(&install,&root,"wrong-command").unwrap_err().contains("differs"));
+            assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),*registry);
+            assert_eq!(installation_status(&install,Some(&p.id))["state"],if committed {"applied"}else{"queued"});
+            fs::write(install.join("projects"),if committed {&original}else{&next}).unwrap();
+            assert!(cancel_install(&install,&root,&p.id).unwrap_err().contains("registry changed"));
+            fs::write(install.join("projects"),registry).unwrap();
+            // Corrupt native recovery, a prior generation, and legacy execution all refuse before cursor mutation.
+            let kids=crate::kids_path(&install,&root).unwrap();fs::create_dir_all(kids.parent().unwrap()).unwrap();
+            fs::write(&kids,"unknown native execution").unwrap();
+            assert!(cancel_install(&install,&root,&p.id).is_err());fs::remove_file(&kids).unwrap();
+            publish_service(&install,&native,"another-host-generation").unwrap();
+            assert!(cancel_install(&install,&root,&p.id).unwrap_err().contains("ownership uncertain"));
+            publish_service(&install,&native,"invented-cancel-host").unwrap();
+            fs::write(crate::dot(&root).join("kids"),"unknown legacy execution").unwrap();
+            assert!(cancel_install(&install,&root,&p.id).unwrap_err().contains("legacy"));fs::remove_file(crate::dot(&root).join("kids")).unwrap();
+            assert_eq!(pending(&install).unwrap().phase,initial);
+            for _ in 0..2 {
+                assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancellation requested"));
+                assert_eq!(pending(&install).unwrap().command,p.command);
+                assert_eq!(projects(&install).unwrap(),vec![existing.clone()]);
+                assert_eq!(install_acknowledgement(&install,&root,"invented-cancel-host"),None);
+                assert!(!acknowledge(&install,&p).unwrap());
+                assert!(finish_cancellation(&install,&mut h,true).unwrap_err().contains("drain/execution"),"cached membership/thread still fences retirement");
+                assert_eq!(h.occupied(),1,"existing child remains owned and supervised");
+            }
+            h.detached(&root);
+            assert!(!h.rebuilding,"the removed startup failure cannot strand original occupancy recovery");
+            assert!(finish_cancellation(&install,&mut h,true).is_err(),"cached membership/thread still fences retirement");
+            h.sync(&root,vec![(11,12,"codex".into())]);
+            assert!(finish_cancellation(&install,&mut h,false).is_err(),"unknown occupied execution refuses removal");
+            h.sync(&root,vec![]);
+            // Crash after restoring registry: same cursor and command must finish the remaining audit writes.
+            if committed {replace_owned(&install.join("projects"),&next,&original).unwrap();}
+            assert!(admission_reason(&install).is_some());
+            finish_cancellation(&install,&mut h,false).unwrap();
+            assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),original);
+            assert_eq!(fs::read(manifest(&install)).unwrap(),original_bytes);
+            let failed=installation_status(&install,Some(&p.id));
+            assert_eq!(failed["state"],"failed");assert!(failed.get("observed_receipt").is_none());
+            assert_eq!(failed["received_receipt"],applied["received_receipt"]);assert_eq!(failed["applied_receipt"],applied["applied_receipt"]);
+            if !committed {assert!(failed.get("applied_receipt").is_none(),"uncommitted cancellation never fabricates application");}
+            assert_eq!(failed["cancelled_attachment"]["original"],original);assert_eq!(failed["cancelled_attachment"]["command"],p.command);
+            // Crash after the terminal receipt but before cursor retirement still needs host reconciliation.
+            let cancelled:Pending=serde_json::from_value(failed["cancelled_attachment"].clone()).unwrap();save(&install,&cancelled).unwrap();
+            assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancellation requested"));
+            assert!(admission_reason(&install).is_some());finish_cancellation(&install,&mut h,false).unwrap();
+            for _ in 0..2 {assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancelled"));}
+            assert_eq!(crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap(),1);
+            h.reload_admission(Ok(policy.clone()),admission_reason(&install),std::slice::from_ref(&existing));
+            assert!(h.reserve(&existing,9,10,"codex",&policy.cap,true,0).is_ok(),"unrelated project can launch after cancellation");
+            assert_eq!(h.occupied(),2,"the prior child keeps its slot");
+            drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);drop(_owner);
+            fs::remove_dir_all(install.parent().unwrap()).unwrap();
+        }
+    }
+
+    // Chain: §8 Project attachment (A3/R12): worker_env failure -> host join -> exact cancellation -> unrelated grant.
+    // Risk: a joined pre-execution failure strands busy/stopped; cancellation must still fence uncertain execution.
+    #[test]
+    fn joined_startup_failure_cancellation_preserves_existing_execution() {
+        for cancel_before_join in [false,true] {
+            let (install,root,paths)=fixture();let baseline=snapshot(&install,vec![root.clone()],paths).unwrap();
+            let originals=fs::read(manifest(&install)).unwrap();
+            let existing=install.parent().unwrap().join("existing");fs::create_dir(&existing).unwrap();
+            let existing=existing.canonicalize().unwrap();let original=format!("{}\r\n\n",existing.display());
+            let next=format!("{original}{}\n",crate::platform::plain_path(&root).display());
+            let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
+            let _owner=owner(&install).unwrap().unwrap();publish_service(&install,&native,"invented-joined-host").unwrap();
+            let (capture,guard)=crate::profile::tests::collecting(&install);
+            let span=tracing::info_span!("host.install");let entered=span.enter();
+            let p=Pending {schema:1,id:"invented-joined-attachment".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),
+                original:Some(original.clone()),next:next.clone(),phase:"registered".into(),restore:false,attach:true,
+                owner:Some(InstallOwner {pid:native.pid,started:native.started.clone(),instance:"invented-joined-host".into()}),activation:None,command:CommandReceipt::current().unwrap().encode()};
+            save(&install,&p).unwrap();fs::write(install.join("projects"),&next).unwrap();
+            record(&install,&p,"received").unwrap();record(&install,&p,"applied").unwrap();let applied=retained(&install,&p).unwrap();
+            let policy=Policy::parse(json!({"limits":{"codex":4},"load_gate":{"enabled":false}}),"invented").unwrap();
+            let mut h=Host::new(Ok(policy.clone()));h.instance="invented-joined-host".into();
+            h.sync(&existing,vec![(7,8,"codex".into())]);h.busy.insert(existing.clone(),true);h.rebuilt.insert(existing.clone());
+            h.attach(&root);h.held=admission_reason(&install);let shared=Arc::new(Mutex::new(h));
+            let (project,store,host)=(root.clone(),install.clone(),shared.clone());
+            let thread=std::thread::spawn(move || {
+                enter(&project,&store);let mut cfg=crate::tests::cfg();cfg.root=project;cfg.install=store;
+                cfg.board=&crate::board::github::KIND;
+                let result=crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(crate::board::Fake::default())},Some(host));
+                assert_eq!(result.as_ref().unwrap_err(),crate::board::github::TOKEN_ERROR);
+                result
+            });
+            let until=Instant::now()+std::time::Duration::from_secs(30);
+            while !thread.is_finished() {assert!(Instant::now()<until,"startup failure did not finish");std::thread::sleep(std::time::Duration::from_millis(1));}
+            let mut threads=BTreeMap::from([(root.clone(),thread)]);let mut stopped=BTreeSet::new();let mut drained=BTreeSet::new();
+            if !cancel_before_join {
+                reconcile_projects(&install,&shared,&mut threads,&[existing.clone(),root.clone()],&mut stopped,&mut drained).unwrap();
+                assert!(stopped.contains(&root));assert!(shared.lock().unwrap().busy.contains_key(&root));
+            }
+            assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancellation requested"));
+            let roots=projects(&install).unwrap();assert_eq!(roots,vec![existing.clone()]);
+            // Recheck execution and native ownership after the cancellation request, before retiring cached state.
+            shared.lock().unwrap().sync(&root,vec![(11,12,"codex".into())]);
+            assert!(reconcile_projects(&install,&shared,&mut threads,&roots,&mut stopped,&mut drained).is_err());
+            shared.lock().unwrap().sync(&root,vec![]);
+            let kids=crate::kids_path(&install,&root).unwrap();fs::create_dir_all(kids.parent().unwrap()).unwrap();fs::write(&kids,"unknown execution").unwrap();
+            assert!(reconcile_projects(&install,&shared,&mut threads,&roots,&mut stopped,&mut drained).is_err());fs::remove_file(&kids).unwrap();
+            publish_service(&install,&native,"another-host-generation").unwrap();
+            assert!(reconcile_projects(&install,&shared,&mut threads,&roots,&mut stopped,&mut drained).is_err());
+            assert!(shared.lock().unwrap().busy.contains_key(&root));assert!(stopped.contains(&root));
+            assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),next);
+            assert_eq!(installation_status(&install,Some(&p.id))["state"],"applied");
+            publish_service(&install,&native,"invented-joined-host").unwrap();
+            reconcile_projects(&install,&shared,&mut threads,&roots,&mut stopped,&mut drained).unwrap();
+            assert!(threads.is_empty());assert!(!stopped.contains(&root),"a later attachment may retry this root");
+            let mut h=shared.lock().unwrap();assert!(!h.busy.contains_key(&root));assert!(!h.rebuilding);
+            assert_eq!(h.slots.get(&slot(&existing,7,8)).map(String::as_str),Some("codex"));
+            h.reload_admission(Ok(policy.clone()),admission_reason(&install),&roots);
+            h.reserve(&existing,9,10,"codex",&policy.cap,true,0).unwrap();assert_eq!(h.occupied(),2);
+            assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),original);assert_eq!(fs::read(manifest(&install)).unwrap(),originals);
+            let failed=installation_status(&install,Some(&p.id));assert_eq!(failed["state"],"failed");assert!(failed.get("observed_receipt").is_none());
+            for phase in ["received_receipt","applied_receipt"] {assert_eq!(failed[phase],applied[phase]);}
+            assert_eq!(failed["cancelled_attachment"]["command"],p.command);
+            assert!(cancel_install(&install,&root,&p.id).unwrap().contains("cancelled"));
+            assert_eq!(crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap(),1);
+            drop(h);drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);drop(_owner);
+            fs::remove_dir_all(install.parent().unwrap()).unwrap();
+        }
+    }
+
+    // Chain: §8 Project attachment: reject known WSL UNC paths before any filesystem or native lock probe.
+    #[cfg(windows)]
+    #[test]
+    fn wsl_unc_attachment_refuses_before_native_wake() {
+        let install=std::env::temp_dir().join(format!("taskq-unc-preflight-{}",crate::runtime::uuid()));
+        for path in [r"\\wsl.localhost\InventedDistro\project",r"\\WSL$\InventedDistro\project",r"\\?\UNC\wsl.localhost\InventedDistro\project",r"\\?\UNC\WSL$\InventedDistro\project"] {
+            let error=install_project(&install,Path::new(path)).unwrap_err();
+            assert!(error.contains("unsupported on Windows WSL UNC"),"{error}");
+            assert!(!install.exists(),"no installation hold or receipt can precede path eligibility");
+        }
+    }
     pub(super) fn interrupt(install:&Path,phase:&str)->Res<()> {
         if std::env::var("TASKQ_INSTALL_INTERRUPT").ok().as_deref()!=Some(phase) {return Ok(());}
         if std::env::var_os("TASKQ_INSTALL_PROCESS_CASE").as_deref()!=Some(install.as_os_str())
@@ -793,7 +1204,8 @@ mod tests {
         let (capture,guard)=crate::profile::tests::collecting(&install);
         let span=tracing::info_span!("host.install");let entered=span.enter();
         let request=pending(&install).ok().map(|p|p.id);
-        let result=if role=="recover" {recover(&install)}else{install_project(&install,&root)};
+        // This native-manager instrument uses in-memory boards; the credential process case owns real preflight.
+        let result=if role=="recover" {request.as_deref().ok_or_else(||"original installation cursor absent".to_string()).and_then(|id|install_bound(&install,&root,Some(id)))}else{upgrade(&install,&root).and_then(|_|install_bound(&install,&root,None))};
         let operation_count=crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap();
         fs::write(install.join("installer-result.json"),serde_json::to_vec(&json!({"ok":result.is_ok(),"result":result.as_ref().ok(),"error":result.as_ref().err(),"status":installation_status(&install,request.as_deref()),"operation_count":operation_count})).unwrap()).unwrap();
         drop(entered);drop(span);
@@ -1039,12 +1451,23 @@ mod tests {
         save(&install,&p).unwrap();fs::write(install.join("projects"),&p.next).unwrap();
         fs::create_dir_all(crate::dot(&root)).unwrap();
         record(&install,&p,"received").unwrap();record(&install,&p,"applied").unwrap();
-        let mut status=json!({"pid":p.owner.as_ref().unwrap().pid,"host_instance":"invented-install-host","host_install":"prior-registration"});
+        let mut status=json!({"pid":p.owner.as_ref().unwrap().pid,"host_instance":"invented-install-host","host_install":"prior-registration","complete":true,"tasks":[]});
         let path=crate::dot(&root).join("status.json");fs::write(&path,status.to_string()).unwrap();
         assert!(!acknowledge(&install,&p).unwrap(),"same PID/generation cannot acknowledge a different registration");
         status["host_install"]=json!(p.id);status["host_instance"]=json!("prior-host");fs::write(&path,status.to_string()).unwrap();
         assert!(!acknowledge(&install,&p).unwrap(),"old project generation cannot acknowledge the installation");
         status["host_instance"]=json!("invented-install-host");fs::write(&path,status.to_string()).unwrap();
+        let mut h=Host::new(Err("publication fixture".into()));h.instance="invented-install-host".into();let shared=Arc::new(Mutex::new(h));
+        for (key,value) in [("complete",json!(false)),("error",json!("board credential rejected")),("focus_error",json!("focus unreadable"))] {
+            let mut failed=status.clone();failed[key]=value;
+            assert!(!crate::publish_status(&crate::platform::tool(&install),&root,&failed,Some(&shared)));
+            assert!(crate::data::json(&path).unwrap().unwrap()["host_install"].is_null(),"failed producer cannot stamp acknowledgement");
+            fs::write(&path,failed.to_string()).unwrap(); // an older publisher's matching ID still cannot pass the consumer
+            assert!(!acknowledge(&install,&p).unwrap(),"failed project publication cannot observe installation: {key}");
+            assert_eq!(installation_status(&install,Some(&p.id))["state"],"applied");
+            assert!(install.join(INSTALL_PENDING).exists());
+        }
+        assert!(crate::publish_status(&crate::platform::tool(&install),&root,&status,Some(&shared)));
         let lock=coreq::file_lock::try_lock(&install.join("projects.lock")).unwrap();
         assert!(!acknowledge(&install,&p).unwrap(),"observer never waits on the registry owner");drop(lock);
         assert!(acknowledge(&install,&p).unwrap());assert!(acknowledge(&install,&p).unwrap(),"the other observer reads the retained outcome");
