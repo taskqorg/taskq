@@ -333,7 +333,7 @@ fn login_off(install: &Path, bin: &str, refreshed: Option<&str>) -> Option<Strin
     (at == refreshed.unwrap_or_default()).then(|| reason.trim().to_string()).filter(|r| !r.is_empty())
 }
 
-pub use coreq::agent::{final_text, which, which_in, codex_native};
+pub use coreq::agent::{final_text, which, which_in, user_bin_path, codex_native};
 
 /// The worker's last message in an attempt log, for the `gone` reason (§ 4 step 1); None when unreadable.
 pub fn last_message(log: &Path) -> Option<String> { final_text(&events(log, 0)?) }
