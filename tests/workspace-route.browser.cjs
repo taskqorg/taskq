@@ -43,6 +43,10 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture'
   const report=await page.evaluate(()=>sent.filter(m=>m.a==='route-error'));
   assert.equal(report.length,1);assert.equal(report[0].route,'conversations');assert.equal(report[0].error,'TypeError');assert.match(report[0].site,/^[\w$.]+(:\d+:\d+)?$/);
   assert(!JSON.stringify(report).includes('example.org'),'report carries no content');
+  await page.getByRole('button',{name:'Back',exact:true}).click();
+  await page.getByRole('region',{name:'Conversations recovery'}).waitFor();
+  assert(await page.getByRole('region',{name:'Conversations recovery'}).isVisible(),'Back must leave a failed data projection for an independent safe view');
+  assert.match(await page.locator('main').innerText(),/previous reader is unavailable/);
   await page.locator('.shell-overflow summary').click();await page.locator('[data-route=conversations]').click();
   assert.equal(await page.locator('h1').innerText(),'Conversations','safe navigation leaves the failing route');
   assert.deepEqual(errors,[]);

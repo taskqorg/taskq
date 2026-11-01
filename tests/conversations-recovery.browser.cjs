@@ -37,7 +37,7 @@ const browserTask=runtime=>({n:112,title:'Existing local worker',revision:71,sta
    assert.deepEqual([request.root,request.attempt,request.conversation,request.session],['invented-root',71,thread,undefined]);
    // Explicit refusal retains the current source and gives a reason.
    await page.evaluate(()=>{const m=sent.filter(m=>m.action==='transcript').at(-1);taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:'transcript',state:'unknown',reason:'Invented source unavailable'}});});
-   await page.evaluate(()=>taskq.receive({open:{page:'conversations',thread:'recovery'}}));
+   await page.evaluate(()=>taskq.receive({open:{page:'conversations'}}));
    if(width<620){const list=page.locator('[data-c=list]');if(await list.count())await list.click();}
    await page.locator('[data-c=select][data-id="'+draft.id+'"]').click();
    const field=page.locator('[data-c-field=text]');await field.fill('Unsaved local recovery draft');
@@ -51,7 +51,7 @@ const browserTask=runtime=>({n:112,title:'Existing local worker',revision:71,sta
     // Independent guard still works after product taskq itself has failed.
     await page.evaluate(()=>{window.taskqWebFault('script',{error:'TypeError',site:'invented:1:1'});window.taskq=null;});
     assert.equal(await page.locator('.workspace').evaluate(e=>getComputedStyle(e).display),'none');
-    for(const label of ['Reload safely','Back to list','Close'])assert(await page.getByRole('button',{name:label,exact:true}).isVisible(),label);
+    for(const label of ['Reload safely','Back to safe view','Close'])assert(await page.getByRole('button',{name:label,exact:true}).isVisible(),label);
     await page.getByRole('button',{name:'Close',exact:true}).click();
     await page.getByRole('button',{name:'Reload safely',exact:true}).click();
     assert(await page.evaluate(()=>sent.some(m=>m.a==='hide')&&sent.some(m=>m.a==='workspace-reload')));
@@ -62,6 +62,15 @@ const browserTask=runtime=>({n:112,title:'Existing local worker',revision:71,sta
     assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-action').length),0,'mount/recovery must not replay even local storage actions');
     assert.equal((await page.evaluate(()=>window.checkpoint)).conversation.pending?.id,checkpoint.conversation.pending?.id,'retain the original pending operation ID');
    }
+   await page.locator('[data-c=retry-save]').click();
+   const retried=await page.evaluate(()=>sent.filter(m=>m.a==='conversation-action'));
+   assert.equal(retried.length,1,'one explicit retry submits only its interrupted operation');assert.equal(retried[0].action,'save');
+   await page.evaluate(m=>taskq.receive({conversationReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:null}}),retried[0]);
+   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-action').length),1,'successful retry must not drain recovered attach/remove/save work');
+   assert(await page.getByRole('button',{name:'Remove recovered attachment',exact:true}).isVisible(),'each recovered mutation needs its own explicit action');
+   await page.evaluate(({draft,saved})=>{const s={...window.fixture,conversations:{...window.fixture.conversations,items:[{...draft,...saved,revision:2}]}};taskq.receive(s);},{draft,saved:retried[0].draft});
+   assert.equal(await field.inputValue(),'Unsaved local recovery draft','an old save receipt cannot replace recovered edits');
+   assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),[3,9],'an old save/snapshot cannot replace recovered caret');
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'ordinary text must not create horizontal scroll');
    if(process.env.TASKQ_EVIDENCE_2140&&runtime==='codex'&&theme==='dark'&&font===20&&width===900){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2140,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2140+'/recovered-draft.png'});}
    cells++;

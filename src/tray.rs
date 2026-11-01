@@ -1271,7 +1271,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             let quit = MenuItem::with_id("quit", "Quit TaskQ", true, "CmdOrCtrl+Q".parse::<Accelerator>().ok());
             let app = Submenu::with_items("TaskQ", true, &[&PredefinedMenuItem::about(Some("About TaskQ"), Some(about)), &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::hide(Some("Hide TaskQ")), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator(),
-                &MenuItem::with_id("conversations-reload", "Reload Conversations safely", true, "CmdOrCtrl+R".parse::<Accelerator>().ok()), &MenuItem::with_id("conversations-back", "Conversations list", true, None), &MenuItem::with_id("conversations-close", "Close Conversations", true, "CmdOrCtrl+W".parse::<Accelerator>().ok()), &restart, &quit]).map_err(|e| e.to_string())?;
+                &MenuItem::with_id("conversations-reload", "Reload Conversations safely", true, "CmdOrCtrl+R".parse::<Accelerator>().ok()), &MenuItem::with_id("conversations-back", "Conversations safe view", true, None), &MenuItem::with_id("conversations-close", "Close Conversations", true, "CmdOrCtrl+W".parse::<Accelerator>().ok()), &restart, &quit]).map_err(|e| e.to_string())?;
             let edit = Submenu::with_items("Edit", true, &[&PredefinedMenuItem::undo(None), &PredefinedMenuItem::redo(None), &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::cut(None), &PredefinedMenuItem::copy(None), &PredefinedMenuItem::paste(None), &PredefinedMenuItem::select_all(None)]).map_err(|e| e.to_string())?;
             let menu = Menu::with_items(&[&app, &edit]).map_err(|e| e.to_string())?;
@@ -1496,7 +1496,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 // macOS needs a running event loop before the icon exists
                 // M15: Open, Restart TaskQ and Quit TaskQ in the tray menu (right click), naming the work they wait for
                 let menu = Menu::with_items(&[&work_item, &PredefinedMenuItem::separator(), &MenuItem::with_id("open", "Open", true, None),
-                    &MenuItem::with_id("conversations-reload", "Reload Conversations safely", true, None), &MenuItem::with_id("conversations-back", "Conversations list", true, None), &MenuItem::with_id("conversations-close", "Close Conversations", true, None), &MenuItem::with_id("restart", "Restart TaskQ", true, None), &MenuItem::with_id("quit", "Quit TaskQ", true, None)]);
+                    &MenuItem::with_id("conversations-reload", "Reload Conversations safely", true, None), &MenuItem::with_id("conversations-back", "Conversations safe view", true, None), &MenuItem::with_id("conversations-close", "Close Conversations", true, None), &MenuItem::with_id("restart", "Restart TaskQ", true, None), &MenuItem::with_id("quit", "Quit TaskQ", true, None)]);
                 match TrayIconBuilder::new().with_icon(rgba_icon(&compact(false, dark, 2.0))).with_tooltip("taskq").with_menu_on_left_click(false)
                     .with_menu(Box::new(menu.unwrap_or_default())).build() {
                     Ok(t) => tray = Some(t),

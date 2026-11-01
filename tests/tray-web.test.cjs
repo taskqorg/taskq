@@ -31,6 +31,6 @@ console.log('PASS early page failure, bounded counters, no raw content, independ
 // #2140 P-W3: fallback controls do not call the failed product renderer or replay a command.
 const w=page(false,true);w.context.taskq=null;w.context.taskqWebFault('script');
 const actions=w.nodes.find(n=>n.role==='alert').children||[];
-assert.deepEqual(actions.map(n=>n.textContent),['Reload safely','Back to list','Close']);
+assert.deepEqual(actions.map(n=>n.textContent),['Reload safely','Back to safe view','Close']);
 for(const button of actions)button.click();
 assert.deepEqual(w.sent.slice(-3),[{a:'workspace-reload'},{a:'workspace-reload',safe:true},{a:'hide'}]);

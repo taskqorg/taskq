@@ -18,7 +18,7 @@ function notice(){
   box.textContent='Interface error; command outcomes unknown. Close and reopen TaskQ. Check service status before retrying a command.';
   if(document.querySelector?.('.workspace')){
     box.textContent='Interface error; command outcomes unknown. Drafts and receipts are retained. Use native Close or Reload Conversations safely. Check delivery before retrying a command.';
-    for(const [label,message] of [['Reload safely',{a:'workspace-reload'}],['Back to list',{a:'workspace-reload',safe:true}],['Close',{a:'hide'}]]){
+    for(const [label,message] of [['Reload safely',{a:'workspace-reload'}],['Back to safe view',{a:'workspace-reload',safe:true}],['Close',{a:'hide'}]]){
       const button=document.createElement('button');button.textContent=label;
       button.addEventListener('click',()=>{try{window.ipc.postMessage(JSON.stringify(message));}catch(_){box.textContent='Recovery bridge unavailable. Use the native Conversations menu or window Close.';}});box.append(button);
     }

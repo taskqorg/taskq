@@ -186,7 +186,8 @@ const {create}=execution.module('workspace',{
    checkpoint:function(){const value={conversation:conversations.recovery(),navigation:state.capture()},text=JSON.stringify(value);if(text!==recoveryText){recoveryText=text;ui.send({a:'workspace-checkpoint',value});}},
    // #1680 A3: a failing route keeps the shell (Home, Back, Close); its class and site reach tray stderr, not the page-wide fence
    route:function(){
-    try{return (Object.hasOwn(routes,view.page)?pages[view.page]:pages.conversations)();}
+    if(view.safe)return h('section',{'aria-label':'Conversations recovery'},h('p',{role:'status'},'Recovery view: the previous reader is unavailable. Drafts and pending receipts are retained. Refresh status or choose Conversations; nothing was sent.'),h('button',{'data-route':'conversations'},'Open Conversations'));
+    try{const nodes=(Object.hasOwn(routes,view.page)?pages[view.page]:pages.conversations)();view.routeFault=null;return nodes;}
     catch(error){
      const d=require('./tray-web.js').site(error),key=view.page+' '+d.site;
      if(view.routeFault!==key){view.routeFault=key;ui.send({a:'route-error',route:view.page,...d});}
@@ -195,6 +196,7 @@ const {create}=execution.module('workspace',{
    },
    navigate:function(page,context){
     // #1662 A3: the removed New AI request route opens a new Conversations draft for its project
+    view.safe=false;
     if(page==='request'){page='conversations';context={...context,fresh:true};}
     // #1699 A2: the removed Inbox, message and answer routes open their thread in Conversations
     if(page==='messages'){page='conversations';context={...context,thread:'unread'};}
@@ -210,7 +212,7 @@ const {create}=execution.module('workspace',{
     if(page==='conversations'){
      const r=context?.key&&snapshot.value?.messages?.entries?.find(r=>r.key===context.key);
      if(context?.thread==='centre'){if(snapshot.value?.conversations?.loading)view.centrePending=true;else if(!conversations.hasContext()){const a=notifications.attention();conversations.filter(a.needs.size?'needs':a.fresh.size?'new':'all');}}
-     if(context?.thread==='recovery'){view.answer=null;view.message=null;view.result=null;conversations.select(null,false);}
+     if(context?.thread==='recovery'){view.safe=true;view.answer=null;view.message=null;view.result=null;conversations.select(null,false);}
      if(context?.filter)conversations.filter(context.filter,context.criteria);
      if(context?.thread==='unread')api.unread();
      else if(context?.board&&context?.task){const matches=snapshot.value.projects.filter(p=>p.issues===context.board&&(!context.root||p.root===context.root)),root=matches.length===1?matches[0].root:context.root;if(context.sha){conversations.enter('task:'+context.board+'/'+Number(context.task));if(!reports.open(root,Number(context.task),context.sha)){view.answer=null;view.result=null;conversations.select(null,false);view.threadNotice={thread:'list',text:'The requested result SHA is unavailable. Choose the current result to review it; nothing was acknowledged.'};}}else api.openTask(context.board,context.task,root,true);}
@@ -221,7 +223,7 @@ const {create}=execution.module('workspace',{
     if(page==='conversations'&&context?.fresh)conversations.fresh({root:context.root||undefined});
     api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
    },
-   back:function(){if(view.routeFault){view.routeFault=null;view.answer=null;view.message=null;view.result=null;conversations.select(null,false);view.page='conversations';renderer.clear();api.draw();return;}if(view.page==='operations'&&view.operationOrigin){const origin=view.operationOrigin;view.operationOrigin=null;ui.send({a:'workspace-origin',origin});const prior=renderer.pop();if(prior){state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);}api.draw();return;}const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
+   back:function(){if(view.routeFault){view.routeFault=null;view.safe=true;view.answer=null;view.message=null;view.result=null;conversations.select(null,false);view.page='conversations';renderer.clear();api.draw();return;}if(view.page==='operations'&&view.operationOrigin){const origin=view.operationOrigin;view.operationOrigin=null;ui.send({a:'workspace-origin',origin});const prior=renderer.pop();if(prior){state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);}api.draw();return;}const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
    receive:function(s){
     threadProjection=null;
     if(Array.isArray(s.projects))s.index_spare=Math.max(0,16*1024*1024-new TextEncoder().encode(JSON.stringify(s)).length);
@@ -254,7 +256,7 @@ const {create}=execution.module('workspace',{
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
     if(!Array.isArray(s.projects))return;
-    const first=snapshot.value===null;reports.hydrate(s.workspace_local);reports.sync(s.projects,s.index_spare);snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
+    view.safe=false;const first=snapshot.value===null;reports.hydrate(s.workspace_local);reports.sync(s.projects,s.index_spare);snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;
     // #1680 A4: request status lives on its conversation (handoff), never on other pages

@@ -18,6 +18,7 @@ module.exports=execution.module('conversations',{
   let focuses={},readerIdentity=null,layoutFrame=null,correcting=false,scrollIntent=null,scrollIntentTimer=null,dragScroll=false,sidebarEpoch=0,sidebarProjection=null,stableOrder=new Map(),stableGroups=new Map(),modeCounts={},pageSelected=null,listObserver=null,listObservedRoot=null,listAnchor=null;
   let resultFilter='all',sidebarItems=[],resultPages=new Map(),scopeReturn=null,completed=null,readerResize=null;
   const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
+  let recoveryQueue=[];
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
   // Q-A5: owner/task/result reserve 2 slots/2 MiB each; closed/question reserve 1/1 MiB each, total 8/8 MiB.
@@ -373,10 +374,11 @@ module.exports=execution.module('conversations',{
     api.next();
    },
    next:function(){
+    if(!pending&&!failure&&!queue.length&&recoveryQueue.length){const op=recoveryQueue.shift();failure={...op,recovered:true,reason:'Recovered local '+op.action+' needs an explicit retry; other recovered actions remain paused.'};api.note(failure.reason,op.conversation);draw();return;}
     if(pending||!queue.length||failure)return;
     const op=queue.shift(),c=items.find(c=>c.id===op.conversation);if(!c||!api.editable(c)&&!['archive','restore'].includes(op.action)){api.next();return;}
     if(op.action!=='save')api.note('',op.conversation);
-    pending={...op,id:api.id(),revision:c.revision||0,version:c.version||0};
+    pending={...op,id:api.id(),revision:c.revision||0,version:op.version??c.version??0};
     checkpoint();
     ui.send({a:op.action==='window'?'conversation-window':'conversation-action',...pending});
     ui.cancel(timer);timer=ui.defer(()=>{if(pending){if(pending.action==='reply'){const c=items.find(c=>c.id===pending.conversation);if(c)c.reply={id:pending.id};}failure={...pending,reason:'Native receipt missing; refresh or retry saving. Submitted requests must use Check delivery.'};pending=null;api.note(failure.reason,failure.conversation);draw();}},30000);
@@ -618,7 +620,7 @@ module.exports=execution.module('conversations',{
                h('div',{class:'conversation-files'},(c.files||[]).map(f=>h('div',{class:'conversation-file',key:f.id},h('button',{'data-c':'preview','data-file':f.id,disabled},f.name+' · '+f.bytes+' B'),button('x','Remove '+f.name,{'data-c':'remove','data-file':f.id,disabled}))))],
         tools,reason:bad==='Write a message for the session.'?'':bad})))
       ]:h('p',null,'Choose a thread or New. Launched requests continue here as native turns.'))),
-     h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},notices[selected||'list']||'',bodyNotice&&h('span',{class:'meta'},bodyNotice),pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
+     h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},notices[selected||'list']||'',bodyNotice&&h('span',{class:'meta'},bodyNotice),pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.recovered?({save:'Save recovered draft',attach:'Save recovered attachment',remove:'Remove recovered attachment'}[failure.action]||'Retry recovered action'):failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
    },
    click:function(b){
     const action=b.dataset.c;if(!action)return false;const c=api.current();sidebarProjection=null;
@@ -735,11 +737,11 @@ module.exports=execution.module('conversations',{
     if(changed&&identity&&focuses[identity]&&!focusDraft){const f=focuses[identity],target=[...detail.parentElement.querySelectorAll(f.tag)].filter(n=>JSON.stringify(n.dataset)===f.key)[f.index];if(target?.checkVisibility()&&!target.disabled)target.focus({preventScroll:true});}
     if(log&&open){if(api.trim(detail))draw();else api.edge(detail);}},
    bounds:function(){const resident=live||view;return {listRows:menu.querySelectorAll('.conversation-row').length,indexRows:items.length+sidebarItems.filter(r=>r.thread).length,queryKeys:resultPages.size,nativeRecords:(view?.items.length||0)+(live?.items.length||0),nativeBytes:[...(view?.items||[]),...(live?.items||[])].reduce((n,i)=>n+api.bytes(i),0),anchor:resident?.anchor||null,bodySources:bodyCache.size,bodyBytes:[...bodyCache.keys()].reduce((n,id)=>{const c=items.find(c=>c.id===id);return n+(c?new TextEncoder().encode(JSON.stringify(api.local(c))+JSON.stringify(c.sent||'')).length:0);},0),closedSources:closedViews.size,historyKeys:historyViews.size,historyRecords:[...historyViews.values()].reduce((n,v)=>n+(v.rows?.length||0),0),historyBytes:[...historyViews.values()].reduce((n,v)=>n+new TextEncoder().encode(JSON.stringify(v.rows||[])).length,0),textPages:textPages.size,bodyReads:bodyReads.size,taskBodies:taskBodies.size,taskBytes:[...taskBodies.values()].reduce((n,v)=>n+v.bytes,0),taskReads:taskReads.size,linkedRows:linked?.total||0,linkedKnown:linked?.known.size||0,linkedChecked:linked?.checked.size||0};},
-   recovery:function(){return {drafts:items.filter(c=>!c.lazy&&(c.saved??0)!==(c.version??0)).map(c=>({id:c.id,revision:c.revision,...api.local(c),files:c.files,sentRevision:c.sent?.revision})),pending:pending||failure,localQueue:queue.filter(o=>['save','attach','remove'].includes(o.action)),context:{selected,list,selection,scrolls,positions,focuses,opened,listOnly,search,filter:resultFilter}};},
+   recovery:function(){return {drafts:items.filter(c=>!c.lazy&&(c.saved??0)!==(c.version??0)).map(c=>({id:c.id,revision:c.revision,version:c.version,...api.local(c),files:c.files,sentRevision:c.sent?.revision})),pending:pending||failure,localQueue:[...queue.filter(o=>['save','attach','remove'].includes(o.action)),...recoveryQueue],context:{selected,list,selection,scrolls,positions,focuses,opened,listOnly,search,filter:resultFilter}};},
    restoreRecovery:function(r){
-    for(const draft of r?.drafts||[]){const c=items.find(c=>c.id===draft.id);if(!c||c.deleted){api.note('Recovered draft source unavailable; saved source retained.','list');continue;}const mismatch=c.sent?.revision!==draft.sentRevision;Object.assign(c,api.local(draft),{files:draft.files,lazy:false,version:1,saved:0});c.recoveryReason=mismatch?'Recovered draft source changed; text/files retained. Use New from draft or inspect the source.':null;api.note(c.recoveryReason||'Recovered local edits; pending delivery requires the same receipt.',c.id);}
-    queue=(r?.localQueue||[]).filter(o=>['save','attach','remove'].includes(o.action));
-    const interrupted=r?.pending||queue.shift();
+    for(const draft of r?.drafts||[]){const c=items.find(c=>c.id===draft.id);if(!c||c.deleted){api.note('Recovered draft source unavailable; saved source retained.','list');continue;}const mismatch=c.sent?.revision!==draft.sentRevision;Object.assign(c,api.local(draft),{files:draft.files,lazy:false,version:(draft.version??0)+1,saved:0});c.recoveryReason=mismatch?'Recovered draft source changed; text/files retained. Use New from draft or inspect the source.':null;api.note(c.recoveryReason||'Recovered local edits; pending delivery requires the same receipt.',c.id);}
+    queue=[];recoveryQueue=(r?.localQueue||[]).filter(o=>['save','attach','remove'].includes(o.action));
+    const interrupted=r?.pending||recoveryQueue.shift();
     if(interrupted){failure={...interrupted,reason:'Reader reloaded; original operation outcome unknown. Check delivery or explicitly retry the native save.'};const c=items.find(c=>c.id===interrupted.conversation);if(c&&interrupted.action==='reply')c.reply={id:interrupted.id};api.note(failure.reason,interrupted.conversation);}
 
     if(r?.context){const c=r.context;({selected,list,selection,scrolls,positions,focuses,opened,listOnly,search}=c);resultFilter=c.filter;focusDraft=!!api.current();onSelect?.(selected);}
