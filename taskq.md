@@ -154,6 +154,8 @@ Every command's syntax and effect, op ids, revisions, receipts, task-write ackno
 - Worker `requeue`, `later`, `failed`: `Reason: <blocker>`, optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each; `--stage` adds `Stages:` (§ 2).
 - Commands add `attempt $TASKQ_ATTEMPT` when set. Fold refusals print current state. In a taskq project (`taskq.json` here or above), a `TASKQ_ROOT` without the current directory refuses: `TASKQ_ROOT <root> is not the project of the current directory <dir>`.
 - Untrusted text (issue bodies by others, worker output) follows [shared agent security](https://github.com/taskqorg/specq/blob/main/engineering/security.md#agents).
+### Board-only root
+A root with `taskq.json` and no `.git` connects a project whose code lives elsewhere (PilotQ); hosts whose service serves the project run its attempts, and the board token stays the host's (§ 9). There `status`, `inbox`, `issue`, `add`, `start`, `answer`, `steer`, `requeue`, `later` and `close` run against the board as in any root. Commands that need a checkout refuse with one line naming the reason: `service install` (its host would spawn workers there) and `cleanup`.
 ## 6. Setup
 Target, not in force: [setup and project locations](docs/design/setup-and-project-locations.md). `taskq labels` applies and reads back the shared [label catalog](docs/design/board.md) after setup approval; task creation ensures used labels. Unknown labels stay; dynamic ones appear only when used. Conflicting type/runtime/host/priority labels are diagnosed, not admitted. [Setup check](docs/design/setup-check.md#contract-detail) (`service check [--json]`): read-only;
 `service install` ends with it; service status, R6 show gaps.
