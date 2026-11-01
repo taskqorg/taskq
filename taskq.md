@@ -132,7 +132,9 @@ The service alone admits a slot through the same runtime/project/host limits, lo
 External manager admission is independent of task focus; it neither changes focus nor admits tasks.
 Durable readback precedes `reserved`; only a fresh matching host-generation receipt permits a turn.
 Release attests that the consumer has ended its entire turn, including tools; it is irreversible, idempotent and acknowledged only after the service removes the slot.
-Caller exit, silence, expiry after admission and service restart never prove execution release: retain occupancy as unknown until the same release key reconciles completion or a verified later boot proves exit.
+Caller exit, silence, expiry after admission and service restart never prove execution release.
+Rebuild and retain occupancy; absent/unreadable caller liveness or unknown boot reports unknown.
+Only completion attested with the same release key or a verified later boot releases it.
 Queued expired/dead callers never start; terminal receipts have bounded retention.
 [Consumer protocol](docs/design/external-slots.md#contract-detail).
 ### Runtime accounts
