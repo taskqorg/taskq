@@ -9,12 +9,13 @@ const {create}=execution.module('workspace',{
   const routes={conversations:{title:'Conversations'},sessions:{title:'Work sessions',parent:'conversations'},operations:{title:'Operation review',parent:'conversations'}};
   // A2: the recorded Wouter history is the Back stack; each entry keeps its scroll, disclosures and focus.
   const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail:renderer.entries(),root:'conversations',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
-  let composing=false,answerField=null,redraw=null,threadProjection=null,projectionSidebar=null;
+  if(window.taskqNativeFrame)menu.classList.add('native-frame');
+  let recoveryText='',composing=false,answerField=null,redraw=null,threadProjection=null,projectionSidebar=null;
   const notifications=notification.create({view,send:ui.send,draw:()=>api.draw(),messages:(action,rows)=>api.messageAction(action,rows.map(r=>r.key),'list'),reports:{rows:()=>reports.rows(),count:()=>reports.count(),markRead:rows=>reports.markRead(rows),feedback:()=>reports.feedback(),readFailure:()=>reports.readFailure()}});
   // #1662 A3: task answers use the workspace's one composer; a card change repaints it once per tick
   const pm=require('./pm-composer.js');
   const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw(),composer:true,steer:pm.composer,read:(p,t)=>conversations.task(p,t),historyText:(t,text,source,root)=>conversations.taskText(t,text,source,root),changed:()=>{if(view.page==='conversations'&&view.answer&&!redraw)redraw=ui.defer(()=>{redraw=null;api.draw();},0);}});
-  const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),navigate:(...args)=>api.navigate(...args),onSelect:id=>{if(view.result?.conversation!==id)view.result=null;const row=api.threads().find(t=>t.id===id);view.answer=row?.task?{root:row.root,board:row.board,task:row.task,revision:row.revision}:null;view.message=row?.event&&!row.task?row.event.key:null;}});
+  const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),checkpoint:()=>api.checkpoint(),navigate:(...args)=>api.navigate(...args),onSelect:id=>{if(view.result?.conversation!==id)view.result=null;const row=api.threads().find(t=>t.id===id);view.answer=row?.task?{root:row.root,board:row.board,task:row.task,revision:row.revision}:null;view.message=row?.event&&!row.task?row.event.key:null;}});
   const reports=require('./reports.js').create({draw:()=>api.draw(),onMove:step=>conversations.move(step),navigation:r=>conversations.navigation(r),reading:(key,r)=>conversations.reading(key,r),transcript:r=>conversations.closed(r),onOpen:r=>{if(r.next){const next=conversations.nextUnresolved(api.threads());if(next?.report)reports.open(next.root,next.report);else if(next)conversations.select(next.id,false);else{view.threadNotice={thread:'list',text:'No unresolved items in this view. Choose All to continue.'};api.draw();}return;}if(r.conversation&&conversations.ids().includes(r.conversation)){conversations.reveal(r.conversation,false,true);view.result={root:r.root,n:r.n,sha:r.sha,conversation:r.conversation};}else api.openTask(r.board||view.S.projects.find(p=>p.root===r.root)?.issues,r.n,r.root);}});
   const operationView=require('./tray-app.js').createState();
   const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
@@ -62,7 +63,7 @@ const {create}=execution.module('workspace',{
    taskWait:function(p,t){return [h('p',{role:'status'},t.body_reason),h('button',{'data-c':'task-body-retry','data-root':p.root,'data-task':t.n},'Retry card read')];},
    // #1699 A3: the task thread: question card with source choice ids, order and recommendation, then the shared answer composer
    task:function(row){
-    const p=view.S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=conversations.task(p,p?.tasks?.find(t=>t.n===row.task));
+    const matches=view.S.projects.filter(p=>p.issues===row.board&&(!row.root||p.root===row.root)),p=matches.length===1?matches[0]:null,t=conversations.task(p,p?.tasks?.find(t=>t.n===row.task));
     const composer=!row.archived&&p&&t?.state==='ask'&&!t.body_lazy?api.answerComposer(p,t):{};
     // #1781: Task info above the title; the title row holds the board, Mark read and Archive icons (input-scroll 04)
     const ev=row.event,url=t?.url||row.board+'/'+row.task,busy=!!view.messageBusy;
@@ -81,7 +82,7 @@ const {create}=execution.module('workspace',{
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
       // #1773 A3: the task shows as one card in the chat: agent state, then the question; #1781: the thread title above
       // already names number and title (input-scroll 04), so the card keeps them only as its accessible name
-      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},time.stamp(time.seconds(t.since),t.state==='ask'?'Question opened':'Task state changed'),h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:t.executions?.some(x=>x.attempt===t.attempt&&x.state==='running')?'Worker is working':'Worker activity unknown',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),t.body_lazy?pages.taskWait(p,t):row.archived?[h('p',{class:'conversation-text'},t.question?.text||t.card||(!(t.history_count??t.history?.length)?'No recorded question.':''))]:[t.state==='ask'?h('div',{class:'thread-card'},pages.questionText(p,t),answers.answerSlot({...t,key:p.issues+'/'+t.n})):!(t.history_count??t.history?.length)&&(answers.answerWon(p.issues,t)||h('p',{role:'status'},t.wait||'There is no open question.'))]),t.state==='ask'&&!t.body_lazy&&composer.body,conversations.worker(row.id,t,p),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)],notifications.history(row.news||[],t&&(t.history_count??t.history?.length)>0?()=>conversations.history(p,t,answers.answerHistory):null,row.id,notifications.taskMessages(row.board,row.task))],tools:composer.tools};
+      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},time.stamp(time.seconds(t.since),t.state==='ask'?'Question opened':'Task state changed'),h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:t.executions?.some(x=>x.attempt===t.attempt&&x.state==='running')?'Worker is working':'Worker activity unknown',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),t.body_lazy?pages.taskWait(p,t):row.archived?[h('p',{class:'conversation-text'},t.question?.text||t.card||(!(t.history_count??t.history?.length)?'No recorded question.':''))]:[t.state==='ask'?h('div',{class:'thread-card'},pages.questionText(p,t),answers.answerSlot({...t,key:p.issues+'/'+t.n})):t.state!=='doing'&&!(t.history_count??t.history?.length)&&(answers.answerWon(p.issues,t)||h('p',{role:'status'},t.wait||'There is no open question.'))]),t.state==='ask'&&!t.body_lazy&&composer.body,conversations.worker(row.id,t,p),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)],notifications.history(row.news||[],t&&(t.history_count??t.history?.length)>0?()=>conversations.history(p,t,answers.answerHistory):null,row.id,notifications.taskMessages(row.board,row.task))],tools:composer.tools};
    },
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
@@ -172,15 +173,17 @@ const {create}=execution.module('workspace',{
     conversations.capture();view.disclosures={...view.disclosures,...state.groups()};
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
     document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');for(const entry of (s?.palette||'').split(';')){const [key,value]=entry.split(':');if(key&&value)menu.style.setProperty(key,value);}
-    const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},icons.icon('ellipsis')),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
-    renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='conversations'||renderer.entries().length>0,actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
+    const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},icons.icon('ellipsis')),h('nav',{class:'overflow-actions','aria-label':'Workspace'},h('button',{'data-a':'workspace-reload'},'Reload Conversations safely'),[['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
+    renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='conversations'||renderer.entries().length>0,actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),!window.taskqNativeFrame&&icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),!window.taskqNativeFrame&&icons.button('x','Close workspace',{'data-a':'hide'})]}),
      h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Conversations.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.notice||''))),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();if(view.page==='conversations'&&menu.querySelector('.report-card'))reports.mount(menu);state.restore(view.disclosures);if(view.page!=='conversations'&&menu.querySelector('.content').scrollTop!==scroll)menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     // a new answer field takes its saved caret once
     const field=menu.querySelector('[data-c-field=answer]');if(field&&field!==answerField){answerField=field;const target=api.answerContext(),t=target&&view.S?.projects.find(p=>p.issues===target.board&&(!target.root||p.root===target.root))?.tasks?.find(t=>t.n===target.task),c=t&&answers.answerCompose(target.board,t);if(Array.isArray(c?.caret))field.setSelectionRange(...c.caret);}
     conversations.afterDraw();state.flush();
+    api.checkpoint();
    },
+   checkpoint:function(){const value={conversation:conversations.recovery(),navigation:state.capture()},text=JSON.stringify(value);if(text!==recoveryText){recoveryText=text;ui.send({a:'workspace-checkpoint',value});}},
    // #1680 A3: a failing route keeps the shell (Home, Back, Close); its class and site reach tray stderr, not the page-wide fence
    route:function(){
     try{return (Object.hasOwn(routes,view.page)?pages[view.page]:pages.conversations)();}
@@ -207,17 +210,18 @@ const {create}=execution.module('workspace',{
     if(page==='conversations'){
      const r=context?.key&&snapshot.value?.messages?.entries?.find(r=>r.key===context.key);
      if(context?.thread==='centre'){if(snapshot.value?.conversations?.loading)view.centrePending=true;else if(!conversations.hasContext()){const a=notifications.attention();conversations.filter(a.needs.size?'needs':a.fresh.size?'new':'all');}}
+     if(context?.thread==='recovery'){view.answer=null;view.message=null;view.result=null;conversations.select(null,false);}
      if(context?.filter)conversations.filter(context.filter,context.criteria);
      if(context?.thread==='unread')api.unread();
-     else if(context?.board&&context?.task){const root=context.root||snapshot.value.projects.find(p=>p.issues===context.board)?.root;if(context.sha){conversations.enter('task:'+context.board+'/'+Number(context.task));if(!reports.open(root,Number(context.task),context.sha)){view.answer=null;view.result=null;conversations.select(null,false);view.threadNotice={thread:'list',text:'The requested result SHA is unavailable. Choose the current result to review it; nothing was acknowledged.'};}}else api.openTask(context.board,context.task,root,true);}
+     else if(context?.board&&context?.task){const matches=snapshot.value.projects.filter(p=>p.issues===context.board&&(!context.root||p.root===context.root)),root=matches.length===1?matches[0].root:context.root;if(context.sha){conversations.enter('task:'+context.board+'/'+Number(context.task));if(!reports.open(root,Number(context.task),context.sha)){view.answer=null;view.result=null;conversations.select(null,false);view.threadNotice={thread:'list',text:'The requested result SHA is unavailable. Choose the current result to review it; nothing was acknowledged.'};}}else api.openTask(context.board,context.task,root,true);}
      else if(r?.task&&r?.board)api.openTask(r.board,r.task,r.root);
      else if(r)conversations.enter(conversations.ids().includes(r.id)?r.id:'event:'+r.key);
     }
     view.restoreScroll=0;
     if(page==='conversations'&&context?.fresh)conversations.fresh({root:context.root||undefined});
-    api.draw();if(context?.event){const event=notifications.rows().find(r=>r.id===context.event);if(event)notifications.read([event]);}menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
+    api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
    },
-   back:function(){if(view.page==='operations'&&view.operationOrigin){const origin=view.operationOrigin;view.operationOrigin=null;ui.send({a:'workspace-origin',origin});const prior=renderer.pop();if(prior){state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);}api.draw();return;}const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
+   back:function(){if(view.routeFault){view.routeFault=null;view.answer=null;view.message=null;view.result=null;conversations.select(null,false);view.page='conversations';renderer.clear();api.draw();return;}if(view.page==='operations'&&view.operationOrigin){const origin=view.operationOrigin;view.operationOrigin=null;ui.send({a:'workspace-origin',origin});const prior=renderer.pop();if(prior){state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);}api.draw();return;}const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
    receive:function(s){
     threadProjection=null;
     if(Array.isArray(s.projects))s.index_spare=Math.max(0,16*1024*1024-new TextEncoder().encode(JSON.stringify(s)).length);
@@ -245,6 +249,7 @@ const {create}=execution.module('workspace',{
     if(s.answerReceipt){const c=api.answerContext(),local=c&&answers.load(c.board,{n:c.task});if(view.pmTask&&local?.op?.id===s.answerReceipt.id&&s.answerReceipt.state==='accepted')view.pmTask=null;answers.answerReceipt(s.answerReceipt);return;}
     if(s.replyFileReceipt){answers.answerFileReceipt(s.replyFileReceipt);return;}
     if(s.viewStateError!==undefined||s.workspaceLocalError!==undefined){if(s.viewStateError!==undefined)view.navigationError=s.viewStateError;if(s.workspaceLocalError!==undefined)view.localError=s.workspaceLocalError;api.draw();return;}
+    if(s.workspaceRecovery){conversations.restoreRecovery(s.workspaceRecovery.conversation);const v=require('./tray-view-state.js').normalize({schema:1,current:s.workspaceRecovery.navigation},snapshot.value||{},routes,'conversations');state.apply(v.current);api.draw();state.focus(v.current.focus);return;}
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
@@ -255,7 +260,7 @@ const {create}=execution.module('workspace',{
     // #1680 A4: request status lives on its conversation (handoff), never on other pages
     view.notice='Workspace status received.';
     if(view.centrePending&&!s.conversations?.loading){view.centrePending=false;if(!conversations.hasContext()){const a=notifications.attention();conversations.filter(a.needs.size?'needs':a.fresh.size?'new':'all');}}
-    answers.answerReadback();api.draw();if(first)state.focus(view.restoreFocus);
+    api.draw();if(first)state.focus(view.restoreFocus);
    },
    bounds:function(){return {conversations:conversations.bounds(),reports:reports.bounds(),answers:answers.bounds(),projectionRows:threadProjection?.length||0};},
    mount:function(){
@@ -284,7 +289,7 @@ const {create}=execution.module('workspace',{
      // #1699 A2/A7: selecting a thread acknowledges nothing; its draft, caret and scroll stay with it
      else if(b.dataset.a==='workspace'){api.navigate('conversations',{board:b.dataset.board,root:b.dataset.root,task:+b.dataset.task});}else if(b.dataset.a==='thread'){
       const row=api.threads().find(t=>t.id===b.dataset.thread);if(!row)return;conversations.flush();
-      if(row.task)conversations.remember(row.id,row.root,true);conversations.select(row.id,false);notifications.read((row.news||[]).filter(r=>!r.read));
+      if(row.task)conversations.remember(row.id,row.root,true);conversations.select(row.id,false);
       view.restoreScroll=0;api.draw();state.flush();
      }
      else if(['message-read','message-archive','message-restore','message-delete'].includes(b.dataset.a))api.messageAction(b.dataset.a.slice(8),[b.dataset.key],api.thread(b.dataset.key));
@@ -296,6 +301,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='answer-steer'){const t=answers.project(b.dataset.board)?.tasks?.find(t=>t.n===+b.dataset.task);if(t)answers.answerSteer(b.dataset.board,t);}
      else if(b.dataset.a==='back')api.back();
      else if(b.dataset.a==='hide'){conversations.workerClose();conversations.flush();state.flush();ui.send({a:'hide'});}
+     else if(b.dataset.a==='workspace-reload'){conversations.flush();state.flush();if(conversations.recoverable())ui.send({a:'workspace-reload'});else{view.localError='Draft save or command receipt pending. Check delivery before reloading; edits kept in this window.';api.draw();}}
      else if(b.dataset.a==='refresh'){view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}
      else if(b.dataset.a==='answer-retry')answers.retry(b.dataset.key);
      else if(b.dataset.a==='sync-retry')ui.send({a:'sync-retry',root:b.dataset.root,id:b.dataset.id});
@@ -314,7 +320,7 @@ const {create}=execution.module('workspace',{
     // P-W3: the header drags the window; its controls never start a drag
     let dragFrom=null;
     ui.listen(menu,'pointerdown',e=>{if(e.button===0&&e.target.closest('.head')&&!e.target.closest('button,a,summary,input,select,textarea'))dragFrom={x:e.screenX,y:e.screenY};});
-    ui.listen(window,'pointermove',e=>{if(dragFrom&&Math.hypot(e.screenX-dragFrom.x,e.screenY-dragFrom.y)>=4){dragFrom=null;ui.send({a:'workspace-window',action:'drag'});}});
+    ui.listen(window,'pointermove',e=>{if(!window.taskqNativeFrame&&dragFrom&&Math.hypot(e.screenX-dragFrom.x,e.screenY-dragFrom.y)>=4){dragFrom=null;ui.send({a:'workspace-window',action:'drag'});}});
     for(const event of ['pointerup','pointercancel'])ui.listen(window,event,()=>{dragFrom=null;});
     ui.listen(window,'resize',()=>shell.fitTitle(menu));
     let resizing=null;

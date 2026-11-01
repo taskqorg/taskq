@@ -1,10 +1,10 @@
 // Chain: early page faults -> bounded safe IPC -> independent visible failure, even when the bridge fails.
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const {install}=require('../src/tray-web.js');
-function page(broken=false){
+function page(broken=false,workspace=false){
  const handlers={},timers=[],sent=[],nodes=[];
- const document={readyState:'complete',head:{append:x=>nodes.push(x)},body:{append:x=>nodes.push(x)},
-  createElement:tag=>({tag,style:{},setAttribute(k,v){this[k]=v;}})};
+ const document={querySelector:()=>workspace,readyState:'complete',head:{append:x=>nodes.push(x)},body:{append:x=>nodes.push(x)},
+  createElement:tag=>({tag,style:{},append(x){(this.children??=[]).push(x);},addEventListener(n,fn){this[n]=fn;},setAttribute(k,v){this[k]=v;}})};
  const context={document,setTimeout:(f,ms)=>{assert.equal(ms,2000);timers.push(f);return 1;},addEventListener:(n,f)=>handlers[n]=f};
  context.window=context;context.ipc={postMessage:m=>{if(broken)throw Error('secret');sent.push(JSON.parse(m));}};
  install(context);return {handlers,timers,sent,nodes,context,win:context};
@@ -27,3 +27,10 @@ assert.deepEqual(site({name:'TypeError',stack:'TypeError: secret text\n    at ti
 assert.deepEqual(site({name:'TypeError',stack:'title@taskq://localhost/secret:1:7034\nbody@x:1:9'}),{error:'TypeError',site:'title:1:7034'});
 assert.deepEqual(site({name:'secret text',stack:'nothing'}),{error:'unknown',site:'anonymous'});
 console.log('PASS early page failure, bounded counters, no raw content, independent notice and broken bridge');
+
+// #2140 P-W3: fallback controls do not call the failed product renderer or replay a command.
+const w=page(false,true);w.context.taskq=null;w.context.taskqWebFault('script');
+const actions=w.nodes.find(n=>n.role==='alert').children||[];
+assert.deepEqual(actions.map(n=>n.textContent),['Reload safely','Back to list','Close']);
+for(const button of actions)button.click();
+assert.deepEqual(w.sent.slice(-3),[{a:'workspace-reload'},{a:'workspace-reload',safe:true},{a:'hide'}]);

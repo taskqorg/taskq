@@ -5,7 +5,7 @@ const {create}=execution.module('workspace.answers',{
 create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed,steer,read=(p,t)=>t,historyText}){
  const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={},steers={};
  const api=execution.module('workspace.answers.instance',{
-project:function(board,root=view.answer?.board===board?view.answer.root:null){return view.S?.projects.find(p=>p.issues===board&&(!root||p.root===root));},
+project:function(board,root=view.answer?.board===board?view.answer.root:null){const matches=view.S?.projects.filter(p=>p.issues===board&&(!root||p.root===root))||[];return matches.length===1?matches[0]:null;},
 answerCapability:function(board,row){const p=api.project(board);return {manage:true,files:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board',composer,paged:composer&&(row?.question?.text||row?.card||'').length>32768};},
 // #1662 A3: the workspace's shared composer reads and drives the mounted card; the card keeps draft, op and receipt
 answerCompose:function(board,row){return component().compose(row,saved[board+'#'+row.n]||component().fresh(row),answerCapability(board,row));},
@@ -80,8 +80,8 @@ answerHistory:function(t,root){
   return (t.history||[]).map(({question:q,answered:a},i)=>{
    const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:a?.revision||0,question:{choices:[],evidence:[],...q}},key=a?.revision??i;
    const paged=!!historyText&&(q?.text||'').length>32768;
-   return [h('section',{key:'asked:'+key,class:'thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+((t.history_start||0)+i+1)+' of #'+t.n},time.stamp(null,'Recorded question','Question timestamp unavailable in the history adapter'),paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question'})}})),
-    h('p',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'body answered',role:'status'},won({answered:a||{}}),time.stamp(null,'Recorded answer','Answer timestamp unavailable in the history adapter'))];
+   return [h('section',{key:'asked:'+key,class:'dialogue-item thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+((t.history_start||0)+i+1)+' of #'+t.n},h('p',{class:'meta document-author'},'Worker',time.stamp(q?.updated,'Recorded question','Question timestamp unavailable in the history adapter')),paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question'})}})),
+    h('section',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'dialogue-item body answered',role:'status'},h('p',{class:'meta document-author'},a?.by||'Author unknown',time.stamp(a?.updated,'Recorded answer','Answer timestamp unavailable in the history adapter')),h('div',{class:'conversation-text'},a?.text||'Answer text unavailable'))];
   });
 },
 readingAnchors:function(el,t){if(el)for(const [i,node]of [...el.querySelectorAll('.qac-done,.qac-problem,.qac-detail,.qac-context>summary,.qac-images,.qac-evidence,.qac-text,[data-choice]')].entries())node.dataset.readingKey='report:question-'+t.n+'-'+t.revision+'-'+i;},

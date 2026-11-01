@@ -157,7 +157,7 @@
 .journey-state[data-state=doing]{color:var(--work)}.journey-state[data-state=ask]{color:var(--ask)}.journey-state[data-state=review]{color:var(--review)}.journey-state[data-state=failed]{color:var(--failed)}.journey-state[data-state=held]{color:var(--muted)}
 .journey-card .thread-card .qac{background:transparent;border:0;padding:0}
 /* #1781: Done, the question and its options stay above the pinned composer at 800x600 with large text: the state leads the first line, an empty status line takes no height */
-.journey-card:has(.thread-card){margin:2px 0;padding:8px 8px 6px}.journey-card:has(.thread-card)>.journey-heading{float:left;margin:0 .5em 0 0;padding-top:2px}.journey-card .qac-problem{margin:0 0 2px}.journey-card .qac-choices{clear:left;margin:4px 0}
+.journey-card:has(>.thread-card){margin:2px 0;padding:8px 8px 6px}.journey-card:has(>.thread-card)>.journey-heading{float:left;margin:0 .5em 0 0;padding-top:2px}.journey-card .qac-problem{margin:0 0 2px}.journey-card .qac-choices{clear:left;margin:4px 0}
 .conversations>.conversation-status:empty{min-height:0;padding:0}
 @media(max-width:620px){.conversations .conversation-list-toggle{display:inline-flex}.conversations:has(>.conversation-grid){grid-template-columns:minmax(0,1fr)}.conversations>.chat-entry-bar{border-right:0;border-bottom:1px solid var(--divider,var(--edge))}.conversation-grid>.conversation-list,.conversation-grid>.conversation-detail{grid-column:1;grid-row:2;border-right:0;padding-left:0}.chat-entry-bar [data-c=search-open]{margin-left:0}}
 @media(pointer:coarse){.conversations .compact-action,.conversations .new-chat-action{min-width:44px;min-height:44px;width:auto}.conversations .compact-action{width:44px;height:44px}.list-tabs>button{min-height:44px}}
@@ -209,3 +209,13 @@
 
 
 .relative-time.time-unknown{inline-size:auto;white-space:normal}.relative-time.time-future{inline-size:9ch}
+
+/* P-W3: native framing owns title/drag/close; the content row is a toolbar. */
+.workspace.native-frame .head{cursor:default}
+.workspace.native-frame .head h1{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.worker-live{margin-block:var(--section-gap,12px);min-width:0}
+.document-author,.dialogue-item>.meta{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5em;margin:0 0 .25em}
+.conversation-reader .dialogue-item{margin-block:0 1em}
+.conversation-reader .asked{border:0;border-radius:0;padding:0;background:none}
+
+.workspace.native-frame .head:is(.title-below,[data-title-below]) .nav-title{grid-column:2;grid-row:1}

@@ -65,6 +65,9 @@ enum Ev {
     QuitFailed(String),
     /// M15: a second Open shows the running tray's window.
     Raise,
+    /// Recreate only Conversations; true opens its safe list.
+    RecoverWorkspace(String,bool),
+    WorkspaceClose,
     Ipc(String),
     /// #1819: the shared pending store changed; every window gets it at once, not on the next tick.
     Sync,
@@ -73,7 +76,7 @@ enum Ev {
     Settings(String),
     /// P-W4: IPC from the one View window (the tray page as its `views` surface).
     Views(String),
-    WorkspaceEvaluated(String, u64, &'static str),
+    WorkspaceEvaluated(u64, String, u64, &'static str),
     Evaluated(u64, &'static str),
     Click(Rect),
     Shot,
@@ -197,6 +200,17 @@ impl Settings {
         }
         crate::platform::write_atomic(&p, &v.to_string()).is_ok()
     }
+}
+
+// Preserve the last durable navigation when validation, write or readback fails.
+fn save_workspace_navigation(settings:&mut Settings,install:&Path,navigation:&Value)->Option<&'static str> {
+    if !navigation.is_object() || navigation["schema"]!=1 {return Some("Workspace view state was not saved: unsupported schema; previous saved state retained");}
+    if navigation.to_string().len()>65536 {return Some("Workspace view state was not saved: exceeds 64 KiB; previous saved state retained");}
+    let previous=settings.workspace_navigation.clone();
+    settings.workspace_navigation=navigation.clone();
+    if settings.save(install) && crate::data::json(&install.join("tray.json")).ok().flatten().is_some_and(|v|v["workspace_navigation"]==*navigation) {return None;}
+    settings.workspace_navigation=previous;
+    Some("Workspace view state was not saved: storage write/readback failed; current view kept in this window")
 }
 
 // M1.1/M1.2: reject malformed appearance IPC before applying any part of the request.
@@ -1004,6 +1018,7 @@ fn resources_reply(result:crate::Res<Value>)->Value {match result {Ok(_)=>json!(
 
 // The page owns asynchronous work; a submission result cannot acknowledge its execution.
 struct WebCalls {
+    generation: u64,
     workspace: bool,
     surface: String,
     next: u64,
@@ -1023,7 +1038,8 @@ static FAULT_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 static TICK_QUEUED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 impl WebCalls {
     fn new() -> Self {
-        let mut calls=Self{workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false,logged:0,seen:Instant::now(),tick:None};
+        static GENERATION: std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
+        let mut calls=Self{generation:GENERATION.fetch_add(1,std::sync::atomic::Ordering::Relaxed),workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false,logged:0,seen:Instant::now(),tick:None};
         calls.begin("tray.web.boot",Instant::now());
         calls
     }
@@ -1101,6 +1117,19 @@ impl WebCalls {
         }
         else if counts.iter().any(|n|*n>0) {self.fault("page-error");}
     }
+}
+
+// The native closure stamps generation; retired renderer IPC never gets authority after reload.
+fn workspace_view(window:&Window, proxy:tao::event_loop::EventLoopProxy<Ev>, surface:String, calls:&WebCalls)->Result<WebView,String> {
+    let generation=calls.generation;
+    WebViewBuilder::new().with_accept_first_mouse(true).with_html(WORKSPACE_HTML)
+        .with_initialization_script("window.taskqNativeFrame=true;")
+        .with_navigation_handler(own_page).with_ipc_handler(move |r|{
+            if let Ok(mut m)=serde_json::from_str::<Value>(&r.into_body()) {
+                if let Some(m)=m.as_object_mut(){m.insert("readerGeneration".into(),json!(generation));}
+                let _=proxy.send_event(Ev::Workspace(surface.clone(),m.to_string()));
+            }
+        }).build(window).map_err(|e|e.to_string())
 }
 
 // #1680 A3: a failing workspace route keeps its shell; log its class and site without faulting the window.
@@ -1184,8 +1213,8 @@ fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_l
     let Some(id)=calls.begin(name,Instant::now()) else {return};
     if name==TICK {calls.tick=Some(id);}
     let p=proxy.clone();
-    let workspace=calls.workspace;let surface=calls.surface.clone();
-    if wv.evaluate_script_with_callback(&web_script(script),move |value| {let _=p.send_event(if workspace {Ev::WorkspaceEvaluated(surface.clone(),id,web_result(&value))} else {Ev::Evaluated(id,web_result(&value))});}).is_err() {
+    let workspace=calls.workspace;let surface=calls.surface.clone();let generation=calls.generation;
+    if wv.evaluate_script_with_callback(&web_script(script),move |value| {let _=p.send_event(if workspace {Ev::WorkspaceEvaluated(generation,surface.clone(),id,web_result(&value))} else {Ev::Evaluated(id,web_result(&value))});}).is_err() {
         calls.finish(id,"submit-error");
     }
 }
@@ -1242,7 +1271,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             let quit = MenuItem::with_id("quit", "Quit TaskQ", true, "CmdOrCtrl+Q".parse::<Accelerator>().ok());
             let app = Submenu::with_items("TaskQ", true, &[&PredefinedMenuItem::about(Some("About TaskQ"), Some(about)), &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::hide(Some("Hide TaskQ")), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator(),
-                &restart, &quit]).map_err(|e| e.to_string())?;
+                &MenuItem::with_id("conversations-reload", "Reload Conversations safely", true, "CmdOrCtrl+R".parse::<Accelerator>().ok()), &MenuItem::with_id("conversations-back", "Conversations list", true, None), &MenuItem::with_id("conversations-close", "Close Conversations", true, "CmdOrCtrl+W".parse::<Accelerator>().ok()), &restart, &quit]).map_err(|e| e.to_string())?;
             let edit = Submenu::with_items("Edit", true, &[&PredefinedMenuItem::undo(None), &PredefinedMenuItem::redo(None), &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::cut(None), &PredefinedMenuItem::copy(None), &PredefinedMenuItem::paste(None), &PredefinedMenuItem::select_all(None)]).map_err(|e| e.to_string())?;
             let menu = Menu::with_items(&[&app, &edit]).map_err(|e| e.to_string())?;
@@ -1259,7 +1288,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     }));
     let proxy = event_loop.create_proxy();
     MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
-        let ev = match e.id.0.as_str() { "quit" => Ev::Quit, "restart" => Ev::Restart, "open" => Ev::Raise, _ => return };
+        let ev = match e.id.0.as_str() { "quit" => Ev::Quit, "restart" => Ev::Restart, "open" => Ev::Raise, "conversations-reload"=>Ev::RecoverWorkspace(String::new(),false), "conversations-back"=>Ev::RecoverWorkspace(String::new(),true), "conversations-close"=>Ev::WorkspaceClose, _ => return };
         let _ = proxy.send_event(ev);
     }));
     let proxy = event_loop.create_proxy();
@@ -1315,6 +1344,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let mut detached_shown:std::collections::BTreeMap<String,String>=Default::default();
     let mut workspace_handoff=false;
     let mut workspace_open=Value::Null;
+    let mut focused_workspace=String::from("main");
+    let mut workspace_checkpoints:std::collections::BTreeMap<String,Value>=Default::default();
+    let mut workspace_checkpoint_errors:std::collections::BTreeSet<String>=Default::default();
     let mut settings_window: Option<(Window, WebView)> = None;
     let mut settings_web: Option<WebCalls> = None;
     let mut settings_open=Value::Null;
@@ -1361,6 +1393,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         // #1548: a fit after each tick render resizes the window; unchanged native events fold per window.
         if let Some(name)=native {let _=coreq::telemetry::capture::poll(name,0,||Ok::<_,&str>(()),|_|"observed");}
 
+        if let Event::WindowEvent{window_id,event:WindowEvent::Focused(true),..}=&event {
+            if workspace.as_ref().is_some_and(|(w,_)|w.id()==*window_id){focused_workspace="main".into();}
+            else if let Some((id,_))=detached.iter().find(|(_, (w,_,_))|w.id()==*window_id){focused_workspace=id.clone();}
+        }
         web.expire(Instant::now());
         if let Some(calls)=&mut workspace_web {
             calls.expire(Instant::now());
@@ -1384,6 +1420,29 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             }
         };
         match event {
+            Event::UserEvent(Ev::WorkspaceClose)=>{if focused_workspace=="main" {if let Some((w,_))=&workspace {w.set_visible(false);}}else if let Some((w,_,_))=detached.get(&focused_workspace){w.set_visible(false);}}
+            Event::UserEvent(Ev::RecoverWorkspace(surface,safe))=>{
+                let surface=if surface.is_empty(){focused_workspace.clone()}else{surface};
+                if workspace_checkpoint_errors.contains(&surface){eprintln!("taskq tray: Conversations recovery checkpoint exceeds 32 MiB; reader retained, reload refused");if let Some(tray)=&tray {let _=tray.set_tooltip(Some("Conversations recovery unknown: checkpoint exceeds 32 MiB; reader retained"));}return;}
+                if surface!="main" {
+                    if let Some((window,old,_))=detached.remove(&surface){
+                        drop(old);let mut reader=WebCalls::new();reader.workspace=true;reader.surface=surface.clone();
+                        match workspace_view(&window,proxy.clone(),surface.clone(),&reader){
+                            Ok(wv)=>{window.set_visible(true);window.set_focus();detached.insert(surface,(window,wv,reader));}
+                            Err(reason)=>eprintln!("taskq tray: detached Conversations reload unavailable: {reason}"),
+                        }
+                    }
+                    return;
+                }
+                if let Some((window,old))=workspace.take() {
+                    drop(old);
+                    let mut reader=WebCalls::new();reader.workspace=true;
+                    match workspace_view(&window,proxy.clone(),"main".into(),&reader) {
+                        Ok(wv)=>{workspace=Some((window,wv));workspace_web=Some(reader);workspace_shown.clear();if safe {workspace_open=json!({"page":"conversations","thread":"recovery"});}if let Some((w,_))=&workspace {w.set_visible(true);w.set_focus();}}
+                        Err(reason)=>{workspace_web=None;eprintln!("taskq tray: Conversations reload unavailable: {reason}");}
+                    }
+                }
+            }
             Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if detached.values().any(|(w,_,_)|w.id()==window_id)=>{if let Some((w,_,_))=detached.values().find(|(w,_,_)|w.id()==window_id){w.set_visible(false);}}
             Event::WindowEvent {window_id,..} if detached.values().any(|(w,_,_)|w.id()==window_id)=>{}
             Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if workspace.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {
@@ -1437,7 +1496,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 // macOS needs a running event loop before the icon exists
                 // M15: Open, Restart TaskQ and Quit TaskQ in the tray menu (right click), naming the work they wait for
                 let menu = Menu::with_items(&[&work_item, &PredefinedMenuItem::separator(), &MenuItem::with_id("open", "Open", true, None),
-                    &MenuItem::with_id("restart", "Restart TaskQ", true, None), &MenuItem::with_id("quit", "Quit TaskQ", true, None)]);
+                    &MenuItem::with_id("conversations-reload", "Reload Conversations safely", true, None), &MenuItem::with_id("conversations-back", "Conversations list", true, None), &MenuItem::with_id("conversations-close", "Close Conversations", true, None), &MenuItem::with_id("restart", "Restart TaskQ", true, None), &MenuItem::with_id("quit", "Quit TaskQ", true, None)]);
                 match TrayIconBuilder::new().with_icon(rgba_icon(&compact(false, dark, 2.0))).with_tooltip("taskq").with_menu_on_left_click(false)
                     .with_menu(Box::new(menu.unwrap_or_default())).build() {
                     Ok(t) => tray = Some(t),
@@ -1620,6 +1679,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if web.pending.is_empty() && let Some(next)=shot_wait.take() {let _=proxy.send_event(next);}
             }
             Event::UserEvent(Ev::Dialogue(surface,mut receipt)) => {
+                let current=if surface=="main" {workspace_web.as_ref()}else{detached.get(&surface).map(|(_,_,c)|c)};
+                if current.is_none_or(|c|receipt["readerGeneration"].as_u64()!=Some(c.generation)){return;}
                 task_body_receipt(&sync,&mut receipt);
                 let script=format!("taskq.receive({})",json!({"dialogueReceipt":receipt}));
                 if surface=="main" {if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}}
@@ -1631,9 +1692,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 else if let Some((_,wv,calls))=detached.get_mut(&surface) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
                 shown.clear();workspace_shown.clear();detached_shown.clear();
             }
-            Event::UserEvent(Ev::WorkspaceEvaluated(surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {calls.finish(id,result);}}else if surface==SETTINGS_SURFACE {if let Some(calls)=&mut settings_web {calls.finish(id,result);}}else if surface==VIEWS_SURFACE {if let Some(calls)=&mut views_web {calls.finish(id,result);}}else if let Some((_,_,calls))=detached.get_mut(&surface){calls.finish(id,result);}}
+            Event::UserEvent(Ev::WorkspaceEvaluated(generation,surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {if calls.generation==generation {calls.finish(id,result);}}}else if surface==SETTINGS_SURFACE {if let Some(calls)=&mut settings_web {calls.finish(id,result);}}else if surface==VIEWS_SURFACE {if let Some(calls)=&mut views_web {calls.finish(id,result);}}else if let Some((_,_,calls))=detached.get_mut(&surface){if calls.generation==generation {calls.finish(id,result);}}}
             Event::UserEvent(Ev::Workspace(surface,message)) => {
                 let Ok(input)=serde_json::from_str::<Value>(&message) else {return};
+                let current=if surface=="main" {workspace_web.as_ref()}else{detached.get(&surface).map(|(_,_,c)|c)};
+                if current.is_none_or(|c|input["readerGeneration"].as_u64()!=Some(c.generation)){return;}
                 if input["a"]=="workspace-origin" && surface=="main" && input["origin"]["surface"]=="settings" {
                     // TW1: Settings keeps its DOM, route, scroll and focus while the shared review is open.
                     if let Some((window,_))=&settings_window {window.set_visible(true);window.set_focus();if let Some((window,_))=&workspace {window.set_visible(false);}}
@@ -1643,20 +1706,20 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     let id=input["conversation"].as_str().unwrap_or("");
                     if !crate::resources::id(id){return;}
                     let action=input["windowAction"].as_str().or_else(||input["action"].as_str()).unwrap_or("");
-                    if action=="raise" {if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();}return;}
+                    if action=="raise" {if let Some((window,_,calls))=detached.get(id){if calls.failed {let _=proxy.send_event(Ev::RecoverWorkspace(id.into(),false));}else{window.set_visible(true);window.set_focus();}}return;}
                     if action=="detach" && surface=="main" && !detached.contains_key(id) {
                         let saved=crate::conversations::summary(&install);
                         let valid=saved["items"].as_array().is_some_and(|rows|rows.iter().any(|c|c["id"]==id&&c["revision"]==input["revision"]));
                         if !valid {return;}
-                        let p=proxy.clone();let source=id.to_string();
-                        let built=WindowBuilder::new().with_title("TaskQ Request").with_decorations(false).with_inner_size(LogicalSize::new(640.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window|{
-                            WebViewBuilder::new().with_accept_first_mouse(true).with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace(source.clone(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                        let p=proxy.clone();let source=id.to_string();let mut reader=WebCalls::new();reader.workspace=true;reader.surface=source.clone();
+                        let built=WindowBuilder::new().with_title("TaskQ Conversations").with_decorations(true).with_inner_size(LogicalSize::new(640.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window|{
+                            workspace_view(&window,p,source,&reader).map(|wv|(window,wv))
                         });
                         match built {
-                            Ok((window,wv))=>{let mut calls=WebCalls::new();calls.workspace=true;calls.surface=id.into();window.set_visible(true);window.set_focus();detached.insert(id.into(),(window,wv,calls));}
+                            Ok((window,wv))=>{window.set_visible(true);window.set_focus();detached.insert(id.into(),(window,wv,reader));}
                             Err(_)=>{if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){let r=json!({"conversationReceipt":{"id":input["id"],"state":"unknown","reason":"Detached window unavailable; main retains ownership"}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}return;}
                         }
-                    }else if action=="return" && surface==id {detached.remove(id);if let Some((window,_))=&workspace{window.set_visible(true);window.set_focus();}}
+                    }else if action=="return" && surface==id {detached.remove(id);workspace_checkpoints.remove(id);if let Some((window,_))=&workspace{window.set_visible(true);window.set_focus();}}
                     else {return;}
                     if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){
                         let owner=json!({"workspaceOwner":{"id":"main","detached":detached.keys().collect::<Vec<_>>()}});
@@ -1674,6 +1737,14 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if m["a"]=="route-error" {calls.route(&m);return;}
                 let context=match m["context"].as_str(){Some(text)=>match coreq::telemetry::capture::TraceContext::decode(text){Ok(context)=>Some(context),Err(_)=>{calls.fault("invalid-web-context");return;}},None=>None};
                 let _continuation=context.as_ref().map(|context|context.span().entered());
+                if m["a"]=="workspace-checkpoint" {
+                    let bytes=workspace_checkpoints.iter().filter(|(key,_)|*key!=&surface).map(|(_,value)|value.to_string().len()).sum::<usize>()+m["value"].to_string().len();
+                    if m["value"].is_object() && bytes<=32*1024*1024 {workspace_checkpoints.insert(surface.clone(),m["value"].clone());workspace_checkpoint_errors.remove(&surface);}
+                    else {workspace_checkpoint_errors.insert(surface.clone());web_eval(wv,"taskq.receive({workspaceLocalError:'Recovery checkpoint exceeds 32 MiB; reload refused, current reader retained'})","tray.web.receive",&proxy,calls);}
+                    return;
+                }
+                if m["a"]=="workspace-reload" {let _=proxy.send_event(Ev::RecoverWorkspace(surface.clone(),m["safe"]==true));return;}
+                if m["a"]=="hide" {w.set_visible(false);return;}
                 if calls.failed {return;}
                 match m["a"].as_str() {
                     Some("reports")=>{let result=if m["local"].is_object(){answer_local(&install,m["local_key"].as_str().unwrap_or(""),&m["local"])}else{Ok(())}.and_then(|_|{let mut request=m.clone();request.as_object_mut().map(|v|{v.remove("local");v.remove("local_key");});report_actions.submit(&request)});if let Err(reason)=result {web_eval(wv,&format!("taskq.receive({})",json!({"reportReceipt":{"id":m["id"],"root":m["root"],"reason":reason}})),"tray.web.receive",&proxy,calls);}}
@@ -1684,6 +1755,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let _=proxy.send_event(Ev::Sync);
                         calls.finish(0,"ok");
                         web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);
+                        if m["a"]=="ready" && let Some(value)=workspace_checkpoints.get(&surface) {web_eval(wv,&format!("taskq.receive({})",json!({"workspaceRecovery":value})),"tray.web.receive",&proxy,calls);}
                         if surface=="main" && !workspace_open.is_null() && !workspace_open["page"].is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
                         let own=if surface=="main" {json!({"id":"main","detached":detached_ids})}else{json!({"id":surface,"conversation":surface,"detached":[]})};
                         web_eval(wv,&format!("taskq.receive({})",json!({"workspacePin":w.is_always_on_top(),"workspaceMaximized":w.is_maximized()})),"tray.web.receive",&proxy,calls);
@@ -1721,7 +1793,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         }
                         // Reads only, off the event loop: the D3 holder probe starts the runtime CLI.
                         let (p,install,surface,m)=(proxy.clone(),install.clone(),surface.clone(),m.clone());
-                        std::thread::spawn(move||{let receipt=crate::conversations::dialogue(&install,&m);let _=coreq::telemetry::capture::operation("tray.dialogue.report",||p.send_event(Ev::Dialogue(surface,receipt)),|_|"ui-closed");});
+                        std::thread::spawn(move||{let mut receipt=crate::conversations::dialogue(&install,&m);receipt["readerGeneration"]=m["readerGeneration"].clone();let _=coreq::telemetry::capture::operation("tray.dialogue.report",||p.send_event(Ev::Dialogue(surface,receipt)),|_|"ui-closed");});
                     }
                     Some("message-action") => {
                         let ps:Vec<Value>=roots(&install).iter().map(|r|project(&install,r)).collect();
@@ -1732,9 +1804,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         push(&mut web,&ui,&state(&install,&settings,dark,None,&adding,&mut sync));
                     }
                     Some("workspace-set") => {
-                        settings.set(&json!({"workspace_navigation":m["navigation"]}));
-                        let saved=m["navigation"].is_object() && m["navigation"]["schema"]==1 && settings.workspace_navigation==m["navigation"] && settings.save(&install);
-                        web_eval(wv,&format!("taskq.receive({})",json!({"viewStateError":if saved {Value::Null}else{json!("Workspace view state was not saved; close and reopen may lose navigation")}})),"tray.web.receive",&proxy,calls);
+                        let reason=save_workspace_navigation(&mut settings,&install,&m["navigation"]);
+                        web_eval(wv,&format!("taskq.receive({})",json!({"viewStateError":reason})),"tray.web.receive",&proxy,calls);
                     }
                     Some("answer-local") => {
                         let result=answer_local(&install,m["key"].as_str().unwrap_or(""),&m["local"]);
@@ -1840,15 +1911,16 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 match m["a"].as_str().unwrap_or("") {
                     "workspace" if snapshot.is_none() => {
                         workspace_open=m["open"].clone();
+                        if workspace_web.as_ref().is_some_and(|c|c.failed) {let _=proxy.send_event(Ev::RecoverWorkspace("main".into(),false));return;}
                         // #1699: the header entry (it names a thread) opens the main workspace, never a detached conversation
                         if workspace_open["page"]=="conversations" && workspace_open["thread"].is_null() && workspace_open["task"].is_null() {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
                         if workspace.is_none() {
-                            let p=proxy.clone();
-                            let built=WindowBuilder::new().with_title("TaskQ Workspace").with_decorations(false).with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
-                                WebViewBuilder::new().with_accept_first_mouse(true).with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace("main".into(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                            let p=proxy.clone();let mut reader=WebCalls::new();reader.workspace=true;
+                            let built=WindowBuilder::new().with_title("TaskQ Conversations").with_decorations(true).with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
+                                workspace_view(&window,p,"main".into(),&reader).map(|wv|(window,wv))
                             });
                             match built {
-                                Ok(window)=>{workspace=Some(window);let mut calls=WebCalls::new();calls.workspace=true;workspace_web=Some(calls);}
+                                Ok(window)=>{workspace=Some(window);workspace_web=Some(reader);}
                                 Err(error)=>{reply!(&json!({"workspaceError":format!("Workspace unavailable: {error}")}));return;}
                             }
                         }
@@ -2522,7 +2594,7 @@ fn relaunch(install: &Path) -> std::io::Result<()> {
 }
 
 fn workspace_operation(action:&str)->bool {
-    matches!(action,"agentq-setup"|"agentq-dismiss"|"agentq-check"|"capacity"|"restart"|"stop"|"uninstall"|"recovery-read"|"recovery-apply"|"pause"|"resume"|"focus"|"update"|"add"|"add-cancel"|"add-install"|"add-setup"|"resources"|"log"|"folder")
+    matches!(action,"completed"|"agentq-setup"|"agentq-dismiss"|"agentq-check"|"capacity"|"restart"|"stop"|"uninstall"|"recovery-read"|"recovery-apply"|"pause"|"resume"|"focus"|"update"|"add"|"add-cancel"|"add-install"|"add-setup"|"resources"|"log"|"folder")
 }
 
 /// A blur this soon after opening can be the Windows hidden-icons flyout retaking focus.
@@ -4510,4 +4582,23 @@ mod tests {
         assert!(starting["session_url"].is_null(), "starting: no link");
         task_session(Path::new("."), "win", None, &mut Value::Null);
     }
+    #[test]
+    fn conversations_recovery_storage_and_generation() {
+        let dir=std::env::temp_dir().join(format!("taskq-2140-{}",std::process::id()));
+        let _=fs::remove_dir_all(&dir);fs::create_dir_all(&dir).unwrap();
+        let mut settings=Settings::load(&dir);
+        let nav=json!({"schema":1,"current":{"page":"conversations","answer":{"root":"invented","task":112,"revision":71}},"trail":[]});
+        assert_eq!(save_workspace_navigation(&mut settings,&dir,&nav),None);
+        assert_eq!(Settings::load(&dir).workspace_navigation,nav);
+        assert!(save_workspace_navigation(&mut settings,&dir,&json!({"schema":1,"text":"界".repeat(22000)})).unwrap().contains("64 KiB"));
+        assert_eq!(settings.workspace_navigation,nav);
+        fs::remove_file(dir.join("tray.json")).unwrap();fs::create_dir(dir.join("tray.json")).unwrap();
+        assert!(save_workspace_navigation(&mut settings,&dir,&json!({"schema":1,"current":{}})).unwrap().contains("storage"));
+        assert_eq!(settings.workspace_navigation,nav,"failed save retains previous navigation");
+        assert!(workspace_operation("completed"),"reader transcript reads reach the existing adapter");
+        assert!(!workspace_operation("answer"),"writes retain the workspace authority boundary");
+        let old=WebCalls::new();let fresh=WebCalls::new();assert_ne!(old.generation,fresh.generation,"retired reader IPC/callbacks are fenced");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
 }

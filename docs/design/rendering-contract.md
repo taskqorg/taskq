@@ -34,7 +34,7 @@ Apply [F3](https://github.com/taskqorg/specq/blob/main/design/implementation-fid
 | Menu task list | window header row, version/resize footer | one shared scroll: host summary, global pins first, filters, task rows or Completed; no separately scrolling subpanels (P-W1) |
 | Project / filtered tasks | Back, project/Board, current filter | task rows; all required states reachable |
 | Settings detail | Back/title, contextual commit/cancel where present | settings groups, validation and detailed effects |
-| AI conversation | window controls, reachable Send/tools | one thread reader: status, questions, transcript and growing draft; list independent when side by side |
+| AI conversation | native recovery chrome outside the renderer; reachable Send/tools | one thread reader: status, questions, transcript and growing draft; list independent when side by side |
 | Narrow AI | window controls, Back, reachable Send | full-width list OR shared thread reader, not compressed columns |
 | Change review | target context, Cancel/Confirm | long diff/evidence; buttons never cover last row |
 

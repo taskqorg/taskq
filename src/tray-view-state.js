@@ -25,7 +25,9 @@ normalize:function(saved,snapshot,routes,root='home'){
  }
  });
  if(saved?.schema!==1)return {schema:1,current:entry(null),trail:[],...(root==='home'?{dashboard:require('./task-views.js').normalize(null)}:{})};
- return {schema:1,...(root==='home'?{dashboard:require('./task-views.js').normalize(saved.dashboard,saved.current)}:{}),current:entry(saved.current),trail:(Array.isArray(saved.trail)?saved.trail:[]).slice(-32).filter(v=>v&&entry(v).page===v.page).map(entry)};
+ const state={schema:1,...(root==='home'?{dashboard:require('./task-views.js').normalize(saved.dashboard,saved.current)}:{}),current:entry(saved.current),trail:(Array.isArray(saved.trail)?saved.trail:[]).slice(-32).filter(v=>v&&entry(v).page===v.page).map(entry)};
+ if(root==='conversations')while(state.trail.length&&new TextEncoder().encode(JSON.stringify(state)).length>65536)state.trail.shift();
+ return state;
 },
 create:function(view,{menu,document,send,defer,cancel,routes,trail,root='home'}){
  let hydrated=false,timer=null,last='',restoring=false;
@@ -53,6 +55,7 @@ create:function(view,{menu,document,send,defer,cancel,routes,trail,root='home'})
   cancel(timer);timer=null;if(!hydrated||view.S?.page!==undefined)return;
   if(root==='home'&&view.dashboard&&view.page==='home')require('./task-views.js').current(view.dashboard).scroll=(menu.querySelector('.content')||document.scrollingElement)?.scrollTop||0;
   const navigation=normalize({schema:1,current:api.capture(),trail,...(root==='home'?{dashboard:view.dashboard}:{})},view.S,routes,root),text=JSON.stringify(navigation);
+  if(new TextEncoder().encode(text).length>65536){view.navigationError='Workspace view state exceeds 64 KiB; current context kept in this window, previous saved state retained.';return;}
   if(text!==last){last=text;send({a:'set',navigation});}
  },
  schedule:function(){if(restoring)return;cancel(timer);timer=defer(api.flush,100);}
