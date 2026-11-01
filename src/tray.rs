@@ -916,7 +916,15 @@ impl ActionQueue {
                         if registered&&!crate::host::project_paths(&install)?.iter().any(|r|r==&job.root) {
                             return Err("Project is no longer registered; command not applied".into());
                         }
-                        execute(&install,&job.root,&job.message)
+                        let value=execute(&install,&job.root,&job.message)?;
+                        if operation=="tray.capacity.execute" {
+                            match value["state"].as_str() {
+                                Some("rejected")=>tracing::info!(coreq_refusal="capacity-rejected"),
+                                Some("unknown")=>tracing::info!(coreq_error="capacity-unknown"),
+                                _=>{}
+                            }
+                        }
+                        Ok(value)
                     })).unwrap_or_else(|_|Err("Command panicked; result unknown; check service status before retry".into())),|_|"command-failed");
                     report(job.root.clone(),job.id.clone(),result);
                     completed.lock().unwrap_or_else(|e|e.into_inner()).remove(&format!("{}#{}",job.root.display(),job.id));
@@ -2903,13 +2911,21 @@ fn capacity(install:&Path,root: &Path,m: &Value) -> crate::Res<Value> {
         return crate::lifecycle::submit(install,&request);
     }
     let mut input=m.clone();input.as_object_mut().ok_or("invalid capacity message")?.remove("context");
-    if !crate::resources::keys(&input,&["a","root","id","ops","issued_at","expires_at"]) {
-        return Ok(json!({"state":"rejected","reason":"Unsupported host capacity payload; refresh and review current settings"}));
+    let receipt=if !crate::resources::keys(&input,&["a","root","id","ops","issued_at","expires_at"]) {
+        json!({"state":"rejected","reason":"Unsupported host capacity payload; refresh and review current settings"})
+    } else {
+        let request=json!({"id":input["id"],"ops":input["ops"],"issued_at":input["issued_at"],"expires_at":input["expires_at"]});
+        match crate::host::capacity_request(&request) {
+            Err(error)=>json!({"state":"rejected","reason":error}),
+            Ok(_)=>{let policy=crate::host::Policy::read(install)?;crate::host::local_capacity(install,&policy.me,&request)?}
+        }
+    };
+    match receipt["state"].as_str() {
+        Some("rejected")=>tracing::info!(coreq_refusal="capacity-rejected"),
+        Some("unknown")=>tracing::info!(coreq_error="capacity-unknown"),
+        _=>{}
     }
-    let request=json!({"id":input["id"],"ops":input["ops"],"issued_at":input["issued_at"],"expires_at":input["expires_at"]});
-    if let Err(error)=crate::host::capacity_request(&request) {return Ok(json!({"state":"rejected","reason":error}));}
-    let policy=crate::host::Policy::read(install)?;
-    crate::host::local_capacity(install,&policy.me,&request)
+    Ok(receipt)
 }
 
 /// Web links and Codex app threads (setup sessions, #1522).
@@ -3877,6 +3893,27 @@ mod tests {
         for set in [json!({"mode":"auto"}),json!({"limits":{"codex":4}}),json!({"maximum":null})] {
             assert_eq!(capacity(Path::new("/nonexistent-taskq-954"),Path::new("/nonexistent-taskq-954"),&json!({"set":set})).unwrap()["state"],"rejected");
         }
+        let dir=std::env::temp_dir().join(format!("taskq-tray-cap-telemetry-{}",std::process::id()));
+        let _=fs::remove_dir_all(&dir);let root=dir.join("project");let install=dir.join("install");
+        fs::create_dir_all(&root).unwrap();fs::create_dir_all(&install).unwrap();
+        fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
+        fs::write(install.join("host.json"),"{\"limits\":{\"codex\":2}}").unwrap();
+        let (capture,guard)=crate::profile::tests::collecting(&install);
+        let (tx,rx)=std::sync::mpsc::channel();
+        let queue=ActionQueue::start(install.clone(),&["capacity"],true,|install,root,message| {
+            if message["id"]=="unknown-op" {return Ok(json!({"state":"unknown","reason":"prior write interrupted"}));}
+            capacity(install,root,message)
+        },move |_,_,result|tx.send(result).unwrap()).unwrap();
+        queue.submit(&json!({"a":"capacity","root":root,"id":"rejected-op","ops":[]})).unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["state"],"rejected");
+        queue.submit(&json!({"a":"capacity","root":root,"id":"unknown-op","ops":[]})).unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["state"],"unknown");
+        let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
+        capture.flush().unwrap();
+        let actions=crate::telemetry::diagnostic::actions(&install,None).unwrap();
+        assert!(actions.contains("tray.capacity.execute")&&actions.contains("1/1/0"),"{actions}");
+        assert!(actions.contains("capacity-rejected:1, capacity-unknown:1"),"{actions}");
+        drop(guard);drop(capture);let _=fs::remove_dir_all(dir);
     }
 
     // Chain: § 4 tray opens an incident report. Risk: tray opens a file outside .taskq/incidents.

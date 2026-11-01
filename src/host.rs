@@ -350,7 +350,7 @@ pub fn capacity_request(request:&Value)->Res<crate::CapEdit> {
         || serde_json::to_vec(request).map_err(|e|e.to_string())?.len()>16<<10 {return Err(invalid.into());}
     let issued=request["issued_at"].as_u64().ok_or(invalid)?;let expires=request["expires_at"].as_u64().ok_or(invalid)?;
     if expires<=issued || expires-issued>300 {return Err(invalid.into());}
-    let ops=request["ops"].as_array().filter(|ops|!ops.is_empty()&&ops.len()<=4).ok_or(invalid)?;
+    let ops=request["ops"].as_array().filter(|ops|!ops.is_empty()&&ops.len()<=service::RUNTIMES.len()+1).ok_or(invalid)?;
     let mut seen=BTreeSet::new();let mut edit=crate::CapEdit::default();
     for op in ops {
         if !keys(op,&["target","policy_schema","expected_revision","changes"]) || op["policy_schema"]!="taskq.host-capacity/1"
@@ -2264,7 +2264,7 @@ mod tests {
         let saved=local_capacity(&install,&owner,&request).unwrap();assert_eq!(saved["state"],"saved");
         let bytes=fs::read(install.join("host.json")).unwrap();
         assert_eq!(local_capacity(&install,&owner,&request).unwrap(),saved);
-        for change in ["payload","stale","expired","installation","generation","project","runtime","schema","type","future","lifetime","empty","extra","large"] {
+        for change in ["payload","stale","expired","installation","generation","project","runtime","schema","type","future","lifetime","empty","too-many","extra","large"] {
             let mut other=request.clone();
             if change!="payload" {other["id"]=json!(change);}
             match change {
@@ -2279,6 +2279,7 @@ mod tests {
                 "future"=>{let now=wall().unwrap();other["issued_at"]=json!(now+60);other["expires_at"]=json!(now+300);}
                 "lifetime"=>other["expires_at"]=json!(request["issued_at"].as_u64().unwrap()+301),
                 "empty"=>other["ops"]=json!([]),
+                "too-many"=>other["ops"]=json!(vec![other["ops"][0].clone();service::RUNTIMES.len()+2]),
                 "extra"=>other["set"]=json!({"codex":4}),
                 "large"=>other["ops"][0]["changes"]["runtime_limit"]=json!("x".repeat(16<<10)),
                 _=>{},
@@ -2289,7 +2290,10 @@ mod tests {
         }
         let current=Policy::read(&install).unwrap();observe_capacity(&install,&current).unwrap();
         assert_eq!(local_capacity(&install,&owner,&request).unwrap()["saved_revision"],current.revision().unwrap());
-        let mut newer=request.clone();newer["id"]=json!("newer");newer["ops"][0]["expected_revision"]=json!(current.revision().unwrap());
+        let rev=current.revision().unwrap();
+        let mut all_targets:Vec<Value>=service::RUNTIMES.iter().enumerate().map(|(i,rt)|json!({"target":{"installation_id":null,"generation":1,"project_id":null,"runtime_id":rt},"policy_schema":"taskq.host-capacity/1","expected_revision":rev,"changes":{"runtime_limit":(i+1) as u64}})).collect();
+        all_targets.push(json!({"target":{"installation_id":null,"generation":1,"project_id":null,"runtime_id":null},"policy_schema":"taskq.host-capacity/1","expected_revision":rev,"changes":{"maximum":10,"load_gate":{"enabled":true,"cpu_max":85,"memory_min":15}}}));
+        let mut newer=request.clone();newer["id"]=json!("newer");newer["ops"]=json!(all_targets);
         let next=local_capacity(&install,&owner,&newer).unwrap();assert_eq!(next["state"],"saved");assert_ne!(next["saved_revision"],saved["saved_revision"]);
         let bytes=fs::read(install.join("host.json")).unwrap();
         assert_eq!(local_capacity(&install,&owner,&request).unwrap(),saved,"a later command must not change the original receipt");
@@ -2299,7 +2303,7 @@ mod tests {
             for n in state.ops.len()..crate::resources::MAX_OPS {state.ops.insert(format!("retained-{n}"),op.clone());}
             Ok(())
         }).unwrap();
-        newer["id"]=json!("store-full");newer["ops"][0]["expected_revision"]=json!(Policy::read(&install).unwrap().revision().unwrap());
+        newer=request.clone();newer["id"]=json!("store-full");newer["ops"][0]["expected_revision"]=json!(Policy::read(&install).unwrap().revision().unwrap());
         assert_eq!(local_capacity(&install,&owner,&newer).unwrap()["state"],"rejected");
         assert_eq!(fs::read(install.join("host.json")).unwrap(),bytes);
         fs::write(install.join("resource-state/state.json"),"{").unwrap();
