@@ -4,7 +4,7 @@ const syncView=require('./sync-view.js'),time=require('./relative-time.js'),noti
 const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null);
-  const view={page:'conversations',section:null,taskFilter:null,working:null,aiRoot:null,answer:null,disclosures:{},restoreScroll:0};
+  const view={safe:!!window.taskqSafeRecovery,page:'conversations',section:null,taskFilter:null,working:null,aiRoot:null,answer:null,disclosures:{},restoreScroll:0};
   // #1699 A1: Conversations is the one thread screen; a task thread is view.answer, an event thread view.message, else an owner conversation
   const routes={conversations:{title:'Conversations'},sessions:{title:'Work sessions',parent:'conversations'},operations:{title:'Operation review',parent:'conversations'}};
   // A2: the recorded Wouter history is the Back stack; each entry keeps its scroll, disclosures and focus.
@@ -15,7 +15,7 @@ const {create}=execution.module('workspace',{
   // #1662 A3: task answers use the workspace's one composer; a card change repaints it once per tick
   const pm=require('./pm-composer.js');
   const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw(),composer:true,steer:pm.composer,read:(p,t)=>conversations.task(p,t),historyText:(t,text,source,root)=>conversations.taskText(t,text,source,root),changed:()=>{if(view.page==='conversations'&&view.answer&&!redraw)redraw=ui.defer(()=>{redraw=null;api.draw();},0);}});
-  const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),checkpoint:()=>api.checkpoint(),navigate:(...args)=>api.navigate(...args),onSelect:id=>{if(view.result?.conversation!==id)view.result=null;const row=api.threads().find(t=>t.id===id);view.answer=row?.task?{root:row.root,board:row.board,task:row.task,revision:row.revision}:null;view.message=row?.event&&!row.task?row.event.key:null;}});
+  const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),checkpoint:()=>api.checkpoint(),navigate:(...args)=>api.navigate(...args),onSelect:id=>{if(view.safe)return;if(view.result?.conversation!==id)view.result=null;const row=api.threads().find(t=>t.id===id);view.answer=row?.task?{root:row.root,board:row.board,task:row.task,revision:row.revision}:null;view.message=row?.event&&!row.task?row.event.key:null;}});
   const reports=require('./reports.js').create({draw:()=>api.draw(),onMove:step=>conversations.move(step),navigation:r=>conversations.navigation(r),reading:(key,r)=>conversations.reading(key,r),transcript:r=>conversations.closed(r),onOpen:r=>{if(r.next){const next=conversations.nextUnresolved(api.threads());if(next?.report)reports.open(next.root,next.report);else if(next)conversations.select(next.id,false);else{view.threadNotice={thread:'list',text:'No unresolved items in this view. Choose All to continue.'};api.draw();}return;}if(r.conversation&&conversations.ids().includes(r.conversation)){conversations.reveal(r.conversation,false,true);view.result={root:r.root,n:r.n,sha:r.sha,conversation:r.conversation};}else api.openTask(r.board||view.S.projects.find(p=>p.root===r.root)?.issues,r.n,r.root);}});
   const operationView=require('./tray-app.js').createState();
   const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
@@ -251,6 +251,7 @@ const {create}=execution.module('workspace',{
     if(s.answerReceipt){const c=api.answerContext(),local=c&&answers.load(c.board,{n:c.task});if(view.pmTask&&local?.op?.id===s.answerReceipt.id&&s.answerReceipt.state==='accepted')view.pmTask=null;answers.answerReceipt(s.answerReceipt);return;}
     if(s.replyFileReceipt){answers.answerFileReceipt(s.replyFileReceipt);return;}
     if(s.viewStateError!==undefined||s.workspaceLocalError!==undefined){if(s.viewStateError!==undefined)view.navigationError=s.viewStateError;if(s.workspaceLocalError!==undefined)view.localError=s.workspaceLocalError;api.draw();return;}
+    if(s.workspaceRecoveryReady){ui.send({a:'workspace-recovered'});recoveryText='';api.checkpoint();return;}
     if(s.workspaceRecovery){conversations.restoreRecovery(s.workspaceRecovery.conversation);const v=require('./tray-view-state.js').normalize({schema:1,current:s.workspaceRecovery.navigation},snapshot.value||{},routes,'conversations');state.apply(v.current);api.draw();state.focus(v.current.focus);return;}
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here

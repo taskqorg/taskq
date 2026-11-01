@@ -1019,6 +1019,8 @@ fn resources_reply(result:crate::Res<Value>)->Value {match result {Ok(_)=>json!(
 // The page owns asynchronous work; a submission result cannot acknowledge its execution.
 struct WebCalls {
     generation: u64,
+    safe: bool,
+    recovery_ready: bool,
     workspace: bool,
     surface: String,
     next: u64,
@@ -1039,7 +1041,7 @@ static TICK_QUEUED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 impl WebCalls {
     fn new() -> Self {
         static GENERATION: std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
-        let mut calls=Self{generation:GENERATION.fetch_add(1,std::sync::atomic::Ordering::Relaxed),workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false,logged:0,seen:Instant::now(),tick:None};
+        let mut calls=Self{generation:GENERATION.fetch_add(1,std::sync::atomic::Ordering::Relaxed),safe:false,recovery_ready:false,workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false,logged:0,seen:Instant::now(),tick:None};
         calls.begin("tray.web.boot",Instant::now());
         calls
     }
@@ -1119,11 +1121,19 @@ impl WebCalls {
     }
 }
 
+// Ignore boot/snapshot checkpoints until the restored renderer acknowledges its recovery handoff.
+fn workspace_checkpoint(calls:&WebCalls,checkpoints:&mut std::collections::BTreeMap<String,Value>,surface:&str,value:&Value)->Result<bool,&'static str> {
+    if !calls.recovery_ready {return Ok(false);}
+    let bytes=checkpoints.iter().filter(|(key,_)|key.as_str()!=surface).map(|(_,v)|v.to_string().len()).sum::<usize>()+value.to_string().len();
+    if !value.is_object() || bytes>32*1024*1024 {return Err("Recovery checkpoint exceeds 32 MiB; reload refused, current reader retained");}
+    checkpoints.insert(surface.into(),value.clone());Ok(true)
+}
+
 // The native closure stamps generation; retired renderer IPC never gets authority after reload.
 fn workspace_view(window:&Window, proxy:tao::event_loop::EventLoopProxy<Ev>, surface:String, calls:&WebCalls)->Result<WebView,String> {
     let generation=calls.generation;
     WebViewBuilder::new().with_accept_first_mouse(true).with_html(WORKSPACE_HTML)
-        .with_initialization_script("window.taskqNativeFrame=true;")
+        .with_initialization_script(&format!("window.taskqNativeFrame=true;window.taskqSafeRecovery={};",calls.safe))
         .with_navigation_handler(own_page).with_ipc_handler(move |r|{
             if let Ok(mut m)=serde_json::from_str::<Value>(&r.into_body()) {
                 if let Some(m)=m.as_object_mut(){m.insert("readerGeneration".into(),json!(generation));}
@@ -1426,7 +1436,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if workspace_checkpoint_errors.contains(&surface){eprintln!("taskq tray: Conversations recovery checkpoint exceeds 32 MiB; reader retained, reload refused");if let Some(tray)=&tray {let _=tray.set_tooltip(Some("Conversations recovery unknown: checkpoint exceeds 32 MiB; reader retained"));}return;}
                 if surface!="main" {
                     if let Some((window,old,_))=detached.remove(&surface){
-                        drop(old);let mut reader=WebCalls::new();reader.workspace=true;reader.surface=surface.clone();
+                        drop(old);let mut reader=WebCalls::new();reader.workspace=true;reader.surface=surface.clone();reader.safe=safe;
                         match workspace_view(&window,proxy.clone(),surface.clone(),&reader){
                             Ok(wv)=>{window.set_visible(true);window.set_focus();detached.insert(surface,(window,wv,reader));}
                             Err(reason)=>eprintln!("taskq tray: detached Conversations reload unavailable: {reason}"),
@@ -1436,7 +1446,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 }
                 if let Some((window,old))=workspace.take() {
                     drop(old);
-                    let mut reader=WebCalls::new();reader.workspace=true;
+                    let mut reader=WebCalls::new();reader.workspace=true;reader.safe=safe;
                     match workspace_view(&window,proxy.clone(),"main".into(),&reader) {
                         Ok(wv)=>{workspace=Some((window,wv));workspace_web=Some(reader);workspace_shown.clear();if safe {workspace_open=json!({"page":"conversations","thread":"recovery"});}if let Some((w,_))=&workspace {w.set_visible(true);w.set_focus();}}
                         Err(reason)=>{workspace_web=None;eprintln!("taskq tray: Conversations reload unavailable: {reason}");}
@@ -1737,10 +1747,13 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if m["a"]=="route-error" {calls.route(&m);return;}
                 let context=match m["context"].as_str(){Some(text)=>match coreq::telemetry::capture::TraceContext::decode(text){Ok(context)=>Some(context),Err(_)=>{calls.fault("invalid-web-context");return;}},None=>None};
                 let _continuation=context.as_ref().map(|context|context.span().entered());
+                if m["a"]=="workspace-recovered" {if !calls.pending.contains_key(&0){calls.recovery_ready=true;}return;}
                 if m["a"]=="workspace-checkpoint" {
-                    let bytes=workspace_checkpoints.iter().filter(|(key,_)|*key!=&surface).map(|(_,value)|value.to_string().len()).sum::<usize>()+m["value"].to_string().len();
-                    if m["value"].is_object() && bytes<=32*1024*1024 {workspace_checkpoints.insert(surface.clone(),m["value"].clone());workspace_checkpoint_errors.remove(&surface);}
-                    else {workspace_checkpoint_errors.insert(surface.clone());web_eval(wv,"taskq.receive({workspaceLocalError:'Recovery checkpoint exceeds 32 MiB; reload refused, current reader retained'})","tray.web.receive",&proxy,calls);}
+                    match workspace_checkpoint(calls,&mut workspace_checkpoints,&surface,&m["value"]) {
+                        Ok(true)=>{workspace_checkpoint_errors.remove(&surface);}
+                        Ok(false)=>{}
+                        Err(reason)=>{workspace_checkpoint_errors.insert(surface.clone());web_eval(wv,&format!("taskq.receive({})",json!({"workspaceLocalError":reason})),"tray.web.receive",&proxy,calls);}
+                    }
                     return;
                 }
                 if m["a"]=="workspace-reload" {let _=proxy.send_event(Ev::RecoverWorkspace(surface.clone(),m["safe"]==true));return;}
@@ -1754,12 +1767,16 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     Some("ready") | Some("refresh") => {
                         let _=proxy.send_event(Ev::Sync);
                         calls.finish(0,"ok");
-                        web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);
-                        if m["a"]=="ready" && let Some(value)=workspace_checkpoints.get(&surface) {web_eval(wv,&format!("taskq.receive({})",json!({"workspaceRecovery":value})),"tray.web.receive",&proxy,calls);}
-                        if surface=="main" && !workspace_open.is_null() && !workspace_open["page"].is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
+                        let mut messages=vec![workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))];
+                        if m["a"]=="ready" && let Some(value)=workspace_checkpoints.get(&surface) {messages.push(json!({"workspaceRecovery":value}));}
+                        if surface=="main" && !workspace_open.is_null() && !workspace_open["page"].is_null(){messages.push(json!({"open":workspace_open.take()}));}
                         let own=if surface=="main" {json!({"id":"main","detached":detached_ids})}else{json!({"id":surface,"conversation":surface,"detached":[]})};
-                        web_eval(wv,&format!("taskq.receive({})",json!({"workspacePin":w.is_always_on_top(),"workspaceMaximized":w.is_maximized()})),"tray.web.receive",&proxy,calls);
-                        let script=if surface=="main" {format!("taskq.receive({})",json!({"workspaceOwner":own}))}else{format!("taskq.receive({});taskq.receive({})",json!({"open":{"page":"conversations"}}),json!({"workspaceOwner":own}))};
+                        messages.push(json!({"workspacePin":w.is_always_on_top(),"workspaceMaximized":w.is_maximized()}));
+                        if surface!="main" && m["a"]=="ready" {messages.push(json!({"open":{"page":"conversations","thread":if calls.safe {json!("recovery")} else {Value::Null}}}));}
+                        messages.push(json!({"workspaceOwner":own}));
+                        if m["a"]=="ready" {messages.push(json!({"workspaceRecoveryReady":true}));}
+                        // One evaluation: a failed restore cannot acknowledge or replace its previous checkpoint.
+                        let script=messages.iter().map(|v|format!("taskq.receive({v})")).collect::<Vec<_>>().join(";");
                         web_eval(wv,&script,"tray.web.receive",&proxy,calls);
                     }
                     Some("hide") => w.set_visible(false),
@@ -4598,6 +4615,23 @@ mod tests {
         assert!(workspace_operation("completed"),"reader transcript reads reach the existing adapter");
         assert!(!workspace_operation("answer"),"writes retain the workspace authority boundary");
         let old=WebCalls::new();let fresh=WebCalls::new();assert_ne!(old.generation,fresh.generation,"retired reader IPC/callbacks are fenced");
+        let prior=json!({"conversation":{"drafts":[{"text":"Unsaved local edits","caret":[2,4]}]}});
+        for surface in ["main","invented-detached"] {
+            let mut checkpoints=std::collections::BTreeMap::from([(surface.into(),prior.clone())]);
+            let mut reader=WebCalls::new();reader.safe=true;
+            assert!(!workspace_checkpoint(&reader,&mut checkpoints,surface,&json!({})).unwrap());
+            reader.finish(0,"ok");
+            assert!(!workspace_checkpoint(&reader,&mut checkpoints,surface,&json!({"snapshot":"unrestored"})).unwrap());
+            assert_eq!(checkpoints[surface],prior,"boot and snapshot cannot overwrite recovery edits");
+            reader.recovery_ready=true;
+            let restored=json!({"conversation":{"drafts":[{"text":"Restored edits","caret":[2,4]}]}});
+            assert!(workspace_checkpoint(&reader,&mut checkpoints,surface,&restored).unwrap());
+            assert_eq!(checkpoints[surface],restored);
+            let next=WebCalls::new();
+            assert!(!workspace_checkpoint(&next,&mut checkpoints,surface,&json!({})).unwrap());
+            assert_eq!(checkpoints[surface],restored,"next generation must hydrate before replacing edits");
+        }
+
         fs::remove_dir_all(dir).unwrap();
     }
 
