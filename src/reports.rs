@@ -49,7 +49,7 @@ impl Cache {
                 Ok(all)
             },|_|"board-read")?;
             let newest=issues.iter().filter(|(i,_)|i.labels.iter().any(|l|l==crate::service::TASK_LABEL)).map(|(i,_)|i.updated).max();
-            let mut next=if self.verified.is_none(){Default::default()}else{self.entries.clone()};let mut errors=Vec::new();
+            let mut next=if self.verified.is_none(){Default::default()}else{self.entries.clone()};let mut errors=Vec::new();let mut unreadable=false;
             for (i,closed) in issues {
                 let old=self.entries.get(&i.number);
                 // Board timestamps have second precision, and #2091: a comment list read soon after the update may still lag
@@ -64,7 +64,7 @@ impl Cache {
                 } else {
                     match coreq::telemetry::capture::operation("reports.collect.comments",||b.comments(i.number),|_|"board-read") {
                         Ok(comments)=>project(&i,closed,&comments,b.url(i.number)),
-                        Err(e)=>{errors.push(format!("#{}: {e}",i.number));if let Some((_,_,row))=old {next.insert(i.number,(-1,0,row.clone()));}continue;}
+                        Err(e)=>{errors.push(format!("#{}: {}",i.number,shown(&format!("#{} comments",i.number),&e.to_string(),brief(&e.to_string()))));if let Some((_,_,row))=old {next.insert(i.number,(-1,0,row.clone()));}continue;}
                     }
                 };
                 let row=row.map(|mut row| {
@@ -81,14 +81,16 @@ impl Cache {
                         match content {Ok((body,tasks))=>{row["body"]=body;row["tasks"]=tasks;},Err(reason)=>{
                             // #1968: a 404 at an immutable SHA never heals; settle it instead of re-reading every pass.
                             if reason.contains("HTTP 404") {row["missing"]=json!(true);}
-                            row["reason"]=json!(reason)}}
+                            row["reason"]=json!(shown(&format!("#{} source",i.number),&reason,source_reason(&reason)))}}
                     }row
                 });
-                if let Some(reason)=row.as_ref().filter(|r|r["kind"]=="report"&&r["missing"]!=true).and_then(|r|r["reason"].as_str()) {errors.push(format!("#{}: {reason}",i.number));}
+                // #2193: one unreadable report keeps its row and reason; the list stays complete, but the cursor
+                // holds so the next pass retries it.
+                if row.as_ref().is_some_and(|r|r["kind"]=="report"&&r["missing"]!=true&&r["reason"].is_string()) {unreadable=true;}
                 next.insert(i.number,(i.updated,if reusable{old.unwrap().1}else{verified},row));
             }
             self.entries=next;
-            if errors.is_empty() {
+            if errors.is_empty()&&!unreadable {
                 if let Some(since)=since {
                     if full {self.full=Some(verified);}
                     self.cursor=newest.map(|t|t-30).filter(|t|*t<=verified).into_iter().chain(self.cursor).max().or(Some(since));
@@ -100,7 +102,7 @@ impl Cache {
             let visible:Vec<_>=rows.iter().filter(|r|r["visible"]==true).collect();let archived:Vec<_>=rows.iter().filter(|r|r["visible"]!=true).collect();
             Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now(),"verified":self.verified,"overlap":LIST_LAG,"settle":LIST_LAG}))
         },|_|"board-read");
-        match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(reason);}}
+        match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(shown("collect",&reason.to_string(),brief(&reason.to_string())));}}
     }
 }
 
@@ -333,6 +335,31 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
     row["later_until"]=json!(until);
     if !report {row["body"]=json!(details);row["verdict"]=json!(verdict);if handin.is_none() {row["reason"]=json!("No accepted hand-in recorded; result details unknown");}}
     Some(row)
+}
+
+/// #2193: the row reason for a failed report source read. A board reply body (JSON) never reaches Conversations or
+/// the menu; the service log keeps the full text. Own validation messages are already short and stay.
+fn source_reason(e:&str)->String {
+    match http_status(e).as_deref() {
+        Some("404")=>"Report source unavailable at the result SHA (HTTP 404)".into(),
+        Some("403") if !e.to_ascii_lowercase().contains("rate limit")=>"Report source unreadable: board token lacks Contents read permission (HTTP 403)".into(),
+        _=>brief(e),
+    }
+}
+
+/// A board error without its reply body; the caller logs the full text.
+fn brief(e:&str)->String {
+    match http_status(e) {Some(status)=>format!("Board read failed (HTTP {status}); details in the service log"),None=>e.to_string()}
+}
+
+fn http_status(e:&str)->Option<String> {
+    let at=e.find("HTTP ")?;Some(e[at+5..].chars().take_while(char::is_ascii_digit).collect())
+}
+
+/// Shortens a board error for the projection and logs the full text when it differs.
+fn shown(context:&str,e:&str,short:String)->String {
+    if short!=e {crate::platform::log(&format!("reports: {context}: {e}"));}
+    short
 }
 
 pub const VERDICTS:[&str;3]=["confirmed","refuted","inconclusive"];
@@ -761,6 +788,29 @@ mod tests {
         b.state.borrow_mut().report_sources.push(source);b.advance(2);cache.collect(&b);
         assert_eq!(b.state.borrow().comment_reads,reads,"settled rows reuse comments");
         assert_eq!(cache.value["reports"][0]["n"],n);assert!(cache.value["reports"][0]["body"].is_null());
+    }
+
+    // Chain: #2193 A1/A2 -> collect. Risk: one 403 report marks every result incomplete or shows the raw reply body.
+    #[test] fn unreadable_report_source_keeps_its_row_and_others_complete() {
+        let (b,_,n,sha)=board();
+        let other=b.create("Plain task","",&["taskq".into()]).unwrap();let spawn=b.raw(other,"taskq: spawn worker invented:session host",true,false);
+        b.raw(other,&format!("taskq: result {} attempt {spawn}","c".repeat(40)),true,false);b.raw(other,"taskq: close",true,false);b.close(other).unwrap();
+        let body=r#"GET /repos/o/r/contents/docs/research/1.md?ref=x: HTTP 403 {"message":"Resource not accessible by personal access token","documentation_url":"https://docs.github.com/rest","status":"403"}"#;
+        b.state.borrow_mut().source_error=Some(body.into());
+        let mut cache=Cache::default();cache.collect(&b);
+        assert_eq!(cache.value["complete"],true,"{}",cache.value["reason"]);assert!(cache.value["reason"].is_null());
+        assert!(cache.verified.is_none(),"the cursor holds so the read retries");
+        let rows=cache.value["reports"].as_array().unwrap();
+        let row=rows.iter().find(|r|r["n"]==n).unwrap();let reason=row["reason"].as_str().unwrap();
+        assert!(reason.contains("Contents read"),"{reason}");assert!(!reason.contains('{')&&!reason.contains("personal access token"),"{reason}");
+        assert!(rows.iter().any(|r|r["n"]==other&&r["reason"].is_null()),"other rows stay complete");
+        // The token gains Contents read: the next pass heals the row.
+        b.state.borrow_mut().source_error=None;b.advance(2);cache.collect(&b);
+        let row=cache.value["reports"].as_array().unwrap().iter().find(|r|r["n"]==n).unwrap().clone();
+        assert!(row["reason"].is_null()&&row["body"].is_string()&&row["sha"]==sha.as_str());assert!(cache.verified.is_some());
+        assert_eq!(source_reason("GET x: HTTP 502 <html>bad gateway</html>"),"Board read failed (HTTP 502); details in the service log");
+        assert_eq!(source_reason("report missing Question heading"),"report missing Question heading");
+        assert_eq!(source_reason("GET x: HTTP 403 {\"message\":\"API rate limit exceeded\"}"),"Board read failed (HTTP 403); details in the service log");
     }
 
     #[test] fn close_event_invalidates_collection_before_the_next_due_pass() {
