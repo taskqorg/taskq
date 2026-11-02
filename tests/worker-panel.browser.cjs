@@ -7,7 +7,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
   page.on('pageerror',e=>errors.push(e.message));
   for(const runtime of ['claude','codex']){
    const board='https://example.org/alpha/issues',thread='task:'+board+'/7';
-   const task={n:7,title:'Live worker',state:'doing',role:'worker',attempt:71,runtime,local_session:true,session_id:'invented-native',session:runtime+':invented-native fixture-host'};
+   const task={n:7,title:'Live worker',state:'doing',role:'worker',attempt:71,runtime,local_session:true,session_id:'invented-native',session:runtime+':invented-native fixture-host',executions:[{attempt:71,state:'running'}]};
    const state={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixture-alpha',name:'Alpha',issues:board,alive:true,complete:true,tasks:[task]}],ai:{history:[]},conversations:{complete:true,items:[]},messages:{complete:true,entries:[]}};
    await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
    await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:text=>sent.push(JSON.parse(text))};});
@@ -50,15 +50,15 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    await page.waitForTimeout(1200);
    assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-dialogue'&&m.action==='transcript').length),0,'A3: ended response stops polling');
    // A replaced attempt starts with a new cursor; a late old reply cannot pollute it.
-   task.attempt=72;await page.evaluate(s=>taskq.receive(s),state);m=await read();assert.equal(m.attempt,72);assert.equal(m.after,undefined);
+   task.attempt=72;task.executions=[{attempt:72,state:'running'}];await page.evaluate(s=>taskq.receive(s),state);m=await read();assert.equal(m.attempt,72);assert.equal(m.after,undefined);
    await page.evaluate(()=>taskq.receive({open:{page:'sessions'}}));
    await reply(m,{items:[{at:40,i:0,role:'assistant',text:'Late old reply'}],end:50});
    await page.waitForTimeout(1200);
    assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-dialogue'&&m.action==='transcript').length),0,'A3: leaving the thread cancels the read');
    assert.equal(await panel.count(),0);
    task.state='review';await page.evaluate(s=>taskq.receive(s),state);await page.evaluate(board=>taskq.receive({open:{page:'conversations',board,task:7,root:'fixture-alpha'}}),board);
-   assert.equal(await panel.count(),0,'A3: review is not a live worker panel');
-   task.state='doing';task.attempt=73;await page.evaluate(s=>taskq.receive(s),state);m=await read();
+   assert.equal(await panel.count(),1,'#2159: review retains worker history without a live worker');m=await read();await reply(m,{items:[],start:0,end:0,size:0,following:false,activity:'ended'});assert.equal(await page.locator('[data-a=answer-steer]:enabled').count(),0,'review history grants no worker steer');
+   task.state='doing';task.attempt=73;task.executions=[{attempt:73,state:'running'}];await page.evaluate(s=>taskq.receive(s),state);m=await read();
    await page.locator('[data-a=hide]').click();
    await reply(m,{items:[{at:0,i:0,role:'assistant',text:'Hidden reply'}],end:1});
    await page.evaluate(s=>taskq.receive(s),state);await page.waitForTimeout(1200);
@@ -71,7 +71,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    // #1832 A1/A3: a worker on another host gets the same panel and request; its host answers over the host link, and
    // a host that does not answer reads unknown with the reason, never an empty session.
    const board='https://example.org/alpha/issues',thread='task:'+board+'/7';
-   const task={n:7,title:'Remote worker',state:'doing',role:'worker',attempt:81,runtime:'codex',local_session:false,host:'other-host',session:'codex:invented-native other-host'};
+   const task={n:7,title:'Remote worker',state:'doing',role:'worker',attempt:81,runtime:'codex',local_session:false,host:'other-host',session:'codex:invented-native other-host',executions:[{attempt:81,state:'running'}]};
    await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
    await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:text=>sent.push(JSON.parse(text))};});
    await page.evaluate(s=>taskq.receive(s),{font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixture-alpha',name:'Alpha',issues:board,alive:true,complete:true,tasks:[task]}],ai:{history:[]},conversations:{complete:true,items:[]},messages:{complete:true,entries:[]}});
@@ -91,6 +91,45 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('Remote worker line'));
    assert.equal(await panel.locator('.dialogue-unknown').count(),0,'the next answered read clears the unknown reason; missing native time remains explicit');
    m=await take();assert.equal(m.after,10,'D4: the next read continues after the remote page');
+  }
+  {
+   // #2159 A4: the common document survives Ask/ended without granting steer or following a stopped worker.
+   const retained=await browser.newPage({viewport:{width:900,height:720}}),retainedErrors=[];retained.on('pageerror',e=>retainedErrors.push(e.message));await retained.clock.install();
+   const board='https://example.org/retained/issues',thread='task:'+board+'/7';
+   const task={n:7,title:'Retained worker',state:'ask',role:'worker',attempt:71,revision:80,card:'Done: read\nProblem: Inspect the retained source',question:{text:'Done: read\nProblem: Inspect the retained source'},worker:{attempt:71,role:'worker',runtime:'codex',host:'fixture',local_session:true,session:'codex:retained-native fixture'},executions:[{attempt:71,state:'ended'}]};
+   const state={font:20,theme:'dark',projects:[{root:'fixture-retained',name:'Invented',issues:board,alive:true,complete:true,tasks:[task]}],messages:{complete:true,entries:[]},conversations:{complete:true,items:[]}};
+   const src='data:image/png;base64,'+fs.readFileSync('docs/design/evidence/2159/rich-document.png').toString('base64');
+   await retained.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
+   await retained.evaluate(({state,board,src})=>{window.sent=[];window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='conversation-dialogue'&&m.action==='transcript')queueMicrotask(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:{generation:'invented-retained-source',following:false,activity:'waiting',start:0,end:300,size:300,items:[{at:100,i:0,role:'assistant',text:'## Retained code\n```javascript\nconst answer = 42;\n```'},{at:200,i:0,role:'image',text:'',image:{name:'Invented fixture content',src,width:900,height:760}}]}}}));}};taskq.receive(state);taskq.receive({open:{page:'conversations',board,task:7,root:'fixture-retained'}});},{state,board,src});
+   await retained.locator('.worker-live').waitFor({timeout:1500});
+   await retained.getByRole('heading',{name:'Retained code'}).waitFor();
+   await retained.clock.runFor(100);const questionBox=await retained.locator('.journey-card').boundingBox();assert(questionBox.y+questionBox.height>80&&questionBox.y<680,'Ask current question remains visible on initial retained read');
+   assert.equal(await retained.locator('.transcript-image img').getAttribute('alt'),'Invented fixture content');
+   assert(await retained.locator('code .syntax-keyword').count()>0,'retained worker code uses the shared language renderer');
+   assert.equal(await retained.locator('[data-a=answer-steer]').count(),0,'Ask never offers worker steer');
+   assert(await retained.locator('.journey-card').evaluate(e=>e.compareDocumentPosition(document.querySelector('.worker-live'))&Node.DOCUMENT_POSITION_FOLLOWING),'current question stays before retained history');
+   await retained.screenshot({path:'/tmp/taskq-2159-retained-ask.png'});
+   await retained.clock.runFor(2500);assert.equal(await retained.evaluate(()=>sent.filter(m=>m.action==='transcript').length),1,'Ask history is not polled');
+   await retained.locator('[data-c=worker-latest]').click();assert.equal(await retained.evaluate(()=>sent.filter(m=>m.action==='transcript').length),2,'explicit Latest can reread retained content');
+   for(const stateName of ['later','failed','ready','review']){
+    task.state=stateName;task.attempt=null;task.role=stateName==='review'?'reviewer':null;task.session=null;task.question=null;task.card=null;task.revision++;
+    await retained.evaluate(s=>taskq.receive(s),state);await retained.clock.runFor(1200);
+    assert.equal(await retained.locator('.worker-live').count(),1,stateName+' retains the same worker document');
+    assert.equal(await retained.locator('[data-a=answer-steer]:enabled,[data-answer]').count(),0,stateName+' read access grants no worker answer/steer');
+    assert.equal(await retained.evaluate(()=>sent.filter(m=>m.action==='transcript').length),2,stateName+' cannot start polling');
+   }
+   await retained.screenshot({path:'/tmp/taskq-2159-retained-worker.png'});
+   await retained.evaluate(()=>{window.ipc={postMessage:text=>sent.push(JSON.parse(text))};});
+   task.state='doing';task.attempt=71;task.role='worker';task.executions=[{attempt:71,state:'running'}];task.revision++;
+   await retained.evaluate(s=>taskq.receive(s),state);await retained.clock.runFor(1100);
+   const pending=await retained.evaluate(()=>sent.filter(m=>m.action==='transcript').at(-1));
+   assert.equal(await retained.evaluate(()=>sent.filter(m=>m.action==='transcript').length),3,'current running worker resumes the same read source');
+   task.state='ask';task.revision++;await retained.evaluate(s=>taskq.receive(s),state);
+   await retained.evaluate(m=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:{generation:'invented-retained-source',following:true,activity:'working',start:300,end:300,size:300,items:[]}}}),pending);
+   await retained.clock.runFor(2500);assert.equal(await retained.evaluate(()=>sent.filter(m=>m.action==='transcript').length),3,'late Doing reply cannot restart polling in Ask');
+   assert.deepEqual(retainedErrors,[]);
+   assert.equal(await retained.evaluate(()=>sent.some(m=>m.a==='answer'||['reply','send','retry-turn'].includes(m.action))),false,'read journey never sends or resumes input');
+   await retained.close();
   }
   assert.deepEqual(errors,[]);console.log('#1831/#1832 live worker panel: first render, append, attempt fence, teardown and remote host passed');
  }finally{await browser.close();}

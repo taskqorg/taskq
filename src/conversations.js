@@ -287,24 +287,27 @@ module.exports=execution.module('conversations',{
    // The browser names only a registered project and attempt. The native adapter selects the session (A2); a worker on
    // another host answers through the host link (#1832), and a host that does not answer reads unknown, never empty.
    worker:function(thread,t,p){
-    if(workerPaused||!p?.alive||p.complete===false||!(t?.local_session||t?.host)||t.state!=='doing'||t.role!=='worker'||!t.attempt){api.workerStop();return null;}
-    if(live?.attempt!==t.attempt||live.thread!==thread||live.root!==p.root){api.workerStop();const saved=api.anchored(positions[thread])?positions[thread]:null;live={thread,root:p.root,attempt:t.attempt,items:[],start:null,end:null,size:null,source:saved?.g,from:saved?.at,gen:0,quiet:{before:0,after:0},reason:'',busy:{},request:null,timer:null,timeout:null,ended:false,stick:!saved,anchor:saved&&{key:saved.key||saved.at+':'+saved.i,board:!!saved.key,y:saved.y,...(saved.part!==undefined?{part:saved.part}:{})}};}
-    if(!live.ended&&!live.lost&&!live.request&&!live.timer)live.timer=ui.defer(()=>api.workerRead(live.end===null?'initial':'after'),live.end===null&&!live.reason?0:1000);
-    const label={assistant:'Worker',owner:'You · via the board'};
-    return h('section',{class:'worker-live','aria-label':'Worker document'},h('p',{class:'meta document-author'},'Live session · '+t.runtime+(t.local_session?'':' on '+t.host)),
-     !live.stick&&h('button',{'data-c':'worker-latest',class:'dialogue-latest'},'Jump to latest'),
+    const w=t?.worker||(t?.role==='worker'?t:null);
+    if(workerPaused||!p?.alive||p.complete===false||!(w?.local_session||w?.host)||w.role!=='worker'||!w.attempt){api.workerStop();return null;}
+    if(live?.attempt!==w.attempt||live.thread!==thread||live.root!==p.root){api.workerStop();const saved=api.anchored(positions[thread])?positions[thread]:null;live={thread,root:p.root,attempt:w.attempt,items:[],start:null,end:null,size:null,source:saved?.g,from:saved?.at,gen:0,quiet:{before:0,after:0},reason:'',busy:{},request:null,timer:null,timeout:null,ended:false,stick:!saved&&t.state==='doing',anchor:saved&&{key:saved.key||saved.at+':'+saved.i,board:!!saved.key,y:saved.y,...(saved.part!==undefined?{part:saved.part}:{})}};}
+    const current=t.attempt===w.attempt&&t.role==='worker',x=t.executions?.find(x=>x.attempt===w.attempt),mode=[t.state,t.attempt,t.role,x?.state].join(':');
+    if(live.mode!==mode){live.mode=mode;live.follow=current&&t.state==='doing'&&x?.state==='running';if(!live.follow){ui.cancel(live.timer);live.timer=null;}live.activity=live.follow?'working':current&&t.state==='ask'?'waiting':!current||x?.state==='ended'?'ended':'unknown';}
+    if(!live.ended&&!live.lost&&!live.request&&!live.timer&&(live.end===null&&!live.attempted||live.follow))live.timer=ui.defer(()=>api.workerRead(live.end===null?'initial':'after'),live.end===null&&!live.reason?0:1000);
+    const label={assistant:'Worker',owner:'You · via the board'},state={working:'Live session',waiting:'Worker history · waiting for owner answer',ended:'Retained worker history',unknown:'Worker history · activity unknown'}[live.activity];
+    return h('section',{class:'worker-live','aria-label':'Worker document'},h('p',{class:'meta document-author'},state+' · '+w.runtime+(w.local_session?'':' on '+w.host)),
+     (!live.stick||!live.follow)&&h('button',{'data-c':'worker-latest',class:'dialogue-latest'},'Jump to latest'),
      h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Live worker session','data-id':thread},
       live.start>0&&h('button',{'data-c':'worker-earlier',disabled:!!live.request},'Load earlier'),live.end<live.size&&live.quiet.after>=FILL&&h('button',{'data-c':'worker-later',disabled:!!live.request},'Load later'),
       live.limitReason&&h('p',{role:'status',class:'meta'},live.limitReason),live.ended&&h('p',{role:'status',class:'meta'},'Worker attempt ended'),
       live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
-      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):api.steps(live.items,!live.ended,item=>{const key=api.key(item);return item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn',time.stamp(item.updated,'Turn brief recorded')):api.nativeItem(item,item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role);})));
+      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):api.steps(live.items,live.follow&&!live.ended,item=>{const key=api.key(item);return item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn',time.stamp(item.updated,'Turn brief recorded')):api.nativeItem(item,item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role);})));
    },
    workerRead:function(kind='after',extra={}){
     const l=live;if(!l||l.request||l.lost)return;ui.cancel(l.timer);l.timer=null;
     if(workerPaused||l.ended||!menu.querySelector('.worker-live')?.checkVisibility()){api.workerStop();return;}
     if(kind==='after'&&l.end<l.size&&!Object.keys(extra).length)return;
     const cursor=Object.keys(extra).length?extra:kind==='initial'?(l.from!==undefined?{after:l.from}:{}):kind==='before'?{before:l.start}:{after:l.end};
-    const id=api.id();l.request={id,kind,gen:l.gen,expected:kind==='initial'?l.anchor?.key:undefined,...cursor};l.busy[kind]=id;
+    const id=api.id();l.attempted=true;l.request={id,kind,gen:l.gen,mode:l.mode,expected:kind==='initial'?l.anchor?.key:undefined,...cursor};l.busy[kind]=id;
     ui.send({a:'conversation-dialogue',id,conversation:l.thread,root:l.root,attempt:l.attempt,action:'transcript',...cursor});
     l.timeout=ui.defer(()=>{if(live===l&&l.request?.id===id){l.request=null;l.busy[kind]=null;l.reason='Live read receipt missing';draw();}},30000);
    },
@@ -318,14 +321,14 @@ module.exports=execution.module('conversations',{
     if(r.state!=='accepted'){l.reason=r.reason||'Transcript unknown';if(/shrank|replaced/.test(l.reason)){l.lost=true;l.stick=false;}}
     else if(r.value.generation&&l.source&&r.value.generation!==l.source&&(l.items.length||l.end>0||l.anchor)){l.gen++;l.items=[];l.start=l.end=null;l.anchor=null;api.place(l.thread);l.reason='Transcript source changed. Choose Latest to open the current source.';l.lost=true;l.stick=false;}
     else {
-     const v=r.value;l.source=v.generation||l.source;l.reason='';l.size=v.size;
+     const v=r.value;if(op.mode===l.mode&&typeof v.following==='boolean'){l.follow=v.following;l.activity=v.activity||'unknown';}l.source=v.generation||l.source;l.reason='';l.size=v.size;
      const have=new Set(l.items.map(api.key));fresh=v.items.filter(i=>!have.has(api.key(i)));
      if(op.kind==='initial'&&op.after!==undefined&&!v.items.some(i=>api.key(i)===op.expected)){l.reason='Saved worker reading position is unavailable. Choose Latest to open the current source.';l.lost=true;l.stick=false;return true;}
      if(op.kind==='initial'){l.items=v.items;l.start=v.start;l.end=v.end;l.from=undefined;}
      else if(op.kind==='before'&&op.before===l.start){l.items=[...fresh,...l.items];l.start=v.start;l.quiet.before=fresh.length?0:l.quiet.before+1;}
      else if(op.kind==='after'&&op.after===l.end){l.items.push(...fresh);l.end=v.end;l.quiet.after=fresh.length?0:l.quiet.after+1;}
     }
-    if(!first&&!fresh.length&&was===l.reason&&!l.timer)l.timer=ui.defer(()=>api.workerRead('after'),1000);
+    if(l.follow&&!first&&!fresh.length&&was===l.reason&&!l.timer)l.timer=ui.defer(()=>api.workerRead('after'),1000);
     return true;
    },
    // #1775: a tool line keeps the file name of an absolute path, never the local directories
@@ -664,7 +667,7 @@ module.exports=execution.module('conversations',{
     else if(action==='linked-newer')api.linkedRead(selected,undefined,Math.max(1,linked.page-1));
     else if(action==='worker-earlier'&&live){live.quiet.before=0;api.workerRead('before');}
     else if(action==='worker-later'&&live){live.quiet.after=0;api.workerRead('after',{after:live.end});}
-    else if(action==='worker-latest'&&live){const reset=!!live.lost;live.stick=true;live.anchor=null;api.place(live.thread);if(reset||live.end<live.size){live.gen++;live.items=[];live.start=live.end=null;live.request=null;live.busy={};if(reset){live.lost=false;live.reason='';live.source=null;live.from=undefined;}api.workerRead('initial');}draw();}
+    else if(action==='worker-latest'&&live){const reset=!!live.lost;live.stick=true;live.anchor=null;api.place(live.thread);if(reset||!live.follow||live.end<live.size){live.gen++;live.items=[];live.start=live.end=null;live.request=null;live.busy={};if(reset){live.lost=false;live.reason='';live.source=null;live.from=undefined;}api.workerRead('initial');}draw();}
     else if(action==='row-pin'){api.sidebar('pin',b.dataset.id,!sidebar.pins.includes(b.dataset.id));}
     else if(action==='result-filter'){api.filter(b.dataset.filter);menu.querySelector('.conversation-view')?.removeAttribute('open');draw();}
     else if(action==='scope-return')api.returnScope();

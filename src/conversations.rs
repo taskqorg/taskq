@@ -535,8 +535,8 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
     let n=id.strip_prefix("task:").and_then(|s|s.strip_prefix(board)).and_then(|s|s.strip_prefix('/')).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("Worker thread does not match its project")?;
     let read=crate::link::Read{board:board.into(),task:n,attempt:m["attempt"].as_u64().filter(|a|*a>0).ok_or("Worker attempt missing")?,before:m["before"].as_u64(),after:m["after"].as_u64()};
     let local=crate::host::Policy::read(install)?.me;
-    let row=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n&&r["attempt"]==read.attempt));
-    let host=row.and_then(|r|r["session"].as_str()).and_then(|s|s.split_whitespace().nth(1)).filter(|h|*h!=local);
+    let row=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n));
+    let host=row.map(|r|r.get("worker").unwrap_or(r)).filter(|w|w["attempt"]==read.attempt).and_then(|w|w["session"].as_str()).and_then(|s|s.split_whitespace().nth(1)).filter(|h|*h!=local);
     let Some(host)=host else {return serve(install,&read)};
     let allow=crate::link::allowed(&raw)?;
     let peer=crate::link::peers(&status,cfg.ttl,allow.as_deref()).into_iter().find(|p|p.host==host).ok_or_else(||format!("Host {host} publishes no live host link"))?;
@@ -576,23 +576,20 @@ fn worker_page(root:&Path,local:&str,status:&Value,read:&crate::link::Read,page:
     let (n,attempt)=(read.task,read.attempt);
     let ended=||Ok(json!({"ended":true,"items":[]}));
     let Some(row)=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n)) else {return ended()};
-    if row["attempt"]!=attempt || row["role"]!="worker" {return ended()}
-    // § 2: Ask retains the attempt; a fast answer can resume it before the browser receives an Ask snapshot.
-    if row["state"]=="ask" {return Err("Worker is waiting for an owner answer".into())}
-    if row["state"]!="doing" {return ended()}
-    let session=row["session"].as_str().ok_or("Worker session unknown")?;
+    let worker=row.get("worker").unwrap_or(row);
+    if worker["attempt"]!=attempt || worker["role"]!="worker" {return ended()}
+    let session=worker["session"].as_str().ok_or("Worker session unknown")?;
     let words:Vec<_>=session.split_whitespace().collect();
     let Some((rt,id))=words.first().and_then(|s|s.split_once(':')) else {return Err("Worker session unknown".into())};
     if local.is_empty() || words.get(1).copied()!=Some(local) {return Err("Worker transcript is available only on its host".into())}
     let execution=row["executions"].as_array().and_then(|rows|rows.iter().find(|e|e["attempt"]==attempt));
-    match execution.and_then(|e|e["state"].as_str()) {
-        Some("ended")=>return ended(),
-        Some("running")=>{},
-        _=>return Err("Worker execution is not confirmed running".into()),
-    }
+    let following=row["state"]=="doing" && row["attempt"]==attempt && row["role"]=="worker" && execution.is_some_and(|e|e["state"]=="running");
+    let activity=if following {"working"} else if row["state"]=="ask" && row["attempt"]==attempt {"waiting"}
+        else if row["attempt"]!=attempt || execution.is_some_and(|e|e["state"]=="ended") {"ended"} else {"unknown"};
     let id=crate::runtime::session_id(root,rt,id,n,attempt,"worker");
     if id=="-" || !crate::runtime::plain_thread(&id) {return Err("Worker native session unknown".into())}
-    page(&format!("{rt}:{id}"),read.before,read.after)
+    let mut value=page(&format!("{rt}:{id}"),read.before,read.after)?;
+    value["following"]=json!(following);value["activity"]=json!(activity);Ok(value)
 }
 
 fn request_marks(install:&Path,id:&str,action:&str)->Res<()> {
@@ -809,19 +806,39 @@ mod tests {
             assert_eq!(session,"codex:native-from-attempt");assert_eq!(before,None);assert_eq!(after,Some(123));Ok(json!({"read":true}))
         });
         assert_eq!(read(&status).unwrap()["read"],true);
-        status["tasks"][0]["state"]=json!("ask");assert!(read(&status).unwrap_err().contains("waiting for an owner answer"));
+        status["tasks"][0]["state"]=json!("ask");assert_eq!(read(&status).unwrap()["following"],false,"Ask retains read access without following");
         status["tasks"][0]["state"]=json!("doing");assert_eq!(read(&status).unwrap()["read"],true,"an answer resumes the same attempt");
-        for (field,value) in [("attempt",json!(72)),("state",json!("review")),("role",json!("reviewer"))] {
+        for (field,value) in [("attempt",json!(72)),("role",json!("reviewer"))] {
             let mut changed=status.clone();changed["tasks"][0][field]=value;
             assert_eq!(read(&changed).unwrap()["ended"],true,"{field}");
         }
         status["tasks"][0]["session"]=json!("codex:- remote");assert!(read(&status).unwrap_err().contains("only on its host"));
         status["tasks"][0]["session"]=json!("codex:- local");
-        status["tasks"][0]["executions"][0]["state"]=json!("unknown");assert!(read(&status).unwrap_err().contains("not confirmed running"));
-        status["tasks"][0]["executions"][0]["state"]=json!("ended");assert_eq!(read(&status).unwrap()["ended"],true);
+        status["tasks"][0]["executions"][0]["state"]=json!("unknown");assert_eq!(read(&status).unwrap()["activity"],"unknown","read access never proves execution health");
+        status["tasks"][0]["executions"][0]["state"]=json!("ended");assert_eq!(read(&status).unwrap()["following"],false,"ended execution retains read access");
         status["tasks"]=json!([]);assert_eq!(read(&status).unwrap()["ended"],true);
         let refused=dialogue(&f.0,&json!({"conversation":"task:https://example.org/r/issues/7","action":"transcript","root":f.0,"session":"codex:forged"}));
         assert_eq!(refused["state"],"unknown","unregistered roots never reach native transcripts");
+    }
+
+    // #2159 A4: retained read access never selects a client session or grants execution/input authority.
+    #[test]
+    fn retained_worker_history_keeps_attempt_host_and_read_only_boundary() {
+        let f=Fixture::new();fs::create_dir(f.0.join(".taskq")).unwrap();
+        fs::write(f.0.join(".taskq/T7-71.log"),"{\"type\":\"thread.started\",\"thread_id\":\"retained-native\"}\n").unwrap();
+        let mut status=json!({"tasks":[{"n":7,"state":"ask","role":"worker","attempt":71,"session":"codex:- local","worker":{"attempt":71,"role":"worker","session":"codex:- local"},"executions":[{"attempt":71,"state":"ended"}]}]});
+        let mut m=crate::link::Read{board:"https://example.org/r/issues".into(),task:7,attempt:71,before:Some(123),after:None};
+        let read=|s:&Value,m:&crate::link::Read|worker_page(&f.0,"local",s,m,|session,before,after|{
+            assert_eq!(session,"codex:retained-native");assert_eq!(before,Some(123));assert_eq!(after,None);Ok(json!({"read":true}))
+        });
+        for state in ["ask","later","failed","ready","review"] {
+            status["tasks"][0]["state"]=json!(state);
+            if state!="ask" {status["tasks"][0]["attempt"]=Value::Null;status["tasks"][0]["role"]=Value::Null;status["tasks"][0]["session"]=Value::Null;}
+            let page=read(&status,&m).unwrap();assert_eq!(page["read"],true,"{state}: retained document must remain readable");assert_eq!(page["following"],false,"history is not proof of running execution");
+        }
+        status["tasks"][0]["worker"]["session"]=json!("codex:- remote");assert!(read(&status,&m).unwrap_err().contains("only on its host"));
+        status["tasks"][0]["worker"]["session"]=json!("codex:- local");m.attempt=72;assert_eq!(read(&status,&m).unwrap()["ended"],true,"a mismatched attempt never selects native content");
+        m.attempt=71;status["tasks"][0]["worker"]["attempt"]=json!(72);assert_eq!(read(&status,&m).unwrap()["ended"],true,"a replaced worker cannot reinterpret the previous source");
     }
 
     // A2/A3/R12: actual IPC read boundary validates registration, board, service freshness and current attempt.

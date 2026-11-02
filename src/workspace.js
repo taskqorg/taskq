@@ -116,7 +116,7 @@ const {create}=execution.module('workspace',{
      if(r.kind==='question'){const id='task:'+r.board+'/'+r.task,prior=rows.get(id);if(!prior||prior.event.archived&&!r.archived)rows.set(id,{id,task:r.task,board:r.board,root:r.root,title:'#'+r.task+' '+(r.title||''),project:r.project,revision:r.revision,event:r,archived:r.archived});}
      else if(r.kind==='request'&&!owned.has(r.id))rows.set('event:'+r.key,{id:'event:'+r.key,title:r.title||'Request',root:r.root,updated:r.created,timeContext:'Request created',event:r,archived:r.archived,meta:(r.host||'Host unknown')+' · '+api.plain(r.state),marker:!r.read&&!r.archived?'Unread':''});
     }
-    for(const p of S.projects)for(const t of p.tasks||[])if(t.session||t.until||t.state==='ask'){const id='task:'+p.issues+'/'+t.n;if(!rows.has(id))rows.set(id,{id,root:p.root,board:p.issues,task:t.n,title:'#'+t.n+' '+t.title});}
+    for(const p of S.projects)for(const t of p.tasks||[])if(t.session||t.worker||t.until||t.state==='ask'){const id='task:'+p.issues+'/'+t.n;if(!rows.has(id))rows.set(id,{id,root:p.root,board:p.issues,task:t.n,title:'#'+t.n+' '+t.title});}
     for(const event of notifications.rows()){const p=S.projects.find(p=>p.root===event.root);if(!p)continue;const id='task:'+p.issues+'/'+event.n,row=rows.get(id)||{id,root:p.root,board:p.issues,task:event.n,title:event.title,project:p.name};row.news=[...(row.news||[]),event];row.unread=row.news.some(r=>!r.read);row.updated??=event.at*1000;rows.set(id,row);}
     const a=view.answer,refs=new Map(conversations.opened().map(r=>[r.id,r]));
     if(a&&!refs.has('task:'+a.board+'/'+a.task))refs.set('task:'+a.board+'/'+a.task,{id:'task:'+a.board+'/'+a.task,root:a.root});
@@ -125,7 +125,7 @@ const {create}=execution.module('workspace',{
     for(const row of rows.values())if(row.task){
      const matches=S.projects.filter(p=>p.issues===row.board&&(!row.root||p.root===row.root)),p=matches.length===1?matches[0]:null,t=taskIndex.get(p)?.get(row.task);
      if(t?.conversation?.id&&owned.has(t.conversation.id)){const id=t.conversation.id;view.ownerOutcomes[id]={...view.ownerOutcomes[id],unread:!!(view.ownerOutcomes[id]?.unread||row.unread),needsReply:!!(view.ownerOutcomes[id]?.needsReply||t.state==='ask')};if(!refs.has(row.id)){rows.delete(row.id);continue;}row.linkedAlias=true;}
-     if(t){row.activityThread=!!(t.session||t.until);row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=time.seconds(t.updated);row.updated_reason=t.updated_reason;}
+     if(t){row.activityThread=!!(t.session||t.worker||t.until);row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=time.seconds(t.updated);row.updated_reason=t.updated_reason;}
      if(p){row.root=p.root;row.project=p.name;}
      row.archived=!!row.event?.archived||Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown

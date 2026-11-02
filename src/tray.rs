@@ -653,6 +653,10 @@ fn project(install: &Path, root: &str) -> Value {
     let page = crate::load(r).ok().and_then(|(c, _)| crate::enrollment::progress_page(install, &c.repo));
     for task in &mut tasks {
         task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task);
+        if task["worker"].is_object() {
+            let mut worker=task["worker"].take();worker["n"]=task["n"].clone();
+            task_session(r,cap_host.as_str().unwrap_or(""),page.as_deref(),&mut worker);task["worker"]=worker;
+        }
         inline_images(r, task);
     }
     let installation = fs::read_to_string(install.join("installation-id")).ok().filter(|i| i.len() == 64 && i.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
