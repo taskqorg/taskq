@@ -7254,7 +7254,7 @@ Open: none";
             let mut c=cfg("fleet");
             c.install=std::env::temp_dir().join(format!("taskq-collaborator-{}",crate::runtime::uuid()));
             std::fs::create_dir_all(&c.install).unwrap();
-            let p=crate::host::Policy::parse(json!({"load_gate":{"enabled":false},"limits":{"claude":0,"codex":2},"projects":{"/nonexistent":{"default_runtime":"codex","allowed_runtimes":["codex"],"auto_reroute":reroute}}}),"fleet").unwrap();
+            let p=crate::host::Policy::parse(json!({"load_gate":{"enabled":false},"limits":{"claude":0,"codex":2},"projects":{c.root.to_string_lossy():{"default_runtime":"codex","allowed_runtimes":["codex"],"auto_reroute":reroute}}}),"fleet").unwrap();
             p.apply(&mut c);
             c.limits=p.project_limits(&c.root,&json!({})).unwrap();
             let mut s=service(&b,&c,Default::default());
