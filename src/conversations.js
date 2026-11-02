@@ -258,7 +258,7 @@ module.exports=execution.module('conversations',{
    steps:function(items,current,render,setup=null){
     const out=[],tool=item=>{const key=api.key(item),line=h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded'));
      // #2176 owner answer 1: the result body opens only on request, read-only; nothing is sent.
-     return typeof item.result!=='string'?line:h('div',{key,'data-key':key},line,h('details',{'data-view-key':'result:'+key},h('summary',{class:'source-toggle'},'Tool result'),h('pre',null,item.result)));};
+     return typeof item.result!=='string'?line:h('details',{key,'data-key':key,'data-view-key':'result:'+key,class:'dialogue-tool'},h('summary',{class:'source-toggle'},'Tool result'),h('pre',null,item.result));};
     for(let i=0;i<items.length;){
      if(setup&&['brief','transport'].includes(items[i].role)){
       let j=i;while(j<items.length&&['brief','transport'].includes(items[j].role))j++;
@@ -335,8 +335,8 @@ module.exports=execution.module('conversations',{
     return true;
    },
    // #1775: a tool line keeps the file name of an absolute path, never the local directories
-   // #2176: the AgentQ history capability for this format; only a non-supported status is shown, with its reason.
-   capability:function(c){const st=c?.history?.status;return st&&st!=='supported'&&h('p',{role:'status',class:'meta'},'History '+st+' ('+c.format+'): '+(c.history.reason||'no reason given'));},
+   // #2176 A5: the AgentQ history capability for this runtime: status, reason, CLI version and native qualification.
+   capability:function(c){const st=c?.history?.status;return st&&h('p',{role:'status',class:'meta','data-capability':st},'History '+st+' · '+c.format+' '+(c.version||'version unknown')+' · native '+(c.native?.status||'unknown')+': '+(c.history.reason||'no reason given'));},
    short:function(text){return String(text).replace(/(?<![^\s'"`=(])(?:~\/|\/)(?:[^\s/'"`]+\/)+([^\s/'"`]*)/g,'…/$1');},
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
    nativeItem:function(item,label=item.role,closed=false,scope=''){

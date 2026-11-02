@@ -3,7 +3,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
 (async()=>{const browser=await chromium.launch(require('./browser.cjs')());try{
  const page=await browser.newPage({viewport:{width:900,height:700}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
- await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:m.action==='status'?{state:'idle',watch:'no watch'}:{generation:'invented-source',start:m.after!==undefined?200:0,end:300,size:300,items:[{at:200,i:0,role:'assistant',text:'Current source text'}]}}}));}};
+ await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:m.action==='status'?{state:'idle',watch:'no watch'}:{generation:'invented-source',start:m.after!==undefined?200:0,end:300,size:300,capability:{format:'claude-native',version:'2.1.316',history:{status:'supported',reason:'bounded source adapter'},native:{status:'untested'}},items:[{at:200,i:0,role:'assistant',text:'Current source text'},{at:250,i:0,role:'tool',tool_name:'result',text:'result',result:'Invented result body'}]}}}));}};
   taskq.receive({font:20,theme:'dark',host:'fixture',projects:[],ai:{history:[],runtime:{id:'claude',available:true}},messages:{complete:true,entries:[]},conversations:{complete:true,items:[{id:'owner',revision:1,root:'fixture',title:'Saved source',text:'Independent draft',caret:[1,4],files:[],sent:{root:'fixture',runtime:'claude',text:'Original request',files:[]},request:{state:'launched',runtime:'claude'}}],navigation:{list:'recent',selected:'owner',threads:{selected:'owner',positions:{owner:{at:100,i:0,y:-7,g:'invented-source'}}}}}});
  });
  await page.getByText('Saved reading position is no longer in the transcript. Choose Latest to open the current source.',{exact:true}).waitFor();
@@ -11,6 +11,10 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
  assert.equal(await page.locator('.dialogue-item').count(),0);assert.equal(await page.locator('[data-c-field=text]').inputValue(),'Independent draft');
  await page.locator('[data-c=latest]').click();await page.getByText('Current source text',{exact:true}).waitFor();
  assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='transcript').length),2);assert.equal(await page.locator('[data-c=latest]').count(),0);
+ // #2176 A5/A2: the capability line names status, format, version and native state; a result body opens only on request and sends nothing.
+ await page.getByText('History supported · claude-native 2.1.316 · native untested: bounded source adapter',{exact:true}).waitFor();
+ assert.equal(await page.getByText('Invented result body').isVisible(),false,'result body closed by default');const before=await page.evaluate(()=>sent.length);
+ await page.getByText('Tool result',{exact:true}).click();await page.getByText('Invented result body').waitFor();assert.equal(await page.evaluate(()=>sent.length),before,'opening a result sends nothing');
  assert.equal(await page.evaluate(()=>sent.some(m=>m.a==='answer'||['send','reply'].includes(m.action))),false);assert.deepEqual(errors,[]);
  for(const generation of ['invented-source','replacement-source','history-v1:invented-source','shrank','replaced-during-read']){
   const worker=await browser.newPage(),workerErrors=[];worker.on('pageerror',e=>workerErrors.push(e.message));await worker.clock.install();await worker.setContent(fs.readFileSync('build/web/workspace.html','utf8'));

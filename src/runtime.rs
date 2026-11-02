@@ -2553,6 +2553,21 @@ fn probe_env(name: &'static str, bin: &Path, args: &[&str], home: Option<(&str, 
     Some((out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
 }
 
+/// #2176 A5: the installed CLI version for an AgentQ history `format` (`claude-native`, `codex-rollout`, `agy-stream`),
+/// re-probed at most every 5 minutes; None when the CLI is missing or its version unreadable (R12: unknown).
+pub fn history_version(format: &str) -> Option<String> {
+    use std::{collections::HashMap, sync::Mutex, time::{Duration, Instant}};
+    static SEEN: Mutex<Option<HashMap<&'static str, (Instant, Option<String>)>>> = Mutex::new(None);
+    let bin = ADAPTERS.iter().find(|a| a.history == format)?.bin;
+    if let Some((at, v)) = SEEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(bin).cloned()) {
+        if at.elapsed() < Duration::from_secs(300) { return v; }
+    }
+    let p = which(bin);
+    let v = p.is_absolute().then(|| probe("runtime.version", &p, &["--version"]).and_then(|(_, o)| version(&o))).flatten();
+    SEEN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(bin, (Instant::now(), v.clone()));
+    v
+}
+
 /// The first word of `--version` output that starts with a digit: `2.1.3 (Claude Code)`, `codex-cli 0.15.3`.
 fn version(out: &str) -> Option<String> {
     out.split_whitespace().find(|w| w.starts_with(|c: char| c.is_ascii_digit())).map(String::from)

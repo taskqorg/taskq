@@ -24,11 +24,12 @@ pub fn format(runtime: &str) -> &'static str {
     crate::runtime::of(runtime).history
 }
 
-/// A5: AgentQ's adapter status and the native qualification for `format`; native version stays caller readback.
+/// A5: AgentQ's adapter status and native qualification for `format`, with the installed CLI version (null: unknown).
 pub fn capability(format: &str) -> Value {
-    match history::capabilities(format, None, std::env::consts::OS) {
-        Ok(c) => json!({"format":format,"history":c["features"]["history"],"native":c["native"]}),
-        Err(e) => json!({"format":format,"history":{"status":"unsupported","reason":e}}),
+    let version = crate::runtime::history_version(format);
+    match history::capabilities(format, version.as_deref(), std::env::consts::OS) {
+        Ok(c) => json!({"format":format,"version":version,"history":c["features"]["history"],"native":c["native"]}),
+        Err(e) => json!({"format":format,"version":version,"history":{"status":"unsupported","reason":e}}),
     }
 }
 
@@ -149,10 +150,10 @@ pub fn after(format: &str, session: &str, path: &Path, from: u64) -> Res<Page> {
 }
 
 /// A2: AgentQ events as view items: user and assistant text and images in order, each tool call as one line (D4)
-/// with its result body attached for explicit open (owner answer on #2176: arguments stay omitted on worker views).
+/// and each tool result as its own item at its record, its body opened only on request (owner answer on #2176: arguments stay omitted on worker views).
 /// Lifecycle and unknown shapes stay in the exact source only.
 fn view(format: &str, events: &[Value]) -> Vec<Value> {
-    let (mut out, mut calls) = (Vec::<Value>::new(), HashMap::<String, usize>::new());
+    let mut out = Vec::<Value>::new();
     let (claude, codex) = (format.starts_with("claude-"), format.starts_with("codex-"));
     for e in events {
         let first = out.len();
@@ -176,13 +177,13 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
                         "image" | "tool_call" | "tool_result" if !text.is_empty() => { out.push(line(author, &text.join("\n"))); text.clear(); }
                         _ => {}
                     }
-                    block(author, b, &mut out, &mut calls);
+                    block(author, b, &mut out);
                 }
                 if !text.is_empty() { out.push(line(author, &text.join("\n"))); }
             }
             "tool" => for b in blocks {
                 if b["type"] == "unknown" { out.push(tool(b["native"]["name"].as_str().unwrap_or("tool"), &Value::Null)); }
-                else { block("tool", b, &mut out, &mut calls); }
+                else { block("tool", b, &mut out); }
             },
             "result" if format == "agy-stream" => {
                 let text: Vec<&str> = blocks.iter().filter_map(|b| b["text"].as_str()).collect();
@@ -203,7 +204,7 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
     out
 }
 
-fn block(author: &str, b: &Value, out: &mut Vec<Value>, calls: &mut HashMap<String, usize>) {
+fn block(author: &str, b: &Value, out: &mut Vec<Value>) {
     match b["type"].as_str().unwrap_or_default() {
         "image" => out.push(image(author, &b["native"])),
         "tool_call" => {
@@ -212,7 +213,6 @@ fn block(author: &str, b: &Value, out: &mut Vec<Value>, calls: &mut HashMap<Stri
             // a custom tool's input is free text: an exec script or an apply_patch envelope, never shown as is
             let summary = raw.filter(|_| b["native"]["type"] == "custom_tool_call").and_then(|a| if name == "apply_patch" { Some(patch_files(a)) } else { codex_script(a) });
             let input = match (summary, raw) { (Some(cmd), _) => json!({"cmd": cmd}), (None, Some(a)) => serde_json::from_str(a).unwrap_or_else(|_| json!(a)), _ => b["input"].clone() };
-            if let Some(id) = b["id"].as_str() { calls.insert(id.into(), out.len()); }
             out.push(tool(name, &input));
         }
         "tool_result" => {
@@ -229,10 +229,9 @@ fn block(author: &str, b: &Value, out: &mut Vec<Value>, calls: &mut HashMap<Stri
             // tool output may echo credentials: the same masking as arguments, line by line
             let mut body = text.join("\n").lines().map(mask).collect::<Vec<_>>().join("\n");
             if body.len() > 32 * 1024 { let mut cut = 32 * 1024; while !body.is_char_boundary(cut) { cut -= 1; } body.truncate(cut); body.push_str("\n[result cut at 32 KiB; inspect the native source]"); }
-            match b["id"].as_str().and_then(|id| calls.get(id)) {
-                Some(&i) => out[i]["result"] = json!(body),
-                None => { let mut item = line("tool", "result"); item["tool_name"] = json!("result"); item["result"] = json!(body); out.push(item); }
-            }
+            // the result stays at its own record: a call and its output may fall in different pages, and the view must
+            // not depend on page boundaries (#2176 native Codex evidence)
+            let mut item = line("tool", "result"); item["tool_name"] = json!("result"); item["result"] = json!(body); out.push(item);
         }
         _ => {}
     }
@@ -533,6 +532,33 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    // #2176 native Codex evidence: a call and its output in different backward pages gave a result-less call one way
+    // and the call with its body the other, so the view depended on page boundaries. Risk kept: every result is one
+    // item at its own record, identical from either end; output text is masked like arguments.
+    #[test]
+    fn tool_results_are_page_independent() {
+        let dir = tmp();
+        let path = dir.join("r.jsonl");
+        let mut src = String::new();
+        for n in 0..150 {
+            src += &format!("{}\n", json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":format!("c{n}"),"arguments":"{\"cmd\":\"ls\"}"}}));
+            src += &format!("{}\n", json!({"type":"response_item","payload":{"type":"function_call_output","call_id":format!("c{n}"),"output":format!("out {n} GH_TOKEN=ghp_{}", "a".repeat(36))}}));
+        }
+        fs::write(&path, src).unwrap();
+        let size = fs::metadata(&path).unwrap().len();
+        let mut pages = vec![before("codex-rollout", "-", &path, None).unwrap()];
+        while pages.last().unwrap().start > 0 { pages.push(before("codex-rollout", "-", &path, Some(pages.last().unwrap().start)).unwrap()); }
+        assert!(pages.len() > 1, "the fixture splits pages");
+        let backward: Vec<Value> = pages.iter().rev().flat_map(|p| p.items.clone()).collect();
+        let (mut forward, mut from) = (vec![], 0);
+        while from < size { let p = after("codex-rollout", "-", &path, from).unwrap(); forward.extend(p.items); from = p.end; }
+        assert_eq!(forward, backward);
+        let results: Vec<&Value> = backward.iter().filter(|i| i["result"].is_string()).collect();
+        assert_eq!(results.len(), 150, "every result kept once");
+        assert!(results.iter().all(|r| r["result"].as_str().unwrap().ends_with("GH_TOKEN=[redacted]")), "output masked");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     // #2159 D7: status previews prose, while metadata, partial text and exact source remain inspectable.
     #[test]
     fn last_assistant_preview_excludes_complete_citation_suffix_only() {
@@ -770,6 +796,52 @@ mod tests {
             let mut missing=b.clone();missing.as_object_mut().unwrap().remove("timestamp");fs::write(&path,format!("{a}\n{missing}\n")).unwrap();assert!(last_update(fm(codex),"-",&path).unwrap().is_null(),"do not substitute an older known timestamp");
         }
         fs::remove_file(&path).unwrap();assert!(last_update("claude-native","-",&path).is_err());fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #2176 A5: every runtime's page names its AgentQ status, reason, CLI version slot and native qualification.
+    // Defect: a supported or version-less capability was hidden. Risk kept: the view can always say what it relies on.
+    #[test]
+    fn capability_names_status_reason_version_and_native_state_per_runtime() {
+        for (rt, format) in [("claude","claude-native"),("codex","codex-rollout"),("antigravity","agy-stream")] {
+            let c = capability(super::format(rt));
+            assert_eq!(c["format"], format);
+            assert!(c.as_object().unwrap().contains_key("version"), "{rt}: version key present, null when unknown");
+            assert!(["supported","limited"].contains(&c["history"]["status"].as_str().unwrap()) && c["history"]["reason"].is_string(), "{rt}: {c}");
+            assert!(c["native"]["status"].is_string(), "{rt}: native qualification named");
+        }
+        assert_eq!(capability("agy-stream")["history"]["status"], "limited");
+        assert_eq!(capability("nope")["history"]["status"], "unsupported");
+    }
+
+    /// #2176 A5 native evidence instrument, not a gate: `TASKQ_NATIVE_SOURCES` lists `format=session=path` lines of
+    /// retained native transcripts. Reads each fully backward and forward through the product reader, read-only, and
+    /// prints counts only (no text, no paths): `cargo test --bin taskq native_transcripts -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn native_transcripts_read_both_ways() {
+        let list = std::env::var("TASKQ_NATIVE_SOURCES").expect("TASKQ_NATIVE_SOURCES");
+        for (n, entry) in list.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+            let mut it = entry.splitn(3, '=');
+            let (format, session, path) = (it.next().unwrap(), it.next().unwrap(), Path::new(it.next().unwrap()));
+            let size = fs::metadata(path).unwrap().len();
+            let mut pages = vec![before(format, session, path, Some(size)).unwrap()];
+            while pages.last().unwrap().start > 0 { pages.push(before(format, session, path, Some(pages.last().unwrap().start)).unwrap()); }
+            let backward: Vec<Value> = pages.iter().rev().flat_map(|p| p.items.clone()).collect();
+            let keys: Vec<_> = backward.iter().map(key).collect();
+            assert!(keys.windows(2).all(|k| k[0] < k[1]), "source {n}: unique ordered identities");
+            let (mut forward, mut from) = (vec![], 0);
+            while from < size { let p = after(format, session, path, from).unwrap(); assert!(p.end > from); forward.extend(p.items); from = p.end; }
+            if let Some(d) = (0..forward.len().max(backward.len())).find(|&i| forward.get(i) != backward.get(i)) {
+                let brief = |v: Option<&Value>| v.map(|i| { let mut i = i.clone(); i.as_object_mut().unwrap().remove("text"); let r = i.as_object_mut().unwrap().remove("result").map(|r| r.as_str().map_or(0, str::len)); i["result_len"] = json!(r); i["text_len"] = json!(i.get("text").and_then(Value::as_str).map(str::len)); i });
+                panic!("source {n}: forward and backward differ at item {d} of {}/{}: forward {:?} backward {:?}", forward.len(), backward.len(), brief(forward.get(d)), brief(backward.get(d)));
+            }
+            let mut roles = std::collections::BTreeMap::<String, usize>::new();
+            for i in &backward { *roles.entry(i["role"].as_str().unwrap_or("?").into()).or_default() += 1; }
+            let results = backward.iter().filter(|i| i["result"].is_string()).count();
+            let c = &pages[0].capability;
+            println!("source {n}: {format} {} bytes, {} pages, {} items {roles:?}, {results} tool results; history {} ({}), version {}, native {}",
+                size, pages.len(), backward.len(), c["history"]["status"], c["history"]["reason"], c["version"], c["native"]["status"]);
+        }
     }
 
 }
