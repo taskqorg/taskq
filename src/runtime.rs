@@ -2113,16 +2113,25 @@ pub fn claude_background(root: &Path, session: &str, home: Option<&Path>) -> Res
 
 /// #1825 prototype: a task worker's native transcript on this host and whether it is in Codex's format. The homes are
 /// the service's own (`claude_home`, `codex_home`), which a Windows probe of both runtimes confirmed (#1825 A2).
-pub fn worker_transcript(rt: &str, session: &str) -> Result<(bool, PathBuf), String> {
+/// #2176 A3: an Antigravity worker's native stream is its attempt log `log`, bound to `session` by the log itself.
+pub fn worker_transcript(rt: &str, session: &str, log: &Path) -> Result<(&'static str, PathBuf), String> {
     let a = of(rt);
-    if a.name != rt || !a.codex && !a.remote { return Err(format!("runtime {rt:?}: native transcript adapter unqualified")); }
+    let format = crate::transcript::format(rt);
+    if a.name == rt && rt == "antigravity" {
+        return match native_session(rt, log) {
+            Some(id) if id == session => Ok((format, log.to_path_buf())),
+            Some(_) => Err("Antigravity attempt log names another conversation; view unknown".into()),
+            None => Err("Antigravity attempt log unavailable or has no conversation yet; view unknown".into()),
+        };
+    }
+    if a.name != rt || !a.codex && !a.remote { return Err(format!("runtime {rt:?}: no AgentQ history format; view unknown")); }
     // § 3 Runtime accounts: the default home first, then each account home; the first error stands when none has it
     let rt = if a.codex { "codex" } else { "claude" };
     let homes = crate::runtime::accounts::homes(rt);
     let mut first = None;
     for home in &homes {
         match if a.codex { owner::codex_transcript_in(home, session) } else { claude_transcript_in(home, session) } {
-            Ok(p) => return Ok((a.codex, p)),
+            Ok(p) => return Ok((format, p)),
             Err(e) => { first.get_or_insert(e); }
         }
     }
@@ -2545,6 +2554,21 @@ fn probe_env(name: &'static str, bin: &Path, args: &[&str], home: Option<(&str, 
     Some((out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
 }
 
+/// #2176 A5: the installed CLI version for an AgentQ history `format` (`claude-native`, `codex-rollout`, `agy-stream`),
+/// re-probed at most every 5 minutes; None when the CLI is missing or its version unreadable (R12: unknown).
+pub fn history_version(format: &str) -> Option<String> {
+    use std::{collections::HashMap, sync::Mutex, time::{Duration, Instant}};
+    static SEEN: Mutex<Option<HashMap<&'static str, (Instant, Option<String>)>>> = Mutex::new(None);
+    let bin = ADAPTERS.iter().find(|a| a.history == format)?.bin;
+    if let Some((at, v)) = SEEN.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(bin).cloned()) {
+        if at.elapsed() < Duration::from_secs(300) { return v; }
+    }
+    let p = which(bin);
+    let v = p.is_absolute().then(|| probe("runtime.version", &p, &["--version"]).and_then(|(_, o)| version(&o))).flatten();
+    SEEN.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(bin, (Instant::now(), v.clone()));
+    v
+}
+
 /// The first word of `--version` output that starts with a digit: `2.1.3 (Claude Code)`, `codex-cli 0.15.3`.
 fn version(out: &str) -> Option<String> {
     out.split_whitespace().find(|w| w.starts_with(|c: char| c.is_ascii_digit())).map(String::from)
@@ -2661,15 +2685,17 @@ pub struct Adapter {
     /// Oldest qualified CLI version and the owner's update step ([host tools](../docs/design/host-service.md#host-tools)).
     pub min: &'static str,
     pub update: &'static str,
+    /// AgentQ `history` format of the native transcript (#2176).
+    pub history: &'static str,
 }
 
 const ADAPTERS: [Adapter; 4] = [
-    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, grant_required: false, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`", min: "2.1.296", update: "run `claude update`" },
-    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, grant_required: false, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
-    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, grant_required: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
-    Adapter { name: RUNTIMES[3], bin: "agy", client: "Antigravity", home: ".gemini/antigravity", child: true, grant_required: true, remote: false, app: false, codex: false, setup: RUNTIMES[3], login: "sign in through the Antigravity client", sessions: "Antigravity conversations", min: "", update: "install or update the Antigravity agy CLI" },
+    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, grant_required: false, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`", min: "2.1.296", update: "run `claude update`", history: "claude-native" },
+    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, grant_required: false, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)", history: "codex-rollout" },
+    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, grant_required: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)", history: "codex-rollout" },
+    Adapter { name: RUNTIMES[3], bin: "agy", client: "Antigravity", home: ".gemini/antigravity", child: true, grant_required: true, remote: false, app: false, codex: false, setup: RUNTIMES[3], login: "sign in through the Antigravity client", sessions: "Antigravity conversations", min: "", update: "install or update the Antigravity agy CLI", history: "agy-stream" },
 ];
-const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, grant_required: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "", min: "", update: "" };
+const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, grant_required: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "", min: "", update: "", history: "claude-native" };
 
 /// The CLI runtimes a host can run as service children, one per binary: the runtime rows of host tools.
 pub fn clis() -> impl Iterator<Item = &'static Adapter> {
