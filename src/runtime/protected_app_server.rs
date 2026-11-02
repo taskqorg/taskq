@@ -5,6 +5,8 @@ use serde_json::{Value, json};
 use std::{fs, io::Read, path::{Path, PathBuf}};
 
 const SCHEMA:&str="taskq.app-server/1";
+/// R12: transport refusals carry the numeric OS error, so a native failure is attributable, never inferred.
+fn errno(e:&std::io::Error)->String {e.raw_os_error().map_or("errno unknown".into(),|n|format!("errno {n}"))}
 #[derive(Clone,Deserialize,serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct Request {schema:String,slot:Value,policy_revision:u64,account:String,#[serde(default)] preparation:String}
@@ -106,6 +108,32 @@ mod tests {
             let mut corrupt=s.clone();corrupt.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"][field]=Value::Null;
             assert!(release_ready(&corrupt.ops["slot"]).is_err(),"{field}");
         }
+    }
+    // Chain: R9 R12 #2179 A1 — a supervisor that sealed input before native spawn completes only on kernel no-spawn proof.
+    // Risk: an absent native identity is read as "nothing ran" (forged completion), or a true pre-native abort stays occupied forever.
+    #[test]
+    fn protected_pre_native_abort_certifies_only_on_unchanged_started_count() {
+        let (mut s,r,a,id)=model();consume(&mut s,"slot",&r,&a,&id).unwrap();
+        let binding=json!({"boot":10,"coalition":101});
+        let launch=&mut s.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"];
+        launch["input_closed"]=json!(true);launch["scope"]=json!({"binding":binding,"dispatch_ack":true,"cleanup_intent":false,"cleanup_verified":false});
+        let legacy=s.clone();
+        s.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"]["scope"]["prelaunch_counts"]=json!([1,0]);
+        // Legacy launches without a baseline and any started task after the baseline (a spawned native whose identity was lost) stay unknown.
+        assert!(certify(&mut legacy.clone(),"slot",&r,&id,&binding,[1,0]).is_err());
+        let before=s.clone();
+        for counts in [[2,1],[3,2]] {assert!(certify(&mut s,"slot",&r,&id,&binding,counts).is_err());assert_eq!(s,before);}
+        assert!(certify(&mut s,"slot",&r,&id,&binding,[1,0]).unwrap());
+        assert!(s.ops["slot"].bound["local_slot"]["launch"]["scope"]["certificate"]["native"].is_null());
+        for (field,value) in [("native",json!({"pid":43,"started":"late"})),("input_closed",json!(false))] {
+            let mut forged=s.clone();forged.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"][field]=value;
+            assert!(certified(&forged.ops["slot"].bound["local_slot"]["launch"]).is_err(),"{field}");
+        }
+        let mut moved=s.clone();moved.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"]["scope"]["prelaunch_counts"]=json!([2,1]);
+        assert!(certified(&moved.ops["slot"].bound["local_slot"]["launch"]).is_err());
+        let scope=&mut s.ops.get_mut("slot").unwrap().bound["local_slot"]["launch"]["scope"];
+        for field in ["cleanup_intent","bootout_ack","cleanup_verified"] {scope[field]=json!(true);}
+        release_ready(&s.ops["slot"]).unwrap();
     }
     // Chain: R8 R9 R12 #2151 A2/A5 — output descriptors cannot read input before authority validation.
     // Risk: a duplex native stdout bypasses the supervisor's input gate.
@@ -379,13 +407,19 @@ fn prepared(s:&resources::State,key:&str,r:&Request,authority:&Value)->Res<()> {
     }Ok(())
 }
 
+/// R12: a pre-native abort completes only on kernel proof: no native identity was ever recorded and the
+/// scope's started-task count still equals the durable pre-launch baseline, so no descendant ever joined it.
+fn no_spawn(launch:&Value,counts:&Value)->bool {
+    launch["native"].is_null()&&launch["input_closed"]==true&&counts.as_array().is_some_and(|c|c.len()==2)
+        &&launch["scope"]["prelaunch_counts"]==*counts
+}
 fn certified(launch:&Value)->Res<()> {
     let scope=&launch["scope"];let cert=&scope["certificate"];
     if launch["input_closed"]!=true||scope["dispatch_ack"]!=true
         ||cert["schema"]!="taskq.native-completion/1"||cert["scope"]!=scope["binding"]
         ||cert["native"]!=launch["native"]||cert["supervisor"]!=launch["supervisor"]
         ||cert["counts"][0].as_u64().zip(cert["counts"][1].as_u64()).is_none_or(|(a,b)|a.checked_sub(b)!=Some(1))
-        ||native(&cert["supervisor"]).is_err()||native(&cert["native"]).is_err()
+        ||native(&cert["supervisor"]).is_err()||(native(&cert["native"]).is_err()&&!no_spawn(launch,&cert["counts"]))
         ||scope["binding"]["coalition"].as_u64().is_none_or(|v|v==0)||scope["binding"]["boot"].as_i64().is_none_or(|v|v<=0) {
         return Err("protected descendant completion unproved; retain original slot".into());
     }Ok(())
@@ -418,7 +452,7 @@ fn certify(s:&mut resources::State,key:&str,r:&Request,supervisor:&coreq::proces
         if launch["scope"]["certificate"]["counts"]!=json!(counts) {return Err("sealed scope changed after certification; retain original receipt".into());}
         return Ok(true);
     }
-    if counts[0]-counts[1]==1 {native(&launch["native"])?;}
+    if counts[0]-counts[1]==1&&!no_spawn(launch,&json!(counts)) {native(&launch["native"])?;}
     launch["scope"]["last_counts"]=json!(counts);
     if counts[0]-counts[1]!=1 {return Ok(false);}
     launch["scope"]["certificate"]=json!({"schema":"taskq.native-completion/1","scope":binding,"supervisor":mine,"native":launch["native"],"counts":counts});
@@ -765,8 +799,8 @@ mod mac {
         println!("{receipt}");Ok(())
     }
     pub(super) fn launch_native(install:&Path,home:&Path,r:&Request,key:&str,mut transport:std::io::BufReader<std::os::unix::net::UnixStream>,stdout:Stdio,stderr:Stdio)->Res<()> {
-        // macOS refuses SO_RCVTIMEO with EINVAL once the frontend closed the socket; bind the bound before any native spawn.
-        transport.get_ref().set_read_timeout(Some(Duration::from_millis(250))).map_err(|_|"scope input transport closed before native spawn; no native launch")?;
+        // macOS refuses SO_RCVTIMEO with EINVAL once both socket directions are shut; bind the bound before any native spawn.
+        transport.get_ref().set_read_timeout(Some(Duration::from_millis(250))).map_err(|e|format!("scope input transport closed before native spawn ({}); no native launch",errno(&e)))?;
         let original=resources::within(install,resources::WAIT,|s|Ok(launch_record(s,key,r)?.clone()))?;
         let p=refresh(install,home,r,&original["authority"])?;
         let supervisor=coreq::process::identity(std::process::id()).map_err(|_|"supervisor identity unknown")?.ok_or("supervisor absent")?;

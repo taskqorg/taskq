@@ -35,7 +35,7 @@ fn peer(socket:&UnixStream)->Res<coreq::process::Identity> {
     coreq::process::identity(pid as u32).map_err(|_|"scope peer incarnation unknown")?.ok_or("scope peer absent".into())
 }
 fn socket_deadlines(socket:&UnixStream)->Res<()> {
-    socket.set_read_timeout(Some(WAIT)).and_then(|_|socket.set_write_timeout(Some(WAIT))).map_err(|_|"scope transport deadline unavailable".into())
+    socket.set_read_timeout(Some(WAIT)).and_then(|_|socket.set_write_timeout(Some(WAIT))).map_err(|e|format!("scope transport deadline unavailable ({})",errno(&e)).into())
 }
 fn line(reader:&mut BufReader<UnixStream>,limit:usize)->Res<String> {
     let mut bytes=Vec::new();
@@ -45,7 +45,8 @@ fn line(reader:&mut BufReader<UnixStream>,limit:usize)->Res<String> {
 }
 fn accept(listener:&UnixListener,until:Instant)->Res<UnixStream> {
     loop {match listener.accept() {
-        Ok((s,_))=>{socket_deadlines(&s)?;return Ok(s);},
+        // macOS accept inherits the listener's O_NONBLOCK: a nonblocking stream turns "no native output yet" into EAGAIN (#2179).
+        Ok((s,_))=>{s.set_nonblocking(false).map_err(|e|format!("scope stream blocking mode unavailable ({})",errno(&e)))?;socket_deadlines(&s)?;return Ok(s);},
         Err(e) if e.kind()==io::ErrorKind::WouldBlock&&Instant::now()<until=>std::thread::sleep(Duration::from_millis(10)),
         Err(_)=>return Err("scope connection unknown; never repeat dispatch".into()),
     }}
@@ -117,6 +118,8 @@ pub(super) fn launch(install:&Path,home:&Path,r:&Request,key:&str)->Res<()> {
         launch["scope"]["dispatch_ack"]=json!(true);Ok(())
     })?;
     output.get_mut().write_all(format!("{}\n",serde_json::to_string(r).map_err(|_|"request serialization failed")?).as_bytes()).map_err(|_|"scope input delivery unknown; never replay")?;
+    // Handshake deadlines end here: a consumer or native pausing past WAIT is backpressure, never transport loss.
+    output.get_ref().set_write_timeout(None).map_err(|e|format!("scope input stream unavailable ({})",errno(&e)))?;
     let mut input=output.get_ref().try_clone().map_err(|_|"scope input unavailable")?;
     std::thread::spawn(move||{let _=io::copy(&mut io::stdin().lock(),&mut input);let _=input.shutdown(Shutdown::Write);});
     errors.set_read_timeout(None).map_err(|_|"scope stderr stream unavailable")?;
@@ -128,7 +131,7 @@ pub(super) fn launch(install:&Path,home:&Path,r:&Request,key:&str)->Res<()> {
         let n=match output.fill_buf() {
             Ok([])=>break,Ok(b)=>{stdout.write_all(b).map_err(|_|"native stdout interrupted: consumer stdout write failed; retain scope")?;b.len()},
             Err(e) if e.kind()==io::ErrorKind::Interrupted=>continue,
-            Err(_)=>return Err("native stdout interrupted: scope transport read failed; retain scope".into()),
+            Err(e)=>return Err(format!("native stdout interrupted: scope transport read failed ({}); retain scope",errno(&e)).into()),
         };output.consume(n);
     }
     stdout.flush().map_err(|_|"native stdout interrupted: consumer stdout write failed; retain scope")?;
@@ -165,6 +168,14 @@ pub(super) fn run(key:&str)->Res<()> {
     membership(&supervisor,&binding)?;
     let c=counts(binding["coalition"].as_u64().ok_or("coalition unknown")?)?;
     if c[0].checked_sub(c[1])!=Some(1) {return Err("scope contains unbound work before native launch; retain occupancy".into());}
+    // Kernel no-spawn baseline: an unchanged started count at seal proves no native ever joined this scope.
+    resources::within(&install,resources::WAIT,|s| {
+        launch_record(s,key,&r)?;let scope=&mut s.ops.get_mut(key).unwrap().bound["local_slot"]["launch"]["scope"];
+        if !scope["prelaunch_counts"].is_null() {return Err("scope pre-launch accounting already bound; no replay".into());}
+        scope["prelaunch_counts"]=json!(c);Ok(())
+    })?;
+    // Handshake write deadline ends before native output: a slow consumer is backpressure, not frontend loss.
+    input.get_ref().set_write_timeout(None).map_err(|e|format!("scope output stream unavailable ({})",errno(&e)))?;
     let output=input.get_ref().try_clone().map_err(|_|"scope output unavailable")?;
     let (stdout,stdout_pump)=native_output(output.try_clone().map_err(|_|"scope stdout unavailable")?)?;
     let (stderr,stderr_pump)=native_output(errors)?;
@@ -320,6 +331,22 @@ mod tests {
         assert!(line(&mut BufReader::new(reader),32).is_err());
         let (mut writer,reader)=UnixStream::pair().unwrap();writer.write_all(b"oversize\n").unwrap();
         assert!(line(&mut BufReader::new(reader),4).is_err());
+    }
+    // Chain: R12 #2179 A1 — root cause of the d9ea8cef and native15f6 refusals: macOS accept() inherits the listener's O_NONBLOCK.
+    // Risk: the frontend's first stdout read before native output returns EAGAIN (errno 35), the frontend exits and the supervisor then sees EINVAL (errno 22).
+    #[test]
+    fn protected_scope_accepted_stream_blocks_until_native_output() {
+        let dir=std::env::temp_dir().join(format!("tq-accept-{}",std::process::id()));let _=fs::remove_dir_all(&dir);fs::create_dir_all(&dir).unwrap();
+        let listener=UnixListener::bind(dir.join("io")).unwrap();listener.set_nonblocking(true).unwrap();
+        let supervisor=UnixStream::connect(dir.join("io")).unwrap();
+        let mut frontend=accept(&listener,Instant::now()+WAIT).unwrap();
+        let flags=unsafe{libc::fcntl(frontend.as_raw_fd(),libc::F_GETFL)};assert!(flags>=0&&flags&libc::O_NONBLOCK==0,"accepted scope stream must block");
+        frontend.set_read_timeout(None).unwrap();
+        let writer=std::thread::spawn(move||{std::thread::sleep(Duration::from_millis(200));(&supervisor).write_all(b"late").unwrap();supervisor});
+        let mut bytes=[0u8;4];io::Read::read_exact(&mut frontend,&mut bytes).unwrap();assert_eq!(&bytes,b"late","no native output yet is a wait, never EAGAIN");
+        drop(writer.join().unwrap());
+        assert_eq!(io::Read::read(&mut frontend,&mut bytes).unwrap(),0);
+        let _=fs::remove_dir_all(&dir);
     }
     // Chain: R12 #2175 A1 — the d9ea8cef refusal: macOS rejects SO_RCVTIMEO with EINVAL once the frontend closed its socket.
     // Risk: the supervisor reports frontend loss as an unavailable input bound after native spawn instead of input EOF.
