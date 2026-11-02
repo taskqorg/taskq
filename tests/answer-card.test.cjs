@@ -61,6 +61,6 @@ const built=JSON.parse(fs.readFileSync('build/web/answer-card.sources.json','utf
 assert.deepEqual(manifest.files,['src/answer-card.js','src/reply-files.js','src/answer-card.css','tests/fixtures/answer-card.json']);
 assert.deepEqual(Object.keys(built.files),manifest.files);
 for(const [file,hash] of Object.entries(built.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
-const release=fs.readFileSync('.github/workflows/release.yml','utf8');
+const release=fs.readFileSync('.github/workflows/release-build.yml','utf8');
 for(const file of ['build/web/answer-card.js','src/answer-card.css','tests/fixtures/answer-card.json','build/web/answer-card.sources.json'])assert(release.includes('cp '+file),'missing released file: '+file);
 console.log('PASS asset checksums and release inclusion');

@@ -1,4 +1,10 @@
-# § 8 Release: a live push (a fast-forward to a tested main commit) that changes the version tags v<Cargo.toml version> here (a GITHUB_TOKEN tag starts no run); one binary per OS, answer card and resource controls assets, the telemetry sync wire fixture and field list, the status snapshot schema and fixture, SHA256SUMS, latest.json; release files and SHA256SUMS carry build provenance attestations; publish then dispatches README shots for the tag. A failing selftest publishes nothing.
+# § 8 Release: a live push (a fast-forward to a tested main commit) tags the next unused vX.Y.Z on that commit
+# (.github/release-tag.sh; a GITHUB_TOKEN tag starts no run) and stamps it into the build; no version commit.
+# linux and windows publish together as soon as both are built and the exact-source tests pass; macos joins the
+# same release when its runner finishes, then README shots are dispatched for the tag. Each publish carries one
+# binary per OS, SHA256SUMS and latest.json (.github/release-index.py); the first also the answer card and resource
+# controls assets, the telemetry sync wire fixture and field list, the status snapshot schema and fixture.
+# Release files and SHA256SUMS carry build provenance attestations. A failing selftest publishes nothing for its OS.
 name: release
 on:
   push:
@@ -6,6 +12,9 @@ on:
     branches: [live]
 permissions:
   contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
 jobs:
   tag:
     runs-on: ubuntu-latest
@@ -23,7 +32,6 @@ jobs:
       - id: tag
         env:
           GH_TOKEN: ${{ github.token }}
-          BEFORE: ${{ github.event.before }}
         run: .github/release-tag.sh >> "$GITHUB_OUTPUT"
   checks:
     needs: tag
@@ -41,156 +49,100 @@ jobs:
           SOURCE_BRANCH: main
         run: python3 .github/release-check.py
   build:
-    needs: [tag, checks]
+    needs: tag
     if: needs.tag.outputs.tag
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             target: linux-x86_64
-          - os: macos-latest
-            target: macos-aarch64
           - os: windows-latest
             target: windows-x86_64
             ext: .exe
-    runs-on: ${{ matrix.os }}
-    env:
-      TASKQ_SELFTEST_OFFLINE: '1'
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - run: rustup default stable
-      - name: Static WebView2 loader for the single-file Windows release
-        if: runner.os == 'Windows'
-        run: rustup default stable-x86_64-pc-windows-msvc
-      - name: Version from tag
-        if: needs.tag.outputs.tag
-        shell: bash
-        env:
-          TAG: ${{ needs.tag.outputs.tag }}
-        run: |
-          ver="${TAG#v}"
-          perl -pi -e 'if (!$d && s/^version = ".*"/version = "'"$ver"'"/) { $d = 1 }' Cargo.toml
-          grep -q "^version = \"$ver\"" Cargo.toml
-          echo "VER=$ver" >> "$GITHUB_ENV"
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock') }}-
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      - run: npm run build
-      - run: cargo build --release --locked
-      - name: Selftest and stage
-        if: needs.tag.outputs.tag
-        shell: bash
-        env:
-          TASKQ_INCIDENT_REPORTS: 'off'
-          TASKQ_INSTALL: ${{ runner.temp }}/taskq-release-selftest
-        run: |
-          bin="target/release/taskq${{ matrix.ext }}"
-          mkdir dist
-          cp "$bin" "dist/taskq-$VER-${{ matrix.target }}${{ matrix.ext }}"
-          # Start the shipped file from its isolated directory, not Cargo's build tree.
-          (cd dist && "./taskq-$VER-${{ matrix.target }}${{ matrix.ext }}" selftest)
-          # shared answer card assets (docs/design/answer-card.md): once, from the Linux job
-          if [ "${{ matrix.target }}" = linux-x86_64 ]; then
-            cp build/web/answer-card.js "dist/taskq-$VER-answer-card.js"
-            cp src/answer-card.css "dist/taskq-$VER-answer-card.css"
-            cp tests/fixtures/answer-card.json "dist/taskq-$VER-answer-card-fixtures.json"
-            cp build/web/answer-card.sources.json "dist/taskq-$VER-answer-card-sources.json"
-            cp build/web/task-controls.js "dist/taskq-$VER-task-controls.js"
-            cp tests/fixtures/task-controls.json "dist/taskq-$VER-task-controls-fixtures.json"
-            cp build/web/project-blocks.js "dist/taskq-$VER-project-blocks.js"
-            cp src/project-blocks.css "dist/taskq-$VER-project-blocks.css"
-            cp src/project-blocks.LICENSE "dist/taskq-$VER-project-blocks.LICENSE"
-            cp tests/fixtures/project-blocks.json "dist/taskq-$VER-project-blocks-fixtures.json"
-            cp build/web/project-blocks.sources.json "dist/taskq-$VER-project-blocks-sources.json"
-            cp build/web/finding-composer.js "dist/taskq-$VER-finding-composer.js"
-            cp src/finding-composer.css "dist/taskq-$VER-finding-composer.css"
-            cp tests/fixtures/finding-composer.json "dist/taskq-$VER-finding-composer-fixtures.json"
-            cp build/web/finding-composer.sources.json "dist/taskq-$VER-finding-composer-sources.json"
-            cp build/web/pm-composer.js "dist/taskq-$VER-pm-composer.js"
-            cp src/pm-composer.css "dist/taskq-$VER-pm-composer.css"
-            cp tests/fixtures/pm-requests.json "dist/taskq-$VER-pm-composer-fixtures.json"
-            cp build/web/pm-composer.sources.json "dist/taskq-$VER-pm-composer-sources.json"
-            cp build/web/task-workspace.js "dist/taskq-$VER-task-workspace.js"
-            cp build/web/task-workspace.css "dist/taskq-$VER-task-workspace.css"
-            cp tests/fixtures/task-workspace.json "dist/taskq-$VER-task-workspace-fixtures.json"
-            cp build/web/task-workspace.sources.json "dist/taskq-$VER-task-workspace-sources.json"
-            # shared resource controls (docs/design/shared-resource-controls.md), same mechanism
-            cp build/web/resource-controls.js "dist/taskq-$VER-resource-controls.js"
-            cp src/resource-controls.css "dist/taskq-$VER-resource-controls.css"
-            cp tests/fixtures/resource-controls.json "dist/taskq-$VER-resource-controls-fixtures.json"
-            cp tests/fixtures/resource-policy-v1.json "dist/taskq-$VER-resource-policy-fixtures.json"
-            cp tests/fixtures/telemetry-sync.json "dist/taskq-$VER-telemetry-sync-fixtures.json"
-            # TaskQ telemetry field list CoreQ pins (docs/design/standalone-telemetry.md)
-            cp tests/fixtures/telemetry-fields.json "dist/taskq-$VER-telemetry-fields-fixtures.json"
-            # status snapshot contract (docs/design/status-report.md)
-            cp tests/fixtures/status-snapshot.json "dist/taskq-$VER-status-snapshot-fixtures.json"
-            cp tests/fixtures/status-snapshot.schema.json "dist/taskq-$VER-status-snapshot-schema.json"
-          fi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: needs.tag.outputs.tag
-        with:
-          name: ${{ matrix.target }}
-          path: dist/*
-  attest:
+    uses: ./.github/workflows/release-build.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      os: ${{ matrix.os }}
+      target: ${{ matrix.target }}
+      ext: ${{ matrix.ext }}
+  build-macos:
+    needs: tag
     if: needs.tag.outputs.tag
-    needs: [tag, build]
+    uses: ./.github/workflows/release-build.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      os: macos-latest
+      target: macos-aarch64
+  publish:
+    needs: [tag, checks, build]
     runs-on: ubuntu-latest
     permissions:
+      contents: write
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .github/release-index.py
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
+          pattern: '*-x86_64'
           path: dist
           merge-multiple: true
-      - name: Describe
-        env:
+      - env:
           TAG: ${{ needs.tag.outputs.tag }}
-        run: |
-          ver="${TAG#v}"
-          cd dist
-          sha256sum taskq-* > SHA256SUMS
-          python3 - "$ver" <<'PY'
-          import json, os, sys
-          ver = sys.argv[1]
-          files = {}
-          for name in sorted(os.listdir('.')):
-              if name.startswith(f'taskq-{ver}-'):
-                  files[name[len(f'taskq-{ver}-'):].removesuffix('.exe')] = name
-          json.dump({'version': ver, 'files': files}, open('latest.json', 'w'), indent=1)
-          PY
+        run: python3 .github/release-index.py "${TAG#v}" dist
       # v4.2.2
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
           subject-path: |
             dist/taskq-*
             dist/SHA256SUMS
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: release
-          path: dist/*
-  publish:
-    needs: [tag, attest]
+      - name: Publish linux and windows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --generate-notes
+  publish-macos:
+    needs: [tag, publish, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       actions: write
+      id-token: write
+      attestations: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .github/release-index.py
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: release
+          name: macos-aarch64
           path: dist
-      - name: Publish
+      - name: Add macos to the published sums
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.tag.outputs.tag }}
-        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "taskq $TAG"
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir dist
+          python3 .github/release-index.py "${TAG#v}" dist
+      # v4.2.2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: |
+            dist/taskq-*
+            dist/SHA256SUMS
+      # Binary first, then its sum, then latest.json: a host never reads a macos entry without both.
+      - name: Publish macos
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          gh release upload "$TAG" dist/taskq-* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" dist/latest.json --repo "$GITHUB_REPOSITORY" --clobber
       # README shots of this release binary (#2024); a stale set arrives as a draft PR. GITHUB_TOKEN may dispatch.
       - name: README shots
         env:

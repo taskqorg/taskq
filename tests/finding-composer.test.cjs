@@ -22,6 +22,6 @@ assert.equal(q.receipt({...fx.receipts.held,start:{outcome:'accepted',task:2402}
 const manifest=JSON.parse(fs.readFileSync('docs/design/finding-composer.sources.json','utf8')),built=JSON.parse(fs.readFileSync('build/web/finding-composer.sources.json','utf8'));
 assert.deepEqual(Object.keys(built.files),manifest.files);
 for(const [file,hash] of Object.entries(built.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file.replace(/^docs\/design\/(.+\.sources\.json)$/,'build/web/$1'),'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
-const release=fs.readFileSync('.github/workflows/release.yml','utf8');
+const release=fs.readFileSync('.github/workflows/release-build.yml','utf8');
 for(const file of ['build/web/finding-composer.js','src/finding-composer.css','tests/fixtures/finding-composer.json','build/web/finding-composer.sources.json'])assert(release.includes('cp '+file));
 console.log('PASS finding review, ownership, evidence allowlist, bounds, immutable payload, separate receipts and provenance');

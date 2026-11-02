@@ -1,6 +1,6 @@
 #!/bin/sh
 # taskq.md § 8 item 1: install a local development build of origin/main (or the ref given) on this Mac.
-# Version <next patch>-yymmdd-N (UTC date, N = that date's builds on this host from 0; scripts/dev-version.py) sorts above the release on main and below the next one, so `current`
+# Version <next patch of Cargo.toml or the highest release tag>-yymmdd-N (UTC date, N = that date's builds on this host from 0; scripts/dev-version.py) sorts above the release on main and below the next one, so `current`
 # moves forward (coreq `newer`). The host channel is set to `dev` first, so no release replaces the build until
 # `taskq service channel live` (#1325). Builds in a detached worktree beside the
 # primary checkout, so local edits there are never touched. Under a running host service, install makes the build
@@ -29,12 +29,13 @@ finish() {
 trap finish EXIT
 trap 'exit 1' INT TERM HUP
 # A given ref (the service's SHA) needs no origin/main update, so a concurrent fetch holding its lock cannot fail it (#1633).
-if [ $# -gt 0 ]; then git -C "$repo" fetch -q --refmap= --no-write-fetch-head origin main; else git -C "$repo" fetch -q origin main; fi
+if [ $# -gt 0 ]; then git -C "$repo" fetch -q --tags --refmap= --no-write-fetch-head origin main; else git -C "$repo" fetch -q --tags origin main; fi
 [ -d "$w" ] || git -C "$repo" worktree add -q --detach "$w" "$ref"
 cd "$w"
 git checkout -q -f --detach "$ref"
 sha=$(git rev-parse HEAD)
-v=$(python3 scripts/dev-version.py Cargo.toml "$d/releases")
+# shellcheck disable=SC2046 # one argument per release tag
+v=$(python3 scripts/dev-version.py Cargo.toml "$d/releases" $(git tag -l 'v[0-9]*'))
 prev=$(cat "$d/current")
 sed -i '' "s/^version = .*/version = \"$v\"/" Cargo.toml
 npm ci --silent
