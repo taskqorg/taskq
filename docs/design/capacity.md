@@ -232,7 +232,7 @@ A Codex worker whose turn fails on a transient model error mid-work continues in
 
 ## Background job at turn end
 
-A Claude worker whose turn ends while its own background job still runs continues in the same session instead of ending `gone` (#2198). On #2176 and #2180 the worker started the full check with `run_in_background`, said "full check running, waiting", and ended its turn; the process exited 0 with no outcome, and each attempt was lost.
+A Claude worker whose turn ends while its own background job still runs continues in the same session instead of ending `gone`. A background full check can outlive the turn, leaving an exit 0 without an outcome and wasting the attempt.
 
 - Detection reads the Claude attempt log after the last `taskq.rules` start or resume record. A job is a `Bash` call with `run_in_background: true` or a `Monitor` call whose result names its task. A terminal `<task-notification>` status (completed, failed, killed, stopped), a `TaskStop`/`KillShell` call naming it, or an error result (the job never started) ends it. Other jobs are live.
 - It applies on exit without a task outcome (taskq.md § 4 step 1) to a `doing` Claude worker on the attempt host. Reviewers keep `gone`.
