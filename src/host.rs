@@ -1126,13 +1126,16 @@ pub fn run(install: &Path) -> Res<()> {
         }}
         let handover=h.restart&&!h.stopping;
         if !handover {stuck=None;}
+        if !h.restart {waits_reported.clear();}
         if h.restart {
             let wait=h.handoff_wait();
             drop(h);
             // #1601: the receipt and the log name what the re-exec really waits for; a stuck one is reported, never killed
             let waits=restart_waits(&roots);
             if let Err(e)=crate::lifecycle::handoff_wait(install,&instance,wait,&waits) {if reported!=e {crate::platform::log(&e);reported=e;}}
-            if waits!=waits_reported&&installation::upgrade_waits(install,crate::platform::VERSION,&waits) {waits_reported=waits.clone();}
+            // #2209: every tick, so a superseding intent's receipt names the waits too; the log names each change.
+            installation::upgrade_waits(install,crate::platform::VERSION,&waits);
+            if waits!=waits_reported {log_all(install,&roots,&format!("host re-exec waits for {waits}"));waits_reported=waits.clone();}
             if crate::restart_watch(&mut stuck,handover,began.elapsed().as_secs(),300) {log_all(install,&roots,&format!("restart pending over 600 s; waits for {waits}"));}
             h=shared.lock().unwrap_or_else(|e|e.into_inner());
             if h.handoff_ready() {

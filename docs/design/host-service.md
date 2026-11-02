@@ -351,7 +351,7 @@ The next host generation drops a Stop issued by an ended generation: at once whi
 
 Why: the old rule waited on those attempts while the restart refused their reservation, so neither side could move and the host stayed on the old image until an owner kickstart. Admitting slots under a pending restart was rejected: a child started then must itself hand over or delay the re-exec again. A test sets up each childless attempt kind and asserts one pass reaches the re-exec.
 
-While the re-exec waits, the host retains the projects' `restart_waits` as the reason of a queued upgrade receipt (`host re-exec into <v> waits for <project> <wait>`), and status shows the same list. A re-exec still pending after 600 s logs `restart pending over 600 s; waits for …` once and reports `dispatch.reexec` (`restart:stuck`); nothing is killed or restarted.
+While the re-exec waits, the host retains the projects' `restart_waits` as the reason of a queued upgrade receipt (`host re-exec into <v> waits for <project> <wait>`) on every tick, so an intent that superseded another names them too (#2209); status shows the same list, and the host and project logs name each change (`host re-exec waits for …`). A re-exec still pending after 600 s logs `restart pending over 600 s; waits for …` once and reports `dispatch.reexec` (`restart:stuck`); nothing is killed or restarted.
 
 A newer `service install` build supersedes a queued upgrade intent for an older version: the old receipt fails with `superseded by <v>`, the intent goes, and the newer build requests its own upgrade. A build equal to the intent still continues it.
 
