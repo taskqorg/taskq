@@ -1126,8 +1126,7 @@ fn closed_transcript(b: &dyn Board, n: u64, host: &str, before: Option<u64>) -> 
     if owner != host { return Err(format!("Transcript is on host {owner}; open it there")); }
     let (runtime,session) = native.split_once(':').ok_or("Worker session unavailable")?;
     let path = runtime::owner::transcript(runtime,session)?;
-    let page = transcript::before(runtime::of(runtime).codex,&path,before)?;
-    Ok(json!({"generation":page.generation,"items":page.items,"start":page.start,"end":page.end,"size":page.size}))
+    Ok(transcript::before(transcript::format(runtime),session,&path,before)?.json())
 }
 
 /// #1679: the PR/MR merge `close` read back (§ 7 `delivery <preset> r<R>: merged #P ..`, GitLab `merged !P`); none stays unknown.

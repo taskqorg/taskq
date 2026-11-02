@@ -2112,16 +2112,25 @@ pub fn claude_background(root: &Path, session: &str, home: Option<&Path>) -> Res
 
 /// #1825 prototype: a task worker's native transcript on this host and whether it is in Codex's format. The homes are
 /// the service's own (`claude_home`, `codex_home`), which a Windows probe of both runtimes confirmed (#1825 A2).
-pub fn worker_transcript(rt: &str, session: &str) -> Result<(bool, PathBuf), String> {
+/// #2176 A3: an Antigravity worker's native stream is its attempt log `log`, bound to `session` by the log itself.
+pub fn worker_transcript(rt: &str, session: &str, log: &Path) -> Result<(&'static str, PathBuf), String> {
     let a = of(rt);
-    if a.name != rt || !a.codex && !a.remote { return Err(format!("runtime {rt:?}: native transcript adapter unqualified")); }
+    let format = crate::transcript::format(rt);
+    if a.name == rt && rt == "antigravity" {
+        return match native_session(rt, log) {
+            Some(id) if id == session => Ok((format, log.to_path_buf())),
+            Some(_) => Err("Antigravity attempt log names another conversation; view unknown".into()),
+            None => Err("Antigravity attempt log unavailable or has no conversation yet; view unknown".into()),
+        };
+    }
+    if a.name != rt || !a.codex && !a.remote { return Err(format!("runtime {rt:?}: no AgentQ history format; view unknown")); }
     // § 3 Runtime accounts: the default home first, then each account home; the first error stands when none has it
     let rt = if a.codex { "codex" } else { "claude" };
     let homes = crate::runtime::accounts::homes(rt);
     let mut first = None;
     for home in &homes {
         match if a.codex { owner::codex_transcript_in(home, session) } else { claude_transcript_in(home, session) } {
-            Ok(p) => return Ok((a.codex, p)),
+            Ok(p) => return Ok((format, p)),
             Err(e) => { first.get_or_insert(e); }
         }
     }
@@ -2660,15 +2669,17 @@ pub struct Adapter {
     /// Oldest qualified CLI version and the owner's update step ([host tools](../docs/design/host-service.md#host-tools)).
     pub min: &'static str,
     pub update: &'static str,
+    /// AgentQ `history` format of the native transcript (#2176).
+    pub history: &'static str,
 }
 
 const ADAPTERS: [Adapter; 4] = [
-    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, grant_required: false, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`", min: "2.1.296", update: "run `claude update`" },
-    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, grant_required: false, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
-    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, grant_required: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
-    Adapter { name: RUNTIMES[3], bin: "agy", client: "Antigravity", home: ".gemini/antigravity", child: true, grant_required: true, remote: false, app: false, codex: false, setup: RUNTIMES[3], login: "sign in through the Antigravity client", sessions: "Antigravity conversations", min: "", update: "install or update the Antigravity agy CLI" },
+    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, grant_required: false, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`", min: "2.1.296", update: "run `claude update`", history: "claude-native" },
+    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, grant_required: false, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)", history: "codex-rollout" },
+    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, grant_required: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)", history: "codex-rollout" },
+    Adapter { name: RUNTIMES[3], bin: "agy", client: "Antigravity", home: ".gemini/antigravity", child: true, grant_required: true, remote: false, app: false, codex: false, setup: RUNTIMES[3], login: "sign in through the Antigravity client", sessions: "Antigravity conversations", min: "", update: "install or update the Antigravity agy CLI", history: "agy-stream" },
 ];
-const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, grant_required: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "", min: "", update: "" };
+const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, grant_required: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "", min: "", update: "", history: "claude-native" };
 
 /// The CLI runtimes a host can run as service children, one per binary: the runtime rows of host tools.
 pub fn clis() -> impl Iterator<Item = &'static Adapter> {

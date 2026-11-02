@@ -290,7 +290,7 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
 
 /// CS2: called on the existing background read channel, never during the tray snapshot/UI pass.
 pub fn activity(install:&Path,r:&Request)->Value {
-    let updated=crate::runtime::owner::transcript_for(install,r).and_then(|p|crate::transcript::last_update(crate::runtime::of(&r.runtime).codex,&p));
+    let updated=crate::runtime::owner::transcript_for(install,r).and_then(|p|crate::transcript::last_update(crate::transcript::format(&r.runtime),session(r),&p));
     match updated {Ok(updated)=>json!({"updated":updated}),Err(reason)=>json!({"updated":null,"reason":reason})}
 }
 
@@ -326,7 +326,7 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
         }}
         let activity=activity(install,r);v["updated"]=activity["updated"].clone();v["updated_reason"]=activity["reason"].clone();
         let path = crate::runtime::owner::transcript_for(install,r);
-        match path.and_then(|p| crate::transcript::last_line(crate::runtime::of(&r.runtime).codex, &p)) {
+        match path.and_then(|p| crate::transcript::last_line(crate::transcript::format(&r.runtime), session(r), &p)) {
             Ok(line) => v["last_line"] = json!(line),
             Err(e) => { state = "unknown".into(); v["reason"] = json!(e); }
         }
@@ -346,22 +346,26 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
 /// it holds the file end.
 pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u64>) -> Res<Value> {
     let r = launched(install, id)?;
-    let codex = crate::runtime::of(&r.runtime).codex;
+    let format = crate::transcript::format(&r.runtime);
     let path = crate::runtime::owner::transcript_for(install,&r)?;
-    let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
+    let mut page = match after { Some(a) => crate::transcript::after(format, session(&r), &path, a)?, None => crate::transcript::before(format, session(&r), &path, before)? };
     mark_brief(&mut page.items, &r.brief, &crate::setup::dir(install).join(id));
-    Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+    Ok(page.json())
 }
+
+/// The native session a request's transcript must carry; AgentQ refuses a record bound to another (#2176).
+fn session(r: &Request) -> &str { r.session.as_deref().unwrap_or("-") }
 
 /// #1831: the live view of a resolved task worker's session `<rt>:<id>` on this host, read like an owner
 /// transcript (D1, D4). Every user input of a worker session is TaskQ's, carrying the owner's board entries it delivers
 /// (an answer or a steer, § 4 step 6), so each user item names which one it is.
-pub fn worker_transcript(session: &str, before: Option<u64>, after: Option<u64>) -> Res<Value> {
+/// `log` is the attempt log, the Antigravity worker's only native stream (A3).
+pub fn worker_transcript(session: &str, log: &Path, before: Option<u64>, after: Option<u64>) -> Res<Value> {
     let (rt, id) = session.split_once(':').ok_or("worker session unknown")?;
-    let (codex, path) = crate::runtime::worker_transcript(rt, id)?;
-    let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
+    let (format, path) = crate::runtime::worker_transcript(rt, id, log)?;
+    let mut page = match after { Some(a) => crate::transcript::after(format, id, &path, a)?, None => crate::transcript::before(format, id, &path, before)? };
     worker_roles(&mut page.items);
-    Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+    Ok(page.json())
 }
 
 /// #1834: a user item whose text, or the turn input file its pointer names, ends with the service's marker is TaskQ's,
@@ -606,25 +610,28 @@ mod tests {
     }
 
     // #1831 A4: tool arguments can contain arbitrary secrets, even without recognizable token prefixes.
+    // #2176 owner answer 1: the result body rides on its call for explicit read-only open; arguments stay omitted.
     #[test]
-    fn worker_tool_lines_never_export_arguments_or_output() {
+    fn worker_tool_lines_never_export_arguments_and_attach_results() {
         use std::io::Write;
         let dir=std::env::temp_dir().join(format!("taskq-worker-tools-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
         let path=dir.join("native.jsonl");
         for codex in [false,true] {
             let mut file=fs::File::create(&path).unwrap();
             let rows=if codex {vec![
-                json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"curl -H 'Authorization: Bearer invented-private-value'\"}"}}),
-                json!({"type":"response_item","payload":{"type":"function_call_output","output":"invented-output-private-value"}}),
+                json!({"type":"response_item","payload":{"type":"function_call","call_id":"c1","name":"exec_command","arguments":"{\"cmd\":\"curl -H 'Authorization: Bearer invented-private-value'\"}"}}),
+                json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"invented-output-private-value\nAuthorization: Bearer invented-result-token"}}),
             ]} else {vec![
-                json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"curl -u user:invented-private-value"}}]}}),
-                json!({"type":"user","message":{"content":[{"type":"tool_result","content":"invented-output-private-value"}]}}),
+                json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"curl -u user:invented-private-value"}}]}}),
+                json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"invented-output-private-value\nAuthorization: Bearer invented-result-token"}]}}),
             ]};
             for row in rows {writeln!(file,"{row}").unwrap();}drop(file);
-            let mut page=crate::transcript::before(codex,&path,None).unwrap();worker_roles(&mut page.items);
+            let format=if codex {"codex-rollout"} else {"claude-native"};
+            let mut page=crate::transcript::before(format,"-",&path,None).unwrap();worker_roles(&mut page.items);
             assert_eq!(page.items.len(),1);assert_eq!(page.items[0]["role"],"tool");
-            assert!(page.items[0]["text"].as_str().unwrap().contains(if codex {"exec_command"} else {"Bash"}));
-            assert!(!json!(page.items).to_string().contains("private-value"));
+            assert_eq!(page.items[0]["text"],if codex {"exec_command"} else {"Bash"});
+            let body=page.items[0]["result"].as_str().unwrap();assert!(body.starts_with("invented-output-private-value\n"),"result body attached to its call");assert!(!body.contains("invented-result-token"),"a credential in the output is masked like arguments");
+            assert!(!json!(page.items).to_string().contains("user:invented")&&!json!(page.items).to_string().contains("Bearer invented"),"arguments never leave the adapter");
         }
         fs::remove_dir_all(dir).unwrap();
     }
@@ -637,7 +644,7 @@ mod tests {
         let session = std::env::var("TASKQ_PROBE_SESSION").expect("TASKQ_PROBE_SESSION");
         let (mut end, until) = (None, std::time::Instant::now() + std::time::Duration::from_secs(60));
         while std::time::Instant::now() < until {
-            match worker_transcript(&session, None, end) {
+            match worker_transcript(&session, Path::new(&std::env::var("TASKQ_PROBE_LOG").unwrap_or_default()), None, end) {
                 Ok(v) => {
                     for i in v["items"].as_array().unwrap() { println!("{} {} {}", now(), i["role"], i["text"].as_str().unwrap_or_default().chars().take(40).collect::<String>().replace('\n', " ")); }
                     end = v["end"].as_u64();

@@ -270,7 +270,7 @@ pub fn transcript_for(install:&Path,r:&Request)->Res<PathBuf> {
 
 pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
     let a = super::of(runtime);
-    if !a.codex && !a.remote { return Err(format!("runtime {runtime:?}: native transcript adapter unqualified")); }
+    if !a.codex && !a.remote { return Err(format!("runtime {runtime:?}: no retained native transcript file; view unknown")); }
     if super::of(runtime).codex {
         codex_transcript_in(&super::codex_home().ok_or("transcript unknown: no home folder")?, session)
     } else {

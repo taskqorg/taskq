@@ -121,12 +121,6 @@ pub fn outcome(text:&str)->String {
     let report=agentq_runtime::agent::Report::read(agentq_runtime::agent::Client::Antigravity,"",&rows,None);
     if report.outcome=="unknown" {"unknown: native Antigravity completion unverified".into()}else if report.outcome=="ok" {"success".into()}else{format!("failed: {}",report.outcome)}
 }
-// Native original records only; input intent is explicit, result response is the provider's complete text.
-pub fn items(value:&Value,out:&mut Vec<Value>) {
-    if value["event"]=="user" {if let Some(text)=value["message"]["content"].as_str(){out.push(json!({"role":"user","text":text,"delivery":"intent"}));}}
-    if value["event"]=="result" {if let Some(text)=value["result"]["response"].as_str(){out.push(json!({"role":"assistant","text":text}));}}
-}
-
 pub fn accepted(own:&Path,r:&Request,turn:&crate::dialogue::Turn)->Res<bool> {
     use std::io::{Read,Seek,SeekFrom};
     if !turn.stream_written{return Ok(false);}
@@ -148,7 +142,6 @@ mod tests {
         let session_id="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
         let text=format!("{}\n{}\n",json!({"event":"init","conversation_id":session_id}),json!({"event":"result","result":{"conversation_id":session_id,"status":"SUCCESS","response":"literal response"}}));
         assert_eq!(session(&text).unwrap().as_deref(),Some(session_id));assert_eq!(outcome(&text),"success");assert!(session(&(text+&json!({"conversationId":"foreign-conversation"}).to_string())).is_err());
-        let mut rendered=vec![];items(&json!({"event":"user","message":{"content":"literal input"},"delivery":"intent"}),&mut rendered);assert_eq!(rendered[0]["delivery"],"intent");
         let root=std::env::temp_dir().join(format!("taskq-owner-stream-{}",super::super::uuid()));fs::create_dir_all(&root).unwrap();
         let r:Request=serde_json::from_value(json!({"schema":2,"id":"invented","created":1,"host":"invented","platform":"invented","client":"invented","runtime":"antigravity","targets":[],"brief":"invented","state":"launched","session":session_id})).unwrap();
         let current=coreq::process::identity(std::process::id()).unwrap().unwrap();let identity=json!({"pid":current.pid,"started":current.started});fs::write(root.join("native-process.json"),json!({"identity":identity}).to_string()).unwrap();assert_eq!(holder(&root,&r),Ok(true));

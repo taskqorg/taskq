@@ -133,7 +133,7 @@ module.exports=execution.module('conversations',{
     if(v.generation&&view.source&&v.generation!==view.source&&(view.items.length||view.end>0||view.anchor)){
      view.gen++;view.items=[];view.start=view.end=null;if(!view.anchor?.board)view.anchor=null;view.stick=false;view.lost='Transcript source changed. Choose Latest to open the current source.';view.reason=view.lost;api.place(view.id);return;
     }
-    const priorSize=view.size;view.source=v.generation||view.source;view.reason='';view.size=v.size;if(op.kind==='tail'){if(v.size>priorSize&&!view.stick)view.unseen=true;return;}
+    const priorSize=view.size;view.capability=v.capability||view.capability;view.source=v.generation||view.source;view.reason='';view.size=v.size;if(op.kind==='tail'){if(v.size>priorSize&&!view.stick)view.unseen=true;return;}
     // The user scroll owns the anchor; a late read must not sample an intermediate reflow.
     const have=new Set(view.items.map(api.key)),fresh=v.items.filter(item=>!have.has(api.key(item)));
     if(op.kind==='initial'){
@@ -247,7 +247,7 @@ module.exports=execution.module('conversations',{
     // Q-A9: page loads are not announced in full; a short status says what changed
     return [c.sent?.text&&!v?.items?.some(i=>i.role==='user'&&i.text===c.sent.text)&&h('section',{'data-reading-key':'owner-request:'+c.id,class:'conversation-prose'},h('p',{class:'meta'},'You · request'),require('./reports.js').body(c.sent.text,'owner-request:'+c.id,0),h('details',{'data-view-key':'request-source:'+c.id,'data-native-source':'request-source:'+c.id},h('summary',{class:'source-toggle'},'Exact request source'),nativeSources.has('request-source:'+c.id)&&h('pre',null,c.sent.text))),h('p',{class:'sr-only',role:'status'},v?.announce||''),h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Transcript',tabindex:'0','data-id':c.id},
      v?.start>0&&h('button',{'data-c':'earlier',disabled:!!v.busy.before||!!v.lost},v.busy.before?'Loading earlier…':'Load earlier'),
-     v?.limitReason&&h('p',{role:'status',class:'meta'},v.limitReason),v?.lost&&h('p',{role:'status',class:'dialogue-unknown'},v.lost),
+     api.capability(v?.capability),     v?.limitReason&&h('p',{role:'status',class:'meta'},v.limitReason),v?.lost&&h('p',{role:'status',class:'dialogue-unknown'},v.lost),
      v?.reason&&v.reason!==v.lost&&h('p',{role:'status',class:'dialogue-unknown'},'Transcript unknown: '+v.reason+(v.items.length?'. Showing what was read before.':'')),
      !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'&&!item.image?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):api.nativeItem(item,label[item.role]||item.role);},c.id):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
@@ -256,7 +256,9 @@ module.exports=execution.module('conversations',{
    // #1918 A6: consecutive tool calls fold into one collapsible line (docs/design/conversations-usability-review.md#tool-collapse-1918);
    // a message ends the group. `current`: the worker runs, so the last group names its latest step live.
    steps:function(items,current,render,setup=null){
-    const out=[],tool=item=>{const key=api.key(item);return h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded'));};
+    const out=[],tool=item=>{const key=api.key(item),line=h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded'));
+     // #2176 owner answer 1: the result body opens only on request, read-only; nothing is sent.
+     return typeof item.result!=='string'?line:h('div',{key,'data-key':key},line,h('details',{'data-view-key':'result:'+key},h('summary',{class:'source-toggle'},'Tool result'),h('pre',null,item.result)));};
     for(let i=0;i<items.length;){
      if(setup&&['brief','transport'].includes(items[i].role)){
       let j=i;while(j<items.length&&['brief','transport'].includes(items[j].role))j++;
@@ -300,7 +302,7 @@ module.exports=execution.module('conversations',{
      h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Live worker session','data-id':thread},
       live.start>0&&h('button',{'data-c':'worker-earlier',disabled:!!live.request},'Load earlier'),live.end<live.size&&live.quiet.after>=FILL&&h('button',{'data-c':'worker-later',disabled:!!live.request},'Load later'),
       live.limitReason&&h('p',{role:'status',class:'meta'},live.limitReason),live.ended&&h('p',{role:'status',class:'meta'},'Worker attempt ended'),
-      live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
+      api.capability(live.capability),      live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
       live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):api.steps(live.items,live.follow&&!live.ended,item=>{const key=api.key(item);return item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn',time.stamp(item.updated,'Turn brief recorded')):api.nativeItem(item,item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role);})));
    },
    workerRead:function(kind='after',extra={}){
@@ -322,7 +324,7 @@ module.exports=execution.module('conversations',{
     if(r.state!=='accepted'){l.reason=r.reason||'Transcript unknown';if(/shrank|replaced/.test(l.reason)){l.lost=true;l.stick=false;}}
     else if(r.value.generation&&l.source&&r.value.generation!==l.source&&(l.items.length||l.end>0||l.anchor)){l.gen++;l.items=[];l.start=l.end=null;l.anchor=null;api.place(l.thread);l.reason='Transcript source changed. Choose Latest to open the current source.';l.lost=true;l.stick=false;}
     else {
-     const v=r.value;if(op.mode===l.mode&&typeof v.following==='boolean'){l.follow=v.following;l.activity=v.activity||'unknown';}l.source=v.generation||l.source;l.reason='';l.size=v.size;
+     const v=r.value;if(op.mode===l.mode&&typeof v.following==='boolean'){l.follow=v.following;l.activity=v.activity||'unknown';}l.capability=v.capability||l.capability;l.source=v.generation||l.source;l.reason='';l.size=v.size;
      const have=new Set(l.items.map(api.key));fresh=v.items.filter(i=>!have.has(api.key(i)));
      if(op.kind==='initial'&&op.after!==undefined&&!v.items.some(i=>api.key(i)===op.expected)){l.reason='Saved worker reading position is unavailable. Choose Latest to open the current source.';l.lost=true;l.stick=false;return true;}
      if(op.kind==='initial'){l.items=v.items;l.start=v.start;l.end=v.end;l.from=undefined;}
@@ -333,6 +335,8 @@ module.exports=execution.module('conversations',{
     return true;
    },
    // #1775: a tool line keeps the file name of an absolute path, never the local directories
+   // #2176: the AgentQ history capability for this format; only a non-supported status is shown, with its reason.
+   capability:function(c){const st=c?.history?.status;return st&&st!=='supported'&&h('p',{role:'status',class:'meta'},'History '+st+' ('+c.format+'): '+(c.history.reason||'no reason given'));},
    short:function(text){return String(text).replace(/(?<![^\s'"`=(])(?:~\/|\/)(?:[^\s/'"`]+\/)+([^\s/'"`]*)/g,'…/$1');},
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
    nativeItem:function(item,label=item.role,closed=false,scope=''){

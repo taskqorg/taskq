@@ -7,7 +7,7 @@ publish = false
 autotests = false
 
 [dependencies]
-agentq-runtime = { git = "https://github.com/taskqorg/agentq", rev = "9be735b5a82f5a526cd8b1757196387956c3b5d0" }
+agentq-runtime = { git = "https://github.com/taskqorg/agentq", rev = "ce1e27883a0e8e96ea02a9c3d241e39672d14f17" }
 coreq = { git = "https://github.com/taskqorg/coreq", tag = "v0.18.0" }
 tracing = "0.1"
 ring = "0.17"
