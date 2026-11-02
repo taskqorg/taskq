@@ -1118,6 +1118,8 @@ pub struct FakeState {
     pub video_inline: bool,
     /// Immutable repository text for the Reports source adapter (path, SHA, body).
     pub report_sources: Vec<(String,String,String)>,
+    /// Every report source read fails with this board error (#2193).
+    pub source_error: Option<String>,
     pub report_closed: std::collections::BTreeMap<u64,i64>,
     /// A real adapter that answers `publish` calls instead of the `publish` string above (#1939).
     pub publisher: Option<Box<dyn Board>>,
@@ -1168,6 +1170,7 @@ impl Board for Fake {
             .map(|i|(i.clone(),st.report_closed.get(&i.number).copied().unwrap_or(i.updated))).collect())
     }
     fn source(&self,path:&str,sha:&str)->Result<String> {
+        if let Some(e)=&self.state.borrow().source_error {return Err(e.clone());}
         self.state.borrow().report_sources.iter().find(|(p,s,_)|p==path&&s==sha).map(|(_,_,b)|b.clone()).ok_or("report source unavailable: HTTP 404".into())
     }
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> {

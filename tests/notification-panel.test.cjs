@@ -30,3 +30,17 @@ q.tasks[0].conversation={id:'owner'};attention=panel.attention([q],[{...report,c
  assert.equal(a.needs.size,0,'archived question cannot produce an empty Needs me entrance');
  assert.equal(p.tasks[0].state,'ask','local archive never answers the board question');
 }
+
+// Chain: #2193 A3. Risk: one task's repeated unread Question, Attempt ended or Blocked events show as many New rows.
+{
+ const kinds=['ask','gone','blocked'],p={root:'r',name:'R',issues:'https://example.org/i',tasks:[{n:14,title:'T'},{n:75,title:'U'}],events:[]};
+ for(let i=0;i<9;i++)p.events.push([100-i,kinds[i%3],'attempt-'+i,i%2?75:14]);
+ const rows=panel.rows([p],[]),groups=panel.collapse(rows);
+ for(const kind of kinds)for(const n of [14,75]){const g=groups.filter(g=>g.rows[0].kind===kind&&g.rows[0].n===n);assert.ok(g.length<=1,'one unread row per task and kind: '+kind+' #'+n);}
+ assert.equal(groups.reduce((a,g)=>a+g.rows.length,0),9,'every event stays inside a counted row');
+ const ask=groups.find(g=>g.rows[0].kind==='ask'&&g.rows[0].n===14);assert.equal(ask.rows.length,2,'interleaved and cross-attempt events collapse');
+ const marks=Object.fromEntries(ask.rows.map(r=>[r.id,'read']));
+ assert.ok(panel.rows([p],[],marks).filter(r=>r.kind==='ask'&&r.n===14).every(r=>r.read),'marking the row read clears every collapsed event');
+ assert.equal(panel.collapse(panel.rows([p],[],marks)).filter(g=>!g.rows[0].read).length,groups.length-1);
+}
+console.log('PASS #2193 unread task events collapse per kind and mark read together');
