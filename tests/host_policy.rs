@@ -75,13 +75,14 @@ fn capacity_command_changes_host_policy_not_project_settings() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(install.join("host.json"),fs::Permissions::from_mode(0o600)).unwrap();
     }
-    let at=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()+10;
+    let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
+    // Keep this observation future for the entire bounded CLI startup, including a loaded Windows host.
+    let at=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()+budget.as_secs()+1;
     let host=json!({"limits":{"codex":3},"load_gate":{"enabled":true,"cpu_max":90,"memory_min":10},"admission":{"mode":"auto","max":null}});
     // Include the explicit host policy alongside the project-effective snapshot; no running service or board.
     let mut capacity=host.clone();capacity["host_policy"]=host;capacity["limits"]["codex"]=json!(1);
     fs::write(root.join(".taskq/status.json"),json!({"host":"fixture-host","at":at,"capacity":capacity}).to_string()).unwrap();
     fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-    let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
     let run_in=|cwd:&std::path::Path,args:&[&str]|{let began=std::time::Instant::now();match coreq::process::output("test.host-policy",Command::new(env!("CARGO_BIN_EXE_taskq"))
         .args(args)
         .env("TASKQ_INSTALL",&install).env_remove("TASKQ_ROOT").env("TASKQ_HOST","fixture-host")
