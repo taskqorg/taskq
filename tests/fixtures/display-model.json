@@ -172,6 +172,7 @@
           "card": null,
           "question": null,
           "failed": null,
+          "heartbeat": null,
           "controls": [
             "stop",
             "later"
@@ -204,6 +205,7 @@
           "card": null,
           "question": null,
           "failed": null,
+          "heartbeat": null,
           "controls": [
             "stop",
             "later"
@@ -239,6 +241,7 @@
           "card": null,
           "question": null,
           "failed": null,
+          "heartbeat": null,
           "controls": [
             "stop",
             "later"
@@ -273,6 +276,7 @@
           "card": null,
           "question": null,
           "failed": null,
+          "heartbeat": null,
           "controls": [
             "stop",
             "later"
@@ -305,6 +309,7 @@
           "card": null,
           "question": null,
           "failed": null,
+          "heartbeat": null,
           "controls": [
             "stop",
             "later"
@@ -337,6 +342,7 @@
           "card": null,
           "question": null,
           "failed": null,
+          "heartbeat": null,
           "controls": [
             "retry"
           ],
@@ -368,6 +374,7 @@
           "card": null,
           "question": null,
           "failed": null,
+          "heartbeat": null,
           "controls": [
             "start"
           ],

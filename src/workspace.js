@@ -67,7 +67,7 @@ const {create}=execution.module('workspace',{
     const composer=!row.archived&&p&&t?.state==='ask'&&!t.body_lazy?api.answerComposer(p,t):{};
     // #1781: Task info above the title; the title row holds the board, Mark read and Archive icons (input-scroll 04)
     const ev=row.event,url=t?.url||row.board+'/'+row.task,busy=!!view.messageBusy;
-    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('button',{'data-a':'message-delete','data-key':ev.key,disabled:busy},'Delete permanently'),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · '+(t?.role||'Role unknown')+' · '+(t?.host||'Host unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
+    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('button',{'data-a':'message-delete','data-key':ev.key,disabled:busy},'Delete permanently'),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · '+(t?.role||'Role unknown')+' · '+(t?.host||'Host unknown')+' · question revision '+(t?.revision??row.revision??'unknown')),require('./task-health.js').details(t)),
      h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),
       h('a',{class:'compact-action',href:url,'data-url':url,title:'Open #'+row.task+' on the board','aria-label':'Open #'+row.task+' on the board'},icons.icon(p?.board_kind==='gitlab'?'gitlab':p?.board_kind==='github'?'github':'external-link')),
       ev&&!row.archived&&!ev.read&&icons.button('check-check','Mark read',{'data-a':'message-read','data-key':ev.key,class:'compact-action',disabled:busy}),
@@ -125,7 +125,7 @@ const {create}=execution.module('workspace',{
     for(const row of rows.values())if(row.task){
      const matches=S.projects.filter(p=>p.issues===row.board&&(!row.root||p.root===row.root)),p=matches.length===1?matches[0]:null,t=taskIndex.get(p)?.get(row.task);
      if(t?.conversation?.id&&owned.has(t.conversation.id)){const id=t.conversation.id;view.ownerOutcomes[id]={...view.ownerOutcomes[id],unread:!!(view.ownerOutcomes[id]?.unread||row.unread),needsReply:!!(view.ownerOutcomes[id]?.needsReply||t.state==='ask')};if(!refs.has(row.id)){rows.delete(row.id);continue;}row.linkedAlias=true;}
-     if(t){row.activityThread=!!(t.session||t.worker||t.until);row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=time.seconds(t.updated);row.updated_reason=t.updated_reason;}
+     if(t){row.state=t.state;row.heartbeat=t.heartbeat;row.activityThread=!!(t.session||t.worker||t.until);row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=time.seconds(t.updated);row.updated_reason=t.updated_reason;}
      if(p){row.root=p.root;row.project=p.name;}
      row.archived=!!row.event?.archived||Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown

@@ -27,6 +27,8 @@ const HOST_CAPS: [&str; 6] = ["tasks", "totals", "focus", "capacity", "agents", 
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionStatus {
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub progress: Option<Value>,
     pub task: u64,
     pub attempt: u64,
     pub id: u64,
@@ -116,7 +118,7 @@ pub(crate) fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[boar
     let owners:Vec<_>=hosts.iter().filter(|h|h.trusted && h.title==format!("taskq host {}",x.host)).collect();
     let mut beat=None;
     if let [host]=owners[..] {
-        if live(now-host.updated,ttl) {
+        {
             let rows=host.body.lines().filter_map(|l|l.strip_prefix("execution ")).map(|text| {
                 if text.len()>4096 {return Err("oversized execution status".to_string());}
                 serde_json::from_str::<ExecutionStatus>(text).map_err(|e|e.to_string())
@@ -129,17 +131,83 @@ pub(crate) fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[boar
     }
     let recovery=(x.release==Some(core::Release::Exit)&&!x.accepted).then(||format!("agent exited; {}",runtime::acceptance_action(&x.runtime)));
     let (state,reason)=if let Some(reason)=&recovery {verdict(&Signals {local:true,wait:Some(reason),..Default::default()})}
-        else {verdict(&Signals {beat:beat.as_ref().map(|b|&b.0),..Default::default()})};
-    let observed=recovery.as_ref().map(|_|now).or_else(||beat.filter(|_|state!="unknown" || reason!=STALE).map(|b|b.1));
-    let status=ExecutionStatus {task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),reason};
+        else {verdict(&Signals {beat:beat.as_ref().filter(|(_,at)|live(now-*at,ttl)).map(|b|&b.0),..Default::default()})};
+    let observed=recovery.as_ref().map(|_|now).or_else(||beat.as_ref().filter(|_|state!="unknown" || reason!=STALE).map(|b|b.1));
+    let progress=beat.as_ref().and_then(|b|b.0.progress.clone()).map(|p|if runtime::progress::valid(&p) {p} else {runtime::progress::unknown("execution progress heartbeat invalid")});
+    let status=ExecutionStatus {progress,task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),reason};
     let mut value=serde_json::to_value(status).unwrap();
     value["host"]=json!(x.host);value["runtime"]=json!(x.runtime);value["observed"]=json!(observed);
     if recovery.is_some() {value["release"]=json!("exit");}
     value
 }
 
+/// R6: ownership observation and progress remain independent advisory facts.
+pub fn heartbeat(t:&Task,n:u64,hosts:&[board::Issue],executions:&[Value],now:i64,ttl:i64)->Value {
+    let host=service::host_of(t);
+    let owners:Vec<_>=hosts.iter().filter(|h|h.trusted && Some(h.title.trim_start_matches("taskq host "))==host).collect();
+    let owner=if let [h]=owners[..] {Some(h)} else {None};
+    let observed=owner.map(|h|h.updated);
+    let age=observed.map(|at|now-at);
+    let leased=owner.is_some_and(|h|t.attempt.is_some_and(|a|h.body.lines().any(|l|l==format!("#{n} {a}"))));
+    let active=matches!(t.state,State::Doing|State::Review)&&t.attempt.is_some();
+    let (freshness,reason)=if !active {("not applicable","no live attempt")}
+        else if owner.is_none() {("unknown","owning host heartbeat missing or ambiguous")}
+        else if age.is_none_or(|a|!live(a,ttl)) {("stale","owning host heartbeat stale or time unknown")}
+        else if !leased {("unknown","matching attempt heartbeat lease missing")}
+        else {("fresh","matching host/attempt ownership lease observed; progress is separate")};
+    let progress=if !active {json!({"source":"not applicable","status":"not applicable","reason":"no live attempt"})} else {executions.iter().find(|x|x["attempt"].as_u64()==t.attempt && x["host"].as_str()==host)
+        .and_then(|x|x.get("progress")).cloned().unwrap_or_else(||runtime::progress::unknown("matching execution progress missing"))};
+    let mut h=json!({"host":host,"attempt":t.attempt,"source":"board host heartbeat","observed":observed,"age_s":age,
+        "freshness":freshness,"reason":reason,"ttl_s":ttl,"progress":progress});
+    refresh_heartbeat(&mut h,now,active);
+    h
+}
+
+/// The board records input intent; only an exact fresh execution observation confirms an executor.
+pub fn executor(t:&Task,executions:&[Value],pending:bool,now:i64,ttl:i64)->Value {
+    let current:Vec<_>=executions.iter().filter(|x|x["attempt"].as_u64()==t.attempt).collect();
+    let (state,reason,observed,source)=if !matches!(t.state,State::Doing|State::Review)||t.attempt.is_none() {
+        ("not applicable","no live attempt",None,"board task projection")
+    } else if current.is_empty() && pending {
+        ("awaiting execution","input recorded; awaiting execution, no current native work confirmed",Some(now),"board input projection")
+    } else if let [x]=current[..] {
+        let observed=x["observed"].as_i64();
+        let fresh=observed.is_some_and(|at|live(now-at,ttl));
+        let state=if x["release"]=="exit"||!fresh {"unknown"}
+            else if x["state"]=="running" {"active"}
+            else if x["state"]=="waiting" && pending {"awaiting acceptance"}
+            else if x["state"]=="waiting" {"waiting"} else {"unknown"};
+        (state,x["reason"].as_str().unwrap_or("current executor observation unavailable"),observed,"owning-host execution observation")
+    } else {
+        ("unknown","current executor missing or ambiguous; logical task state is not native work",None,"board execution projection")
+    };
+    json!({"state":state,"reason":reason,"observed":observed,"source":source})
+}
+
+/// Re-age cached observations; reading a snapshot never renews either heartbeat.
+pub fn refresh_heartbeat(h:&mut Value,now:i64,active:bool) {
+    let age=h["observed"].as_i64().map(|at|now-at);
+    h["age_s"]=json!(age);h["as_of"]=json!(now);
+    if active && age.is_some_and(|a|!live(a,h["ttl_s"].as_i64().unwrap_or(0))) {
+        h["freshness"]=json!("stale");h["reason"]=json!("owning host heartbeat stale or time unknown");
+    }
+    if h["executor"]["observed"].as_i64().is_some_and(|at|!live(now-at,h["ttl_s"].as_i64().unwrap_or(0))) {
+        h["executor"]["state"]=json!("unknown");h["executor"]["reason"]=json!("current executor observation stale");
+    }
+    let progress=&h["progress"];
+    let progress_live=progress["observed"].as_i64().is_some_and(|at|live(now-at,h["ttl_s"].as_i64().unwrap_or(0)));
+    let warning=if !active {None} else if h["freshness"]!="fresh" {h["reason"].as_str()}
+        else if matches!(h["executor"]["state"].as_str(),Some("awaiting execution"|"awaiting acceptance")) {h["executor"]["reason"].as_str()}
+        else if h["executor"]["state"]=="unknown" {Some("current executor unknown; inspect execution health")}
+        else if !progress_live {Some("execution progress observation missing or stale")}
+        else if !matches!(progress["status"].as_str(),Some("quiet"|"active")) {progress["reason"].as_str().or(Some("execution progress unknown"))}
+        else {None};
+    h["warning"]=json!(warning);
+}
+
 #[derive(Default)]
 pub struct Row {
+    pub heartbeat: Value,
     /// Last accepted worker source for read-only history, never current task authority.
     pub worker: Option<Value>,
     pub conversation: Option<Value>,
@@ -387,7 +455,13 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
                     else {v.projection.changes.iter().find(|(id,_,_)| *id==x.attempt).and_then(|(_,_,t)|t.role.as_deref())});
                 value
             }).collect();
+        let mut heartbeat=heartbeat(&v.projection.task,v.issue.number,hosts,&executions,observed,cfg.ttl);
+        let pending=v.projection.task.attempt.is_some_and(|a|v.projection.task.inbox.iter().any(|id|*id>v.projection.delivered(a).unwrap_or(0)));
+        heartbeat["input_pending"]=json!(pending);
+        heartbeat["executor"]=executor(&v.projection.task,&executions,pending,observed,cfg.ttl);
+        refresh_heartbeat(&mut heartbeat,observed,matches!(v.projection.task.state,State::Doing|State::Review)&&v.projection.task.attempt.is_some());
         Row {
+        heartbeat,
         worker: std::iter::once(&v.projection.task).chain(v.projection.changes.iter().rev().map(|(_,_,t)|t))
             .find(|t|t.role.as_deref()==Some("worker") && t.attempt.is_some() && t.session.is_some())
             .map(|t|json!({"attempt":t.attempt,"session":t.session,"role":"worker"})),
@@ -547,13 +621,22 @@ impl Row {
         }
     }
 
+    pub fn stuck_age(&self)->Option<i64> {
+        self.stuck.or_else(|| {
+            let h=&self.heartbeat;
+            (matches!(self.task.state,State::Doing|State::Review) && h["freshness"]=="fresh" && h["progress"]["status"]=="overdue"
+                && h["progress"]["observed"].as_i64().zip(h["as_of"].as_i64()).is_some_and(|(at,now)|live(now-at,h["ttl_s"].as_i64().unwrap_or(0))))
+                .then(||h["as_of"].as_i64().unwrap_or(0)-h["progress"]["overdue_since"].as_i64().unwrap_or(0))
+        })
+    }
+
     pub fn json(&self) -> Value {
         let mut row = json!({"n": self.n, "title": self.title, "state": self.task.state.name(), "labels": self.labels, "url": self.url, "revision": self.revision, "updated": self.updated,
             "session": self.task.session, "attempt": self.task.attempt, "role": self.task.role,
             "deps": self.deps.iter().filter(|b| b.dep.repo.is_none() && b.reason == "open").map(|b| b.dep.n).collect::<Vec<_>>(),
             "blocked": self.deps.iter().map(|b| json!({"ref": b.dep.name(), "url": b.url, "reason": b.reason})).collect::<Vec<_>>(),
             "card": self.task.card, "question": self.task.card.as_deref().map(question), "failed": self.failed,
-            "controls": controls(self.task.state.name()), "verdict": self.verdict.as_deref().map(verdict_fields)});
+            "heartbeat":self.heartbeat,"controls": controls(self.task.state.name()), "verdict": self.verdict.as_deref().map(verdict_fields)});
         if let Some(worker) = &self.worker { row["worker"] = worker.clone(); }
         if let Some(c) = &self.conversation { row["conversation"] = c.clone(); }
         if let Some(id) = &self.task.enqueued { row["enqueued"] = json!(id); }
@@ -571,8 +654,8 @@ impl Row {
         row["since"] = json!(self.since);
         row["created"] = json!(self.created);
         row["steps"] = json!(self.steps);
-        row["stuck"] = json!(self.stuck.is_some());
-        if let Some(a) = self.stuck { row["age_s"] = json!(a); }
+        row["stuck"] = json!(self.stuck_age().is_some());
+        if let Some(a) = self.stuck_age() { row["age_s"] = json!(a); }
         if let Some(c) = self.churn { row["churn"] = json!({"notes": c.notes, "spawns": c.spawns, "accepted": c.accepted}); }
         if let Some(a) = &self.admission { row["admission"] = a.json(); }
         if let Some(a) = &self.answered { row["answered"] = json!(a); }
@@ -746,7 +829,8 @@ impl Snapshot {
                 } else {
                     r.task.state.name().to_string()
                 };
-                let state = format!("{state}{}", r.stage_text());
+                let health=if matches!(r.task.state,State::Doing|State::Review) {r.heartbeat["warning"].as_str().map(|w|format!(" · {}",cell(&compact(w,160)))).unwrap_or_default()} else {String::new()};
+                let state = format!("{state}{}{health}", r.stage_text());
                 let (rt, s) = session_link(cfg, raw, r);
                 format!("| {} | {state} | {} | {s} |", link(r), cell(&rt))
             })
@@ -801,7 +885,7 @@ impl Snapshot {
             out.push("Failed:\n| Task | Reason |\n|---|---|".into());
             out.extend(failed);
         }
-        let stuck: Vec<String> = self.tasks.iter().filter_map(|r| r.stuck.map(|a| format!("{} ({}, {})", link(r), r.task.state.name(), age(a)))).collect();
+        let stuck: Vec<String> = self.tasks.iter().filter_map(|r| r.stuck_age().map(|a| format!("{} ({}, {})", link(r), r.task.state.name(), age(a)))).collect();
         if !stuck.is_empty() {
             out.push(String::new());
             out.push(format!("Stuck: {}", stuck.join(", ")));
@@ -907,7 +991,7 @@ mod tests {
     #[test]
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
-        let mut r = Row { worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
+        let mut r = Row { heartbeat: Value::Null, worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
             executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
@@ -931,7 +1015,7 @@ mod tests {
     fn codex_thread_links_only_on_its_host_else_dashq_progress() {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
-        let row = |host: &str| Row { worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
+        let row = |host: &str| Row { heartbeat: Value::Null, worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
             executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
@@ -978,7 +1062,7 @@ mod tests {
 
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
-        let row = |n, stuck| Row { worker: None, conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
+        let row = |n, stuck| Row { heartbeat: Value::Null, worker: None, conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
             execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
@@ -1111,7 +1195,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         for (raw, k) in cases { assert_eq!(wait_text(raw), WAIT_TEXTS[k], "{raw}"); }
         // status text and row JSON: owner text only in the row, raw reason kept in --json
         let raw = cases[11].0;
-        let row = Row { worker: None, conversation: None, n: 1, title: "T".into(), url: "u1".into(), task: Task { state: State::Doing, ..Default::default() }, execution_wait: Some(raw.into()), ..Default::default() };
+        let row = Row { heartbeat: Value::Null, worker: None, conversation: None, n: 1, title: "T".into(), url: "u1".into(), task: Task { state: State::Doing, ..Default::default() }, execution_wait: Some(raw.into()), ..Default::default() };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert!(text.contains("| doing · Run state unknown; see service log |") && !text.contains("termination") && !text.contains("execution 3"), "{text}");
@@ -1144,6 +1228,47 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         let snap = from_views("board", &crate::board::Fake::default(), &crate::tests::cfg(), 1000, &[v], &[]);
         let roles: Vec<_> = snap.tasks[0].executions.iter().map(|x| (x["attempt"].as_u64(), x["role"].as_str())).collect();
         assert!(roles.contains(&(Some(11), Some("reviewer"))), "{roles:?}");
+    }
+
+    // R6/R12, #2173: a fresh lease must not hide missing execution progress.
+    // R6/R12, #2173 note 6574454403: an accepted board answer is not a native executor.
+    #[test]
+    fn logical_doing_after_answer_waits_for_an_exact_execution() {
+        let log=vec![core::Entry{id:5,body:"taskq: spawn worker codex:invented win".into(),edited:false},
+            core::Entry{id:6,body:"taskq: accepted 5 attempt 5".into(),edited:false},
+            core::Entry{id:7,body:"taskq: ask attempt 5\nDone: checked\nProblem: owner decision".into(),edited:false},
+            core::Entry{id:8,body:"taskq: released 5 exit attempt 5".into(),edited:false},
+            core::Entry{id:9,body:"taskq: answer\nContinue".into(),edited:false}];
+        let v=View{issue:board::Issue{number:1,..Default::default()},projection:core::project(1,&log,false),log:log.clone(),comments:vec![],blockers:vec![]};
+        let host=board::Issue{trusted:true,title:"taskq host win".into(),updated:1000,body:"#1 5".into(),..Default::default()};
+        let row=from_views("board",&crate::board::Fake::default(),&crate::tests::cfg(),1000,&[v],&[host]).tasks[0].json();
+        assert_eq!(row["state"],"doing");assert!(row["executions"].is_null());
+        assert_eq!(row["heartbeat"]["executor"]["state"],"awaiting execution");
+        assert!(row["heartbeat"]["executor"]["reason"].as_str().unwrap().contains("input recorded"));
+        assert_eq!(row["stuck"],false,"ordinary delivery wait is not a failed task");
+        assert_eq!(core::executions(1,&log).len(),1,"projection cannot submit another execution");
+        let mut log=log;
+        log.push(core::Entry{id:10,body:"taskq: executing 9 attempt 5".into(),edited:false});
+        log.push(core::Entry{id:11,body:"taskq: accepted 10 attempt 5".into(),edited:false});
+        let v=View{issue:board::Issue{number:1,..Default::default()},projection:core::project(1,&log,false),log,comments:vec![],blockers:vec![]};
+        let host=board::Issue{trusted:true,title:"taskq host win".into(),updated:1000,
+            body:format!("#1 5\nexecution {}",json!({"task":1,"attempt":5,"id":10,"through":9,"state":"running","reason":"native executor observed"})),..Default::default()};
+        for (now,expected) in [(1000,"active"),(1301,"unknown")] {
+            let row=from_views("board",&crate::board::Fake::default(),&crate::tests::cfg(),now,std::slice::from_ref(&v),std::slice::from_ref(&host)).tasks[0].json();
+            assert_eq!(row["heartbeat"]["executor"]["state"],expected,"a stale remote executor cannot read active");
+        }
+    }
+
+    #[test]
+    fn heartbeat_health_is_explicit_even_without_an_execution_row() {
+        let log=vec![core::Entry{id:5,body:"taskq: spawn worker codex:- mac".into(),edited:false}];
+        let v=View{issue:board::Issue{number:1,..Default::default()},projection:core::project(1,&log,false),log,comments:vec![],blockers:vec![]};
+        let snap=from_views("board",&crate::board::Fake::default(),&crate::tests::cfg(),1000,&[v],&[]);
+        let row=snap.tasks[0].json();
+        assert_eq!(row["heartbeat"]["freshness"],"unknown");
+        assert!(row["heartbeat"]["reason"].as_str().unwrap().contains("missing"));
+        assert!(row["heartbeat"]["warning"].is_string());
+        assert_eq!(row["state"],"doing","health never changes board state");
     }
 
     #[test]
@@ -1191,7 +1316,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
             assert_eq!((got, why.as_str()), (state, reason), "{name}");
             if got == "ended" { continue; }
             // the owner publishes `execution_statuses` rows; the reader and the tray read them back through `execution_status`
-            let row = ExecutionStatus { task: 1, attempt: 5, id: 7, through: 7, state: got.into(), reason: why.clone() };
+            let row = ExecutionStatus { progress: None, task: 1, attempt: 5, id: 7, through: 7, state: got.into(), reason: why.clone() };
             let issue = board::Issue { body: format!("execution {}", serde_json::to_string(&row).unwrap()), ..host(10) };
             let v = execution_status(1, &exec(), &[issue.clone()], 1000, 300);
             assert_eq!((v["state"].as_str(), v["reason"].as_str()), (Some(got), Some(why.as_str())), "{name} via heartbeat");

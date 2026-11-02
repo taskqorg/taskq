@@ -22,3 +22,14 @@
 .tqp-task-head .tqp-meta{white-space:normal}
 .tqp-task{display:block;width:100%;padding:5px 4px;overflow-wrap:anywhere}
 @media(pointer:coarse){.tqp button,.tqp a{min-width:44px;min-height:44px}}
+
+/* R6: a health change must not displace the task's identity, title or session. */
+.task-health-warning{display:inline-flex;align-items:center;justify-content:center;flex:0 0 1em;width:1em;height:1em;color:var(--ask);}
+.task-health-warning svg{width:1em;height:1em;}
+.task-health dl{display:grid;grid-template-columns:minmax(6em,1fr) minmax(0,2fr);gap:.2em .6em;margin:.4em 0;}
+.task-health dt,.task-health dd{margin:0;overflow-wrap:anywhere;}
+.task-health-warning{position:relative;}
+.task-health-tip{display:none;position:absolute;z-index:20;right:0;top:100%;width:max-content;max-width:min(32ch,70vw);padding:.4em;background:var(--surface);color:inherit;border:1px solid currentColor;white-space:normal;font-size:.85em;text-align:left;}
+.task-health-warning:hover .task-health-tip,.task-health-warning:focus .task-health-tip,.conversation-row:focus .task-health-tip{display:block;}
+
+.conversation-row .task-health-tip{left:0;right:auto;}

@@ -112,6 +112,7 @@ module.exports=execution.module('taskDashboard',{
     const p=view.S.projects.find(p=>p.root===t.root),pinned=views.pinned(api.model(),api.ref(t));
     return h(Fragment,null,h('div',{class:'popover-heading'},app.answerSlot(t,false),button(pinned?'pin-off':'pin',pinned?'Unpin task':'Pin task',{'data-a':'task-pin','aria-pressed':String(pinned)}),button('x','Close task details',{'data-a':'popup-close'})),
      t.wait&&h('p',{role:'status'},t.wait),t.publication?.reason&&!t.wait&&h('p',{role:'status'},t.publication.reason),t.enqueued&&!t.publication?.reason&&h('p',{class:'meta'},'CI progress unknown in this snapshot.'),t.failed&&h('p',{class:'alert'},t.failed),t.later&&!t.until&&h('p',{role:'status'},t.later),api.question(t),t.result&&h('p',{class:'task-card-text'},'Result: '+t.result),
+     require('./task-health.js').details(t),
      h('div',{class:'task-destinations'},blocks.destinations(t).map(d=>d.url?h('a',{href:d.url,'data-url':d.url,'data-destination':d.kind},icon(d.kind==='native'?'external-link':'network'),d.label):h('p',{class:'meta','data-destination':d.kind},d.label+' unavailable: '+d.reason))),
      (t.blocked||[]).map(b=>h('p',null,h('a',{href:b.url,'data-url':b.url},b.ref),' · '+b.reason)),
      h('div',{class:'row-actions'},t.state==='held'&&app.startButton([t]),h('span',{dangerouslySetInnerHTML:{__html:require('./task-controls.js').render(t,{key:t.key,url:t.url,board:p.board_kind,except:['start']})}})),

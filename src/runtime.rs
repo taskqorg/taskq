@@ -1,6 +1,7 @@
 //! Runtimes: stdin briefs or file-backed Claude background input (taskq.md section 8).
 
 pub mod protected_app_server;
+pub mod progress;
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -66,6 +67,8 @@ pub fn session_name(l: &Launch) -> String {
 
 /// A running child; a trait so the service can be tested with fake processes.
 pub trait Proc {
+    /// Read-only progress source and current input byte boundary; never an execution verdict.
+    fn progress_source(&self)->Result<(PathBuf,u64),String> {Err("native progress source unavailable".into())}
     fn job(&self)->Option<String> {None}
     /// Save missing native recovery identity after launch without surrendering the handle on failure.
     fn checkpoint(&mut self, _cfg:&crate::service::Config, _launch:&Launch, _execution:u64)->Result<(),String> { Err("native recovery checkpoint unsupported".into()) }
@@ -498,6 +501,7 @@ impl CliTurn {
 }
 
 impl Proc for CliTurn {
+    fn progress_source(&self)->Result<(PathBuf,u64),String> {if self.accepted {Ok((self.log.clone(),self.start))} else {Err("native input not accepted".into())}}
     fn refused(&self,task:u64,attempt:u64,execution:u64,code:i32)->Option<String> {
         use std::io::{Seek,SeekFrom};
         if code<=0 || self.accepted || self.read_error.is_some() {return None;}
@@ -1892,6 +1896,7 @@ impl ClaudeTurn {
 }
 
 impl Proc for ClaudeTurn {
+    fn progress_source(&self)->Result<(PathBuf,u64),String> {if self.accepted {Ok((self.log.clone(),0))} else {Err("native input not accepted".into())}}
     fn checkpoint(&mut self,cfg:&crate::service::Config,l:&Launch,execution:u64)->Result<(),String> {
         self.recovery=Some(Recovery {install:cfg.install.clone(),root:cfg.root.clone(),task:l.task,attempt:l.attempt,execution,runtime:l.rt.clone()});
         let rows=self.agents()?;
@@ -2188,6 +2193,9 @@ fn codex_direct() -> Command {
 }
 
 impl Proc for AppTurn {
+    fn progress_source(&self)->Result<(PathBuf,u64),String> {
+        self.rollout.clone().zip(self.history.progress_start).filter(|_|self.accepted).map(|(p,at)|(p,at)).ok_or("native progress source unavailable".into())
+    }
     fn accepted(&mut self) -> Result<bool, String> { Ok(self.accepted) }
     fn exited(&mut self) -> Result<Option<i32>, String> {
         if let Some(h) = &mut self.hand {
@@ -2371,6 +2379,7 @@ impl NativeHistory {
 
 #[derive(Default)]
 struct AppHistory {
+    progress_start: Option<u64>,
     reader: NativeHistory,
     floor:u64,
     count: usize,
@@ -2384,7 +2393,7 @@ struct AppHistory {
 /// Match this submission and its native turn id; another user turn cannot release its fence.
 impl AppHistory {
     fn read(&mut self,path:&Path,baseline:usize,input:&str,root:&Path,thread:&str)->Result<(bool,bool),String> {
-        let Self {reader,floor,count,current,owned,ended,aborted,identity}=self;
+        let Self {progress_start,reader,floor,count,current,owned,ended,aborted,identity}=self;
         let complete=reader.read_at(path,|v,at| {
             if v["type"] == "event_msg" && !v["payload"].is_object() {return Err("Codex rollout record shape invalid".into());}
             if v["type"] == "session_meta" {
@@ -2410,7 +2419,7 @@ impl AppHistory {
                         }
                         if p["turn_id"].as_str().is_some_and(|turn|turn!=id) {return Err("Codex submitted input has conflicting native turn identity".into());}
                         if owned.is_some() {return Err("Codex submitted input matches multiple native messages".into());}
-                        *owned=Some(id);
+                        *progress_start=Some(at);*owned=Some(id);
                     },
                     Some(kind @ ("task_complete"|"turn_aborted")) if owned.is_some() && p["turn_id"].as_str()==owned.as_deref()=>{
                         let cancelled=kind=="turn_aborted";

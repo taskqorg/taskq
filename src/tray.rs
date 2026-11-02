@@ -738,6 +738,16 @@ fn liveness(s: &Value, age: Option<u64>, ttl: i64, tasks: &mut [Value]) -> (Valu
     let mut hosts = s["hosts"].clone();
     for h in hosts.as_array_mut().into_iter().flatten() { row_live(h, "updated"); }
     for x in tasks.iter_mut().filter_map(|t| t.get_mut("executions").and_then(Value::as_array_mut)).flatten() { row_live(x, "observed"); }
+    for t in tasks {
+        let active=matches!(t["state"].as_str(),Some("doing"|"review"))&&t["attempt"].is_u64();
+        if let Some(h)=t.get_mut("heartbeat").filter(|h|h.is_object()) {
+            if let Some(now)=elapsed.zip(s["observed"].as_i64()).map(|(e,obs)|obs+e) {
+                crate::snapshot::refresh_heartbeat(h,now,active);
+            } else if active {
+                h["freshness"]=json!("unknown");h["warning"]=json!("heartbeat snapshot age unknown");
+            }
+        }
+    }
     (hosts, elapsed.is_some_and(|e| crate::snapshot::live(e, ttl)))
 }
 
@@ -1291,7 +1301,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let views_shots=snapshot.is_some() && routes.iter().any(|r|r=="views");
     if views_shots && routes.len()>1 {return Err("route views renders the View window alone; run it without other routes".into());}
     // #1699 A8: Conversations is the workspace surface, so its snapshot renders the workspace page alone at that window's size
-    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations");
+    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations"||r=="health-conversation");
     if conversation_shots && routes.len()>1 {return Err("route conversations renders the workspace alone; run it without other routes".into());}
     if snapshot.is_some()&&routes.iter().any(|r|r=="reports")&&routes.len()>1 {return Err("route reports renders its menu cases alone".into());}
     let mut settings = Settings::load(&install);
@@ -1497,7 +1507,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             Event::WindowEvent {window_id,..} if views_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
-                    .with_visible(snapshot.is_some()).with_inner_size(if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots && routes.iter().any(|r|r!="conversations") {LogicalSize::new(1280.0,760.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
+                    .with_visible(snapshot.is_some()).with_inner_size(if routes.iter().any(|r|r.starts_with("health-")) {if conversation_shots {LogicalSize::new(1100.0,900.0)} else {LogicalSize::new(420.0,900.0)}} else if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots && routes.iter().any(|r|r!="conversations") {LogicalSize::new(1280.0,760.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // ordinary snapshots render off-screen; opacity evidence must remain visible and unoccluded (R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots||opacity_shots{40.0}else{-20000.0}, if agentq_shots||opacity_shots{40.0}else{-20000.0})).with_always_on_top(opacity_shots).with_focused(false) } else { b };
                 #[cfg(windows)]
@@ -2380,7 +2390,11 @@ const CONVERSATIONS: [(&str, &str); 4] = [
 // M1.1: explicit native-alpha cases; a webview snapshot alone cannot capture window alpha.
 const OPACITY_SHOTS:[(&str,&str,u64);5]=[("/* opacity: off */","whole",100),("/* opacity: contrast */","whole",90),("/* opacity: minimum */","whole",60),("/* background: clear */","background",0),("/* background: half */","background",50)];
 const ROUTES: [&str; 26] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "notification-settings", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
-const REPORT_SHOTS:[(&str,&str);8]=[
+const REPORT_SHOTS:[(&str,&str);12]=[
+    ("health-list",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'list')")),
+    ("health-detail",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'detail')")),
+    ("health-recovered",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'recovered')")),
+    ("health-conversation",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'conversation')")),
     ("notifications-home",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'home')")),
     ("notifications-panel",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'panel')")),
     ("notifications-expanded",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'expanded')")),

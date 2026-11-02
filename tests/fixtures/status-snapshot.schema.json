@@ -56,6 +56,16 @@
           "labels": {"type": "array", "items": {"type": "string"}},
           "url": {"type": "string"},
           "revision": {"type": "integer"},
+          "heartbeat": {
+            "description": "Advisory host/attempt observation and native progress; never execution or admission authority.",
+            "type": ["object", "null"],
+            "properties": {
+              "source": {"type": "string"}, "observed": {"type": ["integer", "null"]},
+              "age_s": {"type": ["integer", "null"]}, "reason": {"type": "string"},
+              "freshness": {"enum": ["fresh", "stale", "unknown", "not applicable"]},
+              "warning": {"type": ["string", "null"]}, "progress": {"type": "object"}, "executor": {"type": "object"}
+            }
+          },
           "executions": {
             "type": "array",
             "items": {
