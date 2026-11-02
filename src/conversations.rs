@@ -209,10 +209,10 @@ pub(crate) fn task_header(row:&Value)->Value {
 
 struct Catalog {
     root:PathBuf, value:Value, at:Option<std::time::Instant>, epoch:u64,
-    pending:Option<(std::time::Instant,u64,std::sync::mpsc::Receiver<Value>)>,
+    pending:Option<(std::time::Instant,u64,std::sync::mpsc::Receiver<(std::time::Instant,Value)>)>,
 }
 static CATALOG:std::sync::OnceLock<std::sync::Mutex<Catalog>>=std::sync::OnceLock::new();
-fn catalog_unknown(reason:&str)->Value {json!({"items":[],"complete":false,"loading":true,"absence_complete":false,"reason":reason})}
+fn catalog_unknown(reason:&str)->Value {json!({"items":[],"complete":false,"absence_complete":false,"reason":reason})}
 fn catalog()->&'static std::sync::Mutex<Catalog> {
     CATALOG.get_or_init(||std::sync::Mutex::new(Catalog{root:PathBuf::new(),value:catalog_unknown("Reading conversation catalog"),at:None,epoch:0,pending:None}))
 }
@@ -221,20 +221,24 @@ fn invalidate_catalog(install:&Path) {
 }
 /// R12: one bounded catalog read off the event loop; a pre-mutation scan never proves absence after its receipt.
 pub(crate) fn observed(install:&Path)->Value {
-    use std::{sync::mpsc,time::{Duration,Instant}};
     let Ok(mut cache)=catalog().lock() else{return catalog_unknown("Conversation catalog lock unavailable")};
-    if cache.root!=install {cache.root=install.into();cache.value=catalog_unknown("Reading conversation catalog");cache.at=None;cache.pending=None;cache.epoch=cache.epoch.wrapping_add(1);}
-    if let Some((started,epoch,rx))=&cache.pending {match rx.try_recv(){
-        Ok(mut value)=>{let (started,epoch)=(*started,*epoch);cache.pending=None;if epoch==cache.epoch {value["absence_complete"]=json!(true);value["catalog_epoch"]=json!(epoch);cache.value=value;cache.at=Some(started);}},
-        Err(mpsc::TryRecvError::Disconnected)=>{cache.value=catalog_unknown("Conversation catalog read stopped; retrying");cache.pending=None;},
+    poll_catalog(&mut cache,install)
+}
+fn poll_catalog(cache:&mut Catalog,install:&Path)->Value {
+    use std::{sync::mpsc,time::{Duration,Instant}};
+    if cache.root!=install {cache.root=install.into();cache.value=catalog_unknown("Reading conversation catalog");cache.value["loading"]=json!(true);cache.at=None;cache.pending=None;cache.epoch=cache.epoch.wrapping_add(1);}
+    if let Some((_,epoch,rx))=&cache.pending {match rx.try_recv(){
+        Ok((finished,mut value))=>{let epoch=*epoch;cache.pending=None;if epoch==cache.epoch {value["absence_complete"]=json!(value["complete"]==true);value["catalog_epoch"]=json!(epoch);cache.value=value;cache.at=Some(finished);}},
+        Err(mpsc::TryRecvError::Disconnected)=>{cache.value["complete"]=json!(false);cache.value["absence_complete"]=json!(false);cache.value["loading"]=json!(false);cache.value["reason"]=json!("Conversation catalog read stopped; retrying");cache.pending=None;},
         Err(mpsc::TryRecvError::Empty)=>{}
     }}
     if cache.pending.is_none()&&cache.at.is_none_or(|at|at.elapsed()>=Duration::from_secs(2)) {
         let (tx,rx)=mpsc::sync_channel(1);let root=install.to_path_buf();cache.pending=Some((Instant::now(),cache.epoch,rx));
-        std::thread::spawn(move||{let value=coreq::telemetry::capture::operation("conversations.catalog.read",||Ok::<_,String>(summary(&root)),|_|"source-read").unwrap_or_else(|reason|catalog_unknown(&reason));let _=tx.send(value);});
+        std::thread::spawn(move||{let mut value=coreq::telemetry::capture::operation("conversations.catalog.read",||Ok::<_,String>(summary(&root)),|_|"source-read").unwrap_or_else(|reason|catalog_unknown(&reason));let finished=Instant::now();value["observed_at"]=json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d|d.as_millis() as u64));let _=tx.send((finished,value));});
     }
-    let mut value=cache.value.clone();
-    if cache.at.is_some_and(|at|at.elapsed()>=Duration::from_secs(4)){value["complete"]=json!(false);value["absence_complete"]=json!(false);value["reason"]=json!("Conversation catalog observation is stale; refresh pending");}
+    let mut value=cache.value.clone();value["refreshing"]=json!(cache.pending.is_some());value["observation_age_seconds"]=json!(cache.at.map(|at|at.elapsed().as_secs()));
+    if value["loading"]==true&&cache.pending.as_ref().is_some_and(|(started,_,_)|started.elapsed()>=Duration::from_secs(4)){value["loading"]=json!(false);value["reason"]=json!("Conversation catalog read has not completed; refresh pending");}
+    if cache.at.is_some_and(|at|at.elapsed()>=Duration::from_secs(4)){value["complete"]=json!(false);value["absence_complete"]=json!(false);if cache.value["complete"]==true {value["reason"]=json!("Conversation catalog observation is stale; refresh pending");}}
     value
 }
 
@@ -667,6 +671,44 @@ mod tests {
         fn attach(&self,id:&str,name:&str,mime:&str,data:&[u8])->Value {self.act(id,"attach",json!({"file":{"id":"invented-file","name":name,"mime":mime,"hash":"0".repeat(64),"bytes":data.len()},"data":STANDARD.encode(data)}))}
     }
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
+
+    #[test]
+    fn catalog_polling_ages_the_completed_read_and_preserves_failures() {
+        use std::{sync::mpsc,time::{Duration,Instant}};
+        let f=Fixture::new();let finished=Instant::now();let (tx,rx)=mpsc::sync_channel(1);
+        let mut c=Catalog{root:f.0.clone(),value:json!({"items":[],"complete":true}),at:Some(finished-Duration::from_secs(10)),epoch:7,pending:Some((finished-Duration::from_secs(8),7,rx))};
+        tx.send((finished,json!({"items":[],"complete":true,"observed_at":1000}))).unwrap();
+        let fresh=poll_catalog(&mut c,&f.0);
+        assert_eq!(fresh["complete"],true,"a completed read must not inherit eight seconds of launch/poll delay: {fresh}");
+        assert_eq!(fresh["refreshing"],false,"ordinary reads wait two seconds after actual completion");
+        assert_eq!(fresh["observed_at"],1000);
+        let (tx,rx)=mpsc::sync_channel(1);
+        {c.at=Some(finished-Duration::from_secs(5));c.pending=Some((finished,7,rx));}
+        let stale=poll_catalog(&mut c,&f.0);assert_eq!(stale["complete"],false);assert_eq!(stale["absence_complete"],false);assert_eq!(stale["refreshing"],true);assert!(stale["observation_age_seconds"].as_u64().unwrap()>=5);
+        tx.send((finished,json!({"items":[],"complete":false,"reason":"Invented permanent read failure"}))).unwrap();
+        let failure=poll_catalog(&mut c,&f.0);assert_eq!(failure["reason"],"Invented permanent read failure");assert_eq!(failure["absence_complete"],false);
+        let (hold,rx)=mpsc::sync_channel(1);
+        {c.at=Some(finished-Duration::from_secs(5));c.pending=Some((finished,7,rx));}
+        let old_failure=poll_catalog(&mut c,&f.0);assert_eq!(old_failure["reason"],"Invented permanent read failure","age cannot replace a genuine failure with a refresh notice");
+        drop(hold);
+        // A result completed long ago remains stale even when delivered to this poll only now.
+        let (tx,rx)=mpsc::sync_channel(1);
+        {c.pending=Some((finished,7,rx));}
+        tx.send((finished-Duration::from_secs(5),json!({"items":[],"complete":true}))).unwrap();
+        assert_eq!(poll_catalog(&mut c,&f.0)["complete"],false,"poll receipt cannot renew a source observation");
+        let (_,_,read)=c.pending.take().unwrap();read.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (hold,rx)=mpsc::sync_channel(1);
+        {c.at=None;c.value=catalog_unknown("Reading conversation catalog");c.value["loading"]=json!(true);c.pending=Some((finished-Duration::from_secs(5),7,rx));}
+        let stalled=poll_catalog(&mut c,&f.0);assert_eq!(stalled["loading"],false);assert_eq!(stalled["complete"],false);assert!(stalled["reason"].as_str().unwrap().contains("has not completed"),"a stalled first read cannot stay silently loading forever");
+        drop(hold);
+        let disconnected=poll_catalog(&mut c,&f.0);assert!(disconnected["reason"].as_str().unwrap().contains("read stopped"));
+        let (_,_,read)=c.pending.take().unwrap();read.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (tx,rx)=mpsc::sync_channel(1);
+        {c.epoch=8;c.at=None;c.value["absence_complete"]=json!(false);c.pending=Some((finished,7,rx));}
+        tx.send((finished,json!({"items":[],"complete":true}))).unwrap();
+        assert_eq!(poll_catalog(&mut c,&f.0)["absence_complete"],false,"pre-mutation scans never prove absence at a new epoch");
+        let (_,_,read)=c.pending.take().unwrap();read.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
 
     // R9/C4: per-draft runtime survives storage; a stale Send cannot freeze another runtime or erase work.
     #[test]

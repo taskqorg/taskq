@@ -27,10 +27,10 @@ const state={font:16,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   const ownerTime=log.locator('.dialogue-item.user time');assert.equal(await ownerTime.getAttribute('data-time-source'),iso);assert.equal(await ownerTime.getAttribute('datetime'),iso);
   assert.match(await ownerTime.getAttribute('title'),/31 Oct 2026.*19:00:30.*GMT\+07:00.*Asia\/Bangkok/);
   await ownerTime.focus();assert.match(await page.locator('.time-tooltip').innerText(),/You message.*19:00:30/);await page.keyboard.press('Escape');assert(await page.locator('.time-tooltip').isHidden());
-  const steps=log.locator('.dialogue-steps');assert.equal(await steps.locator('summary .time-unknown').textContent(),'Time unknown','latest group member cannot borrow earlier time');
+  const steps=log.locator('.dialogue-steps:not(.dialogue-setup)');assert.equal(await steps.locator('summary .time-unknown').textContent(),'Time unknown','latest group member cannot borrow earlier time');
   await steps.locator('summary').click();assert.equal(await steps.locator('p .relative-time').count(),2);assert.match(await steps.locator('p .time-unknown').getAttribute('title'),/Tool recorded.*unavailable/);
   assert.equal(await log.locator('.dialogue-item').filter({hasText:'Zone-less record'}).locator('.time-unknown').count(),1);
-  assert.equal(await log.locator('.dialogue-brief time').count(),1);
+  assert.equal(await log.locator('.dialogue-setup time').count(),1,'recorded brief keeps its own time in inspectable setup evidence');
   await page.locator('.conversation-info>summary').click();
   assert.equal(await page.locator('.dialogue-status time[aria-label^="Next scheduled turn"]').textContent(),'in 1h');
   assert.match(await page.locator('.dialogue-status time[aria-label^="Turn submitted"]').getAttribute('title'),/Turn submitted/);
@@ -70,6 +70,12 @@ const state={font:16,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
    const labels=page.locator('.dialogue-transcript time');assert(await labels.count()>0,engine+' '+width+'/'+font+'/'+theme+' '+await log.innerText()+' '+JSON.stringify(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-dialogue'&&m.action==='transcript').slice(-4)))) ;assert(await labels.first().evaluate(e=>getComputedStyle(e).fontSize)!=='0px');
    assert(await page.locator('.dialogue-status').evaluate(e=>e.scrollWidth<=e.clientWidth+1),'expanded time facts fit '+width+'/'+font+'/'+theme);
    const first=page.locator('.dialogue-transcript .dialogue-item').first();await first.scrollIntoViewIfNeeded();
+   await page.waitForFunction(()=>[...document.querySelectorAll('.dialogue-item>.meta,.document-author')].every(e=>{const t=e.querySelector('.relative-time');return !t||Math.abs(t.getBoundingClientRect().right-e.getBoundingClientRect().right)<2;}));
+   for(const metadata of await page.locator('.dialogue-item>.meta,.document-author').all()){
+    const stamp=metadata.locator('.relative-time');if(!await stamp.count())continue;
+    assert(await metadata.evaluate(e=>{const r=e.getBoundingClientRect(),t=e.querySelector('.relative-time').getBoundingClientRect();return Math.abs(t.right-r.right)<2;}),'A3 author left / time right at '+width+'/'+font+'/'+theme+' '+JSON.stringify(await metadata.evaluate(e=>({text:e.textContent,outer:e.getBoundingClientRect().toJSON(),time:e.querySelector('.relative-time').getBoundingClientRect().toJSON(),html:e.outerHTML.slice(0,300)}))));
+   }
+   assert.equal(await page.locator('.composer-destination .ui-icon svg').count(),1,'A2 recorded runtime icon stays mounted');
    assert(await first.locator('time').evaluate(e=>{const r=e.getBoundingClientRect();return r.right<=innerWidth+1&&r.width>0;}),'timestamp fits narrow reading pane');cells++;
   }
   if(out){await page.setViewportSize({width:940,height:740});await page.evaluate(()=>taskq.receive({...state,font:20,theme:'dark'}));await page.locator('.dialogue-transcript .dialogue-item').first().scrollIntoViewIfNeeded();await page.screenshot({path:path.join(out,engine+'-owner.png')});await page.locator('.dialogue-item.user time').focus();await page.screenshot({path:path.join(out,engine+'-exact-focus.png')});}

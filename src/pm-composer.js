@@ -32,7 +32,7 @@ const api=execution.module('pm-composer',{
     }
  },
  composer:function({text,disabled=false,id='pm-draft',field='text',label='Request draft',reason='',placeholder='Ask AI…',before,files,tools,after,onInput,onPaste,onDrop,onDragOver}){
-  return h('div',{class:'conversation-composer',onPaste,onDrop,onDragOver},before,h('label',{for:id,class:'sr-only'},label),h('textarea',{id,'data-c-field':field,rows:3,value:text,disabled,'aria-describedby':id==='conversation-draft'?'conversation-reason':id+'-reason',placeholder,onInput}),files,tools,h('p',{id:id==='conversation-draft'?'conversation-reason':id+'-reason',class:'meta'},reason),after);
+  return h('div',{class:'conversation-composer',onPaste,onDrop,onDragOver},before,h('label',{for:id,class:'sr-only'},label),h('textarea',{id,'data-c-field':field,rows:3,value:text,disabled,'aria-describedby':id==='conversation-draft'?'conversation-reason':id+'-reason',placeholder,onInput}),files,tools,h('p',{id:id==='conversation-draft'?'conversation-reason':id+'-reason',class:'meta',title:reason,'data-tooltip':true,tabIndex:reason?0:undefined},reason),after);
  },
  mount:function(el,adapter){
   let draft=adapter.load()||{text:''},pending=false,timer,serial=0,invalid=false;

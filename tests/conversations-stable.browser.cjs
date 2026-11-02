@@ -84,6 +84,68 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
   await page.evaluate(s=>{window.sent=[];window.fixture=s;window.ipc={postMessage:t=>{const m=JSON.parse(t);sent.push(m);if(m.a==='conversation-action'&&m.action==='save'){const c=fixture.conversations.items.find(c=>c.id===m.conversation);Object.assign(c,m.draft);c.revision++;queueMicrotask(()=>taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:fixture.conversations}}));}}};taskq.receive(s);},state);
  }
+ // #2168 A1: receipt text must not resize the reader or move its pinned input. Native/board effects are substituted.
+ await check('A1 status changes keep header, reader and composer geometry',async()=>{
+  await bootOwners();
+  for(const width of [940,350]){
+   await page.setViewportSize({width,height:740});
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   const geometry=()=>page.evaluate(()=>Object.fromEntries(['.thread-head','.conversation-reader','.conversation-composer'].map(s=>{const r=document.querySelector(s).getBoundingClientRect();return [s,[r.x,r.y,r.width,r.height]];})));
+   const before=await geometry();
+   assert.doesNotMatch(await page.locator('.feedback-message').getAttribute('title'),/\[object Object\]/,'stale source diagnostics remain text');
+   const out=process.env.TASKQ_EVIDENCE_2168;if(out&&width===940){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:out+'/bundle-idle.png'});}
+   await page.locator('[data-c=reply]').click();await page.waitForFunction(()=>sent.some(m=>m.action==='reply'));
+   const op=await page.evaluate(()=>sent.filter(m=>m.action==='reply').at(-1));
+   await page.evaluate(id=>taskq.receive({conversationReceipt:{id,state:'unknown',reason:'Invented delivery unavailable. Preserve the original operation and draft. '.repeat(6)}}),op.id);
+   assert.deepEqual(await geometry(),before,'long receipt cannot displace the reading viewport at '+width);
+   assert.equal(await page.locator('[data-c-field=text]').inputValue(),'Independent draft');
+   assert(await page.locator('[data-c=retry-save]').isVisible(),'full recovery remains reachable');
+   assert(await page.locator('[data-c-field=text]').evaluate(e=>{const r=e.getBoundingClientRect();return e===document.elementFromPoint(r.x+r.width/2,r.y+r.height/2); }),'notice never overlays the input');
+   await page.locator('.feedback-message').focus();
+   assert.match(await page.locator('.time-tooltip').innerText(),/Invented delivery unavailable.*Preserve the original operation and draft/,'keyboard focus exposes the full receipt');
+   await page.keyboard.press('Escape');
+   if(out&&width===940)await page.screenshot({path:out+'/bundle-unknown.png'});
+   assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='reply').length),1,'feedback never replays input');
+   await bootOwners();
+   const idle=await geometry();
+   await page.evaluate(()=>taskq.receive({...fixture,ai:{...fixture.ai,error:'Invented workspace failure'}}));
+   await page.evaluate(()=>taskq.receive({workspaceLocalError:'Invented draft save failure'}));
+   assert.deepEqual(await geometry(),idle,'workspace and local errors cannot resize the reader');
+   assert.match(await page.locator('.feedback-message[role=alert]').innerText(),/Invented workspace failure/);
+   assert.match(await page.locator('.feedback-message[role=alert]').innerText(),/Invented draft save failure/,'a second failure remains visible and announced');
+   await page.evaluate(()=>taskq.receive({workspaceLocalError:{reason:'Invented object-shaped failure'}}));
+   assert.match(await page.locator('.feedback-message[role=alert]').innerText(),/Invented object-shaped failure/,'structured failures retain their readable reason');
+   assert.doesNotMatch(await page.locator('.feedback-message').innerText(),/\[object Object\]/,'status diagnostics never expose object coercion');
+   await bootOwners();
+  }
+ });
+ await page.setViewportSize({width:940,height:740});
+ await check('A1 catalog polling is quiet; stale failure has one stable recovery location',async()=>{
+  await bootOwners();const input=page.locator('[data-c-field=text]');
+  await input.focus();await input.evaluate(e=>e.setSelectionRange(2,6));
+  const before=await input.boundingBox(),observed=Date.now()-10000;
+  const catalog=async patch=>page.evaluate(patch=>taskq.receive({...fixture,conversations:{...fixture.conversations,...patch}}),patch);
+  await catalog({complete:true,refreshing:true,observed_at:observed});
+  assert.doesNotMatch(await page.locator('.feedback-message').innerText(),/refresh|catalog/i,'ordinary background refresh is quiet');
+  await catalog({complete:false,loading:true,reason:'Reading conversation catalog'});
+  assert.doesNotMatch(await page.locator('.conversations').innerText(),/Reading conversation catalog/,'initial in-flight read is not a warning');
+  assert(await page.locator('[data-c=reply]').isDisabled(),'unknown catalog still fences Send');
+  const reason='Conversation catalog observation is stale; refresh pending';
+  await catalog({complete:false,loading:false,refreshing:true,reason,observed_at:observed});
+  assert.equal(await page.getByText(reason,{exact:true}).count(),1,'stale diagnosis appears once');
+  assert(await page.getByRole('button',{name:'Refresh conversation catalog',exact:true}).isVisible());
+  assert.match(await page.locator('.catalog-observed time').getAttribute('title'),/Conversation catalog read completed/);
+  await page.evaluate(()=>{window.feedbackMutations=0;new MutationObserver(rows=>feedbackMutations+=rows.length).observe(document.querySelector('.feedback-message'),{childList:true,characterData:true,subtree:true});});
+  await catalog({complete:false,loading:false,refreshing:true,reason,observed_at:observed});
+  assert.equal(await page.evaluate(()=>feedbackMutations),0,'unchanged polling does not repeat the live announcement');
+  assert.deepEqual(await input.boundingBox(),before,'poll transitions never displace the input');
+  assert.equal(await input.inputValue(),'Independent draft');assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[2,6]);
+  await catalog({complete:false,loading:false,reason:'Invented permanent read failure',observed_at:observed});
+  assert.equal(await page.getByText('Invented permanent read failure',{exact:true}).count(),1,'a genuine failure stays visible during refresh');
+  await catalog({complete:true,loading:false,refreshing:false,reason:''});
+  assert.equal(await page.getByRole('button',{name:'Refresh conversation catalog',exact:true}).count(),0);
+  assert.doesNotMatch(await page.locator('.feedback-message').innerText(),/stale|permanent read failure/);
+ });
  for(const action of ['archive','delete','fork'])await check('Q-A8 '+action+' completion follows resulting selection',async()=>{
   await bootOwners();
   if(action==='delete'){
