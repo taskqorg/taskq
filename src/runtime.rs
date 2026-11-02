@@ -1618,8 +1618,9 @@ pub(crate) fn claude_failure(row: &serde_json::Value, root: &Path, id: &str, hom
     crate::profile::class(detail.as_deref().unwrap_or_default())
 }
 
-/// The session's transcript in the default home or a § 3 runtime account's home.
-fn claude_transcript(session: &str) -> Option<PathBuf> {
+/// Attempt-bound reads use their exact home; display discovery may search all homes.
+fn claude_transcript(session: &str, home: Option<&Path>) -> Option<PathBuf> {
+    if let Some(home) = home { return claude_transcript_in(home, session).ok(); }
     crate::runtime::accounts::homes("claude").iter().find_map(|home| claude_transcript_in(home,session).ok())
 }
 
@@ -1820,7 +1821,8 @@ impl ClaudeTurn {
             // The caller releases the previous execution before continuation; reject contradictory native liveness.
             if claude_pid(row)?.is_some() { return Err("Claude session is still running; no copy started".into()); }
             expected_id = Some(row["id"].as_str().ok_or("Claude background ID missing")?.to_string());
-            let path = claude_transcript(&l.session).ok_or("Claude saved permissions unavailable")?;
+            let home = crate::runtime::accounts::log_home("claude", log).or_else(claude_home);
+            let path = claude_transcript(&l.session, home.as_deref()).ok_or("Claude saved permissions unavailable")?;
             let mut mode=None;
             before=claude_history(&path,0,|v|{if let Some(m)=v["permissionMode"].as_str() {mode=Some(m.to_owned());}})?;
             let mode=mode.ok_or("Claude saved permission mode unknown")?;
@@ -1993,7 +1995,7 @@ impl ClaudeTurn {
             self.announced = true;
         }
         self.pid = claude_pid(row)?.unwrap_or(self.pid);
-        let path = claude_transcript(&self.session).ok_or("Claude transcript unavailable; completion unknown")?;
+        let path = claude_transcript(&self.session, self.native_home().as_deref()).ok_or("Claude transcript unavailable; completion unknown")?;
         if !self.history.read(&path,self.before,&self.input,&self.log)? {return Ok(None);}
         self.accepted=true;
         if row["status"]!="idle" && row["state"]!="done" && row["state"]!="blocked" {return Ok(None);}
@@ -2071,7 +2073,7 @@ fn opened(windows: bool, code: Option<i32>) -> bool {
 
 /// Only a URL registered by the native session is a Remote Control link.
 pub fn claude_remote(session: &str) -> Option<String> {
-    let path=claude_transcript(session)?;let mut reader=NativeHistory::default();let mut found=None;
+    let path=claude_transcript(session,None)?;let mut reader=NativeHistory::default();let mut found=None;
     let until=observation_deadline(std::time::Duration::from_secs(5));
     loop {
         let complete=reader.read(&path,|v| {
@@ -2088,7 +2090,8 @@ pub fn claude_remote(session: &str) -> Option<String> {
 pub fn claude_background(root: &Path, session: &str, home: Option<&Path>) -> Result<bool, String> {
     if claude_agents_in(root, home)?.iter().any(|v| v["sessionId"] == session) { return Ok(true); }
     // A missing native job must not silently resume a background conversation in print mode.
-    Ok(claude_transcript(session).and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|text|
+    let home = home.map(Path::to_path_buf).or_else(claude_home);
+    Ok(claude_transcript(session, home.as_deref()).and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|text|
         text.lines().filter_map(|s| serde_json::from_str::<serde_json::Value>(s).ok()).any(|v| v["sessionKind"] == "bg")))
 }
 
@@ -3501,6 +3504,7 @@ finally:
                 .env("TASKQ_ACCOUNT_FIXTURE", &dir).env("TASKQ_ACCOUNT_MODE", mode)
                 .env("TASKQ_INSTALL", dir.join("install")).env("HOME", &dir).env("USERPROFILE", &dir)
                 .env_remove("CLAUDE_CONFIG_DIR").env_remove("CODEX_HOME");
+            c.env("PATH", std::env::join_paths(std::iter::once(dir.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()))).unwrap());
             if mode == "explicit-default" { c.env("CLAUDE_CONFIG_DIR", dir.join(".claude")); }
             if mode == "custom" || mode == "unreadable" { c.env("CLAUDE_CONFIG_DIR", dir.join("custom")); }
             if mode == "nested" { c.env("CLAUDE_CONFIG_DIR", dir.join(".claude/taskq-accounts/work")); }
@@ -3527,9 +3531,9 @@ finally:
         let bin = root.join(if cfg!(windows) { "claude.cmd" } else { "claude" });
         // Invented status only: the fallback is logged in, every explicit home starts empty.
         let script = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"--version\" (echo 2.1.316\r\nexit /b 0)\r\nif not defined CLAUDE_CONFIG_DIR (echo {\"loggedIn\":true}\r\nexit /b 0)\r\nif exist \"%CLAUDE_CONFIG_DIR%\\fixture-status\" (type \"%CLAUDE_CONFIG_DIR%\\fixture-status\") else (echo {\"loggedIn\":false})\r\n"
+            "@echo off\r\nif \"%1\"==\"agents\" (echo []\r\nexit /b 0)\r\nif \"%1\"==\"--version\" (echo 2.1.316\r\nexit /b 0)\r\nif not defined CLAUDE_CONFIG_DIR (echo {\"loggedIn\":true}\r\nexit /b 0)\r\nif exist \"%CLAUDE_CONFIG_DIR%\\fixture-status\" (type \"%CLAUDE_CONFIG_DIR%\\fixture-status\") else (echo {\"loggedIn\":false})\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 2.1.316; exit; fi\nif [ \"${CLAUDE_CONFIG_DIR+x}\" != x ]; then echo '{\"loggedIn\":true}'; elif [ -f \"$CLAUDE_CONFIG_DIR/fixture-status\" ]; then cat \"$CLAUDE_CONFIG_DIR/fixture-status\"; else echo '{\"loggedIn\":false}'; fi\n"
+            "#!/bin/sh\nif [ \"$1\" = agents ]; then echo '[]'; exit; fi\nif [ \"$1\" = --version ]; then echo 2.1.316; exit; fi\nif [ \"${CLAUDE_CONFIG_DIR+x}\" != x ]; then echo '{\"loggedIn\":true}'; elif [ -f \"$CLAUDE_CONFIG_DIR/fixture-status\" ]; then cat \"$CLAUDE_CONFIG_DIR/fixture-status\"; else echo '{\"loggedIn\":false}'; fi\n"
         };
         std::fs::write(&bin, script).unwrap();
         #[cfg(unix)] std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
@@ -3560,6 +3564,22 @@ finally:
         if mode == "named" || mode == "custom" || mode == "nested" {
             std::fs::write(selected.join("fixture-status"), r#"{"loggedIn":true}"#).unwrap();
             check("logged in");
+        }
+        if mode == "named" {
+            let session = uuid();
+            let default_dir = base.join("projects/default");
+            let work_dir = work.join("projects/work");
+            std::fs::create_dir_all(&default_dir).unwrap();
+            std::fs::create_dir_all(&work_dir).unwrap();
+            let default_path = default_dir.join(format!("{session}.jsonl"));
+            let work_path = work_dir.join(format!("{session}.jsonl"));
+            std::fs::write(&default_path, r#"{"sessionKind":"bg","permissionMode":"bypassPermissions"}"#).unwrap();
+            assert!(!claude_background(&root, &session, Some(&work)).unwrap(), "missing named history cannot borrow default background state");
+            std::fs::write(&work_path, r#"{"permissionMode":"dontAsk"}"#).unwrap();
+            assert_eq!(claude_transcript(&session, Some(&work)), Some(work_path.clone()), "saved permissions stay in their account");
+            assert!(!claude_background(&root, &session, Some(&work)).unwrap(), "duplicate session stays in its account");
+            std::fs::write(&work_path, r#"{"sessionKind":"bg","permissionMode":"dontAsk"}"#).unwrap();
+            assert!(claude_background(&root, &session, Some(&work)).unwrap());
         }
         if mode == "named" {
             std::fs::write(&policy, r#"{"claude":[{"label":"default","enabled":true},{"label":"work","enabled":false}]}"#).unwrap();

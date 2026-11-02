@@ -148,7 +148,7 @@ Only completion attested with the same release key or a verified later boot rele
 Queued expired/dead callers never start; terminal receipts have bounded retention.
 [Consumer protocol](docs/design/external-slots.md#contract-detail).
 ### Runtime accounts
-Each host keeps, per CLI runtime (`claude`, `codex`), an ordered list of named login homes in `<install>/accounts.json`, each enabled or disabled; no list means one `default` account, the runtime's own home. Login probes and native turns preserve the default home variable's presence or absence; an implicit default never forces a config-home override. A new start uses the first enabled account that is not usage-limited; a resume, recovery or running child keeps the account its attempt log names.
+Each host keeps, per CLI runtime (`claude`, `codex`), an ordered list of named login homes in `<install>/accounts.json`, each enabled or disabled; no list means one `default` account, the runtime's own home. A new start uses the first enabled account that is not usage-limited; a resume, recovery or running child keeps the account its attempt log names.
 A usage limit before work (§ 2 `usage-limit`) on one account moves the runtime to the next enabled account on that host without spending a retry; the § 4 usage-limit hold applies only when none is left. Every switch goes to the service log and telemetry.
 `taskq accounts` lists every host's accounts; enable, disable, reorder and add (a device login into a new TaskQ-owned home) write only the local host, never copy a login and never print a token. An account email is read only on its own host; the heartbeat carries labels and state, never email. [Detail](docs/design/capacity.md#runtime-accounts).
 ## 4. Service

@@ -6,8 +6,9 @@ The owner request and acceptance are [#2166](https://github.com/taskqorg/taskq/i
 
 ## Applied contract
 
-R13: clarified §3 Runtime accounts before implementation. R8 keeps the linked
-capacity detail consistent. R9: no login, credential/config copy, account migration,
+R13: clarified the linked §3 Runtime accounts detail before implementation; the
+existing root decision (runtime own default; default keeps service value) is
+unchanged. R8 keeps the linked capacity detail consistent. R9: no login, credential/config copy, account migration,
 provider, model, grant or capacity changes. R12 separates adapter regressions from
 native service admission and merge-result CI.
 
@@ -56,13 +57,39 @@ ordinary default, custom override, inherited named override, multi-account choic
 and malformed native status. Empty explicit homes cannot borrow the fallback's
 invented login. Named/custom status changes are read only in their exact home.
 Policy changes retain a resumed attempt's original account, native session,
-input file and pending input-binding bytes.
+input file and pending input-binding bytes. Attempt-bound transcript lookups stay
+in that account; global lookup remains only for display discovery. A duplicate
+session in the default home cannot supply a named attempt's background state or
+saved permissions.
 
 After the fix, the same command passed: `1 passed; 0 failed` (six isolated
-environment scenarios, 1.13 seconds execution on this Mac; warm build 45.22 seconds).
+environment scenarios including duplicate-session isolation, 1.16 seconds execution
+on this Mac; warm build 21.72 seconds).
 
 The regression uses invented status responses. It does not qualify native auth,
 background launch, sandbox, native input acceptance, tool execution or other OSes.
+
+A read-only independent source review found that attempt-bound transcript reads
+still searched every account. The expanded regression reproduced the defect with
+one default-home background marker and no named-home transcript:
+
+```text
+missing named history cannot borrow default background state
+test result: FAILED. 0 passed; 1 failed
+```
+
+Resume permissions, turn observation and background fallback now bind the exact
+attempt/supplied home. Default-only, duplicate-session and named-only markers are
+covered; display-only session discovery retains its global lookup.
+
+## Candidate gate
+
+The first canonical invocation stopped before running the suite: its case-sensitive
+rule-ID matcher did not recognize the task's existing `section 3 runtime accounts`
+spelling as `§3 Runtime accounts`. The redundant root-contract amendment was
+removed; the existing default-home decision already requires this fix. The linked
+detail clarifies that decision. No rule matcher or task authority was changed.
+The gate is rerun on the corrected candidate and its added account-isolation check.
 
 ## Remaining native acceptance
 
