@@ -6880,9 +6880,10 @@ Open: none";
             let log = crate::runtime::log_path(&r, l);
             std::fs::create_dir_all(log.parent().unwrap()).unwrap();
             std::fs::write(&log, r#"{"type":"taskq.rules","phase":"start"}
-{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"python3 scripts/check.py","description":"Full check","run_in_background":true}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"echo ghp_aaaaaaaaaaaaaaaaaaaaaaaa","description":"Full check","run_in_background":true}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"Command running in background with ID: b1. Output is being written to: out"}]}}
-{"type":"assistant","message":{"content":[{"type":"text","text":"full check running, waiting"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"echo ghp_bbbbbbbbbbbbbbbbbbbbbbbb","run_in_background":true}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"Command running in background with ID: b2. Output is being written to: out"}]}}
 {"type":"result","subtype":"success","is_error":false}
 "#).unwrap();
             Ok(Box::new(FakeProc(flag)) as Box<dyn Proc>)
@@ -6897,6 +6898,8 @@ Open: none";
             s.pass().unwrap();
             let steers: Vec<_> = b.comments(n).unwrap().into_iter().filter(|c| c.body.starts_with(&format!("taskq: steer attempt {a}\n"))).collect();
             assert_eq!(steers.len(), k + 1, "one continuing steer per exit");
+            assert!(!steers[k].body.contains("ghp_"), "invented command tokens must never reach the board");
+            assert!(!steers[k].body.contains("echo"), "raw commands must never reach the board");
             assert!(steers[k].body.contains(BACKGROUND_STEER) && steers[k].body.contains("Full check") && steers[k].body.contains("foreground"), "{}", steers[k].body);
             assert_eq!((task(&b, n).state, task(&b, n).attempt, task(&b, n).retries), (State::Doing, Some(a), 0), "the attempt stays live, no retry spent");
             s.pass().unwrap();

@@ -383,7 +383,7 @@ pub fn live_background(log: &Path) -> Vec<String> {
             let id = c["id"].as_str().or(c["tool_use_id"].as_str()).unwrap_or_default().to_string();
             match (c["type"].as_str(), c["name"].as_str()) {
                 (Some("tool_use"), Some(name)) if name == "Monitor" || name == "Bash" && c["input"]["run_in_background"] == true => {
-                    let label = c["input"]["description"].as_str().or(c["input"]["command"].as_str()).unwrap_or(name);
+                    let label = c["input"]["description"].as_str().filter(|s| !s.trim().is_empty()).unwrap_or(name);
                     jobs.push((id, label.chars().take(80).collect()));
                 }
                 (Some("tool_use"), Some("TaskStop" | "KillShell" | "KillBash")) => {

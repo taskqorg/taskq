@@ -586,9 +586,22 @@ pub(crate) fn serve(install:&Path,read:&crate::link::Read)->Res<Value> {
 /// Principle 2: a peer is a live host of the listening project's board, so its read serves only that board, never
 /// another registered project of this host.
 pub(crate) fn serve_peer(install:&Path,root:&Path,read:&crate::link::Read)->Res<Value> {
+    serve_peer_with(install,root,read,|session,before,after|crate::dialogue::worker_transcript(session,&crate::runtime::attempt_log(root,"worker",read.task,read.attempt),before,after))
+}
+
+fn serve_peer_with(install:&Path,root:&Path,read:&crate::link::Read,page:impl FnOnce(&str,Option<u64>,Option<u64>)->Res<Value>)->Res<Value> {
     let (_,_,status)=live_status(root)?;
     if status["issues"]!=read.board.as_str() {return Err("Worker board is not the board of this host link".into())}
-    serve_root(install,root,&status,read)
+    let local=crate::host::Policy::read(install)?.me;
+    let mut value=worker_page(root,&local,&status,read,page)?;
+    // R12, section 7 rule 6: arbitrary tool output has no safe pattern-based redaction. Only view metadata and
+    // the worker adapter's validated tool name may cross the host boundary; local reads retain the body.
+    for item in value["items"].as_array_mut().into_iter().flatten().filter(|i|i["role"]=="tool") {
+        let output=item.get("result").is_some() || item.get("image").is_some();
+        item.as_object_mut().unwrap().retain(|k,_|matches!(k.as_str(),"role"|"text"|"at"|"i"|"updated"));
+        if output {item["text"]=json!("Tool output available only on its host");}
+    }
+    Ok(crate::link::fit(value,read.after.is_some()))
 }
 
 fn serve_root(install:&Path,root:&Path,status:&Value,read:&crate::link::Read)->Res<Value> {
@@ -1013,6 +1026,29 @@ mod tests {
         assert_eq!(serve_peer(&f.0,&roots[0],&read("board-a")).unwrap()["ended"],true);
         assert!(serve_peer(&f.0,&roots[0],&read("board-b")).unwrap_err().contains("not the board of this host link"));
         assert_eq!(serve(&f.0,&read("board-b")).unwrap()["ended"],true,"the local panel path is unchanged");
+    }
+
+    // #2225 A2: cross-host reads cannot export arbitrary result text, structured output or tool images.
+    #[test]
+    fn peer_reads_omit_tool_result_bodies() {
+        let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/worker-panel"}"#).unwrap();
+        fs::write(f.0.join("host.json"),"{}").unwrap();
+        let local=crate::host::Policy::read(&f.0).unwrap().me;
+        let status=json!({"pid":std::process::id(),"issues":"https://github.com/invented/worker-panel/issues","tasks_age_seconds":0,"complete":true,
+            "tasks":[{"n":7,"state":"doing","role":"worker","attempt":71,"session":format!("codex:native {local}")}]});
+        fs::write(root.join(".taskq/status.json"),status.to_string()).unwrap();
+        for after in [None,Some(0)] {
+            let read=crate::link::Read{board:status["issues"].as_str().unwrap().into(),task:7,attempt:71,before:None,after};
+            let value=serve_peer_with(&f.0,&root,&read,|_,_,_|Ok(json!({"start":0,"end":12,"size":12,"items":[
+                {"role":"tool","text":"result","result":"invented-unrecognized-secret","future_output":{"value":"invented-structured-secret"},"at":0,"i":0},
+                {"role":"tool","text":"image","image":{"src":"invented-private-image"},"at":0,"i":1},
+                {"role":"assistant","text":"done","at":0,"i":2}]}))).unwrap();
+            assert!(!value.to_string().contains("invented-"),"tool output must stay on its host");
+            assert_eq!(value["items"][2]["text"],"done");
+            assert_eq!(value["items"][1]["i"],1);
+            assert_eq!(value["end"],12);
+        }
     }
 
     // #1665 D4/D5: view reads of a launched conversation whose native transcript is missing stay unknown, never empty,
