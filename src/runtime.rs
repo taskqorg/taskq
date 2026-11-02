@@ -353,6 +353,54 @@ pub fn auth_rejected(log: &Path) -> Option<String> {
 /// A Codex turn that ended on a transient model failure (#1843, [transient model failure](docs/design/capacity.md#transient-model-failure)).
 pub fn transient_failure(log: &Path) -> Option<String> { agentq_runtime::agent::transient_failure(&events(log, 0)?) }
 
+/// #2198 [background job at turn end](docs/design/capacity.md#background-job-at-turn-end): the labels of the Claude
+/// background jobs (Bash `run_in_background`, Monitor) the last turn started and never saw end, oldest first. A job
+/// ends with a terminal `<task-notification>` for its tool use or task id, or a TaskStop/KillShell naming its task id;
+/// an errored start never ran. Empty when unreadable or none.
+pub fn live_background(log: &Path) -> Vec<String> {
+    let Ok(bytes) = std::fs::read(log) else { return vec![] };
+    let text = String::from_utf8_lossy(&bytes);
+    let lines: Vec<&str> = text.lines().collect();
+    let json = |l: &str| serde_json::from_str::<serde_json::Value>(l).ok();
+    let start = lines.iter().rposition(|l| l.contains("\"taskq.rules\"")
+        && json(l).is_some_and(|e| e["type"] == "taskq.rules" && matches!(e["phase"].as_str(), Some("start" | "resume")))).map_or(0, |i| i + 1);
+    let tag = |s: &str, t: &str| s.split_once(&format!("<{t}>")).and_then(|(_, r)| r.split_once(&format!("</{t}>"))).map(|(v, _)| v.trim().to_string());
+    let (mut jobs, mut ids, mut ended) = (Vec::<(String, String)>::new(), std::collections::BTreeMap::<String, String>::new(), std::collections::BTreeSet::<String>::new());
+    for l in &lines[start..] {
+        // the notification sits in queue, attachment or user records alike: read it from the raw line
+        for block in l.split("<task-notification>").skip(1) {
+            let block = block.split("</task-notification>").next().unwrap_or_default();
+            if tag(block, "status").is_some_and(|s| matches!(s.as_str(), "completed" | "failed" | "killed" | "stopped" | "error" | "timeout" | "expired")) {
+                ended.extend(tag(block, "tool-use-id").into_iter().chain(tag(block, "task-id")));
+            }
+        }
+        if !l.contains("tool_") { continue; }
+        let Some(e) = json(l) else { continue };
+        let Some(content) = e["message"]["content"].as_array().filter(|_| e["type"] == "assistant" || e["type"] == "user") else { continue };
+        for c in content {
+            let id = c["id"].as_str().or(c["tool_use_id"].as_str()).unwrap_or_default().to_string();
+            match (c["type"].as_str(), c["name"].as_str()) {
+                (Some("tool_use"), Some(name)) if name == "Monitor" || name == "Bash" && c["input"]["run_in_background"] == true => {
+                    let label = c["input"]["description"].as_str().or(c["input"]["command"].as_str()).unwrap_or(name);
+                    jobs.push((id, label.chars().take(80).collect()));
+                }
+                (Some("tool_use"), Some("TaskStop" | "KillShell" | "KillBash")) => {
+                    ended.extend(c["input"].as_object().into_iter().flat_map(|o| o.values()).filter_map(|v| v.as_str()).map(String::from));
+                }
+                (Some("tool_result"), _) if jobs.iter().any(|(j, _)| *j == id) => {
+                    if c["is_error"] == true { ended.insert(id); continue; }
+                    let out = c["content"].as_str().map(String::from).unwrap_or_else(|| c["content"].to_string());
+                    let task = ["with ID: ", "(task "].iter().find_map(|p| out.split_once(p))
+                        .map(|(_, r)| r.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect::<String>());
+                    ids.insert(id, task.unwrap_or_default());
+                }
+                _ => {}
+            }
+        }
+    }
+    jobs.into_iter().filter(|(j, _)| ids.get(j).is_some_and(|t| !ended.contains(j) && (t.is_empty() || !ended.contains(t)))).map(|(_, l)| l).collect()
+}
+
 /// `<install>/login-off/<bin>` (#1446): line 1 the `last_refresh` of `auth.json` when the login was rejected, line 2
 /// the reason. It reads not logged in until a re-login changes `last_refresh`.
 pub fn mark_login_off(install: &Path, bin: &str, reason: &str) -> std::io::Result<()> {
@@ -757,7 +805,9 @@ const CI_WAIT: &str = "Board budget: poll CI at most once a minute (`gh pr check
 
 /// taskq.md § 7 rule 4 checks: a full suite after each edit costs minutes; the project's testing doc names the fast form.
 const DEV_LOOP: &str = "While editing, run only the filtered checks of the project's development loop (its AGENTS.md or testing doc names the fast command);\n\
-     run the full project checks once on the result candidate, after the rebase.\n";
+     run the full project checks once on the result candidate, after the rebase.\n\
+     Run the full check in the foreground with a long timeout (Claude: Bash timeout 600000 ms), never run_in_background or Monitor:\n\
+     a turn end does not wait for its own background jobs, so a worker that ended its turn waiting on one lost its attempt as gone.\n";
 
 /// taskq.md § 7 rule 4 (#1842): workers chasing main rebased up to 5 times per attempt, each a rebuild, new shots and a full check.
 const PUBLISH_ONCE: &str = "Rebase on origin/main once, before the first push. After that, never rebase or rerun the full checks because main moved:\n\
@@ -3265,6 +3315,51 @@ finally:
         }
         let _ = std::fs::remove_file(&log);
         assert_eq!(transient_failure(&log), None, "an unreadable log is no failure");
+    }
+
+    // Chain: #2198 § 4 step 1 -> Claude log -> live background job at turn end -> continuing steer.
+    // Risk: a turn that ended while its own check ran goes `gone` again (#2176, #2180), or a finished,
+    // stopped or never-started job or an earlier turn's job keeps resuming the worker.
+    #[test]
+    fn live_background_reads_jobs_the_last_turn_left_running() {
+        let log = std::env::temp_dir().join(format!("taskq-background-{}.log", uuid()));
+        let start = r#"{"type":"taskq.rules","phase":"start"}"#;
+        let resume = r#"{"type":"taskq.rules","phase":"resume"}"#;
+        let bash = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"python3 scripts/check.py","description":"Full check","run_in_background":true}}]}}"#;
+        let fg = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_2","name":"Bash","input":{"command":"git status"}}]}}"#;
+        let fg_done = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"clean"}]}}"#;
+        let started = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"Command running in background with ID: b7x9. Output is being written to: out"}]}}"#;
+        let failed = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"denied"}]}}"#;
+        let monitor = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_3","name":"Monitor","input":{"description":"CI watch","command":"gh pr checks 1"}}]}}"#;
+        let monitor_started = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_3","content":[{"type":"text","text":"Monitor started (task m42, expires in 20m)"}]}]}}"#;
+        let done = r#"{"type":"queue-operation","content":"<task-notification>\n<task-id>b7x9</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>\n</task-notification>"}"#;
+        let running = r#"{"type":"queue-operation","content":"<task-notification>\n<task-id>b7x9</task-id>\n<status>running</status>\n</task-notification>"}"#;
+        let killed = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_4","name":"KillShell","input":{"shell_id":"b7x9"}}]}}"#;
+        let cases: [(Vec<&str>, Vec<&str>); 8] = [
+            (vec![start, fg, fg_done, bash, started], vec!["Full check"]),
+            (vec![start, bash, started, running], vec!["Full check"]),
+            (vec![start, bash, started, monitor, monitor_started], vec!["Full check", "CI watch"]),
+            (vec![start, bash, started, done], vec![]),
+            (vec![start, bash, started, killed], vec![]),
+            (vec![start, bash, failed], vec![]),
+            (vec![start, bash, started, resume, fg, fg_done], vec![]),
+            (vec![start, fg, fg_done], vec![]),
+        ];
+        for (lines, want) in cases {
+            let text = lines.join("\n") + "\n";
+            std::fs::write(&log, &text).unwrap();
+            assert_eq!(live_background(&log), want, "{text}");
+        }
+        let _ = std::fs::remove_file(&log);
+        assert!(live_background(&log).is_empty(), "an unreadable log has no live job");
+    }
+
+    // Chain: #2198 worker rule -> full check in the foreground. Risk: the brief drops the rule or its cause.
+    #[test]
+    fn worker_brief_runs_the_full_check_in_the_foreground() {
+        for part in ["foreground", "600000 ms", "never run_in_background or Monitor", "does not wait for its own background jobs", "gone"] {
+            assert!(DEV_LOOP.contains(part), "{part}");
+        }
     }
 
     // Chain: installed npm entrypoint -> exact native executable -> owned process identity.

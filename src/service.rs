@@ -707,6 +707,10 @@ const MONTH: i64 = 30 * 86400;
 const USAGE_PROBE: i64 = 1800;
 /// #1843: continuing steers per attempt after a transient model failure (§ 4 step 1).
 const CONTINUE_MAX: usize = 2;
+/// #2198: continuing steers per attempt after a Claude turn ended with its own live background job (§ 4 step 1).
+/// `ponytail:` a fixed bound keeps a worker that backgrounds again from looping; past it the exit is `gone`.
+const BACKGROUND_MAX: usize = 3;
+const BACKGROUND_STEER: &str = "Continue the task: the last turn ended while its own background jobs still ran";
 
 /// Host readback stays separate from a project's effective narrowing limits.
 pub fn host_capacity(capacity:&Value)->Option<Value> {
@@ -1451,8 +1455,11 @@ impl<'a> Service<'a> {
     /// #1843: the `steer` that resumes worker attempt `a` after a [transient model failure](docs/design/capacity.md#transient-model-failure)
     /// with its Codex session known; None past [`CONTINUE_MAX`] or when the board log is unread.
     fn continuation(&self, n: u64, t: &Task, a: u64) -> Option<String> {
-        if t.state != State::Doing || t.role.as_deref() != Some("worker") || !rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).codex) { return None; }
+        if t.state != State::Doing || t.role.as_deref() != Some("worker") { return None; }
         let log = crate::runtime::attempt_log(&self.cfg.root, "worker", n, a);
+        // #2198: a Claude Code transcript (the `remote` adapter) shows the background jobs its last turn left running.
+        if rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).remote) { return self.background_continuation(n, a, &log); }
+        if !rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).codex) { return None; }
         let failure = crate::runtime::transient_failure(&log)?;
         crate::runtime::codex_thread(&log)?;
         let head = core::entry("steer", &[], Some(a), "");
@@ -1460,6 +1467,21 @@ impl<'a> Service<'a> {
         (prior < CONTINUE_MAX).then(|| core::entry("steer", &[], Some(a), &format!(
             "Continue the task from where the last turn stopped; it failed on a transient model error: {}",
             crate::runtime::public_line(&failure, &self.cfg.root, 160))))
+    }
+
+    /// #2198: the `steer` that resumes Claude worker attempt `a` whose turn ended with its own
+    /// [live background job](docs/design/capacity.md#background-job-at-turn-end); None without one, past
+    /// [`BACKGROUND_MAX`] or when the board log is unread.
+    fn background_continuation(&self, n: u64, a: u64, log: &std::path::Path) -> Option<String> {
+        let jobs = crate::runtime::live_background(log);
+        if jobs.is_empty() { return None; }
+        let head = core::entry("steer", &[], Some(a), "");
+        let prior = crate::board::entries(self.board, n).ok()?.iter()
+            .filter(|e| !e.edited && e.body.lines().next() == Some(head.as_str()) && e.body.contains(BACKGROUND_STEER)).count();
+        (prior < BACKGROUND_MAX).then(|| core::entry("steer", &[], Some(a), &format!(
+            "{BACKGROUND_STEER}: {}. The turn end did not wait for them; finish each in the foreground with a long Bash timeout \
+             (600000 ms), never run_in_background or Monitor, then hand in.",
+            crate::runtime::public_line(&jobs.join("; "), &self.cfg.root, 160))))
     }
 
     /// § 4 step 5 (#1950): read each task gone from the open list once; a failed read or write retries next pass.
@@ -6702,6 +6724,57 @@ Open: none";
         s.pass().unwrap();
         assert!(b.comments(n).unwrap().iter().any(|c| c.body.starts_with(&format!("taskq: gone attempt {a}
 "))), "a third failure ends the attempt");
+        assert_eq!((task(&b, n).state, task(&b, n).retries), (State::Ready, 1));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Chain: #2198 Claude worker exit 0 while its own `run_in_background` check runs -> continuing `steer` ->
+    // same session resumes (§ 4 step 1). Risk: the attempt goes `gone` as in #2176 and #2180, a retry is spent,
+    // or a worker that keeps backgrounding loops past the bound.
+    #[test]
+    fn claude_turn_ending_with_its_own_background_check_resumes_instead_of_gone() {
+        let root = std::env::temp_dir().join(format!("taskq-background-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let b = Fake::default();
+        let mut c = Config { root: root.clone(), install: root.join("install"), ..cfg("mac") };
+        c.limits = BTreeMap::from([("claude".to_string(), 1)]);
+        let e: Exits = Default::default();
+        let resumes: Rc<RefCell<Vec<(String, Option<String>)>>> = Default::default();
+        let (seen, r, rs) = (e.clone(), root.clone(), resumes.clone());
+        let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |l: &Launch| {
+            let flag = Rc::new(RefCell::new(None));
+            seen.borrow_mut().push((l.task, flag.clone()));
+            rs.borrow_mut().push((l.session.clone(), l.resume.clone()));
+            let log = crate::runtime::log_path(&r, l);
+            std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+            std::fs::write(&log, r#"{"type":"taskq.rules","phase":"start"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"python3 scripts/check.py","description":"Full check","run_in_background":true}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"Command running in background with ID: b1. Output is being written to: out"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"full check running, waiting"}]}}
+{"type":"result","subtype":"success","is_error":false}
+"#).unwrap();
+            Ok(Box::new(FakeProc(flag)) as Box<dyn Proc>)
+        }));
+        s.focus = vec!["all".into()];
+        let n = b.create("A", "", &["taskq".into(), "run-claude".into()]).unwrap();
+        s.pass().unwrap();
+        let a = task(&b, n).attempt.unwrap();
+        let first = resumes.borrow()[0].0.clone();
+        for k in 0..3 {
+            *e.borrow()[k].1.borrow_mut() = Some(0);
+            s.pass().unwrap();
+            let steers: Vec<_> = b.comments(n).unwrap().into_iter().filter(|c| c.body.starts_with(&format!("taskq: steer attempt {a}\n"))).collect();
+            assert_eq!(steers.len(), k + 1, "one continuing steer per exit");
+            assert!(steers[k].body.contains(BACKGROUND_STEER) && steers[k].body.contains("Full check") && steers[k].body.contains("foreground"), "{}", steers[k].body);
+            assert_eq!((task(&b, n).state, task(&b, n).attempt, task(&b, n).retries), (State::Doing, Some(a), 0), "the attempt stays live, no retry spent");
+            s.pass().unwrap();
+            let (session, resume) = resumes.borrow()[k + 1].clone();
+            assert_eq!(session, first, "the same Claude session resumes");
+            assert!(resume.is_some_and(|r| r.contains(BACKGROUND_STEER)), "the steer reaches the session");
+        }
+        *e.borrow()[3].1.borrow_mut() = Some(0);
+        s.pass().unwrap();
+        assert!(b.comments(n).unwrap().iter().any(|c| c.body.starts_with(&format!("taskq: gone attempt {a}\n"))), "a fourth such exit ends the attempt");
         assert_eq!((task(&b, n).state, task(&b, n).retries), (State::Ready, 1));
         let _ = std::fs::remove_dir_all(&root);
     }
