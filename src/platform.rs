@@ -634,7 +634,7 @@ pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),Stri
     if let Some(r)=read("result") {
         let (sha,outcome)=r.split_once(' ').unwrap_or((&r,"failed"));
         let ok=outcome=="installed";
-        log!("dev install: {sha} {}",if ok {"installed"} else {"failed; see dev/install.log"});
+        if ok {log!("dev install: {sha} installed");} else {log!("dev install: {sha} failed; see dev/{sha}.install.log");}
         let _=coreq::write_durable(&dir.join(if ok {"installed"} else {"failed"}),sha);
         if ok {let _=fs::remove_file(dir.join("failed"));}
         let _=fs::remove_file(dir.join("result"));
@@ -663,7 +663,7 @@ fn dev_spawn(root:&Path,sha:&str,dir:&Path)->Result<(),String> {
     use std::os::unix::process::CommandExt;
     let st=command("sh").arg("-c")
         // `--refmap=`: fetch main's objects without updating origin/main, whose ref lock a concurrent fetch may hold (#1633)
-        .arg(r#"(git -C "$1" fetch -q --refmap= --no-write-fetch-head origin main && git -C "$1" show "$2:scripts/dev-install.sh" >"$3/install.sh" && TASKQ_DEV_REPO="$1" exec sh "$3/install.sh" "$2" || echo "$2 failed" >"$3/result") >"$3/install.log" 2>&1 </dev/null &"#)
+        .arg(r#"(git -C "$1" fetch -q --refmap= --no-write-fetch-head origin main && git -C "$1" show "$2:scripts/dev-install.sh" >"$3/install.sh" && TASKQ_DEV_REPO="$1" exec sh "$3/install.sh" "$2" || echo "$2 failed" >"$3/result") >"$3/$2.install.log" 2>&1 </dev/null &"#)
         .arg("sh").arg(root).arg(sha).arg(dir)
         .env_remove("TASKQ_ROOT").env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE")
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
@@ -1356,10 +1356,29 @@ mod tests {
         assert!(fs::read_to_string(base.join("project.log")).unwrap().contains(&format!("dev install: start {sha}")));
         let done=install.join("dev/install.sh.done");
         for _ in 0..100 { if done.exists() {break;} std::thread::sleep(std::time::Duration::from_millis(100)); }
-        assert!(done.exists(),"fetched script ran: {}",fs::read_to_string(install.join("dev/install.log")).unwrap_or_default());
+        assert!(done.exists(),"fetched script ran: {}",fs::read_to_string(install.join(format!("dev/{sha}.install.log"))).unwrap_or_default());
         assert_eq!(fs::read_to_string(install.join("dev/install.sh")).unwrap(),script,"script taken from the fetched SHA");
         assert!(!root.join("scripts/dev-install.sh").exists()&&git(&root,&["status","--porcelain"]).is_empty(),"root working tree untouched");
         assert_eq!(git(&root,&["rev-parse","origin/main"]),tracking,"shared remote-tracking ref untouched");
+        // #2208 A1: each failed SHA keeps its diagnostic output through the next build.
+        for message in ["first install failed", "second install failed"] {
+            fs::write(w.join("scripts/dev-install.sh"),format!("echo '{message}'\necho \"$1 failed\" > \"$(dirname \"$0\")/result\"\nexit 1\n")).unwrap();
+            git(&w,&["add","scripts"]);git(&w,&["commit","-qm",message]);git(&w,&["push","-q","origin","main"]);
+            let failed_sha=git(&w,&["rev-parse","HEAD"]);
+            dev_tick(&install,&root,&mut |_|Ok(()));
+            for _ in 0..100 { if install.join("dev/result").exists() {break;} std::thread::sleep(std::time::Duration::from_millis(100)); }
+            assert!(install.join("dev/result").exists(),"failed build reports completion");
+            dev_tick(&install,&root,&mut |_|Ok(()));
+            let path=format!("dev/{failed_sha}.install.log");
+            assert!(fs::read_to_string(install.join(&path)).unwrap().contains(message),"failed SHA retains its output");
+            assert!(fs::read_to_string(base.join("project.log")).unwrap().contains(&format!("dev install: {failed_sha} failed; see {path}")),"failure names retained log");
+            if message=="first install failed" {
+                fs::write(base.join("first-sha"),&failed_sha).unwrap();
+            }
+        }
+        let first=fs::read_to_string(base.join("first-sha")).unwrap();
+        assert!(fs::read_to_string(install.join(format!("dev/{first}.install.log"))).unwrap().contains("first install failed"),"next SHA leaves first failure intact");
+
         fs::remove_dir_all(&base).unwrap();
     }
 
