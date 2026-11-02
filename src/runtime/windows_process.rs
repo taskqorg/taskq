@@ -24,7 +24,23 @@ unsafe extern "system" {
     fn Process32FirstW(snapshot:Handle,entry:*mut ProcessEntry)->i32;
     fn Process32NextW(snapshot:Handle,entry:*mut ProcessEntry)->i32;
     fn QueryFullProcessImageNameW(process:Handle,flags:u32,name:*mut u16,size:*mut u32)->i32;
+    fn GetPriorityClass(process:Handle)->u32;
+    fn SetPriorityClass(process:Handle,class:u32)->i32;
+    fn GetProcessInformation(process:Handle,class:u32,data:*mut u32,size:u32)->i32;
+    fn SetProcessInformation(process:Handle,class:u32,data:*const u32,size:u32)->i32;
 }
+#[link(name="ntdll")]
+unsafe extern "system" {
+    fn NtQueryInformationProcess(process:Handle,class:u32,data:*mut u32,size:u32,returned:*mut u32)->i32;
+    fn NtSetInformationProcess(process:Handle,class:u32,data:*const u32,size:u32)->i32;
+}
+const IDLE_PRIORITY_CLASS:u32=0x40;
+const BELOW_NORMAL_PRIORITY_CLASS:u32=0x4000;
+const NORMAL_PRIORITY_CLASS:u32=0x20;
+const PROCESS_IO_PRIORITY:u32=33;
+const IO_PRIORITY_NORMAL:u32=2;
+const PROCESS_MEMORY_PRIORITY:u32=0;
+const MEMORY_PRIORITY_NORMAL:u32=5;
 #[repr(C)]
 struct ProcessEntry {size:u32,usage:u32,id:u32,heap:usize,module:u32,threads:u32,parent:u32,priority:i32,flags:u32,exe:[u16;260]}
 #[repr(C)]
@@ -141,6 +157,39 @@ pub fn exit_with_launcher(launchers:&[std::path::PathBuf]) {
     });
 }
 
+/// CPU class, I/O priority and memory priority of one process.
+fn scheduling(process:Handle)->Result<(u32,u32,u32),String> {
+    let class=unsafe {GetPriorityClass(process)};
+    if class==0 {return Err(format!("priority class unreadable: {}",io::Error::last_os_error()));}
+    let mut io_priority=0;
+    let status=unsafe {NtQueryInformationProcess(process,PROCESS_IO_PRIORITY,&mut io_priority,4,std::ptr::null_mut())};
+    if status!=0 {return Err(format!("I/O priority unreadable: NTSTATUS {status:#x}"));}
+    let mut memory=0;
+    if unsafe {GetProcessInformation(process,PROCESS_MEMORY_PRIORITY,&mut memory,4)}==0 {return Err(format!("memory priority unreadable: {}",io::Error::last_os_error()));}
+    Ok((class,io_priority,memory))
+}
+
+/// #2214: Task Scheduler starts the host task at its default priority 7: below-normal CPU, low I/O, memory priority 2.
+/// Low I/O and memory priorities can penalize probe, curl and git children during worker builds.
+/// Raises only what is below normal and returns the previous values when it changed anything.
+fn raise_scheduling(process:Handle)->Result<Option<String>,String> {
+    let (class,io_priority,memory)=scheduling(process)?;
+    let low_class=matches!(class,IDLE_PRIORITY_CLASS|BELOW_NORMAL_PRIORITY_CLASS);
+    if !low_class && io_priority>=IO_PRIORITY_NORMAL && memory>=MEMORY_PRIORITY_NORMAL {return Ok(None);}
+    if low_class && unsafe {SetPriorityClass(process,NORMAL_PRIORITY_CLASS)}==0 {return Err(format!("priority class not raised: {}",io::Error::last_os_error()));}
+    if io_priority<IO_PRIORITY_NORMAL {
+        let status=unsafe {NtSetInformationProcess(process,PROCESS_IO_PRIORITY,&IO_PRIORITY_NORMAL,4)};
+        if status!=0 {return Err(format!("I/O priority not raised: NTSTATUS {status:#x}"));}
+    }
+    if memory<MEMORY_PRIORITY_NORMAL && unsafe {SetProcessInformation(process,PROCESS_MEMORY_PRIORITY,&MEMORY_PRIORITY_NORMAL,4)}==0 {
+        return Err(format!("memory priority not raised: {}",io::Error::last_os_error()));
+    }
+    Ok(Some(format!("class {class:#x}, I/O {io_priority}, memory {memory}")))
+}
+
+/// Gives the host service and the children it starts normal scheduling.
+pub fn normal_scheduling()->Result<Option<String>,String> {raise_scheduling(unsafe {GetCurrentProcess()})}
+
 pub struct Execution {
     members:std::collections::BTreeMap<u32,OwnedHandle>,
     child:Option<Child>,native:Option<coreq::process::Identity>,key:String,job:Option<OwnedHandle>,
@@ -255,6 +304,83 @@ mod tests {
         let up=owned(unsafe {OpenProcess(0x1000,0,parent(GetCurrentProcessId()).unwrap())},io::Error::last_os_error()).unwrap();
         assert!(launched_by(&[std::env::current_exe().unwrap(),image(&up).unwrap()]).unwrap().is_some(),"the runner's parent is a listed launcher");
         child.kill().ok();child.wait().ok();
+    }
+    // #2214 A1: Task Scheduler priority 7 -> host below-normal CPU, low I/O, memory 2 -> probes starve behind worker builds.
+    // Risk: the host keeps the task's low scheduling, or the raise lowers a process that already runs higher.
+    #[test]
+    fn host_scheduling_rises_from_task_priority_to_normal_and_never_lowers() {
+        let mut child=Command::new("cmd").args(["/c","ping -n 30 127.0.0.1 >nul"]).spawn().unwrap();
+        let process=child.as_raw_handle();
+        let (low_io,low_memory)=(1u32,2u32);
+        assert_ne!(unsafe {SetPriorityClass(process,BELOW_NORMAL_PRIORITY_CLASS)},0);
+        assert_eq!(unsafe {NtSetInformationProcess(process,PROCESS_IO_PRIORITY,&low_io,4)},0);
+        assert_ne!(unsafe {SetProcessInformation(process,PROCESS_MEMORY_PRIORITY,&low_memory,4)},0);
+        assert_eq!(scheduling(process).unwrap(),(BELOW_NORMAL_PRIORITY_CLASS,1,2),"fixture matches a priority-7 scheduled task");
+        assert_eq!(raise_scheduling(process).unwrap().as_deref(),Some("class 0x4000, I/O 1, memory 2"));
+        assert_eq!(scheduling(process).unwrap(),(NORMAL_PRIORITY_CLASS,IO_PRIORITY_NORMAL,MEMORY_PRIORITY_NORMAL));
+        assert_eq!(raise_scheduling(process).unwrap(),None,"a normal host is left alone");
+        assert_ne!(unsafe {SetPriorityClass(process,0x8000)},0);
+        assert_eq!(raise_scheduling(process).unwrap(),None);
+        assert_eq!(scheduling(process).unwrap().0,0x8000,"above-normal is never lowered");
+        child.kill().ok();child.wait().ok();
+    }
+    // #2214 A1 / R12: opt-in process qualification, using installed CLIs without dispatching agent work.
+    // Run in its own filtered harness: scheduling changes apply only to that harness and its descendants.
+    #[test]
+    #[ignore = "native CLI login/version and curl qualification; TASKQ_PROBE_PHASE=before|after"]
+    fn native_probes_under_worker_load() {
+        let phase=std::env::var("TASKQ_PROBE_PHASE").expect("select before or after");
+        assert!(matches!(phase.as_str(),"before"|"after"));
+        let process=unsafe {GetCurrentProcess()};
+        let (low_io,low_memory)=(1u32,2u32);
+        assert_ne!(unsafe {SetPriorityClass(process,BELOW_NORMAL_PRIORITY_CLASS)},0);
+        assert_eq!(unsafe {NtSetInformationProcess(process,PROCESS_IO_PRIORITY,&low_io,4)},0);
+        assert_ne!(unsafe {SetProcessInformation(process,PROCESS_MEMORY_PRIORITY,&low_memory,4)},0);
+        if phase=="after" {normal_scheduling().unwrap();}
+        println!("phase={phase} scheduling={:?}",scheduling(process).unwrap());
+        struct Work(Vec<Execution>);
+        impl Drop for Work {
+            fn drop(&mut self) {
+                for child in &mut self.0 {child.kill().unwrap();}
+                let until=Instant::now()+Duration::from_secs(5);
+                for child in &mut self.0 {
+                    while child.exited().unwrap().is_none() {
+                        assert!(Instant::now()<until,"qualification child did not exit");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+        }
+        let mut work=Work(Vec::new());
+        for _ in 0..2 {
+            work.0.push(Execution::spawn(Command::new("cmd").args(["/c","ping -n 180 127.0.0.1 >nul"])).unwrap());
+        }
+        let mut failures=0;
+        for round in 0..30 {
+            for (rt,args) in [("claude",&["--version"][..]),("claude",&["auth","status"][..]),
+                ("codex",&["--version"][..]),("codex",&["login","status"][..]),
+                ("curl.exe",&["--silent","--show-error","--fail","--max-time","10","--output","NUL","https://github.com/robots.txt"][..])] {
+                let bin=super::super::which(rt);
+                assert!(bin.is_absolute(),"installed {rt} required");
+                let start=Instant::now();
+                let result=super::super::probe("qualification.windows-probe",&bin,args);
+                // Never print auth output: it may identify the operator.
+                let ok=result.as_ref().is_some_and(|(success,_)|*success);
+                println!("{phase} round={round} {rt} {} elapsed_ms={} ok={ok}",args[..args.len().min(2)].join(" "),start.elapsed().as_millis());
+                failures+=usize::from(!ok);
+            }
+            let running=work.0.iter_mut().map(|child| {
+                let observed=child.exited();
+                let reason=observed.as_ref().err().map(String::as_str);
+                let signals=crate::snapshot::Signals {local:true,child:Some(crate::snapshot::Child {
+                    exited:observed.as_ref().is_ok_and(Option::is_some),unknown:reason,stopping:false}),..Default::default()};
+                crate::snapshot::verdict(&signals).0=="running"
+            }).filter(|running|*running).count();
+            println!("{phase} round={round} native status running={running}/2");
+            assert_eq!(running,2,"owned native children must remain observable during probes");
+        }
+        println!("{phase} failures={failures}/150");
+        if phase=="after" {assert_eq!(failures,0,"native probe qualification failed");}
     }
     // Chain: native failure -> automatically captured adapter -> original diagnostic.
     #[test]
