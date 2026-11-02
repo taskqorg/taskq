@@ -34,7 +34,8 @@ const state={...fx.state,font:18,theme:'dark',projects:[{...fx.state.projects[0]
  await open(2021);await open(2022);
  assert(await full.evaluate(e=>e.open),'switch restores Full report before measuring');assert(Math.abs(await offset()-before)<2,'switch keeps content anchor and offset');
  await page.evaluate(()=>taskq.receive(fixture));assert(Math.abs(await offset()-before)<2,'snapshot keeps passage');
- await page.setViewportSize({width:820,height:700});await page.waitForTimeout(100);assert(Math.abs(await offset()-before)<2,'reflow keeps passage');
+ // Observe resize/layout completion; the fixed 100 ms sleep could precede the native resize event.
+ await page.setViewportSize({width:820,height:700});await page.waitForFunction(({key,before})=>{const e=[...document.querySelectorAll('[data-reading-key]')].find(e=>e.dataset.readingKey===key);return e&&Math.abs(e.getBoundingClientRect().top-e.closest('.conversation-reader').getBoundingClientRect().top-before)<2;},{key:await passage.getAttribute('data-reading-key'),before});assert(Math.abs(await offset()-before)<2,'reflow keeps passage');
  await shot('reading');await page.evaluate(board=>taskq.receive({open:{page:'conversations',root:'fixture',board,task:256}}),board);
  assert.equal(await page.locator('.conversation-row[aria-current=page]').count(),1,'external task selection is visible');assert.match(await page.locator('.conversation-scope').innerText(),/outside|linked/i);assert.equal((await page.locator('.conversation-view>summary').innerText()).replace(/\s+/g,' '),'Decisions · 2','temporary linked source is outside the saved matching count');
  assert.equal(await page.locator('[data-c-field=steer]').count(),0,'reviewers stay read-only');assert.equal(await page.locator('.thread-events').count(),0,'empty secondary history adds no control row');await shot('linked-reviewer');
