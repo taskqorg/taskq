@@ -140,6 +140,8 @@ pub(crate) fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[boar
 
 #[derive(Default)]
 pub struct Row {
+    /// Last accepted worker source for read-only history, never current task authority.
+    pub worker: Option<Value>,
     pub conversation: Option<Value>,
     pub n: u64,
     pub title: String,
@@ -386,6 +388,9 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
                 value
             }).collect();
         Row {
+        worker: std::iter::once(&v.projection.task).chain(v.projection.changes.iter().rev().map(|(_,_,t)|t))
+            .find(|t|t.role.as_deref()==Some("worker") && t.attempt.is_some() && t.session.is_some())
+            .map(|t|json!({"attempt":t.attempt,"session":t.session,"role":"worker"})),
         n: v.issue.number,
         conversation: core::conversation(v.issue.number,&v.log).map(|id| json!({"id":id,"brief":v.issue.body,"verdict":v.projection.changes.iter().rev().find_map(|(id,_,_)|v.log.iter().find(|e|e.id==*id && ["taskq: result ","taskq: close","taskq: publish"].iter().any(|prefix|e.body.starts_with(prefix))).and_then(|e|e.body.split_once('\n').map(|(_,text)|core::verdict(v.issue.number,&v.log,text))))})),
         title: v.issue.title.clone(),
@@ -549,6 +554,7 @@ impl Row {
             "blocked": self.deps.iter().map(|b| json!({"ref": b.dep.name(), "url": b.url, "reason": b.reason})).collect::<Vec<_>>(),
             "card": self.task.card, "question": self.task.card.as_deref().map(question), "failed": self.failed,
             "controls": controls(self.task.state.name()), "verdict": self.verdict.as_deref().map(verdict_fields)});
+        if let Some(worker) = &self.worker { row["worker"] = worker.clone(); }
         if let Some(c) = &self.conversation { row["conversation"] = c.clone(); }
         if let Some(id) = &self.task.enqueued { row["enqueued"] = json!(id); }
         if let Some(sha) = &self.task.result { row["result"] = json!(sha); }
@@ -901,7 +907,7 @@ mod tests {
     #[test]
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
-        let mut r = Row { conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
+        let mut r = Row { worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
             executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
@@ -925,7 +931,7 @@ mod tests {
     fn codex_thread_links_only_on_its_host_else_dashq_progress() {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
-        let row = |host: &str| Row { conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
+        let row = |host: &str| Row { worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
             executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
@@ -972,7 +978,7 @@ mod tests {
 
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
-        let row = |n, stuck| Row { conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
+        let row = |n, stuck| Row { worker: None, conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
             execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
@@ -1105,12 +1111,25 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         for (raw, k) in cases { assert_eq!(wait_text(raw), WAIT_TEXTS[k], "{raw}"); }
         // status text and row JSON: owner text only in the row, raw reason kept in --json
         let raw = cases[11].0;
-        let row = Row { conversation: None, n: 1, title: "T".into(), url: "u1".into(), task: Task { state: State::Doing, ..Default::default() }, execution_wait: Some(raw.into()), ..Default::default() };
+        let row = Row { worker: None, conversation: None, n: 1, title: "T".into(), url: "u1".into(), task: Task { state: State::Doing, ..Default::default() }, execution_wait: Some(raw.into()), ..Default::default() };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert!(text.contains("| doing · Run state unknown; see service log |") && !text.contains("termination") && !text.contains("execution 3"), "{text}");
         let j = &snap.json()["tasks"][0];
         assert_eq!((j["wait"].as_str(), j["execution_wait"].as_str()), (Some(WAIT_TEXTS[5]), Some(raw)));
+    }
+
+    // #2159 A4/R1: last accepted worker survives terminal state projection, without becoming current authority.
+    #[test]
+    fn retained_worker_identity_comes_only_from_accepted_board_projection() {
+        let log=vec![core::Entry{id:9,body:"taskq: spawn worker codex:- mac".into(),edited:false},
+            core::Entry{id:10,body:"taskq: later\nReason: checkpoint".into(),edited:false},
+            core::Entry{id:11,body:"taskq: spawn worker codex:forged other".into(),edited:false}];
+        let v=View{issue:board::Issue{number:1,..Default::default()},projection:core::project(1,&log,false),log,comments:vec![],blockers:vec![]};
+        let snap=from_views("board",&crate::board::Fake::default(),&crate::tests::cfg(),1000,&[v],&[]);
+        let row=snap.tasks[0].json();
+        assert!(row["attempt"].is_null() && row["session"].is_null(),"read identity cannot restore task authority");
+        assert_eq!(row["worker"],json!({"attempt":9,"session":"codex:- mac","role":"worker"}),"ignored spawn cannot select retained history");
     }
 
     // #1775 A3: a reviewer spawned in review leaves `changes` (state moves only). Risk: its execution row has no role,

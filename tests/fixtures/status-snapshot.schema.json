@@ -65,6 +65,11 @@
               }
             }
           },
+          "worker": {
+            "description": "Last accepted worker source; read-only, independent of current task authority or execution health.",
+            "type": "object", "required": ["attempt", "session", "role"],
+            "properties": {"attempt": {"type": "integer"}, "session": {"type": "string"}, "role": {"const": "worker"}}
+          },
           "controls": {"type": "array", "items": {"type": "string"}},
           "verdict": {
             "description": "Fields of the accepted result text behind the current result (taskq.md § 7); null without a result.",

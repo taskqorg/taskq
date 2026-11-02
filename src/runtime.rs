@@ -2152,6 +2152,12 @@ impl AppTurn {
 /// Show `thread` in the Codex app and queue `text` on it (§ 8 Codex app); the caller has checked the id.
 pub(crate) fn app_submit(thread: &str, text: &str) -> Result<(), String> {
     open_link(&thread_url(thread), true).map_err(|e| format!("codex queue failed for thread {thread}: {e}"))?;
+    app_queue(thread,text)
+}
+
+/// An already owned App thread accepts serialized input without raising another native window.
+pub(crate) fn app_queue(thread:&str,text:&str)->Result<(),String> {
+    if !plain_thread(thread) {return Err("native App thread identity invalid".into());}
     // #1856: the error names the queue call's exit and stderr; the brief itself stays out of it
     // ponytail: the queue call has no project; any existing directory serves as its working directory
     let spec = agentq_runtime::agent::Spec { client: agentq_runtime::agent::Client::Codex, root: std::env::temp_dir(), session: thread.into(), resume: true, args: vec![], home: None, env: vec![] };
@@ -2279,10 +2285,14 @@ struct NativeHistory {
 
 impl NativeHistory {
     fn read(&mut self,path:&Path,mut visit:impl FnMut(serde_json::Value)->Result<(),String>)->Result<bool,String> {
+        self.read_at(path,|event,_|visit(event))
+    }
+    fn read_at(&mut self,path:&Path,mut visit:impl FnMut(serde_json::Value,u64)->Result<(),String>)->Result<bool,String> {
+        let mut at=self.offset;
         self.lines(path,|line| {
             let event:serde_json::Value=serde_json::from_str(line).map_err(|_|"native history record invalid")?;
             if event["type"].as_str().is_none() {return Err("native history record shape invalid".into());}
-            visit(event)
+            visit(event,at)?;at+=line.len() as u64;Ok(())
         })
     }
     fn lines(&mut self,path:&Path,mut visit:impl FnMut(&str)->Result<(),String>)->Result<bool,String> {
@@ -2355,6 +2365,7 @@ impl NativeHistory {
 #[derive(Default)]
 struct AppHistory {
     reader: NativeHistory,
+    floor:u64,
     count: usize,
     current: Option<String>,
     owned: Option<String>,
@@ -2366,8 +2377,8 @@ struct AppHistory {
 /// Match this submission and its native turn id; another user turn cannot release its fence.
 impl AppHistory {
     fn read(&mut self,path:&Path,baseline:usize,input:&str,root:&Path,thread:&str)->Result<(bool,bool),String> {
-        let Self {reader,count,current,owned,ended,aborted,identity}=self;
-        let complete=reader.read(path,|v| {
+        let Self {reader,floor,count,current,owned,ended,aborted,identity}=self;
+        let complete=reader.read_at(path,|v,at| {
             if v["type"] == "event_msg" && !v["payload"].is_object() {return Err("Codex rollout record shape invalid".into());}
             if v["type"] == "session_meta" {
                 let meta=&v["payload"];
@@ -2383,9 +2394,9 @@ impl AppHistory {
             if *count>=baseline {
                 match p["type"].as_str() {
                     Some("task_started")=>*current=p["turn_id"].as_str().map(String::from),
-                    Some(kind) if (kind=="user_message" && p["message"].as_str()==Some(input))
+                    Some(kind) if at>=*floor && ((kind=="user_message" && p["message"].as_str()==Some(input))
                         || (kind=="item_completed" && p["item"]["type"]=="UserMessage"
-                            && p["item"]["content"].as_array().is_some_and(|parts|parts.len()==1 && parts[0]["type"]=="text" && parts[0]["text"].as_str().is_some_and(|text|text==input || text.strip_suffix('\n')==Some(input))))=>{
+                            && p["item"]["content"].as_array().is_some_and(|parts|parts.len()==1 && parts[0]["type"]=="text" && parts[0]["text"].as_str().is_some_and(|text|text==input || text.strip_suffix('\n')==Some(input)))))=>{
                         let id=current.clone().ok_or("Codex submitted input has no native turn identity")?;
                         if kind=="item_completed" && (p["thread_id"]!=thread || p["turn_id"].as_str()!=Some(id.as_str())) {
                             return Err("Codex submitted user item has conflicting native thread/turn identity".into());
@@ -3659,6 +3670,17 @@ finally:
     }
 
     // Chain: § 8 codex-app turn end. Risk: a turn ends early or never ends.
+    // D2/#2159: a previous aborted identical input cannot acknowledge or finish a new owner submission.
+    #[test]
+    fn app_owner_input_floor_excludes_an_old_aborted_identical_reply() {
+        let root=std::env::temp_dir().join(format!("taskq-app-floor-{}",uuid()));std::fs::create_dir(&root).unwrap();let root=root.canonicalize().unwrap();let path=root.join("native.jsonl");
+        let events=[serde_json::json!({"type":"session_meta","payload":{"id":"thread","cwd":root}}),serde_json::json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"old"}}),serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":"same reply","turn_id":"old"}}),serde_json::json!({"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"old"}})];
+        let old=events.iter().map(|v|format!("{v}\n")).collect::<String>();std::fs::write(&path,&old).unwrap();
+        let mut history=AppHistory{floor:old.len() as u64,..AppHistory::default()};assert_eq!(history.read(&path,0,"same reply",&root,"thread"),Ok((false,false)));
+        let mut next=old;for payload in [serde_json::json!({"type":"task_started","turn_id":"new"}),serde_json::json!({"type":"user_message","message":"same reply","turn_id":"new"}),serde_json::json!({"type":"task_complete","turn_id":"new"})] {next+=&format!("{}\n",serde_json::json!({"type":"event_msg","payload":payload}));}std::fs::write(&path,next).unwrap();
+        assert_eq!(history.read(&path,0,"same reply",&root,"thread"),Ok((true,true)));assert_eq!(history.owned.as_deref(),Some("new"));std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn app_turn_requires_its_input_and_matching_native_completion() {
         let p = std::env::temp_dir().join(format!("taskq-rollout-{}.jsonl", std::process::id()));

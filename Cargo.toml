@@ -14,6 +14,8 @@ ring = "0.17"
 # telemetry upload blocks (docs/design/standalone-telemetry.md); both already in the tree via coreq
 flate2 = { version = "1.1.10", default-features = false, features = ["zlib-rs"] }
 base64 = "0.22.1"
+# Native transcript previews: inspect existing image headers before browser decode.
+imagesize = "0.15.0"
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }

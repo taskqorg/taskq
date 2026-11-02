@@ -22,6 +22,7 @@ pub(crate) struct Reply { pub id:String, pub input:String, pub revision:u64 }
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Draft {
     #[serde(skip_serializing_if="Option::is_none")] pub reply: Option<Reply>,
+    #[serde(skip_serializing_if="String::is_empty")] pub runtime: String,
     pub revision: u64, pub title: String, pub root: String, pub text: String, pub caret: [usize;2],
     pub scroll: u32, pub archived: bool, pub deleting: bool, pub next: bool, pub parent: Option<String>, pub files: Vec<File>, pub sent: Option<Sent>,
 }
@@ -46,6 +47,7 @@ fn rows(v:&Value)->Res<BTreeMap<String,Draft>> {
     if v["conversations"].is_null() {return Ok(BTreeMap::new());}
     let rows:BTreeMap<String,Draft>=serde_json::from_value(v["conversations"].clone()).map_err(|_|"Workspace draft metadata unreadable; kept")?;
     if rows.iter().any(|(id,d)|!crate::resources::id(id)||d.text.len()>65536||d.title.chars().count()>120||d.files.len()>4
+        ||!d.runtime.is_empty()&&!crate::runtime::setup_runtimes().any(|rt|rt==d.runtime)
         ||d.reply.as_ref().is_some_and(|r|!crate::resources::id(&r.id))
         ||d.sent.as_ref().is_some_and(|s|s.text.len()>65536||s.files.len()>4)
         ||d.files.iter().chain(d.sent.iter().flat_map(|s|&s.files)).any(|f|!valid_file(f))) {return Err("Workspace draft metadata invalid; kept".into());}
@@ -158,7 +160,7 @@ pub(crate) fn preserve_draft(install:&Path,id:&str)->Res<()> {
     let recovered=format!("draft-{}",&hash(id.as_bytes())[..40]);
     if crate::messages::request_deleted(install,&recovered)? {return Ok(());}
     if let Some(existing)=drafts.get(&recovered){return if existing.parent.as_deref()==Some(id){Ok(())}else{Err("Recovery draft identity differs; original kept".into())};}
-    let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),text,caret:source.caret,files:copy_files(install,id,&recovered,&files)?,..Draft::default()};
+    let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),runtime:source.runtime.clone(),text,caret:source.caret,files:copy_files(install,id,&recovered,&files)?,..Draft::default()};
     drafts.insert(recovered,draft);p["conversations"]=json!(drafts);persist(install,&p)
 }
 fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
@@ -171,7 +173,7 @@ fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
         if crate::messages::plain(&crate::setup::dir(install).join(format!("{to}.json")))? {return Err("New draft ID belongs to a native request; original kept".into());}
         let source=drafts.get(id).ok_or("Source draft unavailable")?;
         if Some(source.revision)!=revision||source.deleting {return Err("Draft changed; refresh before creating a new request".into());}
-        let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
+        let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),runtime:source.runtime.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
         let source=drafts.get_mut(id).ok_or("Source draft unavailable")?;source.text.clear();source.files.clear();source.next=false;source.caret=[0,0];source.revision=source.revision.checked_add(1).ok_or("Draft revision overflow")?;
         drafts.insert(to.into(),draft);p["conversations"]=json!(drafts);persist(install,&p)?;Ok(to.into())
     })
@@ -288,6 +290,7 @@ fn reply(install:&Path,id:&str,m:&Value,native:&crate::dialogue::Native)->Res<Va
             p["conversations"]=json!(drafts);persist(install,&p)
         })?;
     }
+    if result.is_ok()&&!crate::dialogue::accepted(install,id,op,&input)? {return Err("Native App input acceptance pending; check the original reply, no resend".into());}
     result.map(|_|Value::Null).map_err(|e|e.reason)
 }
 
@@ -305,6 +308,11 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
         }
         // D2/D6 workspace dialogue writes of a launched conversation; the draft stays until the workspace clears it.
         match action {
+            "retry-turn"=>{
+                let p=preferences(install)?;let drafts=rows(&p)?;let d=drafts.get(id).ok_or("Draft unavailable")?;
+                if d.archived||d.deleting {return Err("Restore the thread before retrying its original input".into());}
+                crate::dialogue::retry_refused(install,id,m["op_id"].as_str().ok_or("Original turn operation missing")?,&crate::dialogue::NATIVE)?;return Ok(Value::Null);
+            }
             "reply-check"=>{
                 let p=preferences(install)?;let drafts=rows(&p)?;let d=drafts.get(id).ok_or("Draft unavailable")?;
                 let r=d.reply.as_ref().filter(|r|m["op_id"]==r.id).ok_or("Original reply identity unavailable; draft kept")?;
@@ -332,13 +340,17 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
             if d.deleting&&action!="delete" {return Err("Deletion incomplete; retry Delete without restoring history".into());}
             if m["revision"].as_u64()!=Some(d.revision) {return Err("Draft revision changed; refresh before editing or sending".into());}
             if action=="save" && d.reply.as_ref().is_some_and(|r|m["draft"]["reply_ack"]==r.id){let r=d.reply.as_ref().unwrap();if !crate::dialogue::accepted(install,id,&r.id,&r.input)? {return Err("Reply acknowledgement has no matching native receipt; draft kept".into());}d.reply=None;}
-            let prior=(d.title.clone(),d.root.clone(),d.text.clone(),d.files.clone());
+            let prior=(d.title.clone(),d.root.clone(),d.runtime.clone(),d.text.clone(),d.files.clone());
             match action {
                 "save"=>{
                     let v=&m["draft"];
                     let text=v["text"].as_str().filter(|s|s.len()<=65536).ok_or("Draft exceeds 64 KiB; existing data kept")?;
                     let title=v["title"].as_str().filter(|s|s.chars().count()<=120).ok_or("Name exceeds 120 characters")?;
                     let root=v["root"].as_str().ok_or("Choose a project")?;
+                    if let Some(runtime)=v.get("runtime") {
+                        let runtime=runtime.as_str().filter(|rt|crate::runtime::setup_runtimes().any(|r|r==*rt)).ok_or("Unsupported owner runtime; draft kept")?;
+                        d.runtime=runtime.into();
+                    }
                     if d.sent.is_some()&&(v["next"]==true||(!text.is_empty()&&d.text!=text)||d.root!=root) {d.next=true;}
                     d.text=text.into();d.title=title.into();d.root=root.into();
                     d.caret=serde_json::from_value(v["caret"].clone()).map_err(|_|"Invalid draft selection")?;
@@ -352,8 +364,11 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                     if d.sent.is_some(){return Err("This item already owns a request; check delivery or open its native session".into());}
                     if d.archived||d.text.trim().is_empty() {return Err("Restore the draft and write a request before sending files".into());}
                     if !registered.contains(&d.root) {return Err("Choose a registered project".into());}
+                    let runtime=if d.runtime.is_empty(){crate::runtime::OWNER}else{&d.runtime};
+                    if m["runtime"].as_str()!=Some(runtime) {return Err("Draft runtime changed; refresh before sending".into());}
+                    if !crate::runtime::owner::supported(runtime) {return Err("Selected owner runtime unsupported on this platform; draft kept".into());}
                     for f in &d.files {bytes(install,id,f)?;}
-                    d.next=false;d.sent=Some(Sent{revision:d.revision,text:d.text.clone(),root:d.root.clone(),runtime:m["runtime"].as_str().unwrap_or("").into(),files:d.files.clone()});
+                    d.next=false;d.sent=Some(Sent{revision:d.revision,text:d.text.clone(),root:d.root.clone(),runtime:runtime.into(),files:d.files.clone()});
                 }
                 "reconcile"|"cancel"=>{if d.sent.is_none(){return Err("No submitted request to reconcile".into());}}
                 "delete"=>{
@@ -375,7 +390,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                 }
                 _=>return Err("Unsupported draft action".into()),
             }
-            let changed=prior!=(d.title.clone(),d.root.clone(),d.text.clone(),d.files.clone())||d.revision==0||action=="send";
+            let changed=prior!=(d.title.clone(),d.root.clone(),d.runtime.clone(),d.text.clone(),d.files.clone())||d.revision==0||action=="send";
             d.revision=d.revision.checked_add(1).ok_or("Draft revision overflow")?;let sent=d.sent.clone();
             if changed {
                 if p["conversation_updated"].is_null() {p["conversation_updated"]=json!({});}
@@ -520,8 +535,8 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
     let n=id.strip_prefix("task:").and_then(|s|s.strip_prefix(board)).and_then(|s|s.strip_prefix('/')).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("Worker thread does not match its project")?;
     let read=crate::link::Read{board:board.into(),task:n,attempt:m["attempt"].as_u64().filter(|a|*a>0).ok_or("Worker attempt missing")?,before:m["before"].as_u64(),after:m["after"].as_u64()};
     let local=crate::host::Policy::read(install)?.me;
-    let row=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n&&r["attempt"]==read.attempt));
-    let host=row.and_then(|r|r["session"].as_str()).and_then(|s|s.split_whitespace().nth(1)).filter(|h|*h!=local);
+    let row=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n));
+    let host=row.map(|r|r.get("worker").unwrap_or(r)).filter(|w|w["attempt"]==read.attempt).and_then(|w|w["session"].as_str()).and_then(|s|s.split_whitespace().nth(1)).filter(|h|*h!=local);
     let Some(host)=host else {return serve(install,&read)};
     let allow=crate::link::allowed(&raw)?;
     let peer=crate::link::peers(&status,cfg.ttl,allow.as_deref()).into_iter().find(|p|p.host==host).ok_or_else(||format!("Host {host} publishes no live host link"))?;
@@ -561,23 +576,20 @@ fn worker_page(root:&Path,local:&str,status:&Value,read:&crate::link::Read,page:
     let (n,attempt)=(read.task,read.attempt);
     let ended=||Ok(json!({"ended":true,"items":[]}));
     let Some(row)=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n)) else {return ended()};
-    if row["attempt"]!=attempt || row["role"]!="worker" {return ended()}
-    // § 2: Ask retains the attempt; a fast answer can resume it before the browser receives an Ask snapshot.
-    if row["state"]=="ask" {return Err("Worker is waiting for an owner answer".into())}
-    if row["state"]!="doing" {return ended()}
-    let session=row["session"].as_str().ok_or("Worker session unknown")?;
+    let worker=row.get("worker").unwrap_or(row);
+    if worker["attempt"]!=attempt || worker["role"]!="worker" {return ended()}
+    let session=worker["session"].as_str().ok_or("Worker session unknown")?;
     let words:Vec<_>=session.split_whitespace().collect();
     let Some((rt,id))=words.first().and_then(|s|s.split_once(':')) else {return Err("Worker session unknown".into())};
     if local.is_empty() || words.get(1).copied()!=Some(local) {return Err("Worker transcript is available only on its host".into())}
     let execution=row["executions"].as_array().and_then(|rows|rows.iter().find(|e|e["attempt"]==attempt));
-    match execution.and_then(|e|e["state"].as_str()) {
-        Some("ended")=>return ended(),
-        Some("running")=>{},
-        _=>return Err("Worker execution is not confirmed running".into()),
-    }
+    let following=row["state"]=="doing" && row["attempt"]==attempt && row["role"]=="worker" && execution.is_some_and(|e|e["state"]=="running");
+    let activity=if following {"working"} else if row["state"]=="ask" && row["attempt"]==attempt {"waiting"}
+        else if row["attempt"]!=attempt || execution.is_some_and(|e|e["state"]=="ended") {"ended"} else {"unknown"};
     let id=crate::runtime::session_id(root,rt,id,n,attempt,"worker");
     if id=="-" || !crate::runtime::plain_thread(&id) {return Err("Worker native session unknown".into())}
-    page(&format!("{rt}:{id}"),read.before,read.after)
+    let mut value=page(&format!("{rt}:{id}"),read.before,read.after)?;
+    value["following"]=json!(following);value["activity"]=json!(activity);Ok(value)
 }
 
 fn request_marks(install:&Path,id:&str,action:&str)->Res<()> {
@@ -656,6 +668,21 @@ mod tests {
     }
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
 
+    // R9/C4: per-draft runtime survives storage; a stale Send cannot freeze another runtime or erase work.
+    #[test]
+    fn owner_runtime_choice_is_saved_and_send_is_fenced() {
+        let f=Fixture::new();f.save("owner","Keep literal text");
+        let saved=f.act("owner","save",json!({"draft":{"text":"Keep literal text","root":f.0,"title":"","runtime":"codex","caret":[2,4],"scroll":12}}));
+        assert_eq!(saved["state"],"accepted","{saved}");
+        assert_eq!(snapshot(&f.0)["items"][0]["runtime"],"codex","explicit choice survives native storage");
+        let before=fs::read(f.0.join("tray-requests.json")).unwrap();
+        assert_eq!(f.act("owner","send",json!({"runtime":"claude"}))["state"],"unknown");
+        assert_eq!(fs::read(f.0.join("tray-requests.json")).unwrap(),before,"stale runtime sends preserve draft and immutable input");
+        assert!(crate::setup::all(&f.0).unwrap().0.is_empty());
+        assert_eq!(f.act("owner","save",json!({"draft":{"text":"Keep literal text","root":f.0,"title":"","runtime":"unqualified","caret":[2,4],"scroll":12}}))["state"],"unknown");
+        assert_eq!(fs::read(f.0.join("tray-requests.json")).unwrap(),before,"unsupported choice must not corrupt the store");
+    }
+
     // #1929 A6: definite refusal releases Send, but uncertain storage never permits a replay.
     // #2110 A5: unrelated bodies never cross the bridge; selected source/revision and durable bytes survive.
     #[test]
@@ -711,16 +738,38 @@ mod tests {
         fs::write(dir.join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
         let original=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
         let message=json!({"id":"operation","revision":original.revision});
-        let error=reply(&f.0,"owner",&message,&crate::dialogue::Native{turn:never,holder:unknown}).unwrap_err();
+        let error=reply(&f.0,"owner",&message,&crate::dialogue::Native{app:None,turn:never,holder:unknown}).unwrap_err();
         assert!(error.contains("native holder unknown"));
         assert_eq!(rows(&preferences(&f.0).unwrap()).unwrap()["owner"],original,"a pre-store refusal must clear intent without changing text/files");
         assert!(crate::dialogue::turn(&f.0,"owner").unwrap().is_none());
         // A failed store is not proof that no turn was saved; retain its exact operation and input.
         fs::create_dir(dir.join("owner/turn.json").with_extension("tmp")).unwrap();
-        assert!(reply(&f.0,"owner",&message,&crate::dialogue::Native{turn:never,holder:free}).is_err());
+        assert!(reply(&f.0,"owner",&message,&crate::dialogue::Native{app:None,turn:never,holder:free}).is_err());
         let saved=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
         assert_eq!(saved.text,original.text);assert_eq!(saved.files,original.files);
         assert_eq!(saved.reply.unwrap().id,"operation");
+    }
+
+    // D2/C4/#2159: an accepted local App intent is not native delivery; retain exact draft/files until readback.
+    #[test]
+    fn app_reply_pending_acceptance_keeps_draft_and_original_operation() {
+        fn never(_: &Path,_:&crate::setup::Request)->Res<std::process::Command>{panic!("no CLI writer")}
+        fn free(_: &Path,_:&crate::setup::Request)->Res<bool>{Ok(false)}
+        fn baseline(_: &Path,_:&crate::setup::Request)->Res<(usize,u64)>{Ok((0,0))}
+        fn submit(_: &Path,_:&crate::setup::Request,_:&str)->Res<()>{panic!("UI never submits native input")}
+        fn observe(_: &Path,_:&crate::setup::Request,_:&crate::dialogue::Turn)->Res<crate::dialogue::AppState>{panic!("UI acknowledgement never probes or resends")}
+        let f=Fixture::new();f.save("owner","Keep exact App reply");f.attach("owner","note.txt","text/plain",b"Keep file");
+        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false};
+        let dir=crate::setup::dir(&f.0);fs::create_dir_all(dir.join("owner")).unwrap();fs::write(dir.join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
+        let before=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
+        let native=crate::dialogue::Native {app:Some(crate::dialogue::AppNative{baseline,submit,observe}),turn:never,holder:free};
+        let m=json!({"id":"original-op","revision":before.revision});assert!(reply(&f.0,"owner",&m,&native).unwrap_err().contains("acceptance pending"));
+        let retained=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();assert_eq!(retained.text,before.text);assert_eq!(retained.files,before.files);assert_eq!(retained.reply.as_ref().unwrap().id,"original-op");
+        let mut turn=crate::dialogue::turn(&f.0,"owner").unwrap().unwrap();let input=turn.input.clone();assert!(!crate::dialogue::accepted(&f.0,"owner","original-op",&input).unwrap());
+        assert!(reply(&f.0,"owner",&m,&native).unwrap_err().contains("unresolved"));
+        turn.app_accepted=true;turn.app_baseline=Some(0);turn.state="running".into();crate::platform::write_atomic(&dir.join("owner/turn.json"),&serde_json::to_string(&turn).unwrap()).unwrap();
+        assert!(crate::dialogue::accepted(&f.0,"owner","original-op",&input).unwrap());assert!(!crate::dialogue::accepted(&f.0,"owner","original-op","changed").unwrap());
+        assert_eq!(rows(&preferences(&f.0).unwrap()).unwrap()["owner"].text,before.text,"native readback does not erase independent edits");
     }
 
     // #1929 A6: restart/check reads the immutable turn, never dispatches; new edits remain independent.
@@ -733,6 +782,11 @@ mod tests {
         assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["state"],"unknown");
         let t=crate::dialogue::Turn{op_id:Some("operation".into()),input:"Immutable native input".into(),state:"pending".into(),..Default::default()};
         fs::write(dir.join("turn.json"),serde_json::to_vec(&t).unwrap()).unwrap();
+        assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["state"],"unknown","a turn without launched source identity cannot prove delivery");
+        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false};
+        fs::write(crate::setup::dir(&f.0).join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
+        assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["state"],"unknown","a saved App intent without native acceptance must retain text/files");
+        let t=crate::dialogue::Turn{app_accepted:true,..t};fs::write(dir.join("turn.json"),serde_json::to_vec(&t).unwrap()).unwrap();
         assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["value"]["unchanged"],true);
         f.save("owner","New independent draft");
         assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["value"]["unchanged"],false);
@@ -752,19 +806,39 @@ mod tests {
             assert_eq!(session,"codex:native-from-attempt");assert_eq!(before,None);assert_eq!(after,Some(123));Ok(json!({"read":true}))
         });
         assert_eq!(read(&status).unwrap()["read"],true);
-        status["tasks"][0]["state"]=json!("ask");assert!(read(&status).unwrap_err().contains("waiting for an owner answer"));
+        status["tasks"][0]["state"]=json!("ask");assert_eq!(read(&status).unwrap()["following"],false,"Ask retains read access without following");
         status["tasks"][0]["state"]=json!("doing");assert_eq!(read(&status).unwrap()["read"],true,"an answer resumes the same attempt");
-        for (field,value) in [("attempt",json!(72)),("state",json!("review")),("role",json!("reviewer"))] {
+        for (field,value) in [("attempt",json!(72)),("role",json!("reviewer"))] {
             let mut changed=status.clone();changed["tasks"][0][field]=value;
             assert_eq!(read(&changed).unwrap()["ended"],true,"{field}");
         }
         status["tasks"][0]["session"]=json!("codex:- remote");assert!(read(&status).unwrap_err().contains("only on its host"));
         status["tasks"][0]["session"]=json!("codex:- local");
-        status["tasks"][0]["executions"][0]["state"]=json!("unknown");assert!(read(&status).unwrap_err().contains("not confirmed running"));
-        status["tasks"][0]["executions"][0]["state"]=json!("ended");assert_eq!(read(&status).unwrap()["ended"],true);
+        status["tasks"][0]["executions"][0]["state"]=json!("unknown");assert_eq!(read(&status).unwrap()["activity"],"unknown","read access never proves execution health");
+        status["tasks"][0]["executions"][0]["state"]=json!("ended");assert_eq!(read(&status).unwrap()["following"],false,"ended execution retains read access");
         status["tasks"]=json!([]);assert_eq!(read(&status).unwrap()["ended"],true);
         let refused=dialogue(&f.0,&json!({"conversation":"task:https://example.org/r/issues/7","action":"transcript","root":f.0,"session":"codex:forged"}));
         assert_eq!(refused["state"],"unknown","unregistered roots never reach native transcripts");
+    }
+
+    // #2159 A4: retained read access never selects a client session or grants execution/input authority.
+    #[test]
+    fn retained_worker_history_keeps_attempt_host_and_read_only_boundary() {
+        let f=Fixture::new();fs::create_dir(f.0.join(".taskq")).unwrap();
+        fs::write(f.0.join(".taskq/T7-71.log"),"{\"type\":\"thread.started\",\"thread_id\":\"retained-native\"}\n").unwrap();
+        let mut status=json!({"tasks":[{"n":7,"state":"ask","role":"worker","attempt":71,"session":"codex:- local","worker":{"attempt":71,"role":"worker","session":"codex:- local"},"executions":[{"attempt":71,"state":"ended"}]}]});
+        let mut m=crate::link::Read{board:"https://example.org/r/issues".into(),task:7,attempt:71,before:Some(123),after:None};
+        let read=|s:&Value,m:&crate::link::Read|worker_page(&f.0,"local",s,m,|session,before,after|{
+            assert_eq!(session,"codex:retained-native");assert_eq!(before,Some(123));assert_eq!(after,None);Ok(json!({"read":true}))
+        });
+        for state in ["ask","later","failed","ready","review"] {
+            status["tasks"][0]["state"]=json!(state);
+            if state!="ask" {status["tasks"][0]["attempt"]=Value::Null;status["tasks"][0]["role"]=Value::Null;status["tasks"][0]["session"]=Value::Null;}
+            let page=read(&status,&m).unwrap();assert_eq!(page["read"],true,"{state}: retained document must remain readable");assert_eq!(page["following"],false,"history is not proof of running execution");
+        }
+        status["tasks"][0]["worker"]["session"]=json!("codex:- remote");assert!(read(&status,&m).unwrap_err().contains("only on its host"));
+        status["tasks"][0]["worker"]["session"]=json!("codex:- local");m.attempt=72;assert_eq!(read(&status,&m).unwrap()["ended"],true,"a mismatched attempt never selects native content");
+        m.attempt=71;status["tasks"][0]["worker"]["attempt"]=json!(72);assert_eq!(read(&status,&m).unwrap()["ended"],true,"a replaced worker cannot reinterpret the previous source");
     }
 
     // A2/A3/R12: actual IPC read boundary validates registration, board, service freshness and current attempt.

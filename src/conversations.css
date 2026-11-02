@@ -106,8 +106,8 @@
 .conversations .new-chat-action{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--work);padding:4px 6px;min-height:32px;font-weight:500}
 .chat-entry-bar [data-c=search-open]{margin-left:auto}
 .list-tabs{padding:0 6px;gap:2px}
-.list-tabs>button{display:inline-flex;align-items:center;gap:5px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted);padding:3px 8px;min-height:28px;font-size:.9em}
-.list-tabs>button[aria-pressed=true]{color:inherit;border-color:var(--edge)}
+.list-location>button{display:inline-flex;align-items:center;gap:5px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--muted);padding:3px 8px;min-height:28px;font-size:.9em}
+.list-location>button[aria-pressed=true]{color:inherit;border-color:var(--edge)}
 .conversation-search{display:flex;align-items:center;gap:4px;padding:0 8px}
 .conversation-search>label{display:flex;align-items:center;gap:6px;flex:1;min-width:0;color:var(--muted);border-bottom:1px solid var(--divider,var(--edge))}
 .conversation-search input{flex:1;min-width:0;border:0;border-radius:0;padding:4px 0;background:transparent;font-size:.9em}
@@ -160,7 +160,7 @@
 .journey-card:has(>.thread-card){margin:2px 0;padding:8px 8px 6px}.journey-card:has(>.thread-card)>.journey-heading{float:left;margin:0 .5em 0 0;padding-top:2px}.journey-card .qac-problem{margin:0 0 2px}.journey-card .qac-choices{clear:left;margin:4px 0}
 .conversations>.conversation-status:empty{min-height:0;padding:0}
 @media(max-width:620px){.conversations .conversation-list-toggle{display:inline-flex}.conversations:has(>.conversation-grid){grid-template-columns:minmax(0,1fr)}.conversations>.chat-entry-bar{border-right:0;border-bottom:1px solid var(--divider,var(--edge))}.conversation-grid>.conversation-list,.conversation-grid>.conversation-detail{grid-column:1;grid-row:2;border-right:0;padding-left:0}.chat-entry-bar [data-c=search-open]{margin-left:0}}
-@media(pointer:coarse){.conversations .compact-action,.conversations .new-chat-action{min-width:44px;min-height:44px;width:auto}.conversations .compact-action{width:44px;height:44px}.list-tabs>button{min-height:44px}}
+@media(pointer:coarse){.conversations .compact-action,.conversations .new-chat-action{min-width:44px;min-height:44px;width:auto}.conversations .compact-action{width:44px;height:44px}.list-location>button{min-height:44px}}
 .composer-help{position:relative;flex:none}.composer-help>summary{display:flex;align-items:center;justify-content:center;list-style:none;color:var(--muted)}.composer-help>summary::-webkit-details-marker,.composer-help>summary::after{display:none}
 .composer-help>p{position:absolute;bottom:100%;right:0;z-index:12;margin:0;background:var(--raised);border:1px solid var(--edge);border-radius:8px;padding:8px;width:min(320px,calc(100vw - 24px))}
 /* CS1–CS6 (#1808): shared grouped sidebar, inline view actions, full-width wrapping titles. */
@@ -171,9 +171,10 @@
 .report-card .qac-head{display:none}.conversation-detail .report-card .qac{padding:8px 0}.report-card .qac-choices{flex-direction:column;align-items:flex-start}.report-card .qac-choices button{max-width:100%}
 .report-card summary{grid-template-columns:minmax(0,1fr) 16px}.report-card summary::after{grid-column:2;inline-size:16px;block-size:16px;line-height:16px;text-align:center}
 .report-card{-webkit-user-select:text;user-select:text}
-.conversation-item{display:flex;align-items:flex-start;min-width:0}.conversation-item:has(.conversation-row[aria-current=page]){background:var(--raised)}.conversation-item>.conversation-row{flex:1;min-width:0;width:auto;padding:6px 7px}
+.conversation-item{position:relative;min-width:0}.conversation-item:has(.conversation-row[aria-current=page]){background:var(--raised)}.conversation-item>.conversation-row{min-width:0;width:100%;padding:6px 7px}
 .conversation-item .conversation-row>span{white-space:normal;text-overflow:clip;overflow:visible}.conversation-item .conversation-row small{font-size:max(12px,.85em)}
-.conversation-row-actions{display:flex;flex:none;opacity:0;pointer-events:none}.conversation-item:hover>.conversation-row-actions,.conversation-item:focus-within>.conversation-row-actions{opacity:1;pointer-events:auto}
+.conversation-row-actions{position:absolute;inset-inline-end:0;bottom:6px;display:flex;opacity:0;pointer-events:none}.conversation-item:hover>.conversation-row-actions,.conversation-item:focus-within>.conversation-row-actions{opacity:1;pointer-events:auto}
+.thread-row-meta{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-height:32px;padding-inline-end:64px}.thread-row-meta>.relative-time{margin-inline-start:auto}.thread-state,.thread-marker{display:inline-flex;flex:none}.thread-state{color:var(--muted)}
 @media(hover:none),(pointer:coarse){.conversation-row-actions{opacity:1;pointer-events:auto}}
 
 /* #1929 A3: content keeps its natural height; only the reader scrolls. */
@@ -193,17 +194,17 @@
 @media(max-width:450px){.dialogue-status dl{grid-template-columns:minmax(0,1fr)}.dialogue-status dd{margin-block-end:4px}}
 
 /* CS3/CS6: one compact view control; empty search adds no row. */
-.conversation-view{position:relative;flex:1;min-width:0}.conversation-view>summary{min-height:32px;font-size:.9em;cursor:pointer}
+.list-location{gap:2px;flex:none}.conversation-view{position:relative;flex:1 0 max-content;min-width:0;max-width:100%}.conversation-view>summary{min-height:32px;font-size:.9em;cursor:pointer}
 .conversation-view>.result-filters{position:absolute;inset-inline:0;top:100%;z-index:20;background:var(--raised);border:1px solid var(--edge);border-radius:6px;min-width:180px;box-shadow:0 4px 12px #0004}
 .conversation-view .result-filters>button{width:100%;text-align:left;min-height:32px}
-.conversation-item .conversation-row>span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.conversation-item .conversation-row>span{display:block;width:100%}
 .conversation-scope,.news-tools,.completed-scope{margin:0;padding:0 6px;font-size:.85em}.conversation-scope button{margin-top:4px}
 .news-tools button{font-size:.85em}.news-tools p:empty{display:none}.conversation-row>small{line-height:1.25}
 
 /* RC1/CS5: JS owns one coordinated paragraph correction; native wheel scrolling remains unchanged. */
 .conversation-reader,.conversation-rows{overflow-anchor:none;scroll-behavior:auto}
 .conversation-scope{display:flex;align-items:center;gap:4px;flex-wrap:wrap}.conversation-scope button{margin:0}
-.conversation-view>summary,.conversation-view .result-filters>button{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.conversation-view>summary .view-count{margin-left:auto;font-variant-numeric:tabular-nums}
+.conversation-view>summary,.conversation-view .result-filters>button{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.conversation-view>summary{flex-wrap:nowrap;white-space:nowrap}.conversation-view>summary .view-label{min-width:0;overflow:hidden;text-overflow:ellipsis}.conversation-view>summary .view-count{margin-left:auto;font-variant-numeric:tabular-nums;flex:none}
 .conversation-view .result-filters .view-count{margin-left:auto}.conversation-mode-icon{display:inline-flex;flex:none}
 .thread-events>summary{font-size:.85em;color:var(--muted)}.event-tools{display:flex;flex-wrap:wrap;gap:4px}
 
@@ -219,3 +220,20 @@
 .conversation-reader .asked{border:0;border-radius:0;padding:0;background:none}
 
 .workspace.native-frame .head:is(.title-below,[data-title-below]) .nav-title{grid-column:2;grid-row:1}
+
+/* D4: shared safe prose stays inside the existing native record and one reader. */
+.conversation-prose p{margin:0 0 .4em}.conversation-prose p:last-child{margin-bottom:0}
+.conversation-prose h3{font:inherit;font-weight:600;margin:.4em 0}
+.conversation-prose ul,.conversation-prose ol{margin:.3em 0;padding-left:1.5em}
+.conversation-prose pre{margin:.4em 0;padding:6px;background:var(--raised);white-space:pre-wrap;overflow-wrap:anywhere}
+.conversation-prose code{font-size:.9em}.conversation-prose p code{background:var(--raised);padding:0 2px}
+
+/* Grammar tokens preserve selectable code; contrast stays readable in both native themes. */
+.conversation-prose .syntax-keyword,.report-card .syntax-keyword{color:light-dark(#7133a8,#d6acff)}
+.conversation-prose .syntax-string,.report-card .syntax-string{color:light-dark(#216332,#a8dab5)}
+.conversation-prose .syntax-comment,.report-card .syntax-comment{color:light-dark(#555d65,#b2bac4)}
+.conversation-prose :is(.syntax-number,.syntax-boolean),.report-card :is(.syntax-number,.syntax-boolean){color:light-dark(#965000,#f6c17b)}
+.transcript-image{margin:.4em 0;max-width:100%}.transcript-image img{display:block;max-width:100%;width:auto;height:auto;max-height:320px;object-fit:contain;object-position:left top}
+.transcript-image details[open]+img{max-height:none}.transcript-image :is(summary,figcaption){font-size:.85em;color:var(--muted)}
+@media(forced-colors:active){.conversation-prose [class^=syntax-],.report-card [class^=syntax-]{color:CanvasText}}
+.source-toggle{font-size:.85em;color:var(--muted)}

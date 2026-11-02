@@ -16,6 +16,10 @@ const MINUTE: u128 = 60_000;
 #[serde(deny_unknown_fields)]
 pub struct Turn {
     #[serde(default, skip_serializing_if="Option::is_none")] pub op_id: Option<String>,
+    #[serde(default, skip_serializing_if="Option::is_none")] pub app_baseline: Option<usize>,
+    #[serde(default, skip_serializing_if="Option::is_none")] pub app_after: Option<u64>,
+    #[serde(default, skip_serializing_if="std::ops::Not::not")] pub app_accepted: bool,
+    #[serde(default, skip_serializing_if="Option::is_none")] pub prior_outcome: Option<String>,
     pub input: String, pub state: String, pub at: u128, #[serde(default)] pub watch: bool,
     #[serde(default)] pub pid: Option<u32>, #[serde(default)] pub started: Option<String>, #[serde(default)] pub outcome: Option<String>,
 }
@@ -29,8 +33,15 @@ pub struct Watch {
 }
 
 /// The native side, replaceable in tests: the turn command and the D3 holder check.
-pub struct Native { pub turn: fn(&Path, &Request) -> Res<std::process::Command>, pub holder: fn(&Path, &Request) -> Res<bool> }
-pub const NATIVE: Native = Native { turn: crate::runtime::owner::turn, holder: crate::runtime::owner::holder };
+#[derive(Clone,Copy)]
+pub struct AppNative {
+    pub baseline: fn(&Path,&Request)->Res<(usize,u64)>,
+    pub submit: fn(&Path,&Request,&str)->Res<()>,
+    pub observe: fn(&Path,&Request,&Turn)->Res<AppState>,
+}
+pub struct AppState {pub accepted:bool,pub outcome:Option<String>,pub active:bool}
+pub struct Native { pub app:Option<AppNative>, pub turn: fn(&Path, &Request) -> Res<std::process::Command>, pub holder: fn(&Path, &Request) -> Res<bool> }
+pub const NATIVE: Native = Native { app:Some(AppNative {baseline:crate::runtime::owner::app_baseline,submit:crate::runtime::owner::app_submit,observe:crate::runtime::owner::app_observe}), turn: crate::runtime::owner::turn, holder: crate::runtime::owner::holder };
 
 #[derive(Debug)]
 pub struct SendError { pub reason: String, pub uncertain: bool }
@@ -76,17 +87,33 @@ pub fn send(install: &Path, id: &str, input: &str, native: &Native) -> Res<()> {
 }
 
 pub fn accepted(install:&Path,id:&str,op:&str,input:&str)->Res<bool> {
-    Ok(turn(install,id)?.is_some_and(|t|t.op_id.as_deref()==Some(op)&&t.input==input))
+    let r=launched(install,id)?;
+    Ok(turn(install,id)?.is_some_and(|t|t.op_id.as_deref()==Some(op)&&t.input==input&&(!crate::runtime::of(&r.runtime).codex||t.app_accepted)))
 }
 
 pub fn send_op(install:&Path,id:&str,input:&str,op:Option<&str>,native:&Native)->Result<(),SendError> {
-    if let Some(op)=op {if accepted(install,id,op,input)? {return Ok(());}}
+    if let Some(op)=op {if turn(install,id)?.is_some_and(|t|t.op_id.as_deref()==Some(op)&&t.input==input) {return Ok(());}}
     let r = launched(install, id)?;
     let own = own(install, id)?;
     if busy(&turn(install, id)?) { return Err("working".to_string().into()); }
     if (native.holder)(&own, &r).map_err(|e| format!("native holder unknown ({e}); not sent"))? { return Err(crate::runtime::owner::open_in(&r.runtime).into()); }
+    if crate::runtime::of(&r.runtime).codex {if let Some(app)=native.app {(app.baseline)(&own,&r)?;}}
     // Lock acquisition is a refusal; only an attempted store can leave an uncertain receipt.
     crate::setup::locked(install, || Ok(queue(install,id,input,false,op)))?
+}
+
+pub fn retry_refused(install:&Path,id:&str,op:&str,native:&Native)->Res<()> {
+    let r=launched(install,id)?;let own=own(install,id)?;
+    if !crate::runtime::of(&r.runtime).codex||native.app.is_none() {return Err("No App-owned refused input".into());}
+    if (native.holder)(&own,&r)? {return Err("Native App is working; original refused input kept".into());}
+    (native.app.unwrap().baseline)(&own,&r)?;
+    crate::setup::locked(install,||{
+        let mut t=turn(install,id)?.ok_or("Original turn unavailable")?;
+        if t.op_id.as_deref()!=Some(op)||t.state!="done"||t.app_baseline.is_some()||t.outcome.as_deref()!=Some(crate::runtime::owner::open_in(&r.runtime).as_str()) {return Err("Original refusal changed; nothing retried".into());}
+        match t.pid.map(coreq::process::identity) {Some(Ok(None))=>{},Some(Ok(Some(p))) if t.started.as_deref().is_some_and(|old|old!=p.started.as_str())=>{},_=>return Err("Prior CLI execution release unknown; no retry".into())}
+        t.prior_outcome=t.outcome.take();t.state="pending".into();t.pid=None;t.started=None;
+        store(&own.join("turn.json"),&t)
+    })
 }
 
 fn queue(install: &Path, id: &str, input: &str, watch: bool, op: Option<&str>) -> Result<(),SendError> {
@@ -156,6 +183,12 @@ fn step(install: &Path, r: &Request, now: u128, held: bool, native: &Native) -> 
     let was_busy = busy(&t);
     if let Some(cur) = t.as_mut() {
         match cur.state.as_str() {
+            "running" | "dispatching" if cur.app_baseline.is_some() && native.app.is_some()=>{
+                match (native.app.unwrap().observe)(&own,r,cur) {
+                    Ok(seen)=>{cur.app_accepted|=seen.accepted;if let Some(outcome)=seen.outcome {finish(install,&own,cur,outcome)?;}else{cur.state="running".into();cur.outcome=(!cur.app_accepted).then(||"unknown: App input acceptance pending; no resend".into());store(&path,cur)?;}},
+                    Err(reason)=>{cur.outcome=Some(format!("unknown: {reason}; no resend"));store(&path,cur)?;}
+                }
+            },
             "running" => if let Some(outcome) = ended(&own, r, cur) { finish(install, &own, cur, outcome)? },
             "dispatching" => finish(install, &own, cur, "unknown: the service stopped while the turn started; inspect the transcript".into())?,
             "pending" => dispatch(install, &own, r, cur, native)?,
@@ -205,6 +238,14 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
         Err(e) => return finish(install, own, t, format!("not sent: native holder unknown ({e})")),
         Ok(false) => {}
     }
+    if crate::runtime::of(&r.runtime).codex {if let Some(app)=native.app {
+        let baseline=match (app.baseline)(own,r) {Ok(n)=>n,Err(e)=>return finish(install,own,t,format!("not sent: {e}"))};
+        t.app_baseline=Some(baseline.0);t.app_after=Some(baseline.1);t.state="dispatching".into();t.pid=None;t.started=None;
+        store(&own.join("turn.json"),t)?;
+        let queued=(app.submit)(own,r,&t.input);
+        t.state="running".into();t.outcome=Some(queued.err().map_or("unknown: App acceptance pending; no resend".into(),|e|format!("unknown: {e}; no resend")));
+        return store(&own.join("turn.json"),t);
+    }}
     let mut c = match (native.turn)(own, r) { Ok(c) => c, Err(e) => return finish(install, own, t, format!("not sent: {e}")) };
     t.state = "dispatching".into();
     store(&own.join("turn.json"), t)?;
@@ -240,17 +281,30 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
         _ => "idle".into(),
     };
     let mut v = json!({
-        "turn": t.as_ref().ok().and_then(|t| t.as_ref()).map(|t| json!({"state": t.state, "at": t.at, "watch": t.watch, "outcome": t.outcome})),
+        "turn": t.as_ref().ok().and_then(|t| t.as_ref()).map(|t| json!({"state": t.state, "at": t.at, "watch": t.watch, "outcome": t.outcome,"op_id":t.op_id,"prior_outcome":t.prior_outcome,"retry_refused":crate::runtime::of(&r.runtime).codex&&t.state=="done"&&t.outcome.as_deref()==Some(open.as_str())&&t.app_baseline.is_none()})),
         "watch": match &w { Ok(Some(w)) => json!(w), Ok(None) => json!("no watch"), Err(e) => json!({"unknown": e}) },
     });
     if live {
+        if let Ok(Some(turn))=&t {v["turn"]["input"]=json!(turn.input);}
+        if crate::runtime::of(&r.runtime).codex {if let Some(app)=native.app {
+            let initial=Turn {input:crate::runtime::owner::read_brief(&crate::setup::dir(install).join(&r.id).join("brief.txt")),app_baseline:Some(0),app_after:Some(0),..Turn::default()};
+            let observed=t.as_ref().ok().and_then(|t|t.as_ref()).filter(|t|t.app_baseline.is_some()).unwrap_or(&initial);
+            match own(install,&r.id).and_then(|own|(app.observe)(&own,r,observed)) {
+                Ok(seen) if seen.active=>state="working".into(),
+                Ok(seen) if seen.accepted&&seen.outcome.is_some()&&state!="working"=>state="idle".into(),
+                Ok(_) if !observed.app_accepted&&busy(t.as_ref().ok().unwrap_or(&None))=>state="unknown".into(),
+                Ok(seen) if !seen.accepted||seen.outcome.is_none()=>{state="unknown".into();v["reason"]=json!("App input acceptance or completion unknown");},
+                Err(reason)=>{state="unknown".into();v["reason"]=json!(reason);},
+                _=>{}
+            }
+        }}
         let activity=activity(r);v["updated"]=activity["updated"].clone();v["updated_reason"]=activity["reason"].clone();
         let path = r.session.as_deref().ok_or("native session unknown".to_string()).and_then(|s| crate::runtime::owner::transcript(&r.runtime, s));
         match path.and_then(|p| crate::transcript::last_line(crate::runtime::of(&r.runtime).codex, &p)) {
             Ok(line) => v["last_line"] = json!(line),
             Err(e) => { state = "unknown".into(); v["reason"] = json!(e); }
         }
-        if state == "idle" || state == open {
+        if !crate::runtime::of(&r.runtime).codex && (state == "idle" || state == open) {
             match own(install, &r.id).and_then(|o| (native.holder)(&o, r)) {
                 Ok(true) => state = open,
                 Ok(false) => state = "idle".into(),
@@ -269,7 +323,7 @@ pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u
     let codex = crate::runtime::of(&r.runtime).codex;
     let path = crate::runtime::owner::transcript(&r.runtime, r.session.as_deref().unwrap_or_default())?;
     let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
-    mark_brief(&mut page.items, &r.brief);
+    mark_brief(&mut page.items, &r.brief, &crate::setup::dir(install).join(id));
     Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
 }
 
@@ -334,9 +388,16 @@ fn turn_input(pointer: &str) -> Option<String> {
 }
 
 /// #1773 A4: the launch brief TaskQ sent as the first native input is the setup brief, not an owner message.
-fn mark_brief(items: &mut [Value], brief: &str) {
+fn mark_brief(items: &mut [Value], brief: &str, own:&Path) {
     let Some(head) = brief.lines().map(str::trim).find(|l| !l.is_empty()) else { return };
-    for i in items.iter_mut().filter(|i| i["role"] == "user" && i["text"].as_str().is_some_and(|t| t.trim_start().starts_with(head))) { i["role"] = json!("brief"); }
+    let pointer=crate::runtime::owner::read_brief(&own.join("brief.txt"));let mut handshake=false;
+    for item in items {
+        let text=item["text"].as_str().unwrap_or_default();
+        if item["role"]=="user"&&(text.trim_start().starts_with(head)||text==pointer){item["role"]=json!("brief");handshake=false;}
+        else if item["role"]=="user"&&text.trim()==crate::runtime::HANDSHAKE.trim(){item["role"]=json!("transport");handshake=true;}
+        else if handshake&&item["role"]=="assistant"&&text.trim()=="OK"{item["role"]=json!("transport");handshake=false;}
+        else if item["role"]!="tool"{handshake=false;}
+    }
 }
 
 #[cfg(test)]
@@ -378,18 +439,53 @@ mod tests {
         panic!("turn never ended")
     }
 
+    // D2/D5/#2159: App-owned replies never spawn a CLI writer; lost queue/restart only observe exact input.
+    #[test]
+    fn app_owner_reply_keeps_one_submission_and_native_receipts() {
+        fn baseline(_: &Path,_:&Request)->Res<(usize,u64)>{Ok((9,100))}
+        fn submit(own:&Path,_:&Request,input:&str)->Res<()>{
+            let path=own.join("queued");assert!(!path.exists(),"no duplicate native App submission");fs::write(path,input).unwrap();Err("queue reply lost".into())
+        }
+        fn observe(own:&Path,_:&Request,t:&Turn)->Res<AppState>{
+            let state=fs::read_to_string(own.join("observed")).unwrap_or_default();
+            assert!(t.app_baseline.is_some());
+            Ok(AppState {accepted:state!="",active:state=="active",outcome:(state=="done").then(||"success".into())})
+        }
+        let install=tmp();let r=request(&install,"owner","codex",None);let own=own(&install,"owner").unwrap();
+        let native=Native {app:Some(AppNative{baseline,submit,observe}),turn:never,holder:free};
+        send_op(&install,"owner","Exact owner reply",Some("original-op"),&native).unwrap();tick(&install,now(),&native).unwrap();
+        assert!(!accepted(&install,"owner","original-op","Exact owner reply").unwrap(),"durable intent is not App input acceptance");
+        let first=turn(&install,"owner").unwrap().unwrap();assert_eq!(first.app_baseline,Some(9));assert_eq!(first.input,"Exact owner reply");assert_eq!(first.state,"running");assert!(!first.app_accepted);
+        let mut cold=first.clone();cold.state="dispatching".into();store(&own.join("turn.json"),&cold).unwrap();
+        tick(&install,now(),&native).unwrap();assert_eq!(fs::read_to_string(own.join("queued")).unwrap(),first.input);
+        fs::write(own.join("observed"),"active").unwrap();tick(&install,now(),&native).unwrap();
+        assert!(turn(&install,"owner").unwrap().unwrap().app_accepted);assert!(accepted(&install,"owner","original-op","Exact owner reply").unwrap());assert_eq!(status(&install,&r,false,&native)["state"],"working");
+        fs::write(own.join("observed"),"done").unwrap();tick(&install,now(),&native).unwrap();
+        assert_eq!(turn(&install,"owner").unwrap().unwrap().outcome.as_deref(),Some("success"));
+        fs::remove_file(own.join("turn.json")).unwrap();fs::write(own.join("observed"),"active").unwrap();
+        // The initial brief is still executing tools; launch/queue alone cannot show Ready.
+        assert_ne!(status(&install,&r,true,&native)["state"],"idle");
+        let old=Turn {op_id:Some("refused-op".into()),input:"Keep refused input".into(),state:"done".into(),outcome:Some(crate::runtime::owner::open_in("codex")),pid:Some(std::process::id()),started:Some("prior-incarnation".into()),..Turn::default()};
+        store(&own.join("turn.json"),&old).unwrap();
+        assert!(retry_refused(&install,"owner","different-op",&native).is_err());
+        retry_refused(&install,"owner","refused-op",&native).unwrap();let retried=turn(&install,"owner").unwrap().unwrap();
+        assert_eq!(retried.input,old.input);assert_eq!(retried.op_id,old.op_id);assert_eq!(retried.prior_outcome,old.outcome);assert_eq!(retried.state,"pending");
+        assert_eq!(fs::read_to_string(own.join("queued")).unwrap(),first.input,"explicit retry is admitted, not submitted by the UI call");
+        fs::remove_dir_all(install).unwrap();
+    }
+
     // #1929 A6: same operation readback never starts or queues another native turn.
     #[test]
     fn conversation_1929_reply_readback_binds_input_and_operation() {
         let install=tmp();request(&install,"owner","claude",None);
-        let native=Native{turn:never,holder:free};
+        let native=Native{app:None,turn:never,holder:free};
         assert!(!accepted(&install,"owner","op-a","Hello").unwrap());
         send_op(&install,"owner","Hello",Some("op-a"),&native).unwrap();
         let first=turn(&install,"owner").unwrap();
         assert!(accepted(&install,"owner","op-a","Hello").unwrap());
         assert!(!accepted(&install,"owner","op-b","Hello").unwrap());
         assert!(!accepted(&install,"owner","op-a","Changed").unwrap());
-        send_op(&install,"owner","Hello",Some("op-a"),&Native{turn:never,holder:held}).unwrap();
+        send_op(&install,"owner","Hello",Some("op-a"),&Native{app:None,turn:never,holder:held}).unwrap();
         assert_eq!(turn(&install,"owner").unwrap(),first);
         assert!(send_op(&install,"owner","Changed",Some("op-a"),&native).is_err());
         fs::remove_dir_all(install).unwrap();
@@ -403,7 +499,7 @@ mod tests {
         let mut p=crate::conversations::preferences(&install).unwrap();
         p["conversations"]["owner"]["reply"]=json!({"id":"operation","input":"Immutable input","revision":1});
         crate::conversations::persist(&install,&p).unwrap();
-        let native=Native{turn:never,holder:free};
+        let native=Native{app:None,turn:never,holder:free};
         let path=own(&install,"owner").unwrap().join("turn.json");
         let t=Turn{op_id:Some("operation".into()),input:"Immutable input".into(),state:"dispatching".into(),..Default::default()};
         store(&path,&t).unwrap();set_watch(&install,"owner","Watch input",5,&[],0).unwrap();
@@ -424,10 +520,14 @@ mod tests {
     fn launch_brief_is_not_an_owner_message() {
         let brief = "You are a TaskQ session opened by the host service.\nProject: p\n\nWhy is nothing starting?\n";
         let mut items = vec![json!({"role":"user","text":brief}), json!({"role":"assistant","text":"ok"}), json!({"role":"user","text":"Why is nothing starting?"})];
-        mark_brief(&mut items, brief);
+        mark_brief(&mut items, brief, Path::new("/owned"));
         assert_eq!(items.iter().map(|i| i["role"].as_str().unwrap()).collect::<Vec<_>>(), ["brief", "assistant", "user"]);
-        mark_brief(&mut items, "");
+        mark_brief(&mut items, "", Path::new("/owned"));
         assert_eq!(items[2]["role"], "user", "an empty brief marks nothing");
+        let own=Path::new("/owned");let pointer=crate::runtime::owner::read_brief(&own.join("brief.txt"));
+        let mut transport=vec![json!({"role":"user","text":crate::runtime::HANDSHAKE}),json!({"role":"assistant","text":"OK"}),json!({"role":"user","text":pointer}),json!({"role":"user","text":"Before any work, read a different file"})];
+        mark_brief(&mut transport,brief,own);
+        assert_eq!(transport.iter().map(|i|i["role"].as_str().unwrap()).collect::<Vec<_>>(),["transport","transport","brief","user"]);
     }
 
     // D-A1/A2 source: the input persists before dispatch; the outcome comes from the result record only.
@@ -514,8 +614,8 @@ mod tests {
     fn send_dispatches_one_turn_and_reads_its_outcome() {
         let install = tmp();
         let r = request(&install, "c1", "claude", None);
-        let native = Native { turn: claude_ok, holder: free };
-        send(&install, "c1", "hello", &Native { turn: never, holder: free }).unwrap();
+        let native = Native { app:None,turn: claude_ok, holder: free };
+        send(&install, "c1", "hello", &Native { app:None,turn: never, holder: free }).unwrap();
         assert_eq!(turn(&install, "c1").unwrap().unwrap().state, "pending", "input persisted before dispatch");
         assert_eq!(send(&install, "c1", "again", &native).unwrap_err(), "working");
         assert_eq!(status(&install, &r, false, &native)["state"], "working");
@@ -523,7 +623,7 @@ mod tests {
         assert_eq!((t.input.as_str(), t.outcome.as_deref()), ("hello", Some("success")));
         assert_eq!(status(&install, &r, false, &native)["state"], "idle");
         send(&install, "c1", "next", &native).unwrap();
-        assert_eq!(settle(&install, "c1", &Native { turn: exits, holder: free }).outcome.as_deref(), Some("unknown: the turn ended without a result record"), "exit alone is never success");
+        assert_eq!(settle(&install, "c1", &Native { app:None,turn: exits, holder: free }).outcome.as_deref(), Some("unknown: the turn ended without a result record"), "exit alone is never success");
         fs::remove_dir_all(install).unwrap();
     }
 
@@ -532,15 +632,15 @@ mod tests {
     fn native_holder_refuses_with_d3_text() {
         let install = tmp();
         let r = request(&install, "c2", "claude", None);
-        assert_eq!(send(&install, "c2", "hi", &Native { turn: never, holder: held }).unwrap_err(), "open in claude; close it there first");
+        assert_eq!(send(&install, "c2", "hi", &Native { app:None,turn: never, holder: held }).unwrap_err(), "open in claude; close it there first");
         assert_eq!(turn(&install, "c2").unwrap(), None, "a refused Send queues nothing");
-        send(&install, "c2", "hi", &Native { turn: never, holder: free }).unwrap();
-        let t = settle(&install, "c2", &Native { turn: never, holder: held });
+        send(&install, "c2", "hi", &Native { app:None,turn: never, holder: free }).unwrap();
+        let t = settle(&install, "c2", &Native { app:None,turn: never, holder: held });
         assert_eq!(t.outcome.as_deref(), Some("open in claude; close it there first"));
         assert_eq!(status(&install, &r, false, &NATIVE)["state"], "open in claude; close it there first");
         let r = request(&install, "x2", "codex", None);
-        send(&install, "x2", "hi", &Native { turn: never, holder: free }).unwrap();
-        assert_eq!(settle(&install, "x2", &Native { turn: codex_writer, holder: free }).outcome.as_deref(), Some("open in codex; close it there first"));
+        send(&install, "x2", "hi", &Native { app:None,turn: never, holder: free }).unwrap();
+        assert_eq!(settle(&install, "x2", &Native { app:None,turn: codex_writer, holder: free }).outcome.as_deref(), Some("open in codex; close it there first"));
         assert_eq!(status(&install, &r, false, &NATIVE)["state"], "open in codex; close it there first");
         fs::remove_dir_all(install).unwrap();
     }
@@ -568,14 +668,14 @@ mod tests {
         assert!(set_watch(&install, "w1", "check", 5, &["late".into()], 0).unwrap_err().contains("Unknown watch event"));
         let w = set_watch(&install, "w1", "check the board", 5, &["ask".into()], 0).unwrap();
         assert_eq!((w.next_due, w.seen), (5 * MINUTE, 100), "existing events are not news");
-        let quiet = Native { turn: never, holder: free };
+        let quiet = Native { app:None,turn: never, holder: free };
         tick(&install, MINUTE, &quiet).unwrap();
         assert_eq!(turn(&install, "w1").unwrap(), None);
         // schedule
         tick(&install, 5 * MINUTE, &quiet).unwrap();
         let t = turn(&install, "w1").unwrap().unwrap();
         assert_eq!((t.input.as_str(), t.state.as_str(), t.watch), ("check the board", "pending", true));
-        let t = settle(&install, "w1", &Native { turn: exits, holder: free });
+        let t = settle(&install, "w1", &Native { app:None,turn: exits, holder: free });
         assert!(t.outcome.unwrap().starts_with("unknown"));
         let w = watch(&install, "w1").unwrap().unwrap();
         assert_eq!((w.last_turn, w.next_due), (Some(5 * MINUTE), 10 * MINUTE));

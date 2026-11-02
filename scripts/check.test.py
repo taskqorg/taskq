@@ -199,4 +199,16 @@ three[7] = comment(8, 'taskq: requeue main-moved attempt 7')
 assert 'M8' in approval(three + approve_m8(14)), 'main-moved keeps retries'
 assert 'M8' in approval([spawn, *review_requeue(2), *approve_m8(6, 'M3'), *review_requeue(8, worker=5), *review_requeue(12), *approve_m8(16)]), \
     'an answer resets retries'
+# #2159: a normal stage Later ends the attempt; an owner requeue admits a new approval lifecycle.
+parked = [spawn, comment(2, 'taskq: later attempt 1'), comment(3, 'taskq: requeue'),
+          comment(4, 'taskq: spawn worker codex:next win'),
+          comment(5, 'taskq: ask attempt 4\nProblem: Retained Product document\n1. keep\n2. other'),
+          comment(6, 'taskq: answer\nProduct retained reading approved\nop-id: resumed\nrevision: 5')]
+assert 'Product retained reading approved' in approval(parked), 'stage Later must not discard a later owner decision'
+for invalid in [parked[:2] + parked[3:],
+                [spawn, comment(2, 'taskq: later #99 attempt 1')] + parked[2:],
+                parked[:5] + [comment(6, 'taskq: answer\nProduct\nop-id: stale-stage\nrevision: 2')],
+                parked[:5] + [comment(6, 'taskq: answer\nProduct', author_association='NONE')],
+                parked[:5] + [comment(6, 'taskq: answer\nProduct', updated_at='edited')]]:
+    assert approval(invalid) == '', 'stage parks retain admission, unsupported-transition, revision and trust fences'
 print('PASS approval association preserves revision, attempt, trust and selected-option fences')

@@ -67,3 +67,32 @@ u.sync(empty);assert(JSON.stringify(u.section(empty)).includes('No results waiti
 const unavailable=[{...empty[0],reports:{complete:false,reason:'Board unavailable',reports:[]}}];
 assert(!JSON.stringify(u.section(unavailable)).includes('No results waiting for review.'),'a failed collection cannot report a healthy empty board');
 assert(JSON.stringify(u.section(unavailable)).includes('Board unavailable'));
+
+// #2159 D4: native and result prose share safe formatting; markup is never executable content.
+{
+ const {body}=require('../src/reports.js'),nodes=v=>Array.isArray(v)?v.flatMap(nodes):v?.props?[v,...nodes(v.props.children)]:[];
+ const source='## Current action\n\nKeep **literal negations** and *context* and `taskq inbox 2159`.\n\n- Read the task\n- Do not resend\n\n```text\n<script>bad()</script>\n```\n\n[Safe](https://example.org/source) [Blocked](javascript:bad())';
+ const rendered=nodes(body(source)),types=rendered.map(n=>n.type);
+ for(const type of ['h3','strong','em','code','ul','li','pre'])assert(types.includes(type),'readable Markdown needs '+type);
+ assert(rendered.filter(n=>n.type==='a').every(n=>/^https?:/.test(n.props.href)),'unsafe schemes remain literal text');
+ assert(!types.includes('script'),'HTML stays escaped text');
+ const native=nodes(body(source,null,0));assert(native.every(n=>!n.props['data-reading-key']),'native record keeps its original source anchor');
+}
+
+// #2159 owner extension: language grammars must preserve literal code and refuse executable markup.
+{
+ const {body}=require('../src/reports.js'),nodes=v=>Array.isArray(v)?v.flatMap(nodes):v?.props?[v,...nodes(v.props.children)]:[];
+ const source='const answer = "<script>"; // do not resend';
+ const rendered=nodes(body('```javascript\n'+source+'\n```'));
+ assert(rendered.some(n=>n.props.class==='syntax-keyword'),'JavaScript grammar highlights const');
+ const plain=v=>Array.isArray(v)?v.map(plain).join(''):v?.props?plain(v.props.children):v??'';
+ assert.equal(plain(rendered.find(n=>n.type==='code')),source,'tokens retain exact source');
+ assert(!rendered.some(n=>n.type==='script'));
+ assert.equal(plain(nodes(body('```unknown-language\n'+source+'\n```')).find(n=>n.type==='code')),source,'unknown language is selectable plain code');
+}
+
+// #2159: provider bookkeeping stays inspectable without replacing the PM's response.
+{
+ const {body}=require('../src/reports.js'),out=JSON.stringify(body('Reviewed result.\n<oai-mem-citation>\nMetadata retained exactly.\n</oai-mem-citation>'));
+ assert(out.includes('Provider citation metadata'));assert(out.includes('Metadata retained exactly.'));assert(out.includes('Reviewed result.'));
+}

@@ -376,6 +376,7 @@ Forward: adopt the immutable dependency and run the selected Windows/portable ga
 |---|---|---|
 | Antigravity | With a Workspace/Full grant: `agy --input-format stream-json --output-format stream-json --dangerously-skip-permissions`; one JSON user event on stdin, conversation ID from AgentQ session parsing | Same command with `--conversation <id>` and the fresh user event; retain attempt/session |
 | Codex | `codex exec --json <codex opts> -C <root> -`, brief on stdin; session from the first `thread.started` line | `codex exec --json resume <id> -` |
+| App-owned Codex owner | Existing handshake plus AgentQ App queue, exact project root and existing App grant | Same native thread through AgentQ App queue; persist exact input, completion baseline and record byte boundary first; native acceptance/completion only, no CLI writer or foreground window raise |
 | Claude | `claude --bg --remote-control <name> --permission-mode <mode>`, brief in a per-turn file; short read-file instruction on stdin; native ID from `agents --json` | After stop readback: `claude --bg --resume <id>`, fresh brief as at spawn; saved native options, same ID required |
 | Codex app | Codex's spawn with a handshake brief; then `open codex://threads/<id>` and `codex queue --thread <id> --message <brief>` | `open` and `codex queue --thread <id> --message <text>` |
 

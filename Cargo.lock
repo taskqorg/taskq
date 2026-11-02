@@ -2470,6 +2470,7 @@ dependencies = [
  "coreq-instrument",
  "embed-resource",
  "flate2",
+ "imagesize",
  "libc",
  "objc2",
  "objc2-app-kit",

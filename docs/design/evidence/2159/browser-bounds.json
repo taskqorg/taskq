@@ -1,0 +1,112 @@
+{
+  "functionalAssertions": "Pass; latency budget is reported separately, never inferred from exit status",
+  "environment": "Headless Chromium, 8 logical cores, 1000x700, 20px, dark; driver timing includes Playwright auto-wait",
+  "measured": [
+    {
+      "count": 600,
+      "bytes": 89041,
+      "parse": 0.20000000298023224,
+      "project": 64.59999999403954,
+      "layout": 0.10000000894069672,
+      "bounds": {
+        "conversations": {
+          "listRows": 152,
+          "indexRows": 600,
+          "queryKeys": 24,
+          "nativeRecords": 0,
+          "nativeBytes": 0,
+          "anchor": null,
+          "bodySources": 2,
+          "bodyBytes": 232,
+          "closedSources": 0,
+          "historyKeys": 0,
+          "historyRecords": 0,
+          "historyBytes": 0,
+          "textPages": 0,
+          "bodyReads": 0,
+          "taskBodies": 0,
+          "taskBytes": 0,
+          "taskReads": 0,
+          "linkedRows": 0,
+          "linkedKnown": 0,
+          "linkedChecked": 0
+        },
+        "reports": {
+          "bodySources": 0,
+          "bodyBytes": 0,
+          "controllers": 0,
+          "textPages": 0
+        },
+        "answers": {
+          "controllers": 0,
+          "protectedSources": 0,
+          "protectedBytes": 2
+        },
+        "projectionRows": 0
+      },
+      "interactionP95": 161.90000000596046,
+      "interactionBudget": "Fail",
+      "retainedHeapAfterTours": [
+        4456160,
+        4541248,
+        4707188,
+        4768868,
+        4930948
+      ],
+      "driverInteractionP95": 645
+    },
+    {
+      "count": 10000,
+      "bytes": 1498241,
+      "parse": 2.800000011920929,
+      "project": 670,
+      "layout": 0,
+      "bounds": {
+        "conversations": {
+          "listRows": 192,
+          "indexRows": 10000,
+          "queryKeys": 24,
+          "nativeRecords": 0,
+          "nativeBytes": 0,
+          "anchor": null,
+          "bodySources": 2,
+          "bodyBytes": 232,
+          "closedSources": 0,
+          "historyKeys": 0,
+          "historyRecords": 0,
+          "historyBytes": 0,
+          "textPages": 0,
+          "bodyReads": 0,
+          "taskBodies": 0,
+          "taskBytes": 0,
+          "taskReads": 0,
+          "linkedRows": 0,
+          "linkedKnown": 0,
+          "linkedChecked": 0
+        },
+        "reports": {
+          "bodySources": 0,
+          "bodyBytes": 0,
+          "controllers": 0,
+          "textPages": 0
+        },
+        "answers": {
+          "controllers": 0,
+          "protectedSources": 0,
+          "protectedBytes": 2
+        },
+        "projectionRows": 0
+      },
+      "interactionP95": 366,
+      "interactionBudget": "Fail",
+      "retainedHeapAfterTours": [
+        6701000,
+        6708312,
+        6810472,
+        7004088,
+        7159232
+      ],
+      "driverInteractionP95": 1036
+    }
+  ]
+}

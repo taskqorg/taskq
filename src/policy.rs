@@ -406,6 +406,13 @@ mod tests {
         assert_eq!(e.codex.unwrap(), ["-s", "danger-full-access", "--add-dir", "/p/.git"]);
         assert!(e.profile.unwrap().contains(&format!("(subpath {})", sb(&r.join(".taskq")))));
         assert!(resolve(&p, &host("linux", i, r), "codex", "", &ws).refused.unwrap().contains("enforcement unknown"));
+        // R9/#2159: a CLI Workspace grant cannot authorize an uncontained visible app turn.
+        for os in ["macos","windows"] {
+            let app=Ok(Policy {revision:33,grants:vec![g("codex-app","workspace",Some("/p"))]});
+            assert!(resolve(&app,&host(os,i,r),"codex-app","",&[]).refused.unwrap().contains("enforcement unknown"));
+            let cli=Ok(Policy {revision:33,grants:vec![g("codex","full",Some("/p"))]});
+            assert!(resolve(&cli,&host(os,i,r),"codex-app","",&[]).refused.is_some());
+        }
     }
 
     // Chain: R9 / § 8 Access, #2145 A2/A4. Risk: CLI state is blocked or writable settings bypass tool policy.

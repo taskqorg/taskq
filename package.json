@@ -12,6 +12,7 @@
     "@preact/signals": "2.11.3",
     "@taskq/coreq": "https://codeload.github.com/taskqorg/coreq/tar.gz/e84761cdab43723b871a42b3021e9c39afcd9484",
     "preact": "11.0.1",
+    "prismjs": "1.30.0",
     "wouter-preact": "3.13.0"
   }
 }

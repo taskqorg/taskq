@@ -182,6 +182,11 @@
         "later"
       ],
       "verdict": null,
+      "worker": {
+        "attempt": 3,
+        "session": "claude:abc mac",
+        "role": "worker"
+      },
       "executions": [
         {
           "task": 2,
@@ -340,6 +345,11 @@
           "cargo run -- selftest -- pass"
         ],
         "open": "none"
+      },
+      "worker": {
+        "attempt": 11,
+        "session": "claude:def mac",
+        "role": "worker"
       },
       "result": "cccccccccccccccccccccccccccccccccccccccc",
       "executions": [
