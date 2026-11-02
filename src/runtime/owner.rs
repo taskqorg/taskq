@@ -26,7 +26,7 @@ fn spec(base: &mut std::process::Command, client: agentq_runtime::agent::Client,
 }
 
 /// The brief is a file in the session folder; the first message only points at it.
-fn read_brief(path: &Path) -> String {
+pub(crate) fn read_brief(path: &Path) -> String {
     format!("Before any work, use Read to read {} in full. It is this session's brief; follow it.", serde_json::to_string(&path.to_string_lossy()).unwrap_or_default())
 }
 
@@ -137,7 +137,8 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let a = super::of(&r.runtime);
     let session = r.session.as_deref().filter(|s| super::plain_thread(s)).ok_or("native session unknown; open it in its runtime")?;
     if !super::which(a.bin).is_absolute() { return Err(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
-    if !a.codex { release_idle(r)?; }
+    if a.codex {return Err("App-owned Codex input must use its native queue; CLI resume refused".into());}
+    release_idle(r)?;
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
@@ -148,14 +149,44 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
     let access = super::access(&env, if a.codex { a.setup } else { &r.runtime }).map_err(|e| e.message)?;
     let mut c = super::cli(&r.runtime, &access, &env)?;
-    let spec = if a.codex {
-        let args: Vec<&str> = r.root.is_none().then_some("--skip-git-repo-check").into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
-        spec(&mut c, agentq_runtime::agent::Client::Codex, workdir, session, &args)
-    } else {
-        spec(&mut c, agentq_runtime::agent::Client::Claude, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
-            "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string()])
-    };
+    let spec = spec(&mut c, agentq_runtime::agent::Client::Claude, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
+        "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string()]);
     Ok(agentq_runtime::agent::command(c, &super::optimized(spec)?))
+}
+
+/// D2/D5: reuse native App readback, binding canonical project, thread, exact input and terminal turn id.
+fn app_history(own:&Path,r:&Request,input:&str,baseline:usize,after:u64)->Res<super::AppHistory> {
+    let session=r.session.as_deref().filter(|s|super::plain_thread(s)).ok_or("native App session unknown")?;
+    let root=r.root.as_deref().map_or(own,Path::new).canonicalize().map_err(|_|"native App project unavailable")?;
+    let path=transcript(&r.runtime,session)?;let mut history=super::AppHistory {floor:after,..super::AppHistory::default()};
+    let until=std::time::Instant::now()+std::time::Duration::from_secs(5);
+    loop {match history.read(&path,baseline,input,&root,session) {
+        Ok(_) if history.reader.offset>=after=>return Ok(history),
+        Ok(_)=>return Err("native App source shrank before the saved input boundary".into()),
+        Err(reason) if reason=="Codex native history scan pending; retry observation without queueing"&&std::time::Instant::now()<until=>{},
+        Err(reason)=>return Err(reason),
+    }}
+}
+
+pub(crate) fn app_baseline(own:&Path,r:&Request)->Res<(usize,u64)> {
+    let history=app_history(own,r,&read_brief(&own.join("brief.txt")),0,0)?;
+    if history.current.is_some() {return Err("native App is working; input not queued".into());}
+    Ok((history.count,history.reader.offset))
+}
+
+pub(crate) fn app_submit(own:&Path,r:&Request,input:&str)->Res<()> {
+    let session=r.session.as_deref().filter(|s|super::plain_thread(s)).ok_or("native App session unknown")?;
+    let install=own.parent().and_then(Path::parent).ok_or("owner installation unknown")?;
+    let root=r.root.as_deref().map_or(own,Path::new);let exe=std::env::current_exe().map_err(|_|"owner executable unknown")?;
+    let policy=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
+    let env=super::Env {context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,publish:"",board_env:&[],jobs:None};
+    super::access(&env,super::of(&r.runtime).setup).map_err(|e|e.message)?;
+    super::app_queue(session,input)
+}
+
+pub(crate) fn app_observe(own:&Path,r:&Request,t:&crate::dialogue::Turn)->Res<crate::dialogue::AppState> {
+    let history=app_history(own,r,&t.input,t.app_baseline.ok_or("native App baseline unknown")?,t.app_after.ok_or("native App input boundary unknown")?)?;
+    Ok(crate::dialogue::AppState {accepted:history.owned.is_some(),active:history.current.is_some(),outcome:history.ended.then(||if history.aborted {"failed: native App turn aborted".into()}else{"success".into()})})
 }
 
 /// D3: Claude lists a session someone has open; Codex refuses the second writer itself, so its check is the turn.

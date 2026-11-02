@@ -221,10 +221,11 @@ body:function(text,source='body',nativeAt){
  const list=line=>/^\s*(?:([-*+])|(\d+)[.)])\s+(.+)$/.exec(line);
  for(let i=0;i<lines.length;){
   if(!lines[i].trim()){i++;continue;}const start=i,at=starts[i],fence=/^\s*(`{3,}|~{3,})([^\n]*)$/.exec(lines[i]);let node;
-  if(fence){i++;const begin=i;while(i<lines.length&&!lines[i].trim().startsWith(fence[1]))i++;node=h('pre',null,h('code',{'aria-label':(fence[2].trim()||'Text')+' code'},code(lines.slice(begin,i).join('\n'),fence[2].trim(),starts[begin]??text.length)));if(i<lines.length)i++;}
+  if(lines[i].trim()==='<oai-mem-citation>'&&lines.slice(i+1).some(l=>l.trim()==='</oai-mem-citation>')){i++;while(i<lines.length&&lines[i].trim()!=='</oai-mem-citation>')i++;i++;node=h('details',{'data-view-key':'metadata:'+source+':'+at},h('summary',{class:'source-toggle'},'Provider citation metadata'),h('pre',null,plain(lines.slice(start,i).join('\n'),at)));}
+  else if(fence){i++;const begin=i;while(i<lines.length&&!lines[i].trim().startsWith(fence[1]))i++;node=h('pre',null,h('code',{'aria-label':(fence[2].trim()||'Text')+' code'},code(lines.slice(begin,i).join('\n'),fence[2].trim(),starts[begin]??text.length)));if(i<lines.length)i++;}
   else if(/^#{1,6}\s/.test(lines[i])){const heading=/^#{1,6}\s+/.exec(lines[i])[0];node=h('h3',null,inline(lines[i].slice(heading.length),at+heading.length));i++;}
   else if(list(lines[i])){const ordered=!!list(lines[i])[2],items=[];while(i<lines.length){const m=list(lines[i]);if(!m||!!m[2]!==ordered)break;items.push(h('li',{key:i,...(ordered?{value:Number(m[2])}:{}),...props(starts[i])},inline(m[3],starts[i]+lines[i].indexOf(m[3]))));i++;}node=h(ordered?'ol':'ul',null,items);}
-  else {i++;while(i<lines.length&&lines[i].trim()&&!/^\s*(`{3,}|~{3,})|^#{1,6}\s/.test(lines[i])&&!list(lines[i]))i++;node=h('p',null,inline(lines.slice(start,i).join('\n'),at));}
+  else {i++;while(i<lines.length&&lines[i].trim()&&!/^\s*(`{3,}|~{3,})|^#{1,6}\s/.test(lines[i])&&!list(lines[i])&&lines[i].trim()!=='<oai-mem-citation>')i++;node=h('p',null,inline(lines.slice(start,i).join('\n'),at));}
   Object.assign(node.props,{...props(at),style:{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}});node.key=at;blocks.push(node);
  }
  return blocks;

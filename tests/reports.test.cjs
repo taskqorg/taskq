@@ -90,3 +90,9 @@ assert(JSON.stringify(u.section(unavailable)).includes('Board unavailable'));
  assert(!rendered.some(n=>n.type==='script'));
  assert.equal(plain(nodes(body('```unknown-language\n'+source+'\n```')).find(n=>n.type==='code')),source,'unknown language is selectable plain code');
 }
+
+// #2159: provider bookkeeping stays inspectable without replacing the PM's response.
+{
+ const {body}=require('../src/reports.js'),out=JSON.stringify(body('Reviewed result.\n<oai-mem-citation>\nMetadata retained exactly.\n</oai-mem-citation>'));
+ assert(out.includes('Provider citation metadata'));assert(out.includes('Metadata retained exactly.'));assert(out.includes('Reviewed result.'));
+}

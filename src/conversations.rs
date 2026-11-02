@@ -290,6 +290,7 @@ fn reply(install:&Path,id:&str,m:&Value,native:&crate::dialogue::Native)->Res<Va
             p["conversations"]=json!(drafts);persist(install,&p)
         })?;
     }
+    if result.is_ok()&&!crate::dialogue::accepted(install,id,op,&input)? {return Err("Native App input acceptance pending; check the original reply, no resend".into());}
     result.map(|_|Value::Null).map_err(|e|e.reason)
 }
 
@@ -307,6 +308,11 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
         }
         // D2/D6 workspace dialogue writes of a launched conversation; the draft stays until the workspace clears it.
         match action {
+            "retry-turn"=>{
+                let p=preferences(install)?;let drafts=rows(&p)?;let d=drafts.get(id).ok_or("Draft unavailable")?;
+                if d.archived||d.deleting {return Err("Restore the thread before retrying its original input".into());}
+                crate::dialogue::retry_refused(install,id,m["op_id"].as_str().ok_or("Original turn operation missing")?,&crate::dialogue::NATIVE)?;return Ok(Value::Null);
+            }
             "reply-check"=>{
                 let p=preferences(install)?;let drafts=rows(&p)?;let d=drafts.get(id).ok_or("Draft unavailable")?;
                 let r=d.reply.as_ref().filter(|r|m["op_id"]==r.id).ok_or("Original reply identity unavailable; draft kept")?;
@@ -735,16 +741,38 @@ mod tests {
         fs::write(dir.join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
         let original=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
         let message=json!({"id":"operation","revision":original.revision});
-        let error=reply(&f.0,"owner",&message,&crate::dialogue::Native{turn:never,holder:unknown}).unwrap_err();
+        let error=reply(&f.0,"owner",&message,&crate::dialogue::Native{app:None,turn:never,holder:unknown}).unwrap_err();
         assert!(error.contains("native holder unknown"));
         assert_eq!(rows(&preferences(&f.0).unwrap()).unwrap()["owner"],original,"a pre-store refusal must clear intent without changing text/files");
         assert!(crate::dialogue::turn(&f.0,"owner").unwrap().is_none());
         // A failed store is not proof that no turn was saved; retain its exact operation and input.
         fs::create_dir(dir.join("owner/turn.json").with_extension("tmp")).unwrap();
-        assert!(reply(&f.0,"owner",&message,&crate::dialogue::Native{turn:never,holder:free}).is_err());
+        assert!(reply(&f.0,"owner",&message,&crate::dialogue::Native{app:None,turn:never,holder:free}).is_err());
         let saved=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
         assert_eq!(saved.text,original.text);assert_eq!(saved.files,original.files);
         assert_eq!(saved.reply.unwrap().id,"operation");
+    }
+
+    // D2/C4/#2159: an accepted local App intent is not native delivery; retain exact draft/files until readback.
+    #[test]
+    fn app_reply_pending_acceptance_keeps_draft_and_original_operation() {
+        fn never(_: &Path,_:&crate::setup::Request)->Res<std::process::Command>{panic!("no CLI writer")}
+        fn free(_: &Path,_:&crate::setup::Request)->Res<bool>{Ok(false)}
+        fn baseline(_: &Path,_:&crate::setup::Request)->Res<(usize,u64)>{Ok((0,0))}
+        fn submit(_: &Path,_:&crate::setup::Request,_:&str)->Res<()>{panic!("UI never submits native input")}
+        fn observe(_: &Path,_:&crate::setup::Request,_:&crate::dialogue::Turn)->Res<crate::dialogue::AppState>{panic!("UI acknowledgement never probes or resends")}
+        let f=Fixture::new();f.save("owner","Keep exact App reply");f.attach("owner","note.txt","text/plain",b"Keep file");
+        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false};
+        let dir=crate::setup::dir(&f.0);fs::create_dir_all(dir.join("owner")).unwrap();fs::write(dir.join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
+        let before=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
+        let native=crate::dialogue::Native {app:Some(crate::dialogue::AppNative{baseline,submit,observe}),turn:never,holder:free};
+        let m=json!({"id":"original-op","revision":before.revision});assert!(reply(&f.0,"owner",&m,&native).unwrap_err().contains("acceptance pending"));
+        let retained=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();assert_eq!(retained.text,before.text);assert_eq!(retained.files,before.files);assert_eq!(retained.reply.as_ref().unwrap().id,"original-op");
+        let mut turn=crate::dialogue::turn(&f.0,"owner").unwrap().unwrap();let input=turn.input.clone();assert!(!crate::dialogue::accepted(&f.0,"owner","original-op",&input).unwrap());
+        assert!(reply(&f.0,"owner",&m,&native).unwrap_err().contains("unresolved"));
+        turn.app_accepted=true;turn.app_baseline=Some(0);turn.state="running".into();crate::platform::write_atomic(&dir.join("owner/turn.json"),&serde_json::to_string(&turn).unwrap()).unwrap();
+        assert!(crate::dialogue::accepted(&f.0,"owner","original-op",&input).unwrap());assert!(!crate::dialogue::accepted(&f.0,"owner","original-op","changed").unwrap());
+        assert_eq!(rows(&preferences(&f.0).unwrap()).unwrap()["owner"].text,before.text,"native readback does not erase independent edits");
     }
 
     // #1929 A6: restart/check reads the immutable turn, never dispatches; new edits remain independent.

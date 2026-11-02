@@ -222,6 +222,9 @@ module.exports=execution.module('conversations',{
       h('dl',null,
        watching?[row('Prompt',w.prompt),row('Every',w.every+' minutes'),row('Events',(w.events||[]).join(', ')||'none'),row('Last watch dispatch',time.stamp(w.last_turn,'Watch dispatched')),row('Next scheduled turn',time.stamp(w.next_due,'Next scheduled turn')),row('Last outcome',w.last_outcome||'none')]:row('Watch',watchText),
        row('Latest turn',t?[t.state+' · '+(t.outcome||(t.state==='done'?'outcome unknown':'outcome pending'))+' · ',time.stamp(t.at,'Turn submitted')]:time.stamp(null,'Turn submitted',s?'No turn timestamp in the status record':v?.statusReason||'Turn status unavailable')),
+       row('Original turn input',t?.input||'No queued reply input'),
+       t?.prior_outcome&&row('Prior refusal',t.prior_outcome),
+       t?.retry_refused&&h('button',{'data-c':'retry-turn','data-op-id':t.op_id,disabled:disabled||!!pending||s?.state==='working'},'Retry original App input'),
        row('Last assistant line',!s?'unknown':s.reason?'unknown: '+s.reason:s.last_line??'none in the last chunk')),
       h('div',{class:'dialogue-watch'},
        h('label',null,'Watch prompt',h('textarea',{'data-w-field':'prompt',value:f.prompt,rows:2,maxLength:65536,disabled,placeholder:'Check the board as the project rules say and report'})),
@@ -233,19 +236,23 @@ module.exports=execution.module('conversations',{
    transcript:function(c){
     const v=view?.id===c.id?view:null,label={user:'You',assistant:'Project manager'};
     // Q-A9: page loads are not announced in full; a short status says what changed
-    return [h('p',{class:'sr-only',role:'status'},v?.announce||''),h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Transcript',tabindex:'0','data-id':c.id},
+    return [c.sent?.text&&!v?.items?.some(i=>i.role==='user'&&i.text===c.sent.text)&&h('section',{'data-reading-key':'owner-request:'+c.id,class:'conversation-prose'},h('p',{class:'meta'},'You · request'),require('./reports.js').body(c.sent.text,'owner-request:'+c.id,0),h('details',{'data-view-key':'request-source:'+c.id,'data-native-source':'request-source:'+c.id},h('summary',{class:'source-toggle'},'Exact request source'),nativeSources.has('request-source:'+c.id)&&h('pre',null,c.sent.text))),h('p',{class:'sr-only',role:'status'},v?.announce||''),h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Transcript',tabindex:'0','data-id':c.id},
      v?.start>0&&h('button',{'data-c':'earlier',disabled:!!v.busy.before||!!v.lost},v.busy.before?'Loading earlier…':'Load earlier'),
      v?.limitReason&&h('p',{role:'status',class:'meta'},v.limitReason),v?.lost&&h('p',{role:'status',class:'dialogue-unknown'},v.lost),
      v?.reason&&v.reason!==v.lost&&h('p',{role:'status',class:'dialogue-unknown'},'Transcript unknown: '+v.reason+(v.items.length?'. Showing what was read before.':'')),
-     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'&&!item.image?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief',time.stamp(item.updated,'Setup brief recorded')),api.nativeItem(item,null)):api.nativeItem(item,label[item.role]||item.role);}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
+     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'&&!item.image?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):api.nativeItem(item,label[item.role]||item.role);},c.id):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
    // #1918 A6: consecutive tool calls fold into one collapsible line (docs/design/conversations-usability-review.md#tool-collapse-1918);
    // a message ends the group. `current`: the worker runs, so the last group names its latest step live.
-   steps:function(items,current,render){
+   steps:function(items,current,render,setup=null){
     const out=[],tool=item=>{const key=api.key(item);return h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded'));};
     for(let i=0;i<items.length;){
+     if(setup&&['brief','transport'].includes(items[i].role)){
+      let j=i;while(j<items.length&&['brief','transport'].includes(items[j].role))j++;
+      const run=items.slice(i,j),key=api.key(run[0]);out.push(h('details',{key,'data-key':key,'data-view-key':'setup:'+setup+':'+key,class:'dialogue-steps dialogue-setup'},h('summary',{class:'meta'},'Setup evidence · '+run.length+' records'),run.map(item=>api.nativeItem(item,item.role==='brief'?'Brief':'Transport'))));i=j;continue;
+     }
      if((items[i].role!=='tool'||items[i].image)){out.push(render(items[i]));i++;continue;}
      let j=i;while(j<items.length&&items[j].role==='tool'&&!items[j].image)j++;
      const run=items.slice(i,j),key=api.key(run[0]),now=current&&j===items.length;
@@ -448,7 +455,7 @@ module.exports=execution.module('conversations',{
      const r=s.conversationReceipt;if(r.id!==pending?.id)return true;
      const op=pending;pending=null;if(Number.isSafeInteger(r.snapshot?.catalog_epoch))catalogEpoch=Math.max(catalogEpoch,r.snapshot.catalog_epoch);ui.cancel(timer);const c=items.find(c=>c.id===op.conversation),native=r.snapshot?.items?.find(c=>c.id===op.conversation);
      if(c&&native){c.reply=native.reply;c.revision=native.revision;c.request=native.request;c.sent=native.sent;c.dialogue=native.dialogue;c.updated=native.updated;if(['attach','remove'].includes(op.action))c.files=native.files;}
-     if(r.state!=='accepted'&&['reply','watch','unwatch'].includes(op.action)&&!(op.action==='reply'&&r.state!=='rejected'&&(!native||native.reply)&&r.reason!=='working'&&!r.reason?.startsWith('open in '))){
+     if(r.state!=='accepted'&&['reply','watch','unwatch','retry-turn'].includes(op.action)&&!(op.action==='reply'&&r.state!=='rejected'&&(!native||native.reply)&&r.reason!=='working'&&!r.reason?.startsWith('open in '))){
       // D3: a refused turn or watch change is definite; its text shows and the draft stays.
       if(c)c.sending=false;api.note(op.action==='reply'?'Not sent: '+(r.reason||'delivery unknown')+'. Draft kept.':r.reason||'Watch change unknown',op.conversation);api.next();
      }else if(r.state!=='accepted'){
@@ -467,6 +474,7 @@ module.exports=execution.module('conversations',{
       }
       if(c&&['reply','reply-check'].includes(op.action)){c.replyAck=op.action==='reply'?op.id:op.op_id;c.reply=null;c.sending=false;if(c.version===op.typed&&(op.action==='reply'||r.value?.unchanged===true)){c.text='';c.caret=[0,0];for(const f of c.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=[];}c.version=(c.version||0)+1;api.save(c);api.note('Message saved · check PM activity separately.',op.conversation);if(view?.id===c.id)api.read('status');}
       if(view?.id===op.conversation&&op.action==='watch'&&r.value){view.status={...view.status,watch:r.value};view.form=null;api.form();api.note('Watch saved. Its prompt is sent when due and the session is idle.',op.conversation);}
+      if(view?.id===op.conversation&&op.action==='retry-turn'){api.note('Original refused input admitted to the same App session; check native acceptance. No new session.',op.conversation);api.read('status');}
       if(view?.id===op.conversation&&op.action==='unwatch'){view.status={...view.status,watch:'no watch'};view.form=null;api.form();api.note('Watch removed',op.conversation);}
       if(op.action==='cancel')api.note('Cancelled before native launch. No runtime work was rolled back.',op.conversation);
       if(op.action==='reconcile')api.note('Delivery checked using the original request ID.',op.conversation);
@@ -631,7 +639,7 @@ module.exports=execution.module('conversations',{
                h('div',{class:'conversation-files'},(c.files||[]).map(f=>h('div',{class:'conversation-file',key:f.id},h('button',{'data-c':'preview','data-file':f.id,disabled},f.name+' · '+f.bytes+' B'),button('x','Remove '+f.name,{'data-c':'remove','data-file':f.id,disabled}))))],
         tools,reason:bad==='Write a message for the session.'?'':bad})))
       ]:h('p',null,'Choose a thread or New. Launched requests continue here as native turns.'))),
-     h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},(recoveryDrafts.length?'Recovered draft source unavailable. Local edits kept; refresh status to load it. ':'')+(notices[selected||'list']||''),bodyNotice&&h('span',{class:'meta'},bodyNotice),pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.recovered?({save:'Save recovered draft',attach:'Save recovered attachment',remove:'Remove recovered attachment'}[failure.action]||'Retry recovered action'):failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
+     h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},(recoveryDrafts.length?'Recovered draft source unavailable. Local edits kept; refresh status to load it. ':'')+(notices[selected||'list']||''),bodyNotice&&h('span',{class:'meta'},bodyNotice),pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.recovered?({save:'Save recovered draft',attach:'Save recovered attachment',remove:'Remove recovered attachment'}[failure.action]||'Retry recovered action'):failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch','retry-turn'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
    },
    click:function(b){
     const action=b.dataset.c;if(!action)return false;const c=api.current();sidebarProjection=null;
@@ -675,6 +683,7 @@ module.exports=execution.module('conversations',{
     else if(action==='reply'&&!api.problem(c))api.action('reply',{typed:c.version||0});
     else if(action==='watch'&&view?.form){api.action('watch',{prompt:view.form.prompt,every:Number(view.form.every),events:EVENTS.filter(e=>view.form.events.includes(e))});}
     else if(action==='unwatch')api.action('unwatch');
+    else if(action==='retry-turn')api.action('retry-turn',{op_id:b.dataset.opId});
     else if(action==='status-refresh'&&view&&!view.busy.status){api.read('status');draw();}
     else if(action==='earlier'&&view&&!view.lost&&!view.busy.before&&view.start>0){view.quiet.before=0;api.read('before',{before:view.start});draw();}
     else if(action==='later'&&view&&!view.lost&&!view.busy.after&&view.end<view.size){view.quiet.after=0;api.read('after',{after:view.end});draw();}
@@ -682,7 +691,7 @@ module.exports=execution.module('conversations',{
     else if(action==='retry-save'){
      const failed=failure;failure=null;
      // a reply with no receipt is never resent: the transcript and status tell whether it ran
-     if(failed&&['reply','watch','unwatch'].includes(failed.action)){const f=items.find(c=>c.id===failed.conversation);if(f)f.sending=false;api.note('Delivery unknown; draft kept. Check the transcript and status before sending again.');if(view?.id===failed.conversation)api.read('status');api.next();draw();}
+     if(failed&&['reply','watch','unwatch','retry-turn'].includes(failed.action)){const f=items.find(c=>c.id===failed.conversation);if(f)f.sending=false;api.note('Delivery unknown; draft kept. Check the transcript and status before sending again.');if(view?.id===failed.conversation)api.read('status');api.next();draw();}
      else if(failed){if(['send','reconcile'].includes(failed.action)){queue=queue.filter(o=>o.action!=='send');queue.unshift({conversation:failed.conversation,action:'reconcile'});}else queue.unshift({...failed,id:undefined});api.next();draw();}
     }
     else if(['archive','restore','send','cancel','reconcile','preview','remove','delete'].includes(action))api.action(action,{...(b.dataset.file?{file:b.dataset.file}:{}),...(action==='send'?{runtime:api.runtime(c).id}:{})});
