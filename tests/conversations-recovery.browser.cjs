@@ -64,30 +64,39 @@ async function savedOwnerRecovery(browser){
  }finally{await page.close();}
 }
 // #2159 A3: native search takes focus; returning must restore each PM's independent selected input.
-async function searchedOwnerSwitch(browser){
+async function searchedOwnerSwitch(browser,lazy=false){
  const page=await browser.newPage({viewport:{width:900,height:740}});try{
   await page.setContent(html);
-  await page.evaluate(({draft,board})=>{
+  await page.evaluate(({draft,board,lazy})=>{
    window.sent=[];window.fixture={font:20,theme:'dark',host:'fixture',projects:[{root:draft.root,name:'Invented',issues:board,alive:true,complete:true,tasks:[]}],ai:{history:[]},messages:{complete:true,entries:[]},conversations:{complete:true,items:['General','PilotQ'].map(title=>({...draft,id:title.toLowerCase(),title,text:title==='General'?'Сохрани точный ввод без отправки':'Independent PilotQ input',sent:{root:draft.root,runtime:'codex',text:title+' original request',files:[]},request:{state:'launched',runtime:'codex'}})),navigation:{selected:'general',list:'recent'}}};
+   window.catalog=()=>({...structuredClone(fixture.conversations),items:fixture.conversations.items.map(c=>{const row=structuredClone(c);if(lazy){row.lazy=true;delete row.text;delete row.files;delete row.sent.text;delete row.sent.files;}return row;})});
    window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);
-    if(m.a==='conversation-action'&&m.action==='save'){const c=fixture.conversations.items.find(c=>c.id===m.conversation);Object.assign(c,m.draft);c.revision++;queueMicrotask(()=>taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:structuredClone(fixture.conversations)}}));}
-    if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:m.action==='tasks'?{tasks:[],more:false}:m.action==='status'?{state:'idle',watch:{prompt:'Invented watch',every:10,events:['ask']}}:{generation:'invented-'+m.conversation,start:0,end:2,size:2,items:[{at:0,i:0,role:'assistant',text:'Original '+m.conversation+' response'},{at:1,i:0,role:'assistant',text:'Natural watch progress'}]}}}));
-   }};taskq.receive(fixture);
-  },{draft,board});
-  const field=page.locator('[data-c-field=text]');await field.waitFor();
-  await field.evaluate(e=>{window.previousField=e;e.focus();e.setSelectionRange(8,19);document.dispatchEvent(new Event('selectionchange'));});
+    if(m.a==='conversation-navigation'){const n=m.navigation,valid=new TextEncoder().encode(JSON.stringify(n)).length<=4096&&(!n.selected||/^[A-Za-z0-9_-]{1,64}$/.test(n.selected))&&(!n.search||[...n.search].length<=512)&&Object.entries(n.scrolls||{}).every(([k,v])=>['recent','archive'].includes(k)&&Number.isInteger(v)&&v>=0&&v<=4294967295);queueMicrotask(()=>taskq.receive({conversationNavigationError:valid?null:'Workspace navigation invalid; kept'}));}
+    if(m.a==='conversation-action'&&m.action==='save'){const c=fixture.conversations.items.find(c=>c.id===m.conversation);Object.assign(c,m.draft);c.revision++;const snapshot=catalog();Object.assign(snapshot.items.find(r=>r.id===c.id),structuredClone(c),{lazy:false});queueMicrotask(()=>taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot}}));}
+    if(m.a==='conversation-dialogue'&&m.action==='body'){setTimeout(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:{...structuredClone(fixture.conversations.items.find(c=>c.id===m.conversation)),lazy:false}}}),10);return;}
+    if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:m.action==='tasks'?{tasks:[],more:false}:m.action==='status'?{state:'idle',watch:{prompt:'Invented watch',every:10,events:['ask']}}:{generation:'invented-'+m.conversation,start:m.after??0,end:80,size:80,items:Array.from({length:80},(_,at)=>({at,i:0,role:'assistant',text:'Recorded '+m.conversation+' progress '+at+'\n\n'+'Keep the exact source and do not resend. '.repeat(4)})).slice(m.after??0)}}}));
+   }};taskq.receive({...fixture,conversations:catalog()});
+  },{draft,board,lazy});
+  const field=page.locator('[data-c-field=text]');await field.waitFor();await page.waitForFunction(()=>document.querySelector('[data-c-field=text]')?.value==='Сохрани точный ввод без отправки');
+  await field.evaluate((e,lazy)=>{window.previousField=e;e.focus();if(lazy){window.quietSelection=event=>event.stopImmediatePropagation();document.addEventListener('selectionchange',quietSelection,true);document.addEventListener('select',quietSelection,true);}e.setSelectionRange(8,19);if(!lazy)document.dispatchEvent(new Event('selectionchange'));},lazy);
   assert.equal(await field.evaluate(e=>e.value.slice(e.selectionStart,e.selectionEnd)),'точный ввод');
+  await page.waitForFunction(()=>document.querySelector('.dialogue-item[data-key=\"79:0\"]'));
+  const tail=await page.locator('.dialogue-item[data-key=\"79:0\"]').evaluate(e=>e.getBoundingClientRect().top-e.closest('.conversation-reader').getBoundingClientRect().top);
   for(const title of ['PilotQ','General']){
    await page.getByRole('button',{name:'Search threads',exact:true}).click();const search=page.locator('[data-c-field=search]');await search.fill(title);
    assert(await search.evaluate(e=>document.activeElement===e),'search owns focus while navigating');
-   if(title==='PilotQ')await page.evaluate(()=>{const e=previousField;e.setSelectionRange(e.value.length,e.value.length);e.dispatchEvent(new Event('select',{bubbles:true}));document.dispatchEvent(new Event('selectionchange'));});
+   if(title==='PilotQ')await page.evaluate(()=>{if(window.quietSelection){document.removeEventListener('selectionchange',quietSelection,true);document.removeEventListener('select',quietSelection,true);}const e=previousField;e.setSelectionRange(e.value.length,e.value.length);e.dispatchEvent(new Event('select',{bubbles:true}));document.dispatchEvent(new Event('selectionchange'));});
    await page.locator('[data-c=select][data-id='+title.toLowerCase()+']').click();
-   if(title==='PilotQ'){assert.equal(await field.inputValue(),'Independent PilotQ input');assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),draft.caret,'the other manager keeps its own range');}
+   if(title==='PilotQ'){await page.waitForFunction(()=>document.querySelector('[data-c-field=text]')?.value==='Independent PilotQ input');assert.equal(await field.inputValue(),'Independent PilotQ input');assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),draft.caret,'the other manager keeps its own range');}
   }
-  if(process.env.TASKQ_EVIDENCE_2159){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2159,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2159+'/search-switch.png'});}
+  await page.waitForFunction(()=>document.querySelector('[data-c-field=text]')?.value==='Сохрани точный ввод без отправки');
+  if(process.env.TASKQ_EVIDENCE_2159){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2159,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2159+(lazy?'/search-switch-quiet.png':'/search-switch-events.png')});}
+  assert(!(await page.locator('.conversation-reader').innerText()).includes('Workspace navigation invalid; kept'),'the native-shaped navigation boundary accepts each switch');
   assert.equal(await field.inputValue(),'Сохрани точный ввод без отправки');
   assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),[8,19],'search/switch return retains the exact selected range');
   assert(await field.evaluate(e=>document.activeElement===e),'return restores composer focus');
+  await page.waitForFunction(()=>document.querySelector('.dialogue-item[data-key=\"79:0\"]'));
+  assert(Math.abs(await page.locator('.dialogue-item[data-key=\"79:0\"]').evaluate(e=>e.getBoundingClientRect().top-e.closest('.conversation-reader').getBoundingClientRect().top)-tail)<=2,'the latest reading area survives the searched-manager return');
   assert.match(await page.locator('.conversation-files').innerText(),/notes.md/);
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-action'&&m.action!=='save'||['answer','ai-send','reports','message-action'].includes(m.a)).length),0,'switching and native reads never resend or acknowledge');
  }finally{await page.close();}
@@ -127,8 +136,8 @@ async function loadingRecovery(browser){
 }
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
- await searchedOwnerSwitch(browser);
- const nativeEngine=await webkit.launch({headless:true});try{await searchedOwnerSwitch(nativeEngine);await savedOwnerRecovery(nativeEngine);}finally{await nativeEngine.close();}
+ await searchedOwnerSwitch(browser);await searchedOwnerSwitch(browser,true);
+ const nativeEngine=await webkit.launch({headless:true});try{await searchedOwnerSwitch(nativeEngine);await searchedOwnerSwitch(nativeEngine,true);await savedOwnerRecovery(nativeEngine);}finally{await nativeEngine.close();}
  await savedOwnerRecovery(browser);
  try{
   const regressions=await Promise.allSettled(['answer','steer'].flatMap(kind=>[false,true].map(saved=>taskRecovery(browser,kind,saved))).concat(loadingRecovery(browser)));

@@ -26,6 +26,13 @@ for(const [name,check]of [
   p.tasks=Array.from({length:65},(_,n)=>({n:n+1,conversation:{id:c.id}}));api.linked(c,p);rendered=api.linkedTools();
   assert.match(JSON.stringify(rendered),/1–64 \/ 65 loaded/);assert(nodes(rendered).some(v=>v.props['data-c']==='linked-page'),'real associated rows retain bounded paging');
  }],
+ ['#2159 native navigation uses UTF-8 byte budgets',()=>{
+  const api=instance(),sent=[],later=[];globalThis.ipc={postMessage:text=>sent.push(JSON.parse(text))};const defer=ui.defer;ui.defer=fn=>{later.push(fn);return 0;};
+  try{api.receive(structuredClone(initial));api.restoreRecovery({context:{selected:'owner',list:'recent',selection:{recent:'owner'},scrolls:{recent:0},positions:{},focuses:{owner:{tag:'TEXTAREA',key:'Я'.repeat(1500),index:0}},opened:[],listOnly:false,search:'Я'.repeat(512),filter:'all'}});api.nav();later.shift()();
+   assert(!sent.some(m=>m.a==='conversation-navigation'),'an envelope above 4 KiB must stay local instead of being refused by native');
+   api.place('old',{at:10,i:0,y:0,g:'Я'.repeat(650)});api.place('new',{at:20,i:0,y:0,g:'Я'.repeat(650)});assert(new TextEncoder().encode(JSON.stringify(api.recovery().context.positions)).length<=1536,'saved native anchors share the 1.5 KiB UTF-8 ceiling');
+  }finally{ui.defer=defer;}
+ }],
  ['#2159 image bytes participate in native resident eviction',()=>{const api=instance(),item={text:'text',image:{src:'data:image/png;base64,'+'a'.repeat(4096)}};assert(api.bytes(item)>4096,'image data cannot bypass the 32 MiB native cache ceiling');}],
  ['#2159 New leaves Finished scope and retains its own runtime',()=>{const api=instance();api.receive({...structuredClone(initial),ai:{runtime:{id:'claude'},runtimes:[{id:'claude',available:true},{id:'codex',available:true}]}});api.filter('finished',{projects:['fixture']});api.fresh({root:'fixture',runtime:'codex'});assert.equal(api.filterName(),'all','New cannot strand its draft in Finished');assert.equal(api.context().completed,null);assert.equal(api.local(api.current()).runtime,'codex','the per-request choice must survive native saves/recovery');}],
  ['lightweight refresh retains submitted text/files',()=>{const api=instance();api.receive(structuredClone(initial));api.receive({projects:[],conversations:{complete:true,items:[{id:'owner',revision:2,lazy:true,sent:{root:'fixture',runtime:'claude'}}]}});assert.equal(api.current().sent.text,owner.sent.text);assert.deepEqual(api.current().sent.files,owner.sent.files);assert.equal(api.current().text,owner.text);}],
