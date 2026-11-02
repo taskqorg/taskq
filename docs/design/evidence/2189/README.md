@@ -22,6 +22,8 @@ The legacy balancing filter initially ran with the launching worker's identity a
 | A6 | The host chain reads real heartbeat projections through the board snapshot, checks occupancy/weights in JSON and text, and checks the actual runtime and reason in the task spawn comment. |
 | A7 | Six `weighted` unit checks, 22 `balancing` regression checks and one real CLI integration check passed during development. The final canonical gate outcome is recorded with the exact candidate in the task result. |
 
+The first canonical gate exposed a compatibility defect in the new projection: unweighted host JSON gained an unnecessary null `balancing` key. The implementation now emits that optional field only for weighted hosts; the existing golden fixture and assertion remain unchanged. The pinned contract lint also caught two new overlong paragraphs; splitting the policy into four bounded paragraphs preserves every condition, with linked details unchanged.
+
 ## Qualification boundary
 
 These are model, adapter and isolated process checks on macOS. Structured native quota payloads are fixtures; no provider request, installed fleet cutover or native multi-host workload was run. Missing/stale headroom remains unknown, with neutral ranking; corrupt storage refuses weighted launches. `merge_group` remains the publication gate (R12, §7). All board hosts need schema-2-compatible readers before enabling weights; each intended host receives its own owner-set weights.

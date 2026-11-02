@@ -793,7 +793,8 @@ impl Snapshot {
         json!({"schema": SCHEMA, "source": self.source, "observed": self.observed, "complete": self.reason.is_none(), "reason": self.reason,
             "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "vocabulary": vocabulary(), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
             "hosts": self.hosts.iter().map(|h| {
-                let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics, "balancing":h.balancing});
+                let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
+                if h.balancing["schema"]==2 {r["balancing"]=h.balancing.clone();}
                 if let Some(l) = &h.link { r["link"] = json!(l) }
                 r
             }).collect::<Vec<_>>(),
