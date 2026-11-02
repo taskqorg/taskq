@@ -1040,8 +1040,8 @@ mod tests {
             crate::core::Entry{id:2,body:"taskq: start".into(),edited:false},
             crate::core::Entry{id:3,body:"taskq: spawn worker codex:s mac".into(),edited:false},
             crate::core::Entry{id:4,body:"taskq: result deadbeef attempt 999".into(),edited:false}];
-        let comments=vec![board::Comment{id:1,body:log[0].body.clone(),created:100,trusted:true,edited:false,author:String::new()},
-            board::Comment{id:2,body:log[1].body.clone(),created:150,trusted:true,edited:false,author:String::new()}];
+        let comments=vec![board::Comment{id:1,body:log[0].body.clone(),created:100,trusted:true,edited:false,author:String::new(),read:None},
+            board::Comment{id:2,body:log[1].body.clone(),created:150,trusted:true,edited:false,author:String::new(),read:None}];
         let v=View {issue:board::Issue{number:1,created:100,..Default::default()},projection:crate::core::project(1,&log,false),log,comments,blockers:vec![]};
         let steps=stage_history(&v);
         assert_eq!(steps.iter().map(|s|s["state"].as_str().unwrap()).collect::<Vec<_>>(),["ready","held","ready","doing"]);
@@ -1067,7 +1067,7 @@ mod tests {
     fn rows_name_the_answer_that_closed_the_question() {
         let mut r = Row { n: 1, ..Default::default() };
         assert!(r.json().get("answered").is_none(), "no answer, no field");
-        r.answered = Some(crate::dispatch::Answered { by: "alex".into(), text: "use x".into() });
+        r.answered = Some(crate::dispatch::Answered { by: "alex".into(), text: "use x".into(), ..Default::default() });
         assert_eq!(r.json()["answered"], json!({"by": "alex", "text": "use x"}));
     }
 

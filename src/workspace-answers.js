@@ -78,10 +78,13 @@ answerWon:function(board,t){
 // answer line, in board order; an open question follows as the live card
 answerHistory:function(t,root){
   return (t.history||[]).map(({question:q,answered:a},i)=>{
-   const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:a?.revision||0,question:{choices:[],evidence:[],...q}},key=a?.revision??i;
+   const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:a?.revision||0,question:{choices:[],evidence:[],...q}},key=q?a?.revision??i:'note-'+((t.history_start||0)+i);
+   // § 2 owner notes: a steer has no question; every note shows author, board time, files and the worker's read receipt
+   const files=(a?.files||[]).length>0&&h('ul',{class:'conversation-files'},a.files.map(f=>h('li',{key:f.url},h('a',{href:f.url,target:'_blank',rel:'noreferrer'},f.name||f.url))));
+   const receipt=a?.read===true?h('span',{class:'note-read','aria-label':'Read by worker'},' · Read'):null;
    const paged=!!historyText&&(q?.text||'').length>32768;
-   return [h('section',{key:'asked:'+key,class:'dialogue-item thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+((t.history_start||0)+i+1)+' of #'+t.n},h('p',{class:'meta document-author'},'Worker',time.stamp(q?.updated,'Recorded question','Question timestamp unavailable in the history adapter')),paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question'})}})),
-    h('section',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'dialogue-item body answered',role:'status'},h('p',{class:'meta document-author'},a?.by||'Author unknown',time.stamp(a?.updated,'Recorded answer','Answer timestamp unavailable in the history adapter')),h('div',{class:'conversation-text'},a?.text||'Answer text unavailable'))];
+   return [q&&h('section',{key:'asked:'+key,class:'dialogue-item thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+((t.history_start||0)+i+1)+' of #'+t.n},h('p',{class:'meta document-author'},'Worker',time.stamp(q?.updated,'Recorded question','Question timestamp unavailable in the history adapter')),paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question'})}})),
+    h('section',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'dialogue-item body answered',role:'status'},h('p',{class:'meta document-author'},a?.by||'Author unknown',time.stamp(a?.at!=null?time.seconds(a.at):a?.updated,q?'Recorded answer':'Owner message','Answer timestamp unavailable in the history adapter'),receipt),h('div',{class:'conversation-text'},a?.text||(files?'':'Answer text unavailable')),files)];
   });
 },
 readingAnchors:function(el,t){if(el)for(const [i,node]of [...el.querySelectorAll('.qac-done,.qac-problem,.qac-detail,.qac-context>summary,.qac-images,.qac-evidence,.qac-text,[data-choice]')].entries())node.dataset.readingKey='report:question-'+t.n+'-'+t.revision+'-'+i;},

@@ -402,6 +402,12 @@ pub fn card_before(n: u64, entries: &[Entry], id: u64) -> Option<String> {
     fold(n, &before, false).card
 }
 
+/// § 2 owner notes: accepted `answer`s and `steer`s written without `attempt` (attempt-bound steers are the
+/// worker's or the service's), in board order.
+pub fn owner_notes(n: u64, entries: &[Entry], p: &Projection) -> Vec<u64> {
+    p.notes.iter().copied().filter(|id| entries.iter().find(|e| e.id == *id).and_then(|e| parse(n, &e.body)).is_some_and(|l| l.attempt.is_none())).collect()
+}
+
 /// What a resumed child receives for inbox entry `id` (§ 2): its text, else option K of the card it answers, else its
 /// first line; never empty.
 pub fn delivery(n: u64, entries: &[Entry], id: u64) -> String {

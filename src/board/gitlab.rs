@@ -52,6 +52,7 @@ pub(crate) fn parse_note(v: &Value, trusted: bool) -> Comment {
         trusted,
         edited: s(v, "updated_at") != s(v, "created_at"),
         author: s(&v["author"], "username"),
+        read: None,
     }
 }
 

@@ -89,6 +89,8 @@ For a task question, show the question and exact source-numbered choices in the 
 
 After the answer the question stays in the reading viewport: the question card, then `Answered by <who>: <text>`, then later events, in that order (#1918). The thread appends; it is never rebuilt from the current task state, which only removes the composer.
 
+Every owner note ([§ 2](../../taskq.md#2-log-and-states): an `answer` or a `steer` without `attempt`) shows in that thread with its author, board time and files; a steer has no question card. Once the live attempt has read it, the note shows `Read`, from the `eyes` reaction (#2188).
+
 #### Tool collapse (#1918)
 
 Consecutive worker tool calls show as one collapsible line: the step count and a summary of the files touched, the commands run and the tests run, each list short and deduplicated. While the worker runs, the current step shows live on that line. Expanding the line shows each step in order. A message from You or the agent ends the group; the next tool call starts a new one.

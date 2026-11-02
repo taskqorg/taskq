@@ -71,6 +71,7 @@ pub(crate) fn parse_comment(v: &Value) -> Comment {
         trusted: trusted(v),
         edited: s(v, "updated_at") != s(v, "created_at"),
         author: s(&v["user"], "login"),
+        read: v["reactions"]["eyes"].as_u64().map(|n| n > 0),
     }
 }
 
@@ -799,6 +800,10 @@ impl Board for GitHub {
 
     fn edit_comment(&self, _n: u64, id: u64, body: &str) -> Result<()> {
         self.api.call("PATCH", &format!("/issues/comments/{id}"), Some(json!({ "body": body }))).map(|_| ())
+    }
+
+    fn react_read(&self, _n: u64, id: u64) -> Result<()> {
+        self.api.call("POST", &format!("/issues/comments/{id}/reactions"), Some(json!({ "content": "eyes" }))).map(|_| ())
     }
 
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> {

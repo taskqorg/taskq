@@ -1036,7 +1036,8 @@ fn report(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Res<Stri
 
 fn inbox(b: &dyn Board, root: &Path, n: u64) -> Res<String> {
     let issue = b.issue(n)?;
-    let log = entries(b, n)?;
+    let comments = b.comments(n)?;
+    let log = board::reply::log(n, &comments)?;
     let projection = core::project(n, &log, deps_open(b, n, &issue.body, &log));
     let t = &projection.task;
     let mut out = vec![format!("#{n} {}\n{}", issue.title, b.url(n)), core::task_context(n, issue.body.trim(), &log), format!("Folded: {}", serde_json::to_string(&t).unwrap_or_default())];
@@ -1049,10 +1050,16 @@ fn inbox(b: &dyn Board, root: &Path, n: u64) -> Res<String> {
     out.push("Log:".into());
     let files=reply_files::prepare(b,root,n,&log)?;
     if !files.is_empty(){out.push(files);}
-    for e in log {
+    for e in &log {
         out.push(format!("[{}{}] {}", e.id, if e.edited { " edited, ignored" } else { "" }, e.body.trim()));
     }
+    read_receipts(b, n, &log, &comments);
     Ok(out.join("\n\n"))
+}
+
+/// § 2 read receipt: the live attempt's inbox read reacts `eyes` to each owner note it has now read.
+fn read_receipts(b: &dyn Board, n: u64, log: &[Entry], comments: &[board::Comment]) {
+    if let Some(a) = std::env::var("TASKQ_ATTEMPT").ok().and_then(|s| s.parse().ok()) { dispatch::mark_read(b, n, log, comments, a); }
 }
 
 /// § 5 `inbox N --json`: the folded task, its current attempt's progress and each accepted answer with its writer, board
@@ -1065,7 +1072,8 @@ fn inbox_json(b: &dyn Board, root: &Path, me: &str, n: u64) -> Res<Value> {
     let t = &p.task;
     let at = |id: u64| comments.iter().find(|c| c.id == id);
     let answers: Vec<Value> = p.answers.iter().map(|a| json!({"id": a.id, "by": at(a.id).map(|c| c.author.as_str()), "at": at(a.id).map(|c| c.created),
-        "revision": a.revision, "option": a.option, "text": core::delivery(n, &log, a.id), "late": a.late})).collect();
+        "revision": a.revision, "option": a.option, "text": core::delivery(n, &log, a.id), "late": a.late, "read": at(a.id).and_then(|c| c.read)})).collect();
+    read_receipts(b, n, &log, &comments);
     let attempt = t.attempt.map(|a| {
         let session = t.session.as_deref().unwrap_or_default();
         let (native, host) = session.rsplit_once(' ').unwrap_or((session, ""));
