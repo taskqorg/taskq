@@ -125,7 +125,7 @@ const {create}=execution.module('workspace',{
     for(const row of rows.values())if(row.task){
      const matches=S.projects.filter(p=>p.issues===row.board&&(!row.root||p.root===row.root)),p=matches.length===1?matches[0]:null,t=taskIndex.get(p)?.get(row.task);
      if(t?.conversation?.id&&owned.has(t.conversation.id)){const id=t.conversation.id;view.ownerOutcomes[id]={...view.ownerOutcomes[id],unread:!!(view.ownerOutcomes[id]?.unread||row.unread),needsReply:!!(view.ownerOutcomes[id]?.needsReply||t.state==='ask')};if(!refs.has(row.id)){rows.delete(row.id);continue;}row.linkedAlias=true;}
-     if(t){row.activityThread=!!(t.session||t.worker||t.until);row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=time.seconds(t.updated);row.updated_reason=t.updated_reason;}
+     if(t){row.state=t.state;row.heartbeat=t.heartbeat;row.activityThread=!!(t.session||t.worker||t.until);row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=time.seconds(t.updated);row.updated_reason=t.updated_reason;}
      if(p){row.root=p.root;row.project=p.name;}
      row.archived=!!row.event?.archived||Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown

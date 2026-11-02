@@ -112,4 +112,5 @@ for(const compact of [true,false])for(const state of ['doing','review']){
  assert.match(unknown,/class="task-health-warning" role="status" tabindex="0"/);
  assert.match(overdue,/aria-label="tool overdue &lt;inspect&gt;"/);
  assert(!overdue.includes('tool overdue <inspect>'));
+ assert.match(overdue,/data-icon="triangle-alert"/,'warning needs a visible bundled glyph, not only accessible text');
 }
