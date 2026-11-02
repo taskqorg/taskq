@@ -358,10 +358,21 @@ pub fn last_update(codex:bool,path:&Path)->Res<Value> {
     Ok(before(codex,path,None)?.items.last().map_or(Value::Null,|i|i["updated"].clone()))
 }
 
-/// D7: the last assistant line from the transcript's last chunk; none when that chunk has no assistant text.
+/// D7: the last assistant prose line in the last chunk; complete citation suffixes stay secondary.
 pub fn last_line(codex: bool, path: &Path) -> Res<Option<String>> {
     let page = before(codex, path, None)?;
-    Ok(page.items.iter().rev().find(|i| i["role"] == "assistant").and_then(|i| i["text"].as_str()?.lines().rev().find(|l| !l.trim().is_empty()).map(String::from)))
+    Ok(page.items.iter().rev().find(|i| i["role"] == "assistant").and_then(|i| {
+        let mut lines=i["text"].as_str()?.lines().rev();
+        while let Some(line)=lines.next() {
+            if line.trim().is_empty(){continue;}
+            if line.trim()=="</oai-mem-citation>" {
+                let mut before=lines.clone();
+                if before.any(|l|l.trim()=="<oai-mem-citation>") {lines=before;continue;}
+            }
+            return Some(line.into());
+        }
+        None
+    }))
 }
 
 #[cfg(test)]
@@ -480,6 +491,32 @@ mod tests {
         assert_eq!(crate::runtime::owner::codex_transcript_in(&dir, id).unwrap(), path);
         assert_eq!(text(&before(true, &path, None).unwrap().items), vec![json!({"role":"user","text":"hello"}), json!({"role":"tool","text":"exec_command ls"}), json!({"role":"assistant","text":"done\nall good"})]);
         assert_eq!(last_line(true, &path).unwrap().as_deref(), Some("all good"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #2159 D7: status previews prose, while metadata, partial text and exact source remain inspectable.
+    #[test]
+    fn last_assistant_preview_excludes_complete_citation_suffix_only() {
+        let dir=tmp();let path=dir.join("preview.jsonl");
+        for codex in [false,true] {
+            for (text,expected) in [
+                ("Reviewed result.\n<oai-mem-citation>\nMEMORY.md:1-2\n</oai-mem-citation>\n",Some("Reviewed result.")),
+                ("Ответ принят.\n\n<oai-mem-citation>\nfirst\n</oai-mem-citation>\n<oai-mem-citation>\nsecond\n</oai-mem-citation>",Some("Ответ принят.")),
+                ("<oai-mem-citation>\nmetadata only\n</oai-mem-citation>",None),
+                ("Reviewed.\n<oai-mem-citation>\npartial metadata",Some("partial metadata")),
+                ("Reviewed.\n</oai-mem-citation>",Some("</oai-mem-citation>")),
+                ("Literal example:\n```xml\n<oai-mem-citation>\nexample\n</oai-mem-citation>\n```",Some("```")),
+                ("Reviewed.\n<oai-mem-citation>\nmetadata\n</oai-mem-citation>\nNext action.",Some("Next action.")),
+                ("",None),
+            ] {
+                let record=if codex {json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}})}
+                    else {json!({"type":"assistant","message":{"content":[{"type":"text","text":text}]}})};
+                let source=format!("{record}\n");fs::write(&path,&source).unwrap();
+                assert_eq!(last_line(codex,&path).unwrap().as_deref(),expected,"codex={codex}, text={text}");
+                assert_eq!(fs::read_to_string(&path).unwrap(),source,"preview never rewrites native history");
+                if !text.is_empty(){assert_eq!(before(codex,&path,None).unwrap().items[0]["text"],text,"exact source remains complete");}
+            }
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 

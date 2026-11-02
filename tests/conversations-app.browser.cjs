@@ -5,10 +5,10 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
  const page=await browser.newPage({viewport:{width:1000,height:800}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
  await page.evaluate(()=>{
-  window.sent=[];window.fixtureStatus={state:'working',turn:null,watch:'no watch'};
+  window.sent=[];window.fixtureStatus={state:'working',turn:null,watch:'no watch',last_line:'Which reviewed result should I relay?'};window.fixtureTasks={tasks:[],more:true};
   window.fixtureOwner={id:'invented-owner',revision:1,root:'fixture',runtime:'codex',title:'Invented App owner episode',text:'Retained refused reply',caret:[2,8],files:[],sent:{root:'fixture',runtime:'codex',text:'Read real progress, ask one clarification and relay the reviewed result.',files:[]},request:{state:'launched',runtime:'codex'}};
   window.ipc={postMessage:raw=>{const m=JSON.parse(raw);sent.push(m);
-   if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:m.action==='status'?fixtureStatus:{generation:'fixture-app',start:0,end:50,size:50,items:[
+   if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:m.action==='status'?fixtureStatus:m.action==='tasks'?(m.task?{tasks:[fixtureLinked],more:false}:fixtureTasks):{generation:'fixture-app',start:0,end:50,size:50,items:[
     {at:0,i:0,role:'transport',text:'taskq handshake: reply OK and do nothing else. The task follows in this thread.'},
     {at:10,i:0,role:'transport',text:'OK'},
     {at:20,i:0,role:'brief',text:'Before any work, use Read to read the owned brief in full.'},
@@ -20,12 +20,23 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
  });
  await page.waitForFunction(()=>document.querySelector('.dialogue-transcript')?.textContent.includes('Which reviewed result'));
  const transcript=page.locator('.dialogue-transcript'),reader=page.locator('.conversation-reader');
+ if(process.env.TASKQ_EVIDENCE_2159){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2159,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2159+'/empty-linked.png'});}
+ assert.match(await reader.innerText(),/No linked tasks loaded/);assert(!/1–0|Older results|Refresh task history/.test(await reader.innerText()),'empty association keeps board paging secondary');
+ const history=reader.locator('details').filter({has:page.locator('[data-c=linked-older]')});await history.locator('summary').click();
+ assert(await reader.locator('[data-c=linked-older]').isVisible(),'older matching associations stay discoverable');
+ await page.evaluate(()=>{window.fixtureLinked={n:17,title:'Invented older linked result',report:{},conversation:{id:fixtureOwner.id}};fixtureTasks={tasks:[fixtureLinked],more:false};});
+ await reader.locator('[data-c=linked-older]').click();await page.locator('.linked-task').waitFor();
+ assert.match(await reader.innerText(),/Linked tasks · 1–1 \/ 1 loaded/);assert(await reader.locator('[data-c=linked-newer]').isVisible(),'a real older page can return');
+ await page.evaluate(()=>fixtureTasks={tasks:[],more:false});await reader.locator('[data-c=linked-newer]').click();
+ await page.waitForFunction(()=>sent.some(m=>m.action==='tasks'&&m.task===17));
+ await page.locator('.linked-task').waitFor();assert.match(await reader.innerText(),/Linked tasks · 1–1 \/ 1 loaded/,'a known older association survives an empty newer board page');
  assert.match(await reader.innerText(),/Read real progress, ask one clarification/);
  assert(!/taskq handshake|Invented provider bookkeeping|Before any work/.test(await transcript.innerText()),'transport/provider evidence is secondary');
  assert.equal(await transcript.locator('.dialogue-setup').count(),1,'one secondary setup disclosure');assert.equal(await transcript.locator('.dialogue-setup article').count(),3,'all original setup records remain inspectable');
  assert.equal(await transcript.getByText('Provider citation metadata',{exact:true}).count(),1);
  assert.equal(await page.locator('[data-c-field=text]').inputValue(),'Retained refused reply');
  await page.locator('[data-c=status-refresh]').evaluate(b=>b.closest('details').open=true);
+ assert.match(await reader.innerText(),/Last assistant line\s+Which reviewed result should I relay\?/);
  await page.evaluate(()=>fixtureStatus={state:'idle',watch:'no watch',turn:{state:'done',op_id:'refused-original-op',input:'Retained refused reply',outcome:'open in codex; close it there first',retry_refused:true,at:1}});
  await page.locator('[data-c=status-refresh]').click();await page.locator('[data-c=retry-turn]').waitFor();
  await page.locator('[data-c=retry-turn]').click();
