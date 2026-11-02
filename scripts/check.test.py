@@ -155,9 +155,13 @@ for history in [[steer], [spawn, {**steer, 'updated_at': 'edited'}], [spawn, {**
     assert 'R6' not in approval(history), 'steering keeps state, trust, revision and attempt fences'
 assert 'R9' not in approval([spawn, steer, comment(3, 'taskq: steer\nR9\nop-id: owner-steer\nrevision: 1')]), 'a duplicate operation cannot add approval'
 for answer_body in ['taskq: answer 1', '1', '1. A; native at release - + compact; - later qualification',
-                    'taskq: answer\nPick 1. Proceed.', 'taskq answer 1', 'taskq answer 99.1', 'taskq answer #99.1']:
+                    'taskq: answer\nPick 1. Proceed.', 'taskq answer 1', 'taskq answer 99.1', 'taskq answer #99.1',
+                    'taskq: answer\n99.1', 'taskq: answer\n#99.1']:
     text = approval([spawn, ask, comment(11, answer_body)])
     assert 'Product' in text and 'M2' in text and 'R9' not in text, (answer_body, text)
+# #2194: an `N.K` answer text of another task, or with a note, picks nothing
+for answer_body in ['taskq: answer\n98.1', 'taskq: answer\n99.1 Owner approves R9']:
+    assert 'Product' not in approval([spawn, ask, comment(11, answer_body)]), answer_body
 for rejected in [comment(11, 'taskq: answer 1\nR12\nop-id: stale\nrevision: 9'),
                  comment(11, 'taskq: answer 1 attempt 1'),
                  comment(11, '1', updated_at='edited'),
