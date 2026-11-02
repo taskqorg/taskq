@@ -168,23 +168,26 @@ mod tests {
         use std::{fs,io::Write};
         let dir=std::env::temp_dir().join(format!("taskq-progress-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
         let path=dir.join("events");
-        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let now=1000;
+        // Keep filesystem time on the injected clock; wall-clock rollover must not invent future data.
+        let pin_time=||fs::File::options().write(true).open(&path).unwrap().set_times(
+            fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH+std::time::Duration::from_secs(now as u64))).unwrap();
         let content=|mut v:Value| {v.as_object_mut().unwrap().remove("observed");v};
         // R12/A4: consumed bad timestamps must not hide a pending tool on later incremental reads.
         for timestamp in [json!("invalid"),json!(crate::board::stamp(now+100)),json!(now),json!(false),Value::Null] {
-            fs::write(&path,format!("{}\n",json!({"type":"item.completed","item":{"type":"agent_message"}}))).unwrap();
+            fs::write(&path,format!("{}\n",json!({"type":"item.completed","item":{"type":"agent_message"}}))).unwrap();pin_time();
             let mut r=Reader::default();
             assert_eq!(r.read(&path,0,||now,60)["status"],"quiet");
             let mut f=fs::OpenOptions::new().append(true).open(&path).unwrap();
-            writeln!(f,"{}",json!({"timestamp":timestamp,"type":"item.started","item":{"id":"c","type":"command_execution"}})).unwrap();
+            writeln!(f,"{}",json!({"timestamp":timestamp,"type":"item.started","item":{"id":"c","type":"command_execution"}})).unwrap();pin_time();
             let fault=r.read(&path,0,||now+1,60);
             assert_eq!(fault["status"],"unknown");
             assert_eq!(content(r.read(&path,0,||now+101,60)),content(fault.clone()),"time and an empty read cannot recover a consumed event");
-            writeln!(f,"{}",json!({"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
+            writeln!(f,"{}",json!({"type":"item.completed","item":{"type":"agent_message"}})).unwrap();pin_time();
             assert_eq!(content(r.read(&path,0,||now+102,60)),content(fault.clone()),"unrelated progress cannot prove the missing tool ended");
-            writeln!(f,"{}",json!({"type":"turn.completed"})).unwrap();
+            writeln!(f,"{}",json!({"type":"turn.completed"})).unwrap();pin_time();
             assert_eq!(r.read(&path,0,||now+103,60)["status"],"quiet");
-            writeln!(f,"{}\n{}",json!({"timestamp":"invalid","type":"item.started","item":{"id":"c","type":"command_execution"}}),json!({"type":"turn.completed"})).unwrap();
+            writeln!(f,"{}\n{}",json!({"timestamp":"invalid","type":"item.started","item":{"id":"c","type":"command_execution"}}),json!({"type":"turn.completed"})).unwrap();pin_time();
             assert_eq!(r.read(&path,0,||now+104,60)["status"],"quiet","a valid boundary in the same batch is not discarded");
         }
         fs::remove_dir_all(dir).unwrap();

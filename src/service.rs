@@ -3636,9 +3636,12 @@ mod tests {
     }
 
     fn cfg(me: &str) -> Config {
+        // Per-fixture temporary install: a shared path (C:\nonexistent on Windows) leaked quota holds into later runs.
+        // ponytail: never created or removed here; tests that write leave one small directory in the OS temp dir.
+        let base = std::env::temp_dir().join(format!("taskq-service-test-{}", crate::runtime::uuid()));
         Config {
-            root: PathBuf::from("/nonexistent"),
-            install: PathBuf::from("/nonexistent"),
+            root: base.clone(),
+            install: base,
             board: &crate::board::github::KIND,
             web_host: String::new(),
             repo: "o/r".into(),
@@ -3663,6 +3666,31 @@ mod tests {
             rollback_after: 600,
             external: false,
             host_setup: None,
+        }
+    }
+
+    // #2196: a fixture rooted at the shared /nonexistent path persisted quota holds across runs on Windows.
+    #[test]
+    fn fixtures_use_private_temporary_installs() {
+        let (a, b) = (cfg("mac"), crate::tests::cfg());
+        for c in [&a, &b] {
+            assert!(c.install.starts_with(std::env::temp_dir()) && c.root.starts_with(std::env::temp_dir()), "{:?}", c.install);
+        }
+        assert_ne!(a.install, cfg("mac").install, "each fixture gets its own install");
+        assert_ne!(b.install, crate::tests::cfg().install, "each fixture gets its own install");
+        let shared = format!("\"/{}\"", "nonexistent");
+        let mut dirs = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = dirs.pop() {
+            for e in std::fs::read_dir(dir).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() { dirs.push(p); continue; }
+                if p.extension().is_none_or(|ext| ext != "rs") { continue; }
+                let text = std::fs::read_to_string(&p).unwrap();
+                for (i, line) in text.lines().enumerate() {
+                    let l = line.trim_start();
+                    assert!(l.starts_with("//") || !l.contains(&shared), "{}:{} fixture uses the shared /nonexistent path", p.display(), i + 1);
+                }
+            }
         }
     }
 
@@ -5134,9 +5162,10 @@ Open: none")).unwrap();
             let c = cfg("local");
             let starts = Rc::new(RefCell::new(0));
             let counted = starts.clone();
+            let start_root = c.root.clone();
             let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |_| {
                 *counted.borrow_mut() += 1;
-                Err(crate::runtime::over_cap(std::path::Path::new("/nonexistent"), 128 * 1024 + 5))
+                Err(crate::runtime::over_cap(&start_root, 128 * 1024 + 5))
             }));
             let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
             s.claim(&v, role, "claude", "").unwrap();
@@ -7272,7 +7301,7 @@ Open: none";
             let mut c=cfg("fleet");
             c.install=std::env::temp_dir().join(format!("taskq-collaborator-{}",crate::runtime::uuid()));
             std::fs::create_dir_all(&c.install).unwrap();
-            let p=crate::host::Policy::parse(json!({"load_gate":{"enabled":false},"limits":{"claude":0,"codex":2},"projects":{"/nonexistent":{"default_runtime":"codex","allowed_runtimes":["codex"],"auto_reroute":reroute}}}),"fleet").unwrap();
+            let p=crate::host::Policy::parse(json!({"load_gate":{"enabled":false},"limits":{"claude":0,"codex":2},"projects":{c.root.to_string_lossy():{"default_runtime":"codex","allowed_runtimes":["codex"],"auto_reroute":reroute}}}),"fleet").unwrap();
             p.apply(&mut c);
             c.limits=p.project_limits(&c.root,&json!({})).unwrap();
             let mut s=service(&b,&c,Default::default());

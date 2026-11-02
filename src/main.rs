@@ -4561,7 +4561,7 @@ mod tests {
         Config {
             // Independent command fixtures must not contend for the same project wake lock.
             root: std::env::temp_dir().join(format!("taskq-main-test-{}",crate::runtime::uuid())),
-            install: PathBuf::from("/nonexistent"),
+            install: std::env::temp_dir().join(format!("taskq-main-test-install-{}",crate::runtime::uuid())),
             board: &board::github::KIND,
             web_host: String::new(),
             repo: "o/r".into(),
@@ -5099,7 +5099,7 @@ mod tests {
         let v = b.issues(None).unwrap().into_iter().filter(service::is_held).map(|i| i.number).max().unwrap();
         let text = snapshot::read(b, &c.cfg, &c.raw, &[]).text(&c.cfg, &c.raw).unwrap();
         assert!(text.contains(&format!("Held: [#{u} U]")) && text.contains(&format!("[#{v} V]")), "{text}");
-        let receipts = start_tasks(b, Path::new("/nonexistent"), &[u.to_string(), format!("#{v}")], &Op::default()).unwrap();
+        let receipts = start_tasks(b, &c.cfg.root, &[u.to_string(), format!("#{v}")], &Op::default()).unwrap();
         assert_eq!(receipts.iter().map(|r| r.task).collect::<Vec<_>>(), vec![u, v]);
         assert!([u, v].iter().all(|&m| fold(m, &entries(b, m).unwrap(), false).state == State::Ready));
     }
