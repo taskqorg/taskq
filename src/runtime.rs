@@ -3141,7 +3141,16 @@ finally:
         let root = rules_root("agy-cli-state");
         std::fs::create_dir_all(root.join(".local/bin")).unwrap();
         std::fs::write(root.join(".local/bin/agy"), "invented executable fixture").unwrap();
-        let out = Command::new(std::env::current_exe().unwrap())
+        #[cfg(not(all(windows, target_env = "gnu")))]
+        let exe = std::env::current_exe().unwrap();
+        // GNU needs its loader beside the child when this fixture removes Cargo's PATH.
+        #[cfg(all(windows, target_env = "gnu"))]
+        let exe = {
+            let tool = crate::platform::tool(&root.join("install"));
+            crate::platform::prepare_install(&tool).unwrap();
+            tool.release_exe(tool.version)
+        };
+        let out = Command::new(exe)
             .args(["--exact", "runtime::tests::antigravity_cli_state_and_user_bin_lookup", "--nocapture"])
             .env("TASKQ_AGY_FIXTURE", &root).env("HOME", &root).env("USERPROFILE", &root).env("PATH", root.join("missing-bin"))
             .output().unwrap();

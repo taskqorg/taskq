@@ -1,6 +1,6 @@
 # TaskQ 4.6.60 release handoff
 
-Prepare the patch release for [#2223](https://github.com/taskqorg/taskq/issues/2223), so v4.6.59 hosts receive the admission fix for stuck ready tasks such as #2188 and Windows scheduling correction. The PM owns publication and installed verification. This worker changes version metadata, changelog and release evidence only; live publication, tagging, installation and service restart are outside its scope (sections 7-8).
+Prepare the patch release for [#2223](https://github.com/taskqorg/taskq/issues/2223), so v4.6.59 hosts receive the admission fix for stuck ready tasks such as #2188 and Windows scheduling correction. The PM owns publication and installed verification. This worker changes version metadata, changelog, release evidence and the GNU test-child loader setup; live publication, tagging, installation and service restart are outside its scope (sections 7-8).
 
 ## Source and range
 
@@ -38,7 +38,7 @@ Heartbeats add doctor health and request/answer observations (#2194); older host
 
 The admission fix accepts an attempt's hand-in written after execution began without requiring a transcript match, and recognizes the canonical copied brief's input identity. It preserves execution fencing and unknown-state refusal. Windows scheduling correction raises only inherited lower priorities. The native scheduling instrument passed both profiles, so historical timeout causality remains unproved; see [Windows evidence](testing/windows-probes-2214.md). Source checks do not prove #2188 resumed on installed hosts (R12).
 
-This release preparation adds no defect fix or test changes, so it claims no new failure-before/pass-after evidence. Existing fixes and their protections are inventoried above. The canonical candidate gate is `python3 scripts/check.py` after the one pre-push rebase (section 7 rule 4). Candidate merge-result CI, staged artifacts and owner live-host checks remain pending until their ordinary stages. Native history, lifecycle and UI evidence qualify only their recorded scopes (R8, R12).
+The first local gate failed after 654.109s: 927 Rust tests passed, one failed and 45 were ignored. The Antigravity lookup fixture removed Cargo's PATH and its GNU child exited `0xc0000135` with empty output (missing loader). Its setup now uses the existing isolated install layout on Windows GNU, retaining every lookup, credential-file and directory-refusal assertion. The same filtered test passes after the setup fix (1 passed, 1.04s); the final canonical gate is recorded in the version PR (R12, section 7 rule 3). No product rule or test assertion changes. The canonical candidate gate is `python3 scripts/check.py` after the one pre-push rebase (section 7 rule 4). Candidate merge-result CI, staged artifacts and owner live-host checks remain pending until their ordinary stages. Native history, lifecycle and UI evidence qualify only their recorded scopes (R8, R12).
 
 ## PM publication and readback
 
