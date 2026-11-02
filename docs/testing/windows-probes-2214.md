@@ -40,3 +40,25 @@ Reproduce the native measurements with the command in [test selection](../testin
 - `node tests/tray-running.test.cjs`: passed. Both native instrument phases passed as detailed above.
 
 The failed canonical gate and remaining A1 gaps require review; this evidence is not completion or merge authorization (R12, §7).
+
+## Incident telemetry readback
+
+The subsequent investigation recovered the retained incident observations through `taskq profile export --since 24h`. Selection used `observation.started_ms` in `[2026-11-02T16:00:00Z, 2026-11-02T17:00:00Z)` and completed `kind=method` rows. This yielded 9,932 observations across 59 operations. The public table below contains only operation names, counts and elapsed durations; the raw export remains local because it includes unrelated host activity.
+
+| Operation | Completed observations | Timeout observations | Timeout duration range (s) |
+|---|---:|---:|---:|
+| `runtime.version` | 101 | 20 | 10.000–12.399 |
+| `runtime.login` | 100 | 23 | 10.000–14.100 |
+| `board.http` | 1,511 | 5 | 65.000–67.688 |
+| `link.http` | 138 | 13 | 10.000–45.820 |
+| `agent.background-jobs` | 74 | 3 | 0.192–12.183 |
+
+There were no recorded `capacity` failures. The 58 completed `process.cleanup` observations took up to 12.766 seconds; this is asynchronous cleanup duration, not proof of where a probe waited. The timeout range includes inherited observation budgets: the 0.192-second background-job timeout must not be described as exceeding a fresh ten-second deadline. `active_us` is tracing span activity, not CPU usage.
+
+These observations establish actual deadline failures across local CLI and HTTP commands in the same service execution. They do not identify whether time was spent waiting for a process permit, spawning, executing the child, draining inherited pipes or waiting for the observer to be scheduled. The shared CoreQ v0.18.0 `process::execute` implementation uses one deadline for permit acquisition, spawn and output/exit observation, and returns the same `Timeout` after any of those phases. The historical records contain no phase readback. A timeout alone therefore cannot establish I/O starvation or identify the responsible child.
+
+A read-only System event query for 15:55–16:50 UTC found only HTTP service information events, with no recorded suspension, storage error or resource-exhaustion event. The Defender operational query returned one client health report and no scan event in that window. Absence of an event does not exclude contention or scanning.
+
+A fresh board status read separately reported task #2196 (Claude) and this worker #2214 (Codex) as running on Windows. Task #2188 remained unknown with `native observation deferred; cancellation pending`. These are installed-service observations, not qualification of the candidate or an exact host-wide running total. They show that CLI probe failure and execution identity uncertainty must be investigated separately under R6/R12.
+
+The scheduling change remains a tested correction and a possible mitigation. Establishing historical causality requires native process-phase evidence during a recurrence or a reproduction with the original scheduling profile; the current aggregate telemetry and passing before phase cannot supply it. A1 remains incomplete, and the prior failed canonical gate remains unresolved. No additional runtime, permission, host policy or installed-service change was applied during this readback.
