@@ -361,7 +361,7 @@ pub fn last_update(codex:bool,path:&Path)->Res<Value> {
 /// D7: the last assistant prose line in the last chunk; complete citation suffixes stay secondary.
 pub fn last_line(codex: bool, path: &Path) -> Res<Option<String>> {
     let page = before(codex, path, None)?;
-    Ok(page.items.iter().rev().find(|i| i["role"] == "assistant").and_then(|i| {
+    Ok(page.items.iter().rev().filter(|i| i["role"] == "assistant").find_map(|i| {
         let mut lines=i["text"].as_str()?.lines().rev();
         while let Some(line)=lines.next() {
             if line.trim().is_empty(){continue;}
@@ -516,6 +516,11 @@ mod tests {
                 assert_eq!(fs::read_to_string(&path).unwrap(),source,"preview never rewrites native history");
                 if !text.is_empty(){assert_eq!(before(codex,&path,None).unwrap().items[0]["text"],text,"exact source remains complete");}
             }
+            let text="<oai-mem-citation>\nmetadata only\n</oai-mem-citation>";
+            let records=["Prior reviewed prose.",text].map(|text|if codex {json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}})}else {json!({"type":"assistant","message":{"content":[{"type":"text","text":text}]}})});
+            let source=records.iter().map(|r|format!("{r}\n")).collect::<String>();fs::write(&path,&source).unwrap();
+            assert_eq!(last_line(codex,&path).unwrap().as_deref(),Some("Prior reviewed prose."),"metadata-only records cannot hide prose in the same chunk");
+            assert_eq!(fs::read_to_string(&path).unwrap(),source);
         }
         fs::remove_dir_all(dir).unwrap();
     }

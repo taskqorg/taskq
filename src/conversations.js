@@ -705,15 +705,20 @@ module.exports=execution.module('conversations',{
     else if(['archive','restore','send','cancel','reconcile','preview','remove','delete'].includes(action))api.action(action,{...(b.dataset.file?{file:b.dataset.file}:{}),...(action==='send'?{runtime:api.runtime(c).id}:{})});
     return true;
    },
+   captureCaret:function(field){
+    if(field?.dataset?.cField!=='text'||document.activeElement!==field||!field.checkVisibility())return;
+    const c=api.current(),caret=[field.selectionStart,field.selectionEnd];
+    if(api.editable(c)&&field.closest('.conversation-detail')?.dataset.threadId===c.id&&field.value===c.text&&JSON.stringify(c.caret)!==JSON.stringify(caret)){c.caret=caret;c.version=(c.version||0)+1;api.save(c);}
+   },
    mount:function(){
     time.mount(menu);
     ui.listen(menu,'focusout',e=>{if(e.target.dataset.cField==='search'&&!search)ui.defer(()=>{if(!menu.querySelector('[data-c-field=search]')?.matches(':focus')){searchOpen=false;draw();}},0);});
     ui.listen(menu,'focusin',e=>{if(e.target.closest('.conversation-reader'))api.scrollIntent('focus');const pane=e.target.closest('.conversation-detail'),key=pane?.dataset.threadId;if(!key||!e.target.matches('button,a,summary,input,textarea,select'))return;const target=e.target,data=JSON.stringify(target.dataset);delete focuses[key];focuses[key]={tag:target.tagName,key:data,index:[...pane.querySelectorAll(target.tagName)].filter(n=>JSON.stringify(n.dataset)===data).indexOf(target)};api.nav();});
     // WebKit accessibility selection can change the range without a click or keyup in the field.
-    ui.listen(document,'selectionchange',()=>{const field=document.activeElement;if(field?.dataset?.cField!=='text')return;const c=api.current(),caret=[field.selectionStart,field.selectionEnd];if(api.editable(c)&&field.value===c.text&&JSON.stringify(c.caret)!==JSON.stringify(caret)){c.caret=caret;c.version=(c.version||0)+1;api.save(c);}});
+    ui.listen(document,'selectionchange',()=>api.captureCaret(document.activeElement));
     ui.listen(menu,'input',e=>{const watch=e.target.dataset.wField;if(view?.form&&(watch==='prompt'||watch==='every')){view.form[watch]=e.target.value;view.form.dirty=true;draw();return;}const field=e.target.dataset.cField;if(field==='search'){navigated=true;search=e.target.value;sidebarProjection=null;stableOrder.clear();stableGroups.clear();api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;sidebarProjection=null;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);api.save(c);draw();});
     ui.listen(menu,'change',e=>{if(e.target.dataset.wField==='event'&&view?.form){view.form.events=view.form.events.filter(k=>k!==e.target.value).concat(e.target.checked?[e.target.value]:[]);view.form.dirty=true;draw();return;}const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(['root','runtime'].includes(e.target.dataset.cField)&&api.editable(c)){const field=e.target.dataset.cField;if(field==='runtime'&&(c.sent||c.request||c.sending))return;if(c.sent||c.sending)c.next=true;c[field]=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
-    for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField!=='text')return;const c=api.current();if(api.editable(c)&&JSON.stringify(c.caret)!==JSON.stringify([e.target.selectionStart,e.target.selectionEnd])){c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;api.save(c);}});
+    for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>api.captureCaret(e.target));
     ui.listen(menu,'wheel',e=>{if(e.target.closest('.conversation-reader')){api.scrollIntent('wheel');if(e.deltaY<0)api.pause();}},{passive:true});
     ui.listen(menu,'touchmove',e=>{if(e.target.closest('.conversation-reader'))api.scrollIntent('touch');},{passive:true});
     ui.listen(menu,'pointerdown',e=>{if(e.target.closest('.conversation-reader')){dragScroll=true;api.scrollIntent('pointer');}});
