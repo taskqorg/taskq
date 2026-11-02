@@ -36,6 +36,8 @@ pub struct Comment {
     pub edited: bool,
     /// The writer's board login; empty when the board does not say (§ 5 `answered`).
     pub author: String,
+    /// § 2 owner-note read receipt: whether the comment carries the `eyes` reaction; None when the board does not say.
+    pub read: Option<bool>,
 }
 
 pub trait Board {
@@ -68,6 +70,9 @@ pub trait Board {
     fn comment(&self, n: u64, body: &str) -> Result<u64>;
     /// Edits comment `id` of issue `n`: an edited entry is ignored by `fold` (§ 2).
     fn edit_comment(&self, n: u64, id: u64, body: &str) -> Result<()>;
+    /// § 2 read receipt: adds the `eyes` reaction to comment `id` of issue `n`, which leaves the comment unedited.
+    /// `ponytail:` GitLab awards are not qualified to leave `updated_at` alone, so it stays unsupported there.
+    fn react_read(&self, _n: u64, _id: u64) -> Result<()> { Err("read receipts unsupported on this board".into()) }
     /// The web URL of comment `id` of issue `n`.
     fn comment_url(&self, n: u64, id: u64) -> String { format!("{}#issuecomment-{id}", self.url(n)) }
     /// Whether writers keep the § 2 summary comment; in-memory test boards opt in.
@@ -335,6 +340,7 @@ impl Board for Profiled {
         self.op(if body.starts_with("taskq: spawn ") { "claim" } else { "comment" }, |b| b.comment(n, body))
     }
     fn edit_comment(&self, n: u64, id: u64, body: &str) -> Result<()> { self.op("comment", |b| b.edit_comment(n, id, body)) }
+    fn react_read(&self, n: u64, id: u64) -> Result<()> { self.op("comment", |b| b.react_read(n, id)) }
     fn comment_url(&self, n: u64, id: u64) -> String { self.0.comment_url(n, id) }
     fn summaries(&self) -> bool { self.0.summaries() }
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> { self.op("label", |b| b.labels(n, add, remove)) }
@@ -1155,7 +1161,7 @@ impl Fake {
         if let Ok(i) = st.get(n) {
             i.updated = t;
         }
-        st.comments.push((n, Comment { id, created: t, body: body.into(), trusted, edited, author: String::new() }));
+        st.comments.push((n, Comment { id, created: t, body: body.into(), trusted, edited, author: String::new(), read: Some(false) }));
         id
     }
 }
@@ -1262,6 +1268,11 @@ impl Board for Fake {
             c.1.body = body.into();
             c.1.edited = true;
         }
+        Ok(())
+    }
+    fn react_read(&self, n: u64, id: u64) -> Result<()> {
+        let mut st = self.state.borrow_mut();
+        st.comments.iter_mut().find(|(i, c)| *i == n && c.id == id).ok_or(format!("no comment {id}"))?.1.read = Some(true);
         Ok(())
     }
     fn summaries(&self) -> bool { self.state.borrow().summaries }
@@ -1719,9 +1730,9 @@ mod tests {
             assert!(human.starts_with("#7 Pick\n") && human.contains("\nLog:\n"), "human inbox unchanged: {human}");
             let at = |id: u64| iso(&format!("2026-10-30T00:00:0{id}Z")).unwrap();
             assert_eq!(v["answers"], json!([
-                {"id": 3, "by": "owner", "at": at(3), "revision": 2, "option": 2, "text": "right", "late": false},
-                {"id": 4, "by": "owner", "at": at(4), "revision": 2, "option": null, "text": "left after all", "late": true},
-                {"id": 6, "by": "pm", "at": at(6), "revision": 5, "option": 2, "text": "down", "late": false}]), "{}: {v}", kind.name);
+                {"id": 3, "by": "owner", "at": at(3), "revision": 2, "option": 2, "text": "right", "late": false, "read": null},
+                {"id": 4, "by": "owner", "at": at(4), "revision": 2, "option": null, "text": "left after all", "late": true, "read": null},
+                {"id": 6, "by": "pm", "at": at(6), "revision": 5, "option": 2, "text": "down", "late": false, "read": null}]), "{}: {v}", kind.name);
             let attempt = &v["attempt"];
             assert_eq!((v["open"].clone(), v["state"].clone(), attempt["id"].clone(), attempt["host"].clone(), attempt["runtime"].clone(), attempt["started"].clone()),
                 (json!(true), json!("doing"), json!(1), json!("mac"), json!("claude"), json!(at(1))), "{}: {v}", kind.name);
