@@ -236,7 +236,7 @@ A Claude worker whose turn ends while its own background job still runs continue
 
 - Detection reads the Claude attempt log after the last `taskq.rules` start or resume record. A job is a `Bash` call with `run_in_background: true` or a `Monitor` call whose result names its task. A terminal `<task-notification>` status (completed, failed, killed, stopped), a `TaskStop`/`KillShell` call naming it, or an error result (the job never started) ends it. Other jobs are live.
 - It applies on exit without a task outcome (taskq.md § 4 step 1) to a `doing` Claude worker on the attempt host. Reviewers keep `gone`.
-- The service posts `taskq: steer attempt <id>` with a line that asks to continue, names the live jobs (bounded, public), and tells the worker to finish each in the foreground with a long Bash timeout. The steer goes to the inbox (§ 2), and step 6 resumes the same session with it; no retry is spent. A job may not survive the process end, so the worker reruns it in the foreground.
+- The service posts `taskq: steer attempt <id>` with a line that asks to continue, names the live jobs by description or a fixed tool label (bounded, public), never by raw command, and tells the worker to finish each in the foreground with a long Bash timeout. The steer goes to the inbox (§ 2), and step 6 resumes the same session with it; no retry is spent. A job may not survive the process end, so the worker reruns it in the foreground.
 - At most 3 such steers per attempt, counted from the board log (R1). A fourth such exit, or an unread board log, posts `gone` as before.
 - The worker brief tells workers to run the full check in the foreground with a long timeout and names this cause, so the steer stays a fallback.
 
