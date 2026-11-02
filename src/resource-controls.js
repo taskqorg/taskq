@@ -120,11 +120,15 @@ status:function(group, local, cap, now) {
     if (local.receipt && local.receipt.state === 'saved') return applied(group, now) === 'applied' && JSON.stringify(revs(group)) !== JSON.stringify(local.receipt.from) ? 'applied' : 'saved';
     if (local.receipt) return local.receipt.state;
     if (!local.draft) return cap && cap.edit && fields(group).length ? 'view' : 'read-only';
-    if (JSON.stringify(local.draft.base) !== JSON.stringify(revs(group))) return 'conflict';
+    if (!local.draft.rebind && JSON.stringify(local.draft.base) !== JSON.stringify(revs(group))) return 'conflict';
     return local.draft.review ? 'review' : 'editing';
   },
 step:function(group, local, cap, ev, newId, now) {
-    const st = status(group, local, cap, now), l = {...local};
+    const l = {...local};
+    if (l.draft?.rebind && JSON.stringify(l.draft.base) !== JSON.stringify(revs(group))) {
+      l.draft = {...l.draft, base: revs(group), values: Object.fromEntries(fields(group).map(f => [f.key, l.draft.touched[f.key] ? l.draft.values[f.key] : shown(f)])), rebind: false};
+    }
+    const st = status(group, l, cap, now);
     switch (ev.type) {
       case 'open':
         if (!['view', 'applied', 'rejected','superseded'].includes(st)) return {local, send: null};
@@ -143,21 +147,26 @@ step:function(group, local, cap, ev, newId, now) {
         return {local: l, send: null};
       case 'rebase':
         // a conflict keeps the typed values, binds them to the new revisions and asks for a fresh review
-        if (st === 'conflict') l.draft = {...l.draft, base: revs(group), review: false};
+        if (st === 'conflict') l.draft = {...l.draft, base: revs(group), values: Object.fromEntries(fields(group).map(f => [f.key, l.draft.touched[f.key] ? l.draft.values[f.key] : shown(f)])), review: false};
         return {local: l, send: null};
       case 'cancel':
         return ['editing', 'review', 'conflict'].includes(st) ? {local: fresh(), send: null} : {local, send: null};
       case 'confirm': {
         if (st !== 'review') return {local, send: null};
         l.op = {id: newId(), ops: changes(group, l.draft)};
-        l.receipt = {state: 'sending', from: revs(group)};
+        l.receipt = {state: 'sending', from: revs(group), draft: {...l.draft, review: false}};
         l.draft = null;
         return {local: l, send: l.op};
       }
-      case 'receipt':
+      case 'receipt': {
         if (!l.op || ev.opId !== l.op.id) return {local, send: null};
+        const d = l.receipt?.draft, changed = JSON.stringify(l.receipt?.from) !== JSON.stringify(revs(group));
+        if (ev.state === 'rejected' && d && (l.op.ops || []).some(o => o.policy_schema === 'taskq.host-capacity/1') && (/host policy changed|revision/i.test(ev.reason || '') || changed)) {
+          return {local: {draft: {base: revs(group), values: Object.fromEntries(fields(group).map(f => [f.key, d.touched[f.key] ? d.values[f.key] : shown(f)])), touched: d.touched, review: false, error: ev.reason || RECEIPT.conflict, rebind: !changed}, op: null, receipt: null}, send: null};
+        }
         l.receipt = {...l.receipt, state: ['saved', 'rejected', 'unknown'].includes(ev.state) ? ev.state : 'unknown', reason: ev.reason,saved_revision:ev.saved_revision};
         return {local: l, send: null};
+      }
       case 'retry':
         // uncertain delivery reconciles with the same id and payload, never a new operation
         return st === 'unknown' ? {local: {...l, receipt: {...l.receipt, state: 'sending', reason: null}}, send: l.op} : {local, send: null};
@@ -168,6 +177,9 @@ step:function(group, local, cap, ev, newId, now) {
     }
   },
 render:function(group, local, cap, now) {
+    if (local.draft?.rebind && JSON.stringify(local.draft.base) !== JSON.stringify(revs(group))) {
+      local = {...local, draft: {...local.draft, base: revs(group), values: Object.fromEntries(fields(group).map(f => [f.key, local.draft.touched[f.key] ? local.draft.values[f.key] : shown(f)])), rebind: false}};
+    }
     const st = status(group, local, cap, now), f = freshness(group, now), s = scopes(group), id = 'rsc-' + String(group.key || '').replace(/[^\w-]/g, '_');
     let h = '<section class="rsc" data-rsc-state="' + st + '" aria-label="' + esc('Capacity of ' + (schemaOf(s.host,'taskq.host-capacity/1')?'all registered projects':group.labels?.project||'project') + ' on ' + (group.labels?.host||'this host')) + '">';
     h += '<p class="rsc-row"><span>Policy</span><span class="rsc-muted">' + esc(policy(group)) + '</span></p>';
@@ -238,7 +250,13 @@ const apply=function(ev) {
     ui.listen(el,'click', e => { const b = e.target.closest('button[data-rsc]'); if (b && !b.disabled) apply({type: b.dataset.rsc}); });
     ui.listen(el,'input', e => { const k = e.target.dataset.rscField; if (k) apply({type: 'input', key: k, value: e.target.type === 'checkbox' ? e.target.checked : e.target.value}); });
     return execution.module("resource-controls.mount.controller",{
-      update(g) { group = g; paint(); },
+      update(g) {
+        group = g;
+        if (local.draft?.rebind && JSON.stringify(local.draft.base) !== JSON.stringify(revs(group))) {
+          local = {...local, draft: {...local.draft, base: revs(group), values: Object.fromEntries(fields(group).map(f => [f.key, local.draft.touched[f.key] ? local.draft.values[f.key] : shown(f)])), rebind: false}};
+        }
+        paint();
+      },
       editing() { return !!local.draft; },
     });
   },

@@ -1130,6 +1130,13 @@ impl WebCalls {
     }
 }
 
+/// #2160 A2: a capacity receipt refreshes snapshot revisions and reaches Settings as well as the menu and Workspace.
+fn capmsg_refresh(receipt:&Value,shown:&mut String,workspace_shown:&mut String,settings_shown:&mut String)->bool {
+    let cap=receipt["capmsg"].is_object();
+    if cap {shown.clear();workspace_shown.clear();settings_shown.clear();}
+    cap
+}
+
 // Ignore boot/snapshot checkpoints until the restored renderer acknowledges its recovery handoff.
 fn workspace_checkpoint(calls:&WebCalls,checkpoints:&mut std::collections::BTreeMap<String,Value>,surface:&str,value:&Value)->Result<bool,&'static str> {
     if !calls.recovery_ready {return Ok(false);}
@@ -1673,8 +1680,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     let _=proxy.send_event(Ev::Sync);
                     json!({"updates":[snapshot,receipt]})
                 } else {receipt.clone()};
+                let cap=capmsg_refresh(&receipt,&mut shown,&mut workspace_shown,&mut settings_shown);
+                if cap {let _=proxy.send_event(Ev::Sync);}
                 push(&mut web,&ui,&packet);
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
+                if cap && let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) && !calls.failed {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
                 // #1819: a detached conversation sees the answer it may show too.
                 if receipt["answerReceipt"].is_object()||receipt["reportReceipt"].is_object() {for (_,wv,calls) in detached.values_mut() {if !calls.failed {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}}}
             },
@@ -4544,6 +4554,11 @@ mod tests {
         assert_eq!(resources_reply(Ok(json!({}))),json!({"resources_receipt":{"state":"submitted","reason":"Resources terminal submitted"}}));
         assert_eq!(resources_reply(Err("launcher unavailable".into()))["resources_receipt"]["state"],"unknown");
         assert_eq!(resources_reply(Err("tray.resources.submit: timed out; outcome unknown".into()))["resources_receipt"]["state"],"unknown");
+        let (mut shown,mut workspace_shown,mut settings_shown)=(String::from("ui"),String::from("ws"),String::from("st"));
+        assert!(!capmsg_refresh(&answer,&mut shown,&mut workspace_shown,&mut settings_shown));
+        assert_eq!((shown.as_str(),workspace_shown.as_str(),settings_shown.as_str()),("ui","ws","st"));
+        assert!(capmsg_refresh(&json!({"capmsg":{"root":"registered","id":"op-1","state":"saved","saved_revision":"4".repeat(32)}}),&mut shown,&mut workspace_shown,&mut settings_shown));
+        assert!(shown.is_empty()&&workspace_shown.is_empty()&&settings_shown.is_empty());
     }
 
     // A caught effect panic is visible and cannot silently reopen native admission.

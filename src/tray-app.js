@@ -565,6 +565,8 @@ resourceReceipt:function(m){
   if(!r)return;
   cancel(r.timer);resourceRequests.delete(key);
   const receipt=['saved','rejected','unknown'].includes(m.state)&&(m.state!=='saved'||typeof m.saved_revision==='string'&&/^[a-f0-9]{32}$/.test(m.saved_revision))?{state:m.state,reason:m.reason,saved_revision:m.saved_revision}:{state:'unknown',reason:'Invalid capacity receipt'};
+  if(receipt.state==='rejected'&&/host policy changed|revision/i.test(receipt.reason||''))send({a:'refresh'});
+  if(menu?.querySelectorAll)mountResources();
   r.resolve(receipt);
   defer(fit,0);},
 capacity:function(p){if(!ports.workspace)return p.resources?api.operationLauncher('resources',p.root,'Review capacity…'):'';
@@ -790,7 +792,8 @@ receive:function(s){
   // snapshot mode names the page
   if(s.page!==undefined&&s.page!==view.page){view.popup=null;view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;renderer.clear();view.disclosures={};present(true);return;}
   // a tick does not take the caret out of the range fields
-  if(document.activeElement&&(document.activeElement.dataset.draft||document.activeElement.dataset.rscField||document.activeElement.dataset.recoveryEvidence||document.activeElement.id==='ai'))return;
+  if(document.activeElement?.dataset.rscField){mountResources();return;}
+  if(document.activeElement&&(document.activeElement.dataset.draft||document.activeElement.dataset.recoveryEvidence||document.activeElement.id==='ai'))return;
   refresh(performance.now());
 },
 measure:function(name){
