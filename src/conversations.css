@@ -95,7 +95,11 @@
 .conversations>.chat-entry-bar{grid-column:1;grid-row:1;display:flex;align-items:center;flex-wrap:nowrap;gap:2px;padding:3px 6px;min-height:38px;border-right:1px solid var(--divider,var(--edge));border-bottom:0}
 .conversation-grid>.conversation-list{grid-column:1;grid-row:2;border-right:1px solid var(--divider,var(--edge));padding:4px 0 0;gap:4px}
 .conversation-grid>.conversation-detail{grid-column:2;grid-row:1/span 2;padding-left:4px}
-.conversations>.conversation-status{grid-column:1/-1;grid-row:3;padding:2px 8px}
+.conversations>.conversation-status{grid-column:1/-1;grid-row:3;display:flex;align-items:center;gap:6px;height:var(--target);min-height:var(--target);padding:0 8px}
+.feedback-message{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.feedback-message>span+span::before{content:' · '}
+.feedback-actions{display:flex;align-items:center;flex:none}.conversation-status .compact-action{margin:0}
+.catalog-observed{display:inline-flex;align-items:center}.catalog-observed .relative-time{white-space:nowrap}
 .conversations.detached:has(>.conversation-grid){grid-template-columns:minmax(0,1fr)}.conversations.detached>.chat-entry-bar{border:0}.conversations.detached .conversation-grid>.conversation-detail{grid-column:1;grid-row:2}
 .ui-icon{display:inline-flex;width:16px;height:16px;flex:none}.ui-icon svg{width:16px;height:16px}
 .conversations .compact-action{display:inline-flex;align-items:center;justify-content:center;flex:none;width:32px;height:32px;min-width:32px;min-height:32px;padding:7px;border:0;border-radius:6px;color:var(--muted);background:transparent;list-style:none}
@@ -156,9 +160,10 @@
 .journey-state{display:inline-flex;align-items:center;gap:6px;font-size:.9em;font-weight:500}
 .journey-state[data-state=doing]{color:var(--work)}.journey-state[data-state=ask]{color:var(--ask)}.journey-state[data-state=review]{color:var(--review)}.journey-state[data-state=failed]{color:var(--failed)}.journey-state[data-state=held]{color:var(--muted)}
 .journey-card .thread-card .qac{background:transparent;border:0;padding:0}
-/* #1781: Done, the question and its options stay above the pinned composer at 800x600 with large text: the state leads the first line, an empty status line takes no height */
+/* #1781: Done, the question and its options stay above the pinned composer at 800x600 with large text. */
 .journey-card:has(>.thread-card){margin:2px 0;padding:8px 8px 6px}.journey-card:has(>.thread-card)>.journey-heading{float:left;margin:0 .5em 0 0;padding-top:2px}.journey-card .qac-problem{margin:0 0 2px}.journey-card .qac-choices{clear:left;margin:4px 0}
-.conversations>.conversation-status:empty{min-height:0;padding:0}
+/* #2168 A1: receipt length and empty/nonempty changes keep one stable feedback row. */
+.workspace .conversation-composer>p[id$="-reason"]{display:block;min-height:1.4em;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:620px){.conversations .conversation-list-toggle{display:inline-flex}.conversations:has(>.conversation-grid){grid-template-columns:minmax(0,1fr)}.conversations>.chat-entry-bar{border-right:0;border-bottom:1px solid var(--divider,var(--edge))}.conversation-grid>.conversation-list,.conversation-grid>.conversation-detail{grid-column:1;grid-row:2;border-right:0;padding-left:0}.chat-entry-bar [data-c=search-open]{margin-left:0}}
 @media(pointer:coarse){.conversations .compact-action,.conversations .new-chat-action{min-width:44px;min-height:44px;width:auto}.conversations .compact-action{width:44px;height:44px}.list-location>button{min-height:44px}}
 .composer-help{position:relative;flex:none}.composer-help>summary{display:flex;align-items:center;justify-content:center;list-style:none;color:var(--muted)}.composer-help>summary::-webkit-details-marker,.composer-help>summary::after{display:none}
@@ -216,6 +221,7 @@
 .workspace.native-frame .head h1{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .worker-live{margin-block:var(--section-gap,12px);min-width:0}
 .document-author,.dialogue-item>.meta{display:flex;flex-wrap:wrap;align-items:baseline;gap:.5em;margin:0 0 .25em}
+.document-author>.relative-time,.dialogue-item>.meta>.relative-time{margin-inline-start:auto}
 .conversation-reader .dialogue-item{margin-block:0 1em}
 .conversation-reader .asked{border:0;border-radius:0;padding:0;background:none}
 

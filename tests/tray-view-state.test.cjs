@@ -21,3 +21,25 @@ const large=normalize({schema:1,current,trail:Array.from({length:32},()=>({...cu
 assert(new TextEncoder().encode(JSON.stringify(large)).length<=65536,'workspace Back state exceeds native 64 KiB; navigation save refuses');
 assert.deepEqual(large.current.answer,current.answer);assert.deepEqual(large.current.focus,current.focus);assert.equal(large.current.scroll,123);
 assert(large.trail.length>0,'retain newest Back contexts within the bound');
+// #2168 C2/C7: accumulated off-screen disclosures must not block saving current navigation.
+const disclosures=Object.fromEntries(Array.from({length:1800},(_,i)=>['old-thread:'+String(i).padStart(4,'0')+':'+ '界'.repeat(50),i%2===0]));
+const field={tagName:'TEXTAREA',dataset:{cField:'text'}},visible={dataset:{viewKey:'current-source'},open:true};
+let mounted=[visible];
+const menu={contains:()=>true,querySelector:()=>({scrollTop:123}),querySelectorAll:s=>s.startsWith('details')?mounted:s==='TEXTAREA'?[field]:[]};
+const view={...current,S:snapshot,disclosures:{...disclosures,'current-source':false}},sent=[];
+const controller=require('../src/tray-view-state.js').create(view,{menu,document:{activeElement:field},send:m=>sent.push(m),defer:()=>0,cancel(){},routes:workspaceRoutes,trail:[],root:'conversations'});
+controller.hydrate({page:'conversations'});controller.flush();
+assert.equal(sent.length,1,'old disclosure metadata cannot leave current navigation unsaved');
+const navigation=sent[0].navigation;
+assert(new TextEncoder().encode(JSON.stringify(navigation)).length<=65536);
+assert.deepEqual(navigation.current.answer,current.answer);assert.equal(navigation.current.scroll,123);
+assert.deepEqual(navigation.current.focus,{tag:'TEXTAREA',key:JSON.stringify(field.dataset),index:0});
+assert.equal(navigation.current.open['current-source'],true,'visible disclosure wins and survives');
+assert(Object.hasOwn(navigation.current.open,Object.keys(disclosures).at(-1)),'newest off-screen disclosure retained');
+assert(!Object.hasOwn(navigation.current.open,Object.keys(disclosures)[0]),'oldest off-screen disclosure leaves saved metadata first');
+assert.equal(Object.keys(view.disclosures).length,1801,'bounded persistence does not reset in-window context');
+controller.flush();assert.equal(sent.length,1,'unchanged navigation is not written again');
+mounted=Object.entries(disclosures).map(([key,open])=>({dataset:{viewKey:key},open}));
+controller.flush();assert.equal(sent.length,1,'oversized mounted context cannot overwrite the prior durable navigation');
+assert.match(view.navigationError,/exceeds 64 KiB/,'an irreducible current view still names its storage failure');
+console.log('PASS bounded workspace persistence keeps current source, visible disclosures, scroll and focus');
