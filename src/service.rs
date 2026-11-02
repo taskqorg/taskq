@@ -1925,6 +1925,9 @@ impl<'a> Service<'a> {
                 deferred.get_or_insert(k.execution);
                 k.unknown=Some("native observation deferred; pass budget exhausted".into());return true;
             }
+            // #2221: a hand-in of this attempt after the execution began is board evidence it took its input; the
+            // handle learns it before observation so recovery and exit can use it
+            if by_n.get(&k.task).is_some_and(|v| core::handed_in(k.task, &v.log, k.attempt, k.execution)) { k.proc.accept(); }
             let status = crate::runtime::observe_until(observation_until,||k.proc.exited());
             let confirmed = by_n.get(&k.task).and_then(|v| v.projection.executions.iter().find(|x| x.id == k.execution && x.accepted));
             let accepted = if let Some(x) = confirmed { Ok(Some(x.through)) } else {
@@ -3218,6 +3221,45 @@ mod tests {
         s.adopt(Kid { unknown:None, stopping:false, session_url:None,execution,task:n,attempt:a,rt:"codex".into(),proc:Box::new(FakeProc(Rc::new(RefCell::new(None))))}).unwrap();
         assert_eq!(s.kids[0].execution,execution,"pending acceptance does not change native ownership");
         assert_eq!(s.delivered(a),a,"handover does not invent input acceptance");
+    }
+
+    // Chain: #2221 resumed Claude turn hands in, its transcript readback never matches, PM requeues.
+    // Risk: the stopping handle waits on input acceptance forever and the ready task is never admitted again; with the
+    // execution already accepted on the board, the handle still needs the hand-in before its exit observation.
+    #[test]
+    fn requeued_task_after_resumed_hand_in_is_admitted_next_pass() {
+        struct Resumed { accepted: bool, killed: bool }
+        impl Proc for Resumed {
+            fn accepted(&mut self) -> Result<bool,String> { Ok(self.accepted) }
+            fn accept(&mut self) { self.accepted = true; }
+            fn exited(&mut self) -> Result<Option<i32>,String> {
+                if !self.killed { Ok(None) } else if self.accepted { Ok(Some(0)) } else { Err("current input acceptance unconfirmed".into()) }
+            }
+            fn kill(&mut self) -> Result<(),String> { self.killed = true; Ok(()) }
+            fn id(&self) -> u32 { 0 }
+        }
+        for board_accepted in [false, true] {
+            let b=Fake::default(); let n=b.create("T","",&[TASK_LABEL.into()]).unwrap(); let c=cfg("mac");
+            let a=b.comment(n,"taskq: spawn worker claude:session mac").unwrap();
+            accept_execution(&b,n,a,a,None).unwrap();
+            b.comment(n,&core::entry("ask",&[],Some(a),"Done: checked\nProblem: pick one\n1. Go ★")).unwrap();
+            release_execution(&b,n,a,a,"exit").unwrap();
+            let input=b.comment(n,"taskq: answer 1").unwrap();
+            let execution=b.comment(n,&core::entry("executing",&[&input.to_string()],Some(a),"")).unwrap();
+            if board_accepted { accept_execution(&b,n,a,execution,None).unwrap(); }
+            b.comment(n,&core::entry("result",&[&"a".repeat(40)],Some(a),"Changed: x\nChecks: y -- PASS\nOpen: none")).unwrap();
+            b.comment(n,"taskq: requeue\nPM: no reviewer").unwrap();
+            assert_eq!(task(&b,n).state,State::Ready);
+            let starts=Rc::new(std::cell::Cell::new(0)); let calls=starts.clone();
+            let mut s=Service::new(&b,&c,"fixture",Box::new(move |_| { calls.set(calls.get()+1); Ok(Box::new(FakeProc(Rc::new(RefCell::new(None))))) }));
+            s.focus=vec!["all".into()];
+            s.adopt(Kid { unknown:None, stopping:false, session_url:None, execution, task:n, attempt:a, rt:"claude".into(), proc:Box::new(Resumed { accepted:false, killed:false }) }).unwrap();
+            s.pass().unwrap();
+            let x=core::executions(n,&entries(&b,n).unwrap()).into_iter().find(|x|x.id==execution).unwrap();
+            assert!(x.accepted && x.release==Some(core::Release::Exit),"hand-in accepts and the stop releases ({board_accepted}): {x:?}");
+            assert_eq!(starts.get(),1,"the ready task is admitted on the same pass ({board_accepted})");
+            assert_ne!(task(&b,n).attempt,Some(a));
+        }
     }
 
     // Chain: R6, §3, §4, #2143: a renewed assignment lease must not hide historical unaccepted Exit from PM observers.
