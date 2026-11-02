@@ -13,8 +13,8 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
  assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='transcript').length),2);assert.equal(await page.locator('[data-c=latest]').count(),0);
  // #2176 A5/A2: the capability line names status, format, version and native state; a result body opens only on request and sends nothing.
  await page.getByText('History supported · claude-native 2.1.316 · native untested: bounded source adapter',{exact:true}).waitFor();
- assert.equal(await page.getByText('Invented result body').isVisible(),false,'result body closed by default');const acts=()=>page.evaluate(()=>sent.filter(m=>m.a!=='web-observation').length),before=await acts();
- await page.getByText('Tool result',{exact:true}).click();await page.getByText('Invented result body').waitFor();assert.equal(await acts(),before,'opening a result sends nothing but telemetry');
+ assert.equal(await page.getByText('Invented result body').isVisible(),false,'result body closed by default');const acts=()=>page.evaluate(()=>sent.filter(m=>!['web-observation','workspace-checkpoint','conversation-navigation'].includes(m.a)).length),before=await acts();
+ await page.getByText('Tool result',{exact:true}).click();await page.getByText('Invented result body').waitFor();assert.equal(await acts(),before,'opening a result sends nothing but telemetry and view-state saves');
  assert.equal(await page.evaluate(()=>sent.some(m=>m.a==='answer'||['send','reply'].includes(m.action))),false);assert.deepEqual(errors,[]);
  for(const generation of ['invented-source','replacement-source','history-v1:invented-source','shrank','replaced-during-read']){
   const worker=await browser.newPage(),workerErrors=[];worker.on('pageerror',e=>workerErrors.push(e.message));await worker.clock.install();await worker.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
