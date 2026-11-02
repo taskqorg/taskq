@@ -1848,7 +1848,7 @@ impl ClaudeTurn {
         if self.accepted || (!self.id.is_empty() && self.launch_error.is_none()) {return Ok(());}
         let home=home.ok_or("Claude native home unavailable; original submission remains unknown")?;
         let mut budget=8*1024*1024;
-        let mut matched=None;
+        let mut matched=vec![];
         for row in rows {
             if row["kind"]=="interactive" {continue;}
             if row["kind"]!="background" {return Err("Claude recovery job kind unknown".into());}
@@ -1858,12 +1858,22 @@ impl ClaudeTurn {
             if Path::new(root).canonicalize().ok().as_deref()!=Some(self.root.as_path()) {continue;}
             let session=row["sessionId"].as_str().filter(|s|s.len()==36 && native_job_id(s)).ok_or("Claude recovery session unknown")?;
             let id=row["id"].as_str().filter(|id|native_job_id(id)).ok_or("Claude native job identity unavailable during recovery")?;
-            if session!=self.session && !claude_job_input(home,id,session,&self.root,&self.input,&mut budget)? {continue;}
-            if matched.is_some() {return Err("Claude original input matches multiple native candidates; inspect them before release".into());}
-            matched=Some((id.to_owned(),session.to_owned()));
+            let same=session==self.session;
+            if !same && !claude_job_input(home,id,session,&self.root,&self.input,&mut budget)? {continue;}
+            matched.push((id.to_owned(),session.to_owned(),same));
         }
+        // #2209: a resume can leave the conversation's earlier job beside the one that took this input, both on the
+        // saved session. Only a unique input readback among them names the job; anything else stays unknown.
+        if matched.len()>1 {
+            let mut checked=vec![];
+            for (id,session,same) in matched {
+                if !same || claude_job_input(home,&id,&session,&self.root,&self.input,&mut budget)? {checked.push((id,session,same));}
+            }
+            matched=checked;
+        }
+        if matched.len()>1 {return Err("Claude original input matches multiple native candidates; inspect them before release".into());}
         let missing=||format!("{}Claude original input not found; submission remains unknown; retry native observation",self.launch_error.as_ref().map(|e|format!("{e}; ")).unwrap_or_default());
-        let (id,session)=matched.ok_or_else(missing)?;
+        let (id,session,_)=matched.pop().ok_or_else(missing)?;
         if !self.session.is_empty() && session!=self.session {return Err(format!("Claude original input found in copied job {id}; conversation identity differs; inspect native state"));}
         let before=if session==self.session {self.before} else {0};
         if !self.history.read(&claude_transcript_in(home,&session)?,before,&self.input,&self.log)? {
@@ -4467,6 +4477,7 @@ finally:
     // Chain: lost launch reply -> exact native input lookup -> resumed observation without resubmission.
     // Risk: a missing identity stays orphaned, or unrelated/ambiguous history is adopted as this execution.
     // #1627 `native-cwd`: `claude agents` names the plain root, not the canonical (Windows `\\?\`) form.
+    // #2209 `resume-two-*`: a resumed session lists its earlier job too; only a unique input readback picks the job.
     #[test]
     fn claude_lost_reply_recovers_only_its_unique_input() {
         let root=std::env::temp_dir().join(format!("taskq-claude-lookup-{}",uuid()));
@@ -4476,7 +4487,7 @@ finally:
         std::fs::create_dir_all(root.join("projects/a")).unwrap();
         #[cfg(unix)] std::os::unix::fs::symlink(root.join("missing-native-directory"),root.join("projects/missing")).unwrap();
         for id in ["c37eb75a","eaff90e7"] {std::fs::create_dir_all(root.join("jobs").join(id)).unwrap();}
-        for case in ["match","native-cwd","known","blocks","absent","two-jobs","two-inputs","partial","invalid","oversize","missing","foreign","resume","old","copied","large-unrelated","locator-only","bad-locator","foreign-locator","large-locator","long-history"] {
+        for case in ["match","native-cwd","known","blocks","absent","two-jobs","two-inputs","partial","invalid","oversize","missing","foreign","resume","old","copied","large-unrelated","locator-only","bad-locator","foreign-locator","large-locator","long-history","resume-two-jobs","resume-two-inputs"] {
             let (input,lock,path)=claude_input(&root,"fixture task body",None).unwrap();
             let event=serde_json::json!({"type":"user","message":{"content":if case=="blocks" {serde_json::json!([{"type":"text","text":input}])} else {serde_json::json!(input)}}}).to_string()+"\n";
             let a=root.join("projects/a").join(format!("{session}.jsonl"));let b=root.join("projects/a").join(format!("{other}.jsonl"));
@@ -4491,12 +4502,13 @@ finally:
                     +&serde_json::json!({"type":"system","subtype":"turn_duration"}).to_string()+"\n"
                     +&serde_json::json!({"type":"user","message":{"content":"another turn"}}).to_string()+"\n"
                     +&serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"foreign final"}]}}).to_string()+"\n",
-                "resume"=>serde_json::json!({"type":"system"}).to_string()+"\n"+&event,
+                "resume"|"resume-two-jobs"|"resume-two-inputs"=>serde_json::json!({"type":"system"}).to_string()+"\n"+&event,
                 _=>event.clone(),
             };
             std::fs::write(&a,content).unwrap();std::fs::write(&b,&event).unwrap();
-            for (id,sid) in [("c37eb75a",&session),("eaff90e7",&other)] {
-                let intent=if case=="locator-only" || case=="resume" || (case=="large-unrelated" && id=="eaff90e7") {"unrelated original input"} else {&input};
+            let shared=case.starts_with("resume-two");
+            for (id,sid) in [("c37eb75a",&session),("eaff90e7",if shared {&session} else {&other})] {
+                let intent=if case=="locator-only" || case=="resume" || (matches!(case,"large-unrelated"|"resume-two-jobs") && id=="eaff90e7") {"unrelated original input"} else {&input};
                 let locator=serde_json::json!({"cwd":root,"sessionId":sid,"intent":intent,"providerEnv":{"FIXTURE":"not retained or printed"}});
                 std::fs::write(root.join("jobs").join(id).join("state.json"),locator.to_string()).unwrap();
             }
@@ -4505,12 +4517,14 @@ finally:
             if case=="foreign-locator" {std::fs::write(&locator,serde_json::json!({"cwd":root,"sessionId":other,"intent":input}).to_string()).unwrap();}
             if case=="large-locator" {std::fs::write(&locator,"x".repeat(1024*1024+1)).unwrap();}
             if case=="large-unrelated" {std::fs::write(&b,"x".repeat(8*1024*1024+1)).unwrap();}
-            let mut turn=ClaudeTurn {root:root.clone(),log:root.join("attempt.log"),session:if matches!(case,"resume"|"old") {session.clone()} else if case=="copied" {other.clone()} else {String::new()},id:if matches!(case,"known"|"two-jobs"|"resume") {"c37eb75a".into()} else {String::new()},
-                announced:false,accepted:false,history:ClaudeHistory::default(),before:usize::from(matches!(case,"resume"|"old")),mode:"dontAsk".into(),input:input.clone(),_input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,launch_error:Some("launch response lost".into())};
+            let mut turn=ClaudeTurn {root:root.clone(),log:root.join("attempt.log"),session:if matches!(case,"resume"|"old") || shared {session.clone()} else if case=="copied" {other.clone()} else {String::new()},id:if matches!(case,"known"|"two-jobs"|"resume") {"c37eb75a".into()} else {String::new()},
+                announced:false,accepted:false,history:ClaudeHistory::default(),before:usize::from(matches!(case,"resume"|"old") || shared),mode:"dontAsk".into(),input:input.clone(),_input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,launch_error:Some("launch response lost".into())};
             let plain=if cfg!(windows) {PathBuf::from(root.to_str().unwrap().trim_start_matches(r"\\?\"))} else {root.join("projects/..")};
             let cwd=match case {"foreign"=>root.parent().unwrap(),"native-cwd"=>plain.as_path(),_=>root.as_path()};
             let mut rows=vec![serde_json::json!({"id":"c37eb75a","kind":"background","sessionId":session,"cwd":cwd,"state":"working"})];
             if matches!(case,"two-jobs"|"large-unrelated") {rows.push(serde_json::json!({"id":"eaff90e7","kind":"background","sessionId":other,"cwd":root,"state":"working"}));}
+            // #2209: the resumed conversation's earlier job stays listed on the same session beside the job that took the input.
+            if shared {rows.insert(0,serde_json::json!({"id":"eaff90e7","kind":"background","sessionId":session,"cwd":root,"state":"done"}));}
             rows.push(serde_json::json!({"id":"abcdef12","kind":"background","cwd":root.join("deleted-worktree"),"state":"done"}));
             if case=="missing" {std::fs::remove_file(&a).unwrap();}
             let original_id=turn.id.clone();
@@ -4526,7 +4540,7 @@ finally:
                 assert!(!std::fs::read_to_string(&turn.log).unwrap().contains("foreign final"));
                 assert_eq!(claude_history(&a,0,|_|{}).unwrap(),23,"pre-submission scan supports the same large history");
             }
-            if matches!(case,"match"|"native-cwd"|"known"|"blocks"|"resume"|"large-unrelated"|"long-history") {
+            if matches!(case,"match"|"native-cwd"|"known"|"blocks"|"resume"|"large-unrelated"|"long-history"|"resume-two-jobs") {
                 result.unwrap();assert_eq!(turn.id,"c37eb75a");assert_eq!(turn.session,session);
                 assert_eq!(turn.accepted(),Ok(true));assert!(!turn.done,"input acceptance is not native exit");
                 turn.recover_job(&rows,None).unwrap();

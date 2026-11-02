@@ -657,10 +657,14 @@ pub fn stale_upgrade(install:&Path,late:bool)->Option<String> {
 
 /// #1601: while the host's re-exec into a queued upgrade waits, the receipt names the real waits instead of a promise.
 /// True once retained, or when no queued upgrade waits for this image to re-exec.
+/// #2209: the host asks on every tick, so an intent that superseded another, or an install replay that reset the
+/// reason, gets the waits again although they did not change; an equal reason is not rewritten.
 pub fn upgrade_waits(install:&Path,running:&str,waits:&str)->bool {
     let Ok(Some(p))=upgrade_intent(install) else {return true};
-    if p.version==running||installation_status(install,Some(&p.id))["state"]!="queued" {return true;}
-    retain_reason(install,&p,&format!("host re-exec into {} waits for {waits}",p.version)).is_ok()
+    let receipt=installation_status(install,Some(&p.id));
+    if p.version==running||receipt["state"]!="queued" {return true;}
+    let reason=crate::compact(&format!("host re-exec into {} waits for {waits}",p.version),256);
+    receipt["reason"].as_str()==Some(reason.as_str())||retain_reason(install,&p,&reason).is_ok()
 }
 
 /// #1601: a newer build supersedes a queued upgrade it cannot finish (the version ran, or never will); the old
@@ -1311,6 +1315,10 @@ mod tests {
         assert_eq!(request_upgrade(&install,&tool,&root,&old,&native).unwrap(),v);
         let reason=installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().to_string();
         assert!(reason.ends_with("waits for taskq #1580 unresolved ownership"),"{reason}");
+        // #2209: a superseding intent starts on the placeholder while the waits stay the same; the next tick names them again.
+        retain_reason(&install,&p,"host update step pending; the host names its re-exec waits here").unwrap();
+        assert!(upgrade_waits(&install,"0.0.1","taskq #1580 unresolved ownership"));
+        assert_eq!(installation_status(&install,Some(&p.id))["reason"].as_str().unwrap(),reason,"same waits retained again");
         assert!(adopt_upgrade(&install,&root,"0.0.1").unwrap().is_none(),"the old host never binds the candidate's command");
         let new=host(crate::platform::VERSION);
         assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None);
