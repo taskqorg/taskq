@@ -480,6 +480,11 @@ pub type CommentCache = HashMap<u64, (i64, i64, Vec<Comment>)>;
 
 /// Fold every open task (heartbeat issues and untrusted authors excluded).
 pub fn views(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache, ttl: i64) -> Result<(Vec<View>, Vec<Issue>), String> {
+    views_asked(board, cache, deps, ttl).map(|(views, hosts, _)| (views, hosts))
+}
+
+/// [`views`] and the open `taskq doctor --hosts` request id ([`crate::health::request_of`], #2194).
+pub fn views_asked(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache, ttl: i64) -> Result<(Vec<View>, Vec<Issue>, Option<String>), String> {
     let mut issues = board.issues(None)?;
     // #2083 § 3: a kept heartbeat is never newer than the board; one fresh when listed and past `ttl` now may have been
     // written since, so it relists before a lease reads it stale. One already stale when listed relists no more.
@@ -491,6 +496,7 @@ pub fn views(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache, t
         }
     }
     let open: HashSet<u64> = issues.iter().map(|i| i.number).collect();
+    let request = crate::health::request_of(&issues);
     let (hosts, tasks): (Vec<Issue>, Vec<Issue>) = issues.into_iter().filter(|i| i.trusted).partition(is_host);
     let mut out = vec![];
     for issue in tasks.into_iter().filter(|i| is_task(i) || is_held(i)) {
@@ -510,7 +516,7 @@ pub fn views(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache, t
         }
         out.push(View { projection, issue, comments, log, blockers });
     }
-    Ok((out, hosts))
+    Ok((out, hosts, request))
 }
 
 /// Release only a known submission, with idempotent write and authoritative readback.
@@ -585,6 +591,8 @@ pub struct Service<'a> {
     diagnostics: std::cell::RefCell<Option<(std::time::Instant,Value)>>,
     /// #2194: when the health checks last ran and their heartbeat `doctor` line.
     health: Option<(std::time::Instant, String)>,
+    /// #2194: the last `taskq doctor --hosts` request these health checks answered.
+    answered: Option<String>,
     pub kids: Vec<Kid>,
     /// `service <id>` in the heartbeat (§ 4): a hash of `<install>/installation-id`; empty writes no line.
     pub instance: String,
@@ -938,7 +946,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { progress_clock: |_| crate::runtime::now(), last_spawn: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), last_spawn: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1646,6 +1654,7 @@ impl<'a> Service<'a> {
         lines.extend(crate::runtime::accounts::Host::read(&self.cfg.install).heartbeat(self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now())));
         lines.extend(tray_fault(&self.cfg.install).map(|code| format!("tray {code}")));
         lines.extend(self.health.as_ref().map(|(_, line)| line.clone()));
+        lines.extend(self.answered.as_deref().map(crate::health::answer_line));
         // #1985, #2084: this host's billed requests of its last full hour, in all and per API host: its share of each
         // board user's quota
         lines.extend(self.host.as_ref().and_then(|h| { let h = h.lock().ok()?; Some(crate::requests::heartbeat(h.last_hour.as_ref()?, h.hosts_last_hour.as_ref())) }).unwrap_or_default());
@@ -1744,7 +1753,12 @@ impl<'a> Service<'a> {
         let previous_fixes = std::mem::take(&mut self.label_fixes);
         let me = self.cfg.me.clone();
         let ttl = self.cfg.ttl;
-        let (mut views, mut hosts) = views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
+        let (mut views, mut hosts, request) = views_asked(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
+        // #2194 A2: a new `taskq doctor --hosts` request runs the health checks now; this pass's heartbeat answers it
+        if let Some(id) = request.filter(|id| self.answered.as_ref() != Some(id)) {
+            self.refresh_health();
+            self.answered = Some(id);
+        }
         // §5: an interrupted owner reroute remains fenced and finishes without a second owner request.
         let mut rerouted=false;
         for v in &views {
@@ -5340,6 +5354,33 @@ Open: none")).unwrap();
         assert_eq!(since(),at);
         b.advance(100);b.raw(n,"a plain note",true,false);
         assert_eq!(since(),at,"a comment that changes no state keeps the age");
+    }
+
+    // Chain: `taskq doctor --hosts` request issue -> service pass -> heartbeat `doctor-answer` (#2194 A2). Risk: a host
+    // refreshed its checks only every 10 minutes, so `doctor --hosts` showed results older than a token fix and could
+    // not tell a checked host from a silent one. Protection: a new trusted request runs the checks in the next pass and
+    // the heartbeat names its id, once per id; an untrusted request runs nothing.
+    #[test]
+    fn service_answers_a_doctor_request_in_its_heartbeat() {
+        let b = Fake::default();
+        let c = cfg("win");
+        let mut s = Service::new(&b, &c, "fixture", Box::new(|_| panic!("no launch")));
+        let heartbeat = |b: &Fake| b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host win").unwrap().body;
+        s.pass().unwrap();
+        assert!(!heartbeat(&b).contains("doctor"), "no request, no installed service: no checks");
+        let r = b.create(crate::health::REQUEST_TITLE, &crate::health::request_body("abc123"), &[HOST_LABEL.into()]).unwrap();
+        s.pass().unwrap();
+        let body = heartbeat(&b);
+        assert!(body.lines().any(|l| l == "doctor-answer abc123"), "{body}");
+        assert!(body.lines().any(|l| l.strip_prefix("doctor ").and_then(crate::health::parse).is_some()), "{body}");
+        let ran = s.health.as_ref().unwrap().0;
+        s.pass().unwrap();
+        assert_eq!(s.health.as_ref().unwrap().0, ran, "one run per request");
+        b.edit(r, &crate::health::request_body("evil1")).unwrap();
+        b.state.borrow_mut().issues.iter_mut().find(|i| i.number == r).unwrap().trusted = false;
+        s.pass().unwrap();
+        assert!(!heartbeat(&b).contains("evil1"), "an untrusted request runs nothing");
+        assert_eq!(s.health.as_ref().unwrap().0, ran);
     }
 
     // Chain: § 4 heartbeat body, DashQ host join (dashq docs/design/hosts.md H2). Risk: a changed or missing line

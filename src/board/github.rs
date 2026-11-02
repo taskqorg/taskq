@@ -702,20 +702,23 @@ impl Board for GitHub {
             Err(e) => Probe::Unknown(e),
         }
     }
-    /// #2194: one `per_page=1` read of issues, commits (Contents: Read) and pulls; 401, 403 or 404 names the status.
+    /// #2194: one `per_page=1` read of issues, commits (Contents: Read) and pulls, then for issues and pulls one write
+    /// probe: a POST with an empty body that GitHub refuses with 422 when the token may write and creates nothing.
+    /// 401, 403 or 404 names the status and the access it failed.
     fn access(&self) -> Vec<(&'static str, crate::check::Probe)> {
         use crate::check::Probe;
-        [("Issues", "/issues?per_page=1"), ("Contents", "/commits?per_page=1"), ("Pull requests", "/pulls?per_page=1")].into_iter().map(|(name, path)| {
-            let probe = match self.api.refresh().and_then(|_| self.api.call("GET", path, None)) {
-                Ok(_) => Probe::Ok,
-                Err(e) => match crate::health::http_status(&e) {
-                    // an empty repository answers 409 to a reader that may read it
-                    Some(409) if name == "Contents" => Probe::Ok,
-                    Some(s @ (401 | 403 | 404)) => Probe::Gap(format!("HTTP {s}")),
-                    _ => Probe::Unknown(e),
-                },
-            };
-            (name, probe)
+        let probe = |method: &str, path: &str, body: Option<Value>, ok: u16| match self.api.refresh().and_then(|_| self.api.call(method, path, body)) {
+            Ok(_) => Probe::Ok,
+            Err(e) => match crate::health::http_status(&e) {
+                Some(s) if s == ok => Probe::Ok,
+                Some(s @ (401 | 403 | 404)) => Probe::Gap(format!("{} HTTP {s}", if method == "GET" { "read" } else { "write" })),
+                _ => Probe::Unknown(e),
+            },
+        };
+        // an empty repository answers 409 to a reader that may read it
+        [("Issues", "/issues", true), ("Contents", "/commits", false), ("Pull requests", "/pulls", true)].into_iter().map(|(name, path, write)| {
+            let read = probe("GET", &format!("{path}?per_page=1"), None, if name == "Contents" { 409 } else { 0 });
+            (name, if write && read == Probe::Ok { probe("POST", path, Some(json!({})), 422) } else { read })
         }).collect()
     }
     fn canonical_labels(&self) -> Result<bool> {

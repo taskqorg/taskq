@@ -1836,15 +1836,21 @@ mod tests {
     }
 
     // Chain: § 6 `taskq doctor` token checks (#2194 A1, A4). Risk: a token without Contents: Read on a private board
-    // read issues fine, so doctor called it healthy while commits, reports and publication failed with raw 403s.
-    // Protection: each permission is read on its own; 401/403/404 is a gap with the status, an empty repository's 409
-    // still proves Contents: Read and any other failure stays unknown.
+    // read issues fine, so doctor called it healthy while commits, reports and publication failed with raw 403s; a
+    // read-only Issues or Pull requests grant passed the reads and failed every comment or PR. Protection: each
+    // permission is probed on its own; 401/403/404 is a gap naming read or write and the status, an empty repository's
+    // 409 still proves Contents: Read, the write probe's 422 proves write without creating anything, and any other
+    // failure stays unknown.
     #[test]
     fn token_access_probes_each_permission_and_names_a_403_contents_gap() {
         use crate::check::Probe;
-        for (scenario, want) in [("403", "gap HTTP 403"), ("409", "ok"), ("502", "unknown"), ("ok", "ok")] {
-            let h = http(&github::KIND, None, Box::new(move |method, url, _| {
-                assert_eq!(method, "GET", "the check only reads");
+        let show = |p: &Probe| match p { Probe::Ok => "ok".to_string(), Probe::Gap(g) => format!("gap {g}"), Probe::Unknown(_) => "unknown".into() };
+        for (scenario, want) in [("403", "gap read HTTP 403"), ("409", "ok"), ("502", "unknown"), ("ok", "ok")] {
+            let h = http(&github::KIND, None, Box::new(move |method, url, body| {
+                if method == "POST" {
+                    assert_eq!(body, Some(json!({})), "a write probe sends nothing it could create");
+                    return Err(format!("POST {url}: HTTP 422 Validation Failed"));
+                }
                 if url.contains("/commits?per_page=1") && scenario != "ok" {
                     return Err(format!("GET /commits?per_page=1: HTTP {scenario} Resource not accessible by personal access token"));
                 }
@@ -1853,10 +1859,22 @@ mod tests {
             }));
             let access = h.access();
             assert_eq!(access.iter().map(|(n, _)| *n).collect::<Vec<_>>(), ["Issues", "Contents", "Pull requests"]);
-            let show = |p: &Probe| match p { Probe::Ok => "ok".to_string(), Probe::Gap(g) => format!("gap {g}"), Probe::Unknown(_) => "unknown".into() };
             assert_eq!(show(&access[1].1), want, "{scenario}");
             assert!(matches!((&access[0].1, &access[2].1), (Probe::Ok, Probe::Ok)), "{scenario}");
         }
+        // a read-only Issues and Pull requests grant: both reads pass, both writes are refused
+        let posts = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+        let seen = posts.clone();
+        let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+            if method == "POST" {
+                seen.borrow_mut().push(url.rsplit('/').next().unwrap_or_default().to_string());
+                return Err(format!("POST {url}: HTTP 403 Resource not accessible by personal access token"));
+            }
+            Ok(Reply { status: 200, headers: vec![], body: "[]".into(), operation: operation(method) })
+        }));
+        let access = h.access();
+        assert_eq!(access.iter().map(|(_, p)| show(p)).collect::<Vec<_>>(), ["gap write HTTP 403", "ok", "gap write HTTP 403"]);
+        assert_eq!(*posts.borrow(), ["issues", "pulls"], "only Issues and Pull requests are write-probed");
     }
 
     // Chain: § 7 publication on both boards. Risk: publication uses the wrong SHA or writes twice.

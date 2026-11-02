@@ -2823,17 +2823,26 @@ fn doctor_cmd(a: &Args) -> Res<()> {
             boards.push(json!({"board": cfg.repo, "items": items.iter().map(check::Item::json).collect::<Vec<_>>()}));
             continue;
         }
-        let s = match &board {
-            Ok(b) => snapshot::read(b.as_ref(), &cfg, &raw, &[]),
-            Err(e) => snapshot::Snapshot { source: "board", observed: 0, reason: Some(e.clone()), board: Value::Null, tasks: vec![], hosts: vec![] },
+        let b = match &board {
+            Ok(b) => b,
+            Err(e) => {
+                out.push(format!("board {}: unknown: {e}", cfg.repo));
+                boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
+                continue;
+            }
         };
+        let mut s = snapshot::read(b.as_ref(), &cfg, &raw, &[]);
         if let Some(e) = &s.reason {
             out.push(format!("board {}: unknown: {e}", cfg.repo));
             boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
             continue;
         }
-        let rows: Vec<Value> = s.hosts.iter().map(|h| health::host_row(h, &cfg.repo, s.observed, cfg.ttl)).collect();
-        let workers = health::worker_rows(&s);
+        // #2194 A2: every live host with health checks runs them now and answers in its heartbeat
+        if !json_out { eprintln!("board {}: asking every host to run its health checks (up to {}s)", cfg.repo, health::ASK_WAIT); }
+        let asked = health::ask(b.as_ref(), &mut s.hosts, s.observed, cfg.ttl, health::ASK_WAIT, health::ASK_POLL, &|t| std::thread::sleep(std::time::Duration::from_secs(t)));
+        let now = s.observed + asked.waited as i64;
+        let rows: Vec<Value> = s.hosts.iter().map(|h| health::host_row(h, &cfg.repo, now, cfg.ttl, Some(&asked))).collect();
+        let workers = health::worker_rows(&s, cfg.ttl);
         out.extend(health::hosts_lines(&cfg.repo, &rows, &workers));
         boards.push(json!({"board": cfg.repo, "hosts": rows, "workers": workers}));
     }
