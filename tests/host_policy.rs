@@ -249,3 +249,45 @@ fn external_slot_cli_reconciles_without_a_task_or_scheduler() {
     assert!(!dir.join("host.json").exists());assert!(!dir.join("projects").exists());assert!(!dir.join(".taskq").exists());
     fs::remove_dir_all(dir).unwrap();
 }
+
+// #2189 A2/A4/A7, §4 Balancing: actual owner CLI writes weights only; invalid/worker requests have no effects.
+#[test]
+fn weighted_balance_cli_preserves_host_policy() {
+    let root=std::env::temp_dir().join(format!("taskq-weighted-cli-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("host.json"),json!({"limits":{"claude":4,"codex":2},"owner_field":"preserve","permission_mode":"dontAsk"}).to_string()).unwrap();
+    let run=|args:&[&str],worker:bool| {
+        let mut cmd=Command::new(env!("CARGO_BIN_EXE_taskq"));
+        cmd.args(args).current_dir(&root).env("TASKQ_INSTALL",&root).env("TASKQ_HOST","fixture")
+            .env_remove("TASKQ_ROOT").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK")
+            .env_remove("COREQ_TRACE_CONTEXT").env_remove("CODEX_THREAD_ID").env_remove("CODEX_SESSION_ID").env_remove("CLAUDE_CODE_SESSION_ID");
+        if worker {cmd.env("TASKQ_ATTEMPT","123").env("TASKQ_TASK","2189");}
+        match coreq::process::output("test.weighted-balance",&mut cmd,Duration::from_secs(if cfg!(windows){60}else{10})) {
+            Ok(out)|Err(coreq::process::Failure::Exit(out))=>out,
+            Err(e)=>panic!("balance CLI: {e}"),
+        }
+    };
+    let output=run(&["balance","claude=2","codex=1"],false);
+    assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Saved runtime weights on fixture"));
+    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"],json!({"claude":2,"codex":1}));
+    assert_eq!(saved["limits"],json!({"claude":4,"codex":2}));
+    assert_eq!(saved["owner_field"],"preserve");assert_eq!(saved["permission_mode"],"dontAsk");
+    let text=run(&["balance"],false);assert!(text.status.success());
+    assert!(String::from_utf8_lossy(&text.stdout).contains("\"claude\":2"));
+    let original=fs::read(root.join("host.json")).unwrap();
+    for args in [vec!["balance","claude=0"],vec!["balance","codex=-1"],vec!["balance","unknown=1"],vec!["balance","codex=1.5"],vec!["balance","codex=1","codex=2"],vec!["balance","--clear","codex=1"]] {
+        assert!(!run(&args,false).status.success(),"{args:?}");
+        assert_eq!(fs::read(root.join("host.json")).unwrap(),original);
+    }
+    assert!(!run(&["balance","claude=3"],true).status.success());
+    assert_eq!(fs::read(root.join("host.json")).unwrap(),original);
+    assert!(run(&["balance","codex=3"],false).status.success());
+    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"],json!({"codex":3}),"replace, not merge");
+    assert!(run(&["balance","--clear"],false).status.success());
+    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"],json!({}));assert_eq!(saved["limits"],json!({"claude":4,"codex":2}));
+    fs::remove_dir_all(root).unwrap();
+}

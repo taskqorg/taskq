@@ -403,6 +403,7 @@ pub(crate) fn stuck(n: u64, t: &Task, deps: &[service::Blocker], last: i64, host
 
 #[derive(Default)]
 pub struct Host {
+    pub balancing: Value,
     pub diagnostics: Value,
     pub name: String,
     /// Heartbeat `service <id>` line (§ 4 step 3): the service that claims this host name.
@@ -502,6 +503,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         later: (v.projection.task.state == State::Later).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: later")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
     let hosts = hosts.iter().map(|h| Host {
+        balancing: crate::service::balancing_status(&h.body),
         diagnostics: crate::service_versions::read(&h.body,h.updated,observed,cfg.ttl as i64,false),
         name: h.title.trim_start_matches("taskq host ").to_string(),
         service: h.body.lines().find_map(|l| l.strip_prefix("service ")).map(str::to_string),
@@ -791,7 +793,7 @@ impl Snapshot {
         json!({"schema": SCHEMA, "source": self.source, "observed": self.observed, "complete": self.reason.is_none(), "reason": self.reason,
             "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "vocabulary": vocabulary(), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
             "hosts": self.hosts.iter().map(|h| {
-                let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
+                let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics, "balancing":h.balancing});
                 if let Some(l) = &h.link { r["link"] = json!(l) }
                 r
             }).collect::<Vec<_>>(),
@@ -894,6 +896,11 @@ impl Snapshot {
         let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}{}", h.name, h.version, age(self.observed - h.updated),
             if live(self.observed - h.updated, cfg.ttl) { "" } else { " stale" }, h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
             + &h.limits.iter().map(|l| if l.starts_with("quota ") {format!(" {l}")} else {l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))}).collect::<String>()
+            + &h.balancing["weights"].as_object().map(|weights|weights.iter().map(|(rt,w)| {
+                let load=&h.balancing["runtimes"][rt]["load"];
+                format!(" {rt} running {} / weight {} (headroom {})",load["running"].as_u64().map_or("unknown".into(),|n|n.to_string()),w,
+                    load["headroom"].as_f64().map_or("unknown".into(),|n|format!("{:.1}%",n*100.0)))
+            }).collect::<String>()).unwrap_or_default()
             + &h.tray.as_ref().map(|code| format!(" tray {code}")).unwrap_or_default()
             + &h.requests.as_ref().map(|n| format!(" {n} req/h{}", h.github.map(|g| format!(" (github.com {g})")).unwrap_or_default())).unwrap_or_default())).collect();
         if !hs.is_empty() {

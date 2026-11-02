@@ -113,6 +113,15 @@ pub fn prune(root: &Path, install: &Path, project: &str, live: &[u64]) -> Vec<St
     if n > 0 {
         out.push(format!("pruned {n} attempt logs beyond the newest {ATTEMPT_LOGS}"));
     }
+    // Quota event markers share the lifetime of their exact retained attempt log.
+    for entry in fs::read_dir(&d).into_iter().flatten().flatten() {
+        let path=entry.path();
+        if path.extension().is_some_and(|e|e=="headroom") {
+            let log=path.with_extension("log");
+            if log.file_name().and_then(|n|n.to_str()).and_then(attempt_of).is_some_and(|a|!live.contains(&a))
+                && matches!(log.try_exists(),Ok(false)) {let _=fs::remove_file(path);}
+        }
+    }
     let inputs = d.join("inputs");
     let bound=bound_inputs(root,live);
     if let Err(e)=&bound {out.push(format!("input retention unknown: {e}"));}
@@ -255,6 +264,7 @@ mod tests {
         fs::write(d.join("cli-errors.log"), line.repeat((CLI_ERRORS_MAX / 100 + 10) as usize)).unwrap();
         for a in 0..ATTEMPT_LOGS as u64 + 5 {
             fs::write(d.join(format!("T7-{a}.log")), "").unwrap();
+            fs::write(d.join(format!("T7-{a}.headroom")), "{}").unwrap();
             fs::write(d.join("incidents").join(format!("{a}.json")), "{}").unwrap();
             // mtimes order the files: 0 is the oldest
             let t = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000 + a);
@@ -270,6 +280,7 @@ mod tests {
         assert!(fs::metadata(d.join("cli-errors.log")).unwrap().len() <= CLI_ERRORS_MAX / 2);
         // live attempt 0 stays though oldest; 1..=4 go
         assert!(d.join("T7-0.log").exists() && !d.join("T7-1.log").exists() && !d.join("T7-4.log").exists() && d.join("T7-5.log").exists());
+        assert!(d.join("T7-0.headroom").exists() && !d.join("T7-1.headroom").exists() && d.join("T7-5.headroom").exists());
         assert_eq!(fs::read_dir(d.join("incidents")).unwrap().count(), INCIDENTS);
         assert!(d.join("status.json").exists());
         assert!(prune(&root, &install, "p", &[0]).is_empty(), "a second round finds nothing");

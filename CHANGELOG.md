@@ -3,6 +3,12 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## Unreleased
+
+Owner-weighted runtime and primary-host balancing uses fresh observed quota headroom for new task attempts. `taskq balance` saves local host weights; status shows occupancy, weights and quota headroom (#2189).
+
+**Board**: weighted hosts publish `balancing` schema 2 with runtime load and the last accepted local unlabelled spawn ID. Upgrade every board host to compatible readers before enabling weights; preserve active attempts, quota holds and strict pins. Unweighted hosts keep schema 1. No task-log migration or live policy change is implied. See [cutover](docs/design/configuration.md#balancing-cutover).
+
 ## v4.6.58
 
 Board-only project roots support PM commands with `taskq.json` and the host's board token, while `service install` and `cleanup` refuse without a checkout (#2093). Report rows settle only after a comment read beyond the board list lag, so accepted reports leave Decide (#2091). Bell/news, questions, reports, Completed and task activity share Conversations, preserving scope, selection and reading context (#2095).

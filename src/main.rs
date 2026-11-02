@@ -25,6 +25,7 @@ mod enrollment;
 mod incident;
 mod incoming;
 mod labels;
+mod balance;
 mod link;
 mod recipe;
 mod requests;
@@ -111,6 +112,7 @@ const USAGE: &str = "taskq agents
  taskq service slots --identity PID | --action reserve|observe|release --request JSON [--json]
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
+ taskq balance [claude=N codex=N antigravity=N | --clear]
  taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim primary|any|spillover|pinned-only|labelled|manager-only|none] [--default-runtime claude|codex|antigravity]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
@@ -158,14 +160,14 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
             }
         }
         let used = match a.pos.first().map(String::as_str) {
-            Some("close" | "start") => a.pos.len(),
+            Some("close" | "start" | "balance") => a.pos.len(),
             Some("answer") if a.pos.get(1).is_some_and(|p| p.contains('.')) => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
@@ -343,6 +345,7 @@ fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
         has,
         claim: host::ClaimMode::Any,
         spillover_grace: 300,
+        weights: BTreeMap::new(),
         allowed_runtimes: None,
         auto_reroute: false,
         default_runtime: crate::runtime::OWNER.into(),
@@ -1885,6 +1888,7 @@ struct CapEdit {
     claim: Option<host::ClaimMode>,
     /// host.json `default_runtime`, § 9
     default_runtime: Option<String>,
+    weights: Option<balance::Weights>,
 }
 
 impl CapEdit {
@@ -1919,7 +1923,7 @@ impl CapEdit {
 
     fn is_empty(&self) -> bool {
         self.mode.is_none() && self.max.is_none() && self.limits.is_empty() && self.unset.is_empty() && self.gate.is_none() && self.cpu_max.is_none() && self.memory_min.is_none() && self.claim.is_none()
-            && self.default_runtime.is_none()
+            && self.default_runtime.is_none() && self.weights.is_none()
     }
 }
 
@@ -2120,6 +2124,34 @@ fn pm_cmd(root:&Path,a:&Args)->Res<()> {
     if a.flags.contains_key("json"){println!("{report}");}else {
         let action=if let Some(id)=a.one("grant"){format!("PM grant {id} saved")}else if let Some(id)=a.one("revoke"){format!("PM grant {id} revoked")}else{format!("PM requests: {} authorized targets; {} recorded operations",report["targets"].as_array().map_or(0,Vec::len),report["receipts"].as_array().map_or(0,Vec::len))};
         println!("{action} · taskq {}",platform::VERSION);
+    }
+    Ok(())
+}
+
+/// Local owner runtime weights (§4 Balancing).
+fn balance_cli(a:&Args) -> Res<()> {
+    if !a.flags.keys().all(|k|k=="clear") {return Err("balance accepts runtime=N or --clear".into());}
+    let clear=a.flags.contains_key("clear");
+    let args=&a.pos[1..];
+    if clear && !args.is_empty() {return Err("balance --clear cannot include weights".into());}
+    let install=platform::default_install();
+    let policy=host::Policy::read(&install)?;
+    if clear || !args.is_empty() {
+        if dispatch::agent() {return Err("only the owner can change runtime weights".into());}
+        let mut value=json!({"weights":{}});
+        for arg in args {
+            let (rt,n)=arg.split_once('=').ok_or("balance needs runtime=N")?;
+            if value["weights"].get(rt).is_some() {return Err(format!("duplicate weight {rt}"));}
+            value["weights"][rt]=json!(n.parse::<u32>().map_err(|_|"weight must be an integer 1..1000000")?);
+        }
+        let weights=balance::weights(&value)?;
+        host::write_capacity(&install,&policy.me,&CapEdit {weights:Some(weights.clone()),..Default::default()},None)?;
+        let saved=host::Policy::read(&install)?;
+        if saved.weights!=weights {return Err("runtime weights save uncertain: readback differs".into());}
+        println!("Saved runtime weights on {}: {}; new launches use them after the service reloads",saved.me,serde_json::to_string(&saved.weights).unwrap());
+    } else {
+        println!("Runtime weights on {}: {}",policy.me,serde_json::to_string(&policy.weights).unwrap());
+        if policy.weights.is_empty() {println!("No weights: preference/default routing");}
     }
     Ok(())
 }
@@ -3236,6 +3268,7 @@ fn run(argv: &[String]) -> Res<()> {
         }
         // § 3 Runtime accounts: list reads every host; enable, disable, move and add write this host only
         "accounts" => accounts_cli(&a),
+        "balance" => balance_cli(&a),
         "service" => service(&a),
         // #2060 (docs/design/worktrees.md#commands): the tidy of each registered project of this host
         "cleanup" if a.flags.contains_key("all") => {
@@ -4469,6 +4502,7 @@ mod tests {
             has: vec![],
             claim: host::ClaimMode::Any,
             spillover_grace: 300,
+            weights: BTreeMap::new(),
             allowed_runtimes: None,
             auto_reroute: false,
             default_runtime: "claude".into(),

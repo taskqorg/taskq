@@ -1,5 +1,7 @@
 # Commands
 
+`taskq balance [claude=N codex=N antigravity=N | --clear]` reads or replaces this local host's runtime weights. Only an owner-authenticated CLI can write; all values are integers 1..1000000, duplicate/unknown runtimes refuse before writing. An omitted runtime loses its previous weight. `--clear` accepts no assignments. This is a host policy save with readback, not evidence of service application; existing attempts remain unchanged. [Balancing](../../taskq.md#balancing).
+
 Command syntax, task bodies, outputs, op ids and receipts.
 
 ## Contract detail
