@@ -307,7 +307,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='back')api.back();
      else if(b.dataset.a==='hide'){conversations.workerClose();conversations.flush();state.flush();ui.send({a:'hide'});}
      else if(b.dataset.a==='workspace-reload'){conversations.flush();state.flush();if(conversations.recoverable())ui.send({a:'workspace-reload'});else{view.localError='Draft save or command receipt pending. Check delivery before reloading; edits kept in this window.';api.draw();}}
-     else if(b.dataset.a==='refresh'){view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}
+     else if(b.dataset.a==='refresh'){if(view.page==='conversations')conversations.capture(false,true);view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}
      else if(b.dataset.a==='answer-retry')answers.retry(b.dataset.key);
      else if(b.dataset.a==='sync-retry')ui.send({a:'sync-retry',root:b.dataset.root,id:b.dataset.id});
      else if(b.dataset.a==='answer-dismiss')answers.dismiss(b.dataset.key);

@@ -1,11 +1,11 @@
 // #1741 Q-A2/Q-A7/Q-A8/Q-A11: actual bundle, invented native reads and receipts; no board/native effects.
-const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
+const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium,webkit}=require('playwright');
 const board='https://example.org/alpha/issues',root='fixture',fx=require('./fixtures/answer-card.json');
 const question=structuredClone(fx.cases.find(c=>c.name==='choice').rows[0]);
 question.question.problem='Retained context and alternatives. '.repeat(200);
 const owner=id=>({id,title:id,revision:1,root,text:'Independent draft',caret:[2,4],scroll:0,files:[],archived:false,sent:{text:'Original',runtime:'claude',files:[]},request:{state:'launched',runtime:'claude',id}});
-const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',issues:board,alive:true,complete:true,tasks:[question,{...question,n:question.n+1}]}],ai:{history:[],runtime:{id:'claude',available:true}},conversations:{complete:true,items:[owner('owner-a'),owner('owner-b')],navigation:{selected:'owner-a',list:'recent'}},messages:{complete:true,entries:[]}};
-(async()=>{const browser=await chromium.launch(require('./browser.cjs')());const failures=[];try{
+const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',issues:board,alive:true,complete:true,tasks:[question,{...question,n:question.n+1}]}],ai:{history:[],runtime:{id:'claude',available:true}},conversations:{complete:true,items:[owner('owner-a'),owner('owner-b')],navigation:{selected:'owner-a',list:'recent'}},messages:{complete:true,entries:[]}};
+(async()=>{for(const engine of [chromium,webkit]){const state=structuredClone(initialState),browser=await engine.launch(require('./browser.cjs')());const failures=[];console.log('Browser '+engine.name());try{
  const page=await browser.newPage({viewport:{width:940,height:740}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
  await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:t=>sent.push(JSON.parse(t))};});
@@ -93,7 +93,7 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
    const geometry=()=>page.evaluate(()=>Object.fromEntries(['.thread-head','.conversation-reader','.conversation-composer'].map(s=>{const r=document.querySelector(s).getBoundingClientRect();return [s,[r.x,r.y,r.width,r.height]];})));
    const before=await geometry();
    assert.doesNotMatch(await page.locator('.feedback-message').getAttribute('title'),/\[object Object\]/,'stale source diagnostics remain text');
-   const out=process.env.TASKQ_EVIDENCE_2168;if(out&&width===940){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:out+'/bundle-idle.png'});}
+   const out=(engine===chromium&&process.env.TASKQ_EVIDENCE_2168);if(out&&width===940){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:out+'/bundle-idle.png'});}
    await page.locator('[data-c=reply]').click();await page.waitForFunction(()=>sent.some(m=>m.action==='reply'));
    const op=await page.evaluate(()=>sent.filter(m=>m.action==='reply').at(-1));
    await page.evaluate(id=>taskq.receive({conversationReceipt:{id,state:'unknown',reason:'Invented delivery unavailable. Preserve the original operation and draft. '.repeat(6)}}),op.id);
@@ -148,6 +148,46 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   await page.evaluate(()=>taskq.receive({...fixture,now:1000,projects:fixture.projects.map(p=>({...p,age:1,tasks_age_seconds:40,poll:5}))}));
   assert.match(await page.locator('.conversation-status [role=status]').innerText(),/Data from \d\d:\d\d/,'board source age remains visible in the stable feedback row');
   assert.deepEqual(await input.boundingBox(),before,'board staleness never displaces the input');
+ });
+ await check('A1 superseded snapshots stay quiet without losing errors or source fences',async()=>{
+  await bootOwners({...state,conversations:{...state.conversations,catalog_epoch:7,observed_at:Date.now(),observation_age_seconds:0}});
+  await page.evaluate(()=>fixture.conversations.catalog_epoch=8);
+  const input=page.locator('[data-c-field=text]');await input.fill('Keep exact local typing');await input.evaluate(e=>e.setSelectionRange(2,6));
+  const catalog=async patch=>page.evaluate(patch=>taskq.receive({...fixture,conversations:{...fixture.conversations,catalog_epoch:7,items:[],...patch}}),patch);
+  await catalog({complete:true,absence_complete:true});
+  assert.doesNotMatch(await page.locator('.feedback-message').innerText(),/Superseded|catalog/i,'ordinary superseded reads cannot announce a warning');
+  assert(await page.locator('[data-c=reply]').isDisabled(),'a quiet superseded read still fences Send');
+  assert.equal(await input.inputValue(),'Keep exact local typing');assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[2,6]);
+  await page.evaluate(()=>{window.supersededAnnouncements=0;new MutationObserver(rows=>supersededAnnouncements+=rows.length).observe(document.querySelector('.feedback-message'),{childList:true,characterData:true,subtree:true});});
+  await catalog({complete:true,absence_complete:true});
+  assert.equal(await page.evaluate(()=>supersededAnnouncements),0,'repeated superseded snapshots do not repeat a live announcement');
+  await catalog({complete:false,loading:false,reason:'Invented permanent catalog read failure',observation_age_seconds:5});
+  assert.equal(await page.getByText('Invented permanent catalog read failure',{exact:true}).count(),1,'epoch replacement must not hide the real failure');
+  await catalog({complete:false,loading:false,reason:'Conversation catalog observation is stale; refresh pending',observation_age_seconds:5});
+  assert.equal(await page.getByRole('button',{name:'Refresh conversation catalog',exact:true}).count(),1,'aged supersession retains explicit recovery');
+  await page.evaluate(()=>taskq.receive(fixture));
+  assert.doesNotMatch(await page.locator('.feedback-message').innerText(),/catalog|Superseded/i);
+  assert.equal(await input.inputValue(),'Keep exact local typing');assert.equal(await page.evaluate(()=>sent.filter(m=>['reply','send'].includes(m.action)).length),0);
+ });
+ await check('A4 selected sidebar row is discoverable after editing and explicit Refresh',async()=>{
+  const rows=Array.from({length:40},(_,i)=>({...owner('owner-'+i),title:'Retained draft '+i})),selected='owner-20';
+  await bootOwners({...state,conversations:{complete:true,items:rows,navigation:{selected,list:'recent'}}});
+  const row=page.locator('[data-c=select][data-id='+selected+']'),input=page.locator('[data-c-field=text]');
+  const clip=()=>row.evaluate(e=>{const pane=e.closest('.conversation-rows');pane.scrollTop+=e.getBoundingClientRect().bottom-pane.getBoundingClientRect().top-2;pane.dispatchEvent(new Event('scroll'));});
+  const fits=()=>row.evaluate(e=>{const r=e.getBoundingClientRect(),b=e.closest('.conversation-rows').getBoundingClientRect();return r.top>=b.top-1&&r.bottom<=b.bottom+1;});
+  await clip();assert.equal(await fits(),false);await input.fill('Local edit keeps this selection');
+  assert(await fits(),'editing must reveal the entire selected row, not a thin strip');
+  assert(await input.evaluate(e=>document.activeElement===e),'revealing the row must not steal editor focus');
+  const evidence=(engine===chromium&&process.env.TASKQ_EVIDENCE_2168);if(evidence)await page.screenshot({path:evidence+'/sidebar-after-edit.png'});
+  await clip();await page.getByRole('button',{name:'Refresh workspace status',exact:true}).focus();await page.getByRole('button',{name:'Refresh workspace status',exact:true}).press('Enter');
+  assert(await fits(),'explicit Refresh keeps the selected row discoverable');
+  assert(await page.getByRole('button',{name:'Refresh workspace status',exact:true}).evaluate(e=>document.activeElement===e),'recovery keeps the initiating control focus');
+  await row.evaluate(e=>{const pane=e.closest('.conversation-rows');pane.scrollTop=pane.scrollHeight;pane.dispatchEvent(new Event('scroll'));});
+  const anchor=()=>page.locator('.conversation-rows').evaluate(p=>{const top=p.getBoundingClientRect().top,n=[...p.querySelectorAll('.conversation-row')].find(e=>e.getBoundingClientRect().bottom>top);return {id:n.dataset.id,y:n.getBoundingClientRect().top-top};});
+  const before=await anchor();await page.evaluate(()=>{fixture.conversations.items[0].title='Older draft label that now wraps across three lines at this narrow sidebar width';taskq.receive(fixture);});const after=await anchor();
+  assert.equal(after.id,before.id);assert(Math.abs(after.y-before.y)<=2,'unrelated updates preserve deliberate sidebar reading');
+  const persisted=await page.evaluate(()=>sent.filter(m=>m.a==='workspace-checkpoint').at(-1).value.conversation.context.scrolls.recent);assert(Math.abs(persisted-await page.locator('.conversation-rows').evaluate(e=>e.scrollTop))<=2,'immediate recovery retains the corrected sidebar scroll');
+  assert.equal(await fits(),false,'background refresh cannot steal the manually scrolled sidebar');assert.equal(await input.inputValue(),'Local edit keeps this selection');
  });
  await check('A4 oversized historical disclosures retain current draft and bounded navigation',async()=>{
   const open=Object.fromEntries(Array.from({length:1800},(_,i)=>['old-thread:'+i+':'+ '界'.repeat(50),true]));
@@ -205,4 +245,4 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   assert.equal(await page.evaluate(()=>sent.filter(m=>['send','reply'].includes(m.action)).length),0,'opening recovery never sends');
  });
  assert.deepEqual(errors,[]);assert.deepEqual(failures,[]);
-}finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+}finally{await browser.close();}}})().catch(e=>{console.error(e);process.exitCode=1;});
