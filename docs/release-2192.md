@@ -8,10 +8,10 @@ Fresh preparation readback on 2026-11-02:
 
 - Latest published release: [v4.6.58](https://github.com/taskqorg/taskq/releases/tag/v4.6.58), published 2026-11-01T06:41:33Z.
 - `live` and `v4.6.58`: `dd695b8d1ad2fec03853ea4c6edff3d66faf7acb`.
-- `main`: `50034cbaf6f09480c98732cf4b04ba951481c4ca`; Cargo package version 4.6.58.
+- `main`: `b56633985b2c69f2a6a597c5335f20c36f704192`; Cargo package version 4.6.58.
 - No v4.6.59 tag or release; no open version PR was listed. The next unused patch is 4.6.59. Recheck before publication; stop if another release consumes it. Never replace tags or assets.
 
-The complete `v4.6.58..50034cbaf6f09480c98732cf4b04ba951481c4ca` range contains 36 squash merges, oldest first:
+The complete `v4.6.58..b56633985b2c69f2a6a597c5335f20c36f704192` range contains 37 squash merges, oldest first:
 
 | Merge | Task / PR | Included behavior |
 | --- | --- | --- |
@@ -51,8 +51,9 @@ The complete `v4.6.58..50034cbaf6f09480c98732cf4b04ba951481c4ca` range contains 
 | `3d7fd541e6e30a578a0a83aeafe3d58d8f4c7b72` | #2166, #2168 / #2171 | Conversations feedback, runtime icons and times stabilized. |
 | `01783bdebeaf0cf1d13d43bfb31cdd005442a8f0` | #2183 / #2187 | Registered CSGO Windows execution route report (docs only). |
 | `50034cbaf6f09480c98732cf4b04ba951481c4ca` | #2189 / #2190 | Owner runtime weights and quota headroom for runtime and primary-host balancing. |
+| `b56633985b2c69f2a6a597c5335f20c36f704192` | #2180 / #2185 | Native progress clock sampled after active logs; actionable stale heartbeats in manager status. |
 
-Task numbers come from each merge's `Task:` trailers; #2155 and #2151 come from their merge subjects. [Base main merge-result CI](https://github.com/taskqorg/taskq/actions/runs/41454767251) completed successfully on exact `50034cba`. It does not establish the version candidate's CI or an installed host result (R12).
+Task numbers come from each merge's `Task:` trailers; #2155 and #2151 come from their merge subjects. [Base main merge-result CI](https://github.com/taskqorg/taskq/actions/runs/41459880039) completed successfully on exact `b5663398`. It does not establish the version candidate's CI or an installed host result (R12).
 
 Dependencies changed in the range: `coreq` and `coreq-instrument` move from a pinned revision to tag `v0.18.0`; `agentq-runtime` (pinned revision `9be735b5`) and `imagesize` 0.15.0 are added. The version PR changes only the package version in Cargo.toml/Cargo.lock.
 
@@ -71,7 +72,7 @@ The release adds no feature fix of its own, so no new defect before/after result
 ## PM publication and readback
 
 1. Let ordinary review publish the version PR through the required merge queue. No admin bypass or auto-merge flag. Read its `state`, `mergeCommit.oid` and URL with `gh pr view <version-pr> --repo taskqorg/taskq --json state,mergeCommit,url`. Record the full accepted merge SHA as `M`; do not substitute the worker branch SHA.
-2. Fetch `main`, `live` and tags. Confirm `M` is on main, contains `50034cbaf6f09480c98732cf4b04ba951481c4ca` (`git merge-base --is-ancestor`), and has Cargo.toml/Cargo.lock package version 4.6.59. Inventory every commit in `v4.6.58..M`; add any merge that joined after this readback. Stop on a concurrent version/release or a non-fast-forward live branch. Recheck the latest release, v4.6.59 tag/assets and live ref without changing them.
+2. Fetch `main`, `live` and tags. Confirm `M` is on main, contains `b56633985b2c69f2a6a597c5335f20c36f704192` (`git merge-base --is-ancestor`), and has Cargo.toml/Cargo.lock package version 4.6.59. Inventory every commit in `v4.6.58..M`; add any merge that joined after this readback. Stop on a concurrent version/release or a non-fast-forward live branch. Recheck the latest release, v4.6.59 tag/assets and live ref without changing them.
 3. Require successful `tests.yml` **merge_group** CI on exact `M`, including Linux, macOS, Windows and Windows GNU checks. Read runs as JSON; poll no more than once per minute. PR CI or a main cache run is insufficient. Record the owner batch of affected live-host checks in the version PR and obtain the owner's release go (§ 7 rule 8, R12).
 4. With that go, the PM fast-forwards `live` to exact `M` through the normal § 8 route (`git push origin M:refs/heads/live`, replacing `M` with the full accepted SHA; no force). That is the publication trigger. The worker does not perform it. Do not manually create a tag or upload assets.
 5. Read back `live == M`, `v4.6.59 == M`, and the successful release workflow for `M`. It requires exact-source tests, builds with `--locked`, runs each staged binary's offline selftest from its isolated distribution directory, then publishes checksums, provenance, `latest.json` and platform binaries. A failure leaves publication unverified; never overwrite an existing release.
