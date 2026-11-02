@@ -58,6 +58,12 @@ fn plist(label:&str,program:&str,key:&str,root:&str,environment:&Value)->Res<Str
     }
     Ok(format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><plist version=\"1.0\"><dict><key>Label</key><string>{}</string><key>Program</key><string>{}</string><key>ProgramArguments</key><array><string>{}</string><string>service</string><string>app-server</string><string>--action</string><string>scope-run</string><string>--request</string><string>{}</string></array><key>WorkingDirectory</key><string>{}</string><key>EnvironmentVariables</key><dict>{vars}</dict><key>RunAtLoad</key><false/><key>KeepAlive</key><false/><key>LaunchOnlyOnce</key><true/><key>AbandonProcessGroup</key><true/></dict></plist>",xml(label),xml(program),xml(program),xml(key),xml(root)))
 }
+fn environment(home:&Path)->Value {
+    let mut environment=serde_json::Map::new();
+    for name in ["PATH","LANG","LC_ALL","TMPDIR","TERM","AGENTQ_OPTIMIZATION"] {if let Ok(value)=std::env::var(name) {environment.insert(name.into(),json!(value));}}
+    environment.insert("HOME".into(),json!(home));
+    json!(environment)
+}
 fn launchctl(args:&[&str])->Res<String> {
     let out=coreq::process::output("protected.scope.launchctl",crate::platform::command("/bin/launchctl").args(args).stdin(Stdio::null()),WAIT)
         .map_err(|_|"native job command unacknowledged; retain intent, never retry")?;
@@ -71,10 +77,8 @@ pub(super) fn launch(install:&Path,home:&Path,r:&Request,key:&str)->Res<()> {
     let directory=scope_directory(install,r)?;
     if directory.as_os_str().as_encoded_bytes().len()+5>103 {return Err("protected native socket path exceeds platform bound; no launch".into());}
     let label=format!("org.taskq.protected.{}",runtime::uuid());let domain=format!("gui/{}",unsafe{libc::geteuid()});
-    let mut environment=serde_json::Map::new();
-    for name in ["PATH","LANG","LC_ALL","TMPDIR","TERM"] {if let Ok(value)=std::env::var(name) {environment.insert(name.into(),json!(value));}}
-    environment.insert("HOME".into(),json!(home));
-    let job=plist(&label,p.authority["adapter"]["executable"].as_str().ok_or("adapter path unknown")?,key,p.root.to_str().ok_or("project path invalid")?,&json!(environment))?;
+    let environment=environment(home);
+    let job=plist(&label,p.authority["adapter"]["executable"].as_str().ok_or("adapter path unknown")?,key,p.root.to_str().ok_or("project path invalid")?,&environment)?;
     resources::within(install,resources::WAIT,|s| {
         if crate::external_slots::reserved(install,s,&r.slot,"codex")?!=key {return Err("slot changed".into());}
         super::mac::refresh(install,home,r,&p.authority)?;
@@ -256,6 +260,30 @@ pub(super) fn reconcile(install:&Path,r:&Request,key:&str)->Res<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Chain: §8 #2161 A1/A2 — launchd preserves child optimization intent in the hashed job.
+    // Risk: an explicit off silently becomes inherit at the supervisor boundary.
+    #[test]
+    fn protected_scope_preserves_optimization_in_hashed_job() {
+        if std::env::var_os("TASKQ_SCOPE_ENV_TEST").is_none() {
+            let mut command=std::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact","runtime::protected_app_server::scope::tests::protected_scope_preserves_optimization_in_hashed_job","--nocapture"])
+                .env("TASKQ_SCOPE_ENV_TEST","1").env("AGENTQ_OPTIMIZATION","off");
+            let out=coreq::process::output("test.scope-environment",&mut command,Duration::from_secs(10)).unwrap();
+            assert!(out.status.success(),"{}{}",String::from_utf8_lossy(&out.stdout),String::from_utf8_lossy(&out.stderr));
+            return;
+        }
+        let mut environment=environment(Path::new("/invented/home"));
+        assert_eq!(environment["AGENTQ_OPTIMIZATION"],"off");
+        let job=plist("invented-label","/invented/adapter","slot-invented","/invented/project",&environment).unwrap();
+        assert!(job.contains("<key>AGENTQ_OPTIMIZATION</key><string>off</string>"));
+        let job_sha256=digest(job.as_bytes());
+        for intent in [Some("on"),None] {
+            if let Some(value)=intent {environment["AGENTQ_OPTIMIZATION"]=json!(value);}
+            else {environment.as_object_mut().unwrap().remove("AGENTQ_OPTIMIZATION");}
+            let changed=plist("invented-label","/invented/adapter","slot-invented","/invented/project",&environment).unwrap();
+            assert_ne!(job_sha256,digest(changed.as_bytes()));
+        }
+    }
     // Chain: R8 R9 R12 R13 #2151 A3/A4/A5 — job registration has no replay/restart trigger or executable chosen by native text.
     // Risk: launchd restarts a consumed generation or a path changes the plist surface.
     #[test]
