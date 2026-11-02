@@ -610,7 +610,8 @@ mod tests {
     }
 
     // #1831 A4: tool arguments can contain arbitrary secrets, even without recognizable token prefixes.
-    // #2176 owner answer 1: the result body rides on its call for explicit read-only open; arguments stay omitted.
+    // #2176 owner answer 1: the result body opens read-only on request; arguments stay omitted. Since the page-independence
+    // fix the body is its own item after the call, so a page split cannot hide it.
     #[test]
     fn worker_tool_lines_never_export_arguments_and_attach_results() {
         use std::io::Write;
@@ -628,9 +629,9 @@ mod tests {
             for row in rows {writeln!(file,"{row}").unwrap();}drop(file);
             let format=if codex {"codex-rollout"} else {"claude-native"};
             let mut page=crate::transcript::before(format,"-",&path,None).unwrap();worker_roles(&mut page.items);
-            assert_eq!(page.items.len(),1);assert_eq!(page.items[0]["role"],"tool");
-            assert_eq!(page.items[0]["text"],if codex {"exec_command"} else {"Bash"});
-            let body=page.items[0]["result"].as_str().unwrap();assert!(body.starts_with("invented-output-private-value\n"),"result body attached to its call");assert!(!body.contains("invented-result-token"),"a credential in the output is masked like arguments");
+            assert_eq!(page.items.len(),2);assert_eq!(page.items[0]["role"],"tool");assert_eq!(page.items[1]["role"],"tool");
+            assert_eq!(page.items[0]["text"],if codex {"exec_command"} else {"Bash"});assert!(page.items[0]["result"].is_null());
+            let body=page.items[1]["result"].as_str().unwrap();assert!(body.starts_with("invented-output-private-value\n"),"result body follows its call");assert!(!body.contains("invented-result-token"),"a credential in the output is masked like arguments");
             assert!(!json!(page.items).to_string().contains("user:invented")&&!json!(page.items).to_string().contains("Bearer invented"),"arguments never leave the adapter");
         }
         fs::remove_dir_all(dir).unwrap();
