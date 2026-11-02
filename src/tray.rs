@@ -738,6 +738,16 @@ fn liveness(s: &Value, age: Option<u64>, ttl: i64, tasks: &mut [Value]) -> (Valu
     let mut hosts = s["hosts"].clone();
     for h in hosts.as_array_mut().into_iter().flatten() { row_live(h, "updated"); }
     for x in tasks.iter_mut().filter_map(|t| t.get_mut("executions").and_then(Value::as_array_mut)).flatten() { row_live(x, "observed"); }
+    for t in tasks {
+        let active=matches!(t["state"].as_str(),Some("doing"|"review"))&&t["attempt"].is_u64();
+        if let Some(h)=t.get_mut("heartbeat").filter(|h|h.is_object()) {
+            if let Some(now)=elapsed.zip(s["observed"].as_i64()).map(|(e,obs)|obs+e) {
+                crate::snapshot::refresh_heartbeat(h,now,active);
+            } else if active {
+                h["freshness"]=json!("unknown");h["warning"]=json!("heartbeat snapshot age unknown");
+            }
+        }
+    }
     (hosts, elapsed.is_some_and(|e| crate::snapshot::live(e, ttl)))
 }
 
@@ -1291,7 +1301,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let views_shots=snapshot.is_some() && routes.iter().any(|r|r=="views");
     if views_shots && routes.len()>1 {return Err("route views renders the View window alone; run it without other routes".into());}
     // #1699 A8: Conversations is the workspace surface, so its snapshot renders the workspace page alone at that window's size
-    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations");
+    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations"||r=="health-conversation");
     if conversation_shots && routes.len()>1 {return Err("route conversations renders the workspace alone; run it without other routes".into());}
     if snapshot.is_some()&&routes.iter().any(|r|r=="reports")&&routes.len()>1 {return Err("route reports renders its menu cases alone".into());}
     let mut settings = Settings::load(&install);
@@ -1497,7 +1507,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             Event::WindowEvent {window_id,..} if views_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
-                    .with_visible(snapshot.is_some()).with_inner_size(if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots && routes.iter().any(|r|r!="conversations") {LogicalSize::new(1280.0,760.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
+                    .with_visible(snapshot.is_some()).with_inner_size(if routes.iter().any(|r|r.starts_with("health-")) {if conversation_shots {LogicalSize::new(1100.0,900.0)} else {LogicalSize::new(420.0,900.0)}} else if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots && routes.iter().any(|r|r!="conversations") {LogicalSize::new(1280.0,760.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // ordinary snapshots render off-screen; opacity evidence must remain visible and unoccluded (R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots||opacity_shots{40.0}else{-20000.0}, if agentq_shots||opacity_shots{40.0}else{-20000.0})).with_always_on_top(opacity_shots).with_focused(false) } else { b };
                 #[cfg(windows)]
@@ -1877,7 +1887,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         if a=="ai-send" {web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);}
                     }
                     // Workspace reviews use the same queues, native picker and receipt adapters as the tray.
-                    Some(a) if workspace_operation(a) => {let _=proxy.send_event(Ev::Ipc(message));}
+                    Some(a) if workspace_operation(a) => {if let Some(message)=workspace_forward(&m) {let _=proxy.send_event(Ev::Ipc(message));}}
                     _ => calls.fault("unsupported-workspace-action"),
                 }
             }
@@ -2380,7 +2390,11 @@ const CONVERSATIONS: [(&str, &str); 4] = [
 // M1.1: explicit native-alpha cases; a webview snapshot alone cannot capture window alpha.
 const OPACITY_SHOTS:[(&str,&str,u64);5]=[("/* opacity: off */","whole",100),("/* opacity: contrast */","whole",90),("/* opacity: minimum */","whole",60),("/* background: clear */","background",0),("/* background: half */","background",50)];
 const ROUTES: [&str; 26] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "notification-settings", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
-const REPORT_SHOTS:[(&str,&str);8]=[
+const REPORT_SHOTS:[(&str,&str);12]=[
+    ("health-list",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'list')")),
+    ("health-detail",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'detail')")),
+    ("health-recovered",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'recovered')")),
+    ("health-conversation",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'conversation')")),
     ("notifications-home",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'home')")),
     ("notifications-panel",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'panel')")),
     ("notifications-expanded",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'expanded')")),
@@ -2643,6 +2657,12 @@ fn relaunch(install: &Path) -> std::io::Result<()> {
 
 fn workspace_operation(action:&str)->bool {
     matches!(action,"completed"|"agentq-setup"|"agentq-dismiss"|"agentq-check"|"capacity"|"restart"|"stop"|"uninstall"|"recovery-read"|"recovery-apply"|"pause"|"resume"|"focus"|"update"|"add"|"add-cancel"|"add-install"|"add-setup"|"resources"|"log"|"folder")
+}
+/// The page's own message for the tray path: `readerGeneration` is the native reader stamp, already checked against
+/// the current reader; strict payloads (capacity, lifecycle) refuse it as an unknown field (#2167).
+fn workspace_forward(m:&Value)->Option<String> {
+    if !workspace_operation(m["a"].as_str()?) {return None;}
+    let mut m=m.clone();m.as_object_mut()?.remove("readerGeneration");Some(m.to_string())
 }
 
 /// A blur this soon after opening can be the Windows hidden-icons flyout retaking focus.
@@ -3468,6 +3488,53 @@ mod tests {
             assert_eq!(receipts[0]["trace"],click["trace"]);assert_eq!(receipts[1]["trace"],click["trace"]);
             assert_eq!(receipts[1]["kind"],"command.applied");
             assert_eq!(receipts[2]["kind"],"command.observed");
+        });
+    }
+
+    // #2167: a reviewed Apply from the shared Workspace review carries the native readerGeneration stamp.
+    // Risk: the stamp reaches the strict capacity payload and every valid Apply reads "Unsupported host capacity payload".
+    #[test]
+    fn workspace_capacity_apply_drops_reader_stamp_and_keeps_strict_payload() {
+        crate::with_test_capture(|_store,dir| {
+            let root=dir.join("project");let install=dir.join("install");
+            fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(install.join("resources")).unwrap();
+            fs::write(root.join("taskq.json"),"{\"repo\":\"fixture/project\"}").unwrap();
+            fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
+            fs::write(install.join("host.json"),json!({"hosts":{crate::hostname():"capacity-host"},"limits":{"codex":2}}).to_string()).unwrap();
+            let policy=crate::host::Policy::read(&install).unwrap();
+            let now=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+            let page=json!({"a":"capacity","root":root,"id":"ws-apply","issued_at":now,"expires_at":now+300,"context":"1 a b","ops":[{
+                "target":{"installation_id":null,"generation":1,"project_id":null,"runtime_id":"codex"},
+                "policy_schema":"taskq.host-capacity/1","expected_revision":policy.revision().unwrap(),"changes":{"runtime_limit":3}}]});
+            // As the Workspace webview delivers it (workspace_view): the same page message plus its reader stamp.
+            let mut stamped=page.clone();stamped["readerGeneration"]=json!(7);
+            let before=capacity(&install,&root,&stamped).unwrap();
+            assert_eq!(before["reason"],"Unsupported host capacity payload; refresh and review current settings","before: raw stamp reaches the strict check");
+            let forwarded:Value=serde_json::from_str(&workspace_forward(&stamped).unwrap()).unwrap();
+            assert!(forwarded.get("readerGeneration").is_none());
+            assert_eq!(forwarded,page,"only the native stamp is dropped; reviewed id, ops and times stay exact");
+            // The tray queue and its report, as the native capacity worker runs them: receipt keeps the operation id.
+            let (tx,rx)=std::sync::mpsc::channel();
+            let queue=ActionQueue::start(install.clone(),&["capacity"],true,capacity,move |root,id,result| {
+                let mut reply=result.unwrap();reply["root"]=json!(root);reply["id"]=json!(id);tx.send(reply).unwrap();
+            }).unwrap();
+            queue.submit(&forwarded).unwrap();
+            let saved=rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            assert_eq!(saved["state"],"saved","{saved}");assert_eq!(saved["id"],"ws-apply","{saved}");
+            let fresh=crate::host::Policy::read(&install).unwrap();
+            assert_eq!(fresh.raw["limits"]["codex"],3,"fresh readback");assert_eq!(saved["saved_revision"],json!(fresh.revision().unwrap()));
+            // Lost receipt: the same reviewed operation reconciles without a second write.
+            queue.submit(&forwarded).unwrap();
+            let again=rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            assert_eq!(again["id"],"ws-apply","{again}");assert_ne!(again["state"],"rejected","{again}");
+            assert_eq!(crate::host::Policy::read(&install).unwrap().revision().unwrap(),fresh.revision().unwrap(),"no duplicate write");
+            let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
+            // Unknown fields from the page, foreign actions and stale reviews still refuse.
+            let mut extra=stamped.clone();extra["evil"]=json!(1);
+            assert_eq!(capacity(&install,&root,&serde_json::from_str(&workspace_forward(&extra).unwrap()).unwrap()).unwrap()["state"],"rejected");
+            assert!(workspace_forward(&json!({"a":"settings-top","readerGeneration":7})).is_none());
+            let mut stale=forwarded.clone();stale["id"]=json!("ws-stale");
+            assert_eq!(capacity(&install,&root,&stale).unwrap()["state"],"rejected","stale expected revision refuses");
         });
     }
 
