@@ -12,7 +12,7 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
  await page.evaluate(s=>taskq.receive(s),state);
  async function tool(action){const d=page.locator('.conversation-info');if(!await d.evaluate(e=>e.open))await d.locator('summary').click();await page.locator('[data-c='+action+']').click();}
  const open=async n=>page.evaluate(({board,n})=>taskq.receive({open:{page:'conversations',board,task:n}}),{board,n});
- async function check(name,run){try{await run();console.log('PASS '+name);}catch(e){failures.push(name+': '+e.message);console.error('FAIL '+name+': '+e.message);}}
+ async function check(name,run){try{await run();console.log('PASS '+name);}catch(e){failures.push(name+': '+e.message);console.error('FAIL '+name+': '+e.message);}finally{await page.evaluate(()=>{if(window.nativeFocus){HTMLElement.prototype.focus=nativeFocus;delete window.nativeFocus;}});}}
  await check('Q-A2 fixed heading/Send with growing draft at 350/620/940',async()=>{
   await open(question.n);
   for(const width of [940,620,350]){
@@ -81,7 +81,7 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
  });
  // Q-A8/Q-A11: operations that move selection must retain feedback and recovery without replay.
  async function bootOwners(snapshot=state){
-  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
+  await page.goto('about:blank');await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
   await page.evaluate(s=>{window.sent=[];window.fixture=s;window.ipc={postMessage:t=>{const m=JSON.parse(t);sent.push(m);if(m.a==='conversation-action'&&m.action==='save'){const c=fixture.conversations.items.find(c=>c.id===m.conversation);Object.assign(c,m.draft);c.revision++;queueMicrotask(()=>taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:fixture.conversations}}));}}};taskq.receive(s);},snapshot);
  }
  // #2168 A1: receipt text must not resize the reader or move its pinned input. Native/board effects are substituted.
@@ -120,6 +120,30 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
   }
  });
  await page.setViewportSize({width:940,height:740});
+ // #2168 D4: background notices must leave the native editor/IME owner untouched, including repeated focus calls.
+ for(const kind of ['text','answer','steer'])await check('A4 '+kind+' typing survives notice appearance/update/dismissal',async()=>{
+  const tasks=[structuredClone(question),{...structuredClone(question),n:question.n+1}];if(kind==='steer')Object.assign(tasks[0],{state:'doing',role:'worker',attempt:71,executions:[{attempt:71,state:'running'}]});
+  await bootOwners({...state,projects:[{...state.projects[0],tasks}]});
+  await open(question.n+1);await page.locator('[data-qac=choose]').first().click();const foreign=await page.evaluate(()=>sent.find(m=>m.a==='answer').op);
+  if(kind!=='text')await open(question.n);else await page.locator('[data-c=select][data-id=owner-a]').click();
+  const input=page.locator('[data-c-field='+kind+']');await input.fill('Keep original caret');await input.evaluate(e=>{e.setSelectionRange(5,13);window.retainedEditor=e;window.editorFocusCalls=0;window.editorBlur=0;window.compositionEnds=0;window.nativeFocus=HTMLElement.prototype.focus;HTMLElement.prototype.focus=function(...args){editorFocusCalls++;return nativeFocus.apply(this,args);};e.addEventListener('blur',()=>editorBlur++);e.addEventListener('compositionend',()=>compositionEnds++);e.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true,data:'仮'}));});
+  const reader=page.locator('.conversation-reader');await reader.evaluate(e=>{e.scrollTop=Math.min(120,e.scrollHeight-e.clientHeight);e.dispatchEvent(new Event('scroll'));});const anchor=await reader.evaluate(e=>e.scrollTop);
+  const notices=[{workspaceLocalError:'Invented transient draft save failure'},{workspaceLocalError:'Invented updated draft save failure'},{workspaceLocalError:null},{answerReceipt:{root,id:foreign.id,state:'unknown',reason:'Invented pending receipt; check the original operation'}},{answerReceipt:{root,id:foreign.id,state:'accepted',reason:'Invented accepted foreign receipt'}},{...state,projects:[{...state.projects[0],tasks}],ai:{...state.ai,error:'Invented background workspace failure'}},{...state,projects:[{...state.projects[0],tasks}]}];
+  let expected='Keep original caret',start=5,end=13;
+  for(let i=0;i<notices.length;i++){
+   await page.evaluate(s=>taskq.receive(s),notices[i]);
+   const reason=notices[i].workspaceLocalError||notices[i].ai?.error;if(reason)assert.match(await page.locator('.feedback-message[role=alert]').innerText(),new RegExp(reason),'genuine notice stays visible and announced');
+   assert(await input.evaluate(e=>e===retainedEditor&&e===document.activeElement),kind+' retains its actual editor node and focus');
+   assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[start,end],kind+' retains caret/selection through notice '+i);
+   assert.equal(await page.evaluate(()=>editorFocusCalls),0,kind+' background update must not issue a native focus request');
+   assert.equal(await page.evaluate(()=>editorBlur+compositionEnds),0,kind+' composition is not interrupted');
+   assert(Math.abs(await reader.evaluate(e=>e.scrollTop)-anchor)<=2,kind+' reading anchor stays put');
+   const text=String(i);await page.keyboard.type(text);expected=expected.slice(0,start)+text+expected.slice(end);start+=text.length;end=start;
+   assert.equal(await input.inputValue(),expected,kind+' next characters stay at the original caret without another click');
+  }
+  await input.evaluate(e=>{HTMLElement.prototype.focus=nativeFocus;e.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:'仮'}));});
+  assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='answer'||m.a==='conversation-action'&&['send','reply'].includes(m.action)).length),1,'notice typing never sends or replays beyond the explicitly initiated foreign operation');
+ });
  await check('A1 catalog polling is quiet; stale failure has one stable recovery location',async()=>{
   await bootOwners();const input=page.locator('[data-c-field=text]');
   await input.focus();await input.evaluate(e=>e.setSelectionRange(2,6));
@@ -188,6 +212,21 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
   assert.equal(after.id,before.id);assert(Math.abs(after.y-before.y)<=2,'unrelated updates preserve deliberate sidebar reading');
   const persisted=await page.evaluate(()=>sent.filter(m=>m.a==='workspace-checkpoint').at(-1).value.conversation.context.scrolls.recent);assert(Math.abs(persisted-await page.locator('.conversation-rows').evaluate(e=>e.scrollTop))<=2,'immediate recovery retains the corrected sidebar scroll');
   assert.equal(await fits(),false,'background refresh cannot steal the manually scrolled sidebar');assert.equal(await input.inputValue(),'Local edit keeps this selection');
+ });
+ await check('A4 Reload and reopen reveal saved selection in a collapsed project',async()=>{
+  const rows=Array.from({length:80},(_,i)=>({...owner('saved-'+i),title:'Saved draft '+i})),selected='saved-70',group=JSON.stringify([root,board]);
+  const snapshot={...state,conversations:{complete:true,items:rows,sidebar:{pins:[],collapsed:[group],archived:{}},navigation:{selected,list:'recent',scrolls:{recent:0}}}};
+  await bootOwners(snapshot);
+  const row=page.locator('[data-c=select][data-id='+selected+']');
+  const fits=()=>row.evaluate(e=>{const r=e.getBoundingClientRect(),b=e.closest('.conversation-rows').getBoundingClientRect();return r.top>=b.top-1&&r.bottom<=b.bottom+1;});
+  assert(await row.isVisible(),'restored selection temporarily opens its saved collapsed group');assert(await fits(),'restored selected page fits the whole row');
+  const recovery=await page.evaluate(()=>sent.filter(m=>m.a==='workspace-checkpoint').at(-1).value);
+  await bootOwners(snapshot);await page.evaluate(recovery=>{taskq.receive({workspaceRecovery:recovery});taskq.receive({workspaceRecoveryReady:true});},recovery);await row.waitFor({state:'visible'});
+  assert(await row.isVisible(),'safe Reload reveals the saved selected group');assert(await fits(),'safe Reload reveals its selected page');
+  await page.evaluate(()=>{taskq.receive({workerPanelClosed:true});taskq.receive({open:{page:'conversations',thread:'centre'}});});
+  assert(await row.isVisible());assert(await fits(),'Close/reopen keeps selection discoverable');
+  if(engine===chromium&&process.env.TASKQ_EVIDENCE_2168)await page.screenshot({path:process.env.TASKQ_EVIDENCE_2168+'/sidebar-after-recovery.png'});
+  assert.deepEqual(await page.evaluate(()=>fixture.conversations.sidebar.collapsed),[group],'temporary reveal keeps the saved collapse choice');
  });
  await check('A4 oversized historical disclosures retain current draft and bounded navigation',async()=>{
   const open=Object.fromEntries(Array.from({length:1800},(_,i)=>['old-thread:'+i+':'+ '界'.repeat(50),true]));

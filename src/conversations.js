@@ -398,7 +398,7 @@ module.exports=execution.module('conversations',{
    reveal:function(id,focus=true,keepSearch=false){const c=items.find(c=>c.id===id);if(!c)return false;list=c.archived?'archive':'recent';if(!keepSearch){search='';searchOpen=false;}api.select(id,focus);return true;},
    // #1699 A7: a restored task or event thread opens in Recent
    show:function(name){navigated=true;if(list!==name){selection[list]=selected;list=name;selected=selection[list]||null;onSelect?.(selected);api.nav();}},
-   resume:function(){readerIdentity=null;return !!focuses[selected];},
+   resume:function(){readerIdentity=null;revealed=selected;listReveal=selected;return !!focuses[selected];},
    fresh:function(copy){navigated=true;
     api.capture(true);
     const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);
@@ -528,7 +528,7 @@ module.exports=execution.module('conversations',{
       selection=Object.fromEntries(['recent','archive'].map(k=>[k,typeof t.selection?.[k]==='string'?t.selection[k]:null]));
       opened=Array.isArray(t.opened)?t.opened.filter(r=>r&&typeof r.id==='string'&&/^task:https?:\/\/.+\/[1-9][0-9]*$/.test(r.id)&&(r.root==null||typeof r.root==='string')).map(r=>({id:r.id,root:r.root||null})):[];
       positions=t.positions&&typeof t.positions==='object'?Object.fromEntries(Object.entries(t.positions).filter(([k,v])=>Number.isFinite(v)&&v>=0||api.anchored(v))):{};api.place();
-     }else if(!navigated&&!selected)selected=api.visible()[0]?.id||null;}
+     }else if(!navigated&&!selected)selected=api.visible()[0]?.id||null;api.resume();}
 
     return false;
    },
@@ -801,8 +801,8 @@ module.exports=execution.module('conversations',{
     if(live&&detail&&log){if(api.trim(detail,live))draw();else api.edge(detail,live);}
     const c=api.current(),input=menu.querySelector('[data-c-field=text]'),record=menu.querySelector('.conversation-record');const rows=menu.querySelector('.conversation-rows');if(focusSearch){focusSearch=false;menu.querySelector('[data-c-field=search]')?.focus();}if(listAnchor&&rows){const a=listAnchor;listAnchor=null;const n=[...rows.querySelectorAll('.conversation-row')].find(n=>(n.dataset.thread||n.dataset.id)===a.id);if(n){rows.scrollTop+=n.getBoundingClientRect().top-rows.getBoundingClientRect().top-a.y;scrolls[list]=rows.scrollTop;}}else if(rows&&rows.scrollTop!==scrolls[list]&&changed)rows.scrollTop=scrolls[list]||0;if(record&&c)record.scrollTop=c.scroll||0;
     if(row&&rows?.checkVisibility()&&(changed||focusDraft||listReveal===selected)){const r=row.getBoundingClientRect(),b=rows.getBoundingClientRect(),offset=r.top-b.top;rows.scrollTop+=offset-Math.max(0,Math.min(offset,b.height-r.height));scrolls[list]=rows.scrollTop;api.nav();}listReveal=null;
-    if(focusDraft&&input&&!input.disabled){focusDraft=false;input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}
-    if(changed&&identity&&focuses[identity]&&!focusDraft){const f=focuses[identity],target=[...detail.parentElement.querySelectorAll(f.tag)].filter(n=>JSON.stringify(n.dataset)===f.key)[f.index];if(target?.checkVisibility()&&!target.disabled)target.focus({preventScroll:true});}
+    if(focusDraft&&input&&!input.disabled){focusDraft=false;if(input!==document.activeElement)input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}
+    if(changed&&identity&&focuses[identity]&&!focusDraft){const f=focuses[identity],target=[...detail.parentElement.querySelectorAll(f.tag)].filter(n=>JSON.stringify(n.dataset)===f.key)[f.index];if(target!==document.activeElement&&target?.checkVisibility()&&!target.disabled)target.focus({preventScroll:true});}
     if(log&&open){if(api.trim(detail))draw();else api.edge(detail);}},
    bounds:function(){const resident=live||view;return {listRows:menu.querySelectorAll('.conversation-row').length,indexRows:items.length+sidebarItems.filter(r=>r.thread).length,queryKeys:resultPages.size,nativeRecords:(view?.items.length||0)+(live?.items.length||0),nativeBytes:[...(view?.items||[]),...(live?.items||[])].reduce((n,i)=>n+api.bytes(i),0),anchor:resident?.anchor||null,bodySources:bodyCache.size,bodyBytes:[...bodyCache.keys()].reduce((n,id)=>{const c=items.find(c=>c.id===id);return n+(c?new TextEncoder().encode(JSON.stringify(api.local(c))+JSON.stringify(c.sent||'')).length:0);},0),closedSources:closedViews.size,historyKeys:historyViews.size,historyRecords:[...historyViews.values()].reduce((n,v)=>n+(v.rows?.length||0),0),historyBytes:[...historyViews.values()].reduce((n,v)=>n+new TextEncoder().encode(JSON.stringify(v.rows||[])).length,0),textPages:textPages.size,bodyReads:bodyReads.size,taskBodies:taskBodies.size,taskBytes:[...taskBodies.values()].reduce((n,v)=>n+v.bytes,0),taskReads:taskReads.size,linkedRows:linked?.total||0,linkedKnown:linked?.known.size||0,linkedChecked:linked?.checked.size||0};},
    recovery:function(){return {drafts:[...recoveryDrafts,...items.filter(c=>!c.lazy&&(c.saved??0)!==(c.version??0)).map(c=>({id:c.id,revision:c.revision,version:c.version,...api.local(c),files:c.files,sentRevision:c.recoverySource?c.recoverySource.sentRevision:c.sent?.revision}))],pending:pending||failure,localQueue:[...queue.filter(o=>['save','attach','remove'].includes(o.action)),...recoveryQueue],context:{selected,list,selection,scrolls,positions,focuses,opened,listOnly,search,filter:resultFilter}};},
