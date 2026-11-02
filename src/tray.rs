@@ -1877,7 +1877,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         if a=="ai-send" {web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);}
                     }
                     // Workspace reviews use the same queues, native picker and receipt adapters as the tray.
-                    Some(a) if workspace_operation(a) => {let _=proxy.send_event(Ev::Ipc(message));}
+                    Some(a) if workspace_operation(a) => {if let Some(message)=workspace_forward(&m) {let _=proxy.send_event(Ev::Ipc(message));}}
                     _ => calls.fault("unsupported-workspace-action"),
                 }
             }
@@ -2643,6 +2643,12 @@ fn relaunch(install: &Path) -> std::io::Result<()> {
 
 fn workspace_operation(action:&str)->bool {
     matches!(action,"completed"|"agentq-setup"|"agentq-dismiss"|"agentq-check"|"capacity"|"restart"|"stop"|"uninstall"|"recovery-read"|"recovery-apply"|"pause"|"resume"|"focus"|"update"|"add"|"add-cancel"|"add-install"|"add-setup"|"resources"|"log"|"folder")
+}
+/// The page's own message for the tray path: `readerGeneration` is the native reader stamp, already checked against
+/// the current reader; strict payloads (capacity, lifecycle) refuse it as an unknown field (#2167).
+fn workspace_forward(m:&Value)->Option<String> {
+    if !workspace_operation(m["a"].as_str()?) {return None;}
+    let mut m=m.clone();m.as_object_mut()?.remove("readerGeneration");Some(m.to_string())
 }
 
 /// A blur this soon after opening can be the Windows hidden-icons flyout retaking focus.
@@ -3468,6 +3474,53 @@ mod tests {
             assert_eq!(receipts[0]["trace"],click["trace"]);assert_eq!(receipts[1]["trace"],click["trace"]);
             assert_eq!(receipts[1]["kind"],"command.applied");
             assert_eq!(receipts[2]["kind"],"command.observed");
+        });
+    }
+
+    // #2167: a reviewed Apply from the shared Workspace review carries the native readerGeneration stamp.
+    // Risk: the stamp reaches the strict capacity payload and every valid Apply reads "Unsupported host capacity payload".
+    #[test]
+    fn workspace_capacity_apply_drops_reader_stamp_and_keeps_strict_payload() {
+        crate::with_test_capture(|_store,dir| {
+            let root=dir.join("project");let install=dir.join("install");
+            fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(install.join("resources")).unwrap();
+            fs::write(root.join("taskq.json"),"{\"repo\":\"fixture/project\"}").unwrap();
+            fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
+            fs::write(install.join("host.json"),json!({"hosts":{crate::hostname():"capacity-host"},"limits":{"codex":2}}).to_string()).unwrap();
+            let policy=crate::host::Policy::read(&install).unwrap();
+            let now=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+            let page=json!({"a":"capacity","root":root,"id":"ws-apply","issued_at":now,"expires_at":now+300,"context":"1 a b","ops":[{
+                "target":{"installation_id":null,"generation":1,"project_id":null,"runtime_id":"codex"},
+                "policy_schema":"taskq.host-capacity/1","expected_revision":policy.revision().unwrap(),"changes":{"runtime_limit":3}}]});
+            // As the Workspace webview delivers it (workspace_view): the same page message plus its reader stamp.
+            let mut stamped=page.clone();stamped["readerGeneration"]=json!(7);
+            let before=capacity(&install,&root,&stamped).unwrap();
+            assert_eq!(before["reason"],"Unsupported host capacity payload; refresh and review current settings","before: raw stamp reaches the strict check");
+            let forwarded:Value=serde_json::from_str(&workspace_forward(&stamped).unwrap()).unwrap();
+            assert!(forwarded.get("readerGeneration").is_none());
+            assert_eq!(forwarded,page,"only the native stamp is dropped; reviewed id, ops and times stay exact");
+            // The tray queue and its report, as the native capacity worker runs them: receipt keeps the operation id.
+            let (tx,rx)=std::sync::mpsc::channel();
+            let queue=ActionQueue::start(install.clone(),&["capacity"],true,capacity,move |root,id,result| {
+                let mut reply=result.unwrap();reply["root"]=json!(root);reply["id"]=json!(id);tx.send(reply).unwrap();
+            }).unwrap();
+            queue.submit(&forwarded).unwrap();
+            let saved=rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            assert_eq!(saved["state"],"saved","{saved}");assert_eq!(saved["id"],"ws-apply","{saved}");
+            let fresh=crate::host::Policy::read(&install).unwrap();
+            assert_eq!(fresh.raw["limits"]["codex"],3,"fresh readback");assert_eq!(saved["saved_revision"],json!(fresh.revision().unwrap()));
+            // Lost receipt: the same reviewed operation reconciles without a second write.
+            queue.submit(&forwarded).unwrap();
+            let again=rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            assert_eq!(again["id"],"ws-apply","{again}");assert_ne!(again["state"],"rejected","{again}");
+            assert_eq!(crate::host::Policy::read(&install).unwrap().revision().unwrap(),fresh.revision().unwrap(),"no duplicate write");
+            let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
+            // Unknown fields from the page, foreign actions and stale reviews still refuse.
+            let mut extra=stamped.clone();extra["evil"]=json!(1);
+            assert_eq!(capacity(&install,&root,&serde_json::from_str(&workspace_forward(&extra).unwrap()).unwrap()).unwrap()["state"],"rejected");
+            assert!(workspace_forward(&json!({"a":"settings-top","readerGeneration":7})).is_none());
+            let mut stale=forwarded.clone();stale["id"]=json!("ws-stale");
+            assert_eq!(capacity(&install,&root,&stale).unwrap()["state"],"rejected","stale expected revision refuses");
         });
     }
 
