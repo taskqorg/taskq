@@ -1,23 +1,39 @@
-//! D1/D4: the native transcript is the only dialogue record. TaskQ reads it in bounded chunks by byte cursor and
-//! keeps no copy, index or summary; a missing or unreadable file is unknown, never empty. Each view item carries its
-//! record identity: `at`, the byte offset where its record starts, and `i`, its block ordinal in that record.
+//! D1/D4: the native transcript is the only dialogue record. AgentQ's `agent::history` adapter reads and normalizes
+//! it in bounded pages (#2176, RUNTIME.md history wire contract); TaskQ keeps no copy, index or summary and owns only
+//! the view: masking, image preview limits and roles. A missing or unreadable file is unknown, never empty. Each view
+//! item carries its record identity: `at`, the byte offset where its record starts, and `i`, its ordinal in that record.
+use agentq_runtime::agent::history::{self, History};
 use serde_json::{json, Value};
-use std::{fs, io::{Read, Seek, SeekFrom}, path::Path};
+use std::{collections::HashMap, fs, io::Read, path::Path, sync::Mutex};
 type Res<T> = Result<T, String>;
 
-/// One view read; a record longer than this doubles the read up to `RECORD`.
-pub const CHUNK: u64 = 256 * 1024;
-/// At most this many view items per read; a page always ends at a record boundary, so one record is never split.
-pub const ITEMS: usize = 200;
-const RECORD: u64 = 16 * 1024 * 1024;
-
 /// Complete records between two byte offsets of the transcript: `start` and `end` are record boundaries and the
-/// cursors for the previous and next read; `size` is the file length at the read.
+/// cursors for the previous and next read; `size` is the file length at the read. AgentQ bounds a page to 128
+/// records and 16 MiB. `capability` is AgentQ's history readback for the source format (A5).
 #[derive(Debug)]
-pub struct Page { pub generation: String, pub items: Vec<Value>, pub start: u64, pub end: u64, pub size: u64 }
+pub struct Page { pub generation: String, pub items: Vec<Value>, pub start: u64, pub end: u64, pub size: u64, pub capability: Value }
+
+impl Page {
+    pub fn json(&self) -> Value {
+        json!({"generation":self.generation,"items":self.items,"start":self.start,"end":self.end,"size":self.size,"capability":self.capability})
+    }
+}
+
+/// The AgentQ history format of a runtime's native transcript.
+pub fn format(runtime: &str) -> &'static str {
+    crate::runtime::of(runtime).history
+}
+
+/// A5: AgentQ's adapter status and native qualification for `format`, with the installed CLI version (null: unknown).
+pub fn capability(format: &str) -> Value {
+    let version = crate::runtime::history_version(format);
+    match history::capabilities(format, version.as_deref(), std::env::consts::OS) {
+        Ok(c) => json!({"format":format,"version":version,"history":c["features"]["history"],"native":c["native"]}),
+        Err(e) => json!({"format":format,"version":version,"history":{"status":"unsupported","reason":e}}),
+    }
+}
 
 /// Native file identity plus its immutable prefix; appends preserve it, replacement is never mixed into a window.
-// shortcut: later in-place rewrites are undetected; add a provider epoch if one occurs.
 fn generation(path: &Path) -> Res<String> {
     let mut file=fs::File::open(path).map_err(|e|format!("transcript identity unknown: {e}"))?;
     let meta=file.metadata().map_err(|e|format!("transcript identity unknown: {e}"))?;
@@ -38,113 +54,204 @@ fn generation(path: &Path) -> Res<String> {
     let mut prefix=vec![];
     (&mut file).take(meta.len().min(128)).read_to_end(&mut prefix).map_err(|e|format!("transcript unreadable: {e}"))?;
     let prefix=&prefix[..prefix.iter().position(|b|*b==b'\n').map_or(prefix.len(),|i|i+1)];
-    let digest=ring::digest::digest(&ring::digest::SHA256,&prefix);
-    // Image extraction changes block ordinals; old saved positions must never bind to a different block.
-    Ok(format!("images-v1:{identity}:{}",digest.as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>()))
-}
-fn page(path:&Path,generation:String,mut items:Vec<Value>,start:u64,end:u64,size:u64)->Res<Page> {
-    if self::generation(path)?!=generation {return Err("transcript replaced during read; view unknown".into());}
-    let (mut count,mut bytes)=(0,0);
-    for item in &mut items {
-        if let Some(src)=item["image"]["src"].as_str() {
-            count+=1;bytes+=src.len();
-            if count>4 || bytes>2*1024*1024 {
-                item["image"].as_object_mut().unwrap().remove("src");
-                item["image"]["reason"]=json!("Image page preview limit; inspect the native source");
-            }
-        }
-    }
-    Ok(Page{generation,items,start,end,size})
+    // #2176: AgentQ item ordinals replace the TaskQ parser's; old saved positions must never bind to another item.
+    Ok(format!("history-v1:{identity}:{}",hex(ring::digest::digest(&ring::digest::SHA256,prefix).as_ref())))
 }
 
-fn range(path: &Path, start: u64, end: u64) -> Res<Vec<u8>> {
-    let mut f = fs::File::open(path).map_err(|e| format!("transcript unreadable: {e}"))?;
-    f.seek(SeekFrom::Start(start)).map_err(|e| format!("transcript unreadable: {e}"))?;
-    let mut bytes = vec![];
-    f.take(end - start).read_to_end(&mut bytes).map_err(|e| format!("transcript unreadable: {e}"))?;
-    Ok(bytes)
-}
+fn hex(b: &[u8]) -> String { b.iter().map(|b| format!("{b:02x}")).collect() }
 
 fn len(path: &Path) -> Res<u64> { fs::metadata(path).map(|m| m.len()).map_err(|e| format!("transcript unreadable: {e}")) }
 
-/// The complete records that end at `before` (the file end when none): one chunk back, more only for a longer record.
-pub fn before(codex: bool, path: &Path, before: Option<u64>) -> Res<Page> {
-    let generation=generation(path)?;
-    let size = len(path)?;
-    let end = before.unwrap_or(size);
-    if end > size { return Err("transcript shrank; view unknown".into()); }
-    let mut read = CHUNK;
-    loop {
-        let from = end.saturating_sub(read);
-        let bytes = range(path, from, end)?;
-        // a writer may be mid-line at the file end: only newline-terminated records count
-        let last = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-        let first = if from == 0 { Some(0) } else { bytes[..last].iter().position(|b| *b == b'\n').map(|i| i + 1).filter(|i| *i < last) };
-        match first {
-            Some(first) => {
-                let mut records = records(codex, from + first as u64, &bytes[first..last]);
-                let mut kept = 0;
-                // the newest records up to ITEMS items; the page then starts at the first kept record
-                let start = match records.iter().rposition(|(_, items)| { kept += items.len(); kept > ITEMS }) {
-                    Some(i) => { let n = records.len(); records.drain(..(i + 1).min(n - 1)); records[0].0 }
-                    None => from + first as u64,
-                };
-                return page(path,generation,records.into_iter().flat_map(|(_,items)|items).collect(),start,from+last as u64,size);
+/// AgentQ file identities by source, learnt from its own checkpoints; bounded, a miss costs one tail read.
+static IDENTITY: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+
+fn remember(h: &History) {
+    let c = h.checkpoint();
+    if let (Some(source), Some(id)) = (c["source"].as_str(), c["identity"].as_str()) {
+        let mut m = IDENTITY.lock().unwrap_or_else(|e| e.into_inner());
+        let m = m.get_or_insert_with(HashMap::new);
+        if m.len() >= 64 && !m.contains_key(source) { m.clear(); }
+        m.insert(source.into(), id.into());
+    }
+}
+
+/// An AgentQ cursor at the record boundary `offset`. The checkpoint is AgentQ's: identity from its own readback,
+/// prefix the SHA-256 of the bytes before `offset`; AgentQ verifies both and refuses a replaced or rewritten source.
+// ponytail: each read hashes the prefix here and twice in AgentQ; a 100 MiB source costs ~3 full hashes per poll.
+// Upgrade: an AgentQ cursor-at-offset API or a checkpoint cache keyed by offset.
+fn at(format: &str, path: &Path, session: &str, offset: u64) -> Res<History> {
+    let source = path.to_string_lossy();
+    let h = History::new(format, &source, session)?;
+    if offset == 0 { return Ok(h); }
+    let known = IDENTITY.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(source.as_ref()).cloned());
+    let identity = match known {
+        Some(id) => id,
+        None => { let mut fresh = h.clone(); fresh.poll_before(path)?; remember(&fresh); fresh.checkpoint()["identity"].as_str().unwrap_or_default().to_string() }
+    };
+    let mut file = fs::File::open(path).map_err(|e| format!("unavailable: {e}"))?;
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    let (mut left, mut buf) = (offset, vec![0; 65536]);
+    while left > 0 {
+        let n = file.read(&mut buf[..left.min(65536) as usize]).map_err(|e| e.to_string())?;
+        if n == 0 { return Err("truncated".into()); }
+        ctx.update(&buf[..n]); left -= n as u64;
+    }
+    History::recover(&json!({"schema":1,"format":format,"source":source,"session":session,"offset":offset,"identity":identity,"prefix":hex(ctx.finish().as_ref())}))
+}
+
+/// AgentQ errors read as TaskQ's view states; the reason stays exact.
+fn unknown(e: String) -> String {
+    if e.contains("exceeds 16 MiB") { return "transcript record exceeds 16 MiB; view unknown".into(); }
+    if ["replaced", "truncated", "rewritten"].iter().any(|w| e.contains(w)) { return "transcript replaced during read; view unknown".into(); }
+    format!("transcript {}; view unknown", e.trim_start_matches("history "))
+}
+
+fn page(format: &str, path: &Path, generation: String, events: &[Value], start: u64, end: u64, size: u64) -> Res<Page> {
+    if self::generation(path)? != generation { return Err("transcript replaced during read; view unknown".into()); }
+    let mut items = view(format, events);
+    let (mut count, mut bytes) = (0, 0);
+    for item in &mut items {
+        if let Some(src) = item["image"]["src"].as_str() {
+            count += 1; bytes += src.len();
+            if count > 4 || bytes > 2 * 1024 * 1024 {
+                item["image"].as_object_mut().unwrap().remove("src");
+                item["image"]["reason"] = json!("Image page preview limit; inspect the native source");
             }
-            None if from > 0 && read < RECORD => read *= 2,
-            None => return Err("transcript record exceeds 16 MiB; view unknown".into()),
         }
     }
+    Ok(Page { generation, items, start, end, size, capability: capability(format) })
+}
+
+/// The complete records that end at `before` (the file end when none): one AgentQ backward page.
+pub fn before(format: &str, session: &str, path: &Path, before: Option<u64>) -> Res<Page> {
+    let generation = generation(path)?;
+    let size = len(path)?;
+    if before.is_some_and(|b| b > size) { return Err("transcript shrank; view unknown".into()); }
+    if before == Some(0) { return page(format, path, generation, &[], 0, 0, size); }
+    let mut h = match before { Some(b) => at(format, path, session, b), None => History::new(format, &path.to_string_lossy(), session) }.map_err(unknown)?;
+    let p = h.poll_before(path).map_err(unknown)?;
+    remember(&h);
+    let start = h.checkpoint()["offset"].as_u64().unwrap_or(0);
+    let end = before.or_else(|| p.events.last().and_then(|e| e["end"].as_u64())).unwrap_or(start);
+    page(format, path, generation, &p.events, start, end, size)
 }
 
 /// The complete records that start at `from`: D4 polling while the view is open, and forward reads of an evicted
-/// range. One chunk, more only for a longer record; a partial record at the file end waits for its newline.
-pub fn after(codex: bool, path: &Path, from: u64) -> Res<Page> {
-    let generation=generation(path)?;
+/// range. A partial record at the file end waits for its newline.
+pub fn after(format: &str, session: &str, path: &Path, from: u64) -> Res<Page> {
+    let generation = generation(path)?;
     let size = len(path)?;
     if from > size { return Err("transcript shrank; view unknown".into()); }
-    let mut read = CHUNK;
-    loop {
-        let end = size.min(from + read);
-        let bytes = range(path, from, end)?;
-        match bytes.iter().rposition(|b| *b == b'\n').map(|i| i + 1) {
-            Some(last) => {
-                let mut records = records(codex, from, &bytes[..last]);
-                let mut kept = 0;
-                // the oldest records up to ITEMS items; the page then ends where the first left-out record starts
-                let end = match records.iter().position(|(_, items)| { kept += items.len(); kept > ITEMS }).map(|i| i.max(1)) {
-                    Some(i) if i < records.len() => { let at = records[i].0; records.truncate(i); at }
-                    _ => from + last as u64,
-                };
-                return page(path,generation,records.into_iter().flat_map(|(_,items)|items).collect(),from,end,size);
-            }
-            None if end == size => return page(path,generation,vec![],from,from,size),
-            None if read < RECORD => read *= 2,
-            None => return Err("transcript record exceeds 16 MiB; view unknown".into()),
-        }
-    }
+    let mut h = at(format, path, session, from).map_err(unknown)?;
+    let p = h.poll(path).map_err(unknown)?;
+    remember(&h);
+    let end = h.checkpoint()["offset"].as_u64().unwrap_or(from);
+    page(format, path, generation, &p.events, from, end, size)
 }
 
-/// Each record that starts at `base` within `bytes` with its view items: user and assistant text in order, each tool
-/// call as one line (D4). Records without view items, unknown types and unparsable lines are left out.
-fn records(codex: bool, base: u64, bytes: &[u8]) -> Vec<(u64, Vec<Value>)> {
-    let mut out = vec![];
-    let mut at = base;
-    for l in bytes.split_inclusive(|b| *b == b'\n') {
-        let mut items = vec![];
-        if let Ok(v) = serde_json::from_slice::<Value>(l) {
-            if codex { codex_item(&v, &mut items) } else if v["event"].is_string(){crate::runtime::owner_stream::items(&v,&mut items)}else { claude_item(&v, &mut items) }
-            if v["timestamp"].is_string() {for item in &mut items {item["updated"]=v["timestamp"].clone();}}
+/// A2: AgentQ events as view items: user and assistant text and images in order, each tool call as one line (D4)
+/// and each tool result as its own item at its record, its body opened only on request (owner answer on #2176: arguments stay omitted on worker views).
+/// Lifecycle events are one compact line each, named by their native type; usage counters and unknown shapes stay
+/// in the exact source only.
+fn view(format: &str, events: &[Value]) -> Vec<Value> {
+    let mut out = Vec::<Value>::new();
+    let (claude, codex) = (format.starts_with("claude-"), format.starts_with("codex-"));
+    for e in events {
+        let first = out.len();
+        let author = e["author"].as_str().unwrap_or("unknown");
+        let blocks = e["blocks"].as_array().map(Vec::as_slice).unwrap_or_default();
+        match e["kind"].as_str().unwrap_or_default() {
+            // agy-stream: step deltas are partial; the result record carries the complete response
+            "message" if format == "agy-stream" => {}
+            "message" if matches!(author, "user" | "assistant") => {
+                if claude {
+                    let raw: Value = serde_json::from_str(e["raw"].as_str().unwrap_or_default()).unwrap_or_default();
+                    if raw["isSidechain"] == true || raw["isMeta"] == true { continue; }
+                }
+                let joined: Vec<&str> = blocks.iter().filter_map(|b| b["text"].as_str()).collect();
+                // Codex sends its environment and AGENTS.md to the model as user input; the owner never wrote them
+                if codex && author == "user" && joined.first().is_some_and(|t| t.starts_with('<') || t.starts_with("# AGENTS.md")) { continue; }
+                let mut text = Vec::new();
+                for b in blocks {
+                    match b["type"].as_str().unwrap_or_default() {
+                        "text" => { if let Some(t) = b["text"].as_str() { text.push(t); } continue; }
+                        "image" | "tool_call" | "tool_result" if !text.is_empty() => { out.push(line(author, &text.join("\n"))); text.clear(); }
+                        _ => {}
+                    }
+                    block(author, b, &mut out);
+                }
+                if !text.is_empty() { out.push(line(author, &text.join("\n"))); }
+            }
+            "tool" => for b in blocks {
+                if b["type"] == "unknown" { out.push(tool(b["native"]["name"].as_str().unwrap_or("tool"), &Value::Null)); }
+                else { block("tool", b, &mut out); }
+            },
+            "result" if format == "agy-stream" => {
+                let text: Vec<&str> = blocks.iter().filter_map(|b| b["text"].as_str()).collect();
+                if !text.is_empty() { out.push(line("assistant", &text.join("\n"))); }
+            }
+            "lifecycle" => if let Some(t) = lifecycle(e) { out.push(line("event", &t)); },
+            // TaskQ's own owner input record in the Antigravity stream: input intent, not native acceptance
+            _ if format == "agy-stream" => {
+                let raw: Value = serde_json::from_str(e["raw"].as_str().unwrap_or_default()).unwrap_or_default();
+                if raw["event"] == "user" { if let Some(t) = raw["message"]["content"].as_str() { out.push(json!({"role":"user","text":t,"delivery":"intent"})); } }
+            }
+            _ => {}
         }
-        if !items.is_empty() {
-            for (i, item) in items.iter_mut().enumerate() { item["at"] = json!(at); item["i"] = json!(i); }
-            out.push((at, items));
+        for (i, item) in out[first..].iter_mut().enumerate() {
+            item["at"] = e["start"].clone(); item["i"] = json!(i);
+            if e["time"].is_string() { item["updated"] = e["time"].clone(); }
         }
-        at += l.len() as u64;
     }
     out
 }
 
+/// A2: the native name of a lifecycle event (`turn complete`, `system compact boundary`); usage counters give none.
+fn lifecycle(e: &Value) -> Option<String> {
+    let raw: Value = serde_json::from_str(e["raw"].as_str().unwrap_or_default()).ok()?;
+    let p = &raw["payload"];
+    let name = match e["format"].as_str().unwrap_or_default() {
+        f if f.starts_with("claude-") => [raw["type"].as_str(), raw["subtype"].as_str()].into_iter().flatten().collect::<Vec<_>>().join(" "),
+        "agy-stream" => raw["step_update"]["step_type"].as_str().or(raw["event"].as_str())?.into(),
+        _ => p["type"].as_str().or(raw["type"].as_str()).or(raw["method"].as_str())?.into(),
+    };
+    if matches!(name.as_str(), "token_count" | "rate_limit_event" | "") { return None; }
+    let name = name.replace("task_", "turn_").replace(['_', '.', '/'], " ");
+    Some(if name == "init" { "session started".into() } else { name })
+}
+
+fn block(author: &str, b: &Value, out: &mut Vec<Value>) {
+    match b["type"].as_str().unwrap_or_default() {
+        "image" => out.push(image(author, &b["native"])),
+        "tool_call" => {
+            let name = b["name"].as_str().unwrap_or("tool");
+            let raw = b["input"].as_str();
+            // a custom tool's input is free text: an exec script or an apply_patch envelope, never shown as is
+            let summary = raw.filter(|_| b["native"]["type"] == "custom_tool_call").and_then(|a| if name == "apply_patch" { Some(patch_files(a)) } else { codex_script(a) });
+            let input = match (summary, raw) { (Some(cmd), _) => json!({"cmd": cmd}), (None, Some(a)) => serde_json::from_str(a).unwrap_or_else(|_| json!(a)), _ => b["input"].clone() };
+            out.push(tool(name, &input));
+        }
+        "tool_result" => {
+            let mut text = Vec::new();
+            match &b["output"] {
+                Value::String(s) => text.push(s.clone()),
+                Value::Array(parts) => for p in parts {
+                    if matches!(p["type"].as_str(), Some("image" | "input_image" | "image_url" | "output_image")) { out.push(image("tool", p)); }
+                    else if let Some(t) = p["text"].as_str() { text.push(t.into()); }
+                },
+                _ => {}
+            }
+            if text.is_empty() { return; }
+            // tool output may echo credentials: the same masking as arguments, line by line
+            let mut body = text.join("\n").lines().map(mask).collect::<Vec<_>>().join("\n");
+            if body.len() > 32 * 1024 { let mut cut = 32 * 1024; while !body.is_char_boundary(cut) { cut -= 1; } body.truncate(cut); body.push_str("\n[result cut at 32 KiB; inspect the native source]"); }
+            // the result stays at its own record: a call and its output may fall in different pages, and the view must
+            // not depend on page boundaries (#2176 native Codex evidence)
+            let mut item = line("tool", "result"); item["tool_name"] = json!("result"); item["result"] = json!(body); out.push(item);
+        }
+        _ => {}
+    }
+}
 fn line(role: &str, text: &str) -> Value { json!({"role": role, "text": text}) }
 
 fn tool(name: &str, input: &Value) -> Value {
@@ -295,72 +402,14 @@ fn image(role:&str,b:&Value)->Value {
     item
 }
 
-fn images(role:&str,content:&Value,out:&mut Vec<Value>) {
-    for b in content.as_array().into_iter().flatten() {
-        match b["type"].as_str() {
-            Some("image"|"input_image"|"image_url"|"output_image")=>out.push(image(role,b)),
-            Some("tool_result")=>images(role,&b["content"],out),
-            _=>{}
-        }
-    }
-}
-
-fn claude_item(v: &Value, out: &mut Vec<Value>) {
-    let role = v["type"].as_str().unwrap_or_default();
-    if !["user", "assistant"].contains(&role) || v["isSidechain"] == true || v["isMeta"] == true { return; }
-    let content = &v["message"]["content"];
-    if let Some(text) = content.as_str() { return out.push(line(role, text)); }
-    for b in content.as_array().into_iter().flatten() {
-        match b["type"].as_str() {
-            Some("text") => out.push(line(role, b["text"].as_str().unwrap_or_default())),
-            Some("tool_use") => out.push(tool(b["name"].as_str().unwrap_or("tool"), &b["input"])),
-            Some("image")=>out.push(image(role,b)),
-            Some("tool_result")=>images("tool",&b["content"],out),
-            _ => {}
-        }
-    }
-}
-
-fn codex_item(v: &Value, out: &mut Vec<Value>) {
-    if v["type"] != "response_item" { return; }
-    let p = &v["payload"];
-    match (p["type"].as_str(), p["role"].as_str()) {
-        (Some("message"), Some(role @ ("user" | "assistant"))) => {
-            let text: Vec<&str> = p["content"].as_array().into_iter().flatten().filter_map(|b| b["text"].as_str()).collect();
-            let text = text.join("\n");
-            // Codex sends its environment and AGENTS.md to the model as user input; the owner never wrote them
-            if role == "user" && (text.starts_with('<') || text.starts_with("# AGENTS.md")) { return; }
-            let mut text=Vec::new();
-            for b in p["content"].as_array().into_iter().flatten() {
-                if let Some(t)=b["text"].as_str() {text.push(t);} else if matches!(b["type"].as_str(),Some("image"|"input_image"|"image_url"|"output_image")) {
-                    if !text.is_empty() {out.push(line(role,&text.join("\n")));text.clear();}
-                    out.push(image(role,b));
-                }
-            }
-            if !text.is_empty() {out.push(line(role,&text.join("\n")));}
-        }
-        (Some(kind @ ("function_call" | "custom_tool_call")), _) => {
-            let raw = p["arguments"].as_str().or(p["input"].as_str());
-            let name = p["name"].as_str().unwrap_or("tool");
-            // a custom tool's input is free text: an exec script or an apply_patch envelope, never shown as is
-            let summary = raw.filter(|_| kind == "custom_tool_call").and_then(|a| if name == "apply_patch" { Some(patch_files(a)) } else { codex_script(a) });
-            let input = match summary { Some(cmd) => json!({"cmd": cmd}), None => raw.map_or(Value::Null, |a| serde_json::from_str(a).unwrap_or_else(|_| json!(a))) };
-            out.push(tool(name, &input));
-        }
-        (Some("function_call_output"|"custom_tool_call_output"),_)=>images("tool",&p["output"],out),
-        (Some("local_shell_call"), _) => out.push(tool("shell", &p["action"])),
-        _ => {}
-    }
-}
-
 /// CS2: timestamp on the newest visible native record; a missing timestamp stays unknown.
-pub fn last_update(codex:bool,path:&Path)->Res<Value> {
-    Ok(before(codex,path,None)?.items.last().map_or(Value::Null,|i|i["updated"].clone()))
+pub fn last_update(format:&str,session:&str,path:&Path)->Res<Value> {
+    Ok(before(format,session,path,None)?.items.last().map_or(Value::Null,|i|i["updated"].clone()))
 }
 
 /// D7: the last assistant prose line in the last chunk; complete citation suffixes stay secondary.
-pub fn last_line(codex: bool, path: &Path) -> Res<Option<String>> {
-    let page = before(codex, path, None)?;
+pub fn last_line(format: &str, session: &str, path: &Path) -> Res<Option<String>> {
+    let page = before(format, session, path, None)?;
     Ok(page.items.iter().rev().filter(|i| i["role"] == "assistant").find_map(|i| {
         let mut lines=i["text"].as_str()?.lines().rev();
         while let Some(line)=lines.next() {
@@ -384,27 +433,32 @@ mod tests {
     /// The view text of items, without their record identity.
     fn text(items: &[Value]) -> Vec<Value> { items.iter().map(|i| json!({"role": i["role"], "text": i["text"]})).collect() }
     fn key(i: &Value) -> (u64, u64) { (i["at"].as_u64().unwrap(), i["i"].as_u64().unwrap()) }
+    /// The view items of `source` read from a file.
+    fn read(codex: bool, source: &str) -> Vec<Value> { let d = tmp(); let p = d.join("r.jsonl"); fs::write(&p, source).unwrap(); let v = before(fm(codex), "-", &p, None).unwrap().items; fs::remove_dir_all(d).unwrap(); v }
+    fn fm(codex: bool) -> &'static str { if codex { "codex-rollout" } else { "claude-native" } }
+    /// AgentQ's page bound: at most 128 source records.
+    fn bounded(p: &Page) -> bool { p.items.iter().map(|i| i["at"].as_u64()).collect::<std::collections::HashSet<_>>().len() <= 128 }
 
     // D4/#2159: recorded image bytes, not a text path, are the only preview authority.
     #[test]
     fn recorded_images_keep_source_and_bound_preview_without_fetching_paths() {
         let png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
         let v=json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Review the image"},{"type":"input_image","image_url":format!("data:image/png;base64,{png}")} ]}});
-        let rows=records(true,40,format!("{v}\n").as_bytes());let items=&rows[0].1;
+        let items=&read(true,&format!("{v}\n"));
         assert_eq!(items.len(),2,"recorded image must remain a separate inspectable item");
         assert_eq!(items[1]["role"],"image","a provider user-image wrapper is not proof of an owner/board author");assert_eq!(items[1]["native_role"],"user");
         assert_eq!(items[1]["image"]["width"],1);assert!(items[1]["image"]["src"].as_str().unwrap().starts_with("data:image/png;"));
         let v=json!({"type":"user","message":{"content":[{"type":"tool_result","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":png}}]},{"type":"image","source":{"type":"url","url":"file:///unrelated/private.png"}}]}});
-        let rows=records(false,0,format!("{v}\n").as_bytes());assert_eq!(rows[0].1.len(),2);
-        assert!(rows[0].1[0]["image"]["src"].is_string());assert!(rows[0].1[1]["image"]["reason"].is_string());assert!(rows[0].1[1]["image"]["src"].is_null());
+        let rows=read(false,&format!("{v}\n"));assert_eq!(rows.len(),2);
+        assert!(rows[0]["image"]["src"].is_string());assert!(rows[1]["image"]["reason"].is_string());assert!(rows[1]["image"]["src"].is_null());
         let dir=tmp();let path=dir.join("images.jsonl");
         let recorded=json!({"type":"user","message":{"content":[{"type":"image","source":{"type":"base64","data":png}}]}});
-        fs::write(&path,format!("{recorded}\n").repeat(8)).unwrap();let p=before(false,&path,None).unwrap();
-        assert!(p.generation.starts_with("images-v1:"),"new image ordinals require a parser-generation fence");
+        fs::write(&path,format!("{recorded}\n").repeat(8)).unwrap();let p=before("claude-native","-",&path,None).unwrap();
+        assert!(p.generation.starts_with("history-v1:"),"AgentQ item ordinals require a parser-generation fence");
         assert_eq!(p.items.iter().filter(|i|i["image"]["src"].is_string()).count(),4,"page has at most four inline image sources");
         assert!(p.items[7]["image"]["reason"].as_str().unwrap().contains("limit"));
         let mut malformed=recorded.clone();malformed["message"]["content"][0]["source"]["data"]=json!("broken");
-        let rows=records(false,0,format!("{malformed}\n").as_bytes());assert!(rows[0].1[0]["image"]["reason"].is_string());
+        let rows=read(false,&format!("{malformed}\n"));assert!(rows[0]["image"]["reason"].is_string());
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -413,9 +467,9 @@ mod tests {
     #[test]
     fn conversation_1929_generation_survives_append_and_detects_replacement() {
         let dir=std::env::temp_dir().join(format!("taskq-generation-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();let p=dir.join("log");
-        let line=b"{\"type\":\"ignored\"}\n";fs::write(&p,line).unwrap();let first=before(false,&p,None).unwrap().generation;
+        let line=b"{\"type\":\"ignored\"}\n";fs::write(&p,line).unwrap();let first=before("claude-native","-",&p,None).unwrap().generation;
         use std::io::Write;fs::OpenOptions::new().append(true).open(&p).unwrap().write_all(line).unwrap();
-        assert_eq!(before(false,&p,None).unwrap().generation,first);
+        assert_eq!(before("claude-native","-",&p,None).unwrap().generation,first);
         let replacement=dir.join("new");fs::write(&replacement,line).unwrap();
         #[cfg(windows)] {
             use std::os::windows::fs::FileTimesExt;
@@ -424,7 +478,7 @@ mod tests {
             assert_eq!(fs::metadata(&replacement).unwrap().created().unwrap(),created);
         }
         fs::remove_file(&p).unwrap();fs::rename(replacement,&p).unwrap();
-        assert_ne!(before(false,&p,None).unwrap().generation,first);fs::remove_dir_all(dir).unwrap();
+        assert_ne!(before("claude-native","-",&p,None).unwrap().generation,first);fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -448,13 +502,13 @@ mod tests {
         write!(f, "{{\"type\":\"user\",\"mess").unwrap();
         drop(f);
         assert_eq!(crate::runtime::claude_transcript_in(&dir, id).unwrap(), path);
-        let open = before(false, &path, None).unwrap();
-        assert!(open.start > 0 && open.end - open.start <= CHUNK, "one chunk: {open:?}");
+        let open = before("claude-native","-",&path, None).unwrap();
+        assert!(open.start > 0 && bounded(&open), "one bounded page");
         assert_eq!(text(&open.items).last().unwrap(), &json!({"role":"tool","text":"Bash cargo test --locked"}));
         assert!(open.items.iter().all(|i| i["role"] != "user"), "unknown and partial records are skipped");
         let (mut cursor, mut pages, mut first) = (open.start, 1, None);
         while cursor > 0 {
-            let page = before(false, &path, Some(cursor)).unwrap();
+            let page = before("claude-native","-",&path, Some(cursor)).unwrap();
             assert!(page.end == cursor && page.start < cursor);
             cursor = page.start;
             first = text(&page.items).first().cloned();
@@ -464,10 +518,10 @@ mod tests {
         assert!(pages >= 40);
         let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
         write!(f, "age\":{{\"content\":\"next\"}}}}\n").unwrap();
-        let new = after(false, &path, open.end).unwrap();
+        let new = after("claude-native","-",&path, open.end).unwrap();
         assert_eq!(text(&new.items), vec![json!({"role":"user","text":"next"})]);
         assert_eq!(new.end, fs::metadata(&path).unwrap().len());
-        assert_eq!(last_line(false, &path).unwrap(), Some(format!("{} {filler}", n - 1)));
+        assert_eq!(last_line("claude-native","-",&path).unwrap(), Some(format!("{} {filler}", n - 1)));
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -489,8 +543,35 @@ mod tests {
         ];
         fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
         assert_eq!(crate::runtime::owner::codex_transcript_in(&dir, id).unwrap(), path);
-        assert_eq!(text(&before(true, &path, None).unwrap().items), vec![json!({"role":"user","text":"hello"}), json!({"role":"tool","text":"exec_command ls"}), json!({"role":"assistant","text":"done\nall good"})]);
-        assert_eq!(last_line(true, &path).unwrap().as_deref(), Some("all good"));
+        assert_eq!(text(&before("codex-rollout",id,&path, None).unwrap().items), vec![json!({"role":"user","text":"hello"}), json!({"role":"tool","text":"exec_command ls"}), json!({"role":"assistant","text":"done\nall good"}), json!({"role":"event","text":"turn complete"})]);
+        assert_eq!(last_line("codex-rollout",id,&path).unwrap().as_deref(), Some("all good"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #2176 native Codex evidence: a call and its output in different backward pages gave a result-less call one way
+    // and the call with its body the other, so the view depended on page boundaries. Risk kept: every result is one
+    // item at its own record, identical from either end; output text is masked like arguments.
+    #[test]
+    fn tool_results_are_page_independent() {
+        let dir = tmp();
+        let path = dir.join("r.jsonl");
+        let mut src = String::new();
+        for n in 0..150 {
+            src += &format!("{}\n", json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":format!("c{n}"),"arguments":"{\"cmd\":\"ls\"}"}}));
+            src += &format!("{}\n", json!({"type":"response_item","payload":{"type":"function_call_output","call_id":format!("c{n}"),"output":format!("out {n} GH_TOKEN=ghp_{}", "a".repeat(36))}}));
+        }
+        fs::write(&path, src).unwrap();
+        let size = fs::metadata(&path).unwrap().len();
+        let mut pages = vec![before("codex-rollout", "-", &path, None).unwrap()];
+        while pages.last().unwrap().start > 0 { pages.push(before("codex-rollout", "-", &path, Some(pages.last().unwrap().start)).unwrap()); }
+        assert!(pages.len() > 1, "the fixture splits pages");
+        let backward: Vec<Value> = pages.iter().rev().flat_map(|p| p.items.clone()).collect();
+        let (mut forward, mut from) = (vec![], 0);
+        while from < size { let p = after("codex-rollout", "-", &path, from).unwrap(); forward.extend(p.items); from = p.end; }
+        assert_eq!(forward, backward);
+        let results: Vec<&Value> = backward.iter().filter(|i| i["result"].is_string()).collect();
+        assert_eq!(results.len(), 150, "every result kept once");
+        assert!(results.iter().all(|r| r["result"].as_str().unwrap().ends_with("GH_TOKEN=[redacted]")), "output masked");
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -512,14 +593,14 @@ mod tests {
                 let record=if codex {json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}})}
                     else {json!({"type":"assistant","message":{"content":[{"type":"text","text":text}]}})};
                 let source=format!("{record}\n");fs::write(&path,&source).unwrap();
-                assert_eq!(last_line(codex,&path).unwrap().as_deref(),expected,"codex={codex}, text={text}");
+                assert_eq!(last_line(fm(codex),"-",&path).unwrap().as_deref(),expected,"codex={codex}, text={text}");
                 assert_eq!(fs::read_to_string(&path).unwrap(),source,"preview never rewrites native history");
-                if !text.is_empty(){assert_eq!(before(codex,&path,None).unwrap().items[0]["text"],text,"exact source remains complete");}
+                if !text.is_empty(){assert_eq!(before(fm(codex),"-",&path,None).unwrap().items[0]["text"],text,"exact source remains complete");}
             }
             let text="<oai-mem-citation>\nmetadata only\n</oai-mem-citation>";
             let records=["Prior reviewed prose.",text].map(|text|if codex {json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}})}else {json!({"type":"assistant","message":{"content":[{"type":"text","text":text}]}})});
             let source=records.iter().map(|r|format!("{r}\n")).collect::<String>();fs::write(&path,&source).unwrap();
-            assert_eq!(last_line(codex,&path).unwrap().as_deref(),Some("Prior reviewed prose."),"metadata-only records cannot hide prose in the same chunk");
+            assert_eq!(last_line(fm(codex),"-",&path).unwrap().as_deref(),Some("Prior reviewed prose."),"metadata-only records cannot hide prose in the same chunk");
             assert_eq!(fs::read_to_string(&path).unwrap(),source);
         }
         fs::remove_dir_all(dir).unwrap();
@@ -568,7 +649,7 @@ mod tests {
             json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls\"}"}}),
         ];
         fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
-        let tools: Vec<Value> = text(&before(true, &path, None).unwrap().items).into_iter().map(|i| i["text"].clone()).collect();
+        let tools: Vec<Value> = text(&before("codex-rollout","-",&path, None).unwrap().items).into_iter().map(|i| i["text"].clone()).collect();
         assert_eq!(tools, vec![
             json!("exec echo two"),
             json!("exec git log -1 --format='%H' · rg -n \"tools.exec_command(\" src · write_stdin"),
@@ -634,22 +715,23 @@ mod tests {
 
     /// Backward pages from the file end: each page's view items in file order.
     fn back(codex: bool, path: &Path) -> Vec<Page> {
-        let mut pages = vec![before(codex, path, None).unwrap()];
-        while pages.last().unwrap().start > 0 { pages.push(before(codex, path, Some(pages.last().unwrap().start)).unwrap()); }
+        let mut pages = vec![before(fm(codex),"-",path, None).unwrap()];
+        while pages.last().unwrap().start > 0 { pages.push(before(fm(codex),"-",path, Some(pages.last().unwrap().start)).unwrap()); }
         pages
     }
 
-    // #2110 A5 / Q-A5: 100,000 variable-height visible records of both native renderers. Defect: a bounded or out-of-order
+    // #2110 A5 / Q-A5: 10,000 variable-height visible records of both native renderers (#2176: was 100,000; each AgentQ
+    // page re-hashes the prefix, so the gate keeps the same shapes at a tenth of the pages). Defect: a bounded or out-of-order
     // read omits or repeats a record, splits one, or stops at a page of only ignored records. Risk kept: every record
-    // is reached from either end with the same identity, at most ITEMS items per page.
+    // is reached from either end with the same identity, at most 128 records per page.
     #[test]
-    fn hundred_thousand_records_traverse_both_ways_in_any_order() {
+    fn ten_thousand_records_traverse_both_ways_in_any_order() {
         let dir = tmp();
         for codex in [false, true] {
             let path = dir.join(format!("{codex}.jsonl"));
-            let want = transcript(codex, &path, 100_000, 300_000, 1500, 600 * 1024);
+            let want = transcript(codex, &path, 10_000, 300_000, 1500, 600 * 1024);
             let pages = back(codex, &path);
-            assert!(pages.iter().all(|p| p.items.len() <= ITEMS), "bounded pages");
+            assert!(pages.iter().all(bounded), "bounded pages");
             assert!(pages.iter().any(|p| p.items.is_empty() && p.start > 0), "a page of ignored records still leads earlier");
             for w in pages.windows(2) { assert_eq!(w[1].end, w[0].start, "pages meet at record boundaries"); }
             let backward: Vec<Value> = pages.iter().rev().flat_map(|p| p.items.clone()).collect();
@@ -658,43 +740,43 @@ mod tests {
             assert!(keys.windows(2).all(|k| k[0] < k[1]), "identity is unique and in file order");
             // forward from the start, as after an eviction, gives the same records and identities
             let (mut forward, mut from, size) = (vec![], 0, fs::metadata(&path).unwrap().len());
-            while from < size { let p = after(codex, &path, from).unwrap(); assert!(p.items.len() <= ITEMS && p.end > from && p.size == size); forward.extend(p.items); from = p.end; }
+            while from < size { let p = after(fm(codex),"-",&path, from).unwrap(); assert!(bounded(&p) && p.end > from && p.size == size); forward.extend(p.items); from = p.end; }
             assert_eq!(forward, backward, "codex {codex}: forward and backward reads agree");
             // the same cursors read in another order give the same pages: a reply has no hidden state
             let mut order: Vec<usize> = (0..pages.len()).collect();
             order.sort_by_key(|i| (i * 7919) % pages.len());
-            for i in order { let p = before(codex, &path, Some(pages[i].end)).unwrap(); assert_eq!((p.start, &p.items), (pages[i].start, &pages[i].items)); }
+            for i in order { let p = before(fm(codex),"-",&path, Some(pages[i].end)).unwrap(); assert_eq!((p.start, &p.items), (pages[i].start, &pages[i].items)); }
             // An ignored prefix can exceed CHUNK: the saved anchor is the visible record offset, not the page boundary.
-            for item in pages.iter().skip(1).filter_map(|p|p.items.first()) {let a=after(codex,&path,item["at"].as_u64().unwrap()).unwrap();assert_eq!(a.items.first(),Some(item),"a saved record cursor reloads its range");}
+            for item in pages.iter().skip(1).filter_map(|p|p.items.first()) {let a=after(fm(codex),"-",&path,item["at"].as_u64().unwrap()).unwrap();assert_eq!(a.items.first(),Some(item),"a saved record cursor reloads its range");}
         }
         fs::remove_dir_all(dir).unwrap();
     }
 
-    // #1742 Q-A5: a 100 MiB source with long single messages still reaches its first record; a record over 16 MiB,
+    // #1742 Q-A5: a large source (#2176: 28 MiB, was 108 MiB; each AgentQ page re-hashes the prefix) with long single messages still reaches its first record; a record over 16 MiB,
     // a shrunk file and a partial last line stay explicit. Risk kept: no silent truncation or empty view.
     #[test]
-    fn hundred_mib_source_and_oversized_record_stay_explicit() {
+    fn large_source_and_oversized_record_stay_explicit() {
         let dir = tmp();
         let path = dir.join("stress.jsonl");
         let started = std::time::Instant::now();
-        let want = transcript(false, &path, 2_000, 2 * 1024 * 1024, 40, 2 * 1024 * 1024);
+        let want = transcript(false, &path, 2_000, 2 * 1024 * 1024, 200, 2 * 1024 * 1024);
         let size = fs::metadata(&path).unwrap().len();
-        assert!(size >= 100 * 1024 * 1024, "{size}");
+        assert!(size >= 20 * 1024 * 1024, "{size}");
         let pages = back(false, &path);
         assert_eq!(text(&pages.iter().rev().flat_map(|p| p.items.clone()).collect::<Vec<_>>()), want);
-        eprintln!("100 MiB stress: {} MiB in {} backward pages, {:?} with writing", size >> 20, pages.len(), started.elapsed());
+        eprintln!("large source stress: {} MiB in {} backward pages, {:?} with writing", size >> 20, pages.len(), started.elapsed());
         let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
         write!(f, "{{\"type\":\"user\",\"mess").unwrap();
-        assert!(after(false, &path, size).unwrap().items.is_empty(), "a partial last line waits for its newline");
-        assert_eq!(after(false, &path, size).unwrap().end, size);
+        assert!(after("claude-native","-",&path, size).unwrap().items.is_empty(), "a partial last line waits for its newline");
+        assert_eq!(after("claude-native","-",&path, size).unwrap().end, size);
         writeln!(f, "age\":{{\"content\":\"{}\"}}}}", "y".repeat(17 * 1024 * 1024)).unwrap();
         drop(f);
-        assert_eq!(before(false, &path, None).unwrap_err(), "transcript record exceeds 16 MiB; view unknown");
-        assert_eq!(after(false, &path, size).unwrap_err(), "transcript record exceeds 16 MiB; view unknown");
-        assert_eq!(text(&before(false, &path, Some(size)).unwrap().items), text(&pages[0].items), "earlier records stay readable");
+        assert_eq!(before("claude-native","-",&path, None).unwrap_err(), "transcript record exceeds 16 MiB; view unknown");
+        assert_eq!(after("claude-native","-",&path, size).unwrap_err(), "transcript record exceeds 16 MiB; view unknown");
+        assert_eq!(text(&before("claude-native","-",&path, Some(size)).unwrap().items), text(&pages[0].items), "earlier records stay readable");
         fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(size / 2).unwrap();
-        assert_eq!(before(false, &path, Some(size)).unwrap_err(), "transcript shrank; view unknown");
-        assert_eq!(after(false, &path, size).unwrap_err(), "transcript shrank; view unknown");
+        assert_eq!(before("claude-native","-",&path, Some(size)).unwrap_err(), "transcript shrank; view unknown");
+        assert_eq!(after("claude-native","-",&path, size).unwrap_err(), "transcript shrank; view unknown");
         fs::remove_dir_all(dir).unwrap();
     }
     // #1930 A3/A4/A7: sanitized actual Claude/Codex metadata, never invented times or cursor-to-date inference.
@@ -705,13 +787,13 @@ mod tests {
         for sample in fixture["records"].as_array().unwrap() {
             let codex=sample["provider"]=="codex";let record=&sample["record"];
             fs::write(&path,format!("{record}\n")).unwrap();
-            let page=before(codex,&path,None).unwrap();assert!(!page.items.is_empty());
+            let page=before(fm(codex),"-",&path,None).unwrap();assert!(!page.items.is_empty());
             for item in &page.items {assert_eq!(item["updated"],record["timestamp"]);assert_eq!(item["at"],0);}
-            assert_eq!(after(codex,&path,0).unwrap().items,page.items,"both read directions preserve source time and byte identity");
+            assert_eq!(after(fm(codex),"-",&path,0).unwrap().items,page.items,"both read directions preserve source time and byte identity");
             let mut missing=record.clone();missing.as_object_mut().unwrap().remove("timestamp");
             fs::write(&path,format!("{record}\n{missing}\n")).unwrap();
-            let page=before(codex,&path,None).unwrap();assert!(page.items.last().unwrap()["updated"].is_null());
-            assert!(last_update(codex,&path).unwrap().is_null(),"a source gap cannot borrow the earlier record time");
+            let page=before(fm(codex),"-",&path,None).unwrap();assert!(page.items.last().unwrap()["updated"].is_null());
+            assert!(last_update(fm(codex),"-",&path).unwrap().is_null(),"a source gap cannot borrow the earlier record time");
         }
         for event in fixture["board"].as_array().unwrap() {assert_eq!(crate::board::iso(event["created_at"].as_str().unwrap()),event["seconds"].as_i64());}
         fs::remove_dir_all(dir).unwrap();
@@ -726,10 +808,74 @@ mod tests {
             let record=|text:&str,time:&str|if codex {json!({"type":"response_item","timestamp":time,"payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}})}else{json!({"type":"assistant","timestamp":time,"message":{"content":[{"type":"text","text":text}]}})};
             let a=record("First","2026-10-29T01:00:00.123Z");let b=record("Second","2026-10-29T01:01:00.456Z");
             fs::write(&path,format!("{a}\n{b}\n{{\"type\":\"progress\",\"timestamp\":\"2026-10-29T03:00:00Z\"}}\npartial")).unwrap();
-            assert_eq!(last_update(codex,&path).unwrap(),"2026-10-29T01:01:00.456Z");assert_eq!(last_update(codex,&path).unwrap(),"2026-10-29T01:01:00.456Z","reading again never changes activity");
-            let mut missing=b.clone();missing.as_object_mut().unwrap().remove("timestamp");fs::write(&path,format!("{a}\n{missing}\n")).unwrap();assert!(last_update(codex,&path).unwrap().is_null(),"do not substitute an older known timestamp");
+            assert_eq!(last_update(fm(codex),"-",&path).unwrap(),"2026-10-29T01:01:00.456Z");assert_eq!(last_update(fm(codex),"-",&path).unwrap(),"2026-10-29T01:01:00.456Z","reading again never changes activity");
+            let mut missing=b.clone();missing.as_object_mut().unwrap().remove("timestamp");fs::write(&path,format!("{a}\n{missing}\n")).unwrap();assert!(last_update(fm(codex),"-",&path).unwrap().is_null(),"do not substitute an older known timestamp");
         }
-        fs::remove_file(&path).unwrap();assert!(last_update(false,&path).is_err());fs::remove_dir_all(dir).unwrap();
+        fs::remove_file(&path).unwrap();assert!(last_update("claude-native","-",&path).is_err());fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #2176 A5: every runtime's page names its AgentQ status, reason, CLI version slot and native qualification.
+    // Defect: a supported or version-less capability was hidden. Risk kept: the view can always say what it relies on.
+    #[test]
+    fn capability_names_status_reason_version_and_native_state_per_runtime() {
+        for (rt, format) in [("claude","claude-native"),("codex","codex-rollout"),("antigravity","agy-stream")] {
+            let c = capability(super::format(rt));
+            assert_eq!(c["format"], format);
+            assert!(c.as_object().unwrap().contains_key("version"), "{rt}: version key present, null when unknown");
+            assert!(["supported","limited"].contains(&c["history"]["status"].as_str().unwrap()) && c["history"]["reason"].is_string(), "{rt}: {c}");
+            assert!(c["native"]["status"].is_string(), "{rt}: native qualification named");
+        }
+        assert_eq!(capability("agy-stream")["history"]["status"], "limited");
+        assert_eq!(capability("nope")["history"]["status"], "unsupported");
+    }
+
+    /// #2176 A5 native evidence instrument, not a gate: `TASKQ_NATIVE_SOURCES` lists `format=session=path` lines of
+    /// retained native transcripts. Reads each fully backward and forward through the product reader, read-only, and
+    /// prints counts only (no text, no paths): `cargo test --bin taskq native_transcripts -- --ignored --nocapture`.
+    // A2: lifecycle events render as one named line per runtime; usage counters stay source-only
+    #[test]
+    fn lifecycle_events_render_as_lines() {
+        let dir = tmp();
+        for (format, rows, want) in [
+            ("codex-rollout", vec![json!({"type":"event_msg","payload":{"type":"task_started"}}), json!({"type":"event_msg","payload":{"type":"token_count"}}), json!({"type":"event_msg","payload":{"type":"task_complete"}})], vec!["turn started", "turn complete"]),
+            ("claude-native", vec![json!({"type":"system","subtype":"compact_boundary"}), json!({"type":"rate_limit_event"})], vec!["system compact boundary"]),
+            ("agy-stream", vec![json!({"event":"init"}), json!({"event":"step_update","step_update":{"step_index":1,"step_type":"checkpoint","state":"DONE"}})], vec!["session started", "checkpoint"]),
+        ] {
+            let path = dir.join(format!("{format}.jsonl"));
+            fs::write(&path, rows.iter().map(|r| format!("{r}\n")).collect::<String>()).unwrap();
+            let page = before(format, "-", &path, None).unwrap();
+            let got: Vec<_> = page.items.iter().filter(|i| i["role"] == "event").map(|i| i["text"].as_str().unwrap()).collect();
+            assert_eq!(got, want, "{format}");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn native_transcripts_read_both_ways() {
+        let list = std::env::var("TASKQ_NATIVE_SOURCES").expect("TASKQ_NATIVE_SOURCES");
+        for (n, entry) in list.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+            let mut it = entry.splitn(3, '=');
+            let (format, session, path) = (it.next().unwrap(), it.next().unwrap(), Path::new(it.next().unwrap()));
+            let size = fs::metadata(path).unwrap().len();
+            let mut pages = vec![before(format, session, path, Some(size)).unwrap()];
+            while pages.last().unwrap().start > 0 { pages.push(before(format, session, path, Some(pages.last().unwrap().start)).unwrap()); }
+            let backward: Vec<Value> = pages.iter().rev().flat_map(|p| p.items.clone()).collect();
+            let keys: Vec<_> = backward.iter().map(key).collect();
+            assert!(keys.windows(2).all(|k| k[0] < k[1]), "source {n}: unique ordered identities");
+            let (mut forward, mut from) = (vec![], 0);
+            while from < size { let p = after(format, session, path, from).unwrap(); assert!(p.end > from); forward.extend(p.items); from = p.end; }
+            if let Some(d) = (0..forward.len().max(backward.len())).find(|&i| forward.get(i) != backward.get(i)) {
+                let brief = |v: Option<&Value>| v.map(|i| { let mut i = i.clone(); i.as_object_mut().unwrap().remove("text"); let r = i.as_object_mut().unwrap().remove("result").map(|r| r.as_str().map_or(0, str::len)); i["result_len"] = json!(r); i["text_len"] = json!(i.get("text").and_then(Value::as_str).map(str::len)); i });
+                panic!("source {n}: forward and backward differ at item {d} of {}/{}: forward {:?} backward {:?}", forward.len(), backward.len(), brief(forward.get(d)), brief(backward.get(d)));
+            }
+            let mut roles = std::collections::BTreeMap::<String, usize>::new();
+            for i in &backward { *roles.entry(i["role"].as_str().unwrap_or("?").into()).or_default() += 1; }
+            let results = backward.iter().filter(|i| i["result"].is_string()).count();
+            let c = &pages[0].capability;
+            println!("source {n}: {format} {} bytes, {} pages, {} items {roles:?}, {results} tool results; history {} ({}), version {}, native {}",
+                size, pages.len(), backward.len(), c["history"]["status"], c["history"]["reason"], c["version"], c["native"]["status"]);
+        }
     }
 
 }

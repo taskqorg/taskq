@@ -159,8 +159,8 @@ for answer_body in ['taskq: answer 1', '1', '1. A; native at release - + compact
                     'taskq: answer\n99.1', 'taskq: answer\n#99.1']:
     text = approval([spawn, ask, comment(11, answer_body)])
     assert 'Product' in text and 'M2' in text and 'R9' not in text, (answer_body, text)
-# #2194: an `N.K` answer text of another task, or with a note, picks nothing
-for answer_body in ['taskq: answer\n98.1', 'taskq: answer\n99.1 Owner approves R9']:
+# #2194: an `N.K` answer text of another task picks nothing
+for answer_body in ['taskq: answer\n98.1', 'taskq: answer\n#98.1']:
     assert 'Product' not in approval([spawn, ask, comment(11, answer_body)]), answer_body
 for rejected in [comment(11, 'taskq: answer 1\nR12\nop-id: stale\nrevision: 9'),
                  comment(11, 'taskq: answer 1 attempt 1'),
@@ -225,4 +225,11 @@ for invalid in [parked[:2] + parked[3:],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', author_association='NONE')],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', updated_at='edited')]]:
     assert approval(invalid) == '', 'stage parks retain admission, unsupported-transition, revision and trust fences'
+# #2202: `taskq answer 2194 --text "2194.1 note"` resumed #2194, but the gate read no pick and stayed red.
+section6 = comment(2, 'taskq: ask attempt 1\nProblem: A4 changes rule Shared project bootstrap.\n1. approve the edit\n2. drop the edit')
+noted = lambda body: check['approval_text']([spawn, section6, comment(3, body)], 2194)
+assert 'Shared project bootstrap' in noted('taskq: answer\n2194.1 Owner approves the section 6 edit'), 'a leading N.K pick with a note approves'
+assert 'Shared project bootstrap' in noted('taskq: answer\n#2194.1'), 'a bare N.K pick approves'
+for unpicked in ['taskq: answer\nOwner approves the section 6 edit', 'taskq: answer\n2193.1 Owner approves', 'taskq: answer\n2194.1x']:
+    assert 'Shared project bootstrap' not in noted(unpicked), unpicked
 print('PASS approval association preserves revision, attempt, trust and selected-option fences')

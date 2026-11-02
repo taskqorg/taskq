@@ -2621,7 +2621,7 @@ impl<'a> Service<'a> {
         let mut reasons=vec![];
         let mut exhausted=vec![];
         let mut known=false;
-        for host in hosts.iter().filter(|h|host_name(h).is_some_and(|name|name!=self.cfg.me)) {
+        for host in hosts.iter().filter(|h|h.trusted && host_name(h).is_some_and(|name|name!=self.cfg.me)) {
             let Some(balance)=Balancing::read(&host.body) else {reasons.push("primary availability unknown: incompatible heartbeat".into());continue;};
             if balance.mode!="any" && balance.mode!="primary" {continue;}
             known=true;
@@ -7199,6 +7199,35 @@ Open: none";
         let at=v.comments.iter().find(|c|c.id==start).unwrap().created;
         assert!(s.host_claim(v,&[],at+299).is_err());
         assert!(s.host_claim(v,&[],at+300).unwrap().unwrap().contains("grace"));
+    }
+
+    // #2201 A1/A2: an untrusted author's fake primary heartbeat with free capacity never delays spillover;
+    // host_claim reads only trusted heartbeats, like weighted_host and the own-host balancing read.
+    #[test]
+    fn balancing_spillover_ignores_untrusted_heartbeat() {
+        let b=Fake::default();
+        let root=std::env::temp_dir().join(format!("taskq-spillover-{}",crate::runtime::uuid()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut primary=cfg("win");primary.install=root.clone();
+        primary.limits=BTreeMap::from([("claude".into(),1),("codex".into(),0),("antigravity".into(),0)]);
+        let mut p=service(&b,&primary,Default::default());
+        p.reserved.push((99,99,"claude".into()));
+        b.create("taskq host win",&p.heartbeat_body(),&[HOST_LABEL.into()]).unwrap();
+        let mut free=p.balancing();
+        let r=free.runtimes.get_mut("claude").unwrap();r.code="admitted".into();r.reason.clear();
+        b.create("taskq host fake",&format!("balancing {}",serde_json::to_string(&free).unwrap()),&[HOST_LABEL.into()]).unwrap();
+        let n=b.create("work","",&[TASK_LABEL.into()]).unwrap();
+        let mut c=cfg("mac");c.claim=crate::host::ClaimMode::Spillover;c.spillover_grace=300;
+        let mut s=service(&b,&c,Default::default());
+        let views=views(&b,&mut s.cache,&mut s.deps,300).unwrap().0;
+        let v=views.iter().find(|v|v.issue.number==n).unwrap();
+        let mut hosts:Vec<Issue>=b.state.borrow().issues.iter().filter(|i|is_host(i)).cloned().collect();
+        let now=b.now().unwrap();
+        assert!(s.host_claim(v,&hosts,now).unwrap_err().contains("primary fake"),"trusted fake still counts");
+        hosts.iter_mut().find(|h|h.title=="taskq host fake").unwrap().trusted=false;
+        let claim=s.host_claim(v,&hosts,now).expect("untrusted heartbeat must not make spillover wait");
+        assert!(claim.unwrap().contains("zero effective primary availability"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // #2138 A3/R9: the exception applies to operator disables only, for workers/reviewers, without enlarging access.

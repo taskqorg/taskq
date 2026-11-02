@@ -593,7 +593,7 @@ pub(crate) fn serve_peer(install:&Path,root:&Path,read:&crate::link::Read)->Res<
 
 fn serve_root(install:&Path,root:&Path,status:&Value,read:&crate::link::Read)->Res<Value> {
     let local=crate::host::Policy::read(install)?.me;
-    let page=worker_page(root,&local,status,read,|session,before,after|crate::dialogue::worker_transcript(session,before,after))?;
+    let page=worker_page(root,&local,status,read,|session,before,after|crate::dialogue::worker_transcript(session,&crate::runtime::attempt_log(root,"worker",read.task,read.attempt),before,after))?;
     Ok(crate::link::fit(page,read.after.is_some()))
 }
 

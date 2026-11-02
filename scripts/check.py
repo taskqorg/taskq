@@ -262,9 +262,10 @@ def approval_text(comments, task):
         payload = '\n'.join(lines[1:] if canonical else lines).strip().rstrip('★').strip()
         opts = pending[2]
         picked = int(canonical[1]) if canonical and canonical[1] else int(alias[2]) if alias else int(payload) if payload.isascii() and payload.isdecimal() else None
-        # #2194: a PM relays the owner's `N.K` as the answer text; only this task's N picks K
-        if picked is None and (dotted := re.fullmatch(r'#?([0-9]+)\.([0-9]+)', payload)) and int(dotted[1]) == int(task):
-            picked = int(dotted[2])
+        # `taskq answer N --text "N.K note"` (#2202): a leading N.K pick of this task, parsed as `answer N.K` parses it.
+        lead = re.match(r'#?([0-9]+)\.([0-9]+)(?:\s|$)', payload) if canonical and not canonical[1] else None
+        if picked is None and lead and int(lead[1]) == int(task):
+            picked = int(lead[2])
         if picked is None:
             matches = [k for k, text in opts.items() if payload.casefold() in {text.casefold(), f'{k}. {text}'.casefold()}]
             if len(matches) == 1:
