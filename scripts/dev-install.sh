@@ -1,6 +1,6 @@
 #!/bin/sh
 # taskq.md § 8 item 1: install a local development build of origin/main (or the ref given) on this Mac.
-# Version <next patch>-dev.<unix seconds> sorts above the release on main and below the next one, so `current`
+# Version <next patch>-yymmdd-N (UTC date, N = that date's builds on this host from 0; scripts/dev-version.py) sorts above the release on main and below the next one, so `current`
 # moves forward (coreq `newer`). The host channel is set to `dev` first, so no release replaces the build until
 # `taskq service channel live` (#1325). Builds in a detached worktree beside the
 # primary checkout, so local edits there are never touched. Under a running host service, install makes the build
@@ -34,7 +34,7 @@ if [ $# -gt 0 ]; then git -C "$repo" fetch -q --refmap= --no-write-fetch-head or
 cd "$w"
 git checkout -q -f --detach "$ref"
 sha=$(git rev-parse HEAD)
-v=$(python3 -c 'import re,time; m=re.search(r"^version = \"(\d+)\.(\d+)\.(\d+)\"$", open("Cargo.toml").read(), re.M); print(f"{m[1]}.{m[2]}.{int(m[3])+1}-dev.{int(time.time())}")')
+v=$(python3 scripts/dev-version.py Cargo.toml "$d/releases")
 prev=$(cat "$d/current")
 sed -i '' "s/^version = .*/version = \"$v\"/" Cargo.toml
 npm ci --silent

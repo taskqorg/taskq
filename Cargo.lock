@@ -11,7 +11,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "agentq-runtime"
 version = "0.1.0"
-source = "git+https://github.com/taskqorg/agentq?rev=ce1e27883a0e8e96ea02a9c3d241e39672d14f17#ce1e27883a0e8e96ea02a9c3d241e39672d14f17"
+source = "git+https://github.com/taskqorg/agentq?rev=b2c50de65cd6207acd33f9298bd0f091b994fe33#b2c50de65cd6207acd33f9298bd0f091b994fe33"
 dependencies = [
  "coreq",
  "ring",
@@ -261,8 +261,8 @@ dependencies = [
 
 [[package]]
 name = "coreq"
-version = "0.18.0"
-source = "git+https://github.com/taskqorg/coreq?tag=v0.18.0#e84761cdab43723b871a42b3021e9c39afcd9484"
+version = "0.19.1"
+source = "git+https://github.com/taskqorg/coreq?tag=v0.19.1#17eb4b9f7894b5550e6b30e191302b905a360c0b"
 dependencies = [
  "coreq-instrument",
  "flate2",
@@ -277,7 +277,7 @@ dependencies = [
 [[package]]
 name = "coreq-instrument"
 version = "0.1.0"
-source = "git+https://github.com/taskqorg/coreq?tag=v0.18.0#e84761cdab43723b871a42b3021e9c39afcd9484"
+source = "git+https://github.com/taskqorg/coreq?tag=v0.19.1#17eb4b9f7894b5550e6b30e191302b905a360c0b"
 dependencies = [
  "proc-macro2",
  "quote",
