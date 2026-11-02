@@ -21,8 +21,7 @@ Each command that changes a task appends one `taskq:` comment, sets the projecte
 ### R5. Completion is written to the task
 Result SHA, checks, questions and blockers go to the issue: `result`, `ask`, `requeue` or `later`; evidence follows [specq verification](https://github.com/taskqorg/specq/blob/main/engineering/verification.md).
 ### R6. Human report
-`taskq status`, service status, `status.json` and tray share one board [snapshot](docs/design/refactoring-backlog.md) (§ 5 `--json`); omit empty parts.
-Parts, in order: project line, counts, task table, questions with `Decide:` rows, actionable `Stale heartbeats`, held/later/failed/stuck lists, running agents and hosts, then Next; each part's content and format, tray/browser blocks and counters: [status report](docs/design/status-report.md#contract-detail).
+`taskq status`, service status, `status.json` and tray share one board [snapshot](docs/design/refactoring-backlog.md) (§ 5 `--json`); omit empty parts. Order: project line, counts, task table, questions with `Decide:` rows, actionable `Stale heartbeats`, held/later/failed/stuck lists, running agents and hosts, then Next. Content, formats, tray/browser blocks and counters: [status report](docs/design/status-report.md#contract-detail).
 Task heartbeat and execution progress are the primary stall signals, separate from ownership and tool deadlines; every task detail exposes their sources, times, freshness and reasons, and doing/review rows warn locally ([health](docs/design/status-report.md#task-execution-health)).
 Logical doing/review never proves a current executor; recorded input awaiting execution stays explicit. Overdue tools are advisory stuck observations, never replay, restart or release authority.
 Ownership leases never imply running work. An exited agent with pending input and unknown acceptance is immediately stuck, with its fence, recovery cause and safe action visible; quiet running attempts keep §3 leases.
