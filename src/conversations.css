@@ -243,3 +243,11 @@
 .transcript-image details[open]+img{max-height:none}.transcript-image :is(summary,figcaption){font-size:.85em;color:var(--muted)}
 @media(forced-colors:active){.conversation-prose [class^=syntax-],.report-card [class^=syntax-]{color:CanvasText}}
 .source-toggle{font-size:.85em;color:var(--muted)}
+
+.manager-destination{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.manager-runtime{display:flex;align-items:center;gap:6px;min-width:0;max-width:100%}
+.manager-runtime select{width:auto;max-width:100%;min-width:0}
+.manager-launch{display:flex;flex-wrap:wrap;gap:8px;min-width:0}
+.manager-launch>label{flex:1 1 140px;min-width:0}
+.manager-launch select{max-width:100%}
+.manager-access,.manager-launch>p{flex-basis:100%;overflow-wrap:anywhere;margin:0}

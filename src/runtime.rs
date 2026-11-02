@@ -11,6 +11,8 @@ use std::process::{Child, Command};
 mod app_control;
 pub mod accounts;
 pub mod owner;
+pub mod owner_stream;
+pub mod choices;
 
 #[cfg(windows)]
 pub mod windows_process;
@@ -1567,6 +1569,8 @@ fn start(env: &Env, l: &Launch, log: &Path, text: &str, access: &crate::policy::
 }
 
 /// The agy streaming protocol carries one JSON user event, including the literal brief.
+pub fn owner_input(rt:&str,text:&str)->String {stdin_text(rt,text)}
+
 fn stdin_text(rt: &str, text: &str) -> String {
     if rt == "antigravity" { format!("{}\n", serde_json::json!({"event":"user","message":{"content":text}})) } else { text.into() }
 }
@@ -2596,7 +2600,7 @@ const ADAPTERS: [Adapter; 4] = [
     Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, grant_required: false, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`", min: "2.1.296", update: "run `claude update`" },
     Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, grant_required: false, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
     Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, grant_required: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
-    Adapter { name: RUNTIMES[3], bin: "agy", client: "Antigravity", home: ".gemini/antigravity", child: true, grant_required: true, remote: false, app: false, codex: false, setup: "", login: "sign in through the Antigravity client", sessions: "Antigravity conversations", min: "", update: "install or update the Antigravity agy CLI" },
+    Adapter { name: RUNTIMES[3], bin: "agy", client: "Antigravity", home: ".gemini/antigravity", child: true, grant_required: true, remote: false, app: false, codex: false, setup: RUNTIMES[3], login: "sign in through the Antigravity client", sessions: "Antigravity conversations", min: "", update: "install or update the Antigravity agy CLI" },
 ];
 const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, grant_required: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "", min: "", update: "" };
 

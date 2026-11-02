@@ -14,13 +14,15 @@ pub(crate) struct File {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Sent { #[serde(default)] pub revision: u64, pub text: String, pub root: String, pub runtime: String, pub files: Vec<File> }
+pub(crate) struct Sent { #[serde(default,skip_serializing_if="Option::is_none")] pub choice:Option<crate::runtime::choices::Choice>, #[serde(default)] pub revision: u64, pub text: String, pub root: String, pub runtime: String, pub files: Vec<File> }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Reply { pub id:String, pub input:String, pub revision:u64 }
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Draft {
+    #[serde(skip_serializing_if="Option::is_none")] pub choice:Option<crate::runtime::choices::Choice>,
+    #[serde(skip_serializing_if="BTreeMap::is_empty")] pub choices:BTreeMap<String,crate::runtime::choices::Choice>,
     #[serde(skip_serializing_if="Option::is_none")] pub reply: Option<Reply>,
     #[serde(skip_serializing_if="String::is_empty")] pub runtime: String,
     pub revision: u64, pub title: String, pub root: String, pub text: String, pub caret: [usize;2],
@@ -160,7 +162,7 @@ pub(crate) fn preserve_draft(install:&Path,id:&str)->Res<()> {
     let recovered=format!("draft-{}",&hash(id.as_bytes())[..40]);
     if crate::messages::request_deleted(install,&recovered)? {return Ok(());}
     if let Some(existing)=drafts.get(&recovered){return if existing.parent.as_deref()==Some(id){Ok(())}else{Err("Recovery draft identity differs; original kept".into())};}
-    let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),runtime:source.runtime.clone(),text,caret:source.caret,files:copy_files(install,id,&recovered,&files)?,..Draft::default()};
+    let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),runtime:source.runtime.clone(),choice:source.choice.clone(),text,caret:source.caret,files:copy_files(install,id,&recovered,&files)?,..Draft::default()};
     drafts.insert(recovered,draft);p["conversations"]=json!(drafts);persist(install,&p)
 }
 fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
@@ -173,7 +175,7 @@ fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
         if crate::messages::plain(&crate::setup::dir(install).join(format!("{to}.json")))? {return Err("New draft ID belongs to a native request; original kept".into());}
         let source=drafts.get(id).ok_or("Source draft unavailable")?;
         if Some(source.revision)!=revision||source.deleting {return Err("Draft changed; refresh before creating a new request".into());}
-        let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),runtime:source.runtime.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
+        let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),runtime:source.runtime.clone(),choice:source.choice.clone(),choices:source.choices.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
         let source=drafts.get_mut(id).ok_or("Source draft unavailable")?;source.text.clear();source.files.clear();source.next=false;source.caret=[0,0];source.revision=source.revision.checked_add(1).ok_or("Draft revision overflow")?;
         drafts.insert(to.into(),draft);p["conversations"]=json!(drafts);persist(install,&p)?;Ok(to.into())
     })
@@ -269,7 +271,7 @@ fn snapshot_inner(install:&Path,details:bool)->Value {
             if !details {index_bytes+=row.to_string().len();if index_bytes>16*1024*1024 {truncated=true;continue;}}
             items.push(row);
         }
-        Ok(json!({"items":items,"navigation":p["conversation_navigation"],"sidebar":sidebar_value(&p["conversation_sidebar"])?,"complete":bad.is_empty()&&!truncated,"reason":if truncated{"Conversation index exceeds 16 MiB; coverage unknown; source data kept"}else if bad.is_empty(){""}else{"Some owner requests are unreadable; existing data kept"},"limits":{"files":4,"file_bytes":FILE_BYTES,"draft_bytes":4*FILE_BYTES,"store_bytes":STORE_BYTES,"pdf_pages":0}}))
+        Ok(json!({"items":items,"launch_defaults":p["launch_defaults"],"navigation":p["conversation_navigation"],"sidebar":sidebar_value(&p["conversation_sidebar"])?,"complete":bad.is_empty()&&!truncated,"reason":if truncated{"Conversation index exceeds 16 MiB; coverage unknown; source data kept"}else if bad.is_empty(){""}else{"Some owner requests are unreadable; existing data kept"},"limits":{"files":4,"file_bytes":FILE_BYTES,"draft_bytes":4*FILE_BYTES,"store_bytes":STORE_BYTES,"pdf_pages":0}}))
     })();result.unwrap_or_else(|reason|json!({"items":[],"complete":false,"reason":reason}))
 }
 
@@ -344,7 +346,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
             if d.deleting&&action!="delete" {return Err("Deletion incomplete; retry Delete without restoring history".into());}
             if m["revision"].as_u64()!=Some(d.revision) {return Err("Draft revision changed; refresh before editing or sending".into());}
             if action=="save" && d.reply.as_ref().is_some_and(|r|m["draft"]["reply_ack"]==r.id){let r=d.reply.as_ref().unwrap();if !crate::dialogue::accepted(install,id,&r.id,&r.input)? {return Err("Reply acknowledgement has no matching native receipt; draft kept".into());}d.reply=None;}
-            let prior=(d.title.clone(),d.root.clone(),d.runtime.clone(),d.text.clone(),d.files.clone());
+            let prior=(d.title.clone(),d.root.clone(),d.runtime.clone(),d.text.clone(),d.files.clone(),d.choice.clone());
             match action {
                 "save"=>{
                     let v=&m["draft"];
@@ -355,6 +357,8 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                         let runtime=runtime.as_str().filter(|rt|crate::runtime::setup_runtimes().any(|r|r==*rt)).ok_or("Unsupported owner runtime; draft kept")?;
                         d.runtime=runtime.into();
                     }
+                    if let Some(choice)=v.get("choice") {d.choice=serde_json::from_value(choice.clone()).map_err(|_|"Invalid launch choices; draft kept")?;}
+                    if let Some(choices)=v.get("choices") {d.choices=serde_json::from_value(choices.clone()).map_err(|_|"Invalid runtime choices; draft kept")?;}
                     if d.sent.is_some()&&(v["next"]==true||(!text.is_empty()&&d.text!=text)||d.root!=root) {d.next=true;}
                     d.text=text.into();d.title=title.into();d.root=root.into();
                     d.caret=serde_json::from_value(v["caret"].clone()).map_err(|_|"Invalid draft selection")?;
@@ -371,8 +375,14 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                     let runtime=if d.runtime.is_empty(){crate::runtime::OWNER}else{&d.runtime};
                     if m["runtime"].as_str()!=Some(runtime) {return Err("Draft runtime changed; refresh before sending".into());}
                     if !crate::runtime::owner::supported(runtime) {return Err("Selected owner runtime unsupported on this platform; draft kept".into());}
+                    if let Some(choice)=&d.choice {
+                        choice.validate(runtime)?;
+                        let host=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
+                        let target=crate::runtime::of(runtime).setup;
+                        choice.access(install,Path::new(&d.root),target,&host.permission_mode,&choice.codex(&host.codex))?;
+                    }
                     for f in &d.files {bytes(install,id,f)?;}
-                    d.next=false;d.sent=Some(Sent{revision:d.revision,text:d.text.clone(),root:d.root.clone(),runtime:runtime.into(),files:d.files.clone()});
+                    d.next=false;d.sent=Some(Sent{choice:d.choice.clone(),revision:d.revision,text:d.text.clone(),root:d.root.clone(),runtime:runtime.into(),files:d.files.clone()});
                 }
                 "reconcile"|"cancel"=>{if d.sent.is_none(){return Err("No submitted request to reconcile".into());}}
                 "delete"=>{
@@ -394,13 +404,14 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                 }
                 _=>return Err("Unsupported draft action".into()),
             }
-            let changed=prior!=(d.title.clone(),d.root.clone(),d.runtime.clone(),d.text.clone(),d.files.clone())||d.revision==0||action=="send";
+            let changed=prior!=(d.title.clone(),d.root.clone(),d.runtime.clone(),d.text.clone(),d.files.clone(),d.choice.clone())||d.revision==0||action=="send";
             d.revision=d.revision.checked_add(1).ok_or("Draft revision overflow")?;let sent=d.sent.clone();
             if changed {
                 if p["conversation_updated"].is_null() {p["conversation_updated"]=json!({});}
                 let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|"Conversation clock unavailable")?.as_millis();
                 p["conversation_updated"][id]=json!(now);
             }
+            if action=="save"&&d.sent.is_none() {p["launch_defaults"]=json!({"root":d.root,"runtime":d.runtime,"choice":d.choice,"choices":d.choices});}
             p["conversations"]=json!(drafts);persist(install,&p)?;Ok(sent)
         })?;
         if ["archive","restore"].contains(&action) {request_marks(install,id,action)?;}
@@ -409,7 +420,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
             let sent=sent.ok_or("Submitted input unavailable")?;
             if !registered.contains(&sent.root) {return Err("Submitted project is no longer registered; delivery unknown".into());}
             let task=task(install,id,&sent.text,&sent.files)?;
-            crate::setup::open_id(install,Path::new(&sent.root),&task,id,&sent.runtime,action=="reconcile")?;
+            crate::setup::open_choice(install,Path::new(&sent.root),&task,id,&sent.runtime,action=="reconcile",sent.choice.as_ref())?;
             let mut p=preferences(install)?;let history=p["history"].as_array().cloned().unwrap_or_default();
             p["history"]=json!(std::iter::once(json!(sent.text)).chain(history.into_iter().filter(|h|h.as_str()!=Some(sent.text.as_str()))).take(20).collect::<Vec<_>>());persist(install,&p)?;
         }
@@ -463,7 +474,7 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
                 value["tasks"]=json!(value["tasks"].as_array().into_iter().flatten().filter(|t|t["conversation"]["id"]==id).cloned().collect::<Vec<_>>());
                 value["tasks"]=json!(value["tasks"].as_array().into_iter().flatten().map(task_header).collect::<Vec<_>>());Ok(value)
             }
-            "activity"=>{let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;Ok(crate::dialogue::activity(&r))},
+            "activity"=>{let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;Ok(crate::dialogue::activity(install,&r))},
             "transcript"=>crate::dialogue::transcript(install,id,m["before"].as_u64(),m["after"].as_u64()),
             _=>Err("Unsupported dialogue read".into()),
         }
@@ -710,6 +721,32 @@ mod tests {
         let (_,_,read)=c.pending.take().unwrap();read.recv_timeout(Duration::from_secs(5)).unwrap();
     }
 
+    // A2/A4/C4: real durable path; stale authority cannot freeze input or replace the original launch/files.
+    #[test]
+    fn manager_choice_is_fenced_frozen_and_reconciled_with_its_files() {
+        let f=Fixture::new();let root=f.0.display().to_string();
+        fs::write(f.0.join("host.json"),"{}").unwrap();
+        let mut policy=json!({"revision":7,"grants":[{"runtime":"claude","mode":"full","project":f.0.canonicalize().unwrap(),"by":"invented operator","at":1}]});
+        fs::write(f.0.join(crate::policy::FILE),policy.to_string()).unwrap();
+        let mut choice=json!({"model":"","effort":"","permission":"inherit","grant_mode":"full","grant_revision":7});
+        let draft=|choice:&Value|json!({"draft":{"text":"Keep exact input","title":"","root":root,"runtime":"claude","caret":[1,3],"scroll":9,"choice":choice}});
+        assert_eq!(f.act("owner","save",draft(&choice))["state"],"accepted");
+        assert_eq!(f.attach("owner","fixture.txt","text/plain",b"invented bytes")["state"],"accepted");
+        let before=fs::read(f.0.join("tray-requests.json")).unwrap();
+        policy["revision"]=json!(8);fs::write(f.0.join(crate::policy::FILE),policy.to_string()).unwrap();
+        let refused=f.act("owner","send",json!({"runtime":"claude"}));assert_eq!(refused["state"],"unknown");assert!(refused["reason"].as_str().unwrap().contains("grant changed"));
+        assert_eq!(fs::read(f.0.join("tray-requests.json")).unwrap(),before);assert!(!crate::setup::dir(&f.0).join("owner.json").exists());
+        choice["grant_revision"]=json!(8);assert_eq!(f.act("owner","save",draft(&choice))["state"],"accepted");
+        assert_eq!(preferences(&f.0).unwrap()["launch_defaults"]["choice"],choice);
+        let sent=f.act("owner","send",json!({"runtime":"claude"}));assert_eq!(sent["state"],"accepted","{sent}");
+        let request=crate::setup::read(&crate::setup::dir(&f.0).join("owner.json")).unwrap();assert_eq!(json!(request.choice),choice);
+        assert!(request.brief.contains("fixture.txt"));let frozen=fs::read(crate::setup::dir(&f.0).join("owner.json")).unwrap();
+        choice["permission"]=json!("workspace");assert_eq!(f.act("owner","save",draft(&choice))["state"],"accepted");
+        assert_eq!(f.act("owner","reconcile",json!({}))["state"],"accepted");
+        assert_eq!(fs::read(crate::setup::dir(&f.0).join("owner.json")).unwrap(),frozen,"recovery retains the original choice and operation");
+        let row=&snapshot(&f.0)["items"][0];assert_eq!(row["files"].as_array().unwrap().len(),1);assert_eq!(row["sent"]["choice"]["permission"],"inherit");
+    }
+
     // R9/C4: per-draft runtime survives storage; a stale Send cannot freeze another runtime or erase work.
     #[test]
     fn owner_runtime_choice_is_saved_and_send_is_fenced() {
@@ -775,7 +812,7 @@ mod tests {
         fn unknown(_: &Path,_: &crate::setup::Request)->Res<bool> {Err("invented probe failure".into())}
         fn free(_: &Path,_: &crate::setup::Request)->Res<bool> {Ok(false)}
         let f=Fixture::new();f.save("owner","Keep this reply");f.attach("owner","note.txt","text/plain",b"Keep this file");
-        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"claude".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false};
+        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"claude".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false,choice:None};
         let dir=crate::setup::dir(&f.0);fs::create_dir_all(dir.join("owner")).unwrap();
         fs::write(dir.join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
         let original=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
@@ -801,7 +838,7 @@ mod tests {
         fn submit(_: &Path,_:&crate::setup::Request,_:&str)->Res<()>{panic!("UI never submits native input")}
         fn observe(_: &Path,_:&crate::setup::Request,_:&crate::dialogue::Turn)->Res<crate::dialogue::AppState>{panic!("UI acknowledgement never probes or resends")}
         let f=Fixture::new();f.save("owner","Keep exact App reply");f.attach("owner","note.txt","text/plain",b"Keep file");
-        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false};
+        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false,choice:None};
         let dir=crate::setup::dir(&f.0);fs::create_dir_all(dir.join("owner")).unwrap();fs::write(dir.join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
         let before=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
         let native=crate::dialogue::Native {app:Some(crate::dialogue::AppNative{baseline,submit,observe}),turn:never,holder:free};
@@ -825,7 +862,7 @@ mod tests {
         let t=crate::dialogue::Turn{op_id:Some("operation".into()),input:"Immutable native input".into(),state:"pending".into(),..Default::default()};
         fs::write(dir.join("turn.json"),serde_json::to_vec(&t).unwrap()).unwrap();
         assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["state"],"unknown","a turn without launched source identity cannot prove delivery");
-        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false};
+        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false,choice:None};
         fs::write(crate::setup::dir(&f.0).join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
         assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["state"],"unknown","a saved App intent without native acceptance must retain text/files");
         let t=crate::dialogue::Turn{app_accepted:true,..t};fs::write(dir.join("turn.json"),serde_json::to_vec(&t).unwrap()).unwrap();
@@ -961,7 +998,7 @@ mod tests {
     fn dialogue_reads_of_a_missing_transcript_are_unknown_never_empty() {
         let f=Fixture::new();let id="dialogue-1665";
         let r=crate::setup::Request{schema:2,id:id.into(),created:1,host:"h".into(),platform:"p".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),
-            state:"launched".into(),job:None,session:Some(crate::runtime::uuid()),url:None,reason:None,root:None,pm:false};
+            state:"launched".into(),job:None,session:Some(crate::runtime::uuid()),url:None,reason:None,root:None,pm:false,choice:None};
         fs::create_dir_all(crate::setup::dir(&f.0).join(id)).unwrap();
         fs::write(crate::setup::dir(&f.0).join(format!("{id}.json")),serde_json::to_string(&r).unwrap()).unwrap();
         let read=|action:&str|dialogue(&f.0,&json!({"id":"read","conversation":id,"action":action}));
