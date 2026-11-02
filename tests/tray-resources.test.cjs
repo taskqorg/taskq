@@ -34,6 +34,26 @@ const call=(name,...args)=>context[name](...args),plain=x=>JSON.parse(JSON.strin
   assert.deepEqual(plain(sent[1]),original,'retry freezes body, revisions and expiry despite later edits');
   call('resourceReceipt',{root:'p',id:'op-1',state:'rejected',reason:'config changed on disk'});
   assert.deepEqual(plain(await again),{state:'rejected',reason:'config changed on disk'});
+  const staleOp=call('resourceSend',g,{...op,id:'op-stale'});
+  call('resourceReceipt',{root:'p',id:'op-stale',state:'rejected',reason:'host policy changed; review current values before applying'});
+  assert.deepEqual(plain(await staleOp),{state:'rejected',reason:'host policy changed; review current values before applying'});
+  assert.deepEqual(plain(sent.pop()),{a:'refresh'},'#2160 A3: superseded expected_revision rejection refreshes snapshot revisions');
+  sent.pop();
+  {
+    const g0=modern.groups[0],g4=modern.groups[4],cap={edit:true};let n=0;
+    let l=rc.step(g0,{draft:null,op:null,receipt:null},cap,{type:'open'},()=>'id-'+ ++n,1000).local;
+    l=rc.step(g0,l,cap,{type:'input',key:'rt:codex',value:'4'},()=>'id-'+ ++n,1000).local;
+    l=rc.step(g0,l,cap,{type:'review'},()=>'id-'+ ++n,1000).local;
+    const c1=rc.step(g0,l,cap,{type:'confirm'},()=>'id-'+ ++n,1000);l=c1.local;
+    assert.equal(c1.send.ops[0].expected_revision,'1'.repeat(32));
+    l=rc.step(g0,l,cap,{type:'receipt',opId:c1.send.id,state:'rejected',reason:'host policy changed; review current values before applying'},()=>'id-'+ ++n,1000).local;
+    assert.equal(rc.status(g4,l,cap,1000),'editing','#2160 A3: refreshed snapshot binds to draft for immediate review');
+    l=rc.step(g4,l,cap,{type:'review'},()=>'id-'+ ++n,1000).local;
+    assert.equal(rc.status(g4,l,cap,1000),'review');
+    assert(rc.render(g4,l,cap,1000).includes('Codex 5 → 4'));
+    const c2=rc.step(g4,l,cap,{type:'confirm'},()=>'id-'+ ++n,1000);
+    assert.equal(c2.send.ops[0].expected_revision,'3'.repeat(32),'#2160 A3: confirmed retry after refresh uses superseded snapshot revision');
+  }
   const done=call('resourceSend',g,{...op,id:'op-3'});
   call('resourceReceipt',{root:'p',id:'op-3',state:'saved',saved_revision:'2'.repeat(32)});
   assert.deepEqual(plain(await done),{state:'saved',saved_revision:'2'.repeat(32)});

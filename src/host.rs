@@ -402,7 +402,7 @@ pub fn local_capacity(install:&Path,host:&str,request:&Value)->Res<Value> {
 /// The host already loaded this snapshot; a later writer cannot borrow its observation.
 pub fn observe_capacity(install:&Path,loaded:&Policy)->Res<Option<String>> {
     let Some(command)=loaded.command()? else {return Ok(None)};
-    coreq::telemetry::capture::operation("host.policy.observe",||crate::resources::try_locked(install,|| {
+    let observed=coreq::telemetry::capture::operation("host.policy.observe",||crate::resources::try_locked(install,|| {
         let current=Policy::read(install)?;
         let binding=&loaded.raw[CAPACITY_COMMAND];
         if current.raw!=loaded.raw || binding["host"]!=loaded.me || binding["policy"]!=loaded.cap.json() {
@@ -410,7 +410,13 @@ pub fn observe_capacity(install:&Path,loaded:&Policy)->Res<Option<String>> {
         }
         crate::telemetry::receipt(&command,"applied")?;
         crate::telemetry::receipt(&command,"observed").map(Some)
-    }),|_|"command-observation")
+    }),|_|"command-observation")?;
+    if observed.is_some() && let Ok(roots)=project_paths(install) {
+        for root in &roots {
+            if let Err(error)=crate::poke(root) {crate::platform::log(&error);}
+        }
+    }
+    Ok(observed)
 }
 
 /// Read the exact durable acknowledgment, never infer it from equal values or wall-clock freshness.
@@ -525,10 +531,11 @@ impl Host {
     }
 
     pub(crate) fn reload_admission(&mut self, policy: Res<Policy>, held: Option<String>, roots: &[PathBuf]) {
+        let policy_changed=policy.is_ok()&&self.policy!=policy;
         let was_blocked=self.policy.is_err()||self.held.is_some();
         self.reload(policy);
         self.held=held;
-        if was_blocked&&self.policy.is_ok()&&self.held.is_none() {
+        if policy_changed||(was_blocked&&self.policy.is_ok()&&self.held.is_none()) {
             for root in roots {
                 if let Err(error)=crate::poke(root) {crate::platform::log(&error);}
             }
@@ -1036,7 +1043,14 @@ pub fn run(install: &Path) -> Res<()> {
             match observe_capacity(install,&policy) {
                 Ok(command)=> {
                     let mut h=shared.lock().unwrap_or_else(|e|e.into_inner());
-                    if h.policy.as_ref().ok()==Some(&policy) {h.capacity_command=command;}
+                    let changed=h.policy.as_ref().ok()==Some(&policy)&&h.capacity_command!=command;
+                    if changed {h.capacity_command=command;}
+                    drop(h);
+                    if changed {
+                        for root in &roots {
+                            if let Err(error)=crate::poke(root) {crate::platform::log(&error);}
+                        }
+                    }
                 }
                 Err(e)=> {if reported!=e {crate::platform::log(&e);reported=e;}}
             }
@@ -2342,21 +2356,31 @@ mod tests {
     #[test]
     fn capacity_receipts_follow_the_loaded_command_not_equal_values() {
         let root=temp("capacity-receipt");
+        let proj=root.join("proj");fs::create_dir_all(crate::dot(&proj)).unwrap();
+        fs::write(root.join("projects"),format!("{}\n",proj.display())).unwrap();
+        let poke_paths=[crate::dot(&proj).join("poke"),root.join("host-poke")];
         fs::write(root.join("host.json"),"{\"limits\":{\"codex\":2}}").unwrap();
-        let owner=Policy::read(&root).unwrap().me;
+        let initial=Policy::read(&root).unwrap();
+        let owner=initial.me.clone();
+        let mut h=Host::new(Ok(initial));
         let edit=crate::CapEdit {limits:BTreeMap::from([("codex".into(),3)]),gate:Some(false),..Default::default()};
         assert!(write_capacity(&root,&owner,&edit,None).is_err(),"missing required receipts must refuse before effect");
         assert_eq!(Policy::read(&root).unwrap().cap.limits["codex"],2);
         let (capture,guard)=crate::profile::tests::collecting(&root);
         let (_,_,first)=write_capacity(&root,&owner,&edit,None).unwrap();
         let loaded=Policy::read(&root).unwrap();
+        let before_reload=crate::poke_times(&poke_paths);
+        h.reload_admission(Ok(loaded.clone()),None,std::slice::from_ref(&proj));
+        assert_ne!(crate::poke_times(&poke_paths),before_reload,"changed host Policy must wake registered project roots");
         assert!(!capacity_observed(&root,&first).unwrap());
         let (_,_,second)=write_capacity(&root,&owner,&edit,None).unwrap();
         let current=Policy::read(&root).unwrap();
         assert_eq!(loaded.cap,current.cap);assert_ne!(first.encode(),second.encode());
         assert!(observe_capacity(&root,&loaded).is_err(),"late old loader confirmed a different command");
         assert!(!capacity_observed(&root,&second).unwrap());
+        let before_observe=crate::poke_times(&poke_paths);
         assert_eq!(observe_capacity(&root,&current).unwrap(),Some(second.event_id("observed").unwrap()));
+        assert_ne!(crate::poke_times(&poke_paths),before_observe,"observed capacity command must wake registered project roots");
         assert!(observed_soon(&root,&second));
         assert!(capacity_observed(&root,&first).is_err());
         let mut edited=current.raw.clone();edited["limits"]["codex"]=json!(4);
