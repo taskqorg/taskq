@@ -18,6 +18,7 @@ mod core;
 mod control;
 mod data;
 mod doctor;
+mod health;
 mod deploy;
 mod dispatch;
 mod display;
@@ -103,7 +104,7 @@ const USAGE: &str = "taskq agents
  taskq reports ... (alias of results)
  taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
- taskq cleanup [--force] [--dry-run] [--all] | taskq doctor [--dry-run] | taskq update [--check]
+ taskq cleanup [--force] [--dry-run] [--all] | taskq doctor [--dry-run] [--hosts] [--json] | taskq update [--check]
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
  taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]
@@ -160,7 +161,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear") || k=="hosts"&&a.pos==["doctor"] || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -2776,6 +2777,86 @@ fn service(args: &Args) -> Res<()> {
     }
 }
 
+/// `taskq doctor [--dry-run] [--hosts] [--json]` ([host doctor](docs/design/host-service.md#host-doctor)): without
+/// `--hosts`, one cleanup pass now (#2060), the host-setup gap (#2078) and the health checks of every registered board
+/// (#2194); with `--hosts`, per board one table of every host's published health and one of the running workers, read
+/// from the board alone. `--json` prints the same rows.
+fn doctor_cmd(a: &Args) -> Res<()> {
+    if a.pos.len() != 1 || a.flags.keys().any(|k| !["dry-run", "hosts", "json"].contains(&k.as_str())) {
+        return Err("usage: taskq doctor [--dry-run] [--hosts] [--json]".into());
+    }
+    let (hosts, json_out) = (a.flags.contains_key("hosts"), a.flags.contains_key("json"));
+    let install = platform::default_install();
+    let (mut out, mut cleanup) = (vec![], Value::Null);
+    if !hosts {
+        let lines = doctor::cli(&install, a.flags.contains_key("dry-run"));
+        cleanup = json!(lines);
+        out.extend(lines);
+        // #2078: a project's missing one-time host setup is a host gap the doctor names too
+        if let Some(cfg) = find_root().ok().and_then(|r| load(&r).ok()).map(|(c, _)| c) {
+            if let Some(cmd) = cfg.host_setup.as_deref().filter(|c| !check::host_setup_done(&cfg.root, c)) {
+                out.extend(check::lines(&[check::host_setup_item(&cfg.root, cmd, false)]));
+            }
+        }
+    }
+    // every registered project of this host, else this project; one row set per board
+    let roots = host::projects(&install).ok().filter(|r| !r.is_empty()).or_else(|| find_root().ok().map(|r| vec![r])).unwrap_or_default();
+    let latest = if hosts { Err("not read".into()) } else { platform::latest_release(&install) };
+    let (mut seen, mut boards) = (std::collections::BTreeSet::new(), vec![]);
+    for root in roots {
+        let (cfg, raw) = match load(&root) {
+            Ok(v) => v,
+            Err(e) => {
+                out.push(format!("project {}: unknown: {e}", project_name(&root)));
+                boards.push(json!({"project": project_name(&root), "error": e}));
+                continue;
+            }
+        };
+        if !seen.insert(cfg.repo.clone()) { continue; }
+        let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install));
+        if !hosts {
+            let items = match &board {
+                Ok(b) => health::board_items(b.as_ref(), &cfg.repo, &cfg.root, &cfg.install, &latest),
+                Err(e) => health::unopened(&cfg.repo, e),
+            };
+            out.extend(health::lines(&cfg.repo, &items));
+            boards.push(json!({"board": cfg.repo, "items": items.iter().map(check::Item::json).collect::<Vec<_>>()}));
+            continue;
+        }
+        let b = match &board {
+            Ok(b) => b,
+            Err(e) => {
+                out.push(format!("board {}: unknown: {e}", cfg.repo));
+                boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
+                continue;
+            }
+        };
+        let mut s = snapshot::read(b.as_ref(), &cfg, &raw, &[]);
+        if let Some(e) = &s.reason {
+            out.push(format!("board {}: unknown: {e}", cfg.repo));
+            boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
+            continue;
+        }
+        // #2194 A2: every live host with health checks runs them now and answers in its heartbeat
+        if !json_out { eprintln!("board {}: asking every host to run its health checks (up to {}s)", cfg.repo, health::ASK_WAIT); }
+        let asked = health::ask(b.as_ref(), &mut s.hosts, s.observed, cfg.ttl, health::ASK_WAIT, health::ASK_POLL, &|t| std::thread::sleep(std::time::Duration::from_secs(t)));
+        let now = s.observed + asked.waited as i64;
+        let rows: Vec<Value> = s.hosts.iter().map(|h| health::host_row(h, &cfg.repo, now, cfg.ttl, Some(&asked))).collect();
+        let workers = health::worker_rows(&s, cfg.ttl);
+        out.extend(health::hosts_lines(&cfg.repo, &rows, &workers));
+        boards.push(json!({"board": cfg.repo, "hosts": rows, "workers": workers}));
+    }
+    if json_out {
+        let mut v = json!({"boards": boards});
+        if !hosts { v["cleanup"] = cleanup; }
+        println!("{v}");
+    } else {
+        if boards.is_empty() { out.push("doctor: no project registered on this host".into()); }
+        for l in out { println!("{l}"); }
+    }
+    Ok(())
+}
+
 /// § 6 Shared project bootstrap (#2078): run the project's `host_setup` once per host, outside any worker sandbox, and
 /// stamp it so the `host-setup` gap clears; a failure keeps the gap and says why. `None`: undeclared or already done.
 fn host_setup(cfg: &Config) -> Option<String> {
@@ -3287,16 +3368,7 @@ fn run(argv: &[String]) -> Res<()> {
             Ok(())
         }
         // #2060 (docs/design/host-service.md#host-doctor): one host doctor pass now; no board
-        "doctor" => {
-            for l in doctor::cli(&platform::default_install(), a.flags.contains_key("dry-run")) { println!("{l}"); }
-            // #2078: a project's missing one-time host setup is a host gap the doctor names too
-            if let Some(cfg) = find_root().ok().and_then(|r| load(&r).ok()).map(|(c, _)| c) {
-                if let Some(cmd) = cfg.host_setup.as_deref().filter(|c| !check::host_setup_done(&cfg.root, c)) {
-                    for l in check::lines(&[check::host_setup_item(&cfg.root, cmd, false)]) { println!("{l}"); }
-                }
-            }
-            Ok(())
-        }
+        "doctor" => doctor_cmd(&a),
         // § 5: an owner session (§ 4) in this project; no board
         "retro" => {
             let (cfg, _) = load(&find_root()?)?;

@@ -208,8 +208,8 @@ Target, not in force: [setup and project locations](docs/design/setup-and-projec
 ### Shared project bootstrap
 Setup is one agent conversation per project. Resolve the project name and exact folder; first inspect files, config, Git roots, remotes and visibility (`gh repo view`; never ask for it again). Preserve originals, dirty work, unknown config keys and ownership.
 Show the exact account, repository, visibility and every external effect (creation, labels, access, § 4 incident disclosure); apply only after the owner confirms that list. New repositories default to PRIVATE. Then verify a queue read and write; hand off to the PM. The tray's Add project holds this conversation in the menu (§ 4).
-
 One-time host setup (`host_setup` in `taskq.json`, e.g. shared git hooks) runs in `service install`, outside the worker sandbox, never by a worker; until it succeeds, `service check`, `service status` and `taskq doctor` show a `host-setup` gap.
+`taskq doctor` checks per board the token (Issues and Pull requests write, Contents read), installed vs latest release, report rows and the last service error, one fix per gap; `doctor --hosts [--json]` asks every host through the board and tables hosts and workers; no answer, stale or old reads unknown with reason ([host doctor](docs/design/host-service.md#health-checks-2194)).
 ## 7. Worker, reviewer, publication
 Worker brief: task, attempt, branch, commands, contract path (release URL if absent), folders (§ 8), CI wait (rule 7), stages (§ 2). Task grants only these commit/publication steps ([approval](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#approval-boundaries)). Rules:
 1. Read contract/issue; [prepare](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#prepare-the-task). Conflict (R13), ambiguous/untestable Acceptance or R2 split: ask with options before code.

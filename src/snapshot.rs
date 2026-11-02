@@ -422,6 +422,16 @@ pub struct Host {
     pub github: Option<u64>,
     /// Heartbeat `link <installation-id> <public key>` line ([host link](../docs/design/host-link.md), #1832).
     pub link: Option<String>,
+    /// Heartbeat `doctor <time> ...` text after `doctor ` ([health checks](../docs/design/host-service.md#health-checks-2194), #2194).
+    pub doctor: Option<String>,
+    /// Runtimes of the heartbeat's `login <rt> off` lines.
+    pub logins: Vec<String>,
+    /// The heartbeat issue number.
+    pub issue: u64,
+    /// Heartbeat `doctor-answer <id>`: the last `taskq doctor --hosts` request this host answered (#2194).
+    pub answer: Option<String>,
+    /// The text after `account ` of the heartbeat's account lines ([`crate::runtime::accounts::heartbeat_rows`]).
+    pub accounts: Vec<String>,
 }
 
 pub struct Snapshot {
@@ -502,9 +512,15 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         failed: (v.projection.task.state == State::Failed).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: failed")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
         later: (v.projection.task.state == State::Later).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: later")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
-    let hosts = hosts.iter().map(|h| Host {
+    let hosts = hosts.iter().map(|h| host(h, observed, cfg.ttl as i64)).collect();
+    Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
+}
+
+/// One host of a heartbeat issue `h` read at `observed`.
+pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
+    Host {
         balancing: crate::service::balancing_status(&h.body),
-        diagnostics: crate::service_versions::read(&h.body,h.updated,observed,cfg.ttl as i64,false),
+        diagnostics: crate::service_versions::read(&h.body,h.updated,observed,ttl,false),
         name: h.title.trim_start_matches("taskq host ").to_string(),
         service: h.body.lines().find_map(|l| l.strip_prefix("service ")).map(str::to_string),
         version: h.body.lines().find_map(|l| l.strip_prefix("version ")).unwrap_or("?").to_string(),
@@ -516,8 +532,12 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         github: h.body.lines().find_map(|l| l.strip_prefix("requests api.github.com ")?.strip_suffix("/h")?.parse::<u64>().ok()),
         // only a heartbeat the board trusts may name a key a host serves
         link: h.body.lines().find_map(|l| l.strip_prefix("link ")).filter(|_| h.trusted).map(str::to_string),
-    }).collect();
-    Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
+        doctor: h.body.lines().find_map(|l| l.strip_prefix("doctor ")).map(str::to_string),
+        logins: h.body.lines().filter_map(|l| l.strip_prefix("login ")?.strip_suffix(" off")).map(str::to_string).collect(),
+        issue: h.number,
+        answer: h.body.lines().find_map(|l| l.strip_prefix("doctor-answer ")).map(str::to_string),
+        accounts: h.body.lines().filter_map(|l| l.strip_prefix("account ")).map(str::to_string).collect(),
+    }
 }
 
 /// O1: ordered board stages, with unknown boundaries retained. The fold still owns transitions.

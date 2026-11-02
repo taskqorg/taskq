@@ -509,6 +509,22 @@ fn service_update_locked(install:&Path)->Result<Option<String>,String> {
     channel_update(install,&|name,to| coreq::update::download(&format!("https://github.com/{RELEASE_REPO}/releases/latest/download/{name}"),to))
 }
 
+/// #2194 doctor `version`: the version of the latest release's `latest.json`.
+pub fn latest_release(install:&Path)->Result<String,String> {
+    latest_with(install,&|name,to| coreq::update::download(&format!("https://github.com/{RELEASE_REPO}/releases/latest/download/{name}"),to))
+}
+
+fn latest_with(install:&Path,fetch:&dyn Fn(&str,&Path)->Result<(),String>)->Result<String,String> {
+    fs::create_dir_all(install).map_err(|e|e.to_string())?;
+    let probe=install.join(format!("latest.json.{}",std::process::id()));
+    let read=fetch("latest.json",&probe).and_then(|_|fs::read(&probe).map_err(|e|e.to_string()));
+    let _=fs::remove_file(&probe);
+    let latest:serde_json::Value=serde_json::from_slice(&read?).map_err(|e|format!("latest.json: {e}"))?;
+    let ver=latest["version"].as_str().ok_or("latest.json: no version")?;
+    if ver.is_empty()||ver.len()>80||!ver.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'.'||c==b'-') {return Err(format!("latest.json: unexpected version {ver:?}"));}
+    Ok(ver.into())
+}
+
 /// § 8 item 1 host channel: host.json `channel` `dev|live`; a missing file or key reads `live`.
 pub fn channel(install:&Path)->Result<&'static str,String> {
     let v:serde_json::Value=match fs::read(install.join("host.json")) {
@@ -1345,6 +1361,20 @@ mod tests {
         assert!(!root.join("scripts/dev-install.sh").exists()&&git(&root,&["status","--porcelain"]).is_empty(),"root working tree untouched");
         assert_eq!(git(&root,&["rev-parse","origin/main"]),tracking,"shared remote-tracking ref untouched");
         fs::remove_dir_all(&base).unwrap();
+    }
+
+    // Chain: § 8 update -> doctor `version` (#2194). Risk: the doctor trusted any `latest.json` text or left its probe
+    // behind. Protection: only a plain version is returned and the probe file is always removed.
+    #[test]
+    fn latest_release_reads_a_plain_version_and_leaves_no_probe() {
+        let install=std::env::temp_dir().join(format!("taskq-latest-{}",crate::runtime::uuid()));
+        for (body,want) in [(r#"{"version":"4.6.60"}"#,Ok("4.6.60")),(r#"{"version":"4.6.60; rm"}"#,Err(())),(r#"{}"#,Err(()))] {
+            let fetch=|_:&str,to:&Path|fs::write(to,body).map_err(|e|e.to_string());
+            assert_eq!(latest_with(&install,&fetch).as_deref().map_err(|_|()),want,"{body}");
+            assert!(fs::read_dir(&install).unwrap().next().is_none(),"probe removed");
+        }
+        assert!(latest_with(&install,&|_,_|Err("offline".into())).is_err());
+        fs::remove_dir_all(&install).unwrap();
     }
 
     // Chain: § 8 item 1 host channel dev -> live. Risk: a dev host installs a release, a live host stays on a -dev
