@@ -422,6 +422,10 @@ pub struct Host {
     pub github: Option<u64>,
     /// Heartbeat `link <installation-id> <public key>` line ([host link](../docs/design/host-link.md), #1832).
     pub link: Option<String>,
+    /// Heartbeat `doctor <time> ...` text after `doctor ` ([health checks](../docs/design/host-service.md#health-checks-2194), #2194).
+    pub doctor: Option<String>,
+    /// Runtimes of the heartbeat's `login <rt> off` lines.
+    pub logins: Vec<String>,
 }
 
 pub struct Snapshot {
@@ -516,6 +520,8 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         github: h.body.lines().find_map(|l| l.strip_prefix("requests api.github.com ")?.strip_suffix("/h")?.parse::<u64>().ok()),
         // only a heartbeat the board trusts may name a key a host serves
         link: h.body.lines().find_map(|l| l.strip_prefix("link ")).filter(|_| h.trusted).map(str::to_string),
+        doctor: h.body.lines().find_map(|l| l.strip_prefix("doctor ")).map(str::to_string),
+        logins: h.body.lines().filter_map(|l| l.strip_prefix("login ")?.strip_suffix(" off")).map(str::to_string).collect(),
     }).collect();
     Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
 }

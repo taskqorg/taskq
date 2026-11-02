@@ -702,6 +702,22 @@ impl Board for GitHub {
             Err(e) => Probe::Unknown(e),
         }
     }
+    /// #2194: one `per_page=1` read of issues, commits (Contents: Read) and pulls; 401, 403 or 404 names the status.
+    fn access(&self) -> Vec<(&'static str, crate::check::Probe)> {
+        use crate::check::Probe;
+        [("Issues", "/issues?per_page=1"), ("Contents", "/commits?per_page=1"), ("Pull requests", "/pulls?per_page=1")].into_iter().map(|(name, path)| {
+            let probe = match self.api.refresh().and_then(|_| self.api.call("GET", path, None)) {
+                Ok(_) => Probe::Ok,
+                Err(e) => match crate::health::http_status(&e) {
+                    // an empty repository answers 409 to a reader that may read it
+                    Some(409) if name == "Contents" => Probe::Ok,
+                    Some(s @ (401 | 403 | 404)) => Probe::Gap(format!("HTTP {s}")),
+                    _ => Probe::Unknown(e),
+                },
+            };
+            (name, probe)
+        }).collect()
+    }
     fn canonical_labels(&self) -> Result<bool> {
         self.api.canonical_labels()
     }

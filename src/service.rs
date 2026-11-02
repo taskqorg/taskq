@@ -311,7 +311,7 @@ pub fn host_of(t: &Task) -> Option<&str> {
 }
 
 /// `rt` and the session id of a `spawn` session.
-fn rt_of(t: &Task) -> Option<(&str, &str)> {
+pub(crate) fn rt_of(t: &Task) -> Option<(&str, &str)> {
     t.session.as_deref()?.split(' ').next()?.split_once(':')
 }
 
@@ -583,6 +583,8 @@ pub struct Service<'a> {
     pub version: String,
     started: u64,
     diagnostics: std::cell::RefCell<Option<(std::time::Instant,Value)>>,
+    /// #2194: when the health checks last ran and their heartbeat `doctor` line.
+    health: Option<(std::time::Instant, String)>,
     pub kids: Vec<Kid>,
     /// `service <id>` in the heartbeat (§ 4): a hash of `<install>/installation-id`; empty writes no line.
     pub instance: String,
@@ -936,7 +938,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { progress_clock: |_| crate::runtime::now(), last_spawn: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), last_spawn: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1643,6 +1645,7 @@ impl<'a> Service<'a> {
         // § 3 Runtime accounts: labels and state only, never an email, path or token
         lines.extend(crate::runtime::accounts::Host::read(&self.cfg.install).heartbeat(self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now())));
         lines.extend(tray_fault(&self.cfg.install).map(|code| format!("tray {code}")));
+        lines.extend(self.health.as_ref().map(|(_, line)| line.clone()));
         // #1985, #2084: this host's billed requests of its last full hour, in all and per API host: its share of each
         // board user's quota
         lines.extend(self.host.as_ref().and_then(|h| { let h = h.lock().ok()?; Some(crate::requests::heartbeat(h.last_hour.as_ref()?, h.hosts_last_hour.as_ref())) }).unwrap_or_default());
@@ -1651,6 +1654,15 @@ impl<'a> Service<'a> {
         lines.extend(self.kids.iter().filter_map(|k| k.session_url.as_ref().map(|u| format!("session #{} {} {u}", k.task, k.attempt))));
         lines.extend(self.execution_statuses().iter().map(|s|format!("execution {}",serde_json::to_string(s).unwrap())));
         lines.join("\n")
+    }
+
+    /// #2194 [health checks](../docs/design/host-service.md#health-checks-2194): token reads, version against the
+    /// latest release the host doctor read, report collection and the last pass error, as the heartbeat `doctor` line.
+    fn refresh_health(&mut self) {
+        let latest = crate::health::cached_latest(&self.cfg.install);
+        let items = crate::health::board_items(self.board, &self.cfg.repo, &self.cfg.root, &self.cfg.install, &latest);
+        let at = self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now());
+        self.health = Some((std::time::Instant::now(), crate::health::line(at, &items)));
     }
 
     /// #1819: the next pass reads `task`'s comments from the board, not from the cache.
@@ -1665,6 +1677,10 @@ impl<'a> Service<'a> {
         self.ownership_known = false;
         if self.host.is_none() {
             if let Err(e) = crate::profile::prune(&self.cfg.install) { eprintln!("taskq: telemetry unknown: {e}"); }
+        }
+        // #2194: an installed service checks its board's health every `health::EVERY` seconds for its heartbeat
+        if crate::installed(&self.cfg.install) && self.health.as_ref().is_none_or(|(at, _)| at.elapsed().as_secs() >= crate::health::EVERY) {
+            self.refresh_health();
         }
         let r = crate::profile::measure("service.pass", || self.pass_inner(NATIVE_PASS_BUDGET));
         if r.is_err() { self.unready(); }
@@ -5345,6 +5361,10 @@ Open: none")).unwrap();
         s.machine = String::new();
         s.focus = vec!["all".into()];
         assert_eq!(legacy(&s), "version 4.0.0\nservice abc123");
+        // #2194: the last health check goes with the heartbeat `taskq doctor --hosts` reads
+        s.health = Some((std::time::Instant::now(), "doctor 5 token-contents:gap".into()));
+        assert_eq!(legacy(&s), "version 4.0.0\nservice abc123\ndoctor 5 token-contents:gap");
+        s.health = None;
         // #1204: a live Claude child publishes its account-scoped URL; every host's snapshot reads it back by host and attempt
         s.pending.insert((7, 42));
         s.kids.push(Kid { unknown:None, stopping:false, session_url:Some("https://claude.ai/code/session_014abc".into()), task:7,attempt:42,execution:42,rt:"claude".into(),proc:Box::new(FakeProc(Default::default())) });

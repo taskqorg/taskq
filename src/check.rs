@@ -56,9 +56,9 @@ pub struct Item {
 }
 
 impl Item {
-    fn ok(id: impl Into<String>, text: impl Into<String>) -> Self { Item { id: id.into(), status: "ok", text: text.into(), fix: None } }
-    fn gap(id: impl Into<String>, text: impl Into<String>, fix: impl Into<String>) -> Self { Item { id: id.into(), status: "gap", text: text.into(), fix: Some(fix.into()) } }
-    fn unknown(id: impl Into<String>, text: impl Into<String>, fix: impl Into<String>) -> Self { Item { id: id.into(), status: "unknown", text: text.into(), fix: Some(fix.into()) } }
+    pub(crate) fn ok(id: impl Into<String>, text: impl Into<String>) -> Self { Item { id: id.into(), status: "ok", text: text.into(), fix: None } }
+    pub(crate) fn gap(id: impl Into<String>, text: impl Into<String>, fix: impl Into<String>) -> Self { Item { id: id.into(), status: "gap", text: text.into(), fix: Some(fix.into()) } }
+    pub(crate) fn unknown(id: impl Into<String>, text: impl Into<String>, fix: impl Into<String>) -> Self { Item { id: id.into(), status: "unknown", text: text.into(), fix: Some(fix.into()) } }
     pub fn json(&self) -> Value { json!({"id": self.id, "status": self.status, "text": self.text, "fix": self.fix}) }
 }
 

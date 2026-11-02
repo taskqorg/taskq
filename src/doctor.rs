@@ -84,10 +84,12 @@ fn lock(install: &Path) -> Result<coreq::file_lock::Lock, String> {
 }
 
 /// The host loop's doctor schedule: one background pass at a time, so a large backlog never delays a host tick.
-pub struct Doctor { began: Instant, last: Option<Instant>, running: Option<std::thread::JoinHandle<Option<String>>> }
+pub struct Doctor { began: Instant, last: Option<Instant>, running: Option<std::thread::JoinHandle<Option<String>>>,
+    /// #2194: the latest release read every `health::EVERY` seconds for the project services' health checks.
+    release: Option<Instant>, releasing: Option<std::thread::JoinHandle<()>> }
 
 impl Default for Doctor {
-    fn default() -> Self { Doctor { began: Instant::now(), last: None, running: None } }
+    fn default() -> Self { Doctor { began: Instant::now(), last: None, running: None, release: None, releasing: None } }
 }
 
 impl Doctor {
@@ -96,6 +98,13 @@ impl Doctor {
         let mut line = None;
         if self.running.as_ref().is_some_and(std::thread::JoinHandle::is_finished) {
             line = self.running.take().and_then(|h| h.join().unwrap_or_else(|_| Some("doctor: pass panicked; outcome unknown".into())));
+        }
+        if self.releasing.as_ref().is_some_and(std::thread::JoinHandle::is_finished) { let _ = self.releasing.take().map(std::thread::JoinHandle::join); }
+        if self.releasing.is_none() && self.release.is_none_or(|l| l.elapsed().as_secs() >= crate::health::EVERY) {
+            self.release = Some(Instant::now());
+            let install = install.to_path_buf();
+            // an unread release shows as `version` unknown in doctor; no log line per failed read
+            self.releasing = std::thread::Builder::new().name("taskq-release-read".into()).spawn(move || { let _ = crate::health::record_latest(&install); }).ok();
         }
         let due = self.last.map_or(self.began.elapsed().as_secs() >= FIRST, |l| l.elapsed().as_secs() >= EVERY);
         if self.running.is_none() && due {
