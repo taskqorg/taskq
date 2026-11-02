@@ -122,7 +122,16 @@ pub(super) fn launch(install:&Path,home:&Path,r:&Request,key:&str)->Res<()> {
     errors.set_read_timeout(None).map_err(|_|"scope stderr stream unavailable")?;
     let stderr=std::thread::spawn(move||io::copy(&mut &errors,&mut io::stderr().lock()));
     output.get_ref().set_read_timeout(None).map_err(|_|"scope stdout stream unavailable")?;
-    io::copy(&mut output,&mut io::stdout().lock()).map_err(|_|"native stdout interrupted; retain scope")?;
+    // Name the failing side: a lost consumer and a broken scope transport need different recovery evidence.
+    let mut stdout=io::stdout().lock();
+    loop {
+        let n=match output.fill_buf() {
+            Ok([])=>break,Ok(b)=>{stdout.write_all(b).map_err(|_|"native stdout interrupted: consumer stdout write failed; retain scope")?;b.len()},
+            Err(e) if e.kind()==io::ErrorKind::Interrupted=>continue,
+            Err(_)=>return Err("native stdout interrupted: scope transport read failed; retain scope".into()),
+        };output.consume(n);
+    }
+    stdout.flush().map_err(|_|"native stdout interrupted: consumer stdout write failed; retain scope")?;
     stderr.join().map_err(|_|"native stderr interrupted")?.map_err(|_|"native stderr delivery unknown")?;
     let ended=record(install,r,key)?;
     if ended["native_ok"]==true {Ok(())}else{Err("native stream ended without a successful root outcome; reconcile original scope".into())}
@@ -173,18 +182,23 @@ pub(super) fn run(key:&str)->Res<()> {
             coreq::process::terminate(&id).map_err(|_|"native stop unconfirmed; scope retained")?;
         }
     }
-    let mut pumps=Some([stdout_pump,stderr_pump]);
+    let mut pumps=Some([stdout_pump,stderr_pump]);let mut delivered=None;
     loop {
         membership(&supervisor,&binding)?;
         let c=counts(binding["coalition"].as_u64().ok_or("coalition unknown")?)?;
         if c[0].checked_sub(c[1])==Some(1) {
             // Finish output before the certificate can authorize supervisor cleanup.
+            let mut sent=Vec::new();
             for pump in pumps.take().ok_or("native output drain already consumed; retain scope")? {
-                pump.join().map_err(|_|"native output forwarding interrupted; retain scope")?.map_err(|_|"native output forwarding failed; retain scope")?;
+                sent.push(pump.join().map_err(|_|"native output forwarding interrupted; retain scope")?.map_err(|_|"native output drain failed; retain scope")?);
             }
-            membership(&supervisor,&binding)?;
+            membership(&supervisor,&binding)?;delivered=Some(json!(sent));
         }
-        let done=resources::within(&install,resources::WAIT,|s|certify(s,key,&r,&supervisor,&binding,c))?;
+        let done=resources::within(&install,resources::WAIT,|s| {
+            // Frontend loss makes output delivery false; kernel accounting alone still decides completion.
+            if let Some(sent)=&delivered {launch_record(s,key,&r)?;s.ops.get_mut(key).unwrap().bound["local_slot"]["launch"]["output_delivered"]=sent.clone();}
+            certify(s,key,&r,&supervisor,&binding,c)
+        })?;
         if done {let _=output.shutdown(Shutdown::Both);break;}
         std::thread::sleep(Duration::from_millis(250));
     }
@@ -306,5 +320,15 @@ mod tests {
         assert!(line(&mut BufReader::new(reader),32).is_err());
         let (mut writer,reader)=UnixStream::pair().unwrap();writer.write_all(b"oversize\n").unwrap();
         assert!(line(&mut BufReader::new(reader),4).is_err());
+    }
+    // Chain: R12 #2175 A1 — the d9ea8cef refusal: macOS rejects SO_RCVTIMEO with EINVAL once the frontend closed its socket.
+    // Risk: the supervisor reports frontend loss as an unavailable input bound after native spawn instead of input EOF.
+    #[test]
+    fn protected_scope_input_bound_precedes_frontend_loss() {
+        let (frontend,supervisor)=UnixStream::pair().unwrap();drop(frontend);
+        assert_eq!(supervisor.set_read_timeout(Some(Duration::from_millis(250))).unwrap_err().raw_os_error(),Some(libc::EINVAL));
+        let (frontend,mut supervisor)=UnixStream::pair().unwrap();
+        supervisor.set_read_timeout(Some(Duration::from_millis(250))).unwrap();drop(frontend);
+        assert_eq!(io::Read::read(&mut supervisor,&mut [0u8;8]).unwrap(),0,"bound set before spawn turns frontend loss into input EOF");
     }
 }

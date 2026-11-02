@@ -126,7 +126,22 @@ mod tests {
         supervisor.read_exact(&mut bytes).unwrap();assert_eq!(&bytes,b"ungated native input");
         output.write_all(b"native output").unwrap();drop(output);
         let mut received=[0u8;13];consumer.read_exact(&mut received).unwrap();assert_eq!(&received,b"native output");
-        assert_eq!(pump.join().unwrap().unwrap(),13);
+        assert!(pump.join().unwrap().unwrap());
+    }
+    // Chain: R9 R12 #2175 A1/A2 — frontend loss after verified-effective must not abort descendant completion.
+    // Risk: an output write error after the consumer disconnects ends the supervisor before its certificate, leaving the original slot unreconcilable.
+    #[cfg(unix)]
+    #[test]
+    fn protected_native_output_drains_after_frontend_loss() {
+        use std::{io::Write,os::unix::net::UnixStream};
+        let (consumer,supervisor)=UnixStream::pair().unwrap();
+        let (output,pump)=native_output(supervisor).unwrap();
+        drop(consumer);
+        // More than any socket buffer: native output must never block or break once the frontend is gone.
+        let mut output=fs::File::from(output);
+        for _ in 0..64 {output.write_all(&[b'x';16384]).unwrap();}
+        drop(output);
+        assert!(!pump.join().unwrap().unwrap(),"lost frontend output is drained and reported undelivered");
     }
     struct Fixture {dir:PathBuf,root:PathBuf,home:PathBuf,bin:PathBuf,r:Request,p:policy::Policy}
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.dir);}}
@@ -577,11 +592,20 @@ fn sandbox_result(operation:&str,category:&str,result:i32,errno:Option<i32>,deni
 }
 
 #[cfg(any(target_os="macos",all(test,unix)))]
-fn native_output(mut socket:std::os::unix::net::UnixStream)->Res<(std::os::fd::OwnedFd,std::thread::JoinHandle<std::io::Result<u64>>)> {
+fn native_output(mut socket:std::os::unix::net::UnixStream)->Res<(std::os::fd::OwnedFd,std::thread::JoinHandle<std::io::Result<bool>>)> {
     let (mut reader,writer)=std::io::pipe().map_err(|_|"native output pipe unavailable; retain scope")?;
     // Native code must never inherit the duplex socket that carries input before validation.
-    let pump=std::thread::Builder::new().spawn(move||std::io::copy(&mut reader,&mut socket))
-        .map_err(|_|"native output forwarding unavailable; retain scope")?;
+    // Drain to native EOF even after the frontend is lost: delivery becomes false, never an aborted certification.
+    let pump=std::thread::Builder::new().spawn(move||{
+        use std::io::{Read,Write};
+        let (mut bytes,mut delivered)=(vec![0u8;65536],true);
+        loop {match reader.read(&mut bytes) {
+            Ok(0)=>return Ok(delivered),
+            Ok(n)=>if delivered&&socket.write_all(&bytes[..n]).is_err() {delivered=false;},
+            Err(e) if e.kind()==std::io::ErrorKind::Interrupted=>{},
+            Err(e)=>return Err(e),
+        }}
+    }).map_err(|_|"native output forwarding unavailable; retain scope")?;
     Ok((writer.into(),pump))
 }
 
@@ -741,6 +765,8 @@ mod mac {
         println!("{receipt}");Ok(())
     }
     pub(super) fn launch_native(install:&Path,home:&Path,r:&Request,key:&str,mut transport:std::io::BufReader<std::os::unix::net::UnixStream>,stdout:Stdio,stderr:Stdio)->Res<()> {
+        // macOS refuses SO_RCVTIMEO with EINVAL once the frontend closed the socket; bind the bound before any native spawn.
+        transport.get_ref().set_read_timeout(Some(Duration::from_millis(250))).map_err(|_|"scope input transport closed before native spawn; no native launch")?;
         let original=resources::within(install,resources::WAIT,|s|Ok(launch_record(s,key,r)?.clone()))?;
         let p=refresh(install,home,r,&original["authority"])?;
         let supervisor=coreq::process::identity(std::process::id()).map_err(|_|"supervisor identity unknown")?.ok_or("supervisor absent")?;
@@ -780,7 +806,6 @@ mod mac {
         if let Err(e)=gate {drop(input);let _=coreq::process::terminate(&id);return Err(e);}
         let flags=unsafe{libc::fcntl(input.as_raw_fd(),libc::F_GETFL)};
         if flags<0||unsafe{libc::fcntl(input.as_raw_fd(),libc::F_SETFL,flags|libc::O_NONBLOCK)}<0 {return Err("bounded native input unavailable; intent retained".into());}
-        transport.get_ref().set_read_timeout(Some(Duration::from_millis(250))).map_err(|_|"bounded scope input unavailable")?;
         loop {
             if let Some(status)=child.try_wait().map_err(|_|"native liveness unknown; slot retained")? {
                 return if status.success(){Ok(())}else{Err("native app-server exited; turn outcome unproved, slot retained".into())};
