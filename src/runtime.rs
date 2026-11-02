@@ -1427,6 +1427,11 @@ pub fn handover_waits(rt:&str,p:&dyn Proc)->bool {
     a.app || a.remote&&p.native_identity().is_err()
 }
 
+/// § 8 step 3 on Windows: the image exit waits for every live child and every Codex app turn. #2228: a turn whose
+/// process was never observed (pid 0, e.g. an ambiguous Claude job after a hand-in) is childless; the next image
+/// reads its unresolved execution from the board, like #1435, instead of the exit waiting for it forever.
+pub fn exit_waits(rt:&str,p:&dyn Proc)->bool {of(rt).app || p.id()!=0}
+
 /// Reconnect observation only. This path cannot submit a prompt, queue a turn or change access.
 pub fn recover(root:&Path,install:&Path,task:u64,x:&crate::core::Execution)->Result<Box<dyn Proc>,String> {
     if x.release.is_some() {return Err("released execution cannot be recovered as live".into());}

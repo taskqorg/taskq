@@ -2489,7 +2489,7 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
 /// § 8 step 3: what a pending re-exec waits for. Windows waits for every live child; elsewhere CLI children and
 /// Claude background turns with a saved native identity pass over (#1407); codex-app turns wait.
 fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
-    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || runtime::handover_waits(&k.rt,k.proc.as_ref())).map(|k| format!("#{}", k.task)).collect();
+    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || if cfg!(windows) {runtime::exit_waits(&k.rt,k.proc.as_ref())} else {runtime::handover_waits(&k.rt,k.proc.as_ref())}).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
     // a refused resume (#1601) or Stop (#1769) leaves a childless attempt to the next start
     w.extend(s.handoff_waits(true, cfg!(windows) && !stopping));

@@ -3070,8 +3070,9 @@ mod tests {
         fn kill(&mut self) -> Result<(), String> {
             *self.0.borrow_mut() = Some(-9); Ok(())
         }
+        // a live owned child: nonzero like any OS process (#2228: pid 0 is a turn with no observed process)
         fn id(&self) -> u32 {
-            0
+            1
         }
     }
 
@@ -4339,6 +4340,31 @@ Open: none")).unwrap();
         s.pending.remove(&(n,1));
         if cfg!(windows) {assert!(crate::lifecycle_waits(&s,false).is_empty());}
         assert!(!crate::lifecycle_waits(&s,true).is_empty(),"stop still waits");
+    }
+
+    // #2228: on win a handed-in Claude resume whose native job stayed ambiguous (pid 0) held the 4.6.59 image exit
+    // forever ("restart pending over 600 s; waits for taskq #2188"). Risk kept: live children, app turns and Stop wait.
+    #[test]
+    fn windows_exit_passes_turn_without_observed_process() {
+        struct NoPid;
+        impl Proc for NoPid {
+            fn exited(&mut self) -> Result<Option<i32>, String> {Err("Claude original input matches multiple native candidates; inspect them before release".into())}
+            fn kill(&mut self) -> Result<(), String> {Err("Claude stop identity unavailable".into())}
+            fn id(&self) -> u32 {0}
+        }
+        let b=Fake::default();
+        let c=cfg("mac");
+        let mut s=service(&b,&c,Default::default());
+        s.ownership_known=true;
+        let kid=|task,rt:&str,proc:Box<dyn Proc>|Kid {unknown:None,stopping:false,session_url:None,execution:task,task,attempt:task,rt:rt.into(),proc};
+        s.kids.push(kid(1,"claude",Box::new(NoPid)));
+        assert!(!crate::runtime::exit_waits("claude",&NoPid),"no observed process: the image exit passes over it");
+        assert!(crate::runtime::exit_waits("codex-app",&NoPid),"an app turn still defers the exit");
+        assert!(crate::runtime::exit_waits("claude",&FakeProc(Rc::new(RefCell::new(None)))),"a live child still defers the exit");
+        if cfg!(windows) {assert!(crate::lifecycle_waits(&s,false).is_empty(),"{:?}",crate::lifecycle_waits(&s,false));}
+        assert_eq!(crate::lifecycle_waits(&s,true),["#1"],"stop still waits");
+        s.kids.push(kid(2,"claude",Box::new(FakeProc(Rc::new(RefCell::new(None))))));
+        if cfg!(windows) {assert_eq!(crate::lifecycle_waits(&s,false),["#2"]);}
     }
 
     // Chain: #1359 § 3 claim -> launch -> acceptance, one pass. Risk: a claim rereads the task log the pass just read.
