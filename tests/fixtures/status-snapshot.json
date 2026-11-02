@@ -124,7 +124,14 @@
           "reason": "no live attempt"
         },
         "as_of": 102,
-        "warning": null
+        "warning": null,
+        "input_pending": false,
+        "executor": {
+          "state": "not applicable",
+          "reason": "no live attempt",
+          "observed": null,
+          "source": "board task projection"
+        }
       },
       "controls": [
         "stop",
@@ -209,7 +216,14 @@
           "reason": "no live attempt"
         },
         "as_of": 102,
-        "warning": null
+        "warning": null,
+        "input_pending": false,
+        "executor": {
+          "state": "not applicable",
+          "reason": "no live attempt",
+          "observed": null,
+          "source": "board task projection"
+        }
       },
       "controls": [
         "stop",
@@ -302,7 +316,14 @@
           "reason": "no live attempt"
         },
         "as_of": 102,
-        "warning": null
+        "warning": null,
+        "input_pending": false,
+        "executor": {
+          "state": "not applicable",
+          "reason": "no live attempt",
+          "observed": null,
+          "source": "board task projection"
+        }
       },
       "controls": [
         "stop",
@@ -360,7 +381,14 @@
           "reason": "no live attempt"
         },
         "as_of": 102,
-        "warning": null
+        "warning": null,
+        "input_pending": false,
+        "executor": {
+          "state": "not applicable",
+          "reason": "no live attempt",
+          "observed": null,
+          "source": "board task projection"
+        }
       },
       "controls": [
         "retry"
@@ -417,7 +445,14 @@
           "reason": "no live attempt"
         },
         "as_of": 102,
-        "warning": null
+        "warning": null,
+        "input_pending": false,
+        "executor": {
+          "state": "not applicable",
+          "reason": "no live attempt",
+          "observed": null,
+          "source": "board task projection"
+        }
       },
       "controls": [
         "stop",

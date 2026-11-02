@@ -139,14 +139,19 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
 /// Only issues labelled `taskq` are tasks (§ 1): a user issue never starts by itself.
 /// Heartbeat lines a write compares: the `at` stamp and diagnostics observation times change every pass (#1358).
 fn stable(body: &str) -> Vec<String> {
-    body.lines().filter(|l| !l.starts_with("at ")).map(|l| match l.strip_prefix("diagnostics ").and_then(|t| serde_json::from_str::<Value>(t).ok()) {
+    body.lines().filter(|l| !l.starts_with("at ")).map(|l| {
+        if let Some(mut execution)=l.strip_prefix("execution ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
+            if let Some(progress)=execution.get_mut("progress").and_then(Value::as_object_mut) {progress.remove("observed");}
+            return format!("execution {execution}");
+        }
+        match l.strip_prefix("diagnostics ").and_then(|t| serde_json::from_str::<Value>(t).ok()) {
         Some(Value::Object(mut d)) => {
             d.remove("observed");
             d.values_mut().filter_map(Value::as_object_mut).for_each(|f| { f.remove("at"); });
             format!("diagnostics {}", Value::Object(d))
         }
         _ => l.to_string(),
-    }).collect()
+    }}).collect()
 }
 
 /// #1616: a host admission refusal (`admission.rs` code, or `host.rs` reason under code `host`) as an admission code.
@@ -1641,6 +1646,7 @@ impl<'a> Service<'a> {
                     if let Some(reason)=self.execution_waits.get(&row.n).or_else(|| self.waits.get(&row.n)) {row.execution_wait=Some(reason.clone());}
                 }
                 if let Some(x)=row.executions.iter().find(|x|x["attempt"].as_u64()==row.task.attempt) {row.heartbeat["progress"]=x["progress"].clone();}
+                row.heartbeat["executor"]=crate::snapshot::executor(&row.task,&row.executions,row.heartbeat["input_pending"]==true,snapshot.observed,self.cfg.ttl);
                 crate::snapshot::refresh_heartbeat(&mut row.heartbeat,snapshot.observed,matches!(row.task.state,State::Doing|State::Review)&&row.task.attempt.is_some());
             }
         }
@@ -8020,6 +8026,9 @@ Open: none";
         let mut s=Service::new(&b,&c,"test",Box::new(|_|panic!("monitor cannot replay work")));
         s.adopt(Kid{execution:a,task:n,attempt:a,rt:"antigravity".into(),proc:Box::new(Observed(path.clone())),unknown:None,stopping:false,session_url:None}).unwrap();
         s.pass().unwrap();s.pass().unwrap();
+        let beat_time=|b:&Fake|b.issues(None).unwrap().into_iter().find(|i|i.title=="taskq host mac").unwrap().updated;
+        let before=beat_time(&b);b.advance(10);s.pass().unwrap();s.pass().unwrap();
+        assert_eq!(beat_time(&b),before,"quiet progress observations do not burn a heartbeat write every pass");
         b.advance(901);
         s.pass().unwrap();s.pass().unwrap();
         let row=s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().json();

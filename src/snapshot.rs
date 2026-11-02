@@ -163,6 +163,27 @@ pub fn heartbeat(t:&Task,n:u64,hosts:&[board::Issue],executions:&[Value],now:i64
     h
 }
 
+/// The board records input intent; only an exact fresh execution observation confirms an executor.
+pub fn executor(t:&Task,executions:&[Value],pending:bool,now:i64,ttl:i64)->Value {
+    let current:Vec<_>=executions.iter().filter(|x|x["attempt"].as_u64()==t.attempt).collect();
+    let (state,reason,observed,source)=if !matches!(t.state,State::Doing|State::Review)||t.attempt.is_none() {
+        ("not applicable","no live attempt",None,"board task projection")
+    } else if current.is_empty() && pending {
+        ("awaiting execution","input recorded; awaiting execution, no current native work confirmed",Some(now),"board input projection")
+    } else if let [x]=current[..] {
+        let observed=x["observed"].as_i64();
+        let fresh=observed.is_some_and(|at|live(now-at,ttl));
+        let state=if x["release"]=="exit"||!fresh {"unknown"}
+            else if x["state"]=="running" {"active"}
+            else if x["state"]=="waiting" && pending {"awaiting acceptance"}
+            else if x["state"]=="waiting" {"waiting"} else {"unknown"};
+        (state,x["reason"].as_str().unwrap_or("current executor observation unavailable"),observed,"owning-host execution observation")
+    } else {
+        ("unknown","current executor missing or ambiguous; logical task state is not native work",None,"board execution projection")
+    };
+    json!({"state":state,"reason":reason,"observed":observed,"source":source})
+}
+
 /// Re-age cached observations; reading a snapshot never renews either heartbeat.
 pub fn refresh_heartbeat(h:&mut Value,now:i64,active:bool) {
     let age=h["observed"].as_i64().map(|at|now-at);
@@ -170,9 +191,14 @@ pub fn refresh_heartbeat(h:&mut Value,now:i64,active:bool) {
     if active && age.is_some_and(|a|!live(a,h["ttl_s"].as_i64().unwrap_or(0))) {
         h["freshness"]=json!("stale");h["reason"]=json!("owning host heartbeat stale or time unknown");
     }
+    if h["executor"]["observed"].as_i64().is_some_and(|at|!live(now-at,h["ttl_s"].as_i64().unwrap_or(0))) {
+        h["executor"]["state"]=json!("unknown");h["executor"]["reason"]=json!("current executor observation stale");
+    }
     let progress=&h["progress"];
     let progress_live=progress["observed"].as_i64().is_some_and(|at|live(now-at,h["ttl_s"].as_i64().unwrap_or(0)));
     let warning=if !active {None} else if h["freshness"]!="fresh" {h["reason"].as_str()}
+        else if matches!(h["executor"]["state"].as_str(),Some("awaiting execution"|"awaiting acceptance")) {h["executor"]["reason"].as_str()}
+        else if h["executor"]["state"]=="unknown" {Some("current executor unknown; inspect execution health")}
         else if !progress_live {Some("execution progress observation missing or stale")}
         else if !matches!(progress["status"].as_str(),Some("quiet"|"active")) {progress["reason"].as_str().or(Some("execution progress unknown"))}
         else {None};
@@ -429,8 +455,12 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
                     else {v.projection.changes.iter().find(|(id,_,_)| *id==x.attempt).and_then(|(_,_,t)|t.role.as_deref())});
                 value
             }).collect();
-        let heartbeat=heartbeat(&v.projection.task,v.issue.number,hosts,&executions,observed,cfg.ttl);
-            Row {
+        let mut heartbeat=heartbeat(&v.projection.task,v.issue.number,hosts,&executions,observed,cfg.ttl);
+        let pending=v.projection.task.attempt.is_some_and(|a|v.projection.task.inbox.iter().any(|id|*id>v.projection.delivered(a).unwrap_or(0)));
+        heartbeat["input_pending"]=json!(pending);
+        heartbeat["executor"]=executor(&v.projection.task,&executions,pending,observed,cfg.ttl);
+        refresh_heartbeat(&mut heartbeat,observed,matches!(v.projection.task.state,State::Doing|State::Review)&&v.projection.task.attempt.is_some());
+        Row {
         heartbeat,
         worker: std::iter::once(&v.projection.task).chain(v.projection.changes.iter().rev().map(|(_,_,t)|t))
             .find(|t|t.role.as_deref()==Some("worker") && t.attempt.is_some() && t.session.is_some())
@@ -1201,6 +1231,34 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
     }
 
     // R6/R12, #2173: a fresh lease must not hide missing execution progress.
+    // R6/R12, #2173 note 6574454403: an accepted board answer is not a native executor.
+    #[test]
+    fn logical_doing_after_answer_waits_for_an_exact_execution() {
+        let log=vec![core::Entry{id:5,body:"taskq: spawn worker codex:invented win".into(),edited:false},
+            core::Entry{id:6,body:"taskq: accepted 5 attempt 5".into(),edited:false},
+            core::Entry{id:7,body:"taskq: ask attempt 5\nDone: checked\nProblem: owner decision".into(),edited:false},
+            core::Entry{id:8,body:"taskq: released 5 exit attempt 5".into(),edited:false},
+            core::Entry{id:9,body:"taskq: answer\nContinue".into(),edited:false}];
+        let v=View{issue:board::Issue{number:1,..Default::default()},projection:core::project(1,&log,false),log:log.clone(),comments:vec![],blockers:vec![]};
+        let host=board::Issue{trusted:true,title:"taskq host win".into(),updated:1000,body:"#1 5".into(),..Default::default()};
+        let row=from_views("board",&crate::board::Fake::default(),&crate::tests::cfg(),1000,&[v],&[host]).tasks[0].json();
+        assert_eq!(row["state"],"doing");assert!(row["executions"].is_null());
+        assert_eq!(row["heartbeat"]["executor"]["state"],"awaiting execution");
+        assert!(row["heartbeat"]["executor"]["reason"].as_str().unwrap().contains("input recorded"));
+        assert_eq!(row["stuck"],false,"ordinary delivery wait is not a failed task");
+        assert_eq!(core::executions(1,&log).len(),1,"projection cannot submit another execution");
+        let mut log=log;
+        log.push(core::Entry{id:10,body:"taskq: executing 9 attempt 5".into(),edited:false});
+        log.push(core::Entry{id:11,body:"taskq: accepted 10 attempt 5".into(),edited:false});
+        let v=View{issue:board::Issue{number:1,..Default::default()},projection:core::project(1,&log,false),log,comments:vec![],blockers:vec![]};
+        let host=board::Issue{trusted:true,title:"taskq host win".into(),updated:1000,
+            body:format!("#1 5\nexecution {}",json!({"task":1,"attempt":5,"id":10,"through":9,"state":"running","reason":"native executor observed"})),..Default::default()};
+        for (now,expected) in [(1000,"active"),(1301,"unknown")] {
+            let row=from_views("board",&crate::board::Fake::default(),&crate::tests::cfg(),now,std::slice::from_ref(&v),std::slice::from_ref(&host)).tasks[0].json();
+            assert_eq!(row["heartbeat"]["executor"]["state"],expected,"a stale remote executor cannot read active");
+        }
+    }
+
     #[test]
     fn heartbeat_health_is_explicit_even_without_an_execution_row() {
         let log=vec![core::Entry{id:5,body:"taskq: spawn worker codex:- mac".into(),edited:false}];

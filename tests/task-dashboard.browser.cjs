@@ -12,7 +12,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   const open=async(s=state,viewport={width:360,height:760})=>{const p=await browser.newPage({viewport});p.on('pageerror',e=>{throw e;});await p.setContent(html);await p.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await p.evaluate(s=>taskq.receive(s),s);return p;};
   let p=await open();const list=()=>p.locator('[data-card]'),editor=()=>p.locator('#taskq-popover,.task-inline-details,.task-transcript-page');
   // A2/A3/A5: one health source reaches inline details; recovery keeps the row geometry stable.
-  const health={host:'fixture',attempt:55,source:'board host heartbeat',observed:1000,age_s:0,freshness:'fresh',reason:'matching attempt observed',warning:null,
+  const health={host:'fixture',attempt:55,source:'board host heartbeat',observed:1000,age_s:0,freshness:'fresh',executor:{state:'active',reason:'native executor observed'},reason:'matching attempt observed',warning:null,
    progress:{source:'native execution events',clock:'append mtime lower bound',observed:1000,last_event:999,status:'quiet',reason:'no pending tool',pending_tools:0}};
   const healthState=warning=>({...state,projects:[{...alpha,tasks:[task(55,'doing',{attempt:55,heartbeat:{...health,warning,progress:{...health.progress,status:warning?'overdue':'quiet',reason:warning||'no pending tool'}}})]}]});
   await p.evaluate(s=>taskq.receive(s),healthState(null));
@@ -27,6 +27,9 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   await p.evaluate(s=>taskq.receive(s),healthState(null));
   assert.equal(await row55.locator('.task-health-warning').getAttribute('aria-hidden'),'true');
   assert.match(await details.innerText(),/quiet/,'recovery clears the warning in the open detail');
+  const awaiting=healthState('input recorded; awaiting execution');awaiting.projects[0].tasks[0].heartbeat.executor={state:'awaiting execution',reason:'input recorded; awaiting execution, no current native work confirmed'};
+  await p.evaluate(s=>taskq.receive(s),awaiting);assert.match(await details.innerText(),/awaiting execution/);
+  assert.equal(await row55.locator('.task-health-warning').getAttribute('aria-label'),'input recorded; awaiting execution');
   await p.close();p=await open();
   // #1775 M1: task search is an icon until opened or a query is active; a query keeps the field visible.
   const query=async()=>{const q=p.locator('[data-task-query]');if(!await q.count())await p.locator('[data-a=search-open]').click();return q;};

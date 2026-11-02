@@ -10,6 +10,7 @@ module.exports=execution.module('task-health',{
    h('dt',null,'Heartbeat source'),h('dd',null,b?.source||'unknown: source unavailable'),
    h('dt',null,'Last observation / age'),h('dd',null,stamp(b?.observed,b?.source||'Host heartbeat')),
    h('dt',null,'Freshness'),h('dd',null,(b?.freshness||'unknown')+' · '+(b?.reason||'Heartbeat unavailable')),
+   h('dt',null,'Executor'),h('dd',null,(b?.executor?.state||'unknown')+' · '+(b?.executor?.reason||'No current native work confirmed')),
    h('dt',null,'Execution progress'),h('dd',null,(p?.status||'unknown')+' · '+(p?.reason||'Native progress unavailable')),
    h('dt',null,'Progress source'),h('dd',null,(p?.source||'unknown')+(p?.clock?' · '+p.clock:'')),
    h('dt',null,'Progress observation'),h('dd',null,stamp(p?.observed,'Native progress observation')),

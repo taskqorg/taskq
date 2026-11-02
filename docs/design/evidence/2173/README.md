@@ -1,6 +1,6 @@
 # Task execution health candidate
 
-Candidate for [#2173](https://github.com/taskqorg/taskq/issues/2173), implementing its A1–A6 request. R6 and M3.13 amendments require explicit owner authorization under [the rule gate](../../rule-ids.md#contract-detail); the task currently names neither ID. This is a checkpoint, not implementation acceptance or a published result.
+Candidate for [#2173](https://github.com/taskqorg/taskq/issues/2173), implementing its A1–A6 request. Owner answer `6574730504` approves the R6 and M3.13 amendments under [the rule gate](../../rule-ids.md#contract-detail). This is a checkpoint, not implementation acceptance or a published result.
 
 ## Audit and attribution
 
@@ -12,7 +12,7 @@ A fresh installed `taskq profile watch --since 1h` read succeeded: 8995 board ca
 
 ## Proposed behavior
 
-The root R6 decision was edited first. The linked health contract defines independent host/attempt observation and native progress; bounded incremental reads; explicit unknown/error/stale handling; an advisory 15-minute no-deadline tool window; declared tool timeouts plus two polls; quiet reasoning without a pending tool; recovery clearing; and no replay, restart, release or admission authority. M3.13 needs a narrow exception for the requested local health diagnostic.
+The root R6 decision was edited first. The linked health contract defines independent host/attempt observation and native progress; bounded incremental reads; explicit unknown/error/stale handling; an advisory 15-minute no-deadline tool window; declared tool timeouts plus two polls; quiet reasoning without a pending tool; recovery clearing; and no replay, restart, release or admission authority. M3.13 adds the approved narrow exception for the requested local health diagnostic.
 
 The candidate reaches runtime sources, the shared board/service snapshot, host execution heartbeat rows, CLI status, PM telemetry watch, Home/project/saved View rows, inline task details and Conversations Task info. Published workspace inputs and snapshot fixtures/schema are updated. It adds no dependency, collector, local task database or background agent nudge.
 
@@ -29,7 +29,7 @@ The candidate reaches runtime sources, the shared board/service snapshot, host e
 
 ## Remaining work
 
-Inbox note `6574454403` adds the read-only desiign #14 case: logical Doing after an answer, with no new executing/accepted receipt. The candidate already leaves missing execution progress unknown, but an explicit awaiting-execution versus confirmed-executor diagnostic and its regression case remain pending. No action was taken on that task.
+Inbox note `6574454403` adds the read-only desiign #14 case: logical Doing after an answer, with no new executing/accepted receipt. Its regression failed before the fix with a missing executor state, then passed: the heartbeat now distinguishes board input awaiting execution/acceptance from an active exact executor and stale/unknown observation. No action was taken on that task.
 
 Native WKWebView task list/details/Conversations checks, the final independent readback, the selected canonical gate, the one pre-push rebase, PR publication and merge-result CI are pending. The fixture for bounded native captures is prepared, but no native capture has run. No service, session, receipt, grant, capacity or live policy was changed.
 

@@ -63,7 +63,7 @@
               "source": {"type": "string"}, "observed": {"type": ["integer", "null"]},
               "age_s": {"type": ["integer", "null"]}, "reason": {"type": "string"},
               "freshness": {"enum": ["fresh", "stale", "unknown", "not applicable"]},
-              "warning": {"type": ["string", "null"]}, "progress": {"type": "object"}
+              "warning": {"type": ["string", "null"]}, "progress": {"type": "object"}, "executor": {"type": "object"}
             }
           },
           "executions": {
