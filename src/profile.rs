@@ -997,19 +997,19 @@ pub const WATCH_DOC: &str = "https://github.com/taskqorg/taskq/blob/main/docs/de
 pub(crate) fn stall(t:&serde_json::Value,now:u64)->Option<String> {
     let since=|k:&str|t[k].as_u64().map(|s|now.saturating_sub(s));
     let age=|s:u64|crate::age(s as i64);
-    let reason=match t["state"].as_str()? {
-        "doing"|"review" if t["heartbeat"].is_object()=>{
-            let mut h=t["heartbeat"].clone();crate::snapshot::refresh_heartbeat(&mut h,now as i64,t["attempt"].is_u64());
-            h["warning"].as_str().map(String::from)
-        },
-        "doing" => since("updated").filter(|s|*s>3600).map(|s|format!("doing, no board event for {}",age(s))),
+    let health=if matches!(t["state"].as_str(),Some("doing"|"review")) && t["heartbeat"].is_object() {
+        let mut h=t["heartbeat"].clone();crate::snapshot::refresh_heartbeat(&mut h,now as i64,t["attempt"].is_u64());
+        h["warning"].as_str().map(String::from)
+    } else {None};
+    let reason=health.or_else(||match t["state"].as_str()? {
+        "doing" if !t["heartbeat"].is_object() => since("updated").filter(|s|*s>3600).map(|s|format!("doing, no board event for {}",age(s))),
         "ready" => since("since").filter(|s|*s>900).map(|s|format!("ready for {}{}",age(s),
             t["admission"]["code"].as_str().map_or(String::new(),|c|format!(" (admission {c})")))),
         "ask" => since("since").filter(|s|*s>1800).map(|s|format!("ask unanswered for {}",age(s))),
         "review" => t["publication"]["since"].as_u64().map(|s|now.saturating_sub(s)).filter(|s|*s>1800).map(|s|format!("merge queue for {}",age(s))),
         "later" => t["until"].as_str().filter(|u|*u<crate::board::stamp(now as i64).as_str()).map(|u|format!("later past its until {u}")),
         _ => None,
-    };
+    });
     let reason=reason.or_else(|| (t["stuck"]==true).then(|| format!("stuck in {} for {}",t["state"].as_str().unwrap_or("unknown"),age(t["age_s"].as_u64().unwrap_or(0)))))?;
     Some(format!("#{} {reason}",t["n"]))
 }
@@ -1663,6 +1663,18 @@ Transitions: 9 unique of 11 rows"), "{tasks}");
         assert_eq!(row(serde_json::json!({"n":3,"state":"ready","since":now-901,"admission":{"code":"capacity"}})).as_deref(),Some("#3 ready for 15m (admission capacity)"));
         assert_eq!(row(serde_json::json!({"n":4,"state":"ask","since":now-1801})).as_deref(),Some("#4 ask unanswered for 30m"));
         assert_eq!(row(serde_json::json!({"n":5,"state":"review","publication":{"since":now-1801}})).as_deref(),Some("#5 merge queue for 30m"));
+        // A5: healthy execution observations must not hide a separate publication stall.
+        let mut review=serde_json::json!({"n":5,"state":"review","attempt":1,"updated":now-7200,
+            "heartbeat":{"observed":now,"ttl_s":300,"freshness":"fresh","executor":{"state":"active","observed":now},"progress":{"observed":now,"status":"quiet"}},
+            "publication":{"since":now-1800}});
+        assert_eq!(row(review.clone()),None);
+        review["publication"]["since"]=serde_json::json!(now-1801);
+        assert_eq!(row(review.clone()).as_deref(),Some("#5 merge queue for 30m"));
+        review["heartbeat"]["progress"]["status"]=serde_json::json!("overdue");
+        review["heartbeat"]["progress"]["reason"]=serde_json::json!("tool progress overdue");
+        assert_eq!(row(review.clone()).as_deref(),Some("#5 tool progress overdue"),"task health keeps priority over queue age");
+        review["state"]=serde_json::json!("doing");review["heartbeat"]["progress"]["status"]=serde_json::json!("quiet");
+        assert_eq!(row(review),None,"quiet work with a heartbeat does not fall back to board inactivity");
         assert_eq!(row(serde_json::json!({"n":6,"state":"later","until":"2000-01-01T00:00:00Z"})).as_deref(),Some("#6 later past its until 2000-01-01T00:00:00Z"));
         assert_eq!(row(serde_json::json!({"n":7,"state":"later","until":"2999-01-01T00:00:00Z"})),None);
         assert_eq!(row(serde_json::json!({"n":8,"state":"held","stuck":true,"age_s":7200})).as_deref(),Some("#8 stuck in held for 2h"));

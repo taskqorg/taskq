@@ -42,10 +42,12 @@ impl Reader {
                 at+=line.len() as u64;Ok(())
             });
             for v in events {
-                let at=match v["timestamp"].as_str() {
-                    Some(s)=>crate::board::iso(s).filter(|t|*t>0 && *t<=now).ok_or("native progress timestamp invalid or future")?,
-                    None=>modified,
+                let at=match v.get("timestamp") {
+                    Some(Value::String(s))=>crate::board::iso(s).filter(|t|*t>0 && *t<=now),
+                    None=>Some(modified),
+                    _=>None,
                 };
+                let Some(at)=at else {self.error=Some("native progress timestamp invalid or future");continue;};
                 self.event(&v,at);
             }
             if !complete.map_err(|_|"native progress read failed, changed or incomplete")? {return Err("native progress scan pending");}
@@ -95,7 +97,7 @@ impl Reader {
         }
         if (kind=="system" && v["subtype"]=="turn_duration") || matches!(kind,"turn.completed"|"turn.failed"|"result") || v["event"]=="result"
             || (kind=="event_msg" && matches!(v["payload"]["type"].as_str(),Some("task_complete"|"turn_aborted"))) {
-            self.tools.clear();self.completed(at);
+            self.tools.clear();self.error=None;self.completed(at);
         }
     }
 
@@ -155,6 +157,31 @@ mod tests {
         assert_eq!(r.value(4721,60)["status"],"overdue");
         r.event(&json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c"}}),4722);
         assert_eq!(r.value(99999,60)["status"],"quiet");
+    }
+    #[test]
+    fn timestamp_fault_stays_unknown_until_a_valid_turn_boundary() {
+        use std::{fs,io::Write};
+        let dir=std::env::temp_dir().join(format!("taskq-progress-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
+        let path=dir.join("events");
+        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        // R12/A4: consumed bad timestamps must not hide a pending tool on later incremental reads.
+        for timestamp in [json!("invalid"),json!(crate::board::stamp(now+100)),json!(now),json!(false),Value::Null] {
+            fs::write(&path,format!("{}\n",json!({"type":"item.completed","item":{"type":"agent_message"}}))).unwrap();
+            let mut r=Reader::default();
+            assert_eq!(r.read(&path,0,now,60)["status"],"quiet");
+            let mut f=fs::OpenOptions::new().append(true).open(&path).unwrap();
+            writeln!(f,"{}",json!({"timestamp":timestamp,"type":"item.started","item":{"id":"c","type":"command_execution"}})).unwrap();
+            let fault=r.read(&path,0,now+1,60);
+            assert_eq!(fault["status"],"unknown");
+            assert_eq!(r.read(&path,0,now+101,60),fault,"time and an empty read cannot recover a consumed event");
+            writeln!(f,"{}",json!({"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
+            assert_eq!(r.read(&path,0,now+102,60),fault,"unrelated progress cannot prove the missing tool ended");
+            writeln!(f,"{}",json!({"type":"turn.completed"})).unwrap();
+            assert_eq!(r.read(&path,0,now+103,60)["status"],"quiet");
+            writeln!(f,"{}\n{}",json!({"timestamp":"invalid","type":"item.started","item":{"id":"c","type":"command_execution"}}),json!({"type":"turn.completed"})).unwrap();
+            assert_eq!(r.read(&path,0,now+104,60)["status"],"quiet","a valid boundary in the same batch is not discarded");
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn incremental_source_does_not_turn_reads_partial_writes_or_replacement_into_health() {
