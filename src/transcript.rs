@@ -151,7 +151,8 @@ pub fn after(format: &str, session: &str, path: &Path, from: u64) -> Res<Page> {
 
 /// A2: AgentQ events as view items: user and assistant text and images in order, each tool call as one line (D4)
 /// and each tool result as its own item at its record, its body opened only on request (owner answer on #2176: arguments stay omitted on worker views).
-/// Lifecycle and unknown shapes stay in the exact source only.
+/// Lifecycle events are one compact line each, named by their native type; usage counters and unknown shapes stay
+/// in the exact source only.
 fn view(format: &str, events: &[Value]) -> Vec<Value> {
     let mut out = Vec::<Value>::new();
     let (claude, codex) = (format.starts_with("claude-"), format.starts_with("codex-"));
@@ -189,6 +190,7 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
                 let text: Vec<&str> = blocks.iter().filter_map(|b| b["text"].as_str()).collect();
                 if !text.is_empty() { out.push(line("assistant", &text.join("\n"))); }
             }
+            "lifecycle" => if let Some(t) = lifecycle(e) { out.push(line("event", &t)); },
             // TaskQ's own owner input record in the Antigravity stream: input intent, not native acceptance
             _ if format == "agy-stream" => {
                 let raw: Value = serde_json::from_str(e["raw"].as_str().unwrap_or_default()).unwrap_or_default();
@@ -202,6 +204,20 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
         }
     }
     out
+}
+
+/// A2: the native name of a lifecycle event (`turn complete`, `system compact boundary`); usage counters give none.
+fn lifecycle(e: &Value) -> Option<String> {
+    let raw: Value = serde_json::from_str(e["raw"].as_str().unwrap_or_default()).ok()?;
+    let p = &raw["payload"];
+    let name = match e["format"].as_str().unwrap_or_default() {
+        f if f.starts_with("claude-") => [raw["type"].as_str(), raw["subtype"].as_str()].into_iter().flatten().collect::<Vec<_>>().join(" "),
+        "agy-stream" => raw["step_update"]["step_type"].as_str().or(raw["event"].as_str())?.into(),
+        _ => p["type"].as_str().or(raw["type"].as_str()).or(raw["method"].as_str())?.into(),
+    };
+    if matches!(name.as_str(), "token_count" | "rate_limit_event" | "") { return None; }
+    let name = name.replace("task_", "turn_").replace(['_', '.', '/'], " ");
+    Some(if name == "init" { "session started".into() } else { name })
 }
 
 fn block(author: &str, b: &Value, out: &mut Vec<Value>) {
@@ -527,7 +543,7 @@ mod tests {
         ];
         fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
         assert_eq!(crate::runtime::owner::codex_transcript_in(&dir, id).unwrap(), path);
-        assert_eq!(text(&before("codex-rollout",id,&path, None).unwrap().items), vec![json!({"role":"user","text":"hello"}), json!({"role":"tool","text":"exec_command ls"}), json!({"role":"assistant","text":"done\nall good"})]);
+        assert_eq!(text(&before("codex-rollout",id,&path, None).unwrap().items), vec![json!({"role":"user","text":"hello"}), json!({"role":"tool","text":"exec_command ls"}), json!({"role":"assistant","text":"done\nall good"}), json!({"role":"event","text":"turn complete"})]);
         assert_eq!(last_line("codex-rollout",id,&path).unwrap().as_deref(), Some("all good"));
         fs::remove_dir_all(dir).unwrap();
     }
@@ -816,6 +832,24 @@ mod tests {
     /// #2176 A5 native evidence instrument, not a gate: `TASKQ_NATIVE_SOURCES` lists `format=session=path` lines of
     /// retained native transcripts. Reads each fully backward and forward through the product reader, read-only, and
     /// prints counts only (no text, no paths): `cargo test --bin taskq native_transcripts -- --ignored --nocapture`.
+    // A2: lifecycle events render as one named line per runtime; usage counters stay source-only
+    #[test]
+    fn lifecycle_events_render_as_lines() {
+        let dir = tmp();
+        for (format, rows, want) in [
+            ("codex-rollout", vec![json!({"type":"event_msg","payload":{"type":"task_started"}}), json!({"type":"event_msg","payload":{"type":"token_count"}}), json!({"type":"event_msg","payload":{"type":"task_complete"}})], vec!["turn started", "turn complete"]),
+            ("claude-native", vec![json!({"type":"system","subtype":"compact_boundary"}), json!({"type":"rate_limit_event"})], vec!["system compact boundary"]),
+            ("agy-stream", vec![json!({"event":"init"}), json!({"event":"step_update","step_update":{"step_index":1,"step_type":"checkpoint","state":"DONE"}})], vec!["session started", "checkpoint"]),
+        ] {
+            let path = dir.join(format!("{format}.jsonl"));
+            fs::write(&path, rows.iter().map(|r| format!("{r}\n")).collect::<String>()).unwrap();
+            let page = before(format, "-", &path, None).unwrap();
+            let got: Vec<_> = page.items.iter().filter(|i| i["role"] == "event").map(|i| i["text"].as_str().unwrap()).collect();
+            assert_eq!(got, want, "{format}");
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     #[ignore]
     fn native_transcripts_read_both_ways() {

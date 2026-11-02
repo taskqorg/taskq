@@ -426,7 +426,7 @@ fn mark_brief(items: &mut [Value], brief: &str, own:&Path) {
         if item["role"]=="user"&&(text.trim_start().starts_with(head)||text==pointer){item["role"]=json!("brief");handshake=false;}
         else if item["role"]=="user"&&text.trim()==crate::runtime::HANDSHAKE.trim(){item["role"]=json!("transport");handshake=true;}
         else if handshake&&item["role"]=="assistant"&&text.trim()=="OK"{item["role"]=json!("transport");handshake=false;}
-        else if item["role"]!="tool"{handshake=false;}
+        else if item["role"]!="tool"&&item["role"]!="event"{handshake=false;}
     }
 }
 

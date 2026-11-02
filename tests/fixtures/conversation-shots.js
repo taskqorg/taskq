@@ -13,7 +13,7 @@ function taskqConversationShot(step,state){
   ai:{...state.ai,draft:'',history:[],runtime:{available:true,name:'Claude Code',id:'claude'}},workspace_local:{}};
  delete s.page;
  // #1773 A6: the PM chat reads an invented transcript locally, so a snapshot never reaches a native session
- const log=[['user','What needs my attention today?'],['assistant','One design question needs your answer. Two tasks are held for later; current work continues while you decide.'],['user','Which changes are we keeping?'],['assistant','The compact menu stays the place to find tasks. Conversations is the place to read and answer; saved views, pins, files and task actions stay available.']].map(([role,text],at)=>({role,text,at,i:0}));
+ const log=[['user','What needs my attention today?'],['assistant','One design question needs your answer. Two tasks are held for later; current work continues while you decide.'],['user','Which changes are we keeping?'],['assistant','The compact menu stays the place to find tasks. Conversations is the place to read and answer; saved views, pins, files and task actions stay available.'],['event','turn complete']].map(([role,text],at)=>({role,text,at,i:0}));
  // the native view freezes window.ipc, so the stub wraps the WebKit handler it calls instead
  const sink=window.webkit?.messageHandlers?.ipc||window.ipc,post=sink&&sink.postMessage.bind(sink);
  const stub=t=>{const m=JSON.parse(t);if(m.a!=='conversation-dialogue'||m.conversation!=='pm-1')return post&&post(t);

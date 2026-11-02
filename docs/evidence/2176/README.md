@@ -25,7 +25,14 @@ Before: the Codex rollout failed the both-ways check at item 5 of 28. The `exec`
 
 After: each tool result is one item at its own record, opened on request. All four sources pass. `transcript::tests::tool_results_are_page_independent` keeps the protection with 150 split call/output pairs and checks output masking.
 
+## Lifecycle rows
+
+Lifecycle events render as one `Event · <native name>` line each (D4). Usage counters and unknown normalized events stay in the exact source. `transcript::tests::lifecycle_events_render_as_lines` covers Codex, Claude and Antigravity.
+
+![Native Conversations chat, dark 18 px, with the Event · turn complete row](native-chat-event-dark-18.png)
+
+Native renderer snapshot: `taskq tray --snapshot <dir> --route conversations` on the signed dev build, fixture data, 800x600. This is fixture evidence, not a live session.
+
 ## Not covered here
 
-- Native window switching, Reload, Close and focus in the Conversations window: owner-observed per [testing](../../testing.md); browser instruments cover the source behavior.
-- Lifecycle and unknown normalized events stay in the exact source only (D4); no lifecycle row is rendered.
+- Native window switching, append, Reload, Close and focus in the installed Conversations window: Root-observed per [testing](../../testing.md); browser instruments cover the source behavior.
