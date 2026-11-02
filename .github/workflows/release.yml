@@ -1,10 +1,11 @@
 # § 8 Release: a live push (a fast-forward to a tested main commit) tags the next unused vX.Y.Z on that commit
-# (.github/release-tag.sh; a GITHUB_TOKEN tag starts no run) and stamps it into the build; no version commit.
-# linux and windows publish together as soon as both are built and the exact-source tests pass; macos joins the
-# same release when its runner finishes, then README shots are dispatched for the tag. Each publish carries one
-# binary per OS, SHA256SUMS and latest.json (.github/release-index.py); the first also the answer card and resource
-# controls assets, the telemetry sync wire fixture and field list, the status snapshot schema and fixture.
-# Release files and SHA256SUMS carry build provenance attestations. A failing selftest publishes nothing for its OS.
+# (.github/release-tag.sh; a GITHUB_TOKEN tag starts no run), opens a draft release and stamps the version into the
+# build; no version commit. Each OS publishes alone as soon as its build is attested and the exact-source tests pass
+# (.github/release-publish.sh): its binary, then SHA256SUMS and latest.json merged with the other OSes'; the first
+# OS done un-drafts the release, so hosts update before macos exists. linux also carries the answer card and
+# resource controls assets, the telemetry sync wire fixture and field list, the status snapshot schema and fixture.
+# Release files carry build provenance attestations; once all three OSes are in, the final SHA256SUMS is attested
+# and README shots are dispatched for the tag. A failing selftest publishes nothing for its OS.
 name: release
 on:
   push:
@@ -33,6 +34,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: .github/release-tag.sh >> "$GITHUB_OUTPUT"
+      - name: Draft release
+        if: steps.tag.outputs.tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$TAG" --generate-notes
   checks:
     needs: tag
     if: needs.tag.outputs.tag
@@ -48,23 +57,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_BRANCH: main
         run: python3 .github/release-check.py
-  build:
+  build-linux:
     needs: tag
     if: needs.tag.outputs.tag
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux-x86_64
-          - os: windows-latest
-            target: windows-x86_64
-            ext: .exe
     uses: ./.github/workflows/release-build.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}
-      os: ${{ matrix.os }}
-      target: ${{ matrix.target }}
-      ext: ${{ matrix.ext }}
+      os: ubuntu-latest
+      target: linux-x86_64
+  build-windows:
+    needs: tag
+    if: needs.tag.outputs.tag
+    uses: ./.github/workflows/release-build.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      os: windows-latest
+      target: windows-x86_64
+      ext: .exe
   build-macos:
     needs: tag
     if: needs.tag.outputs.tag
@@ -73,8 +82,8 @@ jobs:
       tag: ${{ needs.tag.outputs.tag }}
       os: macos-latest
       target: macos-aarch64
-  publish:
-    needs: [tag, checks, build]
+  publish-linux:
+    needs: [tag, checks, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,66 +92,95 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          sparse-checkout: .github/release-index.py
+          sparse-checkout: |
+            .github/release-index.py
+            .github/release-publish.sh
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: '*-x86_64'
+          name: linux-x86_64
           path: dist
-          merge-multiple: true
-      - env:
-          TAG: ${{ needs.tag.outputs.tag }}
-        run: python3 .github/release-index.py "${TAG#v}" dist
       # v4.2.2
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
-          subject-path: |
-            dist/taskq-*
-            dist/SHA256SUMS
-      - name: Publish linux and windows
+          subject-path: dist/taskq-*
+      - name: Publish linux
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.tag.outputs.tag }}
-        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --generate-notes
-  publish-macos:
-    needs: [tag, publish, build-macos]
+        run: .github/release-publish.sh "$TAG" dist
+  publish-windows:
+    needs: [tag, checks, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
       id-token: write
       attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          sparse-checkout: .github/release-index.py
+          sparse-checkout: |
+            .github/release-index.py
+            .github/release-publish.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-x86_64
+          path: dist
+      # v4.2.2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: dist/taskq-*
+      - name: Publish windows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: .github/release-publish.sh "$TAG" dist
+  publish-macos:
+    needs: [tag, checks, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: |
+            .github/release-index.py
+            .github/release-publish.sh
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: macos-aarch64
           path: dist
-      - name: Add macos to the published sums
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.tag.outputs.tag }}
-        run: |
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir dist
-          python3 .github/release-index.py "${TAG#v}" dist
       # v4.2.2
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
-          subject-path: |
-            dist/taskq-*
-            dist/SHA256SUMS
-      # Binary first, then its sum, then latest.json: a host never reads a macos entry without both.
+          subject-path: dist/taskq-*
       - name: Publish macos
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.tag.outputs.tag }}
-        run: |
-          gh release upload "$TAG" dist/taskq-* --repo "$GITHUB_REPOSITORY" --clobber
-          gh release upload "$TAG" dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
-          gh release upload "$TAG" dist/latest.json --repo "$GITHUB_REPOSITORY" --clobber
+        run: .github/release-publish.sh "$TAG" dist
+  seal:
+    needs: [tag, publish-linux, publish-windows, publish-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Final SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir dist
+      # v4.2.2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: dist/SHA256SUMS
       # README shots of this release binary (#2024); a stale set arrives as a draft PR. GITHUB_TOKEN may dispatch.
       - name: README shots
         env:

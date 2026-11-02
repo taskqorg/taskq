@@ -563,7 +563,7 @@ fn channel_update(install:&Path,fetch:&dyn Fn(&str,&Path)->Result<(),String>)->R
         let latest:serde_json::Value=serde_json::from_slice(&fs::read(&probe).map_err(|e|e.to_string())?).map_err(|e|format!("latest.json: {e}"))?;
         let _=fs::remove_file(&probe);
         let ver=latest["version"].as_str().ok_or("latest.json: no version")?.to_string();
-        // § 8 item 1 (#2234): linux and windows publish before macos joins the release; this OS waits for its file.
+        // § 8 item 1 (#2234): each OS joins the release when built; this OS waits for its file.
         if latest["files"][coreq::update::target()].is_null() {return Ok(None);}
         let name=format!("taskq-{ver}-{}{}",coreq::update::target(),std::env::consts::EXE_SUFFIX);
         if ver.is_empty()||ver.contains("..")||!ver.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'.'||c==b'-')||latest["files"][coreq::update::target()]!=name.as_str() {

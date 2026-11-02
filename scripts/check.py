@@ -449,6 +449,7 @@ def main():
                 run(['sh', 'docs/shots/check.test.sh'])
                 run(['sh', 'docs/shots/update.test.sh'])
                 run(['sh', '.github/release-tag.test.sh'])
+                run(['sh', '.github/release-publish.test.sh'])
                 run([sys.executable, '.github/release-check.test.py'])
         for path in paths:
             if path.startswith('tests/') and path.endswith('.browser.cjs') and os.environ.get('RUNNER_OS') is None:

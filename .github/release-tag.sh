@@ -2,7 +2,7 @@
 # release.yml tag job (taskq.md § 8 item 1): prints `tag=v<version>` for GITHUB_OUTPUT when this run must release.
 # Tag push: that tag. Live push: the next unused vX.Y.Z, the greater of the Cargo.toml version and the highest
 # vX.Y.Z tag plus one patch, created here on the pushed commit; Cargo.toml is never bumped by a commit.
-# A pushed commit that already has a tag reuses it while its release is absent (rerun), else releases nothing.
+# A pushed commit that already has a tag reuses it while its release is absent or a draft (rerun), else releases nothing.
 # An unreadable or invalid version or tag list fails without a tag. An existing tag never moves.
 set -eu
 if [ "$GITHUB_REF_TYPE" = tag ]; then echo "tag=$GITHUB_REF_NAME"; exit 0; fi
@@ -13,7 +13,8 @@ refs=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --j
   fail "cannot read tags"
 own=$(printf '%s\n' "$refs" | awk -v s="$GITHUB_SHA" '$2 == s { sub("refs/tags/", "", $1); print $1; exit }')
 if [ -n "$own" ]; then
-  if gh release view "$own" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then echo "$GITHUB_SHA is $own, released; no release" >&2
+  if [ "$(gh release view "$own" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
+    echo "$GITHUB_SHA is $own, released; no release" >&2
   else echo "tag=$own"; fi
   exit 0
 fi

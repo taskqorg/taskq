@@ -1,7 +1,7 @@
 #!/bin/sh
 # Chain check for the release.yml tag job (taskq.md § 8 item 1, R12): a live push tags the next unused vX.Y.Z
 # (Cargo.toml version or highest tag plus one patch, whichever is greater) on the pushed commit; a commit that
-# already has a tag reuses it only while its release is absent; unreadable tags or an invalid version fail
+# already has a tag reuses it only while its release is absent or a draft; unreadable tags or an invalid version fail
 # without a tag; a manual tag push releases that tag. gh is a stub; nothing leaves the runner.
 set -eu
 src=$(cd "$(dirname "$0")" && pwd)/release-tag.sh
@@ -11,11 +11,11 @@ cd "$t"
 mkdir bin
 cat > bin/gh <<'SH'
 #!/bin/sh
-# Stub: TAGS = "<ref> <sha>" lines or "503"; RELEASED = 1 when `release view` finds the release. Writes are logged.
+# Stub: TAGS = "<ref> <sha>" lines or "503"; RELEASED = 1 (published) or draft when `release view` finds the release. Writes are logged.
 case "$*" in
   *matching-refs*) [ "$TAGS" = 503 ] && { echo 'HTTP 503' >&2; exit 1; }; [ -z "$TAGS" ] || printf '%s\n' "$TAGS";;
   *git/refs*) echo "$*" >> writes;;
-  'release view'*) [ "$RELEASED" = 1 ];;
+  'release view'*) case $RELEASED in 1) echo false;; draft) echo true;; *) exit 1;; esac;;
   *) exit 2;;
 esac
 SH
@@ -37,6 +37,7 @@ case_ 'tag above Cargo: next patch' 'version = "1.1.0"' "refs/tags/v1.1.0 d0${nl
 case_ 'Cargo above tags: Cargo version' 'version = "1.2.0"' 'refs/tags/v1.1.10 d10' 0 0 tag=v1.2.0 v1.2.0
 case_ 'other tag names ignored' 'version = "1.1.0"' "refs/tags/v1.1.3 d3${nl}refs/tags/v9.9.9-rc1 dx${nl}refs/tags/vx d4" 0 0 tag=v1.1.4 v1.1.4
 case_ 'commit tagged, unreleased: reuses tag' 'version = "1.1.0"' 'refs/tags/v1.1.3 abc' 0 0 tag=v1.1.3 ''
+case_ 'commit tagged, draft release: reuses tag' 'version = "1.1.0"' 'refs/tags/v1.1.3 abc' draft 0 tag=v1.1.3 ''
 case_ 'commit tagged, released: nothing' 'version = "1.1.0"' 'refs/tags/v1.1.3 abc' 1 0 '' ''
 case_ 'tag list 503: fails' 'version = "1.1.0"' 503 0 1 '' ''
 case_ 'invalid version: fails' 'version = "x"' '' 0 1 '' ''
