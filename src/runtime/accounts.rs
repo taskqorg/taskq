@@ -372,9 +372,14 @@ pub fn heartbeat_rows(host: &str, body: &str) -> Vec<Row> {
 
 // ---------- homes ----------
 
-/// The runtime's own home: `CLAUDE_CONFIG_DIR` / `CODEX_HOME` of this process, else `~/.claude` / `~/.codex`.
+/// The runtime's own home, including an explicit override inside a named account.
+pub fn default_home(rt: &str) -> Option<PathBuf> {
+    if rt == "claude" { crate::runtime::claude_home() } else { crate::runtime::codex_home() }
+}
+
+/// The parent home containing TaskQ's named accounts.
 pub fn base(rt: &str) -> Option<PathBuf> {
-    let b = if rt == "claude" { crate::runtime::claude_home() } else { crate::runtime::codex_home() }?;
+    let b = default_home(rt)?;
     if b.parent().and_then(|p| p.file_name()) == Some(std::ffi::OsStr::new(HOMES)) {
         return b.parent().and_then(Path::parent).map(Path::to_path_buf);
     }
@@ -383,6 +388,12 @@ pub fn base(rt: &str) -> Option<PathBuf> {
 
 /// The variable that names a home to the runtime.
 pub fn var(rt: &str) -> &'static str { if rt == "claude" { "CLAUDE_CONFIG_DIR" } else { "CODEX_HOME" } }
+
+/// Native default semantics depend on an absent override, even when the physical path is the same.
+pub fn environment<'a>(rt: &str, home: &'a Path) -> Option<(&'static str, &'a Path)> {
+    let var = var(rt);
+    (std::env::var_os(var).is_some() || default_home(rt).as_deref() != Some(home)).then_some((var, home))
+}
 
 /// The home of a non-default account; None for `default` (the child keeps the service's own value).
 pub fn home(rt: &str, label: &str) -> Option<PathBuf> {

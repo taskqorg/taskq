@@ -2550,10 +2550,10 @@ pub fn login_state(rt: &str, bin: &Path) -> &'static str {
         let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty());
         return if home.is_some_and(|h| [".gemini/antigravity-cli/jetski_state.pbtxt", ".gemini/oauth_creds.json"].iter().any(|p| Path::new(&h).join(p).is_file())) { "logged in" } else { "unknown" };
     }
-    let home = if rt == "claude" { claude_home() } else { codex_home() }
+    let home = crate::runtime::accounts::default_home(rt)
         .map(|b| crate::runtime::accounts::active_in(&crate::platform::default_install(), rt, &b));
     login(rt, probe_in("runtime.login", bin, if rt == "claude" { &["auth", "status"] } else { &["login", "status"] },
-        home.as_deref().map(|h| (crate::runtime::accounts::var(rt), h)))).0
+        home.as_deref().and_then(|h| crate::runtime::accounts::environment(rt, h)))).0
 }
 
 /// The only runtime list (§ 9 runtime adapters).
@@ -2628,7 +2628,7 @@ pub fn agents(install: &Path) -> serde_json::Value {
     let mut seen: std::collections::HashMap<&str, serde_json::Value> = std::collections::HashMap::new();
     let rows = agent_runtimes().iter().map(|rt| {
         let bin = of(rt).bin;
-        let mut row = seen.entry(bin).or_insert_with(|| agent_row_in(install, rt, &which(bin), crate::runtime::accounts::base(bin).as_deref())).clone();
+        let mut row = seen.entry(bin).or_insert_with(|| agent_row_in(install, rt, &which(bin), crate::runtime::accounts::default_home(bin).as_deref())).clone();
         row["runtime"] = serde_json::json!(rt);
         row
     }).collect();
@@ -2642,7 +2642,7 @@ fn agent_row_in(install: &Path, rt: &str, p: &Path, base: Option<&Path>) -> serd
     }
     let ver = probe("runtime.version", p, &["--version"]).and_then(|(_, o)| version(&o));
     let home = base.map(|b| crate::runtime::accounts::active_in(install, bin, b));
-    let env = home.as_deref().map(|h| (crate::runtime::accounts::var(bin), h));
+    let env = home.as_deref().and_then(|h| crate::runtime::accounts::environment(bin, h));
     let out = if rt == "antigravity" { None } else { probe_in("runtime.login", p, if bin == "claude" { &["auth", "status"] } else { &["login", "status"] }, env) };
     let auth = (bin == "codex").then(|| home.as_deref().and_then(|h| std::fs::read_to_string(h.join("auth.json")).ok())).flatten();
     let (kind, refreshed) = kind_refresh(bin, out.as_ref().map(|o| o.1.as_str()), auth.as_deref());
@@ -3486,6 +3486,88 @@ finally:
         let row = agent_row_in(&install, "codex", &bin, Some(&base));
         assert_eq!((row["login"].as_str(), row["refreshed"].as_str()), (Some("logged in"), Some("2026-11-01T00:00:00Z")));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Chain: §3 Runtime accounts / R12 (#2166 A2/A5/A6). Risk: readiness forces a native-default
+    // override, borrows default credentials for named homes, or disagrees with launch/resume.
+    #[test]
+    fn claude_account_environment_parity() {
+        let root = std::env::temp_dir().join(format!("taskq-2166-{}", uuid()));
+        for mode in ["implicit", "explicit-default", "custom", "nested", "named", "unreadable"] {
+            let dir = root.join(mode);
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut c = Command::new(std::env::current_exe().unwrap());
+            c.args(["--exact", "runtime::tests::claude_account_environment_fixture", "--ignored", "--nocapture"])
+                .env("TASKQ_ACCOUNT_FIXTURE", &dir).env("TASKQ_ACCOUNT_MODE", mode)
+                .env("TASKQ_INSTALL", dir.join("install")).env("HOME", &dir).env("USERPROFILE", &dir)
+                .env_remove("CLAUDE_CONFIG_DIR").env_remove("CODEX_HOME");
+            if mode == "explicit-default" { c.env("CLAUDE_CONFIG_DIR", dir.join(".claude")); }
+            if mode == "custom" || mode == "unreadable" { c.env("CLAUDE_CONFIG_DIR", dir.join("custom")); }
+            if mode == "nested" { c.env("CLAUDE_CONFIG_DIR", dir.join(".claude/taskq-accounts/work")); }
+            let out = coreq::process::output("qualification.account-env", &mut c, std::time::Duration::from_secs(30));
+            assert!(out.is_ok(), "{mode}: {out:?}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "isolated account-environment subprocess"]
+    fn claude_account_environment_fixture() {
+        let root = PathBuf::from(std::env::var_os("TASKQ_ACCOUNT_FIXTURE").unwrap());
+        let mode = std::env::var("TASKQ_ACCOUNT_MODE").unwrap();
+        let install = crate::platform::default_install();
+        std::fs::create_dir_all(&install).unwrap();
+        let base = crate::runtime::accounts::base("claude").unwrap();
+        let work = base.join(crate::runtime::accounts::HOMES).join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let policy = install.join(crate::runtime::accounts::FILE);
+        if mode == "named" {
+            std::fs::write(&policy, r#"{"claude":[{"label":"default","enabled":false},{"label":"work","enabled":true}]}"#).unwrap();
+        }
+        let bin = root.join(if cfg!(windows) { "claude.cmd" } else { "claude" });
+        // Invented status only: the fallback is logged in, every explicit home starts empty.
+        let script = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (echo 2.1.316\r\nexit /b 0)\r\nif not defined CLAUDE_CONFIG_DIR (echo {\"loggedIn\":true}\r\nexit /b 0)\r\nif exist \"%CLAUDE_CONFIG_DIR%\\fixture-status\" (type \"%CLAUDE_CONFIG_DIR%\\fixture-status\") else (echo {\"loggedIn\":false})\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 2.1.316; exit; fi\nif [ \"${CLAUDE_CONFIG_DIR+x}\" != x ]; then echo '{\"loggedIn\":true}'; elif [ -f \"$CLAUDE_CONFIG_DIR/fixture-status\" ]; then cat \"$CLAUDE_CONFIG_DIR/fixture-status\"; else echo '{\"loggedIn\":false}'; fi\n"
+        };
+        std::fs::write(&bin, script).unwrap();
+        #[cfg(unix)] std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let selected = if mode == "named" { work.clone() } else { claude_home().unwrap() };
+        if mode == "unreadable" { std::fs::write(selected.join("fixture-status"), "unreadable").unwrap(); }
+        let expected = if mode == "implicit" { "logged in" } else if mode == "unreadable" { "unknown" } else { "not logged in" };
+        let env = Env { context:"", root:&root, exe:&bin, install:&install, permission_mode:"dontAsk", codex:&[], publish:"pr", board_env:&[], jobs:None };
+        let mut l = Launch { files:String::new(), execution:Some(44), task:2166, title:String::new(), attempt:42, role:"worker".into(), rt:"claude".into(), session:"retained-session".into(), url:String::new(), resume:None };
+        let log = log_path(&root, &l);
+        std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+        crate::runtime::accounts::mark(&log, if mode == "named" { "work" } else { "default" }).unwrap();
+        let pending = root.join("pending-input.txt");
+        std::fs::write(&pending, "retained input").unwrap();
+        bind_input(&log, &l, &pending, "retained input", serde_json::json!({"session":l.session})).unwrap();
+        let retained = std::fs::read(&log).unwrap();
+        let check = |expected: &str| {
+            assert_eq!(login_state("claude", &bin), expected, "service readiness: {mode}");
+            assert_eq!(agent_row_in(&install, "claude", &bin, claude_home().as_deref())["login"], expected, "agents: {mode}");
+        };
+        check(expected);
+        for resume in [false, true] {
+            l.resume = resume.then(|| "retained input".into());
+            let turn = spec(&env, &l, root.clone(), vec![]);
+            let mut c = agentq_runtime::agent::command(crate::platform::command(&bin), &turn);
+            let out = coreq::process::output("qualification.launch-env", &mut c, std::time::Duration::from_secs(10)).unwrap();
+            assert_eq!(login("claude", Some((out.status.success(), String::from_utf8(out.stdout).unwrap()))).0, expected, "launch/resume: {mode}");
+        }
+        if mode == "named" || mode == "custom" || mode == "nested" {
+            std::fs::write(selected.join("fixture-status"), r#"{"loggedIn":true}"#).unwrap();
+            check("logged in");
+        }
+        if mode == "named" {
+            std::fs::write(&policy, r#"{"claude":[{"label":"default","enabled":true},{"label":"work","enabled":false}]}"#).unwrap();
+            assert_eq!(spec(&env, &l, root.clone(), vec![]).home, Some(work), "policy changes never move a resumed attempt");
+        }
+        assert_eq!(std::fs::read(log).unwrap(), retained, "probes preserve attempt and pending-input log bytes");
+        assert_eq!(std::fs::read_to_string(pending).unwrap(), "retained input");
+        assert_eq!(l.session, "retained-session");
     }
 
     // Chain: § 4 service pass, `agents` rows (R12), #1114. Risk: a runtime CLI whose child keeps the pipes open blocks the pass.
