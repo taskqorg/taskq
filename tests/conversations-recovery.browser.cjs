@@ -154,7 +154,7 @@ async function loadingRecovery(browser){
      window.ipc={postMessage:text=>{
       const m=JSON.parse(text);sent.push(m);
       if(m.a==='workspace-checkpoint')window.checkpoint=m.value;
-      if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='transcript'&&window.invalidWorkerPage?(window.invalidWorkerPage=false,{}):m.action==='task-body'?{...state.projects[0].tasks[0],body_lazy:false,history:[]}:m.action==='transcript'?{generation:'invented-source-a',start:0,end:10,size:10,items:[{at:0,i:0,role:'assistant',text:'Reading the original worker source.\n\n## Current action\n\nKeep **literal negations** and `taskq inbox 2159`.\n\n- Inspect exact source\n- Do not resend',updated:Date.now()-1000}]}:{state:'idle',turn:null}}}));
+      if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='transcript'&&window.invalidWorkerPage?{}:m.action==='task-body'?{...state.projects[0].tasks[0],body_lazy:false,history:[]}:m.action==='transcript'?{generation:'invented-source-a',start:0,end:10,size:10,items:[{at:0,i:0,role:'assistant',text:'Reading the original worker source.\n\n## Current action\n\nKeep **literal negations** and `taskq inbox 2159`.\n\n- Inspect exact source\n- Do not resend',updated:Date.now()-1000}]}:{state:'idle',turn:null}}}));
      }};
      taskq.receive(state);if(recovery)taskq.receive({workspaceRecovery:recovery});
     },{state,recovery});
@@ -164,6 +164,8 @@ async function loadingRecovery(browser){
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('response invalid')||getComputedStyle(document.querySelector('.workspace')).display==='none');
    assert(await page.locator('.worker-live').isVisible(),'an invalid accepted local-source page must not replace the whole workspace');
    assert.match(await page.locator('.worker-live').innerText(),/response invalid/);
+   // Keep the refused phase observable until its guard runs, then allow the existing poll to recover.
+   await page.evaluate(()=>{window.invalidWorkerPage=false;});
    await page.locator('.worker-live .dialogue-item').waitFor();
    assert.equal(await page.locator('.worker-live .conversation-prose h3').innerText(),'Current action');assert.equal(await page.locator('.worker-live .conversation-prose strong').innerText(),'literal negations');assert.match(await page.locator('.worker-live .conversation-prose').innerText(),/Do not resend/);
    if(process.env.TASKQ_EVIDENCE_2140&&runtime==='codex'&&theme==='dark'&&font===20&&width===900){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2140,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2140+'/worker-document.png'});}
