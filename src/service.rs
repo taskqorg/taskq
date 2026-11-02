@@ -3594,9 +3594,12 @@ mod tests {
     }
 
     fn cfg(me: &str) -> Config {
+        // Per-fixture temporary install: a shared path (C:\nonexistent on Windows) leaked quota holds into later runs.
+        // ponytail: never created or removed here; tests that write leave one small directory in the OS temp dir.
+        let base = std::env::temp_dir().join(format!("taskq-service-test-{}", crate::runtime::uuid()));
         Config {
-            root: PathBuf::from("/nonexistent"),
-            install: PathBuf::from("/nonexistent"),
+            root: base.clone(),
+            install: base,
             board: &crate::board::github::KIND,
             web_host: String::new(),
             repo: "o/r".into(),
@@ -3621,6 +3624,27 @@ mod tests {
             rollback_after: 600,
             external: false,
             host_setup: None,
+        }
+    }
+
+    // #2196: a fixture rooted at the shared /nonexistent path persisted quota holds across runs on Windows.
+    #[test]
+    fn fixtures_use_private_temporary_installs() {
+        let (a, b) = (cfg("mac"), crate::tests::cfg());
+        for c in [&a, &b] {
+            assert!(c.install.starts_with(std::env::temp_dir()) && c.root.starts_with(std::env::temp_dir()), "{:?}", c.install);
+        }
+        assert_ne!(a.install, cfg("mac").install, "each fixture gets its own install");
+        assert_ne!(b.install, crate::tests::cfg().install, "each fixture gets its own install");
+        let shared = format!("PathBuf::from(\"/{}\")", "nonexistent");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for e in std::fs::read_dir(&src).unwrap() {
+            let p = e.unwrap().path();
+            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            for (i, line) in text.lines().enumerate() {
+                let l = line.trim_start();
+                assert!(!((l.starts_with("install:") || l.starts_with("root:")) && l.contains(&shared)), "{}:{} fixture uses the shared /nonexistent install", p.display(), i + 1);
+            }
         }
     }
 
