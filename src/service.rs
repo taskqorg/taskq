@@ -527,6 +527,7 @@ impl Kid {
 }
 
 pub struct Service<'a> {
+    progress: HashMap<(u64,u64,u64),(crate::runtime::progress::Reader,Value,bool)>,
     pub host: Option<crate::host::Shared>,
     pub board: &'a dyn Board,
     pub cfg: Config,
@@ -886,7 +887,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1468,10 +1469,44 @@ impl<'a> Service<'a> {
             ..Default::default()}
     }
 
+    fn observe_progress(&mut self) {
+        let Some(now)=self.snapshot.as_ref().map(|s|s.observed) else {return};
+        for kid in &self.kids {
+            let key=(kid.task,kid.attempt,kid.execution);
+            let previous=self.snapshot.as_ref().and_then(|s|s.tasks.iter().find(|r|r.n==kid.task))
+                .and_then(|r|r.executions.iter().find(|x|x["id"].as_u64()==Some(kid.execution) && x["attempt"].as_u64()==Some(kid.attempt)))
+                .map(|x|&x["progress"]);
+            let restored=!self.progress.contains_key(&key) && previous.is_some_and(|p|p["notice_open"]==true);
+            if restored {
+                if let Some(since)=previous.and_then(|p|p["overdue_since"].as_i64()) {self.stuck.insert(kid.task,since);}
+            }
+            let entry=self.progress.entry(key).or_default();
+            entry.2|=restored;
+            let mut value=crate::runtime::observe_until(std::time::Instant::now()+std::time::Duration::from_millis(50),|| {
+                match kid.proc.progress_source() {
+                    Ok((path,start))=>entry.0.read(&path,start,now,self.cfg.poll),
+                    Err(_)=>crate::runtime::progress::unknown("native execution progress source unavailable"),
+                }
+            });
+            value["observed"]=json!(now);
+            let transition=match value["status"].as_str() {
+                Some("overdue") if !entry.2=>{entry.2=true;Some("service.progress.overdue")},
+                Some("active"|"quiet") if entry.2=>{entry.2=false;Some("service.progress.recovered")},_=>None
+            };
+            value["notice_open"]=json!(entry.2);
+            if entry.2 && value["overdue_since"].is_null() {value["overdue_since"]=entry.1["overdue_since"].clone();}
+            entry.1=value;
+            if let Some(op)=transition {
+                crate::profile::measure_counted(op,|| ((),[("task".into(),kid.task),("attempt".into(),kid.attempt),("execution".into(),kid.execution)].into_iter().collect()));
+            }
+        }
+        self.progress.retain(|key,_|self.kids.iter().any(|k|*key==(k.task,k.attempt,k.execution)));
+    }
+
     fn execution_statuses(&self)->Vec<crate::snapshot::ExecutionStatus> {
         let mut statuses:Vec<_>=self.observations.iter().map(|((task,_),x)| {
             let (state,reason)=crate::snapshot::verdict(&self.signals(*task,x));
-            crate::snapshot::ExecutionStatus {task:*task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),reason}
+            crate::snapshot::ExecutionStatus {progress:self.progress.get(&(*task,x.attempt,x.id)).map(|p|p.1.clone()),task:*task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),reason}
         }).collect();
         if let Some(snapshot)=&self.snapshot {
             statuses.extend(snapshot.tasks.iter().flat_map(|r|&r.executions).filter(|x|x["host"]==self.cfg.me && x["release"]=="exit")
@@ -1584,6 +1619,7 @@ impl<'a> Service<'a> {
         }
         let r = crate::profile::measure("service.pass", || self.pass_inner(NATIVE_PASS_BUDGET));
         if r.is_err() { self.unready(); }
+        self.observe_progress();
         let observations=self.execution_statuses();
         if let Some(snapshot) = &mut self.snapshot {
             for row in &mut snapshot.tasks {
@@ -1592,7 +1628,7 @@ impl<'a> Service<'a> {
                 for value in &mut row.executions {
                     if let Some(status)=observations.iter().find(|s|s.task==row.n && Some(s.id)==value["id"].as_u64()
                         && Some(s.through)==value["through"].as_u64()) {
-                        value["state"]=json!(status.state);value["reason"]=json!(status.reason);
+                        value["state"]=json!(status.state);value["reason"]=json!(status.reason);value["progress"]=json!(status.progress);
                         value["host"]=json!(self.cfg.me);value["observed"]=json!(snapshot.observed);
                     }
                 }
@@ -1604,9 +1640,11 @@ impl<'a> Service<'a> {
                 if !self.kids.iter().any(|k| k.task == row.n && row.task.attempt == Some(k.attempt)) {
                     if let Some(reason)=self.execution_waits.get(&row.n).or_else(|| self.waits.get(&row.n)) {row.execution_wait=Some(reason.clone());}
                 }
+                if let Some(x)=row.executions.iter().find(|x|x["attempt"].as_u64()==row.task.attempt) {row.heartbeat["progress"]=x["progress"].clone();}
+                crate::snapshot::refresh_heartbeat(&mut row.heartbeat,snapshot.observed,matches!(row.task.state,State::Doing|State::Review)&&row.task.attempt.is_some());
             }
         }
-
+        if let Some(now)=self.snapshot.as_ref().map(|s|s.observed) {self.log_stuck(now);}
         r
     }
 
@@ -1672,7 +1710,6 @@ impl<'a> Service<'a> {
         self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
         self.copy_images();
         self.tasks_read = Some(std::time::Instant::now());
-        self.log_stuck(now);
         self.log_churn();
         // Local eligibility only: another host's heartbeat cannot qualify this runtime or hide its refusal.
         self.waits.clear();
@@ -2419,7 +2456,7 @@ impl<'a> Service<'a> {
     /// R6 stuck: one `#N event stuck <state> <age>` line per task, again only after it moves; observe only.
     fn log_stuck(&mut self, now: i64) {
         let Some(snapshot) = &self.snapshot else { return };
-        let stuck: HashMap<u64, (i64, &str, i64)> = snapshot.tasks.iter().filter_map(|r| r.stuck.map(|a| (r.n, (now - a, r.task.state.name(), a)))).collect();
+        let stuck: HashMap<u64, (i64, &str, i64)> = snapshot.tasks.iter().filter_map(|r| r.stuck_age().map(|a| (r.n, (now - a, r.task.state.name(), a)))).collect();
         for (n, (last, state, a)) in &stuck {
             if self.stuck.insert(*n, *last) != Some(*last) {
                 self.log.push(format!("#{n} event stuck {state} {}", crate::age(*a)));
@@ -7950,6 +7987,76 @@ Open: none";
         let ev = std::fs::read_to_string(root.join(".taskq/events")).unwrap();
         assert_eq!(ev.lines().filter(|l| l.ends_with(&format!("#{v} gone {av}"))).count(), 1, "{ev}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // A4/A5: real event-file observation -> host row -> remote snapshot -> committed telemetry.
+    // Risk: fresh leases hide an unbounded tool, notices repeat, or monitoring releases/replays work.
+    #[test]
+    fn progress_health_lifecycle_captures_once_recovers_and_keeps_execution_fenced() {
+        use std::fs;
+        struct Observed(PathBuf);
+        impl Proc for Observed {
+            fn progress_source(&self)->Result<(PathBuf,u64),String> {Ok((self.0.clone(),0))}
+            fn accepted(&mut self)->Result<bool,String> {Ok(true)}
+            fn exited(&mut self)->Result<Option<i32>,String> {Ok(None)}
+            fn kill(&mut self)->Result<(),String> {panic!("monitor cannot stop work")}
+            fn id(&self)->u32 {0}
+        }
+        let dir=std::env::temp_dir().join(format!("taskq-health-{}",crate::runtime::uuid()));fs::create_dir_all(&dir).unwrap();
+        let (capture,guard)=crate::profile::tests::collecting(&dir);crate::profile::init(&dir);
+        let b=Fake::default();b.state.borrow_mut().clock=2_000_000_000;
+        let n=b.create("Invented unbounded tool","",&[TASK_LABEL.into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker antigravity:invented mac").unwrap();
+        accept_execution(&b,n,a,a,None).unwrap();
+        let path=dir.join("native.log");
+        let write=|text:&str| {
+            fs::write(&path,text).unwrap();
+            let at=std::time::UNIX_EPOCH+std::time::Duration::from_secs(b.now().unwrap() as u64);
+            fs::File::options().write(true).open(&path).unwrap().set_times(fs::FileTimes::new().set_modified(at)).unwrap();
+        };
+        let active="{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"invented\",\"step_index\":90,\"state\":\"ACTIVE\",\"step_type\":\"tool\"}}\n";
+        write(active);
+        let mut c=cfg("mac");c.root=dir.join("project");c.install=dir.clone();
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|panic!("monitor cannot replay work")));
+        s.adopt(Kid{execution:a,task:n,attempt:a,rt:"antigravity".into(),proc:Box::new(Observed(path.clone())),unknown:None,stopping:false,session_url:None}).unwrap();
+        s.pass().unwrap();s.pass().unwrap();
+        b.advance(901);
+        s.pass().unwrap();s.pass().unwrap();
+        let row=s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().json();
+        assert_eq!(row["heartbeat"]["freshness"],"fresh");assert_eq!(row["heartbeat"]["progress"]["status"],"overdue");assert_eq!(row["stuck"],true);
+        assert!(crate::profile::stall(&row,b.now().unwrap() as u64).unwrap().contains("tool progress overdue"));
+        let (v,h)=views(&b,&mut CommentCache::new(),&mut DepCache::new(),c.ttl).unwrap();
+        let remote=crate::snapshot::from_views("board",&b,&c,b.now().unwrap(),&v,&h).tasks.into_iter().find(|r|r.n==n).unwrap().json();
+        assert_eq!(remote["stuck"],true,"board consumer sees the same progress stall");
+        assert_eq!(s.log.iter().filter(|l|l.contains("event stuck doing")).count(),1);
+        let kids=std::mem::take(&mut s.kids);drop(s);
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|panic!("restart cannot replay work")));
+        for kid in kids {s.adopt(kid).unwrap();}
+        s.pass().unwrap();s.pass().unwrap();
+        assert_eq!(s.log.iter().filter(|l|l.contains("event stuck doing")).count(),0,"published notice survives service restart");
+        // A collector/read failure cannot claim recovery or lose the original overdue episode.
+        fs::rename(&path,dir.join("original")).unwrap();s.pass().unwrap();
+        assert_eq!(s.progress[&(n,a,a)].1["status"],"unknown");
+        fs::rename(dir.join("original"),&path).unwrap();
+        use std::io::Write;
+        let mut f=fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(f,"{{\"event\":\"step_update\",\"step_update\":{{\"conversation_id\":\"invented\",\"step_index\":90,\"state\":\"DONE\",\"step_type\":\"tool\"}}}}").unwrap();
+        let at=std::time::UNIX_EPOCH+std::time::Duration::from_secs(b.now().unwrap() as u64);f.set_times(fs::FileTimes::new().set_modified(at)).unwrap();
+        s.pass().unwrap();s.pass().unwrap();
+        let row=s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().json();
+        assert_eq!(row["stuck"],false);assert!(row["heartbeat"]["warning"].is_null());
+        assert_eq!(row["heartbeat"]["progress"]["status"],"quiet");
+        assert_eq!(crate::profile::stall(&row,b.now().unwrap() as u64),None);
+        assert_eq!(s.kids.len(),1);assert_eq!(task(&b,n).attempt,Some(a));
+        assert!(core::executions(n,&entries(&b,n).unwrap())[0].release.is_none());
+        capture.flush().unwrap();
+        let samples=crate::telemetry::report_samples(&dir,&["operation"]).unwrap();
+        for op in ["service.progress.overdue","service.progress.recovered"] {
+            let found:Vec<_>=samples.iter().filter_map(|s|s.canonical().ok()).filter(|v|v["op"]==op).collect();
+            assert_eq!(found.len(),1,"{op} captures one durable transition");
+            assert_eq!(found[0]["counts"],json!({"task":n,"attempt":a,"execution":a}));
+        }
+        drop(s);drop(guard);drop(capture);fs::remove_dir_all(dir).unwrap();
     }
 
     // Chain: R6 stuck -> service log. Risk: a stuck task logs every pass, or never again after it moves.

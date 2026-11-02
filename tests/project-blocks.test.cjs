@@ -102,3 +102,14 @@ const sandbox={setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto};
 require('node:vm').runInContext(fs.readFileSync('build/web/project-blocks.js','utf8'),sandbox);
 assert.equal(sandbox.TaskqProjectBlocks.summary({...p,counts:counts({doing:1})}),q.summary({...p,counts:counts({doing:1})}));
 console.log('PASS model counters, unknown/partial/Held, safe links, local/remote sessions, independent navigation, provider assets, provenance and native/release wiring');
+
+// R6, #2173: every doing/review row reserves the health slot; the warning is accessible and escaped.
+for(const compact of [true,false])for(const state of ['doing','review']){
+ const healthy=q.task(p,{...row,state,heartbeat:{warning:null}},false,compact);
+ const unknown=q.task(p,{...row,state},false,compact);
+ const overdue=q.task(p,{...row,state,heartbeat:{warning:'tool overdue <inspect>'}},false,compact);
+ assert.match(healthy,/class="task-health-warning" aria-hidden="true"/);
+ assert.match(unknown,/class="task-health-warning" role="status" tabindex="0"/);
+ assert.match(overdue,/aria-label="tool overdue &lt;inspect&gt;"/);
+ assert(!overdue.includes('tool overdue <inspect>'));
+}

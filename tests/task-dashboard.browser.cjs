@@ -2,7 +2,7 @@
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const out=process.env.DASHBOARD_EVIDENCE;
 const task=(n,state,extra={})=>({n,state,title:'Keep the complete task title readable across narrow windows and large type '+n,revision:n+50,since:900,created:500,steps:[{state:'ready',start:500,end:900,complete:true},{state,start:900,end:null,complete:false}],controls:state==='failed'?['retry']:state==='held'?['start']:['stop','later'],...extra});
-const alpha={root:'/fixture/alpha',name:'Alpha',host:'fixture',issues:'https://example.org/org/alpha/issues',board_kind:'github',alive:true,complete:true,age:1,focus:['all'],labels:[],tasks:[task(3,'ready',{rank:3}),task(5,'doing',{rank:0,runtime:'claude',host:'remote-host',local_session:false,age:'4m'}),task(2,'failed',{rank:2}),task(4,'held',{rank:5})],delivery:{preset:'auto-merge',revision:0}};
+const alpha={root:'/fixture/alpha',name:'Alpha',host:'fixture',issues:'https://example.org/org/alpha/issues',board_kind:'github',alive:true,complete:true,age:1,focus:['all'],labels:[],tasks:[task(3,'ready',{rank:3}),task(5,'doing',{rank:0,runtime:'claude',host:'remote-host',local_session:false,age:'4m',heartbeat:{warning:null}}),task(2,'failed',{rank:2}),task(4,'held',{rank:5})],delivery:{preset:'auto-merge',revision:0}};
 const beta={...alpha,root:'/fixture/beta',name:'Beta',issues:'https://example.org/org/beta/issues',tasks:[task(1,'review',{rank:1}),task(3,'ready',{rank:4})]};
 const state={platform:'macos',font:16,theme:'dark',host:'fixture',now:1000,version:'fixture',size_anchor:'auto',attached_edge:'top',top:true,service:{state:'running'},projects:[beta,alpha,{...alpha,root:'/fixture/duplicate',tasks:alpha.tasks.map(t=>({...t,dup:true}))}],ai:{draft:''},notify:{projects:{}},stop_modes:true,display:require('./fixtures/display-model.json').display,messages:{complete:true,count:1}};
 const html=fs.readFileSync('build/web/tray.html','utf8');
@@ -11,6 +11,23 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
  try{
   const open=async(s=state,viewport={width:360,height:760})=>{const p=await browser.newPage({viewport});p.on('pageerror',e=>{throw e;});await p.setContent(html);await p.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await p.evaluate(s=>taskq.receive(s),s);return p;};
   let p=await open();const list=()=>p.locator('[data-card]'),editor=()=>p.locator('#taskq-popover,.task-inline-details,.task-transcript-page');
+  // A2/A3/A5: one health source reaches inline details; recovery keeps the row geometry stable.
+  const health={host:'fixture',attempt:55,source:'board host heartbeat',observed:1000,age_s:0,freshness:'fresh',reason:'matching attempt observed',warning:null,
+   progress:{source:'native execution events',clock:'append mtime lower bound',observed:1000,last_event:999,status:'quiet',reason:'no pending tool',pending_tools:0}};
+  const healthState=warning=>({...state,projects:[{...alpha,tasks:[task(55,'doing',{attempt:55,heartbeat:{...health,warning,progress:{...health.progress,status:warning?'overdue':'quiet',reason:warning||'no pending tool'}}})]}]});
+  await p.evaluate(s=>taskq.receive(s),healthState(null));
+  const row55=p.locator('[data-card]');const geometry=await row55.boundingBox();
+  await p.evaluate(s=>taskq.receive(s),healthState('tool progress overdue'));
+  assert.equal(await row55.locator('.task-health-warning').getAttribute('aria-label'),'tool progress overdue');
+  const warned=await row55.boundingBox();assert.equal(warned.height,geometry.height);assert.equal(warned.width,geometry.width);
+  await p.locator('[data-a=task-detail]').click();
+  const details=p.getByRole('region',{name:'Execution health'});
+  assert.equal(await details.count(),1);assert.match(await details.innerText(),/Heartbeat source[\s\S]*board host heartbeat[\s\S]*Last observation \/ age[\s\S]*Freshness[\s\S]*fresh[\s\S]*Execution progress[\s\S]*overdue/);
+  assert(await details.locator('time').first().getAttribute('aria-label'));
+  await p.evaluate(s=>taskq.receive(s),healthState(null));
+  assert.equal(await row55.locator('.task-health-warning').getAttribute('aria-hidden'),'true');
+  assert.match(await details.innerText(),/quiet/,'recovery clears the warning in the open detail');
+  await p.close();p=await open();
   // #1775 M1: task search is an icon until opened or a query is active; a query keeps the field visible.
   const query=async()=>{const q=p.locator('[data-task-query]');if(!await q.count())await p.locator('[data-a=search-open]').click();return q;};
   assert.equal(await p.locator('[data-a=view-editor]').count(),1,'before: approved overlay editor missing; after: reachable');
@@ -47,7 +64,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   // #1659 A1: hover and focus never open details; Enter does. IDs, age and steps stay behind a disclosure; no pin latch.
   await identity.hover();await identity.focus();assert.equal(await editor().count(),0,'hover/focus open nothing');assert.equal(await identity.getAttribute('aria-expanded'),'false');
   await p.keyboard.press('Enter');assert.equal(await identity.getAttribute('aria-expanded'),'true');assert.equal(await editor().getByRole('button',{name:'Keep task details open'}).count(),0);
-  assert(!/Total age|Attempt/.test(await editor().innerText()),'technical details start closed');assert(!await list().first().innerText().then(t=>/Total age|completed|runtime|host/.test(t)));
+  assert(!/Total age|Attempt/.test(await editor().locator('.task-more').innerText()),'technical info stays folded; execution health is visible (R6)');
   await editor().locator('summary').click();if(out){fs.mkdirSync(out,{recursive:true});await p.screenshot({path:out+'/dark-details.png'});}assert.match(await editor().innerText(),/Total age\s*\S+[\s\S]*1 completed/);assert.match(await editor().innerText(),/ready[\s\S]*doing[\s\S]*current/);
   assert.equal(await editor().locator('[data-a=control]').count(),2,'all offered revision-fenced controls retained');
   await p.keyboard.press('Escape');assert.equal(await editor().count(),0);assert(await identity.evaluate(e=>e===document.activeElement),'Escape restores identity focus');

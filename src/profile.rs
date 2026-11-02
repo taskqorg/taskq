@@ -9,7 +9,7 @@ use std::sync::{OnceLock, atomic::{AtomicU64, Ordering}};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::telemetry::Sample;
 
-pub const OPS: [&str; 10] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy", "service.churn", "service.doctor", "account.switch"];
+pub const OPS: [&str; 12] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy", "service.churn", "service.progress.overdue", "service.progress.recovered", "service.doctor", "account.switch"];
 #[cfg(test)] const PREFIX: &str = "taskq-profile ";
 pub(crate) const ERRORS: [&str; 9] = ["none", "http4xx", "http5xx", "timeout", "permission", "invalid", "other", "panic", "argument-too-long"];
 static LOG: OnceLock<PathBuf> = OnceLock::new();
@@ -994,10 +994,14 @@ fn store_line(install:&Path)->String {
 pub const WATCH_DOC: &str = "https://github.com/taskqorg/taskq/blob/main/docs/design/profiling.md#pm-telemetry-watch";
 
 /// #1910 one stall line for a `status.json` task row at `now` (Unix s), thresholds of [`WATCH_DOC`]; a row matches its first rule.
-fn stall(t:&serde_json::Value,now:u64)->Option<String> {
+pub(crate) fn stall(t:&serde_json::Value,now:u64)->Option<String> {
     let since=|k:&str|t[k].as_u64().map(|s|now.saturating_sub(s));
     let age=|s:u64|crate::age(s as i64);
     let reason=match t["state"].as_str()? {
+        "doing"|"review" if t["heartbeat"].is_object()=>{
+            let mut h=t["heartbeat"].clone();crate::snapshot::refresh_heartbeat(&mut h,now as i64,t["attempt"].is_u64());
+            h["warning"].as_str().map(String::from)
+        },
         "doing" => since("updated").filter(|s|*s>3600).map(|s|format!("doing, no board event for {}",age(s))),
         "ready" => since("since").filter(|s|*s>900).map(|s|format!("ready for {}{}",age(s),
             t["admission"]["code"].as_str().map_or(String::new(),|c|format!(" (admission {c})")))),
