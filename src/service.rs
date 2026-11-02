@@ -3199,7 +3199,9 @@ mod tests {
             assert_eq!(data["executions"][0]["state"],"unknown");
             assert_eq!(data["executions"][0]["release"],"exit");
             assert!(data["execution_wait"].as_str().unwrap().contains("inspect the pending input in Codex"));
-            assert!(snapshot.text(&c,&json!({})).unwrap().contains("Stuck:"));
+            let report=snapshot.text(&c,&json!({})).unwrap();
+            assert!(report.contains("Stale heartbeats:") && report.contains("Agent exited; input recovery required"));
+            assert!(!report.contains("Stuck:"),"the actionable health block replaces the duplicate list entry (R6)");
             assert!(snapshot.tasks.iter().find(|r|r.n==quiet).unwrap().stuck.is_none(),"a quiet live worker is not stuck");
             let beat=s.heartbeat_body();assert!(beat.lines().any(|l|l==format!("#{n} {a}")),"assignment ownership stays leased");
             let status=beat.lines().filter_map(|l|l.strip_prefix("execution ")).filter_map(|l|serde_json::from_str::<Value>(l).ok()).find(|r|r["id"]==x).unwrap();

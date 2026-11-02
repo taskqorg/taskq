@@ -173,7 +173,7 @@ def test_diff(base, head=None):
 
 
 def approval_text(comments, task):
-    """An owner's picked answer approves its ask context and chosen option, never the other options."""
+    """Accepted owner steering and picked answers bind the task; unchosen options never do."""
     parts, pending, seen = [], None, set()
     state, attempt_id, resume, last, retries = 'ready', None, None, 0, 0
     for c in sorted(comments, key=lambda c: int(c['id'])):
@@ -226,6 +226,8 @@ def approval_text(comments, task):
             pending = (int(c['id']), lines[1:], opts)
             resume, state = state, 'ask'
             continue
+        if head == 'taskq: steer' and state == 'doing' and own is None:
+            parts.append('\n'.join(lines))
         if canonical and own is None:
             parts.append('\n'.join(lines))
         if re.fullmatch(r'taskq: result [0-9a-fA-F]{40} attempt [0-9]+', head) and state == 'doing' and own is not None:

@@ -26,7 +26,7 @@ The lifecycle case uses actual event files, an invented board clock and the exis
 
 The development filter `cargo test --locked --bin taskq progress` passed all 9 selected checks, including the lifecycle reproduction and all five reader checks. The final canonical run also passed their updated assertions, including rejection of an mtime fallback when UTC reverses during the read.
 
-## Final checks
+## Timestamp-fix checkpoint
 
 Source candidate: `44fb4f74fb9430549774fe4e49652c787a4bd862`; the subsequent documentation amendment records these results only. The single pre-push rebase on `origin/main` was already complete.
 
@@ -38,3 +38,27 @@ Source candidate: `44fb4f74fb9430549774fe4e49652c787a4bd862`; the subsequent doc
 Task-fit review: A1's stale-pass/native-time defect is reproduced and corrected at the reader, service, local snapshot and board-consumer boundaries. Implementation review: strict future/invalid guards, bounded reads, quiet work, telemetry/notice deduplication and execution fences remain protected; no dependency, runtime policy or grant was added.
 
 No UI source changed. Installed #2179, native GUI, Windows/Linux event sources and merge-result CI require separate readback. No service, focus, grant, policy or real task execution was changed by this worker. Self-fix publication follows §7 rule 8; this evidence does not claim deployment.
+
+## Manager status extension
+
+[Owner steer 6576533840](https://github.com/taskqorg/taskq/issues/2180#issuecomment-6576533840) adds the separate actionable `Stale heartbeats` block and explicitly authorizes R6/status-report changes. The root contract and linked report specification were updated before implementation. Amended rule: **R6**.
+
+The block selects only existing Doing/Review `heartbeat.warning` values. It preserves the same typed JSON/native projection, clock provenance, exact attempt/execution identities, source observations and ages, source diagnostics and one safe inspection action. It appears after Questions/Decide, omits healthy quiet work and empty results, and removes duplicate entries from the generic `Stuck:` list. No JSON key, threshold, detector, manager action or permission was added.
+
+- Before: the new manager golden check failed because ordinary status contained no `Stale heartbeats:` block. After: the same check passes, including stale host with active executor, missing host, source error, overdue tool with fresh lease, unknown executor, awaiting execution, stale progress, recovery/empty output, preserved Questions/Decide, long source-metadata links and explicit future age. The golden is [stale-heartbeats.txt](../../../../tests/golden/stale-heartbeats.txt).
+- Actual candidate `cargo run --locked -- status` succeeded against the configured board. The [initial capture](status-cli-warning.txt) exposes #2183's fresh lease/active executor separately from missing native progress, with runtime, host, current attempt/execution, observations and a safe inspection action. Questions and the completed result requiring discussion precede the block; there is no duplicate Stuck entry. That capture precedes the presentation-guard corrections below; its selection/discovery path is unchanged, while the final field presentation is qualified by the golden.
+- A [fresh final-renderer capture](status-cli.txt) shows #2183 in Decide as a confirmed result and no remaining Doing/Review health warnings; the health block is correctly absent and Questions/Decide remain discoverable. These are ordinary manager status reads, not web fixtures or an inference from UI health. No manager was launched and no action was taken on #2183/#2184.
+- The rule gate initially refused R6 because it omitted accepted owner steering from task text, contrary to the binding inbox notes in §2. A Python regression failed before the fix, then passed. The gate now includes only trusted, unedited plain owner `steer` accepted in Doing with matching revision/operation identity; attempt-bound, stale, duplicate, reviewer, ignored-state and unknown histories cannot add approval. Existing answer/selected-option protections remain. The actual R6 gate now passes using this task's owner note, without a second approval.
+- The existing historical unaccepted-Exit regression retains its state, lease, input and execution assertions; its human-report check now requires the actionable health block instead of duplicate Stuck text. Structured JSON/PM consumers already receive `tasks[].heartbeat`; no second health collection was needed.
+- The first expanded canonical run found two presentation defects: the new executor line leaked a raw execution diagnostic protected by the existing owner-text guard, and `Problem:` was correctly rejected by the production-card guard. The renderer now reports executor state/source/observation and calls the shared health diagnostic `Reason:`. Both original guards pass unchanged, as does the manager golden. The failed expanded run was 899 passed, 9 failed (7 sandbox refusals plus these two defects), 42 ignored; 291.974s. It is not final acceptance evidence.
+
+## Final amended-R6 verification
+
+Code candidate: `4ffb466141ada2107705fffd762150033cfe5fd1`; the final amendment adds these results only. No further rebase followed the first push.
+
+- `python3 scripts/check.py --base 4f42f8b44ead036461c0ff37b37910fe91d901db`: **not green locally**; 901 passed, 7 sandbox-blocked, 42 ignored; 164.077s/900s. The seven failures remain the protected-fixture configuration setup refusals. Clock/lifecycle, manager golden, historical unaccepted Exit, original owner-text and production-card guards all pass. The actual owner-steer R6 rule gate and pinned contract lint pass; root contract: 294/300 lines, 59,077/61,440 bytes, longest line 394/400 characters.
+- Isolated `cargo +stable test --locked --test integration`: 22 passed, 1 sandbox-blocked, 1 ignored; same `sandbox_apply: Operation not permitted` case. Isolated offline `cargo +stable run --locked -- selftest`: PASS, 130 traces and 8 committed telemetry observations; board/tools deliberately unknown. Combined remainder: 14.125s.
+- All 41 Node/artifact checks ran again and passed in 90.320s. Final canonical plus independent remainders: 268.522s on this warm macOS host, not a cold-CI qualification.
+- The final-renderer actual text read omits an empty health block and keeps Questions/Decide. A subsequent actual `target/debug/taskq status --json` read reports #2180 as fresh host observation, active executor, quiet progress and null warning; all Doing/Review rows in that read have null warnings. These are separate fresh reads, not one atomic snapshot. The typed fields already support manager discovery without another collection or threshold.
+
+Task fit: A1's false-future reason and the accepted owner status extension are implemented and verified at their stated boundaries. Quality: no new dependency, health detector, threshold, grant, capacity or execution control; native future/invalid, owner-text/card, lease/input and notice protections remain. Eight host checks remain sandbox-blocked, and merge-result `merge_group` CI is unverified. Installed #2179 and Windows/Linux source requalification were not run; this worker made no deployment.
