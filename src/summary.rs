@@ -180,7 +180,7 @@ mod tests {
     fn comments(f: &Value) -> Vec<Comment> {
         f["comments"].as_array().unwrap().iter().map(|c| Comment {
             id: c["id"].as_u64().unwrap(), created: c["created"].as_i64().unwrap(), body: c["body"].as_str().unwrap().into(),
-            trusted: c["trusted"].as_bool().unwrap(), edited: c["edited"].as_bool().unwrap(), author: String::new(),
+            trusted: c["trusted"].as_bool().unwrap(), edited: c["edited"].as_bool().unwrap(), author: String::new(), read: None,
         }).collect()
     }
 

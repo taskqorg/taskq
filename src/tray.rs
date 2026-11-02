@@ -3138,6 +3138,10 @@ fn own_page(u: String) -> bool { !u.starts_with("http") }
 mod tests {
     use super::*;
 
+    // Queue handoffs wait on a worker thread; a loaded instrumented Windows runner took over 3 s (merge_group run 41538580169).
+    // Only the failure path waits this long.
+    const WAIT: Duration = Duration::from_secs(30);
+
     // M13 / #1966 A2: a new window must not consume the first control click just to activate the app.
     // P-W3/C2/R12: recreation failure cannot destroy the singleton or retire its active generation.
     #[test]
@@ -3448,7 +3452,7 @@ mod tests {
             let (release_tx,release_rx)=std::sync::mpsc::channel();
             let queue=ActionQueue::start(install.clone(),&["pause","resume","focus"],true,queued_focus,move |root,id,result| {
                 result_tx.send((root,id,result)).unwrap();
-                release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                release_rx.recv_timeout(WAIT).unwrap();
             }).unwrap();
             let message=|action:&str,id:&str|json!({"a":action,"root":root,"id":id});
             let _click=tracing::info_span!("fixture.click").entered();
@@ -3457,7 +3461,7 @@ mod tests {
                 assert_eq!(crate::data::focus(&root).unwrap(),["area-maps"]);
             }
             queue.submit(&message("pause","tray.1")).unwrap();
-            let (reported,id,result)=result_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let (reported,id,result)=result_rx.recv_timeout(WAIT).unwrap();
             assert_eq!(reported,root);assert_eq!(id,"tray.1");let applied=result.unwrap()["applied_receipt"].as_str().unwrap().to_string();
             assert!(queue.submit(&message("pause","tray.1")).is_ok(),"the same pending operation coalesces");
             assert!(queue.submit(&message("resume","tray.1")).unwrap_err().contains("different request"),"an id cannot be repurposed while pending");
@@ -3473,7 +3477,7 @@ mod tests {
             fs::write(install.join("projects"),"").unwrap();
             for n in 0..16 {
                 release_tx.send(()).unwrap();
-                let (reported,id,result)=result_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                let (reported,id,result)=result_rx.recv_timeout(WAIT).unwrap();
                 assert_eq!(reported,root);assert_eq!(id,format!("queued-{n}"));assert!(result.unwrap_err().contains("no longer registered"));
             }
             release_tx.send(()).unwrap();
@@ -3519,13 +3523,13 @@ mod tests {
                 let mut reply=result.unwrap();reply["root"]=json!(root);reply["id"]=json!(id);tx.send(reply).unwrap();
             }).unwrap();
             queue.submit(&forwarded).unwrap();
-            let saved=rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let saved=rx.recv_timeout(WAIT).unwrap();
             assert_eq!(saved["state"],"saved","{saved}");assert_eq!(saved["id"],"ws-apply","{saved}");
             let fresh=crate::host::Policy::read(&install).unwrap();
             assert_eq!(fresh.raw["limits"]["codex"],3,"fresh readback");assert_eq!(saved["saved_revision"],json!(fresh.revision().unwrap()));
             // Lost receipt: the same reviewed operation reconciles without a second write.
             queue.submit(&forwarded).unwrap();
-            let again=rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let again=rx.recv_timeout(WAIT).unwrap();
             assert_eq!(again["id"],"ws-apply","{again}");assert_ne!(again["state"],"rejected","{again}");
             assert_eq!(crate::host::Policy::read(&install).unwrap().revision().unwrap(),fresh.revision().unwrap(),"no duplicate write");
             let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
@@ -3567,10 +3571,10 @@ mod tests {
             let (pause_tx,pause_rx)=std::sync::mpsc::channel();
             let focus=ActionQueue::start(install.clone(),&["pause","resume","focus"],true,queued_focus,move |_,_,result|pause_tx.send(result).unwrap()).unwrap();
             focus.submit(&json!({"a":"pause","root":root,"id":"pause"})).unwrap();
-            assert!(pause_rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["applied_receipt"].is_string());
+            assert!(pause_rx.recv_timeout(WAIT).unwrap().unwrap()["applied_receipt"].is_string());
             assert!(crate::data::focus(&root).unwrap().is_empty());assert!(capacity_rx.try_recv().is_err());
             drop(lock);
-            assert_eq!(capacity_rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["state"],"saved");
+            assert_eq!(capacity_rx.recv_timeout(WAIT).unwrap().unwrap()["state"],"saved");
             for queue in [blocked,focus] {let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();}
         });
     }
@@ -3583,11 +3587,11 @@ mod tests {
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
             fs::write(crate::dot(&root).join("focus"),"all").unwrap();
             let (entered_tx,entered_rx)=std::sync::mpsc::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
-            let answer=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(3)).unwrap();Ok(json!({"answerReceipt":{"state":"accepted"}}))},|_,_,_|{}).unwrap();
-            answer.submit(&json!({"a":"answer","root":root,"id":"tray.1","op":{"id":"tray.1"}})).unwrap();entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let answer=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(WAIT).unwrap();Ok(json!({"answerReceipt":{"state":"accepted"}}))},|_,_,_|{}).unwrap();
+            answer.submit(&json!({"a":"answer","root":root,"id":"tray.1","op":{"id":"tray.1"}})).unwrap();entered_rx.recv_timeout(WAIT).unwrap();
             let (pause_tx,pause_rx)=std::sync::mpsc::channel();let focus=ActionQueue::start(install.clone(),&["pause","resume","focus"],true,queued_focus,move |_,_,result|pause_tx.send(result).unwrap()).unwrap();
             focus.submit(&json!({"a":"pause","root":root,"id":"pause"})).unwrap();
-            assert!(pause_rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["applied_receipt"].is_string());assert!(crate::data::focus(&root).unwrap().is_empty());
+            assert!(pause_rx.recv_timeout(WAIT).unwrap().unwrap()["applied_receipt"].is_string());assert!(crate::data::focus(&root).unwrap().is_empty());
             release_tx.send(()).unwrap();
             for queue in [answer,focus] {let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();}
         });
@@ -3606,9 +3610,9 @@ mod tests {
             fs::write(install.join("projects"),format!("{}
 ",root.display())).unwrap();
             let (entered_tx,entered_rx)=std::sync::mpsc::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
-            let queue=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(3)).unwrap();Ok(json!({}))},|_,_,_|{}).unwrap();
+            let queue=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(WAIT).unwrap();Ok(json!({}))},|_,_,_|{}).unwrap();
             let first=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op,"local":{"draft":"","receipt":{"state":"sending"}}});
-            queue.submit(&answer_request(&first)).unwrap();entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            queue.submit(&answer_request(&first)).unwrap();entered_rx.recv_timeout(WAIT).unwrap();
             let readback=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op});
             let check=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op,"local":{"draft":"","receipt":{"state":"unknown"}}});
             // the cause: the prior bridge queued the message as sent, draft included
@@ -3622,7 +3626,7 @@ mod tests {
             let mut oversized=readback.clone();oversized["extra"]=json!("x".repeat(21<<10));
             assert!(queue.submit(&answer_request(&oversized)).unwrap_err().contains("payload too large"),"non-reply envelope fields retain their bound");
             release_tx.send(()).unwrap();
-            entered_rx.recv_timeout(Duration::from_secs(3)).unwrap(); // the deliberately unnormalized ws.0 job
+            entered_rx.recv_timeout(WAIT).unwrap(); // the deliberately unnormalized ws.0 job
             release_tx.send(()).unwrap();
             let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
           }
@@ -4023,9 +4027,9 @@ mod tests {
             capacity(install,root,message)
         },move |_,_,result|tx.send(result).unwrap()).unwrap();
         queue.submit(&json!({"a":"capacity","root":root,"id":"rejected-op","ops":[]})).unwrap();
-        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["state"],"rejected");
+        assert_eq!(rx.recv_timeout(WAIT).unwrap().unwrap()["state"],"rejected");
         queue.submit(&json!({"a":"capacity","root":root,"id":"unknown-op","ops":[]})).unwrap();
-        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["state"],"unknown");
+        assert_eq!(rx.recv_timeout(WAIT).unwrap().unwrap()["state"],"unknown");
         let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
         capture.flush().unwrap();
         let actions=crate::telemetry::diagnostic::actions(&install,None).unwrap();

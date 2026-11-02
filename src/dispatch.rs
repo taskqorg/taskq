@@ -6,6 +6,7 @@ use crate::core::{self, Entry, Gate, State, Task, entry, fold, options};
 use crate::service::{self, Config};
 use crate::{Res, join, poke};
 use serde::Serialize;
+use serde_json::{Value, json};
 use std::path::Path;
 
 /// Whether a `Depends on` issue of `body` or the worker park's blocker in `log` is not done (§ 1, § 2); an unreadable
@@ -146,10 +147,18 @@ pub struct Receipt {
 }
 
 /// § 5 `answered`: the board login and delivered text of the answer that closed the question.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Answered {
     pub by: String,
     pub text: String,
+    /// § 2 owner note detail for Conversations: board time (Unix seconds), the `eyes` read receipt (None: the board
+    /// does not say) and attached files; receipts leave them out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read: Option<bool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<Value>,
 }
 
 impl Answered {
@@ -163,16 +172,35 @@ impl Answered {
 /// § 5 `answered` of `log` from its `comments`: the answer that closed the last question, its writer and delivered text.
 pub fn answered_in(n: u64, log: &[Entry], p: &core::Projection, comments: &[board::Comment]) -> Option<Answered> {
     let id = p.closing_answer(n, log)?;
-    Some(Answered { by: comments.iter().find(|c| c.id == id).map(|c| c.author.clone()).unwrap_or_default(), text: core::delivery(n, log, id) })
+    Some(Answered { by: comments.iter().find(|c| c.id == id).map(|c| c.author.clone()).unwrap_or_default(), text: core::delivery(n, log, id), ..Default::default() })
 }
 
 /// #1918 conversation history: every accepted answer of `log` in board order, with the card it closed; late answers
-/// saved as notes closed no card and stay out.
+/// saved as notes closed no card and stay out. #2188: every other owner note (§ 2) joins as a message without a card,
+/// each with its board time, files and `eyes` read receipt.
 pub fn history(n: u64, log: &[Entry], p: &core::Projection, comments: &[board::Comment]) -> Vec<(Option<String>, Answered)> {
-    p.answers.iter().filter(|a| !a.late).map(|a| {
-        let by = comments.iter().find(|c| c.id == a.id).map(|c| c.author.clone()).unwrap_or_default();
-        (core::card_before(n, log, a.id), Answered { by, text: core::delivery(n, log, a.id) })
+    let answers: Vec<u64> = p.answers.iter().filter(|a| !a.late).map(|a| a.id).collect();
+    core::owner_notes(n, log, p).into_iter().chain(answers.iter().copied()).collect::<std::collections::BTreeSet<_>>().into_iter().map(|id| {
+        let c = comments.iter().find(|c| c.id == id);
+        let text = core::delivery(n, log, id);
+        let files = crate::reply_files::manifest(&text).unwrap_or_default().into_iter().map(|f| json!({"name": f.name, "mime": f.mime, "url": f.url})).collect::<Vec<_>>();
+        // the file links and manifest the reply appended (§ 5) show as the files list, not as text
+        let shown = match text.rfind(crate::reply_files::MARKER) {
+            Some(at) if !files.is_empty() => files.iter().fold(text[..at].trim_end(), |t, _| t.rsplit_once('\n').map_or("", |x| x.0)).trim_end().to_string(),
+            _ => text,
+        };
+        let question = answers.contains(&id).then(|| core::card_before(n, log, id)).flatten();
+        (question, Answered { by: c.map(|c| c.author.clone()).unwrap_or_default(), text: shown, at: c.map(|c| c.created).filter(|t| *t > 0), read: c.and_then(|c| c.read), files })
     }).collect()
+}
+
+/// § 2 read receipts: after the live attempt `attempt` has read the task, react `eyes` to each owner note lacking it.
+/// Returns the notes it marked; a refused reaction stays unread and is retried by the next read.
+pub fn mark_read(b: &dyn Board, n: u64, log: &[Entry], comments: &[board::Comment], attempt: u64) -> Vec<u64> {
+    let p = core::project(n, log, false);
+    if p.task.attempt != Some(attempt) { return vec![]; }
+    core::owner_notes(n, log, &p).into_iter().filter(|id| comments.iter().any(|c| c.id == *id && c.read == Some(false)))
+        .filter(|id| b.react_read(n, *id).is_ok()).collect()
 }
 
 /// The answer that beat a late `answer` on `log` (#1785); one more comment read names its writer, when it can.
@@ -246,7 +274,7 @@ fn answer_note(b: &dyn Board, root: &Path, n: u64, args: &[&str], text: &str, op
     } else { Ok(text.to_string()) };
     if let Some(id) = said.as_ref().ok().zip(source).filter(|_| files.is_empty()).and_then(|(said, r)| same_answer(n, log, r, said)) {
         let by = b.comments(n).unwrap_or_default().into_iter().find(|c| c.id == id).map(|c| c.author).unwrap_or_default();
-        let answered = Answered { by, text: core::delivery(n, log, id) };
+        let answered = Answered { by, text: core::delivery(n, log, id), ..Default::default() };
         return Receipt { reason: "Same answer; nothing saved".into(), answered: Some(answered), ..Receipt::accepted(n, op, now.0, now.1) };
     }
     match said {
@@ -875,7 +903,7 @@ mod tests {
         let log: Vec<Entry> = [(10, "taskq: spawn worker claude:s win".to_string()), (11, ask("First?")), (12, "taskq: answer 1".into()),
             (13, ask("Second?")), (14, "taskq: answer\nnot yet".into()), (15, ask("Third?"))]
             .into_iter().map(|(id, body)| Entry { id, body, edited: false }).collect();
-        let comment = |id, author: &str| board::Comment { id, created: 0, body: String::new(), trusted: true, edited: false, author: author.into() };
+        let comment = |id, author: &str| board::Comment { id, created: 0, body: String::new(), trusted: true, edited: false, author: author.into(), read: None };
         let comments = [comment(12, "sam"), comment(14, "alex")];
         let p = core::project(7, &log, false);
         assert_eq!(p.task.state, State::Ask, "the third question is open");
@@ -883,6 +911,33 @@ mod tests {
         let shown: Vec<_> = h.iter().map(|(c, a)| (c.as_deref().and_then(|c| c.lines().find(|l| l.starts_with("Problem: "))), a.by.as_str(), a.text.as_str())).collect();
         assert_eq!(shown, [(Some("Problem: First?"), "sam", "Ship - + now; - risk"), (Some("Problem: Second?"), "alex", "not yet")]);
         assert_eq!(answered_in(7, &log, &p, &comments), None, "the open question has no answer yet");
+    }
+
+    // Chain: § 2 owner note -> live attempt inbox read -> `eyes` reaction -> Conversations history. Risk (#2188 A3): an
+    // owner message lived only in a worker channel, or the thread could not tell whether the worker had read it.
+    #[test]
+    fn owner_notes_show_in_history_and_the_live_attempt_marks_them_read() {
+        let b = Fake::default();
+        let n = b.create("Read receipts", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, &entry("spawn", &["worker", "claude:s", "mac"], None, "")).unwrap();
+        let file = crate::reply_files::File { id: "f1".into(), name: "shot.png".into(), mime: "image/png".into(), hash: "a".repeat(64), bytes: 1, url: "https://example.test/shot.png".into() };
+        let owner = b.comment(n, &format!("taskq: steer\n{}", crate::reply_files::append("look at this", std::slice::from_ref(&file)))).unwrap();
+        let worker = b.comment(n, &format!("taskq: steer attempt {a}\ncontinue")).unwrap();
+        let notes = |b: &Fake| { let c = b.comments(n).unwrap(); let log = board::reply::log(n, &c).unwrap(); history(n, &log, &core::project(n, &log, false), &c) };
+        let h = notes(&b);
+        assert_eq!(h.len(), 1, "only the owner note shows; the attempt-bound steer is the worker's own");
+        let (q, row) = &h[0];
+        assert!(q.is_none());
+        assert_eq!((row.text.as_str(), row.read, row.files.len()), ("look at this", Some(false), 1), "unread, files split from text");
+        assert_eq!(row.files[0]["url"], file.url);
+        let c = b.comments(n).unwrap(); let log = board::reply::log(n, &c).unwrap();
+        assert!(mark_read(&b, n, &log, &c, a + 1).is_empty(), "a stale attempt sets no receipt");
+        assert_eq!(mark_read(&b, n, &log, &c, a), [owner]);
+        assert_eq!(notes(&b)[0].1.read, Some(true), "read once the live attempt read the inbox");
+        assert_eq!(b.comments(n).unwrap().iter().find(|c| c.id == worker).unwrap().read, Some(false));
+        let c = b.comments(n).unwrap();
+        assert!(mark_read(&b, n, &log, &c, a).is_empty(), "a read note is not reacted twice");
+        assert_eq!(core::project(n, &board::reply::log(n, &c).unwrap(), false).task, core::project(n, &log, false).task, "the reaction leaves the fold unchanged");
     }
 
     // Chain: § 5 all clients -> shared dispatcher -> stored board text. Risk: length rejects or loses a human reply.
