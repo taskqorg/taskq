@@ -5,6 +5,13 @@ function instance(){return conversations.create({window:{crypto:require('node:cr
 const owner={id:'owner',revision:2,title:'Retained',root:'fixture',text:'Independent unsent draft',caret:[2,4],files:[{id:'file',name:'draft.txt'}],sent:{root:'fixture',runtime:'claude',text:'Immutable submitted text',files:[{id:'sent',name:'sent.txt',hash:'a'.repeat(64)}]}};
 const initial={projects:[],conversations:{items:[owner],complete:true,catalog_epoch:2,navigation:{selected:'owner',list:'recent'}}};
 for(const [name,check]of [
+ ['#2159 leaving a hidden or loading board source retains its exact anchor',()=>{
+  const thread='result:fixture/2022@'+'a'.repeat(40),position={key:'report:full:6',y:-7};let visible=true;
+  const reader={parentElement:{dataset:{threadId:thread}},checkVisibility:()=>visible,querySelector:()=>null,querySelectorAll:()=>[],getBoundingClientRect:()=>({top:0}),scrollTop:0};
+  const api=conversations.create({window:{},document:{},menu:{querySelector:()=>reader},draw(){}});api.place(thread,position);
+  api.capture(true);assert.deepEqual(api.recovery().context.positions[thread],position,'a loading source cannot replace the saved paragraph with zero pixels');
+  visible=false;api.capture(true);assert.deepEqual(api.recovery().context.positions[thread],position,'the narrow search list cannot sample its hidden reader');
+ }],
  ['#2159 empty linked history is truthful without losing older discovery',()=>{
   const api=instance(),sent=[];globalThis.ipc={postMessage:text=>sent.push(JSON.parse(text))};
   const c={id:'owner',sent:{}},p={tasks:[],root:'fixture'},nodes=v=>Array.isArray(v)?v.flatMap(nodes):v?.props?[v,...nodes(v.props.children)]:[];

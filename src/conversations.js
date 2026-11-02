@@ -85,7 +85,8 @@ module.exports=execution.module('conversations',{
     if(row&&scopeReturn)list=row.archived?'archive':'recent';if(!row&&!recoveryDrafts.some(c=>c.id===selected)&&!items.some(c=>c.id===selected&&c.deleted)){if(selected)api.note('The selected source or saved position is unavailable. Refresh or choose another thread.','list');selected=null;}else if(row&&!!row.archived!==(list==='archive'))selected=null;
     selection[list]=selected;onSelect?.(selected);return selected;
    },
-   capture:function(){const el=menu.querySelector('.conversation-reader'),id=el?.parentElement.dataset.threadId;if(id&&!el.querySelector('.dialogue-transcript')&&positions[id]===undefined){const a=api.mark(el);api.place(id,a?.board?api.boardPosition(a):Math.round(el.scrollTop));}},
+   // Sample departing board readers even when accessibility scrolling delivered no wheel/key intent; draws retain the layout anchor.
+   capture:function(leaving=false){const el=menu.querySelector('.conversation-reader'),id=el?.parentElement.dataset.threadId;if(id&&el.checkVisibility()&&!el.querySelector('.dialogue-transcript')&&(leaving||positions[id]===undefined)){const a=api.mark(el);if(a?.board)api.place(id,api.boardPosition(a));else if(!positions[id]?.key)api.place(id,Math.round(el.scrollTop));}},
    // Stable board/native record offsets share the bounded navigation; plain readers retain pixel positions.
    boardPosition:function(a){return {key:a.key,y:Math.round(a.y),...(a.before!==undefined?{before:a.before}:{}),...(a.g?{g:a.g}:{})};},
    place:function(id,value){
@@ -314,7 +315,7 @@ module.exports=execution.module('conversations',{
     const was=l.reason,first=l.end===null;let fresh=[];
     if(r.state==='accepted'&&r.value?.ended===true){l.ended=true;l.reason='';return true;}
     if(r.state==='accepted'&&!api.pageValid(r.value)){l.reason='Worker transcript response invalid; source unknown. Refresh before reading.';return true;}
-    if(r.state!=='accepted')l.reason=r.reason||'Transcript unknown';
+    if(r.state!=='accepted'){l.reason=r.reason||'Transcript unknown';if(/shrank|replaced/.test(l.reason)){l.lost=true;l.stick=false;}}
     else if(r.value.generation&&l.source&&r.value.generation!==l.source&&(l.items.length||l.end>0||l.anchor)){l.gen++;l.items=[];l.start=l.end=null;l.anchor=null;api.place(l.thread);l.reason='Transcript source changed. Choose Latest to open the current source.';l.lost=true;l.stick=false;}
     else {
      const v=r.value;l.source=v.generation||l.source;l.reason='';l.size=v.size;
@@ -376,13 +377,14 @@ module.exports=execution.module('conversations',{
    restoreContext:function(v){list=v.list;resultFilter=v.filter;search=v.search;completed=v.completed;scopeReturn=null;selected=v.selected;onSelect?.(selected);api.nav();},
    filter:function(value,criteria){navigated=true;api.flush();stableOrder.clear();stableGroups.clear();sidebarProjection=null;resultFilter=value;list='recent';selected=null;onSelect?.(null);if(criteria)completed=views.criteria(criteria);else completed=null;scopeReturn=null;revealed=null;api.nav();},
    returnScope:function(){if(!scopeReturn)return;const prior=scopeReturn;scopeReturn=null;list=prior.list;resultFilter=prior.filter;search=prior.search;completed=prior.completed;api.select(prior.selected,false);},
-   select:function(id,focus=true){navigated=true;revealed=id;const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;if(bodyCache.has(id)){bodyCache.delete(id);bodyCache.set(id,true);}onSelect?.(id);selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
+   select:function(id,focus=true){api.capture(true);navigated=true;revealed=id;const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;if(bodyCache.has(id)){bodyCache.delete(id);bodyCache.set(id,true);}onSelect?.(id);selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
    // #1699 A2: open one owner conversation in its list without acknowledging anything
    reveal:function(id,focus=true,keepSearch=false){const c=items.find(c=>c.id===id);if(!c)return false;list=c.archived?'archive':'recent';if(!keepSearch){search='';searchOpen=false;}api.select(id,focus);return true;},
    // #1699 A7: a restored task or event thread opens in Recent
    show:function(name){navigated=true;if(list!==name){selection[list]=selected;list=name;selected=selection[list]||null;onSelect?.(selected);api.nav();}},
    resume:function(){readerIdentity=null;return !!focuses[selected];},
    fresh:function(copy){navigated=true;
+    api.capture(true);
     const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);
     const c={id:api.id(),revision:0,title:'',root:copy?.root||snapshot.projects?.[0]?.root||'',runtime:copy?.runtime||snapshot.ai?.runtime?.id,text:copy?.text||'',caret:copy?.caret||[0,0],scroll:0,files:[],archived:false,version:1};
     resultFilter='all';completed=null;scopeReturn=null;resultPages.clear();stableOrder.clear();stableGroups.clear();sidebarProjection=null;scrolls.recent=0;
@@ -673,10 +675,10 @@ module.exports=execution.module('conversations',{
     else if(action==='reply-check'&&c?.reply){if(failure?.conversation===c.id)failure=null;api.action('reply-check',{op_id:c.reply.id,typed:c.version||0});}
     else if(action==='new'&&!owner.conversation)api.fresh();
     else if(action==='select'){if((owner.detached||[]).includes(b.dataset.id))ui.send({a:'conversation-window',action:'raise',conversation:b.dataset.id});else api.select(b.dataset.id);}
-    else if(action==='search-open'){listOnly=true;searchOpen=true;focusSearch=true;api.nav();draw();}
-    else if(action==='list'){listOnly=!listOnly;api.nav();draw();}
+    else if(action==='search-open'){api.capture(true);listOnly=true;searchOpen=true;focusSearch=true;api.nav();draw();}
+    else if(action==='list'){api.capture(true);listOnly=!listOnly;api.nav();draw();}
     else if(action==='recent'||action==='archive-list'){api.flush();scopeReturn=null;revealed=null;api.show(action==='recent'?'recent':'archive');listOnly=true;api.nav();draw();}
-    else if(action==='clear-search'){search='';searchOpen=false;api.nav();draw();}
+    else if(action==='clear-search'){api.capture(true);search='';searchOpen=false;api.nav();draw();}
     else if(action==='history'&&api.editable(c)){b.closest('details')?.removeAttribute('open');if(c.sent||c.sending)c.next=true;c.text=snapshot.ai.history[Number(b.dataset.index)];c.caret=[0,0];c.version=(c.version||0)+1;api.save(c);focusDraft=true;draw();}
     else if(action==='clear-history'){ui.send({a:'ai-clear'});snapshot.ai.history=[];draw();}
     else if(action==='undo'){selected=undo;api.action('restore');}
@@ -717,7 +719,7 @@ module.exports=execution.module('conversations',{
     ui.listen(menu,'focusin',e=>{if(e.target.closest('.conversation-reader'))api.scrollIntent('focus');const pane=e.target.closest('.conversation-detail'),key=pane?.dataset.threadId;if(!key||!e.target.matches('button,a,summary,input,textarea,select'))return;const target=e.target,data=JSON.stringify(target.dataset);delete focuses[key];focuses[key]={tag:target.tagName,key:data,index:[...pane.querySelectorAll(target.tagName)].filter(n=>JSON.stringify(n.dataset)===data).indexOf(target)};api.nav();});
     // WebKit accessibility selection can change the range without a click or keyup in the field.
     ui.listen(document,'selectionchange',()=>api.captureCaret(document.activeElement));
-    ui.listen(menu,'input',e=>{const watch=e.target.dataset.wField;if(view?.form&&(watch==='prompt'||watch==='every')){view.form[watch]=e.target.value;view.form.dirty=true;draw();return;}const field=e.target.dataset.cField;if(field==='search'){navigated=true;search=e.target.value;sidebarProjection=null;stableOrder.clear();stableGroups.clear();api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;sidebarProjection=null;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);api.save(c);draw();});
+    ui.listen(menu,'input',e=>{const watch=e.target.dataset.wField;if(view?.form&&(watch==='prompt'||watch==='every')){view.form[watch]=e.target.value;view.form.dirty=true;draw();return;}const field=e.target.dataset.cField;if(field==='search'){api.capture(true);navigated=true;search=e.target.value;sidebarProjection=null;stableOrder.clear();stableGroups.clear();api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;sidebarProjection=null;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);api.save(c);draw();});
     ui.listen(menu,'change',e=>{if(e.target.dataset.wField==='event'&&view?.form){view.form.events=view.form.events.filter(k=>k!==e.target.value).concat(e.target.checked?[e.target.value]:[]);view.form.dirty=true;draw();return;}const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(['root','runtime'].includes(e.target.dataset.cField)&&api.editable(c)){const field=e.target.dataset.cField;if(field==='runtime'&&(c.sent||c.request||c.sending))return;if(c.sent||c.sending)c.next=true;c[field]=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>api.captureCaret(e.target));
     ui.listen(menu,'wheel',e=>{if(e.target.closest('.conversation-reader')){api.scrollIntent('wheel');if(e.deltaY<0)api.pause();}},{passive:true});
@@ -790,7 +792,7 @@ module.exports=execution.module('conversations',{
     if(r?.context){navigated=true;unified=true;const c=r.context;({selected,list,selection,scrolls,positions,focuses,opened,listOnly,search}=c);resultFilter=c.filter;focusDraft=!!api.current();onSelect?.(selected);}
    },
    recoverable:function(){return !recoveryDrafts.length&&!pending&&!failure&&!queue.length&&!recoveryQueue.length&&!items.some(c=>!c.lazy&&(c.saved??0)!==(c.version??0));},
-   flush:function(){ui.cancel(saveTimer);const c=api.current();if(c&&!c.lazy)api.save(c);api.nav();},
+   flush:function(){api.capture(true);ui.cancel(saveTimer);const c=api.current();if(c&&!c.lazy)api.save(c);api.nav();},
   });return api;
  }
 });
