@@ -76,6 +76,8 @@ pub trait Proc {
     fn input_offset(&self) -> Result<u64,String> { Err("native input boundary unavailable for handover".into()) }
     /// Exact input was accepted by the native runtime; a handle or process exit alone is not evidence.
     fn accepted(&mut self) -> Result<bool, String> { Err("native input acceptance unavailable; reconcile this execution".into()) }
+    /// #2221: the board holds a hand-in this attempt wrote after the execution began, so the execution took its input.
+    fn accept(&mut self) {}
     /// The exit code once the child has exited; `Err` is an unknown read (§ 4 reconciliation), never an exit.
     fn exited(&mut self) -> Result<Option<i32>, String>;
     fn exit_error(&self) -> Option<&'static str> { None }
@@ -1978,6 +1980,7 @@ impl Proc for ClaudeTurn {
     fn accepted(&mut self) -> Result<bool, String> {
         if self.accepted {Ok(true)} else if let Some(e)=&self.launch_error {Err(e.clone())} else {Ok(false)}
     }
+    fn accept(&mut self) { self.accepted=true; }
     fn exited(&mut self) -> Result<Option<i32>, String> {
         if self.done { return Ok(Some(if self.failure.is_some() {-1} else {0})); }
         let rows = self.agents()?;
@@ -2072,9 +2075,17 @@ impl ClaudeTurn {
         }
         self.pid = claude_pid(row)?.unwrap_or(self.pid);
         let path = claude_transcript(&self.session, self.native_home().as_deref()).ok_or("Claude transcript unavailable; completion unknown")?;
-        if !self.history.read(&path,self.before,&self.input,&self.log)? {return Ok(None);}
+        // #2221: a board hand-in proves acceptance even when the transcript readback never matches the input
+        let found=self.history.read(&path,self.before,&self.input,&self.log)?;
+        if !found && !self.accepted {return Ok(None);}
         self.accepted=true;
         if row["status"]!="idle" && row["state"]!="done" && row["state"]!="blocked" {return Ok(None);}
+        if !found {
+            if row["state"]=="blocked" {return Ok(None);}
+            claude_stop(&self.root, &self.id, self.native.as_ref(), self.account().as_deref())?;
+            self.done=true;
+            return Ok(Some(0));
+        }
         if !self.history.ended {return Ok(None);}
         claude_stop(&self.root, &self.id, self.native.as_ref(), self.account().as_deref())?;
         self.complete()
