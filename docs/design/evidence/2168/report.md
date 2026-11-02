@@ -2,7 +2,9 @@
 
 Implements [#2168](https://github.com/taskqorg/taskq/issues/2168). Baseline: `26b9e6615f75aab6577c1663fdec5d8c77335bfa`. The issue and owner steers retain the request verbatim. Applied R12 for before/after and platform boundaries, R13 and C2/D4 for source/draft preservation, and section 7 for the isolated branch and publication. D4 feedback records the accepted owner clarification before its implementation; no numbered rule, permission, runtime authority or admission policy changes.
 
-The [published protected/heartbeat composition](#published-protected-and-heartbeat-composition) supersedes the earlier source checkpoints below. Frozen implementation: `69c64d0bb3af9c93070e508e73fb2a29468e98f6`, combining the prior UI candidate with published `4f42f8b44ead036461c0ff37b37910fe91d901db`. Native acceptance remains incomplete.
+Owner answer [6576889214](https://github.com/taskqorg/taskq/issues/2168#issuecomment-6576889214) gives the current disposition: "Accepted without GUI review; owner checks later on the installed release." This supersedes the pre-handover native-review requests recorded below. The worker submits the result under section 7; native A1–A5 evidence remains incomplete under R12, and green merge-result `merge_group` CI remains required for publication.
+
+The [published protected/heartbeat composition](#published-protected-and-heartbeat-composition) supersedes the earlier source checkpoints below. Frozen implementation: `69c64d0bb3af9c93070e508e73fb2a29468e98f6`, combining the prior UI candidate with published `4f42f8b44ead036461c0ff37b37910fe91d901db`. Later commits update evidence only; no installation or native qualification is claimed.
 
 ## Failure before
 
@@ -174,3 +176,9 @@ The unexecuted remainder ran once in isolated temporary installs in 138.695 seco
 The combined exact candidate is ready for Root's normal immutable handover and native A1–A5 rerun; it has not been installed or accepted here. Preserve the original #2167 execution and all receipts. Real focus/IME, status/delivery transitions and dismissal, icons/time, reload/draft/files/selection/anchors, native protected behavior and screen-reader/platform limits remain unverified where stated. Merge-result `merge_group` CI is still required before publication and has not been awaited or asserted.
 
 The final installed-CLI inbox read succeeds and confirms the original live worker attempt, while stderr separately reports telemetry queue/protected IPC storage unavailable. This is an observed host telemetry limitation, not a passing observation or a source attribution to this candidate. No host storage repair, service change or policy adjustment was attempted.
+
+## Owner disposition and result
+
+The fresh inbox retains the original attempt and owner answer [6576889214](https://github.com/taskqorg/taskq/issues/2168#issuecomment-6576889214): "Accepted without GUI review; owner checks later on the installed release." No further GUI review is requested before hand-in. This changes the handover disposition, not the evidence: native A1 status geometry, A2 icon journeys, A3 author/time placement, A4 real typing/IME/files/focus/selection/anchors/receipts and A5 native comparison remain unverified where recorded. Independent source review and browser instruments retain their separate scope. The earlier native handover requirements above describe historical checkpoints.
+
+The owner will check the installed release later. This evidence-only update changes no implementation, tests, fixtures, config, exports or dependencies; prior exact-source results remain applicable. No additional full gate, production GUI, installation, restart, replay or live-attempt action occurred. R12 and section 7 retain the merge-result CI gate, sandbox-blocked outcomes, performance/platform/screen-reader limits and handoff-prose provenance boundary.
