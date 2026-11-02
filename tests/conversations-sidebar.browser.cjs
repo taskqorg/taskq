@@ -77,5 +77,18 @@ s.conversations.items.push({...draft('native-b','alpha',null),sent:{text:'Start'
   await page.locator('[data-c=select][data-id=owner-b]').focus();await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.dataset.c),'row-pin','Tab reaches Inline Pin');
  }
  await shot('04-narrow-list');
- assert.deepEqual(errors,[]);console.log('PASS #1808 actual bundle: mixed grouping/recency, local pin/collapse receipts, search/reopen, native Archive/Restore, eventless task archive, retained drafts/focus; no execution effects');
+ // #2159: real manager names must not lose their distinguishing suffix at the native large-text size.
+ s.conversations.items.find(c=>c.id==='owner-b').title='Invented dedicated manager for project Beta: questions, reviewed results and continuation';
+ for(const width of [1100,900,500])for(const font of [18,20]){
+  await page.setViewportSize({width,height:850});await page.evaluate(s=>taskq.receive(s),{...s,font});
+  if(!await page.locator('.conversation-list').isVisible())await page.locator('[data-c=list]').click();
+  const title=row('owner-b').locator('.conversation-row>span').first();await title.scrollIntoViewIfNeeded();await shot('2159-title-'+width+'-'+font);
+  assert(await title.evaluate(e=>e.scrollHeight<=e.clientHeight+1),'#2159: complete manager title is visible, without a two-line clamp');
+  assert(await title.evaluate(e=>e.getBoundingClientRect().width>=e.closest('.conversation-item').clientWidth-20),'#2159: inactive row actions do not reserve title width');
+  assert.equal(await row('owner-b').locator('.conversation-row').getAttribute('title'),s.conversations.items.find(c=>c.id==='owner-b').title);
+  assert.equal(await row('owner-b').getByRole('img',{name:'Draft',exact:true}).count(),1,'compact status retains its accessible meaning');
+  await row('owner-b').getByRole('button',{name:'Pin',exact:true}).focus();
+  assert(await row('owner-b').evaluate(e=>{const title=e.querySelector('.conversation-row>span').getBoundingClientRect(),actions=e.querySelector('.conversation-row-actions').getBoundingClientRect();return actions.top>=title.bottom;}),'actions do not cover a full title on keyboard focus');
+ }
+ assert.deepEqual(errors,[]);console.log('PASS #1808/#2159 actual bundle: grouping/receipts/recovery, complete large-text manager titles, retained drafts/focus; no execution effects');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

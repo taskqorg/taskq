@@ -322,13 +322,18 @@ fn answer_local(install: &Path, key: &str, local: &Value) -> Result<(), String> 
 
 fn owner_runtime(ps: &[Value]) -> Value {
     let probe=ps.iter().map(|p|&p["agents"]).filter(|a|a["at"].as_i64().is_some_and(|at|(0..=360).contains(&(now()-at)))).max_by_key(|a|a["at"].as_u64());
-    let row=probe.and_then(|a|a["rows"].as_array()).and_then(|rows|rows.iter().find(|r|r["runtime"]==crate::runtime::OWNER));
-    let reason=match row {
-        Some(r) if r["login"]=="logged in" => "",
-        Some(r) if r["login"]=="not logged in" => "Claude Code is not logged in; inspect Agents in the tray.",
-        _ => "Claude Code owner-session readiness is unknown; refresh or inspect Agents in the tray.",
-    };
-    json!({"id":crate::runtime::OWNER,"name":crate::runtime::of(crate::runtime::OWNER).client,"available":reason.is_empty(),"reason":reason})
+    let choices:Vec<_>=crate::runtime::setup_runtimes().map(|runtime|{
+        let name=crate::runtime::of(runtime).client;
+        let row=probe.and_then(|a|a["rows"].as_array()).and_then(|rows|rows.iter().find(|r|r["runtime"]==runtime));
+        let reason=if !crate::runtime::owner::supported(runtime){format!("{name} owner sessions are unsupported on this platform.")}else{match row {
+            Some(r) if r["login"]=="logged in" => String::new(),
+            Some(r) if r["login"]=="not logged in" => format!("{name} is not logged in; inspect Agents in the tray."),
+            _ => format!("{name} owner-session readiness is unknown; refresh or inspect Agents in the tray."),
+        }};
+        json!({"id":runtime,"name":name,"available":reason.is_empty(),"reason":reason})
+    }).collect();
+    let mut default=choices.iter().find(|r|r["id"]==crate::runtime::OWNER).cloned().unwrap();
+    default["choices"]=json!(choices);default
 }
 
 fn roots(install: &Path) -> Vec<String> {
@@ -1146,6 +1151,12 @@ fn workspace_checkpoint(calls:&WebCalls,checkpoints:&mut std::collections::BTree
 }
 
 // The native closure stamps generation; retired renderer IPC never gets authority after reload.
+fn recreate_workspace<W,V>(window:&W,view:&mut V,calls:&mut WebCalls,safe:bool,build:impl FnOnce(&W,&WebCalls)->Result<V,String>)->Result<(),String> {
+    let mut reader=WebCalls::new();reader.workspace=true;reader.surface=calls.surface.clone();reader.safe=safe;
+    let next=build(window,&reader)?;
+    *view=next;*calls=reader;Ok(())
+}
+
 fn workspace_view(window:&Window, proxy:tao::event_loop::EventLoopProxy<Ev>, surface:String, calls:&WebCalls)->Result<WebView,String> {
     let generation=calls.generation;
     WebViewBuilder::new().with_accept_first_mouse(true).with_html(WORKSPACE_HTML)
@@ -1451,21 +1462,18 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let surface=if surface.is_empty(){focused_workspace.clone()}else{surface};
                 if workspace_checkpoint_errors.contains(&surface){eprintln!("taskq tray: Conversations recovery checkpoint exceeds 32 MiB; reader retained, reload refused");if let Some(tray)=&tray {let _=tray.set_tooltip(Some("Conversations recovery unknown: checkpoint exceeds 32 MiB; reader retained"));}return;}
                 if surface!="main" {
-                    if let Some((window,old,_))=detached.remove(&surface){
-                        drop(old);let mut reader=WebCalls::new();reader.workspace=true;reader.surface=surface.clone();reader.safe=safe;
-                        match workspace_view(&window,proxy.clone(),surface.clone(),&reader){
-                            Ok(wv)=>{window.set_visible(true);window.set_focus();detached.insert(surface,(window,wv,reader));}
+                    if let Some((window,view,calls))=detached.get_mut(&surface){
+                        match recreate_workspace(window,view,calls,safe,|window,reader|workspace_view(window,proxy.clone(),surface.clone(),reader)){
+                            Ok(())=>{window.set_visible(true);window.set_focus();}
                             Err(reason)=>eprintln!("taskq tray: detached Conversations reload unavailable: {reason}"),
                         }
                     }
                     return;
                 }
-                if let Some((window,old))=workspace.take() {
-                    drop(old);
-                    let mut reader=WebCalls::new();reader.workspace=true;reader.safe=safe;
-                    match workspace_view(&window,proxy.clone(),"main".into(),&reader) {
-                        Ok(wv)=>{workspace=Some((window,wv));workspace_web=Some(reader);workspace_shown.clear();if safe {workspace_open=json!({"page":"conversations","thread":"recovery"});}if let Some((w,_))=&workspace {w.set_visible(true);w.set_focus();}}
-                        Err(reason)=>{workspace_web=None;eprintln!("taskq tray: Conversations reload unavailable: {reason}");}
+                if let (Some((window,view)),Some(calls))=(&mut workspace,&mut workspace_web) {
+                    match recreate_workspace(window,view,calls,safe,|window,reader|workspace_view(window,proxy.clone(),"main".into(),reader)) {
+                        Ok(())=>{workspace_shown.clear();if safe {workspace_open=json!({"page":"conversations","thread":"recovery"});}window.set_visible(true);window.set_focus();}
+                        Err(reason)=>{eprintln!("taskq tray: Conversations reload unavailable: {reason}; existing window retained");}
                     }
                 }
             }
@@ -3107,6 +3115,35 @@ mod tests {
     use super::*;
 
     // M13 / #1966 A2: a new window must not consume the first control click just to activate the app.
+    // P-W3/C2/R12: recreation failure cannot destroy the singleton or retire its active generation.
+    #[test]
+    fn workspace_recreation_retains_identity_and_reader_on_failure() {
+        use std::{cell::Cell,rc::Rc};
+        struct View(Rc<Cell<usize>>);impl Drop for View {fn drop(&mut self){self.0.set(self.0.get()+1);}}
+        for surface in ["main","invented-detached"] {
+            let window=42;let dropped=Rc::new(Cell::new(0));let mut view=View(dropped.clone());let mut calls=WebCalls::new();calls.surface=surface.into();calls.workspace=true;calls.failed=true;
+            let generation=calls.generation;
+            assert!(recreate_workspace(&window,&mut view,&mut calls,true,|w,next|{assert_eq!(*w,42);assert_ne!(next.generation,generation);Err("Invented native creation refusal".into())}).is_err());
+            assert_eq!(window,42);assert_eq!(dropped.get(),0,"failed recreation must retain the old view");assert_eq!(calls.generation,generation);assert!(calls.failed);
+            recreate_workspace(&window,&mut view,&mut calls,true,|w,next|{assert_eq!(*w,42);assert!(next.safe);assert_eq!(next.surface,surface);Ok(View(dropped.clone()))}).unwrap();
+            assert_eq!(window,42);assert_eq!(dropped.get(),1);assert_ne!(calls.generation,generation);assert!(!calls.failed);assert!(!calls.recovery_ready,"new reader still needs its ordered handoff");
+        }
+    }
+
+    // R9/R12: one unavailable runtime must not hide another; stale readiness never becomes available.
+    #[test]
+    fn owner_choices_keep_separate_fresh_readiness_without_fallback() {
+        let projects=vec![json!({"agents":{"at":now(),"rows":[{"runtime":"claude","login":"not logged in"},{"runtime":"codex","login":"logged in"}]}})];
+        let offered=owner_runtime(&projects);
+        assert_eq!(offered["id"],crate::runtime::OWNER);assert_eq!(offered["available"],false,"default never silently switches");
+        let codex=offered["choices"].as_array().unwrap().iter().find(|r|r["id"]=="codex").unwrap();
+        assert_eq!(codex["available"],cfg!(any(target_os="macos",windows)));
+        for at in [now()-361,now()+10] {
+            let unknown=owner_runtime(&[json!({"agents":{"at":at,"rows":[{"runtime":"codex","login":"logged in"}]}})]);
+            assert!(unknown["choices"].as_array().unwrap().iter().all(|r|r["available"]==false&&!r["reason"].as_str().unwrap().is_empty()));
+        }
+    }
+
     #[test]
     fn every_webview_accepts_first_mouse() {
         fn check(dir: &Path) -> usize {

@@ -39,10 +39,21 @@ fn generation(path: &Path) -> Res<String> {
     (&mut file).take(meta.len().min(128)).read_to_end(&mut prefix).map_err(|e|format!("transcript unreadable: {e}"))?;
     let prefix=&prefix[..prefix.iter().position(|b|*b==b'\n').map_or(prefix.len(),|i|i+1)];
     let digest=ring::digest::digest(&ring::digest::SHA256,&prefix);
-    Ok(format!("{identity}:{}",digest.as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>()))
+    // Image extraction changes block ordinals; old saved positions must never bind to a different block.
+    Ok(format!("images-v1:{identity}:{}",digest.as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>()))
 }
-fn page(path:&Path,generation:String,items:Vec<Value>,start:u64,end:u64,size:u64)->Res<Page> {
+fn page(path:&Path,generation:String,mut items:Vec<Value>,start:u64,end:u64,size:u64)->Res<Page> {
     if self::generation(path)?!=generation {return Err("transcript replaced during read; view unknown".into());}
+    let (mut count,mut bytes)=(0,0);
+    for item in &mut items {
+        if let Some(src)=item["image"]["src"].as_str() {
+            count+=1;bytes+=src.len();
+            if count>4 || bytes>2*1024*1024 {
+                item["image"].as_object_mut().unwrap().remove("src");
+                item["image"]["reason"]=json!("Image page preview limit; inspect the native source");
+            }
+        }
+    }
     Ok(Page{generation,items,start,end,size})
 }
 
@@ -259,6 +270,41 @@ fn redact(w: &str) -> String {
     match (secret, name.is_empty()) { (false, _) => w.into(), (true, true) => "[redacted]".into(), (true, false) => format!("{name}=[redacted]") }
 }
 
+/// Only recorded bytes authorize an inline image. Paths and remote URLs never trigger a file/network read.
+fn image(role:&str,b:&Value)->Value {
+    use base64::Engine;
+    let name=b["alt"].as_str().or(b["name"].as_str()).filter(|s|!s.trim().is_empty()).unwrap_or("Recorded image");
+    // Native user-image wrappers also carry tool images; their human/board authorship is unknown.
+    let mut item=line(if role=="user" {"image"} else {role},"");item["native_role"]=json!(role);
+    item["image"]=json!({"name":name.chars().take(160).collect::<String>()});
+    let url=b["image_url"].as_str().or(b["image_url"]["url"].as_str()).or(b["source"]["url"].as_str());
+    if let Some(url)=url.filter(|s|s.len()<=4096&&(s.starts_with("https://")||s.starts_with("http://"))) { item["image"]["url"]=json!(url); }
+    let data=url.and_then(|s|s.strip_prefix("data:image/")).and_then(|s|s.split_once(";base64,")).map(|(_,data)|data)
+        .or_else(||(b["source"]["type"]=="base64").then(||b["source"]["data"].as_str()).flatten());
+    let preview=(|| {
+        let data=data.ok_or("Image bytes missing or access unavailable; no file or URL fetched")?;
+        if data.len()>2*1024*1024 {return Err("Image exceeds 2 MiB preview limit")}
+        let bytes=base64::engine::general_purpose::STANDARD.decode(data).map_err(|_|"Image encoding unreadable")?;
+        let kind=crate::board::image_kind(&bytes).ok_or("Unsupported image format")?;
+        let size=imagesize::blob_size(&bytes).map_err(|_|"Image header unreadable")?;
+        if size.width==0||size.height==0||size.width>4096||size.height>4096||size.width.saturating_mul(size.height)>4_000_000 {return Err("Image exceeds 4 million pixel preview limit")}
+        item["image"]["width"]=json!(size.width);item["image"]["height"]=json!(size.height);
+        item["image"]["src"]=json!(format!("data:image/{kind};base64,{data}"));Ok(())
+    })();
+    if let Err(reason)=preview {item["image"]["reason"]=json!(reason);}
+    item
+}
+
+fn images(role:&str,content:&Value,out:&mut Vec<Value>) {
+    for b in content.as_array().into_iter().flatten() {
+        match b["type"].as_str() {
+            Some("image"|"input_image"|"image_url"|"output_image")=>out.push(image(role,b)),
+            Some("tool_result")=>images(role,&b["content"],out),
+            _=>{}
+        }
+    }
+}
+
 fn claude_item(v: &Value, out: &mut Vec<Value>) {
     let role = v["type"].as_str().unwrap_or_default();
     if !["user", "assistant"].contains(&role) || v["isSidechain"] == true || v["isMeta"] == true { return; }
@@ -268,6 +314,8 @@ fn claude_item(v: &Value, out: &mut Vec<Value>) {
         match b["type"].as_str() {
             Some("text") => out.push(line(role, b["text"].as_str().unwrap_or_default())),
             Some("tool_use") => out.push(tool(b["name"].as_str().unwrap_or("tool"), &b["input"])),
+            Some("image")=>out.push(image(role,b)),
+            Some("tool_result")=>images("tool",&b["content"],out),
             _ => {}
         }
     }
@@ -282,7 +330,14 @@ fn codex_item(v: &Value, out: &mut Vec<Value>) {
             let text = text.join("\n");
             // Codex sends its environment and AGENTS.md to the model as user input; the owner never wrote them
             if role == "user" && (text.starts_with('<') || text.starts_with("# AGENTS.md")) { return; }
-            out.push(line(role, &text));
+            let mut text=Vec::new();
+            for b in p["content"].as_array().into_iter().flatten() {
+                if let Some(t)=b["text"].as_str() {text.push(t);} else if matches!(b["type"].as_str(),Some("image"|"input_image"|"image_url"|"output_image")) {
+                    if !text.is_empty() {out.push(line(role,&text.join("\n")));text.clear();}
+                    out.push(image(role,b));
+                }
+            }
+            if !text.is_empty() {out.push(line(role,&text.join("\n")));}
         }
         (Some(kind @ ("function_call" | "custom_tool_call")), _) => {
             let raw = p["arguments"].as_str().or(p["input"].as_str());
@@ -292,6 +347,7 @@ fn codex_item(v: &Value, out: &mut Vec<Value>) {
             let input = match summary { Some(cmd) => json!({"cmd": cmd}), None => raw.map_or(Value::Null, |a| serde_json::from_str(a).unwrap_or_else(|_| json!(a))) };
             out.push(tool(name, &input));
         }
+        (Some("function_call_output"|"custom_tool_call_output"),_)=>images("tool",&p["output"],out),
         (Some("local_shell_call"), _) => out.push(tool("shell", &p["action"])),
         _ => {}
     }
@@ -302,10 +358,21 @@ pub fn last_update(codex:bool,path:&Path)->Res<Value> {
     Ok(before(codex,path,None)?.items.last().map_or(Value::Null,|i|i["updated"].clone()))
 }
 
-/// D7: the last assistant line from the transcript's last chunk; none when that chunk has no assistant text.
+/// D7: the last assistant prose line in the last chunk; complete citation suffixes stay secondary.
 pub fn last_line(codex: bool, path: &Path) -> Res<Option<String>> {
     let page = before(codex, path, None)?;
-    Ok(page.items.iter().rev().find(|i| i["role"] == "assistant").and_then(|i| i["text"].as_str()?.lines().rev().find(|l| !l.trim().is_empty()).map(String::from)))
+    Ok(page.items.iter().rev().filter(|i| i["role"] == "assistant").find_map(|i| {
+        let mut lines=i["text"].as_str()?.lines().rev();
+        while let Some(line)=lines.next() {
+            if line.trim().is_empty(){continue;}
+            if line.trim()=="</oai-mem-citation>" {
+                let mut before=lines.clone();
+                if before.any(|l|l.trim()=="<oai-mem-citation>") {lines=before;continue;}
+            }
+            return Some(line.into());
+        }
+        None
+    }))
 }
 
 #[cfg(test)]
@@ -317,6 +384,29 @@ mod tests {
     /// The view text of items, without their record identity.
     fn text(items: &[Value]) -> Vec<Value> { items.iter().map(|i| json!({"role": i["role"], "text": i["text"]})).collect() }
     fn key(i: &Value) -> (u64, u64) { (i["at"].as_u64().unwrap(), i["i"].as_u64().unwrap()) }
+
+    // D4/#2159: recorded image bytes, not a text path, are the only preview authority.
+    #[test]
+    fn recorded_images_keep_source_and_bound_preview_without_fetching_paths() {
+        let png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+        let v=json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Review the image"},{"type":"input_image","image_url":format!("data:image/png;base64,{png}")} ]}});
+        let rows=records(true,40,format!("{v}\n").as_bytes());let items=&rows[0].1;
+        assert_eq!(items.len(),2,"recorded image must remain a separate inspectable item");
+        assert_eq!(items[1]["role"],"image","a provider user-image wrapper is not proof of an owner/board author");assert_eq!(items[1]["native_role"],"user");
+        assert_eq!(items[1]["image"]["width"],1);assert!(items[1]["image"]["src"].as_str().unwrap().starts_with("data:image/png;"));
+        let v=json!({"type":"user","message":{"content":[{"type":"tool_result","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":png}}]},{"type":"image","source":{"type":"url","url":"file:///unrelated/private.png"}}]}});
+        let rows=records(false,0,format!("{v}\n").as_bytes());assert_eq!(rows[0].1.len(),2);
+        assert!(rows[0].1[0]["image"]["src"].is_string());assert!(rows[0].1[1]["image"]["reason"].is_string());assert!(rows[0].1[1]["image"]["src"].is_null());
+        let dir=tmp();let path=dir.join("images.jsonl");
+        let recorded=json!({"type":"user","message":{"content":[{"type":"image","source":{"type":"base64","data":png}}]}});
+        fs::write(&path,format!("{recorded}\n").repeat(8)).unwrap();let p=before(false,&path,None).unwrap();
+        assert!(p.generation.starts_with("images-v1:"),"new image ordinals require a parser-generation fence");
+        assert_eq!(p.items.iter().filter(|i|i["image"]["src"].is_string()).count(),4,"page has at most four inline image sources");
+        assert!(p.items[7]["image"]["reason"].as_str().unwrap().contains("limit"));
+        let mut malformed=recorded.clone();malformed["message"]["content"][0]["source"]["data"]=json!("broken");
+        let rows=records(false,0,format!("{malformed}\n").as_bytes());assert!(rows[0].1[0]["image"]["reason"].is_string());
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     // D-A3: a 10 MiB transcript opens in one chunk read, scrolls up to its first record and appends while open
     // #1929 A4: byte offsets alone must not merge replacement sources; appending keeps generation.
@@ -401,6 +491,37 @@ mod tests {
         assert_eq!(crate::runtime::owner::codex_transcript_in(&dir, id).unwrap(), path);
         assert_eq!(text(&before(true, &path, None).unwrap().items), vec![json!({"role":"user","text":"hello"}), json!({"role":"tool","text":"exec_command ls"}), json!({"role":"assistant","text":"done\nall good"})]);
         assert_eq!(last_line(true, &path).unwrap().as_deref(), Some("all good"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #2159 D7: status previews prose, while metadata, partial text and exact source remain inspectable.
+    #[test]
+    fn last_assistant_preview_excludes_complete_citation_suffix_only() {
+        let dir=tmp();let path=dir.join("preview.jsonl");
+        for codex in [false,true] {
+            for (text,expected) in [
+                ("Reviewed result.\n<oai-mem-citation>\nMEMORY.md:1-2\n</oai-mem-citation>\n",Some("Reviewed result.")),
+                ("Ответ принят.\n\n<oai-mem-citation>\nfirst\n</oai-mem-citation>\n<oai-mem-citation>\nsecond\n</oai-mem-citation>",Some("Ответ принят.")),
+                ("<oai-mem-citation>\nmetadata only\n</oai-mem-citation>",None),
+                ("Reviewed.\n<oai-mem-citation>\npartial metadata",Some("partial metadata")),
+                ("Reviewed.\n</oai-mem-citation>",Some("</oai-mem-citation>")),
+                ("Literal example:\n```xml\n<oai-mem-citation>\nexample\n</oai-mem-citation>\n```",Some("```")),
+                ("Reviewed.\n<oai-mem-citation>\nmetadata\n</oai-mem-citation>\nNext action.",Some("Next action.")),
+                ("",None),
+            ] {
+                let record=if codex {json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}})}
+                    else {json!({"type":"assistant","message":{"content":[{"type":"text","text":text}]}})};
+                let source=format!("{record}\n");fs::write(&path,&source).unwrap();
+                assert_eq!(last_line(codex,&path).unwrap().as_deref(),expected,"codex={codex}, text={text}");
+                assert_eq!(fs::read_to_string(&path).unwrap(),source,"preview never rewrites native history");
+                if !text.is_empty(){assert_eq!(before(codex,&path,None).unwrap().items[0]["text"],text,"exact source remains complete");}
+            }
+            let text="<oai-mem-citation>\nmetadata only\n</oai-mem-citation>";
+            let records=["Prior reviewed prose.",text].map(|text|if codex {json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}})}else {json!({"type":"assistant","message":{"content":[{"type":"text","text":text}]}})});
+            let source=records.iter().map(|r|format!("{r}\n")).collect::<String>();fs::write(&path,&source).unwrap();
+            assert_eq!(last_line(codex,&path).unwrap().as_deref(),Some("Prior reviewed prose."),"metadata-only records cannot hide prose in the same chunk");
+            assert_eq!(fs::read_to_string(&path).unwrap(),source);
+        }
         fs::remove_dir_all(dir).unwrap();
     }
 

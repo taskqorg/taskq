@@ -1,6 +1,6 @@
 // Chain: P-W3/TW2/C2/C7/D4 recovery -> same sources/drafts/receipts, no replay or acknowledgement.
 // Risk: native-shaped lazy local worker source faults the whole reader; rebuilding loses unsaved edits or replays input.
-const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
+const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium,webkit}=require('playwright');
 const html=fs.readFileSync(process.env.TASKQ_CONVERSATION_HTML||'build/web/workspace.html','utf8');
 const board='https://example.org/invented/issues',thread='task:'+board+'/112';
 const draft={id:'invented-owner-2140',revision:1,root:'invented-root',title:'Independent draft',text:'Saved draft',caret:[2,4],scroll:0,files:[{id:'invented-file',name:'notes.md',mime:'text/markdown',bytes:2,hash:'0'.repeat(64)}]};
@@ -44,6 +44,63 @@ async function taskRecovery(browser,kind,savedNavigation=false){
   assert.deepEqual(errors,[]);
  }finally{await page.close();}
 }
+// #2159 A3: a saved owner draft can recover while the shell's Reload control owns DOM focus.
+async function savedOwnerRecovery(browser){
+ const page=await browser.newPage({viewport:{width:900,height:740}});try{
+  const saved={...draft,runtime:'codex',caret:[3,9]},state={font:20,theme:'dark',projects:[{root:draft.root,name:'Invented',issues:board,alive:true,complete:true,tasks:[]}],ai:{runtime:{id:'claude',name:'Claude Code',available:true,choices:[{id:'claude',name:'Claude Code',available:true},{id:'codex',name:'Codex',available:true}]}},messages:{complete:true,entries:[]},conversations:{items:[saved],complete:true,navigation:{selected:draft.id,list:'recent'}}};
+  const context={selected:draft.id,list:'recent',selection:{recent:draft.id},scrolls:{},positions:{},focuses:{[draft.id]:{tag:'TEXTAREA',key:'{"cField":"text"}',index:0}},opened:[],listOnly:false,search:'',filter:'all'};
+  const recovery={conversation:{drafts:[],localQueue:[],context},navigation:{page:'conversations',focus:{tag:'BUTTON',key:'{"a":"workspace-reload"}',index:0}}};
+  await page.setContent(html);await page.evaluate(({state,recovery})=>{window.sent=[];window.ipc={postMessage:t=>sent.push(JSON.parse(t))};taskq.receive(state);taskq.receive({workspaceRecovery:recovery});taskq.receive({workspaceRecoveryReady:true});},{state,recovery});
+  const field=page.locator('[data-c-field=text]');
+  for(const action of ['reload','reopen']){
+   if(action==='reopen')await page.evaluate(()=>{taskq.receive({workerPanelClosed:true});taskq.receive({open:{page:'conversations',thread:'centre'}});});
+   assert.equal(await field.inputValue(),saved.text,action+' retains exact saved text');
+   assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),saved.caret,action+' retains selected substring');
+   assert(await field.evaluate(e=>document.activeElement===e),action+' retains composer focus instead of shell heading');
+   assert.match(await page.locator('.conversation-files').innerText(),/notes.md/);
+   assert.equal(await page.locator('[data-c-field=runtime]').inputValue(),'codex','per-request runtime survives recovery');
+  }
+  assert.equal(await page.evaluate(()=>sent.filter(m=>['conversation-action','answer','reports','ai-send'].includes(m.a)).length),0,'saved-draft restoration does not save or resend');
+ }finally{await page.close();}
+}
+// #2159 A3: native search takes focus; returning must restore each PM's independent selected input.
+async function searchedOwnerSwitch(browser,lazy=false){
+ const page=await browser.newPage({viewport:{width:900,height:740}});try{
+  await page.setContent(html);
+  await page.evaluate(({draft,board,lazy})=>{
+   window.sent=[];window.fixture={font:20,theme:'dark',host:'fixture',projects:[{root:draft.root,name:'Invented',issues:board,alive:true,complete:true,tasks:[]}],ai:{history:[]},messages:{complete:true,entries:[]},conversations:{complete:true,items:['General','PilotQ'].map(title=>({...draft,id:title.toLowerCase(),title,text:title==='General'?'Сохрани точный ввод без отправки':'Independent PilotQ input',sent:{root:draft.root,runtime:'codex',text:title+' original request',files:[]},request:{state:'launched',runtime:'codex'}})),navigation:{selected:'general',list:'recent'}}};
+   window.catalog=()=>({...structuredClone(fixture.conversations),items:fixture.conversations.items.map(c=>{const row=structuredClone(c);if(lazy){row.lazy=true;delete row.text;delete row.files;delete row.sent.text;delete row.sent.files;}return row;})});
+   window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);
+    if(m.a==='conversation-navigation'){const n=m.navigation,valid=new TextEncoder().encode(JSON.stringify(n)).length<=4096&&(!n.selected||/^[A-Za-z0-9_-]{1,64}$/.test(n.selected))&&(!n.search||[...n.search].length<=512)&&Object.entries(n.scrolls||{}).every(([k,v])=>['recent','archive'].includes(k)&&Number.isInteger(v)&&v>=0&&v<=4294967295);queueMicrotask(()=>taskq.receive({conversationNavigationError:valid?null:'Workspace navigation invalid; kept'}));}
+    if(m.a==='conversation-action'&&m.action==='save'){const c=fixture.conversations.items.find(c=>c.id===m.conversation);Object.assign(c,m.draft);c.revision++;const snapshot=catalog();Object.assign(snapshot.items.find(r=>r.id===c.id),structuredClone(c),{lazy:false});queueMicrotask(()=>taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot}}));}
+    if(m.a==='conversation-dialogue'&&m.action==='body'){setTimeout(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:{...structuredClone(fixture.conversations.items.find(c=>c.id===m.conversation)),lazy:false}}}),10);return;}
+    if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value:m.action==='tasks'?{tasks:[],more:false}:m.action==='status'?{state:'idle',watch:{prompt:'Invented watch',every:10,events:['ask']}}:{generation:'invented-'+m.conversation,start:m.after??0,end:80,size:80,items:Array.from({length:80},(_,at)=>({at,i:0,role:'assistant',text:'Recorded '+m.conversation+' progress '+at+'\n\n'+'Keep the exact source and do not resend. '.repeat(4)})).slice(m.after??0)}}}));
+   }};taskq.receive({...fixture,conversations:catalog()});
+  },{draft,board,lazy});
+  const field=page.locator('[data-c-field=text]');await field.waitFor();await page.waitForFunction(()=>document.querySelector('[data-c-field=text]')?.value==='Сохрани точный ввод без отправки');
+  await field.evaluate((e,lazy)=>{window.previousField=e;e.focus();if(lazy){window.quietSelection=event=>event.stopImmediatePropagation();document.addEventListener('selectionchange',quietSelection,true);document.addEventListener('select',quietSelection,true);}e.setSelectionRange(8,19);if(!lazy)document.dispatchEvent(new Event('selectionchange'));},lazy);
+  assert.equal(await field.evaluate(e=>e.value.slice(e.selectionStart,e.selectionEnd)),'точный ввод');
+  await page.waitForFunction(()=>document.querySelector('.dialogue-item[data-key=\"79:0\"]'));
+  const tail=await page.locator('.dialogue-item[data-key=\"79:0\"]').evaluate(e=>e.getBoundingClientRect().top-e.closest('.conversation-reader').getBoundingClientRect().top);
+  for(const title of ['PilotQ','General']){
+   await page.getByRole('button',{name:'Search threads',exact:true}).click();const search=page.locator('[data-c-field=search]');await search.fill(title);
+   assert(await search.evaluate(e=>document.activeElement===e),'search owns focus while navigating');
+   if(title==='PilotQ')await page.evaluate(()=>{if(window.quietSelection){document.removeEventListener('selectionchange',quietSelection,true);document.removeEventListener('select',quietSelection,true);}const e=previousField;e.setSelectionRange(e.value.length,e.value.length);e.dispatchEvent(new Event('select',{bubbles:true}));document.dispatchEvent(new Event('selectionchange'));});
+   await page.locator('[data-c=select][data-id='+title.toLowerCase()+']').click();
+   if(title==='PilotQ'){await page.waitForFunction(()=>document.querySelector('[data-c-field=text]')?.value==='Independent PilotQ input');assert.equal(await field.inputValue(),'Independent PilotQ input');assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),draft.caret,'the other manager keeps its own range');}
+  }
+  await page.waitForFunction(()=>document.querySelector('[data-c-field=text]')?.value==='Сохрани точный ввод без отправки');
+  if(process.env.TASKQ_EVIDENCE_2159){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2159,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2159+(lazy?'/search-switch-quiet.png':'/search-switch-events.png')});}
+  assert(!(await page.locator('.conversation-reader').innerText()).includes('Workspace navigation invalid; kept'),'the native-shaped navigation boundary accepts each switch');
+  assert.equal(await field.inputValue(),'Сохрани точный ввод без отправки');
+  assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),[8,19],'search/switch return retains the exact selected range');
+  assert(await field.evaluate(e=>document.activeElement===e),'return restores composer focus');
+  await page.waitForFunction(()=>document.querySelector('.dialogue-item[data-key=\"79:0\"]'));
+  assert(Math.abs(await page.locator('.dialogue-item[data-key=\"79:0\"]').evaluate(e=>e.getBoundingClientRect().top-e.closest('.conversation-reader').getBoundingClientRect().top)-tail)<=2,'the latest reading area survives the searched-manager return');
+  assert.match(await page.locator('.conversation-files').innerText(),/notes.md/);
+  assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-action'&&m.action!=='save'||['answer','ai-send','reports','message-action'].includes(m.a)).length),0,'switching and native reads never resend or acknowledge');
+ }finally{await page.close();}
+}
 // A4: native ready may deliver recovery before a lazy catalog/body; retain it across another recreation.
 async function loadingRecovery(browser){
  const page=await browser.newPage({viewport:{width:380,height:740}});try{
@@ -79,6 +136,9 @@ async function loadingRecovery(browser){
 }
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
+ await searchedOwnerSwitch(browser);await searchedOwnerSwitch(browser,true);
+ const nativeEngine=await webkit.launch({headless:true});try{await searchedOwnerSwitch(nativeEngine);await searchedOwnerSwitch(nativeEngine,true);await savedOwnerRecovery(nativeEngine);}finally{await nativeEngine.close();}
+ await savedOwnerRecovery(browser);
  try{
   const regressions=await Promise.allSettled(['answer','steer'].flatMap(kind=>[false,true].map(saved=>taskRecovery(browser,kind,saved))).concat(loadingRecovery(browser)));
   assert.deepEqual(regressions.filter(r=>r.status==='rejected').map(r=>r.reason.message),[]);
@@ -94,7 +154,7 @@ async function loadingRecovery(browser){
      window.ipc={postMessage:text=>{
       const m=JSON.parse(text);sent.push(m);
       if(m.a==='workspace-checkpoint')window.checkpoint=m.value;
-      if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='transcript'&&window.invalidWorkerPage?(window.invalidWorkerPage=false,{}):m.action==='task-body'?{...state.projects[0].tasks[0],body_lazy:false,history:[]}:m.action==='transcript'?{generation:'invented-source-a',start:0,end:10,size:10,items:[{at:0,i:0,role:'assistant',text:'Reading the original worker source.',updated:Date.now()-1000}]}:{state:'idle',turn:null}}}));
+      if(m.a==='conversation-dialogue')queueMicrotask(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='transcript'&&window.invalidWorkerPage?(window.invalidWorkerPage=false,{}):m.action==='task-body'?{...state.projects[0].tasks[0],body_lazy:false,history:[]}:m.action==='transcript'?{generation:'invented-source-a',start:0,end:10,size:10,items:[{at:0,i:0,role:'assistant',text:'Reading the original worker source.\n\n## Current action\n\nKeep **literal negations** and `taskq inbox 2159`.\n\n- Inspect exact source\n- Do not resend',updated:Date.now()-1000}]}:{state:'idle',turn:null}}}));
      }};
      taskq.receive(state);if(recovery)taskq.receive({workspaceRecovery:recovery});
     },{state,recovery});
@@ -105,6 +165,7 @@ async function loadingRecovery(browser){
    assert(await page.locator('.worker-live').isVisible(),'an invalid accepted local-source page must not replace the whole workspace');
    assert.match(await page.locator('.worker-live').innerText(),/response invalid/);
    await page.locator('.worker-live .dialogue-item').waitFor();
+   assert.equal(await page.locator('.worker-live .conversation-prose h3').innerText(),'Current action');assert.equal(await page.locator('.worker-live .conversation-prose strong').innerText(),'literal negations');assert.match(await page.locator('.worker-live .conversation-prose').innerText(),/Do not resend/);
    if(process.env.TASKQ_EVIDENCE_2140&&runtime==='codex'&&theme==='dark'&&font===20&&width===900){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2140,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2140+'/worker-document.png'});}
    assert.equal(await page.getByText('Interface error',{exact:false}).count(),0);
    const request=await page.evaluate(()=>sent.find(m=>m.action==='transcript'));

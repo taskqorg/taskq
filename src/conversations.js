@@ -9,6 +9,7 @@ const EVENTS=['close','failed','ask','blocked','gone'];
 // reading anchors persist for the SAVED most recently read threads within SAVED_BYTES of the 4096-byte navigation.
 const WINDOW=600,SAVED=24,SAVED_BYTES=1536,FILL=8,PAGE=64,ROWS=192,BYTES=32*1024*1024;
 const MODES=[['all','All','messages-square'],['new','New','inbox'],['needs','Needs me','message-circle-question'],['reply','Needs reply','message-circle-question'],['decision','Decisions','circle-check'],['activity','In progress','activity'],['finished','Finished','check-check']];
+const ROW_STATES={'Draft':'file-text','Working':'activity','Ready':'check','Status unknown':'circle-question-mark','Waiting to start':'pause','Starting chat':'activity','Could not start':'triangle-alert','Start interrupted':'triangle-alert','Delivery unknown':'circle-question-mark',doing:'activity',review:'git-pull-request',ready:'circle',waiting:'link',held:'circle-dashed',later:'circle-pause',failed:'triangle-alert',Finished:'check-check',Accepted:'check',Dropped:'circle-slash',Decided:'check'};
 // #1918 A6: tools whose argument names the files they read or change; a command naming a test runner is a test
 const FILE_TOOLS=/^(Read|Edit|MultiEdit|Write|NotebookEdit|apply_patch|read_file|write_file|view)$/,TEST=/\b(test|tests|pytest|unittest|selftest|check\.py)\b/i;
 module.exports=execution.module('conversations',{
@@ -17,7 +18,7 @@ module.exports=execution.module('conversations',{
   let sidebar={pins:[],collapsed:[],archived:{}},sidebarPending=null,revealed=null,activityRead=null,activityTimer=null,activityTimes={},activityChecks={};
   let focuses={},readerIdentity=null,layoutFrame=null,correcting=false,scrollIntent=null,scrollIntentTimer=null,dragScroll=false,sidebarEpoch=0,sidebarProjection=null,stableOrder=new Map(),stableGroups=new Map(),modeCounts={},pageSelected=null,listObserver=null,listObservedRoot=null,listAnchor=null;
   let resultFilter='all',sidebarItems=[],resultPages=new Map(),scopeReturn=null,completed=null,readerResize=null;
-  const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
+  const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),nativeSources=new Map(),imageFailures=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
   let recoveryQueue=[],recoveryDrafts=[];
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
@@ -61,7 +62,13 @@ module.exports=execution.module('conversations',{
     ui.send({a:'conversation-dialogue',action:'tasks',id,conversation,...(task?{task}:{page})});
     ui.defer(()=>{if(linkedReads[id])api.receive({dialogueReceipt:{id,conversation,action:'tasks',state:'unknown',reason:'Task readback missing; nothing was replayed'}});},30000);
    },
-   linkedTools:function(){return linked&&[linked.reason&&h('p',{role:'status'},'Task history unknown: '+linked.reason),h('p',{class:'meta'},'Linked tasks · '+(linked.start+1)+'–'+Math.min(linked.total,linked.start+PAGE)+' / '+linked.total+' loaded'+(linked.more?' · older board pages available':'')),h('div',{class:'conversation-tools'},linked.start>0&&h('button',{'data-c':'linked-page','data-start':Math.max(0,linked.start-PAGE)},'Previous tasks'),linked.start+PAGE<linked.total&&h('button',{'data-c':'linked-page','data-start':linked.start+PAGE},'Next tasks'),h('button',{'data-c':'linked-refresh',disabled:linked.busy},'Refresh task history'),linked.page>1&&h('button',{'data-c':'linked-newer',disabled:linked.busy},'Newer results'),linked.more&&h('button',{'data-c':'linked-older',disabled:linked.busy},'Older results'))];},
+   linkedTools:function(){
+    if(!linked)return null;
+    const controls=h('div',{class:'conversation-tools'},linked.start>0&&h('button',{'data-c':'linked-page','data-start':Math.max(0,linked.start-PAGE)},'Previous tasks'),linked.start+PAGE<linked.total&&h('button',{'data-c':'linked-page','data-start':linked.start+PAGE},'Next tasks'),h('button',{'data-c':'linked-refresh',disabled:linked.busy},'Refresh task history'),linked.page>1&&h('button',{'data-c':'linked-newer',disabled:linked.busy},'Newer results'),linked.more&&h('button',{'data-c':'linked-older',disabled:linked.busy},'Older results'));
+    const reason=linked.reason&&h('p',{role:'status'},'Task history unknown: '+linked.reason);
+    if(!linked.total)return [reason||h('p',{class:'meta'},linked.busy?'Reading linked task history…':'No linked tasks loaded'),(linked.reason||linked.more||linked.page>1)&&h('details',{'data-view-key':'linked-history:'+linked.id},h('summary',null,'Find linked task history'),controls)];
+    return [reason,h('p',{class:'meta'},'Linked tasks · '+(linked.start+1)+'–'+Math.min(linked.total,linked.start+PAGE)+' / '+linked.total+' loaded'+(linked.more?' · older board pages available':'')),controls];
+   },
    current:function(){return items.find(c=>c.id===selected);},
    bodyRead:function(c){if(!c?.lazy||c.bodyReason||bodyReads.has(c.id))return;const id=api.id(),op={id,revision:c.revision};bodyReads.set(c.id,op);while(bodyReads.size>8){const [key,old]=bodyReads.entries().next().value;ui.cancel(old.timer);bodyReads.delete(key);}ui.send({a:'conversation-dialogue',action:'body',conversation:c.id,revision:c.revision,id});op.timer=ui.defer(()=>{if(bodyReads.get(c.id)===op){bodyReads.delete(c.id);c.bodyReason='Saved draft read unknown; refresh to retry. Nothing was sent.';api.note(c.bodyReason,c.id);draw();}},30000);},
    bodyTrim:function(){
@@ -78,12 +85,13 @@ module.exports=execution.module('conversations',{
     if(row&&scopeReturn)list=row.archived?'archive':'recent';if(!row&&!recoveryDrafts.some(c=>c.id===selected)&&!items.some(c=>c.id===selected&&c.deleted)){if(selected)api.note('The selected source or saved position is unavailable. Refresh or choose another thread.','list');selected=null;}else if(row&&!!row.archived!==(list==='archive'))selected=null;
     selection[list]=selected;onSelect?.(selected);return selected;
    },
-   capture:function(){const el=menu.querySelector('.conversation-reader'),id=el?.parentElement.dataset.threadId;if(id&&!el.querySelector('.dialogue-transcript')&&positions[id]===undefined){const a=api.mark(el);api.place(id,a?.board?api.boardPosition(a):Math.round(el.scrollTop));}},
+   // Sample departing board readers even when accessibility scrolling delivered no wheel/key intent; draws retain the layout anchor.
+   capture:function(leaving=false){const el=menu.querySelector('.conversation-reader'),id=el?.parentElement.dataset.threadId;if(id&&el.checkVisibility()&&!el.querySelector('.dialogue-transcript')&&(leaving||positions[id]===undefined)){const a=api.mark(el);if(a?.board)api.place(id,api.boardPosition(a));else if(!positions[id]?.key)api.place(id,Math.round(el.scrollTop));}},
    // Stable board/native record offsets share the bounded navigation; plain readers retain pixel positions.
    boardPosition:function(a){return {key:a.key,y:Math.round(a.y),...(a.before!==undefined?{before:a.before}:{}),...(a.g?{g:a.g}:{})};},
    place:function(id,value){
     if(id!==undefined){delete positions[id];if(value!==undefined)positions[id]=value;}
-    for(const k of Object.keys(positions)){if(Object.keys(positions).length<=SAVED&&JSON.stringify(positions).length<=SAVED_BYTES)break;delete positions[k];}
+    for(const k of Object.keys(positions)){if(Object.keys(positions).length<=SAVED&&new TextEncoder().encode(JSON.stringify(positions)).length<=SAVED_BYTES)break;delete positions[k];}
    },
    anchored:function(v){return !!v&&typeof v==='object'&&Number.isFinite(v.y)&&(/^(?:(task|brief|question|answer|result):[0-9]+(?::[0-9]+)?|report:[a-z0-9:-]+)$/.test(v.key)||Number.isSafeInteger(v.at)&&v.at>=0&&Number.isSafeInteger(v.i)&&v.i>=0&&(v.part===undefined||Number.isSafeInteger(v.part)&&v.part>=0&&v.part<=16*1024*1024));},
    editable:function(c){return !!c&&!c.lazy&&(!owner.conversation||owner.conversation===c.id)&&!(owner.detached||[]).includes(c.id)&&!c.deleted;},
@@ -136,7 +144,7 @@ module.exports=execution.module('conversations',{
     else if(op.kind==='after'&&op.after===view.end){view.items.push(...fresh);view.end=v.end;view.quiet.after=fresh.length?0:view.quiet.after+1;if(fresh.length){view.announce=fresh.length+(fresh.length===1?' new message':' new messages');if(!view.stick)view.unseen=true;}}
    },
    key:function(item){return item.at+':'+item.i;},
-   bytes:function(item){if(!recordBytes.has(item))recordBytes.set(item,new TextEncoder().encode(item.text||'').length);return recordBytes.get(item);},
+   bytes:function(item){if(!recordBytes.has(item))recordBytes.set(item,new TextEncoder().encode(item.text||'').length+(item.image?.src?.length||0));return recordBytes.get(item);},
    // Q-A3: the first visible native or board record and its offset from the viewport top
    mark:function(el){
     const top=el.getBoundingClientRect().top;
@@ -147,7 +155,7 @@ module.exports=execution.module('conversations',{
    },
    hold:function(el,state=view){
     if(!state)return;
-    const a=state.anchor,record=a&&[...el.querySelectorAll('[data-reading-key],[data-key]')].filter(n=>n.checkVisibility()&&(a.board?n.dataset.readingKey:n.dataset.key)===a.key).at(-1),node=a?.part!==undefined?record?.querySelector('[data-native-part="'+a.part+'"]')||record:record;
+    const a=state.anchor,record=a&&[...el.querySelectorAll('[data-reading-key],[data-key]')].filter(n=>n.checkVisibility()&&(a.board?n.dataset.readingKey:n.dataset.key)===a.key).at(-1),node=a?.part!==undefined?[...(record?.querySelectorAll('[data-native-part="'+a.part+'"]')||[])].filter(n=>n.checkVisibility()).at(-1)||record:record;
     const delta=state.stick?el.scrollHeight-el.clientHeight-el.scrollTop:node?node.getBoundingClientRect().top-el.getBoundingClientRect().top-a.y:0;
     if(Math.abs(delta)>.5){correcting=true;el.scrollTop+=delta;window.requestAnimationFrame(()=>{correcting=false;});}return state.stick||!!node;
    },
@@ -222,6 +230,9 @@ module.exports=execution.module('conversations',{
       h('dl',null,
        watching?[row('Prompt',w.prompt),row('Every',w.every+' minutes'),row('Events',(w.events||[]).join(', ')||'none'),row('Last watch dispatch',time.stamp(w.last_turn,'Watch dispatched')),row('Next scheduled turn',time.stamp(w.next_due,'Next scheduled turn')),row('Last outcome',w.last_outcome||'none')]:row('Watch',watchText),
        row('Latest turn',t?[t.state+' · '+(t.outcome||(t.state==='done'?'outcome unknown':'outcome pending'))+' · ',time.stamp(t.at,'Turn submitted')]:time.stamp(null,'Turn submitted',s?'No turn timestamp in the status record':v?.statusReason||'Turn status unavailable')),
+       row('Original turn input',t?.input||'No queued reply input'),
+       t?.prior_outcome&&row('Prior refusal',t.prior_outcome),
+       t?.retry_refused&&h('button',{'data-c':'retry-turn','data-op-id':t.op_id,disabled:disabled||!!pending||s?.state==='working'},'Retry original App input'),
        row('Last assistant line',!s?'unknown':s.reason?'unknown: '+s.reason:s.last_line??'none in the last chunk')),
       h('div',{class:'dialogue-watch'},
        h('label',null,'Watch prompt',h('textarea',{'data-w-field':'prompt',value:f.prompt,rows:2,maxLength:65536,disabled,placeholder:'Check the board as the project rules say and report'})),
@@ -233,21 +244,25 @@ module.exports=execution.module('conversations',{
    transcript:function(c){
     const v=view?.id===c.id?view:null,label={user:'You',assistant:'Project manager'};
     // Q-A9: page loads are not announced in full; a short status says what changed
-    return [h('p',{class:'sr-only',role:'status'},v?.announce||''),h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Transcript',tabindex:'0','data-id':c.id},
+    return [c.sent?.text&&!v?.items?.some(i=>i.role==='user'&&i.text===c.sent.text)&&h('section',{'data-reading-key':'owner-request:'+c.id,class:'conversation-prose'},h('p',{class:'meta'},'You · request'),require('./reports.js').body(c.sent.text,'owner-request:'+c.id,0),h('details',{'data-view-key':'request-source:'+c.id,'data-native-source':'request-source:'+c.id},h('summary',{class:'source-toggle'},'Exact request source'),nativeSources.has('request-source:'+c.id)&&h('pre',null,c.sent.text))),h('p',{class:'sr-only',role:'status'},v?.announce||''),h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Transcript',tabindex:'0','data-id':c.id},
      v?.start>0&&h('button',{'data-c':'earlier',disabled:!!v.busy.before||!!v.lost},v.busy.before?'Loading earlier…':'Load earlier'),
      v?.limitReason&&h('p',{role:'status',class:'meta'},v.limitReason),v?.lost&&h('p',{role:'status',class:'dialogue-unknown'},v.lost),
      v?.reason&&v.reason!==v.lost&&h('p',{role:'status',class:'dialogue-unknown'},'Transcript unknown: '+v.reason+(v.items.length?'. Showing what was read before.':'')),
-     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief',time.stamp(item.updated,'Setup brief recorded')),api.nativeItem(item,null)):api.nativeItem(item,label[item.role]||item.role);}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
+     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'&&!item.image?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):api.nativeItem(item,label[item.role]||item.role);},c.id):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
    // #1918 A6: consecutive tool calls fold into one collapsible line (docs/design/conversations-usability-review.md#tool-collapse-1918);
    // a message ends the group. `current`: the worker runs, so the last group names its latest step live.
-   steps:function(items,current,render){
+   steps:function(items,current,render,setup=null){
     const out=[],tool=item=>{const key=api.key(item);return h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded'));};
     for(let i=0;i<items.length;){
-     if(items[i].role!=='tool'){out.push(render(items[i]));i++;continue;}
-     let j=i;while(j<items.length&&items[j].role==='tool')j++;
+     if(setup&&['brief','transport'].includes(items[i].role)){
+      let j=i;while(j<items.length&&['brief','transport'].includes(items[j].role))j++;
+      const run=items.slice(i,j),key=api.key(run[0]);out.push(h('details',{key,'data-key':key,'data-view-key':'setup:'+setup+':'+key,class:'dialogue-steps dialogue-setup'},h('summary',{class:'meta'},'Setup evidence · '+run.length+' records'),run.map(item=>api.nativeItem(item,item.role==='brief'?'Brief':'Transport'))));i=j;continue;
+     }
+     if((items[i].role!=='tool'||items[i].image)){out.push(render(items[i]));i++;continue;}
+     let j=i;while(j<items.length&&items[j].role==='tool'&&!items[j].image)j++;
      const run=items.slice(i,j),key=api.key(run[0]),now=current&&j===items.length;
      out.push(run.length===1?tool(run[0]):h('details',{key,'data-key':key,class:'dialogue-steps'},
       h('summary',{class:'dialogue-tool'},h('span',{class:'tool-label'},api.stepSummary(run)+(now?' · now: '+api.short(run.at(-1).text):'')),time.stamp(run.at(-1).updated,'Latest tool recorded',undefined,false)),run.map(tool)));
@@ -300,7 +315,7 @@ module.exports=execution.module('conversations',{
     const was=l.reason,first=l.end===null;let fresh=[];
     if(r.state==='accepted'&&r.value?.ended===true){l.ended=true;l.reason='';return true;}
     if(r.state==='accepted'&&!api.pageValid(r.value)){l.reason='Worker transcript response invalid; source unknown. Refresh before reading.';return true;}
-    if(r.state!=='accepted')l.reason=r.reason||'Transcript unknown';
+    if(r.state!=='accepted'){l.reason=r.reason||'Transcript unknown';if(/shrank|replaced/.test(l.reason)){l.lost=true;l.stick=false;}}
     else if(r.value.generation&&l.source&&r.value.generation!==l.source&&(l.items.length||l.end>0||l.anchor)){l.gen++;l.items=[];l.start=l.end=null;l.anchor=null;api.place(l.thread);l.reason='Transcript source changed. Choose Latest to open the current source.';l.lost=true;l.stick=false;}
     else {
      const v=r.value;l.source=v.generation||l.source;l.reason='';l.size=v.size;
@@ -317,13 +332,20 @@ module.exports=execution.module('conversations',{
    short:function(text){return String(text).replace(/(?<![^\s'"`=(])(?:~\/|\/)(?:[^\s/'"`]+\/)+([^\s/'"`]*)/g,'…/$1');},
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
    nativeItem:function(item,label=item.role,closed=false,scope=''){
-    const key=api.key(item),text=item.text||'';let content=text;
-    if(text.length>32768){const resident=live||view,cache=(closed?scope:resident?.id||resident?.thread)+'@'+(closed?closedViews.get(scope)?.page?.generation||'':resident?.source||'')+':'+key,stored=closed&&new RegExp('^report:native:'+item.at+':'+item.i+':part:(\\d+)$').exec(positions[closedViews.get(scope)?.thread]?.key||''),anchor=!closed&&resident?.anchor?.key===key?resident.anchor:null,part=anchor?.part??(stored?Number(stored[1]):textPages.get(cache))??0,start=Math.floor(Math.min(part,text.length-1)/32768)*32768,end=Math.min(text.length,start+32768),chunks=[];
-     for(let at=start;at<end;at+=1024){let a=at,b=Math.min(end,at+1024);if(a&&/[\uD800-\uDBFF]/.test(text[a-1]))a++;if(b<text.length&&/[\uD800-\uDBFF]/.test(text[b-1]))b++;chunks.push(h('span',{key:at,'data-native-part':at,...(closed?{'data-reading-key':'report:native:'+item.at+':'+item.i+':part:'+at}:{})},text.slice(a,b)));}
+    if(item.role==='image'&&label==='image')label='Native image';
+    const key=api.key(item),resident=closed?closedViews.get(scope)?.page:live||view,sourceKey='source:'+(scope||resident?.thread||resident?.id||selected)+':'+(resident?.source||resident?.generation||'')+':'+key,text=item.text||'',source=closed?'native:'+item.at+':'+item.i:null;let raw=text,content=text.length<=32768?require('./reports.js').body(text,source,0):null;
+    if(text.length>32768){const resident=live||view,cache=(closed?scope:resident?.id||resident?.thread)+'@'+(closed?closedViews.get(scope)?.page?.generation||'':resident?.source||'')+':'+key,stored=closed&&new RegExp('^report:native:'+item.at+':'+item.i+':part:(\\d+)$').exec(positions[closedViews.get(scope)?.thread]?.key||''),anchor=!closed&&resident?.anchor?.key===key?resident.anchor:null,part=anchor?.part??(stored?Number(stored[1]):textPages.get(cache))??0,start=Math.floor(Math.min(part,text.length-1)/32768)*32768,end=Math.min(text.length,start+32768);
+
      const turn=next=>{textPages.delete(cache);textPages.set(cache,next);while(textPages.size>24)textPages.delete(textPages.keys().next().value);if(closed){const page=closedViews.get(scope);api.place(page.thread,{key:'report:native:'+item.at+':'+item.i+':part:'+next,y:0,before:page.page.end,g:page.page.generation});api.nav();}else if(resident){resident.stick=false;resident.anchor={key,part:next,y:0};api.storeAnchor(resident.id||resident.thread,resident);}draw();};
-     content=[h('span',{class:'conversation-text'},chunks),h('span',{class:'conversation-tools'},h('span',{class:'meta'},'Message text · '+(start/32768+1)+' / '+Math.ceil(text.length/32768)),start>0&&h('button',{onClick:()=>turn(start-32768)},'Previous text'),end<text.length&&h('button',{onClick:()=>turn(end)},'Next text'))];
+     raw=text.slice(start,end);content=[require('./reports.js').body(raw,source,start),h('span',{class:'conversation-tools'},h('span',{class:'meta'},'Message text · '+(start/32768+1)+' / '+Math.ceil(text.length/32768)),start>0&&h('button',{onClick:()=>turn(start-32768)},'Previous text'),end<text.length&&h('button',{onClick:()=>turn(end)},'Next text'))];
     }
-    return h('article',{key,'data-key':key,...(closed?{'data-reading-key':'report:native:'+item.at+':'+item.i,'data-read-before':closedViews.get(scope)?.page?.end,'data-source-generation':closedViews.get(scope)?.page?.generation}:{}),class:'dialogue-item '+item.role},label&&h('p',{class:'meta'},label,time.stamp(item.updated,label+' message')),h('div',{class:'conversation-text'},content));
+    const image=item.image;if(image){
+     const resident=closed?closedViews.get(scope)?.page:live||view,items=resident?.items||[],index=items.findIndex(i=>api.key(i)===key),earlier=items.slice(0,Math.max(0,index)).filter(i=>i.image?.src).length;
+     const name=typeof image.name==='string'?image.name:'Recorded image',identity=(resident?.thread||resident?.id||scope)+':'+(resident?.source||resident?.generation||'')+':'+key,src=typeof image.src==='string'&&/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(image.src)&&image.src.length<=2*1024*1024&&image.width>0&&image.height>0&&image.width<=4096&&image.height<=4096&&image.width*image.height<=4000000?image.src:null;
+     const reason=imageFailures.get(identity)||image.reason||(earlier>=4?'Image reader preview limit; inspect the native source':!src?'Image bytes unavailable or unsupported':'');
+     content=h('figure',{class:'transcript-image'},h('figcaption',null,name),reason?h('p',{role:'status'},reason):[h('details',{'data-view-key':'image:'+identity},h('summary',null,'Inspect recorded image')),h('img',{src,alt:name,width:image.width,height:image.height,loading:'lazy',decoding:'async',onError:()=>{imageFailures.set(identity,'Image decode failed; recorded source retained');while(imageFailures.size>24)imageFailures.delete(imageFailures.keys().next().value);draw();}})],typeof image.url==='string'&&/^https?:\/\//.test(image.url)&&h('a',{href:image.url,'data-url':image.url},'Open recorded artifact'));
+    }
+    return h('article',{key,'data-key':key,...(closed?{'data-reading-key':'report:native:'+item.at+':'+item.i,'data-read-before':closedViews.get(scope)?.page?.end,'data-source-generation':closedViews.get(scope)?.page?.generation}:{}),class:'dialogue-item '+item.role},label&&h('p',{class:'meta'},label,time.stamp(item.updated,label+' message')),h('div',{class:'conversation-text conversation-prose'},content),!image&&text&&h('details',{'data-view-key':sourceKey,'data-native-source':sourceKey},h('summary',{class:'source-toggle'},'Exact source'),nativeSources.has(sourceKey)&&h('pre',null,raw)));
    },
    history:function(p,t,render){
     const total=t.history_count??t.history?.length??0,tail=t.history_tail===true?t.history||[]:t.history_tail||[],sourceRevision=t.history_source_revision??t.revision,sourceTotal=total-tail.length;if(!total)return null;
@@ -335,10 +357,11 @@ module.exports=execution.module('conversations',{
    closed:function(r){const key=r.root+'#'+r.n+'@'+r.sha,thread=api.readingId(r),p=positions[thread];let t=closedViews.get(key);if(!t&&/^report:native:/.test(p?.key||'')&&Number.isSafeInteger(p.before)){t={scheduled:true,loading:true};closedViews.set(key,t);ui.defer(()=>{t.loading=false;api.closedRead(r.root,r.n,r.sha,p.before,true,false,thread);},0);}return h('details',{'data-view-key':'native:'+key},h('summary',null,'Task activity · native transcript'),h('p',{class:'meta'},'Read-only native transcript. Opening sends no input.'),!t&&h('button',{'data-c':'closed-open','data-root':r.root,'data-task':r.n,'data-sha':r.sha},'Open transcript'),t&&[t.loading&&h('p',{role:'status'},'Reading transcript…'),t.limitReason&&h('p',{role:'status',class:'meta'},t.limitReason),t.reason&&h('p',{role:'status'},'Transcript unavailable: '+t.reason),t.reason&&h('button',{'data-c':'closed-open','data-root':r.root,'data-task':r.n,'data-sha':r.sha,disabled:t.loading},'Latest transcript'),t.page&&[t.page.start>0&&h('button',{'data-c':'closed-earlier','data-root':r.root,'data-task':r.n,'data-sha':r.sha,disabled:t.loading},'Load earlier'),h('button',{'data-c':'closed-open','data-root':r.root,'data-task':r.n,'data-sha':r.sha,disabled:t.loading},'Latest messages'),t.page.items.map((item,i)=>api.nativeItem({...item,at:item.at??t.page.start,i:item.i??i},{user:'You',assistant:'Agent'}[item.role]||item.role,true,key)),!t.page.items.length&&h('p',{class:'meta'},'No messages in this chunk.')]]);},
    closedRead:function(root,task,sha,before,restore=false,latest=false,thread='result:'+root+'/'+task+'@'+sha){const key=root+'#'+task+'@'+sha,prior=closedViews.get(key);if(prior?.loading)return;const t={...prior,root,task,sha,before,restore,latest,thread,id:api.id(),loading:true,reason:''};closedViews.delete(key);closedViews.set(key,t);while(closedViews.size>1){const old=closedViews.keys().next().value;ui.cancel(closedViews.get(old).timer);closedViews.delete(old);}ui.send({a:'completed',root,task,id:t.id,transcript:true,...(before==null?{}:{before})});t.timer=ui.defer(()=>api.closedReceive({root,id:t.id,reason:'No transcript response within 65 seconds'}),65000);draw();},
    closedReceive:function(r){const t=[...closedViews.values()].find(t=>t.id===r.id&&t.root===r.root);if(!t?.loading)return;ui.cancel(t.timer);t.loading=false;t.reason=r.reason||r.transcript?.reason||'';if(r.transcript?.items){const p=positions[t.thread],parts=/^report:native:(\d+):(\d+)/.exec(p?.key||'');if(t.restore&&(p?.g&&r.transcript.generation!==p.g||parts&&!r.transcript.items.some(i=>i.at===Number(parts[1])&&i.i===Number(parts[2])))){t.reason='Saved native source position unavailable. Choose Latest to open the current source.';delete t.page;}else {t.page=r.transcript;const bytes=t.page.items.reduce((n,i)=>n+api.bytes(i),0);t.limitReason=bytes>1024*1024?'Selected transcript: '+(bytes/1048576).toFixed(1)+' MiB pinned while reading; inactive pages are evicted.':'';if((t.latest||!t.restore&&t.before!==undefined)&&t.page.items.length){const last=t.latest?t.page.items.at(-1):t.page.items[0];api.place(t.thread,{key:'report:native:'+last.at+':'+last.i,y:0,before:t.page.end,g:t.page.generation});}}}let bytes=0;for(const [key,v]of [...closedViews].reverse()){bytes+=(v.page?.items||[]).reduce((n,i)=>n+api.bytes(i),0);if(bytes>1024*1024&&v!==t&&!v.loading)closedViews.delete(key);}draw();},
-   local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next,...(c.replyAck?{reply_ack:c.replyAck}:{})};},
+   runtime:function(c){const base=snapshot.ai?.runtime;return (base?.choices||[base]).find(r=>r?.id===(c?.runtime||base?.id))||{id:c?.runtime,available:false,reason:'Selected runtime unavailable; no fallback.'};},
+   local:function(c){return {title:c.title||'',root:c.root||'',...(c.runtime?{runtime:c.runtime}:{}),text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next,...(c.replyAck?{reply_ack:c.replyAck}:{})};},
    // #1773 A4: the host refuses fractional scroll offsets and navigation over 4096 bytes; whole pixels and the newest opened threads fit
    nav:function(){ui.cancel(navTimer);navTimer=ui.defer(()=>{const whole=Object.fromEntries(Object.entries(scrolls).map(([k,v])=>[k,Math.max(0,Math.round(v)||0)]));let navigation;
-    for(;;){navigation={list,search,filter:resultFilter,selected:api.current()?.id||null,listOnly,scrolls:whole,threads:{selected,selection,opened,positions,focuses,completed,scopeReturn}};if(JSON.stringify(navigation).length<=4096)break;if(opened.length){opened.shift();continue;}if(Object.keys(focuses).length>1){delete focuses[Object.keys(focuses)[0]];continue;}const key=Object.keys(positions)[0];if(key){delete positions[key];continue;}api.note('Navigation exceeds saved-state capacity; current view kept in this window.');return;}
+    for(;;){navigation={list,search,filter:resultFilter,selected:api.current()?.id||null,listOnly,scrolls:whole,threads:{selected,selection,opened,positions,focuses,completed,scopeReturn}};if(new TextEncoder().encode(JSON.stringify(navigation)).length<=4096)break;if(opened.length){opened.shift();continue;}if(Object.keys(focuses).length>1){delete focuses[Object.keys(focuses)[0]];continue;}const key=Object.keys(positions)[0];if(key){delete positions[key];continue;}api.note('Navigation exceeds saved-state capacity; current view kept in this window.');return;}
     ui.send({a:'conversation-navigation',navigation});checkpoint();},100);},
    order:function(){return sidebarItems;},
    readingId:function(report){return report?'result:'+report.root+'/'+report.n+'@'+report.sha:selected;},
@@ -354,14 +377,17 @@ module.exports=execution.module('conversations',{
    restoreContext:function(v){list=v.list;resultFilter=v.filter;search=v.search;completed=v.completed;scopeReturn=null;selected=v.selected;onSelect?.(selected);api.nav();},
    filter:function(value,criteria){navigated=true;api.flush();stableOrder.clear();stableGroups.clear();sidebarProjection=null;resultFilter=value;list='recent';selected=null;onSelect?.(null);if(criteria)completed=views.criteria(criteria);else completed=null;scopeReturn=null;revealed=null;api.nav();},
    returnScope:function(){if(!scopeReturn)return;const prior=scopeReturn;scopeReturn=null;list=prior.list;resultFilter=prior.filter;search=prior.search;completed=prior.completed;api.select(prior.selected,false);},
-   select:function(id,focus=true){navigated=true;revealed=id;const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;if(bodyCache.has(id)){bodyCache.delete(id);bodyCache.set(id,true);}onSelect?.(id);selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
+   select:function(id,focus=true){api.capture(true);navigated=true;revealed=id;const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;if(bodyCache.has(id)){bodyCache.delete(id);bodyCache.set(id,true);}onSelect?.(id);selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
    // #1699 A2: open one owner conversation in its list without acknowledging anything
    reveal:function(id,focus=true,keepSearch=false){const c=items.find(c=>c.id===id);if(!c)return false;list=c.archived?'archive':'recent';if(!keepSearch){search='';searchOpen=false;}api.select(id,focus);return true;},
    // #1699 A7: a restored task or event thread opens in Recent
    show:function(name){navigated=true;if(list!==name){selection[list]=selected;list=name;selected=selection[list]||null;onSelect?.(selected);api.nav();}},
+   resume:function(){readerIdentity=null;return !!focuses[selected];},
    fresh:function(copy){navigated=true;
+    api.capture(true);
     const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);
-    const c={id:api.id(),revision:0,title:'',root:copy?.root||snapshot.projects?.[0]?.root||'',text:copy?.text||'',caret:copy?.caret||[0,0],scroll:0,files:[],archived:false,version:1};
+    const c={id:api.id(),revision:0,title:'',root:copy?.root||snapshot.projects?.[0]?.root||'',runtime:copy?.runtime||snapshot.ai?.runtime?.id,text:copy?.text||'',caret:copy?.caret||[0,0],scroll:0,files:[],archived:false,version:1};
+    resultFilter='all';completed=null;scopeReturn=null;resultPages.clear();stableOrder.clear();stableGroups.clear();sidebarProjection=null;scrolls.recent=0;
     items.push(c);list='recent';search='';searchOpen=false;selected=c.id;onSelect?.(c.id);selection.recent=c.id;listOnly=false;focusDraft=true;api.save(c);api.nav();draw();
    },
    save:function(c){
@@ -439,7 +465,7 @@ module.exports=execution.module('conversations',{
      const r=s.conversationReceipt;if(r.id!==pending?.id)return true;
      const op=pending;pending=null;if(Number.isSafeInteger(r.snapshot?.catalog_epoch))catalogEpoch=Math.max(catalogEpoch,r.snapshot.catalog_epoch);ui.cancel(timer);const c=items.find(c=>c.id===op.conversation),native=r.snapshot?.items?.find(c=>c.id===op.conversation);
      if(c&&native){c.reply=native.reply;c.revision=native.revision;c.request=native.request;c.sent=native.sent;c.dialogue=native.dialogue;c.updated=native.updated;if(['attach','remove'].includes(op.action))c.files=native.files;}
-     if(r.state!=='accepted'&&['reply','watch','unwatch'].includes(op.action)&&!(op.action==='reply'&&r.state!=='rejected'&&(!native||native.reply)&&r.reason!=='working'&&!r.reason?.startsWith('open in '))){
+     if(r.state!=='accepted'&&['reply','watch','unwatch','retry-turn'].includes(op.action)&&!(op.action==='reply'&&r.state!=='rejected'&&(!native||native.reply)&&r.reason!=='working'&&!r.reason?.startsWith('open in '))){
       // D3: a refused turn or watch change is definite; its text shows and the draft stays.
       if(c)c.sending=false;api.note(op.action==='reply'?'Not sent: '+(r.reason||'delivery unknown')+'. Draft kept.':r.reason||'Watch change unknown',op.conversation);api.next();
      }else if(r.state!=='accepted'){
@@ -458,6 +484,7 @@ module.exports=execution.module('conversations',{
       }
       if(c&&['reply','reply-check'].includes(op.action)){c.replyAck=op.action==='reply'?op.id:op.op_id;c.reply=null;c.sending=false;if(c.version===op.typed&&(op.action==='reply'||r.value?.unchanged===true)){c.text='';c.caret=[0,0];for(const f of c.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=[];}c.version=(c.version||0)+1;api.save(c);api.note('Message saved · check PM activity separately.',op.conversation);if(view?.id===c.id)api.read('status');}
       if(view?.id===op.conversation&&op.action==='watch'&&r.value){view.status={...view.status,watch:r.value};view.form=null;api.form();api.note('Watch saved. Its prompt is sent when due and the session is idle.',op.conversation);}
+      if(view?.id===op.conversation&&op.action==='retry-turn'){api.note('Original refused input admitted to the same App session; check native acceptance. No new session.',op.conversation);api.read('status');}
       if(view?.id===op.conversation&&op.action==='unwatch'){view.status={...view.status,watch:'no watch'};view.form=null;api.form();api.note('Watch removed',op.conversation);}
       if(op.action==='cancel')api.note('Cancelled before native launch. No runtime work was rolled back.',op.conversation);
       if(op.action==='reconcile')api.note('Delivery checked using the original request ID.',op.conversation);
@@ -507,7 +534,7 @@ module.exports=execution.module('conversations',{
     if(c.archived)return 'Restore before sending.';
     if(!(c.text||'').trim())return 'Write a request before sending files.';
     const p=snapshot.projects?.find(p=>p.root===c.root);if(!p)return 'Choose a registered project.';if(!p.alive)return 'Project service unavailable.';
-    if(!snapshot.ai?.runtime?.available)return snapshot.ai?.runtime?.reason||'Owner runtime unavailable; no fallback.';
+    if(!api.runtime(c).available)return api.runtime(c).reason||'Owner runtime unavailable; no fallback.';
     if(c.files?.some(f=>f.error))return 'Resolve attachment errors before sending.';
     if(c.sending||pending?.action==='send')return 'Saving request; wait for its receipt.';
     return '';
@@ -562,7 +589,7 @@ module.exports=execution.module('conversations',{
      const render=r=>{
        const own=items.find(c=>c.id===r.id),context=!r.p?(r.root||r.board||r.project?(r.project?r.project+' · ':'')+'Project unavailable':'No project'):(g.id==='pinned'||list==='archive'?r.p.name:''),meta=r.report&&r.needsDecision?'':r.thread?(r.status??r.meta??''):r.meta;
        const blocked=!!sidebarPending||!!pending||!!failure||!!extra.busy;
-       return h('div',{key:r.id,class:'conversation-item'},h('button',{class:'conversation-row',...(r.report?{'data-report':'open','data-root':r.root,'data-n':r.report,'data-thread':r.id}:r.thread?{'data-a':'thread','data-thread':r.id}:{'data-c':'select','data-id':r.id}),title:r.title,'aria-current':r.id===selected?'page':null},h('span',null,r.title),h('small',null,[context,meta].filter(Boolean).join(' · '),(context||meta)?' · ':null,r.timeContext==='Request created'?'Created · ':null,time.stamp(r.activity,r.timeContext||'Last activity',activityTimes[r.id]?.reason||r.updated_reason||'The source did not supply an activity time',false),r.marker&&h('b',{class:'thread-marker'},' · '+r.marker))),
+       return h('div',{key:r.id,class:'conversation-item'},h('button',{class:'conversation-row',...(r.report?{'data-report':'open','data-root':r.root,'data-n':r.report,'data-thread':r.id}:r.thread?{'data-a':'thread','data-thread':r.id}:{'data-c':'select','data-id':r.id}),title:r.title,'aria-current':r.id===selected?'page':null},h('span',null,r.title),h('small',{class:'thread-row-meta'},context&&h('span',null,context),meta&&(ROW_STATES[meta]?h('span',{class:'thread-state',role:'img',title:meta,'aria-label':meta},icons.icon(ROW_STATES[meta])):h('span',null,meta)),r.marker&&h('span',{class:'thread-marker',role:'img',title:r.marker,'aria-label':r.marker},icons.icon(r.marker==='Needs reply'?'message-circle-question':r.marker==='Needs decision'?'circle-check':'inbox')),time.stamp(r.activity,r.timeContext||'Last activity',activityTimes[r.id]?.reason||r.updated_reason||'The source did not supply an activity time',false))),
         h('div',{class:'conversation-row-actions'},icons.button(r.pin?'pin-off':'pin',r.pin?'Unpin':'Pin',{'data-c':'row-pin','data-id':r.id,class:'compact-action',disabled:blocked}),
          icons.button(r.archived?'archive-restore':'archive',r.archived?'Restore':'Archive',{'data-c':'row-archive','data-id':r.id,class:'compact-action',disabled:blocked,onClick:()=>{if(blocked)return;if(own)api.action(r.archived?'restore':'archive',{},r.id);else extra.archive?.(r);}})));
 };
@@ -592,8 +619,8 @@ module.exports=execution.module('conversations',{
      h('div',{class:'conversation-toolbar chat-entry-bar'},button(listOnly?'arrow-left':'rows-3',listOnly?'Back':'List',{'data-c':'list',class:'conversation-list-toggle compact-action'}),h('button',{'data-c':'new',class:'new-chat-action',disabled:!!owner.conversation},icons.icon('plus'),'New chat'),button('search','Search threads',{'data-c':'search-open',class:'compact-action'}),button('terminal','Work sessions',{'data-route':'sessions',class:'compact-action'})),
      h('div',{class:'conversation-grid'},
       h('aside',{class:'conversation-list','aria-label':'Threads'},h('div',{class:'conversation-tools list-tabs'},
-       h('details',{class:'conversation-view','data-view-key':'conversation-view'},h('summary',{title:(incomplete?'Total unknown; '+matching+' loaded':'Total '+matching)+' matching threads in this scope; counts independent of resident pages'},icons.icon(MODES.find(m=>m[0]===resultFilter)?.[2]||'messages-square'),h('span',null,MODES.find(m=>m[0]===resultFilter)?.[1]),h('span',{class:'view-count'},' · '+count(matching))),h('div',{class:'conversation-tools result-filters'},MODES.map(([value,label,glyph])=>h('button',{'data-c':'result-filter','data-filter':value,'aria-pressed':resultFilter===value,'aria-label':label+': '+(incomplete?'total unknown; '+modeCounts[value]+' loaded':modeCounts[value])},icons.icon(glyph),h('span',null,label),h('span',{class:'view-count'},count(modeCounts[value])))))),
-       button('inbox','Recent',{'data-c':'recent','aria-pressed':list==='recent',class:'compact-action'}),button('archive','Archive',{'data-c':'archive-list','aria-pressed':list==='archive',class:'compact-action'})),
+       h('details',{class:'conversation-view','data-view-key':'conversation-view'},h('summary',{title:(MODES.find(m=>m[0]===resultFilter)?.[1]||'All')+' · '+(incomplete?'Total unknown; '+matching+' loaded':'Total '+matching)+' matching threads in this scope; counts independent of resident pages'},icons.icon(MODES.find(m=>m[0]===resultFilter)?.[2]||'messages-square'),h('span',{class:'view-label'},MODES.find(m=>m[0]===resultFilter)?.[1]),h('span',{class:'view-count'},' · '+count(matching))),h('div',{class:'conversation-tools result-filters'},MODES.map(([value,label,glyph])=>h('button',{'data-c':'result-filter','data-filter':value,'aria-pressed':resultFilter===value,'aria-label':label+': '+(incomplete?'total unknown; '+modeCounts[value]+' loaded':modeCounts[value])},icons.icon(glyph),h('span',null,label),h('span',{class:'view-count'},count(modeCounts[value])))))),
+       h('span',{class:'conversation-tools list-location'},button('inbox','Recent',{'data-c':'recent','aria-pressed':list==='recent',class:'compact-action'}),button('archive','Archive',{'data-c':'archive-list','aria-pressed':list==='archive',class:'compact-action'}))),
        (searchOpen||search)&&h('div',{class:'conversation-search'},h('label',null,icons.icon('search'),h('span',{class:'sr-only'},'Search threads'),h('input',{type:'search','data-c-field':'search',value:search,placeholder:'Search',maxLength:512})),button('x','Clear search',{'data-c':'clear-search',class:'compact-action'})),
        scopeReturn&&h('div',{class:'meta conversation-scope'},h('span',null,'Linked'),h('button',{'data-c':'scope-return',title:'Linked source outside this view; return to saved scope and selection'},icons.icon('arrow-left'),'Return to view')),
        completed&&h('details',{'data-view-key':'completed-scope',class:'completed-scope'},h('summary',null,'Finished · '+(completed.projects.length?views.scope(snapshot.projects||[],completed).map(p=>p.name).join(', ')||'Projects unavailable':'All projects')+' · '+completed.period+' · '+(completed.outcomes.join(', ')||'All outcomes')+(completed.query?' · '+completed.query:'')),h('p',{class:'meta'},'Projects: '+(completed.projects.length?views.scope(snapshot.projects||[],completed).map(p=>p.name).join(', ')||'Selected projects unavailable':'All')+' · '+completed.period+' · '+(completed.query||'No query')+' · '+(completed.outcomes.join(', ')||'All outcomes')),h('button',{'data-c':'scope-clear'},'All finished work')),
@@ -608,20 +635,21 @@ module.exports=execution.module('conversations',{
         h('label',null,'Request name',h('input',{'data-c-field':'title','aria-label':'Request name',placeholder:api.title(c),value:c.title,disabled,maxLength:120})),
         h('div',{class:'conversation-tools'},c.archived?h('button',{'data-c':'delete-review',disabled:!api.editable(c)||!!pending},c.deleting?'Retry Delete':'Delete permanently'):null),
         h('label',null,'Project',h('select',{'data-c-field':'root',value:c.root,disabled},h('option',{value:''},'Choose a project'),!snapshot.projects?.some(p=>p.root===c.root)&&c.root&&h('option',{value:c.root},'Unavailable project'),(snapshot.projects||[]).map(p=>h('option',{value:p.root},p.name)))),
-        h('p',{class:'meta'},(dialogue?'Session '+(runtime||'runtime not recorded'):snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown')),
+        !c.sent&&!c.request&&h('label',null,'Runtime',h('select',{'data-c-field':'runtime','aria-label':'Runtime',value:api.runtime(c).id,disabled},(snapshot.ai?.runtime?.choices||[snapshot.ai?.runtime]).filter(Boolean).map(r=>h('option',{value:r.id},r.name||r.id)))),
+        dialogue&&h('p',{class:'meta'},'Session '+(runtime||'runtime not recorded')+' · '+(snapshot.host||'Host unknown')),
         h('p',{class:'meta'},'Request '+c.id),pm.handoff(c.request,true),c.request&&h('p',{class:'meta'},'Request created',time.stamp(c.request.created,'Request created')),
         dialogue&&!c.archived&&h('div',{class:'dialogue-bar'},api.status(c,disabled)),
-        h('p',{class:'meta'},dialogue?'Send replies to this session. New from draft starts a separate request.':'Send shares this request and selected files with the visible native session.'),
+        dialogue&&h('p',{class:'meta'},'Send replies to this session. New from draft starts a separate request.'),
         disabled&&h('p',{class:'meta'},'Attachments cannot be added while this record is read-only.')),
        c.archived&&h('div',null,h('p',{class:'meta'},'Archived in TaskQ only; the native conversation stays. Restore before reply.'),confirmDelete&&h('div',{role:'alert'},h('p',null,'Permanently remove this TaskQ record and its owned files? No undo. Source files, native chats, sessions and board tasks stay.'),h('button',{'data-c':'delete'},'Delete permanently now'),h('button',{'data-c':'delete-cancel'},'Keep record'))),
-       !c.sent&&!c.request&&h('p',{class:'conversation-intro'},'Describe work for '+(snapshot.projects?.find(p=>p.root===c.root)?.name||'the selected project')+'. First Send opens your project manager chat. Tasks start only after assignment.'),api.preview(),dialogue?api.transcript(c):h('div',{class:'conversation-record',tabindex:'0','aria-label':'Request record'},c.sent&&!c.request&&h('p',{role:'status'},'Delivery unknown. Check the original request ID; nothing will be resent.'),c.request&&c.request.state!=='launched'&&h('p',{role:'status'},c.request.reason||c.request.next||'Native launch: '+c.request.state),c.lazy&&h('p',{role:'status'},c.bodyReason||'Reading saved draft…'),c.bodyReason&&h('button',{'data-c':'body-retry'},'Retry draft read'),c.sent&&h('article',null,h('h2',null,'Sent request',time.stamp(c.request?.created,'Request created')),h('p',{class:'meta'},(snapshot.projects?.find(p=>p.root===c.sent.root)?.name||'Original project unavailable')+' · '+c.sent.runtime),h('p',{class:'conversation-text'},c.sent.text),h('ul',null,(c.sent.files||[]).map(f=>h('li',{key:f.id},f.name+' · '+f.bytes+' bytes · SHA256 '+f.hash)))),c.request?.state==='pending'&&h('button',{'data-c':'cancel',disabled},'Cancel queued launch'),c.sent&&h('button',{'data-c':'reconcile',disabled:disabled||!!pending},'Check delivery')),
+       api.preview(),dialogue?api.transcript(c):h('div',{class:'conversation-record',tabindex:'0','aria-label':'Request record'},c.sent&&!c.request&&h('p',{role:'status'},'Delivery unknown. Check the original request ID; nothing will be resent.'),c.request&&c.request.state!=='launched'&&h('p',{role:'status'},c.request.reason||c.request.next||'Native launch: '+c.request.state),c.lazy&&h('p',{role:'status'},c.bodyReason||'Reading saved draft…'),c.bodyReason&&h('button',{'data-c':'body-retry'},'Retry draft read'),c.sent&&h('article',null,h('h2',null,'Sent request',time.stamp(c.request?.created,'Request created')),h('p',{class:'meta'},(snapshot.projects?.find(p=>p.root===c.sent.root)?.name||'Original project unavailable')+' · '+c.sent.runtime),h('p',{class:'conversation-text'},c.sent.text),h('ul',null,(c.sent.files||[]).map(f=>h('li',{key:f.id},f.name+' · '+f.bytes+' bytes · SHA256 '+f.hash)))),c.request?.state==='pending'&&h('button',{'data-c':'cancel',disabled},'Cancel queued launch'),c.sent&&h('button',{'data-c':'reconcile',disabled:disabled||!!pending},'Check delivery')),
        extra.notice,extra.cards,
-       !c.archived&&(extra.editor||pm.composer({text:c.text||'',disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[dialogue&&view?.id===c.id&&api.jump(),h('p',{class:'meta composer-destination',title:dialogue?'Send replies to the recorded '+(runtime||'native')+' session. Change the separate request destination in Details.':'Change the project in Conversation info.'},icons.icon('folder'),(snapshot.projects?.find(p=>p.root===(dialogue?c.sent?.root||c.request?.root||c.root:c.root))?.name||'Project unavailable')+' · '+(dialogue?runtime||'Runtime unknown':snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown')),
+       !c.archived&&(extra.editor||pm.composer({text:c.text||'',disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[dialogue&&view?.id===c.id&&api.jump(),h('p',{class:'meta composer-destination',title:dialogue?'Send replies to the recorded '+(runtime||'native')+' session. Change the separate request destination in Details.':'Change the project in Conversation info.'},icons.icon('folder'),(snapshot.projects?.find(p=>p.root===(dialogue?c.sent?.root||c.request?.root||c.root:c.root))?.name||'Project unavailable')+' · '+(dialogue?runtime||'Runtime unknown':api.runtime(c).name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown')),
         // #1773 A3/A5: files sit above the input and the tools row closes the input box; the shared DashQ composer stays unchanged
                h('div',{class:'conversation-files'},(c.files||[]).map(f=>h('div',{class:'conversation-file',key:f.id},h('button',{'data-c':'preview','data-file':f.id,disabled},f.name+' · '+f.bytes+' B'),button('x','Remove '+f.name,{'data-c':'remove','data-file':f.id,disabled}))))],
         tools,reason:bad==='Write a message for the session.'?'':bad})))
       ]:h('p',null,'Choose a thread or New. Launched requests continue here as native turns.'))),
-     h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},(recoveryDrafts.length?'Recovered draft source unavailable. Local edits kept; refresh status to load it. ':'')+(notices[selected||'list']||''),bodyNotice&&h('span',{class:'meta'},bodyNotice),pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.recovered?({save:'Save recovered draft',attach:'Save recovered attachment',remove:'Remove recovered attachment'}[failure.action]||'Retry recovered action'):failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
+     h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},(recoveryDrafts.length?'Recovered draft source unavailable. Local edits kept; refresh status to load it. ':'')+(notices[selected||'list']||''),bodyNotice&&h('span',{class:'meta'},bodyNotice),pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.recovered?({save:'Save recovered draft',attach:'Save recovered attachment',remove:'Remove recovered attachment'}[failure.action]||'Retry recovered action'):failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch','retry-turn'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
    },
    click:function(b){
     const action=b.dataset.c;if(!action)return false;const c=api.current();sidebarProjection=null;
@@ -647,10 +675,10 @@ module.exports=execution.module('conversations',{
     else if(action==='reply-check'&&c?.reply){if(failure?.conversation===c.id)failure=null;api.action('reply-check',{op_id:c.reply.id,typed:c.version||0});}
     else if(action==='new'&&!owner.conversation)api.fresh();
     else if(action==='select'){if((owner.detached||[]).includes(b.dataset.id))ui.send({a:'conversation-window',action:'raise',conversation:b.dataset.id});else api.select(b.dataset.id);}
-    else if(action==='search-open'){listOnly=true;searchOpen=true;focusSearch=true;api.nav();draw();}
-    else if(action==='list'){listOnly=!listOnly;api.nav();draw();}
+    else if(action==='search-open'){api.capture(true);listOnly=true;searchOpen=true;focusSearch=true;api.nav();draw();}
+    else if(action==='list'){api.capture(true);listOnly=!listOnly;api.nav();draw();}
     else if(action==='recent'||action==='archive-list'){api.flush();scopeReturn=null;revealed=null;api.show(action==='recent'?'recent':'archive');listOnly=true;api.nav();draw();}
-    else if(action==='clear-search'){search='';searchOpen=false;api.nav();draw();}
+    else if(action==='clear-search'){api.capture(true);search='';searchOpen=false;api.nav();draw();}
     else if(action==='history'&&api.editable(c)){b.closest('details')?.removeAttribute('open');if(c.sent||c.sending)c.next=true;c.text=snapshot.ai.history[Number(b.dataset.index)];c.caret=[0,0];c.version=(c.version||0)+1;api.save(c);focusDraft=true;draw();}
     else if(action==='clear-history'){ui.send({a:'ai-clear'});snapshot.ai.history=[];draw();}
     else if(action==='undo'){selected=undo;api.action('restore');}
@@ -665,6 +693,7 @@ module.exports=execution.module('conversations',{
     else if(action==='reply'&&!api.problem(c))api.action('reply',{typed:c.version||0});
     else if(action==='watch'&&view?.form){api.action('watch',{prompt:view.form.prompt,every:Number(view.form.every),events:EVENTS.filter(e=>view.form.events.includes(e))});}
     else if(action==='unwatch')api.action('unwatch');
+    else if(action==='retry-turn')api.action('retry-turn',{op_id:b.dataset.opId});
     else if(action==='status-refresh'&&view&&!view.busy.status){api.read('status');draw();}
     else if(action==='earlier'&&view&&!view.lost&&!view.busy.before&&view.start>0){view.quiet.before=0;api.read('before',{before:view.start});draw();}
     else if(action==='later'&&view&&!view.lost&&!view.busy.after&&view.end<view.size){view.quiet.after=0;api.read('after',{after:view.end});draw();}
@@ -672,19 +701,27 @@ module.exports=execution.module('conversations',{
     else if(action==='retry-save'){
      const failed=failure;failure=null;
      // a reply with no receipt is never resent: the transcript and status tell whether it ran
-     if(failed&&['reply','watch','unwatch'].includes(failed.action)){const f=items.find(c=>c.id===failed.conversation);if(f)f.sending=false;api.note('Delivery unknown; draft kept. Check the transcript and status before sending again.');if(view?.id===failed.conversation)api.read('status');api.next();draw();}
+     if(failed&&['reply','watch','unwatch','retry-turn'].includes(failed.action)){const f=items.find(c=>c.id===failed.conversation);if(f)f.sending=false;api.note('Delivery unknown; draft kept. Check the transcript and status before sending again.');if(view?.id===failed.conversation)api.read('status');api.next();draw();}
      else if(failed){if(['send','reconcile'].includes(failed.action)){queue=queue.filter(o=>o.action!=='send');queue.unshift({conversation:failed.conversation,action:'reconcile'});}else queue.unshift({...failed,id:undefined});api.next();draw();}
     }
-    else if(['archive','restore','send','cancel','reconcile','preview','remove','delete'].includes(action))api.action(action,{...(b.dataset.file?{file:b.dataset.file}:{}),...(action==='send'?{runtime:snapshot.ai?.runtime?.id}:{})});
+    else if(['archive','restore','send','cancel','reconcile','preview','remove','delete'].includes(action))api.action(action,{...(b.dataset.file?{file:b.dataset.file}:{}),...(action==='send'?{runtime:api.runtime(c).id}:{})});
     return true;
+   },
+   captureCaret:function(field,leaving=false){
+    if(field?.dataset?.cField!=='text'||!leaving&&document.activeElement!==field||!field.checkVisibility())return;
+    const c=api.current(),caret=[field.selectionStart,field.selectionEnd];
+    if(api.editable(c)&&field.closest('.conversation-detail')?.dataset.threadId===c.id&&field.value===c.text&&JSON.stringify(c.caret)!==JSON.stringify(caret)){c.caret=caret;c.version=(c.version||0)+1;api.save(c);}
    },
    mount:function(){
     time.mount(menu);
-    ui.listen(menu,'focusout',e=>{if(e.target.dataset.cField==='search'&&!search)ui.defer(()=>{if(!menu.querySelector('[data-c-field=search]')?.matches(':focus')){searchOpen=false;draw();}},0);});
+    // Accessibility selection can omit change events; retain the range before focus leaves the composer.
+    ui.listen(menu,'focusout',e=>{api.captureCaret(e.target,true);if(e.target.dataset.cField==='search'&&!search)ui.defer(()=>{if(!menu.querySelector('[data-c-field=search]')?.matches(':focus')){searchOpen=false;draw();}},0);});
     ui.listen(menu,'focusin',e=>{if(e.target.closest('.conversation-reader'))api.scrollIntent('focus');const pane=e.target.closest('.conversation-detail'),key=pane?.dataset.threadId;if(!key||!e.target.matches('button,a,summary,input,textarea,select'))return;const target=e.target,data=JSON.stringify(target.dataset);delete focuses[key];focuses[key]={tag:target.tagName,key:data,index:[...pane.querySelectorAll(target.tagName)].filter(n=>JSON.stringify(n.dataset)===data).indexOf(target)};api.nav();});
-    ui.listen(menu,'input',e=>{const watch=e.target.dataset.wField;if(view?.form&&(watch==='prompt'||watch==='every')){view.form[watch]=e.target.value;view.form.dirty=true;draw();return;}const field=e.target.dataset.cField;if(field==='search'){navigated=true;search=e.target.value;sidebarProjection=null;stableOrder.clear();stableGroups.clear();api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;sidebarProjection=null;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);api.save(c);draw();});
-    ui.listen(menu,'change',e=>{if(e.target.dataset.wField==='event'&&view?.form){view.form.events=view.form.events.filter(k=>k!==e.target.value).concat(e.target.checked?[e.target.value]:[]);view.form.dirty=true;draw();return;}const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(e.target.dataset.cField==='root'&&api.editable(c)){if(c.sent||c.sending)c.next=true;c.root=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
-    for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField!=='text')return;const c=api.current();if(api.editable(c)&&JSON.stringify(c.caret)!==JSON.stringify([e.target.selectionStart,e.target.selectionEnd])){c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;api.save(c);}});
+    // WebKit accessibility selection can change the range without a click or keyup in the field.
+    ui.listen(document,'selectionchange',()=>api.captureCaret(document.activeElement));
+    ui.listen(menu,'input',e=>{const watch=e.target.dataset.wField;if(view?.form&&(watch==='prompt'||watch==='every')){view.form[watch]=e.target.value;view.form.dirty=true;draw();return;}const field=e.target.dataset.cField;if(field==='search'){api.capture(true);navigated=true;search=e.target.value;sidebarProjection=null;stableOrder.clear();stableGroups.clear();api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;sidebarProjection=null;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);api.save(c);draw();});
+    ui.listen(menu,'change',e=>{if(e.target.dataset.wField==='event'&&view?.form){view.form.events=view.form.events.filter(k=>k!==e.target.value).concat(e.target.checked?[e.target.value]:[]);view.form.dirty=true;draw();return;}const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(['root','runtime'].includes(e.target.dataset.cField)&&api.editable(c)){const field=e.target.dataset.cField;if(field==='runtime'&&(c.sent||c.request||c.sending))return;if(c.sent||c.sending)c.next=true;c[field]=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
+    for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>api.captureCaret(e.target));
     ui.listen(menu,'wheel',e=>{if(e.target.closest('.conversation-reader')){api.scrollIntent('wheel');if(e.deltaY<0)api.pause();}},{passive:true});
     ui.listen(menu,'touchmove',e=>{if(e.target.closest('.conversation-reader'))api.scrollIntent('touch');},{passive:true});
     ui.listen(menu,'pointerdown',e=>{if(e.target.closest('.conversation-reader')){dragScroll=true;api.scrollIntent('pointer');}});
@@ -707,12 +744,12 @@ module.exports=execution.module('conversations',{
      api.place(selected,view.stick?undefined:view.anchor?.board?{key:view.anchor.key,y:Math.round(view.anchor.y)}:!a?undefined:{at:a.at,i:a.i,y:Math.round(view.anchor.y),...(view.source?{g:view.source}:{}),...(view.anchor.part!==undefined?{part:view.anchor.part}:{})});api.nav();
      const before=view.busy.before,after=view.busy.after;api.edge(e.target);if(shown!==api.latest()||before!==view.busy.before||after!==view.busy.after)draw();
     },true);
-    ui.listen(menu,'toggle',e=>{if(e.target.classList?.contains('conversation-info')&&view){view.stick=false;const detail=menu.querySelector('.conversation-reader');if(detail)view.anchor=api.mark(detail);}},true);
+    ui.listen(menu,'toggle',e=>{const source=e.target.dataset.nativeSource;if(source&&nativeSources.has(source)!==e.target.open){if(e.target.open){nativeSources.set(source,true);while(nativeSources.size>24)nativeSources.delete(nativeSources.keys().next().value);}else nativeSources.delete(source);draw();}if(e.target.classList?.contains('conversation-info')&&view){view.stick=false;const detail=menu.querySelector('.conversation-reader');if(detail)view.anchor=api.mark(detail);}},true);
     ui.listen(window,'resize',()=>{api.grow();api.layout();});
     ui.listen(menu,'dragover',e=>{if(e.target.closest('.conversations'))e.preventDefault();});
     ui.listen(menu,'drop',e=>{if(!e.target.closest('.conversations'))return;e.preventDefault();api.files([...e.dataTransfer.files]);});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
-    ui.listen(document,'keydown',e=>{if(e.target.dataset?.cField==='text'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();const c=api.current();if(api.problem(c))return;if(api.launched(c))api.action('reply',{typed:c.version||0});else api.action('send',{runtime:snapshot.ai?.runtime?.id});}});
+    ui.listen(document,'keydown',e=>{if(e.target.dataset?.cField==='text'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();const c=api.current();if(api.problem(c))return;if(api.launched(c))api.action('reply',{typed:c.version||0});else api.action('send',{runtime:api.runtime(c).id});}});
    },
    grow:function(){
     pm.grow(menu);
@@ -755,7 +792,7 @@ module.exports=execution.module('conversations',{
     if(r?.context){navigated=true;unified=true;const c=r.context;({selected,list,selection,scrolls,positions,focuses,opened,listOnly,search}=c);resultFilter=c.filter;focusDraft=!!api.current();onSelect?.(selected);}
    },
    recoverable:function(){return !recoveryDrafts.length&&!pending&&!failure&&!queue.length&&!recoveryQueue.length&&!items.some(c=>!c.lazy&&(c.saved??0)!==(c.version??0));},
-   flush:function(){ui.cancel(saveTimer);const c=api.current();if(c&&!c.lazy)api.save(c);api.nav();},
+   flush:function(){api.capture(true);ui.cancel(saveTimer);const c=api.current();if(c&&!c.lazy)api.save(c);api.nav();},
   });return api;
  }
 });

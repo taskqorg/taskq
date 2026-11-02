@@ -21,3 +21,13 @@ for(const key of ['createState','create'])assert.equal(typeof c.TaskqTaskWorkspa
 const release=fs.readFileSync('.github/workflows/release.yml','utf8');
 for(const asset of ['task-workspace.js','task-workspace.css','task-workspace-fixtures.json','task-workspace-sources.json'])assert(release.includes('dist/taskq-$VER-'+asset),'missing released asset: '+asset);
 console.log('PASS task workspace: tray embeds the released bundle and stylesheet, pinned source hashes, release assets');
+
+// #2159: replacement-string dollar sequences in dependency code must survive HTML embedding.
+{
+ const entry=fs.readFileSync('build/web/workspace-entry.js','utf8').replaceAll('</script','<\\/script');
+ const workspace=fs.readFileSync('build/web/workspace.html','utf8');
+ assert(workspace.includes(entry),'workspace must embed literal bundle bytes, including dollar sequences');
+ // The shipped tokenizer includes its MIT notice, even without node_modules on the installed host.
+ const notice=fs.readFileSync('node_modules/prismjs/LICENSE','utf8').trim();
+ for(const asset of [bundle,entry,tray,workspace])assert(asset.includes(notice),'distributed syntax grammar must retain its complete MIT notice');
+}

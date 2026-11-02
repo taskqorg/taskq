@@ -1,0 +1,37 @@
+Window: TaskQ Conversations; installed v4.6.59-dev.1793573522
+container Selected request
+						222 heading 2159 PM usability checkpoint, Value: 2
+							223 text 2159 PM usability checkpoint
+						224 button Detach
+						225 button Archive
+						226 container (expanded) Secondary Actions: Collapse
+							227 summary Conversation info ⌄, Value: on
+								228 text Conversation info
+							229 container
+								230 text Request name
+								231 text field (settable) Request name, Value: 2159 PM usability checkpoint
+							232 container
+								233 text Project
+								234 pop up button (collapsed) Project, Value: taskq, Secondary Actions: Expand
+							235 text Claude Code · mac
+							236 text Request fc4d2c4ab05d1ab95b085df8590301b1
+							237 text Send shares this request and selected files with the visible native session.
+						238 text Describe work for taskq. First Send opens your project manager chat. Tasks start only after assignment.
+						239 container Request record
+						240 container Change the project in Conversation info.
+							241 text taskq · Claude Code · mac
+						242 text Request draft
+						243 text entry area (settable) Request draft, Value: [text entry area], Placeholder: Ask AI…
+							244 text Ask AI…
+						245 container Attach files
+							246 text Attach
+							247 file upload button Attach files
+						248 summary History, Value: off
+						249 button (disabled) Send
+						250 summary File limits and message help, Value: off
+						251 text Write a request before sending files.
+			252 container
+				253 text TaskQ v4.6.59-dev.1793573522
+				254 button Resize workspace, Help: Resize workspace; arrow keys adjust size
+	255 text TaskQ Conversations
+	256 menu button Window sharing

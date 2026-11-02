@@ -40,9 +40,12 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   assert(await detail.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'opens at the newest record');
   assert.equal(await page.locator('.conversation-record').count(),0,'a launched conversation shows its transcript, not the request record');
   // Scrolling up loads the previous chunk without jumping away from the reading position; Load earlier reaches the first record.
-  const top=await view.locator('.dialogue-item').first().innerText();await detail.evaluate(e=>{e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
+  const first=view.locator('.dialogue-item').first(),top=await first.innerText();
+  // The original owner request precedes native messages; exercise prepend while reading the native record.
+  const y=await first.evaluate(e=>{const reader=e.closest('.conversation-reader');reader.scrollTop+=e.getBoundingClientRect().top-reader.getBoundingClientRect().top+5;const y=e.getBoundingClientRect().top-reader.getBoundingClientRect().top;reader.dispatchEvent(new Event('scroll',{bubbles:true}));return y;});
   await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item, .dialogue-transcript .dialogue-tool').length===40);
   assert(await detail.evaluate(e=>e.scrollTop>0),'prepend keeps the reading anchor');assert.match(top,/Answer 40/);
+  assert(Math.abs(await view.locator('[data-key="40:0"]').evaluate(e=>e.getBoundingClientRect().top-e.closest('.conversation-reader').getBoundingClientRect().top)-y)<=2,'prepend retains the same native record offset');
   // #1747: an in-page click; Playwright's click scrolls the button into view first, which starts the read-ahead and disables it
   await page.evaluate(()=>document.querySelector('[data-c=earlier]').click());await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item, .dialogue-transcript .dialogue-tool').length===60);
   assert.equal(await page.locator('[data-c=earlier]').count(),0,'first record reached');assert.match((await texts())[0],/^Question 0 lorem/);
@@ -98,7 +101,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await page.waitForFunction(()=>/Transcript unknown/.test(document.querySelector('.dialogue-transcript')?.innerText||''));
   assert.match(await view.innerText(),/Transcript unknown: transcript unreadable/);assert.doesNotMatch(await view.innerText(),/No messages/);
   await page.waitForFunction(()=>/Status unknown/.test(document.querySelector('.dialogue-status').textContent));
-  assert.equal(await page.locator('.dialogue-state').textContent(),'PM status unknown');assert.match(await page.locator('[data-c=select][data-id=codex-1665]').innerText(),/Status unknown/);
+  assert.equal(await page.locator('.dialogue-state').textContent(),'PM status unknown');assert(await page.locator('[data-c=select][data-id=codex-1665]').getByRole('img',{name:'Status unknown',exact:true}).isVisible());
   await capture('codex-unknown-light-16');
   unreadable.delete('codex-1665');status['codex-1665']={state:'idle',watch:'no watch',turn:null,last_line:'Codex answer'};
   await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item').length>0,null,{timeout:8000});

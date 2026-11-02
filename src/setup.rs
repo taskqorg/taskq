@@ -176,9 +176,9 @@ fn save(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String
 }
 
 fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, requested_id: Option<(&str, bool)>, pm:bool, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
-    // #1522: a visible Codex session is a Codex app thread, so only a setup request on macOS or Windows takes it.
+    // #1522: a visible Codex session is a Codex app thread, so requests take it only on macOS or Windows.
     let a = crate::runtime::of(runtime);
-    if !a.remote && !(a.codex && a.child && root.is_none() && cfg!(any(target_os = "macos", windows))) {
+    if !crate::runtime::owner::supported(runtime) {
         return Err(format!("setup runtime {runtime}: no qualified visible session here; use claude, or codex on macOS or Windows"));
     }
     let id = requested_id.map(|(id,_)|String::from(id)).unwrap_or_else(crate::runtime::uuid);
@@ -356,6 +356,21 @@ mod tests {
     fn ok(_: &Path, _: &Request) -> Launched { Launched::Job { job: "abcd1234".into(), session: None, url: None } }
     fn unknown(_: &Path, _: &Request) -> Launched { Launched::Unknown("timeout".into()) }
     fn never(_: &Path, _: &Request) -> Launched { panic!("setup launched again") }
+
+    // R9/C4/A5: project Codex uses one immutable request; a readback cannot create a second launch.
+    #[test]
+    fn codex_project_request_keeps_its_explicit_runtime_and_identity() {
+        let install=tmp();
+        let request=open_id(&install,&install,"literal PM request","owner-2159","codex",false);
+        if cfg!(any(target_os="macos",windows)) {
+            let request=request.expect("explicit project Codex request is supported");
+            assert_eq!(request.runtime,"codex");assert_eq!(request.root.as_deref(),install.canonicalize().unwrap().to_str());
+            assert_eq!(open_id(&install,&install,"literal PM request","owner-2159","codex",true).unwrap(),request);
+            assert!(open_id(&install,&install,"literal PM request","owner-2159","claude",false).is_err());
+            step(&install,ok).unwrap();step(&install,never).unwrap();assert_eq!(all(&install).unwrap().0.len(),1);
+        } else {assert!(request.is_err());assert!(all(&install).unwrap().0.is_empty());}
+        fs::remove_dir_all(install).unwrap();
+    }
 
     // #1464 A5: a duplicate/crossed request never creates a second session, even after service launch.
     #[test]

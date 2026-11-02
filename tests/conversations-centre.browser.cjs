@@ -1,12 +1,34 @@
 // Chain: Product / M14 / RC1-RC7 / CS1-CS6 / UC-09/11/14/15 (#2095).
 // Risk: an entry opens the wrong reader/scope, navigation escapes, or a report switch destroys its reading/draft context.
 // Real production bundles; invented board/native receipts, never a live request.
-const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
+const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium,webkit}=require('playwright');
 const fx=require('./fixtures/task-workspace.json'),board='https://example.org/taskq/issues',other='https://example.org/coreq/issues',now=Math.floor(Date.now()/1000),sha='a'.repeat(40);
 const report=n=>({n,sha,title:'Report '+n+' long title '.repeat(12),kind:'report',url:board+'/'+n,closed:now-n,read:true,decision:'none',visible:true,body:'# Question\n\nHow to retain reading?\n\n# Recommendation\n\nKeep the exact source.\n\n# Findings\n\n'+Array.from({length:70},(_,i)=>'Passage '+i+': '+('Readable source content. '.repeat(12))).join('\n\n'),tasks:[]});
 const ordinary={...report(2091),kind:'task',read:false,title:'Ordinary completed task',body:'Changed: Delivered.\nChecks: source -- passed\nOpen: none'};
 const state={...fx.state,font:18,theme:'dark',projects:[{...fx.state.projects[0],root:'fixture',name:'taskq',issues:board,board_kind:'github',alive:true,complete:true,tasks:[{n:256,title:'Active reviewer',state:'review',role:'reviewer',attempt:42,revision:42,runtime:'claude',session:'claude:fixture mac',host:'mac',controls:[]}],reports:{complete:true,reports:[report(2022),report(2021),ordinary,{...report(2000),decision:'later',later_until:'2099-01-01T12:00:00Z'}],history:[]},events:[[now,'ask','historical-question',259]]},{root:'other',name:'coreq',issues:other,board_kind:'github',alive:true,complete:true,tasks:[],reports:{complete:true,reports:[{...ordinary,n:100,title:'Other project result',url:other+'/100',closed:now+1,read:true}]}}],conversations:{complete:true,items:[]},messages:{complete:true,entries:[]},notify:{inbox:{}},ai:{history:[],runtime:{id:'claude',available:true}}};
-(async()=>{const browser=await chromium.launch(require('./browser.cjs')());try{
+// #2159 A6/RC1: accessibility scrolls need not emit wheel/key input. Keep the actual source passage through All/search.
+async function searchedReportReturn(engine,name,width){
+ const browser=await engine.launch(require('./browser.cjs')());try{
+  const page=await browser.newPage({viewport:{width,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  const s=structuredClone(state);s.font=24;s.projects[0].reports.reports=[{...report(2022),title:'Qualify disposable Windows PM delivery and recovery',body:fs.readFileSync('docs/research/2022.md','utf8')},{...report(2021),title:'Qualify native Windows input DPI and Summary surfaces',body:fs.readFileSync('docs/research/2021.md','utf8')}];
+  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await page.evaluate(s=>{window.sent=[];window.ipc={postMessage:t=>sent.push(JSON.parse(t))};taskq.receive(s);},s);
+  await page.locator('[data-c=search-open]').click();const search=page.locator('[data-c-field=search]');
+  const open=async n=>{if(!await search.isVisible())await page.locator('[data-c=list]').click();await search.fill(String(n));await page.locator('[data-report=open][data-n="'+n+'"]').click();};
+  await open(2022);const full=page.locator('.report-card details').filter({has:page.getByText('Full report',{exact:true})});await full.locator('summary').click();
+  const heading=full.getByText('Native transcript defect',{exact:true}),offset=()=>heading.evaluate(e=>e.getBoundingClientRect().top-e.closest('.conversation-reader').getBoundingClientRect().top);
+  // Scroll via the accessibility/layout path; do not manufacture a scroll event or wheel intent.
+  await heading.scrollIntoViewIfNeeded();await heading.click();const before=await offset();
+  const out=width===1200&&process.env.TASKQ_EVIDENCE_2159_ANCHOR;if(out){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:out+'/'+name+'-before.png'});}
+  await open(2021);await open(2022);const after=await offset();
+  if(out)await page.screenshot({path:out+'/'+name+'-after.png'});
+  assert(await full.evaluate(e=>e.open),'search return keeps Full report expanded');
+  assert(Math.abs(after-before)<2,name+'/'+width+': actual #2022 passage survives search #2021/return: '+before+' -> '+after);
+  assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-n'),'2022');
+  assert.equal(await search.inputValue(),'2022','return keeps All/search scope');assert.equal(await page.locator('[data-c=result-filter][data-filter=all]').getAttribute('aria-pressed'),'true');
+  assert.equal(await page.evaluate(()=>sent.filter(m=>['answer','conversation-action','reports'].includes(m.a)).length),0,'read-only search sends no work or decisions');assert.deepEqual(errors,[]);console.log('PASS #2159 '+name+'/'+width+': All/search #2022 -> #2021 -> return keeps source passage within 2px, expansion, scope and no-write guards');
+ }finally{await browser.close();}
+}
+(async()=>{for(const [name,engine]of Object.entries({chromium,webkit}))for(const width of [1200,540])await searchedReportReturn(engine,name,width);const browser=await chromium.launch(require('./browser.cjs')());try{
  const page=await browser.newPage({viewport:{width:1000,height:700}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
  await page.evaluate(s=>{window.fixture=s;window.sent=[];window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='reports'&&m.action==='read'){const r=fixture.projects.find(p=>p.root===m.root).reports.reports.find(r=>r.n===m.n);r.read=true;queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,report:{...r}}}));}}};taskq.receive(s);},state);
@@ -34,7 +56,8 @@ const state={...fx.state,font:18,theme:'dark',projects:[{...fx.state.projects[0]
  await open(2021);await open(2022);
  assert(await full.evaluate(e=>e.open),'switch restores Full report before measuring');assert(Math.abs(await offset()-before)<2,'switch keeps content anchor and offset');
  await page.evaluate(()=>taskq.receive(fixture));assert(Math.abs(await offset()-before)<2,'snapshot keeps passage');
- await page.setViewportSize({width:820,height:700});await page.waitForTimeout(100);assert(Math.abs(await offset()-before)<2,'reflow keeps passage');
+ // Observe resize/layout completion; the fixed 100 ms sleep could precede the native resize event.
+ await page.setViewportSize({width:820,height:700});await page.waitForFunction(({key,before})=>{const e=[...document.querySelectorAll('[data-reading-key]')].find(e=>e.dataset.readingKey===key);return e&&Math.abs(e.getBoundingClientRect().top-e.closest('.conversation-reader').getBoundingClientRect().top-before)<2;},{key:await passage.getAttribute('data-reading-key'),before});assert(Math.abs(await offset()-before)<2,'reflow keeps passage');
  await shot('reading');await page.evaluate(board=>taskq.receive({open:{page:'conversations',root:'fixture',board,task:256}}),board);
  assert.equal(await page.locator('.conversation-row[aria-current=page]').count(),1,'external task selection is visible');assert.match(await page.locator('.conversation-scope').innerText(),/outside|linked/i);assert.equal((await page.locator('.conversation-view>summary').innerText()).replace(/\s+/g,' '),'Decisions · 2','temporary linked source is outside the saved matching count');
  assert.equal(await page.locator('[data-c-field=steer]').count(),0,'reviewers stay read-only');assert.equal(await page.locator('.thread-events').count(),0,'empty secondary history adds no control row');await shot('linked-reviewer');
