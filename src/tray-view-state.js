@@ -54,8 +54,22 @@ create:function(view,{menu,document,send,defer,cancel,routes,trail,root='home'})
  flush:function(){
   cancel(timer);timer=null;if(!hydrated||view.S?.page!==undefined)return;
   if(root==='home'&&view.dashboard&&view.page==='home')require('./task-views.js').current(view.dashboard).scroll=(menu.querySelector('.content')||document.scrollingElement)?.scrollTop||0;
-  const navigation=normalize({schema:1,current:api.capture(),trail,...(root==='home'?{dashboard:view.dashboard}:{})},view.S,routes,root),text=JSON.stringify(navigation);
-  if(new TextEncoder().encode(text).length>65536){view.navigationError='Workspace view state exceeds 64 KiB; current context kept in this window, previous saved state retained.';return;}
+  const navigation=normalize({schema:1,current:api.capture(),trail,...(root==='home'?{dashboard:view.dashboard}:{})},view.S,routes,root),encoder=new TextEncoder();
+  let text=JSON.stringify(navigation);
+  if(root==='conversations'&&encoder.encode(text).length>65536){
+   // Keep mounted disclosures; fill the remaining persistence budget with the newest off-screen keys.
+   const open=navigation.current.open,visible=api.groups();
+   navigation.current.open=Object.fromEntries(Object.entries(open).filter(([key])=>Object.hasOwn(visible,key)));
+   let bytes=encoder.encode(JSON.stringify(navigation)).length,has=Object.keys(navigation.current.open).length>0;
+   for(const [key,value] of Object.entries(open).reverse()){
+    if(Object.hasOwn(visible,key))continue;
+    const added=encoder.encode(JSON.stringify(key)+':'+value).length+(has?1:0);
+    if(bytes+added<=65536){navigation.current.open[key]=value;bytes+=added;has=true;}
+   }
+   navigation.current.open=Object.fromEntries(Object.entries(open).filter(([key])=>Object.hasOwn(navigation.current.open,key)));
+   text=JSON.stringify(navigation);
+  }
+  if(encoder.encode(text).length>65536){view.navigationError='Workspace view state exceeds 64 KiB; current context kept in this window, previous saved state retained.';return;}
   if(text!==last){last=text;send({a:'set',navigation});}
  },
  schedule:function(){if(restoring)return;cancel(timer);timer=defer(api.flush,100);}

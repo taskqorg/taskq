@@ -80,9 +80,9 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='reply').length),2);
  });
  // Q-A8/Q-A11: operations that move selection must retain feedback and recovery without replay.
- async function bootOwners(){
+ async function bootOwners(snapshot=state){
   await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
-  await page.evaluate(s=>{window.sent=[];window.fixture=s;window.ipc={postMessage:t=>{const m=JSON.parse(t);sent.push(m);if(m.a==='conversation-action'&&m.action==='save'){const c=fixture.conversations.items.find(c=>c.id===m.conversation);Object.assign(c,m.draft);c.revision++;queueMicrotask(()=>taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:fixture.conversations}}));}}};taskq.receive(s);},state);
+  await page.evaluate(s=>{window.sent=[];window.fixture=s;window.ipc={postMessage:t=>{const m=JSON.parse(t);sent.push(m);if(m.a==='conversation-action'&&m.action==='save'){const c=fixture.conversations.items.find(c=>c.id===m.conversation);Object.assign(c,m.draft);c.revision++;queueMicrotask(()=>taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:fixture.conversations}}));}}};taskq.receive(s);},snapshot);
  }
  // #2168 A1: receipt text must not resize the reader or move its pinned input. Native/board effects are substituted.
  await check('A1 status changes keep header, reader and composer geometry',async()=>{
@@ -148,6 +148,19 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   await page.evaluate(()=>taskq.receive({...fixture,now:1000,projects:fixture.projects.map(p=>({...p,age:1,tasks_age_seconds:40,poll:5}))}));
   assert.match(await page.locator('.conversation-status [role=status]').innerText(),/Data from \d\d:\d\d/,'board source age remains visible in the stable feedback row');
   assert.deepEqual(await input.boundingBox(),before,'board staleness never displaces the input');
+ });
+ await check('A4 oversized historical disclosures retain current draft and bounded navigation',async()=>{
+  const open=Object.fromEntries(Array.from({length:1800},(_,i)=>['old-thread:'+i+':'+ '界'.repeat(50),true]));
+  await bootOwners({...state,workspace_navigation:{schema:1,current:{page:'conversations',open},trail:[]}});
+  const input=page.locator('[data-c-field=text]');await input.focus();await input.evaluate(e=>e.setSelectionRange(2,6));
+  const before=await input.boundingBox();await page.evaluate(()=>taskq.receive(fixture));
+  const navigation=await page.evaluate(()=>sent.filter(m=>m.a==='workspace-set').at(-1).navigation);
+  assert(new TextEncoder().encode(JSON.stringify(navigation)).length<=65536,'current navigation fits native storage');
+  assert.doesNotMatch(await page.locator('.feedback-message').innerText(),/exceeds 64 KiB/);
+  assert.equal(await input.inputValue(),'Independent draft');assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[2,6]);
+  assert(await input.evaluate(e=>e===document.activeElement),'refresh retains input focus');
+  assert.deepEqual(await input.boundingBox(),before);assert.equal(await page.locator('[data-c=select][data-id=owner-a][aria-current=page]').count(),1);
+  assert.equal(await page.evaluate(()=>sent.filter(m=>['reply','send'].includes(m.action)).length),0,'metadata trimming never launches or replays input');
  });
  for(const action of ['archive','delete','fork'])await check('Q-A8 '+action+' completion follows resulting selection',async()=>{
   await bootOwners();
