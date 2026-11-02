@@ -144,6 +144,16 @@ print('PASS selected design approval reads its ask without asking the owner agai
 approval = lambda comments: check['approval_text'](comments, 99)
 comment = lambda i, body, **fields: {**ask, 'id': i, 'body': body, **fields}
 spawn = comment(1, 'taskq: spawn worker codex:invented win')
+steer = comment(2, 'taskq: steer\nOwner approves R6 status block\nop-id: owner-steer\nrevision: 1')
+assert 'R6' in approval([spawn, steer]), 'accepted owner steering is binding task text, without another answer'
+for history in [[steer], [spawn, {**steer, 'updated_at': 'edited'}], [spawn, {**steer, 'author_association': 'NONE'}],
+                [spawn, comment(2, 'taskq: steer attempt 1\nR6')],
+                [spawn, comment(2, 'taskq: steer\nR6\nop-id: stale\nrevision: 0')],
+                [spawn, ask, comment(12, 'taskq: steer\nR6')],
+                [spawn, comment(2, 'taskq: result ' + 'a'*40 + ' attempt 1'), comment(3, 'taskq: steer\nR6')],
+                [spawn, comment(2, 'taskq: gone attempt 1'), comment(3, 'taskq: steer\nR6')]]:
+    assert 'R6' not in approval(history), 'steering keeps state, trust, revision and attempt fences'
+assert 'R9' not in approval([spawn, steer, comment(3, 'taskq: steer\nR9\nop-id: owner-steer\nrevision: 1')]), 'a duplicate operation cannot add approval'
 for answer_body in ['taskq: answer 1', '1', '1. A; native at release - + compact; - later qualification',
                     'taskq: answer\nPick 1. Proceed.', 'taskq answer 1', 'taskq answer 99.1', 'taskq answer #99.1']:
     text = approval([spawn, ask, comment(11, answer_body)])

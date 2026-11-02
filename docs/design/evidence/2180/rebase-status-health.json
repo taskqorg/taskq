@@ -1,0 +1,75 @@
+{
+  "schema": 1,
+  "source": "board",
+  "observed": 1793627637,
+  "complete": true,
+  "tasks": [
+    {
+      "n": 2176,
+      "state": "doing",
+      "attempt": 6578911541,
+      "heartbeat": {
+        "host": "mac",
+        "attempt": 6578911541,
+        "source": "board host heartbeat",
+        "observed": 1793627634,
+        "age_s": 3,
+        "freshness": "fresh",
+        "reason": "matching host/attempt ownership lease observed; progress is separate",
+        "ttl_s": 300,
+        "progress": {
+          "source": "native execution events",
+          "status": "unknown",
+          "last_event": null,
+          "reason": "matching execution progress missing"
+        },
+        "as_of": 1793627637,
+        "warning": "current executor unknown; inspect execution health",
+        "input_pending": false,
+        "executor": {
+          "state": "unknown",
+          "reason": "Claude original process identity unavailable",
+          "observed": 1793627634,
+          "source": "owning-host execution observation"
+        }
+      }
+    },
+    {
+      "n": 2180,
+      "state": "doing",
+      "attempt": 6578817241,
+      "heartbeat": {
+        "host": "mac",
+        "attempt": 6578817241,
+        "source": "board host heartbeat",
+        "observed": 1793627634,
+        "age_s": 3,
+        "freshness": "fresh",
+        "reason": "matching host/attempt ownership lease observed; progress is separate",
+        "ttl_s": 300,
+        "progress": {
+          "source": "native execution events",
+          "clock": "native timestamp or append mtime lower bound",
+          "status": "active",
+          "last_event": 1793627562,
+          "deadline": null,
+          "overdue_since": null,
+          "tool_since": 1793627562,
+          "pending_tools": 1,
+          "reason": "tool pending within observation deadline",
+          "observed": 1793627608,
+          "notice_open": false
+        },
+        "as_of": 1793627637,
+        "warning": null,
+        "input_pending": false,
+        "executor": {
+          "state": "active",
+          "reason": "native execution observed; termination pending",
+          "observed": 1793627634,
+          "source": "owning-host execution observation"
+        }
+      }
+    }
+  ]
+}

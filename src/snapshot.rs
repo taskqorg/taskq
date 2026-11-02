@@ -601,6 +601,9 @@ pub fn status_totals(status: &Value) -> Option<BTreeMap<&'static str, usize>> {
 }
 
 impl Row {
+    fn health_warning(&self)->Option<&str> {
+        matches!(self.task.state,State::Doing|State::Review).then(||self.heartbeat["warning"].as_str()).flatten()
+    }
     /// R6: ` · stage k/n` for a task with recorded stages (§ 2 Stages), else nothing.
     fn stage_text(&self) -> String {
         self.stage.map(|(k, n)| format!(" · stage {k}/{n}")).unwrap_or_default()
@@ -832,7 +835,7 @@ impl Snapshot {
                 } else {
                     r.task.state.name().to_string()
                 };
-                let health=if matches!(r.task.state,State::Doing|State::Review) {r.heartbeat["warning"].as_str().map(|w|format!(" · {}",cell(&compact(w,160)))).unwrap_or_default()} else {String::new()};
+                let health=r.health_warning().map(|w|format!(" · {}",cell(&compact(w,160)))).unwrap_or_default();
                 let state = format!("{state}{}{health}", r.stage_text());
                 let (rt, s) = session_link(cfg, raw, r);
                 format!("| {} | {state} | {} | {s} |", link(r), cell(&rt))
@@ -868,6 +871,37 @@ impl Snapshot {
             out.push(String::new());
             out.push(d);
         }
+        let health:Vec<_>=self.tasks.iter().filter_map(|r|r.health_warning().map(|warning|(r,warning))).collect();
+        if !health.is_empty() {
+            out.push(String::new());out.push("Stale heartbeats:".into());
+            let stamp=|v:&Value|v.as_i64().filter(|at|*at>0).map(crate::board::stamp).unwrap_or("unknown".into());
+            for (r,warning) in health {
+                let field=|v:&Value| {
+                    let full=v.as_str().unwrap_or("unknown");let text=cell(&compact(full,160));
+                    if full.chars().count()>160 {format!("[{text}]({})",r.url)} else {text}
+                };
+                let h=&r.heartbeat;let p=&h["progress"];
+                let now=h["as_of"].as_i64().unwrap_or(self.observed);
+                let observed=|v:&Value|v.as_i64().filter(|at|*at>0).map(|at| {
+                    let elapsed=now.saturating_sub(at);
+                    format!("{} · age {}",stamp(v),if elapsed<0 {format!("future by {}",age(elapsed.saturating_neg()))} else {age(elapsed)})
+                }).unwrap_or("unknown · age unknown".into());
+                let rt=r.task.session.as_deref().and_then(|s|s.split_once(':')).map(|p|p.0).unwrap_or("unknown");
+                let current:Vec<_>=r.executions.iter().filter(|x|x["attempt"].as_u64()==r.task.attempt).map(|x|x["id"].as_u64().map(|id|id.to_string()).unwrap_or("unknown".into())).collect();
+                let execution=match current.len() {0=>"unknown".into(),1=>current[0].clone(),_=>format!("{} (ambiguous)",current.join(", "))};
+                out.push(format!("- [{} #{} {}]({}) · runtime {} · host {} · attempt {} · execution {execution}",cell(&project),r.n,cell(&compact(&r.title,60)),r.url,cell(rt),field(&h["host"]),r.task.attempt.map(|a|a.to_string()).unwrap_or("unknown".into())));
+                out.push(format!("  Heartbeat: {} · {} · {} · {}",field(&h["freshness"]),field(&h["source"]),observed(&h["observed"]),field(&h["reason"])));
+                out.push(format!("  Executor: {} · {} · {}",field(&h["executor"]["state"]),field(&h["executor"]["source"]),observed(&h["executor"]["observed"])));
+                let source=if p["clock"].is_string() {format!("{} ({})",field(&p["source"]),field(&p["clock"]))} else {field(&p["source"])};
+                out.push(format!("  Progress: {} · {source} · {} · last event {} · {}",field(&p["status"]),observed(&p["observed"]),stamp(&p["last_event"]),field(&p["reason"])));
+                out.push(format!("  Reason: {}",cell(&compact(warning,160))));
+                let action=if h["freshness"]!="fresh" {"Inspect the owning host heartbeat and service status; preserve execution."}
+                    else if matches!(h["executor"]["state"].as_str(),Some("awaiting execution"|"awaiting acceptance")) {"Inspect input acceptance on the owning host; do not resubmit."}
+                    else if p["status"]=="overdue" {"Inspect the pending tool in the owning session; preserve execution."}
+                    else {"Inspect the owning session and native progress source; preserve execution."};
+                out.push(format!("  Action: {action}"));
+            }
+        }
         let mut parked = vec![];
         for state in [State::Held, State::Later] {
             let rows: Vec<String> = self.tasks.iter().filter(|r| r.task.state == state).map(|r| match r.task.until.as_deref().and_then(crate::board::iso) {
@@ -888,7 +922,7 @@ impl Snapshot {
             out.push("Failed:\n| Task | Reason |\n|---|---|".into());
             out.extend(failed);
         }
-        let stuck: Vec<String> = self.tasks.iter().filter_map(|r| r.stuck_age().map(|a| format!("{} ({}, {})", link(r), r.task.state.name(), age(a)))).collect();
+        let stuck: Vec<String> = self.tasks.iter().filter(|r|r.health_warning().is_none()).filter_map(|r| r.stuck_age().map(|a| format!("{} ({}, {})", link(r), r.task.state.name(), age(a)))).collect();
         if !stuck.is_empty() {
             out.push(String::new());
             out.push(format!("Stuck: {}", stuck.join(", ")));
@@ -1277,6 +1311,55 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         assert!(row["heartbeat"]["reason"].as_str().unwrap().contains("missing"));
         assert!(row["heartbeat"]["warning"].is_string());
         assert_eq!(row["state"],"doing","health never changes board state");
+    }
+
+    // Chain: R6 manager status -> shared heartbeat warnings. Risk: health is hidden, duplicated or re-detected differently.
+    #[test]
+    fn stale_heartbeats_block_reuses_shared_health_and_clears() {
+        let now=10_000;let mut cfg=crate::tests::cfg();cfg.root="invented-project".into();
+        let quiet=json!({"source":"native execution events","clock":"native timestamp or append mtime lower bound","observed":9990,"status":"quiet","last_event":9990,"pending_tools":0,"reason":"no pending tool; quiet work is not failure"});
+        let row=|n,host_age:Option<i64>,progress:Value,pending:bool| {
+            let task=Task{state:State::Doing,attempt:Some(5),session:Some("codex:invented mac".into()),..Default::default()};
+            let executions=if pending {vec![]} else {vec![json!({"id":10,"attempt":5,"host":"mac","observed":now,"state":"running","reason":"native executor observed","progress":progress})]};
+            let hosts=host_age.map(|age|vec![board::Issue{trusted:true,title:"taskq host mac".into(),updated:now-age,body:format!("#{n} 5"),..Default::default()}]).unwrap_or_default();
+            let mut health=heartbeat(&task,n,&hosts,&executions,now,cfg.ttl);
+            health["executor"]=executor(&task,&executions,pending,now,cfg.ttl);refresh_heartbeat(&mut health,now,true);
+            Row{n,title:format!("Invented task {n}"),url:format!("https://github.com/invented/project/issues/{n}"),task,executions,heartbeat:health,..Default::default()}
+        };
+        let mut error=crate::runtime::progress::unknown("native progress record invalid");error["observed"]=json!(9990);
+        let overdue=json!({"source":"native execution events","observed":9990,"status":"overdue","last_event":8800,"tool_since":8000,"pending_tools":1,"overdue_since":8900,"reason":"tool progress overdue; preserve execution and inspect owning session"});
+        let mut stale=quiet.clone();stale["observed"]=json!(now-cfg.ttl-1);stale["last_event"]=stale["observed"].clone();
+        for progress in [&quiet,&stale,&overdue] {assert!(crate::runtime::progress::valid(progress),"fixture retains native future guards");}
+        let mut unknown=row(6,Some(10),error.clone(),false);unknown.executions[0]["state"]=json!("unknown");
+        unknown.executions[0]["reason"]=json!("native identity unavailable");
+        unknown.heartbeat["executor"]=executor(&unknown.task,&unknown.executions,false,now,cfg.ttl);refresh_heartbeat(&mut unknown.heartbeat,now,true);
+        let mut question=Row{n:9,title:"Owner question".into(),url:"q9".into(),task:Task{state:State::Ask,card:Some("Problem: owner choice\n1. keep ★\n2. change".into()),..Default::default()},stuck:Some(9000),..Default::default()};
+        question.heartbeat=Value::Null;
+        let mut snap=Snapshot{source:"board",observed:now,reason:None,board:json!({"url":"https://github.com/invented/project/issues"}),hosts:vec![],
+            tasks:vec![row(1,Some(10),quiet.clone(),false),row(2,Some(cfg.ttl+1),quiet.clone(),false),row(3,None,error.clone(),false),row(4,Some(10),error,false),row(5,Some(10),overdue,false),unknown,row(7,Some(10),Value::Null,true),row(8,Some(10),stale,false),question]};
+        snap.tasks[5].task.state=State::Review;
+        let decide=json!({"complete":true,"rows":[{"n":20,"title":"Completed result","url":"r20","verdict":"confirmed","age_s":600,"recommendation":"Discuss result"}]});
+        let text=snap.text_with(&cfg,&json!({}),Some(&decide)).unwrap();
+        assert!(text.contains("Stale heartbeats:"),"manager status must expose health without opening a native task detail: {text}");
+        assert!(text.find("Questions").unwrap()<text.find("Decide:").unwrap() && text.find("Decide:").unwrap()<text.find("Stale heartbeats:").unwrap());
+        assert!(text.contains("Completed result") && text.contains("Discuss result"),"completed results remain discoverable");
+        assert_eq!(text.lines().find(|l|l.starts_with("Stuck:")).unwrap(),"Stuck: [#9 Owner question](q9) (ask, 2h)","health tasks must not duplicate Stuck");
+        let block=format!("Stale heartbeats:{}\n",text.split_once("Stale heartbeats:").unwrap().1.split("\n\n").next().unwrap());
+        let path=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stale-heartbeats.txt");
+        if std::env::var_os("TASKQ_BLESS").as_deref()==Some(std::ffi::OsStr::new("1")) {std::fs::write(&path,&block).unwrap();}
+        assert_eq!(block,std::fs::read_to_string(path).unwrap().replace("\r\n","\n"));
+        assert!(!block.contains("Invented task 1"));
+        let long="x".repeat(200);snap.tasks[5].heartbeat["progress"]["clock"]=json!(long);
+        assert!(snap.text(&cfg,&json!({})).unwrap().contains(&format!("native execution events ([{}]({}))",cell(&compact(&long,160)),snap.tasks[5].url)),"long source metadata links to its full source");
+        snap.tasks[1].heartbeat["observed"]=json!(now+60);refresh_heartbeat(&mut snap.tasks[1].heartbeat,now,true);
+        assert!(snap.text(&cfg,&json!({})).unwrap().contains("future by 1m"),"future observations never display as zero age");
+        let json_before=snap.json();
+        for r in &mut snap.tasks[..8] {
+            r.heartbeat["freshness"]=json!("fresh");r.heartbeat["observed"]=json!(now);r.heartbeat["executor"]=json!({"state":"active","observed":now});r.heartbeat["progress"]=quiet.clone();
+            refresh_heartbeat(&mut r.heartbeat,now,true);
+        }
+        assert!(!snap.text(&cfg,&json!({})).unwrap().contains("Stale heartbeats:"),"recovery omits an empty block");
+        assert_eq!(json_before["tasks"][4]["heartbeat"]["progress"]["status"],"overdue","JSON/PM consumers retain the same typed projection");
     }
 
     #[test]
