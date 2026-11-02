@@ -15,6 +15,8 @@ const MINUTE: u128 = 60_000;
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Turn {
+    #[serde(default,skip_serializing_if="Option::is_none")] pub stream_offset:Option<u64>,
+    #[serde(default,skip_serializing_if="std::ops::Not::not")] pub stream_written:bool,
     #[serde(default, skip_serializing_if="Option::is_none")] pub op_id: Option<String>,
     #[serde(default, skip_serializing_if="Option::is_none")] pub app_baseline: Option<usize>,
     #[serde(default, skip_serializing_if="Option::is_none")] pub app_after: Option<u64>,
@@ -88,7 +90,10 @@ pub fn send(install: &Path, id: &str, input: &str, native: &Native) -> Res<()> {
 
 pub fn accepted(install:&Path,id:&str,op:&str,input:&str)->Res<bool> {
     let r=launched(install,id)?;
-    Ok(turn(install,id)?.is_some_and(|t|t.op_id.as_deref()==Some(op)&&t.input==input&&(!crate::runtime::of(&r.runtime).codex||t.app_accepted)))
+    let saved=turn(install,id)?;
+    let Some(t)=saved.filter(|t|t.op_id.as_deref()==Some(op)&&t.input==input)else{return Ok(false)};
+    if crate::runtime::owner_stream::handles(&r.runtime){return crate::runtime::owner_stream::accepted(&own(install,id)?,&r,&t);}
+    Ok(!crate::runtime::of(&r.runtime).codex||t.app_accepted)
 }
 
 pub fn send_op(install:&Path,id:&str,input:&str,op:Option<&str>,native:&Native)->Result<(),SendError> {
@@ -217,6 +222,15 @@ fn ended(own: &Path, r: &Request, t: &Turn) -> Option<String> {
         Some(Err(_)) => return None,
     };
     if alive { return None; }
+    if let Some(offset)=t.stream_offset {
+        if !t.stream_written{return Some(t.outcome.clone().unwrap_or_else(||"unknown: native input write unverified; no replay".into()));}
+        use std::io::{Read,Seek,SeekFrom};
+        let mut file=fs::File::open(crate::runtime::owner_stream::log(own)).ok()?;
+        if file.metadata().ok()?.len()<offset{return None;}
+        file.seek(SeekFrom::Start(offset)).ok()?;let mut text=String::new();file.take(16*1024*1024).read_to_string(&mut text).ok()?;
+        if crate::runtime::owner_stream::session(&text).ok().flatten().as_deref()!=r.session.as_deref(){return Some("unknown: native reply session identity changed".into());}
+        return Some(crate::runtime::owner::outcome(&r.runtime,&text,""));
+    }
     let read = |n: &str| fs::read_to_string(own.join(n)).unwrap_or_default();
     Some(crate::runtime::owner::outcome(&r.runtime, &read("turn.out"), &read("turn.err")))
 }
@@ -249,13 +263,25 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
     let mut c = match (native.turn)(own, r) { Ok(c) => c, Err(e) => return finish(install, own, t, format!("not sent: {e}")) };
     t.state = "dispatching".into();
     store(&own.join("turn.json"), t)?;
-    let files = (fs::File::create(own.join("turn.out")), fs::File::create(own.join("turn.err")));
+    let stream=crate::runtime::owner_stream::handles(&r.runtime);
+    let files=if stream {
+        let path=crate::runtime::owner_stream::log(own);crate::runtime::owner_stream::write_input(own,&t.input)?;
+        t.stream_offset=Some(fs::metadata(&path).map_err(|_|"Native input boundary unavailable")?.len());store(&own.join("turn.json"),t)?;
+        (fs::OpenOptions::new().create(true).append(true).open(path),fs::File::create(own.join("turn.err")))
+    }else {(fs::File::create(own.join("turn.out")), fs::File::create(own.join("turn.err")))};
     let (Ok(out), Ok(err)) = files else { return finish(install, own, t, "not sent: turn log unavailable".into()) };
     let mut child = match c.stdin(Stdio::piped()).stdout(out).stderr(err).spawn() { Ok(c) => c, Err(e) => return finish(install, own, t, format!("not sent: {e}")) };
-    // a failed write still leaves a turn whose outcome only the runtime's end record tells
-    let _ = child.stdin.take().map(|mut s| s.write_all(t.input.as_bytes()));
     t.pid = Some(child.id());
     t.started = coreq::process::identity(child.id()).ok().flatten().map(|i| i.started);
+    if stream {
+        store(&own.join("turn.json"),t)?;
+        if let Err(reason)=crate::runtime::owner_stream::ready(own,r.session.as_deref().unwrap_or_default(),t.stream_offset.unwrap_or(0),&mut child){
+            drop(child.stdin.take());std::thread::spawn(move||child.wait());t.state="running".into();t.outcome=Some(format!("unknown: {reason}"));return store(&own.join("turn.json"),t);
+        }
+    }
+    // a failed write still leaves a turn whose outcome only the runtime's end record tells
+    let written=child.stdin.take().is_some_and(|mut s|s.write_all(crate::runtime::owner_input(&r.runtime,&t.input).as_bytes()).is_ok());
+    if stream {t.stream_written=written;if !written {t.outcome=Some("unknown: native input write unverified; no replay".into());}}
     t.state = "running".into();
     // ponytail: one waiting thread per turn reaps it; the next pass reads the end record from the log
     std::thread::spawn(move || child.wait());
@@ -263,8 +289,8 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
 }
 
 /// CS2: called on the existing background read channel, never during the tray snapshot/UI pass.
-pub fn activity(r:&Request)->Value {
-    let updated=r.session.as_deref().ok_or("native session unknown".to_string()).and_then(|s|crate::runtime::owner::transcript(&r.runtime,s)).and_then(|p|crate::transcript::last_update(crate::runtime::of(&r.runtime).codex,&p));
+pub fn activity(install:&Path,r:&Request)->Value {
+    let updated=crate::runtime::owner::transcript_for(install,r).and_then(|p|crate::transcript::last_update(crate::runtime::of(&r.runtime).codex,&p));
     match updated {Ok(updated)=>json!({"updated":updated}),Err(reason)=>json!({"updated":null,"reason":reason})}
 }
 
@@ -298,15 +324,15 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
                 _=>{}
             }
         }}
-        let activity=activity(r);v["updated"]=activity["updated"].clone();v["updated_reason"]=activity["reason"].clone();
-        let path = r.session.as_deref().ok_or("native session unknown".to_string()).and_then(|s| crate::runtime::owner::transcript(&r.runtime, s));
+        let activity=activity(install,r);v["updated"]=activity["updated"].clone();v["updated_reason"]=activity["reason"].clone();
+        let path = crate::runtime::owner::transcript_for(install,r);
         match path.and_then(|p| crate::transcript::last_line(crate::runtime::of(&r.runtime).codex, &p)) {
             Ok(line) => v["last_line"] = json!(line),
             Err(e) => { state = "unknown".into(); v["reason"] = json!(e); }
         }
         if !crate::runtime::of(&r.runtime).codex && (state == "idle" || state == open) {
             match own(install, &r.id).and_then(|o| (native.holder)(&o, r)) {
-                Ok(true) => state = open,
+                Ok(true) => state = if crate::runtime::owner_stream::handles(&r.runtime){"working".into()}else{open},
                 Ok(false) => state = "idle".into(),
                 Err(e) => { state = "unknown".into(); v["reason"] = json!(e); }
             }
@@ -321,7 +347,7 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
 pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u64>) -> Res<Value> {
     let r = launched(install, id)?;
     let codex = crate::runtime::of(&r.runtime).codex;
-    let path = crate::runtime::owner::transcript(&r.runtime, r.session.as_deref().unwrap_or_default())?;
+    let path = crate::runtime::owner::transcript_for(install,&r)?;
     let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
     mark_brief(&mut page.items, &r.brief, &crate::setup::dir(install).join(id));
     Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
@@ -408,7 +434,7 @@ mod tests {
 
     fn request(install: &Path, id: &str, runtime: &str, root: Option<&Path>) -> Request {
         let r = Request { schema: 2, id: id.into(), created: 1, host: "h".into(), platform: "macos".into(), client: "c".into(), runtime: runtime.into(), targets: vec![], brief: "b".into(),
-            state: "launched".into(), job: Some("j".into()), session: Some("0b4eaf42-5e87-4d57-9d31-c37c62bfbc2c".into()), url: None, reason: None, root: root.map(|p| p.display().to_string()), pm: false };
+            state: "launched".into(), job: Some("j".into()), session: Some("0b4eaf42-5e87-4d57-9d31-c37c62bfbc2c".into()), url: None, reason: None, root: root.map(|p| p.display().to_string()), pm: false, choice:None };
         fs::create_dir_all(crate::setup::dir(install).join(id)).unwrap();
         fs::write(crate::setup::dir(install).join(format!("{id}.json")), serde_json::to_string(&r).unwrap()).unwrap();
         r
@@ -471,6 +497,18 @@ mod tests {
         retry_refused(&install,"owner","refused-op",&native).unwrap();let retried=turn(&install,"owner").unwrap().unwrap();
         assert_eq!(retried.input,old.input);assert_eq!(retried.op_id,old.op_id);assert_eq!(retried.prior_outcome,old.outcome);assert_eq!(retried.state,"pending");
         assert_eq!(fs::read_to_string(own.join("queued")).unwrap(),first.input,"explicit retry is admitted, not submitted by the UI call");
+        fs::remove_dir_all(install).unwrap();
+    }
+
+    // A5/R12: late native success cannot certify a reply refused before stdin.
+    #[test]
+    fn antigravity_unsent_reply_keeps_its_unknown_fence() {
+        let install=tmp();let r=request(&install,"owner","antigravity",None);let own=own(&install,"owner").unwrap();
+        let t=Turn{op_id:Some("unsent-op".into()),input:"Unsent reply".into(),state:"running".into(),stream_offset:Some(0),outcome:Some("unknown: native startup unverified; input not sent".into()),..Default::default()};
+        store(&own.join("turn.json"),&t).unwrap();
+        fs::write(crate::runtime::owner_stream::log(&own),format!("{}\n{}\n{}\n",json!({"event":"init","conversation_id":r.session}),json!({"event":"step_update","step_update":{"conversation_id":r.session,"step_type":"user_input","state":"DONE"}}),json!({"event":"result","result":{"conversation_id":r.session,"status":"SUCCESS","response":"late unrelated result"}}))).unwrap();
+        assert_eq!(ended(&own,&r,&t),t.outcome,"unsent reply cannot become success");
+        assert!(!accepted(&install,"owner","unsent-op","Unsent reply").unwrap(),"no input write, no accepted reply");
         fs::remove_dir_all(install).unwrap();
     }
 
