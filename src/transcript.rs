@@ -274,7 +274,8 @@ fn redact(w: &str) -> String {
 fn image(role:&str,b:&Value)->Value {
     use base64::Engine;
     let name=b["alt"].as_str().or(b["name"].as_str()).filter(|s|!s.trim().is_empty()).unwrap_or("Recorded image");
-    let mut item=line(role,"");
+    // Native user-image wrappers also carry tool images; their human/board authorship is unknown.
+    let mut item=line(if role=="user" {"image"} else {role},"");item["native_role"]=json!(role);
     item["image"]=json!({"name":name.chars().take(160).collect::<String>()});
     let url=b["image_url"].as_str().or(b["image_url"]["url"].as_str()).or(b["source"]["url"].as_str());
     if let Some(url)=url.filter(|s|s.len()<=4096&&(s.starts_with("https://")||s.starts_with("http://"))) { item["image"]["url"]=json!(url); }
@@ -380,6 +381,7 @@ mod tests {
         let v=json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Review the image"},{"type":"input_image","image_url":format!("data:image/png;base64,{png}")} ]}});
         let rows=records(true,40,format!("{v}\n").as_bytes());let items=&rows[0].1;
         assert_eq!(items.len(),2,"recorded image must remain a separate inspectable item");
+        assert_eq!(items[1]["role"],"image","a provider user-image wrapper is not proof of an owner/board author");assert_eq!(items[1]["native_role"],"user");
         assert_eq!(items[1]["image"]["width"],1);assert!(items[1]["image"]["src"].as_str().unwrap().starts_with("data:image/png;"));
         let v=json!({"type":"user","message":{"content":[{"type":"tool_result","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":png}}]},{"type":"image","source":{"type":"url","url":"file:///unrelated/private.png"}}]}});
         let rows=records(false,0,format!("{v}\n").as_bytes());assert_eq!(rows[0].1.len(),2);

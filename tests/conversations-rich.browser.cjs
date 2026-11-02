@@ -13,11 +13,12 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium,webki
  await page.waitForFunction(()=>sent.some(m=>m.action==='transcript'));
  const src=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=480;c.height=160;const x=c.getContext('2d');x.fillStyle='#246341';x.fillRect(0,0,480,160);x.fillStyle='white';x.font='24px sans-serif';x.fillText('Invented image fixture #2159',22,85);return c.toDataURL();});
  const code='const answer = "<script>"; // do not resend',text='## Current action\n\nKeep **all evidence** and *source identity*.\n\n- Read progress\n- Do not resend\n\n```javascript\n'+code+'\n```';
- const items=[{at:0,i:0,role:'assistant',text},...Array.from({length:6},(_,i)=>({at:10+i,i:0,role:'tool',text:'',image:{name:'Invented image fixture '+(i+1),src,width:480,height:160}})),{at:20,i:0,role:'tool',text:'',image:{name:'Unavailable artifact',reason:'Image bytes missing; no file fetched',url:'https://example.org/artifact.png'}}];
+ const items=[{at:0,i:0,role:'assistant',text},...Array.from({length:6},(_,i)=>({at:10+i,i:0,role:i===0?'image':'tool',native_role:i===0?'user':'tool',text:'',image:{name:'Invented image fixture '+(i+1),src,width:480,height:160}})),{at:20,i:0,role:'tool',text:'',image:{name:'Unavailable artifact',reason:'Image bytes missing; no file fetched',url:'https://example.org/artifact.png'}}];
  await page.evaluate(({board,thread,items})=>{const m=sent.find(m=>m.action==='transcript');taskq.receive({dialogueReceipt:{id:m.id,conversation:thread,action:'transcript',state:'accepted',value:{generation:'fixture-rich',items,start:0,end:30,size:30}}});},{board,thread,items});
  const panel=page.locator('.worker-live');await page.waitForFunction(()=>document.querySelector('.worker-live .syntax-keyword'));
  assert.equal(await panel.locator('pre code').innerText(),code,'highlighted code retains exact characters');
  assert.equal(await panel.locator('script').count(),0);assert.equal(await panel.locator('img').count(),4,'reader caps mounted images');
+ assert.match(await panel.locator('[data-key="10:0"] .meta').innerText(),/^Native image/,'a native user-image wrapper never claims board/human authorship');
  assert.match(await panel.innerText(),/Image reader preview limit/);assert.match(await panel.innerText(),/Image bytes missing/);
  assert.equal(await panel.locator('a[data-url="https://example.org/artifact.png"]').count(),1,'source artifact remains inspectable');
  const first=panel.locator('img').first();await first.scrollIntoViewIfNeeded();await page.waitForFunction(()=>document.querySelector('.worker-live img')?.naturalWidth===480);

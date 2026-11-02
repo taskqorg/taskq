@@ -785,6 +785,11 @@ mod tests {
         assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["state"],"unknown");
         let t=crate::dialogue::Turn{op_id:Some("operation".into()),input:"Immutable native input".into(),state:"pending".into(),..Default::default()};
         fs::write(dir.join("turn.json"),serde_json::to_vec(&t).unwrap()).unwrap();
+        assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["state"],"unknown","a turn without launched source identity cannot prove delivery");
+        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false};
+        fs::write(crate::setup::dir(&f.0).join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
+        assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["state"],"unknown","a saved App intent without native acceptance must retain text/files");
+        let t=crate::dialogue::Turn{app_accepted:true,..t};fs::write(dir.join("turn.json"),serde_json::to_vec(&t).unwrap()).unwrap();
         assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["value"]["unchanged"],true);
         f.save("owner","New independent draft");
         assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["value"]["unchanged"],false);
