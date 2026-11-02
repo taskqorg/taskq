@@ -28,5 +28,19 @@ const state={font:18,theme:'dark',host:'Invented host',projects:[{root:'fixture-
  await page.locator('[data-c=launch-refresh]').click();await drain();assert.equal(current().choice.grant_revision,8,'explicit review refreshes fence');
  await page.locator('[data-c=new]').click();await drain();assert.equal(current().runtime,'codex');assert.equal(current().root,'fixture-beta');assert.equal(current().choice.permission,'workspace');
  await boot();await page.locator('[data-c=new]').click();await drain();assert.equal(current().choice.grant_revision,8,'restart restores exact saved choices');
- assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0,'switching, review, New and recovery never launch or replay');assert.deepEqual(errors,[]);console.log('manager launch persistence, switching, stale grant and normal/narrow layout PASS (invented IPC)');
+ assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0,'switching, review, New and recovery never launch or replay');
+ // A1/A4/A5: pre-choice drafts must expose defaults and grant review without a runtime switch or implicit migration.
+ const legacy={id:'legacy-unsent',revision:4,title:'Retained legacy draft',root:'fixture-beta',runtime:'codex',text:'Keep exact legacy input',caret:[2,5],scroll:0,archived:false,files:[{id:'retained-file',name:'retained.txt',mime:'text/plain',bytes:4,hash:'a'.repeat(64)}]};
+ state.conversations.items.push(legacy);state.conversations.navigation={selected:legacy.id,list:'recent'};
+ await boot();await page.locator('[data-view-key^="conversation-info:"]>summary').click();
+ assert.equal(await page.locator('[data-c-field=model]').count(),1,'legacy unsent draft exposes Model without switching runtime');
+ assert.equal(await page.locator('[data-c-field=model]').inputValue(),'');assert.equal(await page.locator('[data-c-field=effort]').inputValue(),'');assert.equal(await page.locator('[data-c-field=permission]').inputValue(),'inherit');
+ assert.match(await page.locator('.manager-access').innerText(),/Grant: full.*Effective: full/);
+ assert.equal(legacy.choice,undefined,'rendering defaults never persists a choice or grant fence');
+ for(const width of [1000,420]){await page.setViewportSize({width,height:760});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'legacy draft has no horizontal scroll at '+width);const dir=process.env.TASKQ_EVIDENCE_2165;if(dir)await page.screenshot({path:path.join(dir,'legacy-'+width+'.png')});}
+ await page.locator('[data-c=launch-refresh]').click();await drain();
+ assert.deepEqual(legacy.choice,{model:'',effort:'',permission:'inherit',grant_mode:'full',grant_revision:8},'only explicit review binds current grant without changing native defaults');
+ assert.equal(legacy.runtime,'codex');assert.equal(legacy.root,'fixture-beta');assert.equal(legacy.text,'Keep exact legacy input');assert.equal(legacy.files[0].id,'retained-file');assert.equal(legacy.sent,undefined);assert.equal(legacy.request,undefined);
+ assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send'||m.action==='reply'||m.action==='reconcile').length),0,'legacy restoration and grant review never dispatch or reconcile input');
+ assert.deepEqual(errors,[]);console.log('manager launch persistence, switching, stale grant, legacy restore and normal/narrow layout PASS (invented IPC)');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

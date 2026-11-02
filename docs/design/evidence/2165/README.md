@@ -48,3 +48,15 @@ Independent source review checked catalog truth, permissions, launch ownership, 
 The representative capture uses the native macOS renderer with invented data. Visual inspection at both widths confirmed visible controls, selected model, grant/request distinction, wrapping and no clipping. It does not qualify production GUI interactions or real grants.
 
 ![Native narrow manager launch fixture](native-launch.png)
+
+## Legacy unsent draft correction
+
+The reviewer reproduced a retained unsent draft without `choice`: Model, Effort, Permission request and grant review were absent until a runtime switch. The new legacy case in `tests/manager-launch.browser.cjs` failed on the original bundle with `0 !== 1` for the Model control, then passed on the corrected bundle (§7 step 4, R9/R12/R13).
+
+The renderer now derives native-default choices for display without assigning them to the draft. Opening the old draft leaves its runtime and stored choice absence unchanged. Explicit Review current grant saves the current fence; it preserves the native defaults, project, text and retained file. Restoration and review dispatch no Send, reply or reconciliation. Existing persistence, switching, stale-grant and no-replay assertions remain. The existing Conversations browser suite also passes unchanged, retaining its immutable-input, receipt, file and recovery protections.
+
+Independent read-only review cleared the render-only fallback and confirmed that sent/request records still exclude launch controls. The new legacy fixture itself is unsent and has no delivery receipt; it does not independently qualify uncertain native delivery or recovery.
+
+An isolated nonpersistent WKWebView rendered the corrected bundle with the legacy fixture at 1000×760 and 420×760. Both read back Codex, native-default model and Inherit permission, with no horizontal overflow. Visual inspection confirmed all three controls, the grant/effective explanation, review button, retained file and composer without clipping. No production window was activated. These captures prove fixture layout only; the native continuation limits above remain unchanged.
+
+![Native narrow legacy draft fixture](native-legacy.png)
