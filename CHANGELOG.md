@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.61
+
+Windows update restart no longer waits for a handed-in attempt with no observed process, so a host left on an older image exits and admits ready work (#2228, PR #2229). Conversation exports and peer transcript replies omit commands, tool result bodies and images (#2225, PR #2227). Full inventory and publication gates: [release handoff](docs/release-2230.md).
+
 ## v4.6.60
 
 Requeued tasks can start after a resumed attempt handed in without a transcript match (#2221); Windows host processes restore normal scheduling (#2214, PR #2217). Claude background-job continuation and macOS handover recovery are more robust (#2198, #2209). Doctor checks token permissions, versions and collection health across hosts (#2194). Conversations uses AgentQ normalized history (#2176). Spillover ignores untrusted heartbeats (#2201), rule approval reads noted answer picks (#2202), failed dev-install logs survive per SHA (#2208), and test fixtures gain isolation and history-format corrections (#2196, #2215). Native A6 qualification is recorded (#2184). Full inventory and publication gates: [release handoff](docs/release-2223.md).
