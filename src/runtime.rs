@@ -7,7 +7,6 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
-#[cfg(any(target_os="macos",windows))]
 mod app_control;
 pub mod accounts;
 pub mod owner;
@@ -1560,6 +1559,13 @@ fn start(env: &Env, l: &Launch, log: &Path, text: &str, access: &crate::policy::
     if l.rt=="codex" && l.task>0 && l.resume.is_some() {
         let (path,_input)=turn_input(env.root,&text,Some(l))?;
         bind_input(log,l,&path,&text,serde_json::json!({"session":l.session}))?;
+        if let Some(home)=crate::runtime::accounts::log_home("codex",log).or_else(codex_home) {
+            match app_control::release_passive_writer(&home,env.root,&l.session) {
+                app_control::PassiveWriterOutcome::Absent=>{},
+                app_control::PassiveWriterOutcome::Released=>log!("#{} attempt {} released passive Codex writer lock for {}",l.task,l.attempt,l.session),
+                app_control::PassiveWriterOutcome::Retained(reason)=>log!("#{} attempt {} kept Codex writer lock for {}: {reason}",l.task,l.attempt,l.session),
+            }
+        }
         return coreq::telemetry::capture::operation("runtime.launch",|| {
             let input=File::open(path).map_err(|e|StartError::io(e,None))?;
             start_file(c.stdout(out).stderr(err),input)
@@ -2448,6 +2454,57 @@ fn completes(rollout: &Path) -> Result<usize, String> {
     }, |_| "readback")
 }
 
+/// § 8 Passive writer lock check: rollout in `home` must match canonical `root` and `thread`, have at least one
+/// completed turn, and end on a terminal turn event (`task_complete` or `turn_aborted`) with no active turn.
+pub(crate) fn rollout_completed_idle(home:&Path,root:&Path,thread:&str)->Result<(),String> {
+    if !plain_thread(thread) {return Err("Codex thread identity invalid".into());}
+    let root=root.canonicalize().map_err(|_|"Codex project root unavailable")?;
+    let path=agentq_runtime::agent::rollout(thread,Some(home)).ok_or("Codex rollout unavailable in runtime home")?;
+    let mut reader=NativeHistory::default();
+    let (mut identity,mut current,mut completed,mut terminal)=(false,None::<String>,0usize,false);
+    let until=observation_deadline(std::time::Duration::from_secs(5));
+    loop {
+        let complete=reader.read(&path,|v| {
+            if v["type"]=="event_msg" && !v["payload"].is_object() {return Err("Codex rollout record shape invalid".into());}
+            if v["type"]=="session_meta" {
+                let meta=&v["payload"];
+                if identity || meta["id"]!=thread || meta["cwd"].as_str().and_then(|p|Path::new(p).canonicalize().ok()).as_deref()!=Some(root.as_path())
+                    || !meta["forked_from_id"].is_null() {
+                    return Err("Codex native session identity differs or is copied".into());
+                }
+                identity=true;
+            }
+            if v["type"]!="event_msg" {return Ok(());}
+            if !identity {return Err("Codex native session identity missing before turn events".into());}
+            let p=&v["payload"];
+            match p["type"].as_str() {
+                Some("task_started")=>{
+                    if current.is_some() {return Err("Codex rollout has overlapping active turns".into());}
+                    let id=p["turn_id"].as_str().filter(|s|plain_thread(s)).ok_or("Codex active turn identity missing")?;
+                    current=Some(id.to_owned());terminal=false;
+                }
+                Some("user_message"|"item_completed")=>{
+                    if current.is_none() {return Err("Codex rollout has turn items outside an active turn".into());}
+                    terminal=false;
+                }
+                Some("task_complete"|"turn_aborted")=>{
+                    let id=p["turn_id"].as_str().filter(|s|plain_thread(s)).ok_or("Codex terminal turn identity missing")?;
+                    if current.as_deref()!=Some(id) {return Err("Codex terminal event does not match active turn".into());}
+                    current=None;completed+=1;terminal=true;
+                }
+                _=>{}
+            }
+            Ok(())
+        })?;
+        if complete {break;}
+        if std::time::Instant::now()>=until {return Err("Codex rollout scan exceeded 5 seconds".into());}
+    }
+    if !identity {return Err("Codex native session identity unavailable".into());}
+    if current.is_some() || !terminal {return Err("Codex turn is still active".into());}
+    if completed==0 {return Err("Codex rollout has no completed turns".into());}
+    Ok(())
+}
+
 // ---------- `taskq agents` (taskq.md § 5): read-only probes, unknown when unreadable (R12) ----------
 
 /// Exit success and bounded stdout + stderr; incomplete execution/output remains unknown.
@@ -2725,7 +2782,83 @@ mod tests {
     use std::process::Stdio;
     use super::*;
 
-    // R12, #2143: qualify the refusal against an owned native writer without auth, a model turn or app control.
+    // Chain: §8, R2, R9, R11, R12, #2157 A1/A2 -> Codex resume keeps its bound CODEX_HOME without copying auth,
+    // releases a passive unheld writer lock on a completed turn, and retains live writers for no-start continuation retry.
+    #[test]
+    fn codex_resume_releases_passive_writer_and_preserves_bound_home_and_input() {
+        let root=std::env::temp_dir().join(format!("taskq-2157-resume-{}",uuid()));
+        let install=root.join("install");
+        let base=root.join("codex-home");
+        let work=base.join(crate::runtime::accounts::HOMES).join("work");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(base.join("auth.json"),r#"{"auth_mode":"chatgpt","tokens":{"access_token":"default-only"}}"#).unwrap();
+        let thread=uuid();
+        for (account,home) in [("default",&base),("work",&work)] {
+            let project=root.join(format!("project-{account}"));
+            std::fs::create_dir_all(&project).unwrap();
+            let sessions=home.join("sessions/2026/11/02");
+            std::fs::create_dir_all(&sessions).unwrap();
+            let rollout=sessions.join(format!("rollout-2026-11-02T00-00-00-{thread}.jsonl"));
+            let lines=[
+                serde_json::json!({"timestamp":"2026-11-02T00:00:00Z","type":"session_meta","payload":{"id":thread,"timestamp":"2026-11-02T00:00:00Z","cwd":project,"originator":"taskq-2157","cli_version":"0.159.3","source":"cli","model_provider":"openai"}}),
+                serde_json::json!({"timestamp":"2026-11-02T00:00:01Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}),
+                serde_json::json!({"timestamp":"2026-11-02T00:00:02Z","type":"event_msg","payload":{"type":"user_message","turn_id":"turn-1","message":"first turn"}}),
+                serde_json::json!({"timestamp":"2026-11-02T00:00:03Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}),
+            ];
+            std::fs::write(&rollout,lines.iter().map(|v|format!("{v}\n")).collect::<String>()).unwrap();
+            let lock_dir=home.join("thread-writer-locks");
+            std::fs::create_dir_all(&lock_dir).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&lock_dir,std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            let lock_path=lock_dir.join(format!("{thread}.lock"));
+            std::fs::write(&lock_path,b"").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&lock_path,std::fs::Permissions::from_mode(0o600)).unwrap();
+            }
+            let env=Env {context:"",root:&project,exe:Path::new("taskq"),install:&install,permission_mode:"dontAsk",codex:&[],publish:"pr",board_env:&[],jobs:None};
+            let l=Launch {files:String::new(),execution:Some(44),task:2157,title:String::new(),attempt:42,role:"worker".into(),rt:"codex".into(),session:thread.clone(),url:String::new(),resume:Some("retained answer".into())};
+            let log=log_path(&project,&l);
+            std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+            crate::runtime::accounts::mark(&log,account).unwrap();
+            assert_eq!(crate::runtime::accounts::of_log(&log),account);
+            let turn_spec=spec(&env,&l,project.clone(),vec![]);
+            assert_eq!(turn_spec.session,thread);
+            assert!(turn_spec.resume);
+            assert!(!work.join("auth.json").exists(),"never copy auth.json across homes");
+
+            struct Exited;
+            impl Proc for Exited {
+                fn exited(&mut self)->Result<Option<i32>,String> {Ok(Some(1))}
+                fn kill(&mut self)->Result<(),String> {Ok(())}
+                fn id(&self)->u32 {0}
+            }
+            let (path,_input)=turn_input(&project,"retained answer",Some(&l)).unwrap();
+            let start=std::fs::metadata(&log).map_or(0,|m|m.len());
+            bind_input(&log,&l,&path,"retained answer",serde_json::json!({"session":thread})).unwrap();
+            let held_file=File::options().read(true).write(true).open(&lock_path).unwrap();
+            let held=coreq::file_lock::try_lock_file(held_file).unwrap();
+            assert!(matches!(app_control::release_passive_writer(home,&project,&thread),app_control::PassiveWriterOutcome::Retained(_)));
+            assert!(lock_path.exists(),"live OS writer lock stays untouched");
+            writeln!(File::options().append(true).open(&log).unwrap(),
+                "2026-11-02T00:00:00Z ERROR codex_core::session: Failed to create session: thread-store conflict: thread {thread} already has an active writer\nError: thread/resume: thread/resume failed: thread {thread} already has an active writer (code -32600)").unwrap();
+            let turn=CliTurn {proc:Box::new(Exited),log:log.clone(),pos:start,start,stopping:false,accepted:false,read_error:None,session:None,native:None,recovery:None};
+            assert!(turn.refused(l.task,l.attempt,44,1).is_some());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(),"retained answer","retained input file stays intact across writer refusal");
+            drop(held);
+
+            assert_eq!(app_control::release_passive_writer(home,&project,&thread),app_control::PassiveWriterOutcome::Released);
+            assert!(!lock_path.exists(),"passive unheld writer lock on completed turn is released");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // R12, #2143, #2157: qualify live writer retention/refusal and passive writer release against an owned native writer without auth, a model turn or app control.
     #[cfg(unix)]
     #[test]
     #[ignore="installed Codex writer probe; isolated home, no model"]
@@ -2737,7 +2870,13 @@ import json,os,pathlib,selectors,subprocess,sys,time,uuid
 home=pathlib.Path(sys.argv[2]);home.mkdir();thread=str(uuid.uuid4())
 sessions=home/'sessions/2026/11/02';sessions.mkdir(parents=True)
 rollout=sessions/f'rollout-2026-11-02T00-00-00-{thread}.jsonl'
-rollout.write_text(json.dumps({'timestamp':'2026-11-02T00:00:00Z','type':'session_meta','payload':{'id':thread,'timestamp':'2026-11-02T00:00:00Z','cwd':sys.argv[3],'originator':'taskq-2143-fixture','cli_version':'0.159.3','source':'cli','model_provider':'openai'}})+'\n')
+events=[
+ {'timestamp':'2026-11-02T00:00:00Z','type':'session_meta','payload':{'id':thread,'timestamp':'2026-11-02T00:00:00Z','cwd':sys.argv[3],'originator':'taskq-2143-fixture','cli_version':'0.159.3','source':'cli','model_provider':'openai'}},
+ {'timestamp':'2026-11-02T00:00:01Z','type':'event_msg','payload':{'type':'task_started','turn_id':'turn-0'}},
+ {'timestamp':'2026-11-02T00:00:02Z','type':'event_msg','payload':{'type':'user_message','turn_id':'turn-0','message':'completed fixture turn'}},
+ {'timestamp':'2026-11-02T00:00:03Z','type':'event_msg','payload':{'type':'task_complete','turn_id':'turn-0'}},
+]
+rollout.write_text(''.join(json.dumps(e)+'\n' for e in events))
 p=subprocess.Popen([sys.argv[1],'app-server'],env=dict(os.environ,CODEX_HOME=str(home)),stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1)
 def call(i,method,params):
  p.stdin.write(json.dumps({'id':i,'method':method,'params':params})+'\n');p.stdin.flush()
@@ -2754,7 +2893,7 @@ try:
  call(2,'thread/resume',{'threadId':thread,'cwd':sys.argv[3]})
  print(thread,flush=True);sys.stdin.readline()
  row=call(3,'thread/read',{'threadId':thread,'includeTurns':True})['thread']
- assert not row['turns'],row
+ assert len(row['turns'])==1,row
  print('writer retained; no turns submitted',flush=True)
 finally:
  p.stdin.close()
@@ -2767,6 +2906,8 @@ finally:
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit()).spawn().unwrap();
         let mut reader=BufReader::new(owner.stdout.take().unwrap());let mut thread=String::new();reader.read_line(&mut thread).unwrap();
         let thread=thread.trim();assert!(plain_thread(thread));
+        assert!(matches!(app_control::release_passive_writer(&home,&root,thread),app_control::PassiveWriterOutcome::Retained(_)),
+            "live native app-server writer lock must remain retained even on a completed turn");
         let mut l=Launch {files:String::new(),execution:Some(44),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:"codex".into(),session:thread.into(),url:String::new(),resume:Some("retained fixture input".into())};
         let log=root.join("turn.log");
         for execution in [44,45] {
@@ -2788,7 +2929,18 @@ finally:
         }
         drop(owner.stdin.take());let mut reply=String::new();reader.read_line(&mut reply).unwrap();
         assert_eq!(reply.trim(),"writer retained; no turns submitted");assert!(owner.wait().unwrap().success());
-        println!("native writer retained through two refused resumes; original inputs preserved; acceptance false; no model turns");
+        let lock_dir=home.join("thread-writer-locks");
+        std::fs::create_dir_all(&lock_dir).unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&lock_dir,std::fs::Permissions::from_mode(0o700)).unwrap();
+            let passive_lock=lock_dir.join(format!("{thread}.lock"));
+            std::fs::write(&passive_lock,b"").unwrap();
+            std::fs::set_permissions(&passive_lock,std::fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(app_control::release_passive_writer(&home,&root,thread),app_control::PassiveWriterOutcome::Released);
+            assert!(!passive_lock.exists());
+        }
+        println!("native writer retained through two refused resumes; passive unheld lock released after owner exit; original inputs preserved; acceptance false; no model turns");
         std::fs::remove_dir_all(root).unwrap();
     }
 
