@@ -889,7 +889,7 @@ pub fn run(install: &Path) -> Res<()> {
         Ok(pids) => crate::platform::log(&format!("host start: {} inherited children reaped on exit", pids.len())),
         Err(e) => crate::platform::log(&format!("host start: {e}; inherited children stay unreaped")),
     }
-    // #2214: probes, curl and git inherit the host's scheduling; the logon task would start them all below normal.
+    // #2214: correct the host's low scheduling before starting probe, curl and git children.
     #[cfg(windows)]
     match crate::runtime::windows_process::normal_scheduling() {
         Ok(Some(was))=>crate::platform::log(&format!("host start: scheduling raised to normal (was {was})")),

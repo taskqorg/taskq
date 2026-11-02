@@ -170,7 +170,7 @@ fn scheduling(process:Handle)->Result<(u32,u32,u32),String> {
 }
 
 /// #2214: Task Scheduler starts the host task at its default priority 7: below-normal CPU, low I/O, memory priority 2.
-/// Every probe, curl and git child inherits that, so a normal-priority worker build starves them past their deadlines.
+/// Low I/O and memory priorities can penalize probe, curl and git children during worker builds.
 /// Raises only what is below normal and returns the previous values when it changed anything.
 fn raise_scheduling(process:Handle)->Result<Option<String>,String> {
     let (class,io_priority,memory)=scheduling(process)?;
@@ -323,6 +323,64 @@ mod tests {
         assert_eq!(raise_scheduling(process).unwrap(),None);
         assert_eq!(scheduling(process).unwrap().0,0x8000,"above-normal is never lowered");
         child.kill().ok();child.wait().ok();
+    }
+    // #2214 A1 / R12: opt-in process qualification, using installed CLIs without dispatching agent work.
+    // Run in its own filtered harness: scheduling changes apply only to that harness and its descendants.
+    #[test]
+    #[ignore = "native CLI login/version and curl qualification; TASKQ_PROBE_PHASE=before|after"]
+    fn native_probes_under_worker_load() {
+        let phase=std::env::var("TASKQ_PROBE_PHASE").expect("select before or after");
+        assert!(matches!(phase.as_str(),"before"|"after"));
+        let process=unsafe {GetCurrentProcess()};
+        let (low_io,low_memory)=(1u32,2u32);
+        assert_ne!(unsafe {SetPriorityClass(process,BELOW_NORMAL_PRIORITY_CLASS)},0);
+        assert_eq!(unsafe {NtSetInformationProcess(process,PROCESS_IO_PRIORITY,&low_io,4)},0);
+        assert_ne!(unsafe {SetProcessInformation(process,PROCESS_MEMORY_PRIORITY,&low_memory,4)},0);
+        if phase=="after" {normal_scheduling().unwrap();}
+        println!("phase={phase} scheduling={:?}",scheduling(process).unwrap());
+        struct Work(Vec<Execution>);
+        impl Drop for Work {
+            fn drop(&mut self) {
+                for child in &mut self.0 {child.kill().unwrap();}
+                let until=Instant::now()+Duration::from_secs(5);
+                for child in &mut self.0 {
+                    while child.exited().unwrap().is_none() {
+                        assert!(Instant::now()<until,"qualification child did not exit");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+        }
+        let mut work=Work(Vec::new());
+        for _ in 0..2 {
+            work.0.push(Execution::spawn(Command::new("cmd").args(["/c","ping -n 180 127.0.0.1 >nul"])).unwrap());
+        }
+        let mut failures=0;
+        for round in 0..30 {
+            for (rt,args) in [("claude",&["--version"][..]),("claude",&["auth","status"][..]),
+                ("codex",&["--version"][..]),("codex",&["login","status"][..]),
+                ("curl.exe",&["--silent","--show-error","--fail","--max-time","10","--output","NUL","https://github.com/robots.txt"][..])] {
+                let bin=super::super::which(rt);
+                assert!(bin.is_absolute(),"installed {rt} required");
+                let start=Instant::now();
+                let result=super::super::probe("qualification.windows-probe",&bin,args);
+                // Never print auth output: it may identify the operator.
+                let ok=result.as_ref().is_some_and(|(success,_)|*success);
+                println!("{phase} round={round} {rt} {} elapsed_ms={} ok={ok}",args[..args.len().min(2)].join(" "),start.elapsed().as_millis());
+                failures+=usize::from(!ok);
+            }
+            let running=work.0.iter_mut().map(|child| {
+                let observed=child.exited();
+                let reason=observed.as_ref().err().map(String::as_str);
+                let signals=crate::snapshot::Signals {local:true,child:Some(crate::snapshot::Child {
+                    exited:observed.as_ref().is_ok_and(Option::is_some),unknown:reason,stopping:false}),..Default::default()};
+                crate::snapshot::verdict(&signals).0=="running"
+            }).filter(|running|*running).count();
+            println!("{phase} round={round} native status running={running}/2");
+            assert_eq!(running,2,"owned native children must remain observable during probes");
+        }
+        println!("{phase} failures={failures}/150");
+        if phase=="after" {assert_eq!(failures,0,"native probe qualification failed");}
     }
     // Chain: native failure -> automatically captured adapter -> original diagnostic.
     #[test]
