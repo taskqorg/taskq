@@ -3636,14 +3636,18 @@ mod tests {
         }
         assert_ne!(a.install, cfg("mac").install, "each fixture gets its own install");
         assert_ne!(b.install, crate::tests::cfg().install, "each fixture gets its own install");
-        let shared = format!("PathBuf::from(\"/{}\")", "nonexistent");
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        for e in std::fs::read_dir(&src).unwrap() {
-            let p = e.unwrap().path();
-            let Ok(text) = std::fs::read_to_string(&p) else { continue };
-            for (i, line) in text.lines().enumerate() {
-                let l = line.trim_start();
-                assert!(!((l.starts_with("install:") || l.starts_with("root:")) && l.contains(&shared)), "{}:{} fixture uses the shared /nonexistent install", p.display(), i + 1);
+        let shared = format!("\"/{}\"", "nonexistent");
+        let mut dirs = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = dirs.pop() {
+            for e in std::fs::read_dir(dir).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() { dirs.push(p); continue; }
+                if p.extension().is_none_or(|ext| ext != "rs") { continue; }
+                let text = std::fs::read_to_string(&p).unwrap();
+                for (i, line) in text.lines().enumerate() {
+                    let l = line.trim_start();
+                    assert!(l.starts_with("//") || !l.contains(&shared), "{}:{} fixture uses the shared /nonexistent path", p.display(), i + 1);
+                }
             }
         }
     }
@@ -5116,9 +5120,10 @@ Open: none")).unwrap();
             let c = cfg("local");
             let starts = Rc::new(RefCell::new(0));
             let counted = starts.clone();
+            let start_root = c.root.clone();
             let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |_| {
                 *counted.borrow_mut() += 1;
-                Err(crate::runtime::over_cap(std::path::Path::new("/nonexistent"), 128 * 1024 + 5))
+                Err(crate::runtime::over_cap(&start_root, 128 * 1024 + 5))
             }));
             let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
             s.claim(&v, role, "claude", "").unwrap();
