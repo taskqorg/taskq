@@ -41,6 +41,7 @@ pub struct Policy {
     /// Task-claim mode (§4/§9); aliases preserve any/labelled policies.
     pub claim: ClaimMode,
     pub spillover_grace: u64,
+    pub weights: crate::balance::Weights,
     /// `default_runtime`: reviewers and workers without `run-*` run on it (§ 4, § 9).
     pub default_runtime: String,
     pub codex: Vec<String>,
@@ -51,6 +52,7 @@ pub struct Policy {
 
 impl Policy {
     pub fn apply(&self, cfg: &mut service::Config) {
+        cfg.weights = self.weights.clone();
         cfg.me = self.me.clone(); cfg.has = self.has.clone(); cfg.claim = self.claim; cfg.spillover_grace = self.spillover_grace; cfg.codex = self.codex.clone();
         let overlay = self.overlay(&cfg.root).map(|(_,p)|p);
         cfg.default_runtime = overlay.and_then(|p|p["default_runtime"].as_str()).unwrap_or(&self.default_runtime).into();
@@ -124,7 +126,8 @@ impl Policy {
                 if cap.limits.get(rt).is_some_and(|host| n > *host) { return Err(format!("host.json: projects.{root}.limits.{rt} raises host ceiling")); }
             }
         }
-        let policy=Self { raw: v, cap, me, has, claim, spillover_grace, default_runtime, codex, permission_mode, update_every, rollback_after };
+        let weights=crate::balance::weights(&v)?;
+        let policy=Self { raw: v, cap, me, has, claim, spillover_grace, weights, default_runtime, codex, permission_mode, update_every, rollback_after };
         policy.command()?;
         Ok(policy)
     }
@@ -264,6 +267,7 @@ fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:
         }
         if let Some(mode)=edit.claim {next["claim"]=json!(mode.name());}
         if let Some(rt)=&edit.default_runtime {next["default_runtime"]=json!(rt);}
+        if let Some(weights)=&edit.weights {next["weights"]=json!(weights);}
         let candidate=Policy::parse(next,&hostname)?;
         let command=CommandReceipt::current()?;
         crate::telemetry::receipt(&command,"received")?;

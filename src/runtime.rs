@@ -10,6 +10,7 @@ use std::process::{Child, Command};
 
 mod app_control;
 pub mod accounts;
+pub mod headroom;
 pub mod owner;
 pub mod owner_stream;
 pub mod choices;
@@ -329,7 +330,7 @@ pub fn quota_windows(log: &Path) -> Vec<(String, Option<i64>)> {
         }
         let rates = match e["type"].as_str() {
             Some("rate_limits") => &e["rate_limits"],
-            Some("event_msg") if e["payload"]["type"] == "rate_limits" => &e["payload"]["rate_limits"],
+            Some("event_msg") if matches!(e["payload"]["type"].as_str(),Some("rate_limits"|"token_count")) => &e["payload"]["rate_limits"],
             _ => continue,
         };
         for key in ["primary","secondary"] {
