@@ -2770,7 +2770,7 @@ pub fn agent_view(r: &serde_json::Value) -> serde_json::Value {
     serde_json::json!({"runtime": r["runtime"], "version": r["version"], "state": state, "account": account, "method": method, "expires": expires, "refreshed": r["refreshed"], "reason": r["reason"], "next": next})
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 

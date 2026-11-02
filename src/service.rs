@@ -575,6 +575,8 @@ pub struct Service<'a> {
     last_spawn: Option<u64>,
     headroom_error: Option<String>,
     progress: HashMap<(u64,u64,u64),(crate::runtime::progress::Reader,Value,bool)>,
+    // Native UTC sampling is independent of the board reply/pass-start clock.
+    progress_clock: fn(&dyn Board)->i64,
     pub host: Option<crate::host::Shared>,
     pub board: &'a dyn Board,
     pub cfg: Config,
@@ -934,7 +936,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { last_spawn: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), last_spawn: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1517,7 +1519,7 @@ impl<'a> Service<'a> {
     }
 
     fn observe_progress(&mut self) {
-        let Some(now)=self.snapshot.as_ref().map(|s|s.observed) else {return};
+        if self.snapshot.is_none() {return;}
         for kid in &self.kids {
             let key=(kid.task,kid.attempt,kid.execution);
             let previous=self.snapshot.as_ref().and_then(|s|s.tasks.iter().find(|r|r.n==kid.task))
@@ -1531,11 +1533,11 @@ impl<'a> Service<'a> {
             entry.2|=restored;
             let mut value=crate::runtime::observe_until(std::time::Instant::now()+std::time::Duration::from_millis(50),|| {
                 match kid.proc.progress_source() {
-                    Ok((path,start))=>entry.0.read(&path,start,now,self.cfg.poll),
+                    Ok((path,start))=>entry.0.read(&path,start,|| (self.progress_clock)(self.board),self.cfg.poll),
                     Err(_)=>crate::runtime::progress::unknown("native execution progress source unavailable"),
                 }
             });
-            value["observed"]=json!(now);
+            if value["observed"].is_null() {value["observed"]=json!((self.progress_clock)(self.board));}
             let transition=match value["status"].as_str() {
                 Some("overdue") if !entry.2=>{entry.2=true;Some("service.progress.overdue")},
                 Some("active"|"quiet") if entry.2=>{entry.2=false;Some("service.progress.recovered")},_=>None
@@ -1688,8 +1690,10 @@ impl<'a> Service<'a> {
                     if let Some(reason)=self.execution_waits.get(&row.n).or_else(|| self.waits.get(&row.n)) {row.execution_wait=Some(reason.clone());}
                 }
                 if let Some(x)=row.executions.iter().find(|x|x["attempt"].as_u64()==row.task.attempt) {row.heartbeat["progress"]=x["progress"].clone();}
-                row.heartbeat["executor"]=crate::snapshot::executor(&row.task,&row.executions,row.heartbeat["input_pending"]==true,snapshot.observed,self.cfg.ttl);
-                crate::snapshot::refresh_heartbeat(&mut row.heartbeat,snapshot.observed,matches!(row.task.state,State::Doing|State::Review)&&row.task.attempt.is_some());
+                let now=observations.iter().filter(|s|s.task==row.n && self.progress.contains_key(&(s.task,s.attempt,s.id)))
+                    .filter_map(|s|s.progress.as_ref()?.get("observed")?.as_i64()).max().unwrap_or(snapshot.observed);
+                row.heartbeat["executor"]=crate::snapshot::executor(&row.task,&row.executions,row.heartbeat["input_pending"]==true,now,self.cfg.ttl);
+                crate::snapshot::refresh_heartbeat(&mut row.heartbeat,now,matches!(row.task.state,State::Doing|State::Review)&&row.task.attempt.is_some());
             }
         }
         if let Some(now)=self.snapshot.as_ref().map(|s|s.observed) {self.log_stuck(now);}
@@ -2527,13 +2531,16 @@ impl<'a> Service<'a> {
     /// R6 stuck: one `#N event stuck <state> <age>` line per task, again only after it moves; observe only.
     fn log_stuck(&mut self, now: i64) {
         let Some(snapshot) = &self.snapshot else { return };
-        let stuck: HashMap<u64, (i64, &str, i64)> = snapshot.tasks.iter().filter_map(|r| r.stuck_age().map(|a| (r.n, (now - a, r.task.state.name(), a)))).collect();
+        let stuck: HashMap<u64, (i64, &str, i64)> = snapshot.tasks.iter().filter_map(|r| r.stuck_age().map(|a| {
+            let since=if r.stuck.is_none() {r.heartbeat["progress"]["overdue_since"].as_i64()} else {None};
+            (r.n,(since.unwrap_or(now-a),r.task.state.name(),a))
+        })).collect();
         for (n, (last, state, a)) in &stuck {
             if self.stuck.insert(*n, *last) != Some(*last) {
                 self.log.push(format!("#{n} event stuck {state} {}", crate::age(*a)));
             }
         }
-        self.stuck.retain(|n, _| stuck.contains_key(n));
+        self.stuck.retain(|n, _| stuck.contains_key(n) || self.progress.iter().any(|((task,_,_),p)|task==n && p.2));
     }
     /// § 4 Churn: one `#N event churn ...` line and one `service.churn` telemetry record per flagged task until it clears.
     fn log_churn(&mut self) {
@@ -8223,7 +8230,23 @@ Open: none";
         write(active);
         let mut c=cfg("mac");c.root=dir.join("project");c.install=dir.clone();
         let mut s=Service::new(&b,&c,"test",Box::new(|_|panic!("monitor cannot replay work")));
+        s.progress_clock=|b|b.now().unwrap();
         s.adopt(Kid{execution:a,task:n,attempt:a,rt:"antigravity".into(),proc:Box::new(Observed(path.clone())),unknown:None,stopping:false,session_url:None}).unwrap();
+        s.pass().unwrap();s.pass().unwrap();
+        // R6/R12, #2180: a hot source can advance beyond the pass-start snapshot.
+        let sampled=b.now().unwrap()+5;
+        s.progress_clock=|b|b.now().unwrap()+5;
+        use std::io::Write;
+        let mut hot=fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(hot,"{}",json!({"timestamp":crate::board::stamp(sampled),"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
+        hot.set_times(fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH+std::time::Duration::from_secs(sampled as u64))).unwrap();
+        s.pass().unwrap();
+        assert_eq!(s.progress[&(n,a,a)].1["status"],"active","valid source appended after pass start is not future");
+        assert_eq!(s.progress[&(n,a,a)].1["last_event"],sampled);
+        let row=s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().json();
+        assert!(row["heartbeat"]["progress"]["observed"].as_i64().unwrap()>s.snapshot.as_ref().unwrap().observed);
+        assert!(row["heartbeat"]["warning"].is_null(),"fresh local progress must not be re-aged against pass start");
+        b.advance(5);s.progress_clock=|b|b.now().unwrap();
         s.pass().unwrap();s.pass().unwrap();
         let beat_time=|b:&Fake|b.issues(None).unwrap().into_iter().find(|i|i.title=="taskq host mac").unwrap().updated;
         let before=beat_time(&b);b.advance(10);s.pass().unwrap();s.pass().unwrap();
@@ -8236,9 +8259,12 @@ Open: none";
         let (v,h)=views(&b,&mut CommentCache::new(),&mut DepCache::new(),c.ttl).unwrap();
         let remote=crate::snapshot::from_views("board",&b,&c,b.now().unwrap(),&v,&h).tasks.into_iter().find(|r|r.n==n).unwrap().json();
         assert_eq!(remote["stuck"],true,"board consumer sees the same progress stall");
+        s.progress_clock=|b|b.now().unwrap()+5;s.pass().unwrap();s.pass().unwrap();
+        b.advance(5);s.progress_clock=|b|b.now().unwrap();s.pass().unwrap();s.pass().unwrap();
         assert_eq!(s.log.iter().filter(|l|l.contains("event stuck doing")).count(),1);
         let kids=std::mem::take(&mut s.kids);drop(s);
         let mut s=Service::new(&b,&c,"test",Box::new(|_|panic!("restart cannot replay work")));
+        s.progress_clock=|b|b.now().unwrap();
         for kid in kids {s.adopt(kid).unwrap();}
         s.pass().unwrap();s.pass().unwrap();
         assert_eq!(s.log.iter().filter(|l|l.contains("event stuck doing")).count(),0,"published notice survives service restart");
@@ -8246,7 +8272,8 @@ Open: none";
         fs::rename(&path,dir.join("original")).unwrap();s.pass().unwrap();
         assert_eq!(s.progress[&(n,a,a)].1["status"],"unknown");
         fs::rename(dir.join("original"),&path).unwrap();
-        use std::io::Write;
+        s.pass().unwrap();s.pass().unwrap();
+        assert_eq!(s.log.iter().filter(|l|l.contains("event stuck doing")).count(),0,"an unreadable source does not start a new overdue episode");
         let mut f=fs::OpenOptions::new().append(true).open(&path).unwrap();
         writeln!(f,"{{\"event\":\"step_update\",\"step_update\":{{\"conversation_id\":\"invented\",\"step_index\":90,\"state\":\"DONE\",\"step_type\":\"tool\"}}}}").unwrap();
         let at=std::time::UNIX_EPOCH+std::time::Duration::from_secs(b.now().unwrap() as u64);f.set_times(fs::FileTimes::new().set_modified(at)).unwrap();
