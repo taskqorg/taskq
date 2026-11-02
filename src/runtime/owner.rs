@@ -10,16 +10,29 @@ pub enum Launched { Job { job: String, session: Option<String>, url: Option<Stri
 
 pub(crate) fn supported(runtime:&str)->bool {
     let a=super::of(runtime);
-    a.remote || a.codex && a.child && cfg!(any(target_os="macos",windows))
+    super::owner_stream::handles(runtime) || a.remote || a.codex && a.child && cfg!(any(target_os="macos",windows))
+}
+
+pub(super) fn request_access(env:&super::Env,runtime:&str,r:&Request)->Res<crate::policy::Effective> {
+    match &r.choice {Some(choice)=>{
+        let mut choice=choice.clone();
+        if r.state=="launched" {choice.grant_revision=Some(crate::policy::load(env.install)?.revision);}else {choice.validate(runtime)?;}
+        choice.access(env.install,env.root,runtime,env.permission_mode,env.codex)
+    },None=>super::access(env,runtime).map_err(|e|e.message)}
+}
+
+fn choice_args(spec:&mut agentq_runtime::agent::Spec,r:&Request) {
+    if let Some(choice)=&r.choice {if !choice.model.is_empty(){spec.args.extend(["--model".into(),choice.model.clone().into()]);}if !choice.effort.is_empty(){spec.args.extend(["--effort".into(),choice.effort.clone().into()]);}}
 }
 
 /// The request's runtime adapter (§ 8 table).
 pub fn launch(own: &Path, r: &Request) -> Launched {
+    if super::owner_stream::handles(&r.runtime){return super::owner_stream::launch(own,r);}
     if super::of(&r.runtime).codex { codex_launch(own, r) } else { claude_launch(own, r) }
 }
 
 /// An owner session's AgentQ `agent` turn (§ 8 Spawn and resume); `base` loses TaskQ's attempt variables first.
-fn spec(base: &mut std::process::Command, client: agentq_runtime::agent::Client, root: &Path, session: &str, args: &[&str]) -> agentq_runtime::agent::Spec {
+pub(super) fn spec(base: &mut std::process::Command, client: agentq_runtime::agent::Client, root: &Path, session: &str, args: &[&str]) -> agentq_runtime::agent::Spec {
     for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE", "TASKQ_ROOT"] { base.env_remove(k); }
     agentq_runtime::agent::Spec { client, root: root.into(), session: session.into(), resume: session != "-" && !session.is_empty(),
         args: args.iter().map(Into::into).collect(), home: None, env: vec![] }
@@ -39,9 +52,10 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     if super::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let codex = crate::host::Policy::read_for_hostname(install, crate::hostname).map_or(vec![], |p| p.codex);
+    let codex=r.choice.as_ref().map_or_else(||codex.clone(),|choice|choice.codex(&codex));
     let exe = std::env::current_exe().unwrap_or_default();
     let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
-    let access = match super::access(&env, a.setup) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
+    let access = match request_access(&env,a.setup,r) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
     let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
@@ -91,12 +105,13 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let exe = std::env::current_exe().unwrap_or_default();
     let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[], jobs: None };
-    let access = match super::access(&env, &r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
+    let access = match request_access(&env,&r.runtime,r) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
     let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
     let settings = serde_json::json!({"env": super::claude_env(install, None, None)}).to_string();
-    let spec = spec(&mut c, agentq_runtime::agent::Client::Claude, workdir, "", &["--settings", &settings, "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
+    let mut spec = spec(&mut c, agentq_runtime::agent::Client::Claude, workdir, "", &["--settings", &settings, "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
+    if spec.client==agentq_runtime::agent::Client::Claude {choice_args(&mut spec,r);}
     let spec = match super::optimized(spec) { Ok(s) => s, Err(e) => return Launched::NoStart(e) };
     let input = read_brief(&path);
     use coreq::process::Failure;
@@ -134,6 +149,7 @@ pub fn claude_link(workdir: &Path, job: &str) -> (Option<String>, Option<String>
 }
 /// D2: one owner turn into a launched session, text on stdin; the caller spawns it. Never `--bg --resume`: that copies the session.
 pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
+    if super::owner_stream::handles(&r.runtime){return super::owner_stream::command(own,r,true);}
     let a = super::of(&r.runtime);
     let session = r.session.as_deref().filter(|s| super::plain_thread(s)).ok_or("native session unknown; open it in its runtime")?;
     if !super::which(a.bin).is_absolute() { return Err(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
@@ -147,10 +163,11 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let workdir = r.root.as_deref().map_or(own, Path::new);
     let exe = std::env::current_exe().unwrap_or_default();
     let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
-    let access = super::access(&env, if a.codex { a.setup } else { &r.runtime }).map_err(|e| e.message)?;
+    let access = request_access(&env, if a.codex { a.setup } else { &r.runtime },r)?;
     let mut c = super::cli(&r.runtime, &access, &env)?;
-    let spec = spec(&mut c, agentq_runtime::agent::Client::Claude, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
+    let mut spec = spec(&mut c, agentq_runtime::agent::Client::Claude, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
         "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string()]);
+    choice_args(&mut spec,r);
     Ok(agentq_runtime::agent::command(c, &super::optimized(spec)?))
 }
 
@@ -180,7 +197,7 @@ pub(crate) fn app_submit(own:&Path,r:&Request,input:&str)->Res<()> {
     let root=r.root.as_deref().map_or(own,Path::new);let exe=std::env::current_exe().map_err(|_|"owner executable unknown")?;
     let policy=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
     let env=super::Env {context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,publish:"",board_env:&[],jobs:None};
-    super::access(&env,super::of(&r.runtime).setup).map_err(|e|e.message)?;
+    request_access(&env,super::of(&r.runtime).setup,r)?;
     super::app_queue(session,input)
 }
 
@@ -191,6 +208,7 @@ pub(crate) fn app_observe(own:&Path,r:&Request,t:&crate::dialogue::Turn)->Res<cr
 
 /// D3: Claude lists a session someone has open; Codex refuses the second writer itself, so its check is the turn.
 pub fn holder(_own: &Path, r: &Request) -> Res<bool> {
+    if super::owner_stream::handles(&r.runtime){return super::owner_stream::holder(_own,r);}
     if super::of(&r.runtime).codex { return Ok(false); }
     Ok(holds(&claude_rows()?, r) == Hold::Other)
 }
@@ -229,6 +247,7 @@ pub fn open_in(runtime: &str) -> String { format!("open in {runtime}; close it t
 
 /// D5: the outcome only from the runtime's end record (Claude `result`, Codex `turn.completed`/`turn.failed`); exit alone is unknown.
 pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
+    if super::owner_stream::handles(runtime){return super::owner_stream::outcome(out);}
     let codex = super::of(runtime).codex;
     if codex && format!("{out}{err}").contains("already has an active writer") { return open_in(runtime); }
     for v in out.lines().rev().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
@@ -244,6 +263,11 @@ pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
 }
 
 /// The session's transcript (D1): Claude `projects/*/<id>.jsonl`, Codex `sessions/**/rollout-*-<id>.jsonl`.
+pub fn transcript_for(install:&Path,r:&Request)->Res<PathBuf> {
+    if super::owner_stream::handles(&r.runtime){return super::owner_stream::transcript(&dir(install).join(&r.id),r);}
+    transcript(&r.runtime,r.session.as_deref().ok_or("Native session identity unknown")?)
+}
+
 pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
     let a = super::of(runtime);
     if !a.codex && !a.remote { return Err(format!("runtime {runtime:?}: native transcript adapter unqualified")); }

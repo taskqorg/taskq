@@ -133,7 +133,7 @@ fn records(codex: bool, base: u64, bytes: &[u8]) -> Vec<(u64, Vec<Value>)> {
     for l in bytes.split_inclusive(|b| *b == b'\n') {
         let mut items = vec![];
         if let Ok(v) = serde_json::from_slice::<Value>(l) {
-            if codex { codex_item(&v, &mut items) } else { claude_item(&v, &mut items) }
+            if codex { codex_item(&v, &mut items) } else if v["event"].is_string(){crate::runtime::owner_stream::items(&v,&mut items)}else { claude_item(&v, &mut items) }
             if v["timestamp"].is_string() {for item in &mut items {item["updated"]=v["timestamp"].clone();}}
         }
         if !items.is_empty() {

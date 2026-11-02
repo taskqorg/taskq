@@ -15,6 +15,7 @@ use crate::runtime::owner::{ACCESS, LOGIN, MISSING};
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    #[serde(default,skip_serializing_if="Option::is_none")] pub choice:Option<crate::runtime::choices::Choice>,
     pub schema: u8,
     pub id: String,
     pub created: u128,
@@ -99,7 +100,7 @@ Offer, and do on the owner's request: set up an existing folder as a TaskQ proje
 (taskq.md section 6; confirm concrete external effects first), show local telemetry (`taskq profile`),
 show the host service (`taskq service status`, `taskq service list`), and set up agentq.
 Never run gh auth login; a missing board token is an owner item: say what the owner must install.
-Touch only the setup working directory, the approved targets, ~/.claude, ~/.codex and the OS temp dir.
+Touch only the setup working directory, approved targets, the runtime-owned folders in taskq.md section 8 and the OS temp dir.
 Do not search home, the disk or unrelated projects. Do not change TaskQ admission, runtime policy,
 model, effort or permissions. Do not kill or restart existing agent sessions.
 For agentq: set up agentq from https://github.com/taskqorg/agentq on this host for the selected client only.
@@ -121,7 +122,7 @@ fn project_brief(root: &str, task: &str) -> String {
 Project: {root}
 Read its AGENTS.md and taskq.md first and follow them; you may act as the TaskQ PM for this project.
 Confirm concrete external effects with the owner first (taskq.md section 6). Never run gh auth login.
-Touch only this project, ~/.claude, ~/.codex and the OS temp dir. Task-state writes use taskq commands.
+Touch only this project, the runtime-owned folders in taskq.md section 8 and the OS temp dir. Task-state writes use taskq commands.
 
 {task}
 ")
@@ -163,7 +164,12 @@ pub fn open_id(install: &Path, root: &Path, task: &str, id: &str, runtime: &str,
     if !crate::resources::id(id) { return Err("Invalid owner request ID".into()); }
     if task.trim().is_empty() { return Err("Write a request before sending".into()); }
     let root = root.canonicalize().map_err(|e| format!("project {}: {e}", root.display()))?.display().to_string();
-    save_id(install, runtime, None, vec![], Some(root.clone()), Some((id, read_only)), false, |r, _| format!("{}\n{}", project_brief(&root, task), conversation_brief(&r.id)))
+    save_id_choice(install, runtime, None, vec![], Some(root.clone()), Some((id, read_only)), false, None, |r, _| format!("{}\n{}", project_brief(&root, task), conversation_brief(&r.id)))
+}
+
+pub(crate) fn open_choice(install:&Path,root:&Path,task:&str,id:&str,runtime:&str,read_only:bool,choice:Option<&crate::runtime::choices::Choice>)->Res<Request> {
+    let root=root.canonicalize().map_err(|_|"Launch project unavailable")?.display().to_string();
+    save_id_choice(install,runtime,None,vec![],Some(root.clone()),Some((id,read_only)),false,choice.cloned(),|r,_|format!("{}\n{}",project_brief(&root,task),conversation_brief(&r.id)))
 }
 
 pub(crate) fn open_pm(install:&Path,root:&Path,task:&str,id:&str,runtime:&str)->Res<Request> {
@@ -176,17 +182,21 @@ fn save(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String
 }
 
 fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, requested_id: Option<(&str, bool)>, pm:bool, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
+    save_id_choice(install,runtime,client,targets,root,requested_id,pm,None,brief)
+}
+
+fn save_id_choice(install:&Path,runtime:&str,client:Option<&str>,targets:Vec<String>,root:Option<String>,requested_id:Option<(&str,bool)>,pm:bool,choice:Option<crate::runtime::choices::Choice>,brief:impl FnOnce(&Request,&str)->String)->Res<Request> {
     // #1522: a visible Codex session is a Codex app thread, so requests take it only on macOS or Windows.
     let a = crate::runtime::of(runtime);
     if !crate::runtime::owner::supported(runtime) {
-        return Err(format!("setup runtime {runtime}: no qualified visible session here; use claude, or codex on macOS or Windows"));
+        return Err(format!("setup runtime {runtime}: no qualified visible session here; use an installed supported owner-session runtime"));
     }
     let id = requested_id.map(|(id,_)|String::from(id)).unwrap_or_else(crate::runtime::uuid);
     if !owner_id(&id) {return Err("Reserved or invalid owner request ID; use a new ID".into());}
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
     let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
     let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or(a.client).into(), runtime: runtime.into(),
-        targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None, root, pm };
+        targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None, root, pm, choice };
     r.brief = brief(&r, &id);
     locked(install, || {
         if crate::messages::request_deleted(install,&id)? {return Err("Owner request was permanently deleted; it cannot launch again".into());}
@@ -194,7 +204,7 @@ fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<Str
             match fs::metadata(file(install, &id)) {
                 Ok(_) => {
                     let previous = read(&file(install, &id))?;
-                    if previous.root != r.root || previous.brief != r.brief || previous.runtime != r.runtime || previous.pm != r.pm {
+                    if previous.root != r.root || previous.brief != r.brief || previous.runtime != r.runtime || previous.pm != r.pm || previous.choice != r.choice {
                         return Err("Owner request ID already binds different input".into());
                     }
                     r = previous;
@@ -210,7 +220,7 @@ fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<Str
     })?;
     crate::platform::write_atomic(&install.join("poke"), "").map_err(|e| format!("setup request saved; host notification unknown: {e}"))?;
     let observed=read(&file(install,&id))?;
-    if observed.root!=r.root || observed.brief!=r.brief || observed.runtime!=r.runtime {return Err("Owner request readback changed; delivery unknown".into());}
+    if observed.root!=r.root || observed.brief!=r.brief || observed.runtime!=r.runtime || observed.choice!=r.choice {return Err("Owner request readback changed; delivery unknown".into());}
     Ok(observed)
 }
 
@@ -597,7 +607,7 @@ mod tests {
     #[test]
     fn view_names_each_actionable_state() {
         let mut r = Request { schema: 2, id: "a".into(), created: 0, host: "h".into(), platform: "p".into(), client: "c".into(), runtime: "claude".into(),
-            targets: vec![], brief: String::new(), state: "failed".into(), job: None, session: None, url: None, reason: None, root: None, pm:false };
+            targets: vec![], brief: String::new(), state: "failed".into(), job: None, session: None, url: None, reason: None, root: None, pm:false,choice:None };
         let kind = |r: &Request| view(r)["kind"].as_str().unwrap().to_string();
         let mut kinds = vec![];
         for reason in [format!("{MISSING} x"), format!("{LOGIN} x"), format!("{ACCESS} x"), "spawn".into()] { r.reason = Some(reason); kinds.push(kind(&r)); }
