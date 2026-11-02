@@ -889,6 +889,13 @@ pub fn run(install: &Path) -> Res<()> {
         Ok(pids) => crate::platform::log(&format!("host start: {} inherited children reaped on exit", pids.len())),
         Err(e) => crate::platform::log(&format!("host start: {e}; inherited children stay unreaped")),
     }
+    // #2214: probes, curl and git inherit the host's scheduling; the logon task would start them all below normal.
+    #[cfg(windows)]
+    match crate::runtime::windows_process::normal_scheduling() {
+        Ok(Some(was))=>crate::platform::log(&format!("host start: scheduling raised to normal (was {was})")),
+        Ok(None)=>{},
+        Err(e)=>crate::platform::log(&format!("host start: {e}; probes may time out under worker load")),
+    }
     let mut reported=String::new();
     let mut linked=std::time::Instant::now();
     let _owner=loop {
