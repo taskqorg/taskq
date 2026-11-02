@@ -145,6 +145,9 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   await catalog({complete:true,loading:false,refreshing:false,reason:''});
   assert.equal(await page.getByRole('button',{name:'Refresh conversation catalog',exact:true}).count(),0);
   assert.doesNotMatch(await page.locator('.feedback-message').innerText(),/stale|permanent read failure/);
+  await page.evaluate(()=>taskq.receive({...fixture,now:1000,projects:fixture.projects.map(p=>({...p,age:1,tasks_age_seconds:40,poll:5}))}));
+  assert.match(await page.locator('.conversation-status [role=status]').innerText(),/Data from \d\d:\d\d/,'board source age remains visible in the stable feedback row');
+  assert.deepEqual(await input.boundingBox(),before,'board staleness never displaces the input');
  });
  for(const action of ['archive','delete','fork'])await check('Q-A8 '+action+' completion follows resulting selection',async()=>{
   await bootOwners();

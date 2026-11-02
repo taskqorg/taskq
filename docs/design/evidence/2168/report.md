@@ -25,7 +25,7 @@ Actual-bundle Chromium/WebKit timestamp instruments pass 350/620/940px × 14/18/
 
 The timestamp fixture now targets the existing setup-evidence disclosure; its protection still requires exactly one recorded brief time. No source-time, no-replay or preservation assertion was weakened.
 
-The canonical candidate gate and immutable independent review are recorded at the next checkpoint. They are not implied by these development checks.
+The canonical gate outcome and immutable independent review follow below. They are not implied by these development checks.
 
 ## Review set and native handoff
 
@@ -36,3 +36,19 @@ Root owns production GUI navigation under [6572406330](https://github.com/taskqo
 Root must install/reopen the exact candidate through the normal immutable dev handover and repeat real manager/worker loading, switching, question, reply and result journeys at actual text size. Compare polling/refresh/stall/failure transitions with the native before; preserve draft/files/focus/range, selected source/anchor and original receipts, without replay. A1 native-after, A2 native state matrix, A3 native placement and A4 real preservation remain Not tested on this candidate; A5 has independent source review but native comparison remains pending.
 
 Prior 100ms interaction and 32ms frame failures, long-heap plateau unknown, Windows, remote/provider variants and screen-reader boundaries remain explicit. This correction does not claim a performance improvement or qualify those platforms. Merge-result `merge_group` CI remains required before publication (R12/section 7); the worker does not wait for it or install production.
+
+## Immutable source review
+
+A second independent read-only reviewer checked exact `78d68469dd78ea4b7bfa055d85b2970ff784fcc7` against the baseline and found no P0/P1/P2 source blocker. Runtime/test source is `86ac61d7088716282c8f5f5e1e98ed3c050923c2`; the later commit adds evidence only. Review covered connected owner/task/result/error paths, tooltip/focus, visible feedback recovery, simultaneous alerts, completed-read freshness, bounded initial loading, failure/epoch/absence safety and the locally owned polling regression. It ran no native GUI or tests and does not establish native acceptance.
+
+Final image regeneration visually confirms readable feedback/recovery, a clear composer, provider mark and exact local time. The full feedback remains text, including object-shaped native error reasons; unknown error shapes explicitly say details are unavailable. The rejected intermediate overlay design is not in this candidate.
+
+## Final check checkpoint
+
+After the single pre-push rebase, `python3 scripts/check.py --base 26b9e6615f75aab6577c1663fdec5d8c77335bfa` ran on `78d68469dd78ea4b7bfa055d85b2970ff784fcc7`. It exited 1 after 325.828 seconds within the 900-second budget. Rust: 882 passed, 7 failed, 41 ignored. All seven failures occur in unchanged `runtime::protected_app_server` fixture setup at line 140 with `Operation not permitted` (EPERM); the Seatbelt policy-store check separately reports sandbox-blocked. These are not passes. Rule gate passed; contract lint remains unknown because the checker's pinned specq checkout is absent locally. CI supplies that checkout. Environment: macOS worker sandbox, warm dependencies/build cache, Node v22.18.0, Python 3.14.8, Cargo stable 1.98.1. Local timing does not qualify cold CI.
+
+Because the gate stopped at Rust, its remaining commands ran separately with the checker's isolated temporary-install environment, taking 106.564 seconds. `cargo +stable test --locked --test integration`: 22 passed, 1 failed, 1 ignored; the unchanged `telemetry_process::resume_records_its_result_without_releasing_the_host_hold` fails with `sandbox-exec: sandbox_apply: Operation not permitted`. Offline `cargo +stable run --locked -- selftest`, the README shot check/update scripts and release tag/check scripts pass.
+
+Of 37 Node commands, 36 initially passed. The sole failure was `sync-view.test.cjs`, which matched the removed `footer` array spelling rather than the new shared `footerText` status channel. The corrected connection assertion passes. The existing actual-bundle stability instrument now also requires the board's `Data from HH:MM` text to remain visible in the status row without moving the input; it passes. Stale thresholds, unknown-data text, same-row Retry, pending identity and no-overlay checks remain. This is a test-connection repair, not a change to accepted behavior or protection (§7 step 4). The full gate was not repeated for this test/evidence-only correction; unchanged source results above are retained with their sandbox limits.
+
+The final source remains the independently reviewed `86ac61d7088716282c8f5f5e1e98ed3c050923c2`; subsequent changes contain evidence and the stale-feedback test repair only. Native acceptance remains pending Root's exact-source handoff; no result here asserts A1–A5 complete.
