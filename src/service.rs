@@ -7535,6 +7535,15 @@ Open: none";
         let body=win.heartbeat_body();
         assert!(Balancing::read(&body).is_some(),"N-1 balancing shape unchanged");
         assert!(Balancing::read(&body).unwrap().last_spawn.is_some());
+        // #2263 review: an expired observation names a fixed time, so passes minutes apart keep an equal stable() body
+        // (an age in the cause would edit the heartbeat every pass, § 4 step 3).
+        std::fs::create_dir_all(&w.install).unwrap();let log=w.install.join("codex-turn.jsonl");
+        std::fs::write(&log,"{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":20,\"window_minutes\":300}}}}\n").unwrap();
+        let t=b.now().unwrap();crate::runtime::headroom::observe(&w.install,"codex",&log,t).unwrap();
+        b.state.borrow_mut().clock=t+400;let expired=win.heartbeat_body();
+        assert!(expired.contains(&format!("headroom codex account default: last quota observation {} expired",crate::board::stamp(t))),"{expired}");
+        b.state.borrow_mut().clock=t+700;
+        assert_eq!(stable(&expired),stable(&win.heartbeat_body()));
         let mut restarted=service(&b,&w,Default::default());
         let saved=Balancing::read(&b.issue(win.host_issue.unwrap()).unwrap().body).unwrap().last_spawn;
         restarted.pass().unwrap();

@@ -113,7 +113,8 @@ pub fn cause(install:&Path,rt:&str,now:i64)->String {
     match latest {
         None if rt=="claude" => format!("account {label}: Claude background jobs report no quota"),
         None => format!("account {label}: no quota observation yet"),
-        Some(at) => format!("account {label}: last quota observation {} min ago",(now-at).max(0)/60),
+        // A fixed board time, not an age: the heartbeat body stays equal across passes until the state changes (§ 4 step 3).
+        Some(at) => format!("account {label}: last quota observation {} expired",crate::board::stamp(at)),
     }
 }
 
@@ -148,7 +149,9 @@ mod tests {
         std::fs::write(&rollout,"{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":68.0,\"window_minutes\":10080}}}}\n").unwrap();
         observe_in(&root,"codex",&exec,1500,|_|None).unwrap();
         assert_eq!(remaining(&root,"codex",1500).unwrap(),None);
-        assert_eq!(cause(&root,"codex",1500),"account default: last quota observation 8 min ago");
+        let expired=format!("account default: last quota observation {} expired",crate::board::stamp(1001));
+        assert_eq!(cause(&root,"codex",1500),expired);
+        assert_eq!(cause(&root,"codex",1500+3600),expired,"the cause names a fixed time, so later passes keep an equal heartbeat body");
         observe_in(&root,"codex",&exec,1500,|t|(t=="t1").then(||rollout.clone())).unwrap();
         assert!((remaining(&root,"codex",1500).unwrap().unwrap()-0.32).abs()<1e-9);
         std::fs::write(root.join(FILE),"bad").unwrap();assert!(remaining(&root,"codex",1400).is_err());
