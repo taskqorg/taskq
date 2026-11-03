@@ -96,7 +96,7 @@ const USAGE: &str = "taskq agents
  taskq steer N --text T | taskq failed N --text T
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
- taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
+ taskq status [--project P..] [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
  taskq deployed --version V --env E --range A..B [--host H] [--json]
@@ -3496,6 +3496,7 @@ fn run(argv: &[String]) -> Res<()> {
         }
         "tray" => tray(platform::default_install(), a.one("snapshot"), a.one("open").is_some(), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
         "" => Err("command missing; use `taskq help`".into()),
+        "status" if !a.flags.contains_key("closed") => status_all(&a),
         "reports"|"results" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
         _ => command(&ctx()?, cmd, &a),
     }
@@ -3772,6 +3773,55 @@ fn cleanup_lines(b: &dyn Board, cfg: &Config, a: &Args) -> Vec<String> {
     if lines.is_empty() { vec!["nothing to clean".into()] } else { lines }
 }
 
+/// R6 snapshot of one project: the board read, with ready rows the board alone leaves undecided taking this host's
+/// live admission from `status.json` (A3), and #1979 Decide from the collected reports (no board call).
+fn status_snapshot(c: &Ctx, a: &Args) -> (snapshot::Snapshot, Value) {
+    let mut snap = snapshot::read(&*c.board, &c.cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
+    let local = dot(&c.cfg.root).join("status.json");
+    if let Some(s) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, c.cfg.ttl)) { snap.overlay_admission(&s); }
+    (snap, reports::decide(&reports::cached(&c.cfg.root), reports::now()))
+}
+
+/// R10: `taskq status` covers every project of `<install>/projects` plus the current one; `--project P..` narrows to
+/// folder names or `owner/repo`. One project keeps the single-project command; several print one block each.
+fn status_all(a: &Args) -> Res<()> {
+    let here = find_root().ok();
+    let mut roots = host::projects(&platform::default_install()).unwrap_or_default();
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    if let Some(h) = &here { roots.retain(|r| canon(r) != canon(h)); roots.insert(0, h.clone()); }
+    let wanted: Vec<String> = a.all("project").iter().flat_map(|x| x.split([',', ' '])).filter(|x| !x.is_empty()).map(String::from).collect();
+    if !wanted.is_empty() {
+        roots.retain(|r| wanted.iter().any(|w| *w == project_name(r) || load(r).is_ok_and(|(cfg, _)| cfg.repo == *w)));
+        if roots.is_empty() { return Err(format!("--project {}: no listed project matches", wanted.join(" "))); }
+    }
+    let at = |root: &PathBuf| -> Res<Ctx> {
+        let (cfg, raw) = load(root)?;
+        let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
+        Ok(Ctx { cfg, raw, board })
+    };
+    if roots.len() <= 1 {
+        let c = match roots.first() { Some(r) => at(r)?, None => ctx()? };
+        return command(&c, "status", a);
+    }
+    if a.flags.contains_key("json") {
+        let projects: Vec<Value> = roots.iter().map(|r| match at(r) {
+            Ok(c) => { let (snap, decide) = status_snapshot(&c, a); let mut v = snap.json(); v["project"] = json!(project_name(r)); v["decide"] = decide; v }
+            Err(e) => json!({"project": project_name(r), "complete": false, "reason": e}),
+        }).collect();
+        return json_output(&serde_json::to_string_pretty(&json!({"projects": projects})).map_err(|e| e.to_string())?, a.one("json-file"));
+    }
+    for (i, r) in roots.iter().enumerate() {
+        if i > 0 { println!(); }
+        // a project that cannot be read is an anomaly line of its own block, never a silent gap
+        PROJECT_ROOT.with_borrow_mut(|p| *p = Some(r.clone()));
+        if let Err(e) = at(r).and_then(|c| command(&c, "status", a)) {
+            println!("{} · source unavailable: {e} · Next: `taskq status --project {}` after fixing its config or board token", project_name(r), project_name(r));
+        }
+    }
+    PROJECT_ROOT.with_borrow_mut(|p| *p = None);
+    Ok(())
+}
+
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
@@ -4018,9 +4068,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 println!("{value}");
                 return Ok(());
             }
-            let snap = snapshot::read(b, cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
-            // #1979 Decide: undecided reports from the collected projection, no board call
-            let decide = reports::decide(&reports::cached(&cfg.root), reports::now());
+            let (snap, decide) = status_snapshot(c, a);
             if a.flags.contains_key("json") {
                 let mut v = snap.json();
                 v["decide"] = decide;
@@ -5241,7 +5289,7 @@ mod tests {
         run(&["add", "V", "--goal", "G", "--acceptance", "a"]).unwrap();
         let v = b.issues(None).unwrap().into_iter().filter(service::is_held).map(|i| i.number).max().unwrap();
         let text = snapshot::read(b, &c.cfg, &c.raw, &[]).text(&c.cfg, &c.raw).unwrap();
-        assert!(text.contains(&format!("Held: [#{u} U]")) && text.contains(&format!("[#{v} V]")), "{text}");
+        assert!(text.contains(&format!("| [#{u} U](")) && text.contains(&format!("| PM | `taskq start {u}` |")) && text.contains(&format!("[#{v} V]")), "{text}");
         let receipts = start_tasks(b, &c.cfg.root, &[u.to_string(), format!("#{v}")], &Op::default()).unwrap();
         assert_eq!(receipts.iter().map(|r| r.task).collect::<Vec<_>>(), vec![u, v]);
         assert!([u, v].iter().all(|&m| fold(m, &entries(b, m).unwrap(), false).state == State::Ready));
@@ -6338,7 +6386,7 @@ mod tests {
         b.create("taskq host mac", "version 4.0.0", &[service::HOST_LABEL.into()]).unwrap();
         let r = report(&b, &c, &Value::Null, &[]).unwrap();
         assert!(r.contains("In work 0 · Waiting for answer 1 · Ready 1"), "{r}");
-        assert!(r.contains(&format!("| [#{n} Ship \\| it](https://board/{n}) | ready |")), "{r}");
+        assert!(r.contains(&format!("| [#{n} Ship \\| it](https://board/{n}) | no host decision |")), "{r}");
         assert!(r.contains(&format!("{q}.1 left · {q}.2 right ★ |")), "only the star without a pick: {r}");
         assert!(r.contains("Hosts: mac v4.0.0"), "{r}");
         assert!(!inbox(&b, &c.root, q).unwrap().contains("Recommendation:"));
@@ -6732,7 +6780,7 @@ mod tests {
         let blocked = c.board.create("blocked", &format!("Depends on #{dep}"), &["taskq".into(), "selected".into()]).unwrap();
         let report = report(c.board.as_ref(), &c.cfg, &c.raw, &["selected".into()]).unwrap();
         assert!(report.contains(&format!("#{blocked} blocked")));
-        assert!(report.contains(&format!("blocked ([#{dep}](https://board/{dep}) open)")), "non-task dependency remains visible outside filter");
+        assert!(report.contains(&format!("dependency ([#{dep}](https://board/{dep}) open)")), "non-task dependency remains visible outside filter");
     }
 
     // Chain: § 5 piped owner reply -> CLI parsing -> shared dispatcher. Risk: OS arguments cap or alter the text.

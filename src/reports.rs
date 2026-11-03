@@ -224,11 +224,14 @@ pub fn cached_history(root:&Path,m:&Value)->Res<Value> {
     Ok(json!({"source":"service","page":page,"tasks":rows.iter().skip(start).take(crate::board::CLOSED_PAGE).collect::<Vec<_>>(),"more":rows.len()>start+crate::board::CLOSED_PAGE,"reason":value["reason"],"complete":value["complete"]}))
 }
 
-pub fn cached_open(root:&Path,n:u64,sha:&str)->Res<Value> {
+pub fn cached_open(root:&Path,n:u64,sha:&str)->Res<Value> {open_latest(root,n,Some(sha))}
+
+/// `sha: None` opens the task's latest collected result, so `taskq results N` needs no SHA digging.
+pub fn open_latest(root:&Path,n:u64,sha:Option<&str>)->Res<Value> {
     coreq::telemetry::capture::operation("reports.open.cached",|| -> Res<Value> {
-        if !identity(sha) {return Err("result identity must be full SHA or collected close identity".into());}
+        if sha.is_some_and(|s|!identity(s)) {return Err("result identity must be full SHA or collected close identity".into());}
         let value=cached(root);
-        let row=value["reports"].as_array().into_iter().flatten().chain(value["history"].as_array().into_iter().flatten()).find(|r|r["n"]==n && r["sha"]==sha);
+        let row=value["reports"].as_array().into_iter().flatten().chain(value["history"].as_array().into_iter().flatten()).find(|r|r["n"]==n && sha.is_none_or(|s|r["sha"]==s));
         match row {Some(row)=>Ok(json!({"report":row,"complete":value["complete"],"reason":value["reason"]})),None=>Ok(json!({"reason":value["reason"].as_str().unwrap_or("Report not in the collected snapshot; waiting for the service"),"complete":false}))}
     },|_|"cache-read")
 }
@@ -245,7 +248,7 @@ pub fn read_cli(root:&Path,a:&crate::Args)->Res<Option<Value>> {
         return cached_list(root,page,before).map(Some);
     }
     if a.one("page").is_some()||a.one("before").is_some() {return Err("--page/--before list reports without a task number".into());}
-    if a.one("action").unwrap_or("open")=="open" {return cached_open(root,a.num(1)?,a.need("sha")?).map(Some);}
+    if a.one("action").unwrap_or("open")=="open" {return open_latest(root,a.num(1)?,a.one("sha")).map(Some);}
     Ok(None)
 }
 
@@ -846,6 +849,7 @@ mod tests {
         let history=cached_history(&root,&json!({"task":n})).unwrap();assert_eq!(history["source"],"service");assert_eq!(history["tasks"][0]["n"],n);
         assert!(cached_open(&root,n,&sha).unwrap()["report"]["body"].is_string());
         assert_eq!(cached_open(&root,n,&"c".repeat(40)).unwrap()["complete"],false);
+        assert_eq!(open_latest(&root,n,None).unwrap()["report"]["sha"],sha,"steer #2256: no --sha opens the latest result");
         let mut old=cached(&root);old["observed"]=json!(0);std::fs::write(crate::dot(&root).join("status.json"),json!({"reports":old}).to_string()).unwrap();
         let stale_history=cached_history(&root,&json!({"task":n})).unwrap();assert_eq!(stale_history["complete"],false);assert_eq!(stale_history["tasks"][0]["n"],n);assert!(stale_history["reason"].is_string());
         std::fs::remove_dir_all(root).unwrap();
