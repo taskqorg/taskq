@@ -5317,7 +5317,9 @@ Open: none")).unwrap();
                 Ok((!self.live.get()).then_some(0))
             }
             fn kill(&mut self) -> Result<(), String> { Err("Claude original input found in copied job; inspect native state".into()) }
-            fn id(&self) -> u32 { 0 }
+            // An observed live process, like FakeProc: pid 0 means childless on Windows (#2228),
+            // which would attempt to save this unsupported fake handle instead of waiting for exit.
+            fn id(&self) -> u32 { 1 }
         }
         let root = std::env::temp_dir().join(format!("taskq-closed-exit-{}", crate::runtime::uuid()));
         std::fs::create_dir_all(crate::dot(&root)).unwrap();
