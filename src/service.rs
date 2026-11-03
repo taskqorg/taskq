@@ -573,7 +573,8 @@ pub struct Kid {
     /// Last native observation; absence of evidence never releases this exact execution.
     pub unknown: Option<String>,
     pub stopping: bool,
-    pub session_url: Option<String>,
+    /// Remote Control URL from the attempt log, or why it has none (#2261); None: not read yet.
+    pub session_url: Option<Result<String, String>>,
 }
 
 impl Kid {
@@ -1733,7 +1734,11 @@ impl<'a> Service<'a> {
         lines.extend(self.host.as_ref().and_then(|h| { let h = h.lock().ok()?; Some(crate::requests::heartbeat(h.last_hour.as_ref()?, h.hosts_last_hour.as_ref())) }).unwrap_or_default());
         let kids: BTreeSet<_> = self.kids.iter().map(|k| (k.task, k.attempt)).chain(self.pending.iter().copied()).collect();
         lines.extend(kids.iter().map(|(t, a)| format!("#{t} {a}")));
-        lines.extend(self.kids.iter().filter_map(|k| k.session_url.as_ref().map(|u| format!("session #{} {} {u}", k.task, k.attempt))));
+        // #2261: a URL, else `none <cause>` from the attempt log; N-1 readers take only the three-word form
+        lines.extend(self.kids.iter().filter_map(|k| k.session_url.as_ref().map(|u| match u {
+            Ok(u) => format!("session #{} {} {u}", k.task, k.attempt),
+            Err(why) => format!("session #{} {} none {}", k.task, k.attempt, why.replace('\n', " ")),
+        })));
         lines.extend(self.execution_statuses().iter().map(|s|format!("execution {}",serde_json::to_string(s).unwrap())));
         lines.push(format!("queue {}", serde_json::to_string(&self.queues()).unwrap()));
         lines.join("\n")
@@ -2118,11 +2123,11 @@ impl<'a> Service<'a> {
         }
         self.held.retain(|l| by_n.get(&l.task).is_some_and(|v| v.projection.task.attempt == Some(l.attempt)));
         // A Claude Remote Control URL belongs to this exact live execution.
-        // shortcut: bounded transcript scans restart until a URL appears; retain a cursor if costly.
-        for k in self.kids.iter_mut().filter(|k| std::time::Instant::now()<native_until && crate::runtime::of(&k.rt).remote && k.session_url.is_none()) {
-            k.session_url = by_n.get(&k.task).filter(|v| v.projection.task.attempt == Some(k.attempt))
-                .and_then(|v| crate::runtime::remote_session(v.projection.task.session.as_deref()?))
-                .and_then(|id| crate::runtime::observe_until(native_until,||crate::runtime::claude_remote(id)));
+        // #2261: the attempt log, not the board session (a pre-launch alias), carries the URL on every host.
+        // ponytail: rescans the whole log each pass until a URL appears; keep a byte cursor if logs grow costly.
+        for k in self.kids.iter_mut().filter(|k| std::time::Instant::now()<native_until && crate::runtime::of(&k.rt).remote && !matches!(k.session_url, Some(Ok(_)))) {
+            let Some(t) = by_n.get(&k.task).map(|v| &v.projection.task).filter(|t| t.attempt == Some(k.attempt)) else { continue };
+            k.session_url = Some(crate::runtime::remote_from_log(&crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or("worker"), k.task, k.attempt)));
         }
         if let Some(first)=deferred.and_then(|id|self.kids.iter().position(|k|k.execution==id)) {self.kids.rotate_left(first);}
 
@@ -3600,10 +3605,10 @@ mod tests {
         assert_eq!(s.delivered(a),0); assert_eq!(starts.get(),1);
         assert!(s.kids.iter().find(|k|k.attempt==a).unwrap().unknown.as_deref().unwrap().contains("acceptance unconfirmed"));
         s.kids[0].stopping=true;
-        s.kids[0].session_url=Some("https://claude.ai/code/session_014abc".into());
+        s.kids[0].session_url=Some(Ok("https://claude.ai/code/session_014abc".into()));
         s.rebuild();
         assert!(s.kids[0].stopping && s.kids[0].unknown.is_some());
-        assert_eq!(s.kids[0].session_url.as_deref(),Some("https://claude.ai/code/session_014abc"));
+        assert_eq!(s.kids[0].session_url,Some(Ok("https://claude.ai/code/session_014abc".into())));
         b.state.borrow_mut().lose_comment_response=true;
         s.pass().unwrap();
         assert_eq!(s.delivered(a),a); assert!(s.kids.is_empty()); assert_eq!(starts.get(),1);
@@ -5737,11 +5742,16 @@ Open: none")).unwrap();
         s.health = None;
         // #1204: a live Claude child publishes its account-scoped URL; every host's snapshot reads it back by host and attempt
         s.pending.insert((7, 42));
-        s.kids.push(Kid { unknown:None, stopping:false, session_url:Some("https://claude.ai/code/session_014abc".into()), task:7,attempt:42,execution:42,rt:"claude".into(),proc:Box::new(FakeProc(Default::default())) });
+        s.kids.push(Kid { unknown:None, stopping:false, session_url:Some(Ok("https://claude.ai/code/session_014abc".into())), task:7,attempt:42,execution:42,rt:"claude".into(),proc:Box::new(FakeProc(Default::default())) });
         assert_eq!(legacy(&s), "version 4.0.0\nservice abc123\n#7 42\nsession #7 42 https://claude.ai/code/session_014abc");
         let host = |body: String| crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 0, created: 0, closed: None, open: true, trusted: true, reason: None };
         let urls = crate::snapshot::session_urls(&[host(s.heartbeat_body()), host("session #8 43 https://evil.example/x".into())]);
-        assert_eq!(urls.into_iter().collect::<Vec<_>>(), vec![(("win".to_string(), 42), "https://claude.ai/code/session_014abc".to_string())]);
+        assert_eq!(urls.into_iter().collect::<Vec<_>>(), vec![(("win".to_string(), 42), Ok("https://claude.ai/code/session_014abc".to_string()))]);
+        // #2261: no URL yet names its cause from the attempt log; N-1 readers skip the line
+        s.kids.last_mut().unwrap().session_url = Some(Err("Remote Control not registered yet: no bridge_status in the attempt log".into()));
+        assert!(s.heartbeat_body().lines().any(|l| l == "session #7 42 none Remote Control not registered yet: no bridge_status in the attempt log"));
+        let urls = crate::snapshot::session_urls(&[host(s.heartbeat_body())]);
+        assert_eq!(urls.get(&("win".to_string(), 42)), Some(&Err("Remote Control not registered yet: no bridge_status in the attempt log".to_string())));
     }
 
     // Chain: native observation -> aggregate heartbeat -> remote read -> durable terminal after lost response.

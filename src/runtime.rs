@@ -2151,14 +2151,14 @@ pub fn link_ok(u: &str) -> bool { remote_url(u) || thread_of(u).is_some_and(plai
 
 /// The one session link resolver (A2, native adapter M3): board session `<rt>:<id>` of a task attempt. On its own host
 /// the attempt log resolves the id (Codex `-`, Claude's pre-launch alias); a Codex thread links only there; a Claude
-/// URL is account-scoped, so the owning host's transcript, else `published` (the owner's heartbeat). Returns the
+/// URL is account-scoped, so the owning host's attempt log (#2261), else `published` (the owner's heartbeat). Returns the
 /// resolved id and the link, None when unknown.
 pub fn session_link(root: &Path, own: bool, rt: &str, id: &str, task: u64, attempt: u64, role: &str, published: Option<String>) -> (String, Option<String>) {
     let a = of(rt);
     let id = if own {session_id(root,rt,id,task,attempt,role)} else {id.into()};
     let url = if id == "-" || !plain_thread(&id) { None }
         else if a.codex { own.then(|| thread_url(&id)) }
-        else if a.remote { own.then(|| claude_remote(&id)).flatten().or(published.filter(|u| remote_url(u))) }
+        else if a.remote { own.then(|| remote_from_log(&attempt_log(root, role, task, attempt)).ok()).flatten().or(published.filter(|u| remote_url(u))) }
         else { None };
     (id, url)
 }
@@ -2187,6 +2187,23 @@ pub fn open_link(arg: &str, wait: bool) -> Result<(), String> {
 /// Windows `explorer` exits 1 after it opened the link; only `open`'s 0 is success elsewhere.
 fn opened(windows: bool, code: Option<i32>) -> bool {
     code == Some(0) || windows && code == Some(1)
+}
+
+/// #2261: the Remote Control URL a Claude attempt's own log records (its `bridge_status` line, on every host), else
+/// why it has none, read from that log.
+pub fn remote_from_log(log: &Path) -> Result<String, String> {
+    let text = std::fs::read(log).map_err(|e| format!("attempt log unreadable: {}", e.kind()))?;
+    let mut status = None;
+    for line in String::from_utf8_lossy(&text).lines().filter(|l| l.contains("bridge_status")) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if v["subtype"] != "bridge_status" { continue }
+        if let Some(url) = v["url"].as_str().filter(|u| remote_url(u)) { return Ok(url.into()); }
+        status = Some(v["content"].as_str().unwrap_or("no content").chars().take(80).collect::<String>());
+    }
+    Err(match status {
+        Some(c) => format!("bridge_status without a Remote Control URL: {}", c.split_whitespace().collect::<Vec<_>>().join(" ")),
+        None => "Remote Control not registered yet: no bridge_status in the attempt log".into(),
+    })
 }
 
 /// Only a URL registered by the native session is a Remote Control link.
@@ -3297,6 +3314,23 @@ finally:
         let name = session_name(&l("worker", cyr));
         assert_eq!(name.strip_prefix("work #1561 ").unwrap().chars().count(), 40);
         assert!(cyr.starts_with(name.strip_prefix("work #1561 ").unwrap()));
+    }
+
+    // #2261 chain: attempt log bridge_status -> heartbeat URL, else its cause. Risk: the alias session is looked up
+    // as a transcript and the link reads missing on every host.
+    #[test]
+    fn remote_url_comes_from_the_attempt_log_or_names_why_not() {
+        let d = std::env::temp_dir().join(format!("taskq-2261-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let log = d.join("T1-2.log");
+        assert!(remote_from_log(&log).unwrap_err().starts_with("attempt log unreadable"));
+        std::fs::write(&log, "{\"type\":\"taskq.rules\"}\n").unwrap();
+        assert_eq!(remote_from_log(&log), Err("Remote Control not registered yet: no bridge_status in the attempt log".into()));
+        std::fs::write(&log, "{\"type\":\"system\",\"subtype\":\"bridge_status\",\"content\":\"/remote-control failed\\n retry\"}\n").unwrap();
+        assert_eq!(remote_from_log(&log), Err("bridge_status without a Remote Control URL: /remote-control failed retry".into()));
+        std::fs::write(&log, "{\"subtype\":\"bridge_status\",\"url\":\"https://evil.example/session_1\"}\n{\"subtype\":\"bridge_status\",\"url\":\"https://claude.ai/code/session_017ab\"}\n").unwrap();
+        assert_eq!(remote_from_log(&log), Ok("https://claude.ai/code/session_017ab".into()));
+        std::fs::remove_dir_all(&d).ok();
     }
 
     // Chain: board session -> Remote Control lookup and Codex app link. Risk: a Codex session is probed as Claude.

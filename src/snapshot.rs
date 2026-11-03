@@ -235,6 +235,8 @@ pub struct Row {
     pub later: Option<String>,
     /// Claude Remote Control URL of the current attempt from its host's heartbeat `session` line (§ 4).
     pub session_url: Option<String>,
+    /// Why that heartbeat names no URL yet, from the attempt log (#2261).
+    pub session_reason: Option<String>,
     /// Board time of the entry behind the last logged state change (§ 4 Tray age); `None`: no logged change.
     pub since: Option<i64>,
     /// O1: board issue creation and accepted state changes; no inferred execution timings.
@@ -516,6 +518,9 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
     open.sort_by_key(|v| (service::priority(&v.issue), v.issue.number));
     let urls = session_urls(hosts);
     let tasks = open.into_iter().map(|v| {
+        let published = v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
+            .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
+            .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned());
         let recovery=input_recovery(v);
         let last=v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created);
         // #2257: a result whose worker execution stays unreleased past ttl gets no reviewer (§ 3 Recovery); name the host step
@@ -572,9 +577,8 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         ops: v.log.iter().rev().filter_map(|e| crate::core::op_id(v.issue.number, &e.body)).take(OPS).map(String::from).collect(),
         publication: None,
         stage: crate::core::stage(&v.issue.body, &v.projection.task.stages),
-        session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
-            .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
-            .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
+        session_url: published.clone().and_then(Result::ok),
+        session_reason: published.and_then(Result::err),
         stuck: recovery.map(|_|observed-last).or(missing_reviewer.as_ref().map(|_|observed-last)).or_else(||stuck(v.issue.number, &v.projection.task, &v.blockers,last,hosts, observed, cfg.ttl)),
         churn: churn(&v.comments, observed),
         verdict: v.projection.task.result.as_ref().and_then(|_| v.projection.changes.iter().rev()
@@ -635,14 +639,19 @@ fn stage_history(v: &View) -> Vec<Value> {
 }
 
 /// `session #<N> <attempt> <url>` heartbeat lines (§ 4) by host name and attempt; only a canonical claude.ai URL.
-pub fn session_urls(hosts: &[board::Issue]) -> HashMap<(String, u64), String> {
+/// #2261: `session #<N> <attempt> none <cause>` names why the attempt log has no URL yet (Err).
+pub fn session_urls(hosts: &[board::Issue]) -> HashMap<(String, u64), Result<String, String>> {
     hosts.iter().flat_map(|h| {
         let name = h.title.trim_start_matches("taskq host ").to_string();
         h.body.lines().filter_map(move |l| {
-            let w: Vec<&str> = l.strip_prefix("session #")?.split(' ').collect();
-            let [_, a, url] = w[..] else { return None };
-            runtime::remote_url(url).then_some(())?;
-            Some(((name.clone(), a.parse().ok()?), url.to_string()))
+            let mut w = l.strip_prefix("session #")?.splitn(3, ' ');
+            let (_, a, rest) = (w.next()?, w.next()?.parse().ok()?, w.next()?);
+            let v = match rest.strip_prefix("none ") {
+                Some(why) => Err(why.to_string()),
+                None if runtime::remote_url(rest) => Ok(rest.to_string()),
+                None => return None,
+            };
+            Some(((name.clone(), a), v))
         })
     }).collect()
 }
@@ -759,6 +768,7 @@ impl Row {
         if let Some(step) = &self.missing_reviewer { row["missing_reviewer"] = json!(step); }
         if let Some(w) = self.wait() { row["wait"] = json!(w); }
         if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
+        if let Some(w) = &self.session_reason { row["session_reason"] = json!(w); }
         row["since"] = json!(self.since);
         row["created"] = json!(self.created);
         row["steps"] = json!(self.steps);
@@ -1061,7 +1071,8 @@ impl Snapshot {
             }
             if matches!(r.task.state, State::Doing | State::Review) {
                 if let Some(host) = session_link(cfg, raw, r).2 {
-                    anomalies.push(format!("- {} · {host} Remote Control URL not in the heartbeat · Next: open the session on {host}{}", link(r), fix("remote-control")));
+                    let why = r.session_reason.as_deref().map_or_else(|| "Remote Control URL not in the heartbeat".into(), |w| format!("no Remote Control URL: {w}"));
+                    anomalies.push(format!("- {} · {host} {why} · Next: open the session on {host}{}", link(r), fix("remote-control")));
                 }
             }
         }
@@ -1224,7 +1235,7 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { heartbeat: Value::Null, worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, session_reason: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -1248,7 +1259,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { heartbeat: Value::Null, worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, session_reason: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -1295,7 +1306,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { heartbeat: Value::Null, worker: None, conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, session_reason: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("| ") && l.contains("stuck")).collect::<Vec<_>>(), ["| [#1 T](u1) | owner · stuck 2h | answer the Owner row |"], "{text}");
