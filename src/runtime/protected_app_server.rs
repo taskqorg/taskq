@@ -15,7 +15,7 @@ impl Request {
         if text.len()>16384 {return Err("app-server request exceeds 16384 bytes".into());}
         let r:Self=serde_json::from_str(text).map_err(|_|"invalid protected app-server request")?;
         if r.schema!=SCHEMA||r.policy_revision==0||!runtime::accounts::valid_label(&r.account)
-            ||r.slot["binding"]["runtime"]!="codex" {return Err("invalid protected app-server identity".into());}
+            ||!r.slot["binding"]["runtime"].as_str().is_some_and(|rt|runtime::of(rt).has("passive-writer")) {return Err("invalid protected app-server identity".into());}
         Ok(r)
     }
     fn root(&self)->Res<PathBuf> {
@@ -510,7 +510,7 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
     let root=r.root()?;let install=canonical(install)?;let home=canonical(home)?;let bin=canonical(bin)?;
     if !crate::host::projects(&install)?.contains(&root) {return Err("protected project is not registered".into());}
     let p=policy::load(&install)?;
-    let grants:Vec<_>=p.grants.iter().filter(|g|g.runtime=="codex"&&g.project.as_deref()==root.to_str()).collect();
+    let grants:Vec<_>=p.grants.iter().filter(|g|runtime::of(&g.runtime).has("passive-writer")&&g.project.as_deref()==root.to_str()).collect();
     let g=grants.first().filter(|_|grants.len()==1).ok_or("explicit project Codex Workspace grant required")?;
     if p.revision!=r.policy_revision||g.mode!="workspace"||g.by.trim().is_empty()||g.by=="unknown"||g.at==0 {
         return Err("project Workspace authority missing, stale or mismatched".into());

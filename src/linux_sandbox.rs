@@ -84,7 +84,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
     ready(&root)?;
     let p = crate::policy::load(&install)?;
     let scope = root.to_str().ok_or("linux sandbox: root must be UTF-8")?;
-    let g = p.grants.iter().find(|g| crate::runtime::of(&g.runtime).codex && crate::runtime::of(&g.runtime).child && g.project.as_deref() == Some(scope))
+    let g = p.grants.iter().find(|g| crate::runtime::of(&g.runtime).has("sandbox-args") && crate::runtime::of(&g.runtime).has("cli") && g.project.as_deref() == Some(scope))
         .ok_or("linux sandbox: explicit project grant required")?;
     if g.mode != *mode && !(g.mode == "workspace" && mode == "restricted") { return Err("linux sandbox: grant changed or does not permit this mode".into()); }
     let bin = Path::new(&args[3]).canonicalize().map_err(|e| e.to_string())?;

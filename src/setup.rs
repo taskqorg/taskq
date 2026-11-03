@@ -298,7 +298,7 @@ const LINK_WINDOW_MS: u128 = 10 * 60 * 1000;
 /// Remote Control publishes the link after `--bg` returns (#1409): later passes fill a missing session or link
 /// within the window, then stop; the session itself is never tracked.
 pub fn link(install: &Path, now: u128, observe: Linker) -> Res<()> {
-    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && crate::runtime::of(&r.runtime).remote && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
+    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && crate::runtime::of(&r.runtime).has("remote-control") && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
         let Some(job) = r.job.clone() else { continue };
         let own = r.root.as_deref().map_or_else(|| dir(install).join(&r.id), PathBuf::from);
         let (session, url) = observe(&own, &job);

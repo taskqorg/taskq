@@ -46,7 +46,7 @@ pub type Limits = BTreeMap<String, Limit>;
 /// Wall-clock seconds; the service passes board time where it has it.
 pub fn now() -> i64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64) }
 
-pub fn applies(rt: &str) -> bool { matches!(rt, "claude" | "codex") }
+pub fn applies(rt: &str) -> bool { crate::runtime::of(rt).has("accounts") }
 
 pub fn valid_label(l: &str) -> bool {
     (1..=32).contains(&l.len()) && !l.starts_with('-') && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
@@ -374,7 +374,7 @@ pub fn heartbeat_rows(host: &str, body: &str) -> Vec<Row> {
 
 /// The runtime's own home, including an explicit override inside a named account.
 pub fn default_home(rt: &str) -> Option<PathBuf> {
-    if rt == "claude" { crate::runtime::claude_home() } else { crate::runtime::codex_home() }
+    (crate::runtime::of(rt).native_home)()
 }
 
 /// The parent home containing TaskQ's named accounts.
@@ -387,7 +387,7 @@ pub fn base(rt: &str) -> Option<PathBuf> {
 }
 
 /// The variable that names a home to the runtime.
-pub fn var(rt: &str) -> &'static str { if rt == "claude" { "CLAUDE_CONFIG_DIR" } else { "CODEX_HOME" } }
+pub fn var(rt: &str) -> &'static str { crate::runtime::of(rt).home_var }
 
 /// Native default semantics depend on an absent override, even when the physical path is the same.
 pub fn environment<'a>(rt: &str, home: &'a Path) -> Option<(&'static str, &'a Path)> {
@@ -559,10 +559,10 @@ fn add_in(install: &Path, rt: &str, label: &str, base: &Path, login: impl FnOnce
     let home = base.join(HOMES).join(label);
     if std::fs::read_dir(&home).is_ok_and(|mut d| d.next().is_some()) { return Err(format!("{rt} account {label} home is not empty; pick another label")); }
     std::fs::create_dir_all(&home).map_err(|e| format!("account home: {e}"))?;
-    let args: &[&str] = if rt == "claude" { &["auth", "login"] } else { &["login", "--device-auth"] };
+    let args = crate::runtime::of(rt).device_login;
     // the owner's terminal runs the native login; TaskQ never sees the token
     if !login(&home, args)? { return Err(format!("{rt} login for {label} did not finish; the list is unchanged")); }
-    if rt == "codex" && !home.join("config.toml").exists() {
+    if crate::runtime::of(rt).has("auth-file") && !home.join("config.toml").exists() {
         let cfg = std::fs::symlink_metadata(base.join("config.toml")).ok().filter(|m| m.is_file()).and_then(|_| std::fs::read(base.join("config.toml")).ok()).unwrap_or_default();
         std::fs::write(home.join("config.toml"), cfg).map_err(|e| format!("account config.toml: {e}"))?;
     }

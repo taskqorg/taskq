@@ -3007,14 +3007,14 @@ fn onboard_cmd(install: &Path) -> Res<()> {
         match r["login"].as_str() {
             Some("logged in") => {}
             // a codex-only host is valid: a missing runtime is skipped, not a failure
-            Some("not installed") => { claude &= !runtime::of(rt).remote; gaps.push(setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
+            Some("not installed") => { claude &= !runtime::of(rt).has("remote-control"); gaps.push(setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
             _ => gaps.extend([format!("Login: {}", runtime::agent_text(r)), format!("Next: {}", runtime::relogin(rt))]),
         }
     }
     let p = host::Policy::read_for_hostname(install, hostname);
     let (mode, codex, has) = p.map_or(("dontAsk".to_string(), vec![], vec![]), |p| (p.permission_mode, p.codex, p.has));
     // codex-app is opt-in (§ 9): its refusal is a gap only where `has` lists it
-    let opted = |es: Vec<policy::Effective>| es.into_iter().filter(|e| !runtime::of(&e.runtime).app || has.contains(&e.runtime)).collect::<Vec<_>>();
+    let opted = |es: Vec<policy::Effective>| es.into_iter().filter(|e| !runtime::of(&e.runtime).has("app-turn") || has.contains(&e.runtime)).collect::<Vec<_>>();
     // Access is per folder: the setup folder for owner sessions, each registered root for its workers
     gaps.extend(setup::onboard_access("setup", &opted(policy::report(install, &setup::dir(install), &mode, &[]))));
     let roots = match host::projects(install) {

@@ -4,7 +4,7 @@ use crate::setup::Request;
 use std::{fs,io::Write,path::Path,time::Duration};
 use serde_json::{json,Value};
 type Res<T> = Result<T,String>;
-pub fn handles(runtime:&str)->bool {runtime=="antigravity"}
+pub fn handles(runtime:&str)->bool {super::of(runtime).has("stream-input")}
 pub fn log(own:&Path)->std::path::PathBuf {own.join("native.jsonl")}
 fn input(own:&Path,text:&str)->Res<()> {
     let mut file=fs::OpenOptions::new().create(true).append(true).open(log(own)).map_err(|_|"Native input log unavailable")?;

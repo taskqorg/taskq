@@ -781,8 +781,8 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
         row["progress_url"] = json!(page.map(|p| format!("{p}{}", row["n"].as_u64().unwrap_or(0))));
     }
     let a = crate::runtime::of(rt);
-    if !a.remote && !own {
-        if a.codex {
+    if !a.has("remote-control") && !own {
+        if a.has("thread-link") {
             match page {
                 Some(p) => row["session_url"] = json!(format!("{p}{}", row["n"].as_u64().unwrap_or(0))),
                 None => row["session_reason"] = json!(format!("Codex session opens only on {host}")),
