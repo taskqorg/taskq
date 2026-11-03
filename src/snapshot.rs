@@ -434,6 +434,21 @@ pub struct Host {
     pub reports: Option<String>,
     /// The text after `account ` of the heartbeat's account lines ([`crate::runtime::accounts::heartbeat_rows`]).
     pub accounts: Vec<String>,
+    /// Heartbeat `selected <version> waits <reason>` (#2247): CoreQ selected another version than the host runs.
+    pub selected: Option<String>,
+}
+
+impl Host {
+    /// #2247: the running version, and while a handover is pending the selected one with what it waits for. A
+    /// heartbeat without the `selected` line falls back to fresh diagnostics, its wait unknown.
+    pub fn version_text(&self) -> String {
+        if let Some(s) = &self.selected { return format!("{} (selected {s})", self.version); }
+        let d = &self.diagnostics;
+        match d["selected"]["value"].as_str() {
+            Some(v) if d["selected"]["state"] == "ok" && v != self.version => format!("{} (selected {v} waits unknown: older host)", self.version),
+            _ => self.version.clone(),
+        }
+    }
 }
 
 pub struct Snapshot {
@@ -549,6 +564,7 @@ pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
         answer: h.body.lines().find_map(|l| l.strip_prefix("doctor-answer ")).map(str::to_string),
         reports: h.body.lines().find_map(|l| l.strip_prefix("doctor-reports ")).map(str::to_string),
         accounts: h.body.lines().filter_map(|l| l.strip_prefix("account ")).map(str::to_string).collect(),
+        selected: h.body.lines().find_map(|l| l.strip_prefix("selected ")).map(str::to_string),
     }
 }
 
@@ -829,6 +845,7 @@ impl Snapshot {
             "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "vocabulary": vocabulary(), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
             "hosts": self.hosts.iter().map(|h| {
                 let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
+                if let Some(s) = &h.selected { r["selected"] = json!(s) }
                 if h.balancing["schema"]==2 {r["balancing"]=h.balancing.clone();}
                 if let Some(l) = &h.link { r["link"] = json!(l) }
                 r
@@ -960,7 +977,7 @@ impl Snapshot {
             out.push(format!("Stuck: {}", stuck.join(", ")));
         }
         // #1625: a heartbeat older than ttl reads stale, so a stopped service shows within ttl of its last beat
-        let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}{}", h.name, h.version, age(self.observed - h.updated),
+        let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}{}", h.name, h.version_text(), age(self.observed - h.updated),
             if live(self.observed - h.updated, cfg.ttl) { "" } else { " stale" }, h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
             + &h.limits.iter().map(|l| if l.starts_with("quota ") {format!(" {l}")} else {l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))}).collect::<String>()
             + &h.balancing["weights"].as_object().map(|weights|weights.iter().map(|(rt,w)| {
@@ -1156,6 +1173,30 @@ mod tests {
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
         assert!(line.contains("mac v1.0 ") && !line.split(", ").next().unwrap().contains("stale") && line.split(", ").nth(1).unwrap().ends_with(" stale"), "{line}");
+    }
+
+    // Chain: heartbeat `selected` line -> status Hosts line and JSON (#2247 A1, A2). Risk: during a handover status
+    // showed only the running version, so a rollout read as done or stuck. Protection: equal versions show one value;
+    // a pending handover shows running, selected and the attempts it waits for; an older host without the line falls
+    // back to fresh diagnostics with its wait unknown, never to the running version alone.
+    #[test]
+    fn hosts_line_shows_selected_version_and_its_waits_during_handover() {
+        let beat = |title: &str, body: &str| board::Issue { title: title.into(), body: body.into(), updated: 1000, trusted: true, ..Default::default() };
+        let snap = from_views("board", &crate::board::Fake::default(), &crate::tests::cfg(), 1000, &[], &[
+            beat("taskq host mac", "version 4.6.62"),
+            beat("taskq host win", "version 4.6.61\nselected 4.6.62 waits #12 attempt 41, #15 attempt 52")]);
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
+        assert!(line.contains("mac v4.6.62 ") && !line.split(", win").next().unwrap().contains("selected"), "{line}");
+        assert!(line.contains("win v4.6.61 (selected 4.6.62 waits #12 attempt 41, #15 attempt 52) "), "{line}");
+        let hosts = snap.json()["hosts"].clone();
+        assert_eq!((hosts[0].get("selected"), hosts[1]["selected"].as_str()), (None, Some("4.6.62 waits #12 attempt 41, #15 attempt 52")));
+        let old = Host { version: "4.6.61".into(), diagnostics: json!({"selected": {"value": "4.6.62", "state": "ok"}}), ..Default::default() };
+        assert_eq!(old.version_text(), "4.6.61 (selected 4.6.62 waits unknown: older host)");
+        let same = Host { version: "4.6.62".into(), diagnostics: json!({"selected": {"value": "4.6.62", "state": "ok"}}), ..Default::default() };
+        assert_eq!(same.version_text(), "4.6.62");
+        let stale = Host { version: "4.6.61".into(), diagnostics: json!({"selected": {"value": "4.6.62", "state": "stale"}}), ..Default::default() };
+        assert_eq!(stale.version_text(), "4.6.61", "a stale selection is not reported as pending");
     }
 
     // Chain: § 4 Host link heartbeat key. Risk: an untrusted `taskq host` issue publishes a key that hosts then serve.

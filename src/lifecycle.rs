@@ -395,7 +395,7 @@ pub fn supersede(install:&Path,instance:&str)->Res<Option<String>> {
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum HandoffWait {Execution,Recovery,Project,Maintenance}
 impl HandoffWait {
-    fn reason(self)->&'static str {match self {
+    pub fn reason(self)->&'static str {match self {
         Self::Execution=>"native execution drain pending; preserving occupied capacity",
         Self::Recovery=>"host ownership recovery pending; waiting for qualified reconciliation",
         Self::Project=>"project handoff pending; waiting for owned work and preparation",

@@ -1622,6 +1622,20 @@ impl<'a> Service<'a> {
         statuses
     }
 
+    /// #2247: `selected <version> waits <reason>` while the host runs another version than CoreQ `current` selects:
+    /// the live attempts the handover waits for, else the host handover reason, else the pending restart.
+    pub fn selected_line(&self)->Option<String> {
+        let selected=crate::platform::tool(&self.cfg.install).current().filter(|v|*v!=self.version && crate::service_versions::version(v))?;
+        let waits:Vec<String>=crate::lifecycle_waits(self,false).into_iter().map(|w| {
+            match w.strip_prefix('#').and_then(|n|n.parse::<u64>().ok()).and_then(|n|self.kids.iter().find(|k|k.task==n)) {
+                Some(k)=>format!("#{} attempt {}",k.task,k.attempt),
+                None=>w,
+            }
+        }).collect();
+        let host=self.host.as_ref().and_then(|h|h.lock().ok().and_then(|h|h.handoff_wait())).map(|w|w.reason().to_string());
+        Some(format!("selected {selected} waits {}",if !waits.is_empty() {waits.join(", ")} else {host.unwrap_or_else(||"restart pending".into())}))
+    }
+
     pub fn service_diagnostics(&self)->Value {
         if let Some((at,value))=self.diagnostics.borrow().as_ref().filter(|(at,_)|at.elapsed().as_secs()<60) {let _=at;return value.clone();}
         let selected=crate::platform::tool(&self.cfg.install).current();
@@ -1683,6 +1697,7 @@ impl<'a> Service<'a> {
             lines.push(format!("service {}", self.instance));
             lines.push(format!("diagnostics {}", self.service_diagnostics()));
         }
+        lines.extend(self.selected_line());
         if !self.machine.is_empty() {
             lines.push(format!("machine {}", self.machine));
         }
@@ -4416,6 +4431,31 @@ Open: none")).unwrap();
         assert!(!b.issue(held).unwrap().labels.contains(&"q-held".into()));
         assert!(entries(&b, plain).unwrap().iter().all(|e| !e.body.starts_with("taskq: start")));
         assert_eq!(task(&b, plain).state, State::Ready);
+    }
+
+    // #2247 A1, A2: after a live push win selected 4.6.62 but kept running 4.6.61 for its live workers, and the
+    // heartbeat named only the running version. Protection: equal versions write no `selected` line; a pending
+    // handover writes the selected version and the live attempts it waits for, else the pending restart.
+    #[test]
+    fn heartbeat_names_selected_version_and_waiting_attempts() {
+        let b=Fake::default();
+        let c=cfg("mac");
+        let n=b.create("T","## Goal\ng",&[TASK_LABEL.into()]).unwrap();
+        let mut s=service(&b,&c,Default::default()); s.pass().unwrap();
+        let attempt=s.kids[0].attempt;
+        std::fs::create_dir_all(&c.install).unwrap();
+        std::fs::write(c.install.join("current"),&s.version).unwrap();
+        assert_eq!(s.selected_line(),None,"equal versions: one value");
+        assert!(!s.heartbeat_body().lines().any(|l|l.starts_with("selected ")));
+        std::fs::write(c.install.join("current"),"9.9.9").unwrap();
+        assert_eq!(s.selected_line().as_deref(),Some(if crate::lifecycle_waits(&s,false).is_empty() {"selected 9.9.9 waits restart pending".to_string()}
+            else {format!("selected 9.9.9 waits #{n} attempt {attempt}")}.as_str()));
+        s.kids[0].stopping=false;
+        s.observations.clear();
+        let waits=crate::lifecycle_waits(&s,true);
+        assert!(waits.contains(&format!("#{n}")),"{waits:?}");
+        std::fs::write(c.install.join("current"),"../x").unwrap();
+        assert_eq!(s.selected_line(),None,"an invalid selection is never published");
     }
 
     // #1435: a stale childless execution held the Windows image exit forever. Risk kept: handover and stop still wait on it.
