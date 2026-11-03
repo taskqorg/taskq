@@ -24,7 +24,7 @@ struct Diagnostics {
 }
 fn clock()->u64 {SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|d|d.as_secs())}
 fn modified(path:&Path)->Option<u64> {fs::symlink_metadata(path).ok().filter(|m|m.is_file())?.modified().ok()?.duration_since(UNIX_EPOCH).ok().map(|d|d.as_secs())}
-fn version(s:&str)->bool {
+pub fn version(s:&str)->bool {
     let base=match s.split_once('-') {Some((base,pre)) if !pre.is_empty()=>base,Some(_)=>return false,None=>s};
     base.split('.').count()==3 && base.split('.').all(|p|!p.is_empty()&&p.bytes().all(|c|c.is_ascii_digit()))
         && s.len()<=80 && s.bytes().all(|c|c.is_ascii_alphanumeric()||b".-".contains(&c))

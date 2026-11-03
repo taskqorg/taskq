@@ -352,7 +352,7 @@ pub fn fix(id: &str, status: &str, repo: &str, host: &str, gitlab: bool, reports
 /// One `--hosts` row: host, version, `ok|gap|unknown`, the open ids, the reason of an unknown and one fix line. With a
 /// posted request, a host that did not answer it reads unknown; without one, the last published result stands.
 pub fn host_row(h: &Host, repo: &str, gitlab: bool, now: i64, ttl: i64, asked: Option<&Asked>) -> Value {
-    let unknown = |reason: String, fix: String| json!({"host": h.name, "version": h.version, "state": "unknown", "gaps": [], "reason": reason, "fix": fix});
+    let unknown = |reason: String, fix: String| json!({"host": h.name, "version": h.version, "running_selected": h.version_text(), "state": "unknown", "gaps": [], "reason": reason, "fix": fix});
     if !live(h, now, ttl) {
         return unknown(format!("heartbeat {} old, read fresh; its service is not writing", crate::age(now - h.updated)),
             format!("on {}: `taskq service status`; if stopped, `taskq service restart`; if retired, close its heartbeat issue", h.name));
@@ -371,7 +371,7 @@ pub fn host_row(h: &Host, repo: &str, gitlab: bool, now: i64, ttl: i64, asked: O
     let state = if open.is_empty() { "ok" } else if open.iter().any(|(_, s)| s == "gap") { "gap" } else { "unknown" };
     let gaps: Vec<String> = open.iter().map(|(id, s)| if s == "gap" { id.clone() } else { format!("{id} (unknown)") }).collect();
     let fixes: Vec<String> = open.iter().map(|(id, s)| fix(id, s, repo, &h.name, gitlab, h.reports.as_deref())).collect();
-    json!({"host": h.name, "version": h.version, "state": state, "gaps": gaps, "reason": null, "fix": (!fixes.is_empty()).then(|| fixes.join("; "))})
+    json!({"host": h.name, "version": h.version, "running_selected": h.version_text(), "state": state, "gaps": gaps, "reason": null, "fix": (!fixes.is_empty()).then(|| fixes.join("; "))})
 }
 
 /// The `--hosts` worker rows: each doing or review attempt with its host, runtime and health. Only fresh evidence
@@ -430,7 +430,7 @@ pub fn hosts_lines(hosts: &[Value], workers: &[Value]) -> Vec<String> {
     let mut rows = vec![["board", "host", "version", "state", "gaps", "fix"].map(String::from).to_vec()];
     rows.extend(hosts.iter().map(|h| {
         let gaps = h["gaps"].as_array().filter(|g| !g.is_empty()).map(|g| g.iter().map(text).collect::<Vec<_>>().join(", "));
-        vec![text(&h["board"]), text(&h["host"]), text(&h["version"]), text(&h["state"]), gaps.unwrap_or_else(|| text(&h["reason"])), text(&h["fix"])]
+        vec![text(&h["board"]), text(&h["host"]), h["running_selected"].as_str().map_or_else(|| text(&h["version"]), str::to_string), text(&h["state"]), gaps.unwrap_or_else(|| text(&h["reason"])), text(&h["fix"])]
     }));
     if hosts.is_empty() { out.push("no host heartbeat on any board".into()); } else { out.extend(table(&rows)); }
     let alive = |w: &Value| if w["alive"] == true { "yes".to_string() } else { format!("unknown: {}", text(&w["alive_reason"])) };
@@ -571,6 +571,14 @@ mod tests {
         assert!(lines.iter().any(|l| l.starts_with("o/r") && l.contains("mac") && l.contains("not writing")), "{lines:#?}");
         assert!(lines.iter().any(|l| l.starts_with("g/p") && l.contains("pds")), "{lines:#?}");
         assert!(lines.iter().any(|l| l.starts_with("g/p ") && l.contains("#7") && l.contains("claude") && l.contains("yes")), "{lines:#?}");
+        // #2247 A1: the version column shows running and, during a handover, selected with its waits; equal is one value
+        let mut handover = host("win", now - 10, "4.6.61", Some("9900 ok"));
+        handover.selected = Some("4.6.62 waits #7 attempt 42".into());
+        let row = host_row(&handover, "o/r", false, now, 120, None);
+        assert_eq!((row["version"].as_str(), row["running_selected"].as_str()), (Some("4.6.61"), Some("4.6.61 (selected 4.6.62 waits #7 attempt 42)")));
+        let lines = hosts_lines(&[tag(row, "o/r"), tag(host_row(&host("lin", now - 10, "4.6.62", Some("9900 ok")), "o/r", false, now, 120, None), "o/r")], &[]);
+        assert!(lines.iter().any(|l| l.starts_with("o/r") && l.contains(" win ") && l.contains("4.6.61 (selected 4.6.62 waits #7 attempt 42)")), "{lines:#?}");
+        assert!(lines.iter().any(|l| l.starts_with("o/r") && l.contains(" lin ") && l.contains("4.6.62") && !l.contains("selected")), "{lines:#?}");
     }
 
     // Chain: `taskq doctor --hosts` request issue -> service pass -> heartbeat `doctor-answer` (#2194 A2, #2246 A1).
