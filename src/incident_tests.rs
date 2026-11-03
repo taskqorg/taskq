@@ -84,6 +84,13 @@ fn catalog_main_and_launcher_detection_points() {
     crate::restart_watch(&mut since,true,0,10); crate::restart_watch(&mut since,true,19,10); assert!(take_detected().is_empty());
     assert!(crate::restart_watch(&mut since,true,20,10)); assert_eq!(take_detected(),["dispatch.reexec"]);
     assert!(!crate::restart_watch(&mut since,true,40,10),"#1601: logs once"); assert!(take_detected().is_empty());
+    // #2254 defect: a re-exec stuck past its bound read only as "running unknown"; kept: the overdue mark and the
+    // wait reason surface as a host incident line until the handover ends.
+    assert_eq!(since,Some(u64::MAX),"#2254: host status reads the overdue mark");
+    let status=serde_json::json!({"restart_overdue":true,"restart_waits":["#2239 (background project differs)"]});
+    assert_eq!(crate::restart_line(&status).as_deref(),Some("Restart: host incident: pending over 600 s; waits for #2239 (background project differs)"));
+    assert_eq!(crate::restart_line(&serde_json::json!({"restart_waits":["#2239"]})).as_deref(),Some("Restart: waits for #2239"));
+    assert!(!crate::restart_watch(&mut since,false,41,10)); assert_eq!(since,None,"a finished handover clears the incident");
     let dir=root("launcher"); fs::create_dir_all(dir.join("releases/1.2.3")).unwrap();
     fs::write(dir.join("current"),"1.2.3").unwrap(); fs::write(dir.join("previous"),"1.2.2").unwrap();
     let t=crate::platform::tool(&dir); for _ in 0..3 { coreq::launcher::pick(&t,true).unwrap(); }

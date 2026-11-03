@@ -1603,7 +1603,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err(), "stale_grant": s.gui_stale, "grants": grants, "binary": cfg.install.join("taskq")})), ("waits", json!(s.waits.iter().map(|(n, reason)| json!({"task": n, "reason": reason})).collect::<Vec<_>>())),
             ("execution_waits", json!(s.execution_waits)), ("capacity", s.capacity_json()), ("hold", json!(s.hold)), ("access", json!(access.iter().map(|e| e.json()).collect::<Vec<_>>())), ("agents", json!(agents.as_ref().map(|a| &a.1))),
             ("stop_progress",json!(s.stop_progress)), ("poll", json!(cfg.poll)),
-            ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
+            ("restart_overdue", json!(host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart_overdue)))),
+            ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| restart_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
             ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("dev", dev), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health()),
             ("tidy", fs::read_to_string(d.join("tidy.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)), ("setup", setup)]
@@ -2494,6 +2495,21 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     fs::write(dot(&cfg.root).join("restart"), "").map_err(|e| e.to_string())
 }
 
+/// The status line of a pending re-exec; #2254: past its 600 s bound it reads as a host incident.
+fn restart_line(status: &Value) -> Option<String> {
+    let w = status["restart_waits"].as_array().filter(|w| !w.is_empty())?;
+    let overdue = if status["restart_overdue"] == true { "host incident: pending over 600 s; " } else { "" };
+    Some(format!("Restart: {overdue}waits for {}", w.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")))
+}
+
+/// #2254: status names an unreadable child exit's reason, so a stuck re-exec reads as an incident, not "running unknown".
+fn restart_waits(s: &Service, stopping:bool) -> Vec<String> {
+    lifecycle_waits(s, stopping).into_iter().map(|w| {
+        let reason = w.strip_prefix('#').and_then(|n| n.parse::<u64>().ok()).and_then(|n| s.kids.iter().find(|k| k.task == n)?.unknown.as_ref());
+        match reason { Some(e) => format!("{w} ({e})"), None => w }
+    }).collect()
+}
+
 /// § 8 step 3: what a pending re-exec waits for. Windows waits for every live child; elsewhere CLI children and
 /// Claude background turns with a saved native identity pass over (#1407); codex-app turns wait.
 fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
@@ -2534,9 +2550,7 @@ fn service_project_fields(root:&Path,status:Res<Option<Value>>)->String {
         out.push(format!("Status: unknown ({e})"));
     }
     let status = status.ok().flatten();
-    if let Some(w) = status.as_ref().and_then(|s| s["restart_waits"].as_array()).filter(|w| !w.is_empty()) {
-        out.push(format!("Restart: waits for {}", w.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")));
-    }
+    out.extend(status.as_ref().and_then(restart_line));
     // § 4 board budget: only a live status speaks for the running service
     let ttl = snapshot::ttl(root);
     let requests = match status.as_ref().filter(|_| snapshot::status_live(&d.join("status.json"), ttl)) {
