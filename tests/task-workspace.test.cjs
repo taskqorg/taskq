@@ -18,7 +18,7 @@ assert(tray.includes(fs.readFileSync('build/web/task-workspace.css','utf8')),'tr
 const c={setTimeout,clearTimeout,crypto:globalThis.crypto};vm.createContext(c);vm.runInContext(bundle,c);
 assert.equal(c.TaskqTaskWorkspace.schema,manifest.schema);
 for(const key of ['createState','create'])assert.equal(typeof c.TaskqTaskWorkspace[key],'function',key);
-const release=fs.readFileSync('.github/workflows/release.yml','utf8');
+const release=fs.readFileSync('.github/workflows/release-build.yml','utf8');
 for(const asset of ['task-workspace.js','task-workspace.css','task-workspace-fixtures.json','task-workspace-sources.json'])assert(release.includes('dist/taskq-$VER-'+asset),'missing released asset: '+asset);
 console.log('PASS task workspace: tray embeds the released bundle and stylesheet, pinned source hashes, release assets');
 

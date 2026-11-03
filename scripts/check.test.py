@@ -244,4 +244,15 @@ assert dev(cargo, ['4.6.60-dev.1793639858', '4.6.60-261102-0'], day1) == '4.6.60
 assert dev(cargo, [f'4.6.60-261102-{n}' for n in range(11)], day1) == '4.6.60-261102-11'
 assert dev(cargo, ['4.6.60-261102-0', '4.6.60-261102-1'], day2) == '4.6.60-261103-0'
 assert dev(cargo, ['4.6.59-261102-4'], day1.astimezone(datetime.timezone(datetime.timedelta(hours=3)))) == '4.6.60-261102-5'
-print('PASS dev version counts per UTC day')
+# #2234: releases take their version from the tag, so a dev build follows the highest release tag above Cargo.toml.
+assert dev(cargo, [], day1, ['v4.6.59', 'v4.6.70', 'v4.6.9', 'v5.0.0-rc1', 'vx']) == '4.6.71-261102-0'
+assert dev('version = "4.7.0"\n', [], day1, ['v4.6.70']) == '4.7.1-261102-0'
+print('PASS dev version counts per UTC day and follows the release tags')
+release_index = runpy.run_path(str(Path(__file__).parents[1] / '.github' / 'release-index.py'))['index']
+fast, latest = release_index('4.7.1', '', {'taskq-4.7.1-linux-x86_64': 'aa', 'taskq-4.7.1-windows-x86_64.exe': 'bb', 'other': 'cc'})
+assert fast == 'aa  taskq-4.7.1-linux-x86_64\nbb  taskq-4.7.1-windows-x86_64.exe\n'
+assert latest == {'version': '4.7.1', 'files': {'linux-x86_64': 'taskq-4.7.1-linux-x86_64', 'windows-x86_64': 'taskq-4.7.1-windows-x86_64.exe'}}
+full, latest = release_index('4.7.1', fast, {'taskq-4.7.1-macos-aarch64': 'dd', 'taskq-4.7.1-linux-x86_64': 'aa'})
+assert full == 'aa  taskq-4.7.1-linux-x86_64\ndd  taskq-4.7.1-macos-aarch64\nbb  taskq-4.7.1-windows-x86_64.exe\n', 'macos joins the published sums'
+assert sorted(latest['files']) == ['linux-x86_64', 'macos-aarch64', 'windows-x86_64']
+print('PASS release index publishes OS files as they arrive')

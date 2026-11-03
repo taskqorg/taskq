@@ -18,5 +18,5 @@ for(const x of fx.cases)assert.deepEqual(c.op(x.row,x.op.action,'dash'),x.op);
 const sandbox={setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto};vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync('build/web/task-controls.js','utf8'),sandbox);
 assert.equal(sandbox.TaskqTaskControls.render({...fx.cases[1].row,controls:fx.states.doing}),c.render({...fx.cases[1].row,controls:fx.states.doing}));
-assert.match(fs.readFileSync('.github/workflows/release.yml','utf8'),/task-controls-fixtures\.json/);
+assert.match(fs.readFileSync('.github/workflows/release-build.yml','utf8'),/task-controls-fixtures\.json/);
 console.log('PASS controls follow row state, Close stays on the board, op identity matches fixture, bundle and release wiring');

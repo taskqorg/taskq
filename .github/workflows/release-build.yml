@@ -1,0 +1,100 @@
+# § 8 Release build for one OS, called by release.yml: stamps the tag's version into Cargo.toml and Cargo.lock
+# (never committed), builds with --locked, runs the staged binary's offline selftest and uploads the release files
+# as artifact <target>; the Linux leg also stages the shared web assets and fixtures. A failing selftest uploads nothing.
+name: release-build
+on:
+  workflow_call:
+    inputs:
+      tag: {type: string, required: true}
+      os: {type: string, required: true}
+      target: {type: string, required: true}
+      ext: {type: string, default: ''}
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ${{ inputs.os }}
+    env:
+      TASKQ_SELFTEST_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: rustup default stable
+      - name: Static WebView2 loader for the single-file Windows release
+        if: runner.os == 'Windows'
+        run: rustup default stable-x86_64-pc-windows-msvc
+      - name: Version from tag
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          ver="${TAG#v}"
+          perl -pi -e 'if (!$d && s/^version = ".*"/version = "'"$ver"'"/) { $d = 1 }' Cargo.toml
+          perl -0pi -e 's/(\[\[package\]\]\r?\nname = "taskq"\r?\nversion = ")[^"]*"/${1}'"$ver"'"/' Cargo.lock
+          grep -q "^version = \"$ver\"" Cargo.toml
+          grep -A1 '^name = "taskq"' Cargo.lock | grep -q "^version = \"$ver\""
+          echo "VER=$ver" >> "$GITHUB_ENV"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: cargo build --release --locked
+      - name: Selftest and stage
+        shell: bash
+        env:
+          TASKQ_INCIDENT_REPORTS: 'off'
+          TASKQ_INSTALL: ${{ runner.temp }}/taskq-release-selftest
+        run: |
+          bin="target/release/taskq${{ inputs.ext }}"
+          mkdir dist
+          cp "$bin" "dist/taskq-$VER-${{ inputs.target }}${{ inputs.ext }}"
+          # Start the shipped file from its isolated directory, not Cargo's build tree.
+          (cd dist && "./taskq-$VER-${{ inputs.target }}${{ inputs.ext }}" selftest)
+          # shared answer card assets (docs/design/answer-card.md): once, from the Linux job
+          if [ "${{ inputs.target }}" = linux-x86_64 ]; then
+            cp build/web/answer-card.js "dist/taskq-$VER-answer-card.js"
+            cp src/answer-card.css "dist/taskq-$VER-answer-card.css"
+            cp tests/fixtures/answer-card.json "dist/taskq-$VER-answer-card-fixtures.json"
+            cp build/web/answer-card.sources.json "dist/taskq-$VER-answer-card-sources.json"
+            cp build/web/task-controls.js "dist/taskq-$VER-task-controls.js"
+            cp tests/fixtures/task-controls.json "dist/taskq-$VER-task-controls-fixtures.json"
+            cp build/web/project-blocks.js "dist/taskq-$VER-project-blocks.js"
+            cp src/project-blocks.css "dist/taskq-$VER-project-blocks.css"
+            cp src/project-blocks.LICENSE "dist/taskq-$VER-project-blocks.LICENSE"
+            cp tests/fixtures/project-blocks.json "dist/taskq-$VER-project-blocks-fixtures.json"
+            cp build/web/project-blocks.sources.json "dist/taskq-$VER-project-blocks-sources.json"
+            cp build/web/finding-composer.js "dist/taskq-$VER-finding-composer.js"
+            cp src/finding-composer.css "dist/taskq-$VER-finding-composer.css"
+            cp tests/fixtures/finding-composer.json "dist/taskq-$VER-finding-composer-fixtures.json"
+            cp build/web/finding-composer.sources.json "dist/taskq-$VER-finding-composer-sources.json"
+            cp build/web/pm-composer.js "dist/taskq-$VER-pm-composer.js"
+            cp src/pm-composer.css "dist/taskq-$VER-pm-composer.css"
+            cp tests/fixtures/pm-requests.json "dist/taskq-$VER-pm-composer-fixtures.json"
+            cp build/web/pm-composer.sources.json "dist/taskq-$VER-pm-composer-sources.json"
+            cp build/web/task-workspace.js "dist/taskq-$VER-task-workspace.js"
+            cp build/web/task-workspace.css "dist/taskq-$VER-task-workspace.css"
+            cp tests/fixtures/task-workspace.json "dist/taskq-$VER-task-workspace-fixtures.json"
+            cp build/web/task-workspace.sources.json "dist/taskq-$VER-task-workspace-sources.json"
+            # shared resource controls (docs/design/shared-resource-controls.md), same mechanism
+            cp build/web/resource-controls.js "dist/taskq-$VER-resource-controls.js"
+            cp src/resource-controls.css "dist/taskq-$VER-resource-controls.css"
+            cp tests/fixtures/resource-controls.json "dist/taskq-$VER-resource-controls-fixtures.json"
+            cp tests/fixtures/resource-policy-v1.json "dist/taskq-$VER-resource-policy-fixtures.json"
+            cp tests/fixtures/telemetry-sync.json "dist/taskq-$VER-telemetry-sync-fixtures.json"
+            # TaskQ telemetry field list CoreQ pins (docs/design/standalone-telemetry.md)
+            cp tests/fixtures/telemetry-fields.json "dist/taskq-$VER-telemetry-fields-fixtures.json"
+            # status snapshot contract (docs/design/status-report.md)
+            cp tests/fixtures/status-snapshot.json "dist/taskq-$VER-status-snapshot-fixtures.json"
+            cp tests/fixtures/status-snapshot.schema.json "dist/taskq-$VER-status-snapshot-schema.json"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ inputs.target }}
+          path: dist/*

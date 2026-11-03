@@ -359,7 +359,7 @@ mod tests {
         for (row,value) in rows.iter().zip(&observations) {assert_eq!(&row["observation"],value);}
         drop(store);std::fs::remove_dir_all(dir).unwrap();
         // each release publishes the fixture, covered by SHA256SUMS
-        assert!(include_str!("../../.github/workflows/release.yml").contains(r#"cp tests/fixtures/telemetry-fields.json "dist/taskq-$VER-telemetry-fields-fixtures.json""#),"release misses the field fixture");
+        assert!(include_str!("../../.github/workflows/release-build.yml").contains(r#"cp tests/fixtures/telemetry-fields.json "dist/taskq-$VER-telemetry-fields-fixtures.json""#),"release misses the field fixture");
     }
     #[test]
     fn unsupported_or_unsafe_source_metadata_is_refused() {

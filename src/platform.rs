@@ -563,6 +563,8 @@ fn channel_update(install:&Path,fetch:&dyn Fn(&str,&Path)->Result<(),String>)->R
         let latest:serde_json::Value=serde_json::from_slice(&fs::read(&probe).map_err(|e|e.to_string())?).map_err(|e|format!("latest.json: {e}"))?;
         let _=fs::remove_file(&probe);
         let ver=latest["version"].as_str().ok_or("latest.json: no version")?.to_string();
+        // § 8 item 1 (#2234): each OS joins the release when built; this OS waits for its file.
+        if latest["files"][coreq::update::target()].is_null() {return Ok(None);}
         let name=format!("taskq-{ver}-{}{}",coreq::update::target(),std::env::consts::EXE_SUFFIX);
         if ver.is_empty()||ver.contains("..")||!ver.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'.'||c==b'-')||latest["files"][coreq::update::target()]!=name.as_str() {
             return Err(format!("latest.json: unexpected version {ver:?} or file"));
@@ -1415,11 +1417,13 @@ mod tests {
         for v in [dev.as_str(),release] {fs::create_dir_all(t.release_exe(v).parent().unwrap()).unwrap();fs::write(t.release_exe(v),image(v)).unwrap();}
         write_atomic(&install.join("current"),&dev).unwrap();
         let latest=std::cell::RefCell::new(release.to_string());
+        let own=std::cell::Cell::new(true);
         let fetch=|name:&str,to:&Path| -> Result<(),String> {
             if name!="latest.json" {return Err("no network in tests".into());}
             let v=latest.borrow().clone();
             let file=format!("taskq-{v}-{}{}",coreq::update::target(),std::env::consts::EXE_SUFFIX);
-            fs::write(to,serde_json::json!({"version":v,"files":{coreq::update::target():file}}).to_string()).map_err(|e|e.to_string())
+            let target=if own.get() {coreq::update::target()} else {"other-os".into()};
+            fs::write(to,serde_json::json!({"version":v,"files":{target:file}}).to_string()).map_err(|e|e.to_string())
         };
         // dev: neither a newer nor an older release replaces the running version
         fs::write(install.join("host.json"),r#"{"channel":"dev"}"#).unwrap();
@@ -1436,6 +1440,11 @@ mod tests {
         // missing channel = live: the latest release replaces the higher -dev build at the next check
         fs::remove_file(install.join("host.json")).unwrap();
         assert_eq!(channel(&install).unwrap(),"live");
+        // #2234: a release whose file for this OS is not published yet waits without an error
+        own.set(false);
+        assert_eq!(channel_update(&install,&fetch).unwrap(),None);
+        assert_eq!(t.current().unwrap(),dev);
+        own.set(true);
         assert_eq!(channel_update(&install,&fetch).unwrap().as_deref(),Some(release));
         assert_eq!((t.current().unwrap(),fs::read_to_string(install.join("previous")).unwrap()),(release.to_string(),dev.clone()));
         assert_eq!(fs::read(install.join(t.exe_name())).unwrap(),image(release));

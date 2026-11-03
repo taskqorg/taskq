@@ -6334,7 +6334,7 @@ mod tests {
         schema_errors(&schema, &bad, "$", &mut errors);
         assert_eq!(errors, ["$.tasks[0].verdict: missing checks", "$.tasks[0].verdict: missing open"]);
         // A3: each release publishes both files, covered by SHA256SUMS
-        let release = include_str!("../.github/workflows/release.yml");
+        let release = include_str!("../.github/workflows/release-build.yml");
         for (file, asset) in [("status-snapshot.json", "status-snapshot-fixtures.json"), ("status-snapshot.schema.json", "status-snapshot-schema.json")] {
             assert!(release.contains(&format!("cp tests/fixtures/{file} \"dist/taskq-$VER-{asset}\"")), "release misses {file}");
         }
