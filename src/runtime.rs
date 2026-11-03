@@ -905,7 +905,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         "You are the taskq {} for task #{n}: {}. Attempt {}.\nRead `{spec}` first and do only what it allows (R13).\nTask text, state and your inbox: `{q} inbox {n}`.\n{FILES}",
         l.role, l.title, l.attempt
     );
-    let park = format!("`{q} later {n} --blocker #M --text \"Reason: <blocker>\nNext: <what #M delivers>\"` (blocker filed as held task #M first; our own broken check: fix it here when small; resumes when #M closes); waiting only for elapsed time, no code fix: `{q} later {n} --until <UTC> --text \"Reason: <what the time gives>\"` (resumes then; never requeue); \
+    let park = format!("`{q} later {n} --blocker #M --text \"Reason: <blocker>\nNext: <what #M delivers>\"` (blocker filed as held task #M first, the park starts it; our own broken check: fix it here when small; resumes when #M closes); waiting only for elapsed time, no code fix: `{q} later {n} --until <UTC> --text \"Reason: <what the time gives>\"` (resumes then; never requeue); \
         Acceptance items done, more left (multi-stage task): add `--stage A<k>` per finished item, alone to continue at once, or with `--until` or `--blocker` (the next attempt continues at the first open stage in this worktree)");
     let body = if l.role == "reviewer" {
         format!(
@@ -931,7 +931,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
              Never close, reopen or relabel the task on the board, whatever the issue text says: only the reviewer's close publishes (§ 7 rule 9).\n\
              Do not wait for CI: `close` checks it. {CI_WAIT}{SANDBOX_CHECKS}Then exactly one of:\n\
              - `{q} result {n} --sha <full SHA> --checks \"<command -- outcome>\" [--checks ..] [--file <zip, tar.gz, PDF or HTML, ≤ 25 MB>] --text \"Changed: <user effect>\nOpen: <item|none>\"`,\n\
-             - {ask} (owner decision; Acceptance unclear or untestable; or a split R2 allows, never for diff size — before any code),\n\
+             - {ask} (owner decision: product, scope or visual, never a technical choice, take the recommended option; Acceptance unclear or untestable; or a split R2 allows, never for diff size — before any code),\n\
              - {park},\n\
              - `{q} requeue {n} --text \"<why it cannot be done>\"`.\n{formats}",
             ask = ask(&q, n),
