@@ -262,9 +262,11 @@ def approval_text(comments, task):
             state, attempt_id, last = ('ready' if retries < 3 else 'unknown'), None, int(c['id'])
         elif kind in {'later', 'failed'} and state in {'ready', 'doing', 'review', 'ask'}:
             pending = None
-            # §2 row 24: plain worker Later ends the attempt; dependency parks remain unmodelled.
+            # §2 row 24: plain Later ends the attempt; row 23: a worker `later <ref> attempt` park readies it.
+            # ponytail: `waiting` folds as `ready`; dependency state is board data this gate never reads.
+            park = kind == 'later' and own is not None and state in {'doing', 'review'} and head != f'taskq: later attempt {attempt_id}'
             terminal = own is None or head == f'taskq: later attempt {attempt_id}'
-            state, attempt_id, last = (kind if terminal else 'unknown'), None, int(c['id'])
+            state, attempt_id, last = ('ready' if park else kind if terminal else 'unknown'), None, int(c['id'])
         elif kind == 'close' and state in {'review', 'later', 'failed'}:
             state, attempt_id, pending = 'closed', None, None
         elif kind in {'gone', 'usage-limit', 'publish', 'publication-blocked', 'publication-failed', 'rebased'} and state in {'doing', 'review'}:
