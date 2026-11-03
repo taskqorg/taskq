@@ -222,6 +222,8 @@ pub struct Row {
     pub updated: Option<i64>,
     /// An unresolved external execution blocks the next submission even after a task state change.
     pub execution_wait: Option<String>,
+    /// #2257: host step that releases the worker execution blocking a missing reviewer (R6 stuck row).
+    pub missing_reviewer: Option<String>,
     pub executions: Vec<Value>,
     /// The runtime accepted input of the current attempt (`accepted` entry): a codex id `-` then reads running, not starting.
     pub accepted: bool,
@@ -375,6 +377,11 @@ pub fn wait_text(raw: &str) -> &'static str {
         else if has(&["unknown", "stale", "missing", "unavailable", "deferred"]) { 5 } else { 4 }]
 }
 
+/// A `review` result with no reviewer attempt and no pending publication: no reviewer spawned yet (§ 2 row 13).
+fn handover(t: &Task) -> bool {
+    t.state == State::Review && t.result.is_some() && t.attempt.is_none() && t.publication.is_none()
+}
+
 /// R6: no movement for this long marks a task stuck.
 pub const STUCK_AFTER: i64 = 2 * 3600;
 
@@ -474,6 +481,9 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
     let tasks = open.into_iter().map(|v| {
         let recovery=input_recovery(v);
         let last=v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created);
+        // #2257: a result whose worker execution stays unreleased past ttl gets no reviewer (§ 3 Recovery); name the host step
+        let missing_reviewer=handover(&v.projection.task).then(|| v.projection.executions.iter().find(|x| x.release.is_none())).flatten()
+            .filter(|_| observed-last >= cfg.ttl).map(|x| service::release_step(&x.host,&cfg.me));
         let executions:Vec<_>=v.projection.executions.iter().filter(|x|x.release.is_none() || recovery.is_some_and(|r|r.id==x.id))
             .map(|x| {
                 let mut value=execution_status(v.issue.number,x,hosts,observed,cfg.ttl);
@@ -514,6 +524,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
             .map(|x|format!("execution {} on {}: {}: {}",x["id"],x["host"].as_str().unwrap_or("?"),
                 x["state"].as_str().unwrap_or("unknown"),x["reason"].as_str().unwrap_or("observation unavailable"))),
         executions,
+        missing_reviewer: missing_reviewer.clone(),
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
         admission: if v.projection.task.state==State::Ready && v.projection.reroute.is_some() {
@@ -527,7 +538,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
-        stuck: recovery.map(|_|observed-last).or_else(||stuck(v.issue.number, &v.projection.task, &v.blockers,last,hosts, observed, cfg.ttl)),
+        stuck: recovery.map(|_|observed-last).or(missing_reviewer.as_ref().map(|_|observed-last)).or_else(||stuck(v.issue.number, &v.projection.task, &v.blockers,last,hosts, observed, cfg.ttl)),
         churn: churn(&v.comments, observed),
         verdict: v.projection.task.result.as_ref().and_then(|_| v.projection.changes.iter().rev()
             .find_map(|(id, _, _)| v.log.iter().find(|e| e.id == *id && e.body.starts_with("taskq: result "))))
@@ -664,7 +675,11 @@ impl Row {
         if let Some(p) = &self.publication {
             return Some(format!("{} {} · {}", PUBLICATION_WAIT, p.age_s.map_or("?".into(), crate::display::age), compact(&p.reason, 200)));
         }
-        if let Some(reason) = &self.execution_wait { return Some(wait_text(reason).into()); }
+        if let Some(reason) = &self.execution_wait {
+            // #2257: the worker-to-reviewer handover has no live agent to accept input
+            let text = wait_text(reason);
+            return Some(if text == WAIT_TEXTS[2] && handover(&self.task) { WAIT_TEXTS[4] } else { text }.into());
+        }
         let a = self.admission.as_ref()?;
         match (a.code, &a.host) {
             ("capacity", _) => Some(format!("{} · {}", WAIT_TEXTS[0], a.reason)),
@@ -702,6 +717,7 @@ impl Row {
         if let Some((k, reason)) = &self.task.pick { row["pick"] = json!({"id": k, "reason": reason}); }
         if !self.executions.is_empty() { row["executions"]=json!(self.executions); }
         if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); }
+        if let Some(step) = &self.missing_reviewer { row["missing_reviewer"] = json!(step); }
         if let Some(w) = self.wait() { row["wait"] = json!(w); }
         if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
         row["since"] = json!(self.since);
@@ -971,7 +987,9 @@ impl Snapshot {
             out.push("Failed:\n| Task | Reason |\n|---|---|".into());
             out.extend(failed);
         }
-        let stuck: Vec<String> = self.tasks.iter().filter(|r|r.health_warning().is_none()).filter_map(|r| r.stuck_age().map(|a| format!("{} ({}, {})", link(r), r.task.state.name(), age(a)))).collect();
+        let stuck: Vec<String> = self.tasks.iter().filter(|r|r.health_warning().is_none()).filter_map(|r| r.stuck_age().map(|a| format!("{} ({}, {}{})", link(r), r.task.state.name(), age(a),
+                // #2257: the next action for a result no reviewer can take yet
+                r.missing_reviewer.as_ref().map_or(String::new(), |step| format!("; reviewer not started: {step}"))))).collect();
         if !stuck.is_empty() {
             out.push(String::new());
             out.push(format!("Stuck: {}", stuck.join(", ")));
@@ -1082,7 +1100,7 @@ mod tests {
     #[test]
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
-        let mut r = Row { heartbeat: Value::Null, worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
+        let mut r = Row { heartbeat: Value::Null, worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
             executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
@@ -1106,7 +1124,7 @@ mod tests {
     fn codex_thread_links_only_on_its_host_else_dashq_progress() {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
-        let row = |host: &str| Row { heartbeat: Value::Null, worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
+        let row = |host: &str| Row { heartbeat: Value::Null, worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
             executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
@@ -1154,7 +1172,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { heartbeat: Value::Null, worker: None, conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");
@@ -1316,6 +1334,12 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         assert!(text.contains("| doing · Run state unknown; see service log |") && !text.contains("termination") && !text.contains("execution 3"), "{text}");
         let j = &snap.json()["tasks"][0];
         assert_eq!((j["wait"].as_str(), j["execution_wait"].as_str()), (Some(WAIT_TEXTS[5]), Some(raw)));
+        // #2257: a result with no reviewer has no live agent, so an input-class diagnostic reads as the handover
+        let handover = Task { state: State::Review, result: Some("abc".into()), ..Default::default() };
+        let row = Row { task: handover.clone(), execution_wait: Some(cases[4].0.into()), ..Default::default() };
+        assert_eq!(row.wait().as_deref(), Some(WAIT_TEXTS[4]));
+        let row = Row { task: Task { attempt: Some(9), ..handover }, execution_wait: Some(cases[4].0.into()), ..Default::default() };
+        assert_eq!(row.wait().as_deref(), Some(WAIT_TEXTS[2]), "a live reviewer keeps the input wait");
     }
 
     // #2159 A4/R1: last accepted worker survives terminal state projection, without becoming current authority.

@@ -522,6 +522,11 @@ pub fn views_asked(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCa
 }
 
 /// Release only a known submission, with idempotent write and authoritative readback.
+/// #1886: the host step that can release an unresolved execution on `host`, seen from host `me`.
+pub(crate) fn release_step(host: &str, me: &str) -> String {
+    if host == me { format!("reboot {me} to prove exit") } else { format!("start the taskq service on {host} once, after a reboot if the run had started") }
+}
+
 fn release_execution(board: &dyn Board, task: u64, attempt: u64, execution: u64, proof: &str) -> Result<(), String> {
     release_execution_text(board, task, attempt, execution, proof, "")
 }
@@ -2163,7 +2168,7 @@ impl<'a> Service<'a> {
                 .filter(|x| x.release.is_none() && !released.contains(&x.id) && !remote_running(x)).collect();
             if let Some(x) = unresolved.first().filter(|x| !self.held.iter().any(|l| l.execution.unwrap_or(l.attempt) == x.id)) {
                 // #1886: name the host step that can resolve it
-                let step = if x.host == me { format!("reboot {me} to prove exit") } else { format!("start the taskq service on {} once, after a reboot if the run had started", x.host) };
+                let step = release_step(&x.host, &me);
                 self.execution_waits.entry(v.issue.number).or_insert_with(|| format!("execution {} on {}: termination unconfirmed; {step}", x.id, x.host));
             } else if let Some(x) = crate::snapshot::input_recovery(v) {
                 self.execution_waits.insert(v.issue.number, format!("execution {} on {}: agent exited; {}", x.id, x.host,crate::runtime::acceptance_action(&x.runtime)));
@@ -9133,5 +9138,51 @@ Open: none";
         drop(_guard);
         drop(_capture);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Chain: #2257 replays #2239: win spawns the worker, it is accepted and hands in a result, then win hangs (#2254) with
+    // the worker execution unreleased; the PM requeues. Risk: mac shows 'Waiting for the agent to accept input' with no live
+    // agent and no next step, or no eligible host picks the task once win restarts and releases the execution.
+    #[test]
+    fn result_without_reviewer_names_the_release_step_and_any_host_takes_it_after_release() {
+        for requeue in [false, true] {
+            let b = Fake::default();
+            let n = b.create("T", "", &["taskq".into()]).unwrap();
+            let (win, mac) = (cfg("win"), cfg("mac"));
+            let mut owner = service(&b, &win, Default::default());
+            let mut other = service(&b, &mac, Default::default());
+            owner.pass().unwrap();
+            let a = task(&b, n).attempt.unwrap();
+            assert!(entries(&b, n).unwrap().iter().any(|e| e.body.starts_with(&format!("taskq: accepted {a}"))), "accepted");
+            b.comment(n, &core::entry("result", &["356b3e3f016c96ff237ca11071c611d9fd7222cd"], Some(a), "Changed: x\nChecks: y\nOpen: none")).unwrap();
+            drop(owner); // win hangs: no further pass releases the worker execution
+            let row = |s: &Service| s.snapshot.as_ref().unwrap().json()["tasks"].as_array().unwrap().iter().find(|r| r["n"] == n).cloned().unwrap();
+            other.pass().unwrap();
+            let r = row(&other);
+            assert_eq!((r["wait"].as_str(), r["stuck"].as_bool()), (Some(crate::snapshot::WAIT_TEXTS[4]), Some(false)), "handover within ttl: {r}");
+            b.advance(mac.ttl);
+            other.pass().unwrap();
+            let r = row(&other);
+            let step = "start the taskq service on win once, after a reboot if the run had started";
+            assert_eq!(r["wait"].as_str(), Some(crate::snapshot::WAIT_TEXTS[4]), "{r}");
+            assert_eq!((r["stuck"].as_bool(), r["missing_reviewer"].as_str()), (Some(true), Some(step)), "{r}");
+            let text = other.snapshot.as_ref().unwrap().text(&mac, &Value::Null).unwrap();
+            assert!(text.lines().any(|l| l.starts_with("Stuck: ") && l.contains(&format!("(review, 5m; reviewer not started: {step})"))), "{text}");
+            assert!(!text.contains(crate::snapshot::WAIT_TEXTS[2]), "{text}");
+            assert!(!entries(&b, n).unwrap().iter().any(|e| e.body.starts_with("taskq: spawn reviewer")), "§ 3: reviewer needs the worker execution released");
+            if requeue {
+                b.comment(n, &core::entry("requeue", &[], None, "Review stalled after the win re-exec hang")).unwrap();
+                other.pass().unwrap();
+                assert_eq!((task(&b, n).state, task(&b, n).attempt), (State::Ready, None), "fenced until release");
+            }
+            release_execution(&b, n, a, a, "exit").unwrap(); // win restarted and proved exit
+            other.pass().unwrap();
+            let t = task(&b, n);
+            let spawn = entries(&b, n).unwrap().into_iter().rev().find(|e| e.body.starts_with("taskq: spawn")).unwrap();
+            let want = if requeue { "taskq: spawn worker claude:" } else { "taskq: spawn reviewer claude:" };
+            assert!(spawn.body.starts_with(want) && spawn.body.lines().next().unwrap().ends_with(" mac"), "requeue={requeue}: {}", spawn.body);
+            assert_eq!((t.state, t.attempt), (if requeue { State::Doing } else { State::Review }, Some(spawn.id)), "one pass after release");
+            assert!(row(&other).get("missing_reviewer").is_none());
+        }
     }
 }
