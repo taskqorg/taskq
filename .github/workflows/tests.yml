@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: taskqorg/specq
-          ref: 39e6024037fb69e68a84180c04fb7ac53eddb9f9
+          ref: 269a999c4e7c54781260a70305cff5f7cecdf572
           path: .specq
       - run: python3 scripts/check.py --lint
   rust:
