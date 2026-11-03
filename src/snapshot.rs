@@ -1206,12 +1206,12 @@ fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String, Option<S
     let link = match rt {
         _ if id == "-" && r.accepted => format!("{host}: running"),
         _ if id == "-" => format!("{host}: starting"),
-        _ if runtime::of(rt).remote => match url { Some(url) => format!("[{host}]({url})"), None => return (rt.to_string(), host.clone(), Some(host)) },
+        _ if runtime::of(rt).has("remote-control") => match url { Some(url) => format!("[{host}]({url})"), None => return (rt.to_string(), host.clone(), Some(host)) },
         // R6 3: a Codex thread opens only on its own host; elsewhere the DashQ progress page, else the host alone
         _ if !own => crate::enrollment::progress_page(&cfg.install, &cfg.repo).map_or_else(|| host.clone(), |p| format!("[{host}]({p}{n})")),
         _ => match url {
             None => host.clone(),
-            Some(url) if std::env::var("TASKQ_CLIENT").is_ok_and(|c| runtime::of(&c).codex && runtime::of(&c).child) => format!("[{host}]({url})"),
+            Some(url) if std::env::var("TASKQ_CLIENT").is_ok_and(|c| runtime::of(&c).has("thread-link") && runtime::of(&c).has("cli")) => format!("[{host}]({url})"),
             Some(url) => match raw["pages"].as_str() {
                 Some(p) => format!("[{host}]({}/open.html#{url})", p.trim_end_matches('/')),
                 None => format!("{host}: `{url}`"),

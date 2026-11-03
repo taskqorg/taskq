@@ -22,7 +22,7 @@ fn models_at(path:&Path)->Res<Value> {
     Ok(Value::Array(rows.iter().filter(|m|m["visibility"]=="list").map(|m|json!({"id":m["slug"],"name":m["display_name"],"efforts":m["supported_reasoning_levels"],"default_effort":m["default_reasoning_level"]})).collect()))
 }
 pub fn catalog(runtime:&str)->Value {
-    let result=if super::of(runtime).codex {super::codex_home().ok_or("Codex home unknown".into()).and_then(|home|models_at(&home.join("models_cache.json")))}
+    let result=if super::of(runtime).has("model-catalog") {super::codex_home().ok_or("Codex home unknown".into()).and_then(|home|models_at(&home.join("models_cache.json")))}
         else {return native_catalog(runtime)};
     match result {Ok(models)=>json!({"models":models,"reason":null}),Err(reason)=>json!({"models":[],"reason":reason})}
 }
@@ -42,9 +42,9 @@ fn native_catalog(runtime:&str)->Value {
 fn read_native_catalog(runtime:&str)->Res<Value> {
     let adapter=super::of(runtime);let bin=super::which(adapter.bin);
     if !bin.is_absolute(){return Err("Native CLI unavailable; model support unknown".into());}
-    let (ok,text)=super::probe("runtime.models",&bin,if adapter.remote {&["--help"]}else{&["models"]}).ok_or("Native model catalog read timed out")?;
+    let (ok,text)=super::probe("runtime.models",&bin,if adapter.has("remote-control") {&["--help"]}else{&["models"]}).ok_or("Native model catalog read timed out")?;
     if !ok {return Err("Native model catalog refused; inspect the installed client".into());}
-    native_models(adapter.remote,&text)
+    native_models(adapter.has("remote-control"),&text)
 }
 fn native_models(aliases:bool,text:&str)->Res<Value> {
     let models=if aliases {
@@ -63,7 +63,7 @@ impl Choice {
     pub fn validate(&self,runtime:&str)->Res<()> {
         if !["","restricted","workspace","full","legacy"].contains(&self.grant_mode.as_str())||!["","inherit","workspace","full"].contains(&self.permission.as_str()) {return Err("Unsupported permission request; draft kept".into());}
         if self.model.is_empty() {return if self.effort.is_empty(){Ok(())}else{Err("Choose a supported model before effort".into())};}
-        let catalog=if super::of(runtime).codex {catalog(runtime)}else{read_native_catalog(runtime)?};
+        let catalog=if super::of(runtime).has("model-catalog") {catalog(runtime)}else{read_native_catalog(runtime)?};
         if let Some(reason)=catalog["reason"].as_str(){return Err(reason.into());}
         let model=catalog["models"].as_array().and_then(|rows|rows.iter().find(|m|m["id"]==self.model)).ok_or_else(||catalog["reason"].as_str().unwrap_or("Selected model unavailable in the installed catalog; no fallback").to_string())?;
         if !model["efforts"].as_array().is_some_and(|rows|rows.iter().any(|e|e["effort"]==self.effort)) {return Err("Selected effort unsupported for this model; no fallback".into());}Ok(())
@@ -97,7 +97,7 @@ impl Choice {
 }
 
 fn worker_defaults(runtime:&str,args:&[String])->String {
-    if !super::of(runtime).codex {return "Native model and effort".into();}
+    if !super::of(runtime).has("model-catalog") {return "Native model and effort".into();}
     let(mut model,mut effort)=("Native model".to_string(),"Native effort".to_string());let mut it=args.iter();
     while let Some(arg)=it.next() {match arg.as_str(){"-m"|"--model"=>{if let Some(value)=it.next(){model=value.clone();}},"-c"|"--config"=>{if let Some(value)=it.next().and_then(|v|v.strip_prefix("model_reasoning_effort=")){effort=value.into();}},value if value.starts_with("--model=")=>model=value[8..].into(),value if value.starts_with("--config=model_reasoning_effort=")=>effort=value[32..].into(),_=>{}}}
     let effort=if effort=="low" {"Light (low)"}else{&effort};format!("{model} · {effort}")
@@ -111,7 +111,7 @@ pub fn view(install:&Path,root:&Path,runtime:&str)->Value {
         let policy=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
         let grants=crate::policy::load(install)?;
         let home=std::env::var_os("HOME").or_else(||std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("Host home unknown")?;
-        let target=if super::of(runtime).codex{super::of(runtime).setup}else{runtime};
+        let target=if super::of(runtime).has("model-catalog"){super::of(runtime).setup}else{runtime};
         let effective=crate::policy::resolve(&Ok(grants.clone()),&crate::policy::Host::here(install,root,&home),target,&policy.permission_mode,&policy.codex);
         let worker=worker_defaults(runtime,&policy.codex);
         let requests=["inherit","workspace","full"].into_iter().map(|permission|{

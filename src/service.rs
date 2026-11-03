@@ -1091,7 +1091,7 @@ impl<'a> Service<'a> {
                     let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
                     let exit_reason = k.proc.exit_error().map_or_else(|| format!("exit-{code}"), String::from);
                     crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, k.proc.id(), if code == 0 { "ok" } else { "failed" }, &exit_reason);
-                    retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
+                    retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli")));
                     false
                 },
                 Err(e)=>{k.unknown=Some(e);true}
@@ -1469,7 +1469,7 @@ impl<'a> Service<'a> {
     fn last_message(&self, n: u64, a: u64, t: &Task) -> String {
         const LABEL: &str = "Last message: ";
         let log = crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a);
-        let line = crate::runtime::last_message(&log).map(|m| crate::runtime::public_line(&m, &self.cfg.root, 240 - LABEL.len()));
+        let line = crate::runtime::last_message(&log, rt_of(t).map_or("", |(rt, _)| rt)).map(|m| crate::runtime::public_line(&m, &self.cfg.root, 240 - LABEL.len()));
         line.filter(|m| !m.is_empty()).map_or_else(String::new, |m| format!("\n{LABEL}{m}"))
     }
 
@@ -1504,7 +1504,7 @@ impl<'a> Service<'a> {
         let local = host_of(t) == Some(self.cfg.me.as_str());
         let hold = hold.or_else(|| local.then(|| {
             let log = crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a);
-            crate::runtime::usage_limit(&log).map(|reset| reset.filter(|r| *r > now).map_or((now + USAGE_PROBE, false), |r| (r, true)))
+            crate::runtime::usage_limit(&log, rt_of(t).map_or("", |(rt, _)| rt)).map(|reset| reset.filter(|r| *r > now).map_or((now + USAGE_PROBE, false), |r| (r, true)))
         }).flatten());
         if let (Some(hold), Some((rt, _))) = (hold, rt_of(t)) {
             let (at, reported) = hold;
@@ -1515,15 +1515,15 @@ impl<'a> Service<'a> {
             let reason = format!("Usage limit: {rt} {} {}{next}", if reported { "until" } else { "probe" }, crate::board::stamp(at));
             self.gone(n, t, a, &["usage-limit"], &reason)
         } else if local && matches!(t.state,State::Doing|State::Review) && rt_of(t).is_some_and(|(rt,_)| crate::runtime::CLI_RUNTIMES.contains(&rt))
-            && !crate::runtime::quota_windows(&crate::runtime::attempt_log(&self.cfg.root,t.role.as_deref().unwrap_or_default(),n,a)).is_empty() {
+            && !crate::runtime::quota_windows(&crate::runtime::attempt_log(&self.cfg.root,t.role.as_deref().unwrap_or_default(),n,a),rt_of(t).unwrap().0).is_empty() {
             let rt = rt_of(t).unwrap().0;
             self.account_limit(n,t,a,rt,(now+USAGE_PROBE,false),now);
             self.post(n,core::entry("steer",&["quota"],Some(a),"Continue this same task and native session after the original account quota hold; preserve completed work."))
-        } else if let Some((bin, reason)) = local.then(|| rt_of(t).map(|(rt, _)| crate::runtime::of(rt)).filter(|r| r.codex)
-            .and_then(|r| crate::runtime::auth_rejected(&crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a)).map(|e| (r.bin, e)))).flatten() {
+        } else if let Some((bin, reason)) = local.then(|| rt_of(t).map(|(rt, _)| (rt, crate::runtime::of(rt))).filter(|(_, r)| r.has("sandbox-args"))
+            .and_then(|(rt, r)| crate::runtime::auth_rejected(&crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a), rt).map(|e| (r.bin, e)))).flatten() {
             // #1446: a rejected login holds Codex here at once and releases the attempt like a usage limit, retries kept
             if let Err(e) = crate::runtime::mark_login_off(&self.cfg.install, bin, &reason) { eprintln!("login-off not saved: {e}"); }
-            self.logged_out.extend(crate::runtime::agent_runtimes().iter().filter(|r| crate::runtime::of(r).codex).map(|r| r.to_string()));
+            self.logged_out.extend(crate::runtime::agent_runtimes().iter().filter(|r| crate::runtime::of(r).has("sandbox-args")).map(|r| r.to_string()));
             self.gone(n, t, a, &["usage-limit"], &format!("Login off: {bin} {reason}; {}", crate::runtime::relogin(bin)))
         } else if let Some(steer) = local.then(|| self.continuation(n, t, a)).flatten() {
             self.post(n, steer)
@@ -1538,9 +1538,9 @@ impl<'a> Service<'a> {
         if t.state != State::Doing || t.role.as_deref() != Some("worker") { return None; }
         let log = crate::runtime::attempt_log(&self.cfg.root, "worker", n, a);
         // #2198: a Claude Code transcript (the `remote` adapter) shows the background jobs its last turn left running.
-        if rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).remote) { return self.background_continuation(n, a, &log); }
-        if !rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).codex) { return None; }
-        let failure = crate::runtime::transient_failure(&log)?;
+        if rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).has("remote-control")) { return self.background_continuation(n, a, &log); }
+        if !rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).has("thread-link")) { return None; }
+        let failure = crate::runtime::transient_failure(&log, rt_of(t)?.0)?;
         crate::runtime::codex_thread(&log)?;
         let head = core::entry("steer", &[], Some(a), "");
         let prior = crate::board::entries(self.board, n).ok()?.iter().filter(|e| !e.edited && e.body.lines().next() == Some(head.as_str())).count();
@@ -1701,7 +1701,7 @@ impl<'a> Service<'a> {
         let label = crate::runtime::accounts::of_log(&log);
         let (end, reported) = hold;
         let seen = if reported { now } else { end - USAGE_PROBE };
-        let mut windows = crate::runtime::quota_windows(&log);
+        let mut windows = crate::runtime::quota_windows(&log, rt);
         if windows.is_empty() { windows.push(("unknown".into(),reported.then_some(end))); }
         if let Err(e) = crate::runtime::accounts::record_windows(&self.cfg.install, rt, &label, seen, &windows) {
             self.log.push(format!("account {rt} {label} limit not saved: {e}"));
@@ -1985,7 +1985,7 @@ impl<'a> Service<'a> {
             let task = v.issue.number;
             let unresolved: Vec<_> = v.projection.executions.iter().filter(|x| x.release.is_none()).collect();
             if self.kids.iter().any(|k| k.task == task) || self.held.iter().any(|l| l.task == task) { continue; }
-            let Some(x) = unresolved.iter().find(|x| x.host == me && { let a = crate::runtime::of(&x.runtime); a.remote || a.app }) else { continue };
+            let Some(x) = unresolved.iter().find(|x| x.host == me && { let a = crate::runtime::of(&x.runtime); a.has("remote-control") || a.has("app-turn") }) else { continue };
             if unresolved.len() != 1 {
                 self.execution_waits.insert(task, "multiple unresolved executions; verify native ownership before recovery".into());
                 continue;
@@ -2038,7 +2038,7 @@ impl<'a> Service<'a> {
         }
         let quota:Vec<_> = self.kids.iter().filter_map(|k| {
             let log=crate::runtime::attempt_log(&self.cfg.root,by_n.get(&k.task)?.projection.task.role.as_deref().unwrap_or_default(),k.task,k.attempt);
-            let windows=crate::runtime::quota_windows(&log);
+            let windows=crate::runtime::quota_windows(&log,&k.rt);
             (!windows.is_empty()).then(||(k.rt.clone(),crate::runtime::accounts::of_log(&log),windows))
         }).collect();
         for (rt,label,windows) in quota {
@@ -2076,7 +2076,7 @@ impl<'a> Service<'a> {
             (("ended", _), Ok(Some(code))) => {
                 let hold = by_n.get(&k.task).and_then(|v| {
                     let log = crate::runtime::attempt_log(&self.cfg.root, v.projection.task.role.as_deref().unwrap_or_default(), k.task, k.attempt);
-                    crate::runtime::usage_limit(&log)
+                    crate::runtime::usage_limit(&log, &k.rt)
                 }).map(|reset| reset.filter(|r| *r > now).map_or((now + USAGE_PROBE, false), |r| (r, true)));
                 // #2272: a lost resumed input names its cause in the release and in the `gone` that requeues the task
                 let lost = k.proc.lost_input();
@@ -2084,7 +2084,7 @@ impl<'a> Service<'a> {
                 let no_start=match k.release(self.board,code,&evidence) {Ok(no_start)=>no_start,Err(e)=>{k.unknown=Some(e);return true;}};
                 let exit_reason = k.proc.exit_error().map_or_else(|| format!("exit-{code}"), String::from);
                 crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, k.proc.id(), if code == 0 { "ok" } else { "failed" }, &exit_reason);
-                retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
+                retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli")));
                 released.insert(k.execution);
                 // This pass's view predates release; it cannot authorize a continuation before acceptance is resolved.
                 if by_n.get(&k.task).is_some_and(|v|v.projection.task.attempt==Some(k.attempt))
@@ -2101,7 +2101,7 @@ impl<'a> Service<'a> {
             self.ended(n, a, by_n.get(&n).copied(), failure);
             if code == 0 && let Some(v) = by_n.get(&n) && let Some((rt,_)) = rt_of(&v.projection.task) {
                 let log = crate::runtime::attempt_log(&self.cfg.root,v.projection.task.role.as_deref().unwrap_or_default(),n,a);
-                if crate::runtime::quota_windows(&log).is_empty() && let Err(e) = crate::runtime::accounts::confirm_probe(&self.cfg.install,rt,&crate::runtime::accounts::of_log(&log),&log) {
+                if crate::runtime::quota_windows(&log,rt).is_empty() && let Err(e) = crate::runtime::accounts::confirm_probe(&self.cfg.install,rt,&crate::runtime::accounts::of_log(&log),&log) {
                     self.log.push(format!("account {rt} recovery unknown: {e}"));
                 }
             }
@@ -2152,7 +2152,7 @@ impl<'a> Service<'a> {
                     k.proc.released();
                     match crate::runtime::observe_until(native_until,||k.proc.exited()) {
                         Ok(Some(_))=>{
-                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
+                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli")));
                             released.insert(k.execution);stopped.push((k.task,k.attempt));
                             return false;
                         }
@@ -2172,7 +2172,7 @@ impl<'a> Service<'a> {
                     ("ended",_) => match k.release(self.board,stop.unwrap(),"") {
                         Ok(_)=>{
                             crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, pid_before, "ok", kill_reason);
-                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
+                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli")));
                             released.insert(k.execution);stopped.push((k.task,k.attempt));
                         },
                         Err(e)=>{k.unknown=Some(e);return true;}
@@ -2189,7 +2189,7 @@ impl<'a> Service<'a> {
         self.held.retain(|l| by_n.get(&l.task).is_some_and(|v| v.projection.task.attempt == Some(l.attempt)));
         // A Claude Remote Control URL belongs to this exact live execution.
         // shortcut: bounded transcript scans restart until a URL appears; retain a cursor if costly.
-        for k in self.kids.iter_mut().filter(|k| std::time::Instant::now()<native_until && crate::runtime::of(&k.rt).remote && k.session_url.is_none()) {
+        for k in self.kids.iter_mut().filter(|k| std::time::Instant::now()<native_until && crate::runtime::of(&k.rt).has("remote-control") && k.session_url.is_none()) {
             k.session_url = by_n.get(&k.task).filter(|v| v.projection.task.attempt == Some(k.attempt))
                 .and_then(|v| crate::runtime::remote_session(v.projection.task.session.as_deref()?))
                 .and_then(|id| crate::runtime::observe_until(native_until,||crate::runtime::claude_remote(id)));
@@ -2508,7 +2508,7 @@ impl<'a> Service<'a> {
             let (rt, session) = rt_of(t).unwrap_or(("", ""));
             let mut session = session.to_string();
             let mut l = Launch { files: String::new(), execution: None, task: n, title: v.issue.title.clone(), attempt: a, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: session.clone(), url: self.board.url(n), resume: None };
-            if session == "-" || crate::runtime::of(rt).remote {
+            if session == "-" || crate::runtime::of(rt).has("remote-control") {
                 session = crate::runtime::native_session(rt, &crate::runtime::log_path(&self.cfg.root, &l)).unwrap_or_else(|| if session == "-" { String::new() } else { session });
             }
             let text: Vec<String> = new.iter().map(|c| core::delivery(n, &v.log, c.id)).collect();
@@ -2935,7 +2935,7 @@ impl<'a> Service<'a> {
     /// A `needs-gui` task gets only a runtime with effective Full access (§ 4 Filter): never a sandboxed one.
     fn admit_runtime(&self, rt: &str, gui: bool) -> Result<String, (&'static str, String)> {
         if self.cfg.allowed_runtimes.as_ref().is_some_and(|a|!a.iter().any(|r|r==rt)) {return Err(("capability",format!("{rt} excluded by project allowed_runtimes")));}
-        if crate::runtime::of(rt).app && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) {
+        if crate::runtime::of(rt).has("app-turn") && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) {
             return Err(("capability", format!("{rt} not in has")));
         }
         if let Some(r) = self.refused_access.get(rt) { return Err(("access", format!("{rt}: {r}"))); }
@@ -3213,7 +3213,7 @@ impl<'a> Service<'a> {
         let began = std::time::Instant::now();
         let started = (self.start)(&l).map(|proc| {
             self.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution, task: l.task, attempt: l.attempt, rt: l.rt.clone(), proc });
-            if crate::runtime::of(&l.rt).child {
+            if crate::runtime::of(&l.rt).has("cli") {
                 // A failed checkpoint retains the handle; polling retries persistence, never launch.
                 if let Err(e)=self.kids.last_mut().unwrap().proc.checkpoint(&self.cfg,&l,execution) { self.kids.last_mut().unwrap().unknown=Some(e); }
             }
@@ -3671,7 +3671,7 @@ Problem: pick one
                 use std::io::Write;
                 std::fs::OpenOptions::new().append(true).create(true).open(&log).unwrap().write_all(stream.as_bytes()).unwrap();
                 Ok(Box::new(crate::runtime::CliTurn {proc:Box::new(FakeProc(Rc::new(RefCell::new(Some(if case=="signal" {-1} else {1}))))),log,pos:start,start,
-                    stopping:false,accepted:false,read_error:None,session:None,native:None,recovery:None}))
+                    stopping:false,accepted:false,read_error:None,session:None,native:None,recovery:None, rt: "codex".into()}))
             }));
             s.pass().unwrap();if case=="reap" {s.reap_owned();} else {s.pass().unwrap();}
             let x=core::executions(n,&entries(&b,n).unwrap()).pop().unwrap();
@@ -5593,7 +5593,7 @@ Open: none")).unwrap();
             std::fs::write(&log,"").unwrap();
             let child=std::process::Command::new("sleep").arg("30").spawn().unwrap();
             let native=coreq::process::identity(child.id()).unwrap();
-            Ok(Box::new(crate::runtime::CliTurn {proc:Box::new(child),log,pos:0,start:0,stopping:false,accepted:false,read_error:None,session:None,native,recovery:None}))
+            Ok(Box::new(crate::runtime::CliTurn {proc:Box::new(child),log,pos:0,start:0,stopping:false,accepted:false,read_error:None,session:None,native,recovery:None, rt: "codex".into()}))
         }));
         s.focus=vec!["all".into()];
         s.pass().unwrap();
@@ -5648,7 +5648,7 @@ Open: none")).unwrap();
             let log = crate::runtime::log_path(&r, l);
             std::fs::create_dir_all(log.parent().unwrap()).unwrap();
             std::fs::write(&log, "{\"type\":\"thread.started\",\"thread_id\":\"t\"}\n").unwrap();
-            Ok(Box::new(crate::runtime::CliTurn { proc: Box::new(FakeProc(flag)), log, pos: 0, start: 0, stopping: false, accepted: false, read_error: None, session: None, native: None, recovery: None }) as Box<dyn Proc>)
+            Ok(Box::new(crate::runtime::CliTurn { proc: Box::new(FakeProc(flag)), log, pos: 0, start: 0, stopping: false, accepted: false, read_error: None, session: None, native: None, recovery: None, rt: "codex".into() }) as Box<dyn Proc>)
         }));
         s.focus = vec!["all".into()];
         s.pass().unwrap();
@@ -7168,7 +7168,7 @@ Open: none";
         s.focus = vec!["all".into()];
         s.pass().unwrap();
         let a = task(&b, n).attempt.unwrap();
-        std::fs::write(c.root.join(format!(".taskq/T{n}-{a}.log")), "{\"type\":\"thread.started\",\"thread_id\":\"native-session\"}\n").unwrap();
+        std::fs::write(c.root.join(format!(".taskq/T{n}-{a}.log")), "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"native-session\"}\n").unwrap();
         b.comment(n, &core::entry("ask", &[], Some(a), "Which?\n1. x\n2. y ★")).unwrap();
         *e.borrow()[0].1.borrow_mut() = Some(0);
         s.pass().unwrap();
