@@ -96,7 +96,7 @@ const USAGE: &str = "taskq agents
  taskq steer N --text T | taskq failed N --text T
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
- taskq status [--project P..] [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
+ taskq status [--project P..] [--only L,..] [--json] [--timing] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
  taskq deployed --version V --env E --range A..B [--host H] [--json]
@@ -161,7 +161,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear") || k=="hosts"&&a.pos==["doctor"] || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear" | "timing") || k=="hosts"&&a.pos==["doctor"] || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -3790,11 +3790,68 @@ fn cleanup_lines(b: &dyn Board, cfg: &Config, a: &Args) -> Vec<String> {
 
 /// R6 snapshot of one project: the board read, with ready rows the board alone leaves undecided taking this host's
 /// live admission from `status.json` (A3), and #1979 Decide from the collected reports (no board call).
+/// #2291: one comment read per open task dominates `status`; 8 board clients read them in parallel. Any failure
+/// leaves the task out of the cache, so the snapshot read fetches it as before.
+fn prefetch_comments(c: &Ctx) -> service::CommentCache {
+    let Ok(issues) = c.board.issues(None) else { return Default::default() };
+    let now = c.board.now().unwrap_or(0);
+    let todo: Vec<(u64, i64)> = issues.iter().filter(|i| i.trusted && !service::is_host(i) && (service::is_task(i) || service::is_held(i))).map(|i| (i.number, i.updated)).collect();
+    if todo.is_empty() { return Default::default(); }
+    let (cfg, schema) = (&c.cfg, c.raw["label_schema"].as_str());
+    std::thread::scope(|s| {
+        let handles: Vec<_> = todo.chunks(todo.len().div_ceil(8)).map(|part| s.spawn(move || {
+            let Ok(b) = cfg.board.open(&cfg.web_host, &cfg.repo, schema, &platform::tool(&cfg.install)) else { return vec![] };
+            part.iter().filter_map(|&(n, updated)| b.comments(n).ok().map(|cs| (n, (updated, now, cs)))).collect::<Vec<_>>()
+        })).collect();
+        handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+    })
+}
+
 fn status_snapshot(c: &Ctx, a: &Args) -> (snapshot::Snapshot, Value) {
-    let mut snap = snapshot::read(&*c.board, &c.cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
+    let only = a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>();
+    let mut snap = snapshot::read_cached(&*c.board, &c.cfg, &c.raw, &only, prefetch_comments(c));
     let local = dot(&c.cfg.root).join("status.json");
     if let Some(s) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, c.cfg.ttl)) { snap.overlay_admission(&s); }
     (snap, reports::decide(&reports::cached(&c.cfg.root), reports::now()))
+}
+
+/// One project's text report and the hosts it saw; `t` gets each section's wall time (#2291 `--timing`).
+fn status_text(c: &Ctx, a: &Args, read: Option<(snapshot::Snapshot, Value)>, t: &mut Vec<(&'static str, f64)>) -> Res<(String, Vec<(String, usize)>)> {
+    let (b, cfg) = (c.board.as_ref(), &c.cfg);
+    let mut clock = std::time::Instant::now();
+    let mut lap = |t: &mut Vec<(&'static str, f64)>, name| { t.push((name, clock.elapsed().as_secs_f64())); clock = std::time::Instant::now(); };
+    let local = dot(&cfg.root).join("status.json");
+    let mut out = vec![];
+    // R6: a board rate-limit pause the local service reports comes first, also when this read fails
+    if read.is_none() {
+        if let Some(w) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).as_ref().and_then(requests::warning) { out.push(w); }
+    }
+    let (snap, decide) = match read { Some(r) => r, None => {
+        let snap = status_snapshot(c, a).0; lap(t, "board read");
+        let decide = reports::decide(&reports::cached(&cfg.root), reports::now()); lap(t, "decide (cached)");
+        (snap, decide)
+    } };
+    // R6 A3: an unreadable deploy wait or board quota is an anomaly row, never an `unknown` line
+    let mut extra = vec![];
+    // § 2 Deploy: closed tasks still waiting for their first deploy, a live board read
+    let deploys = deploy::status(b, deploy::config(&cfg.root).as_ref()).unwrap_or_else(|e| {
+        extra.push(format!("- deploy wait unreadable: {} · Next: rerun `taskq status`; check the board token", compact(&e, 160)));
+        vec![]
+    });
+    lap(t, "deploy wait");
+    let quota = requests::quota(&b.quota());
+    lap(t, "quota");
+    if quota.starts_with("Board quota: unknown") {
+        extra.push("- board quota unread: no core budget headers on this read · Next: rerun `taskq status`; a lasting gap is a board client defect".into());
+    }
+    out.push(snap.text_extra(cfg, &c.raw, Some(&decide), extra)?);
+    lap(t, "render");
+    out.extend(deploys);
+    if !quota.starts_with("Board quota: unknown") { out.push(quota); }
+    // § 6: the live service's open setup gaps follow the report
+    out.extend(data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default());
+    lap(t, "setup gaps");
+    Ok((out.join("\n"), snap.served()))
 }
 
 /// R10: `taskq status` covers every project of `<install>/projects` plus the current one; `--project P..` narrows to
@@ -3839,13 +3896,39 @@ fn status_all(a: &Args) -> Res<()> {
         }).collect();
         return json_output(&serde_json::to_string_pretty(&json!({"projects": projects, "unseen": snapshot::unseen(&served)})).map_err(|e| e.to_string())?, a.one("json-file"));
     }
-    for (i, r) in roots.iter().enumerate() {
+    // #2291: projects read in parallel; each block prints in list order
+    let timing = a.flags.contains_key("timing");
+    let started = std::time::Instant::now();
+    let blocks: Vec<(String, Vec<(&'static str, f64)>)> = std::thread::scope(|s| {
+        let handles: Vec<_> = roots.iter().map(|r| s.spawn(move || {
+            PROJECT_ROOT.with_borrow_mut(|p| *p = Some(r.clone()));
+            let clock = std::time::Instant::now();
+            let mut t = vec![];
+            let c = at(r);
+            t.push(("open", clock.elapsed().as_secs_f64()));
+            // a project that cannot be read is an anomaly line of its own block, never a silent gap
+            let text = match c.and_then(|c| status_text(&c, a, None, &mut t)) {
+                Ok((text, served)) => { SERVED.with_borrow_mut(|v| v.push(served)); (text, SERVED.take()) }
+                Err(e) => (format!("{} · source unavailable: {e} · Next: `taskq status --project {}` after fixing its config or board token", project_name(r), project_name(r)), vec![]),
+            };
+            (text, t)
+        })).collect();
+        handles.into_iter().map(|h| {
+            let ((text, served), t) = h.join().unwrap_or_else(|_| (("status thread panicked".into(), vec![]), vec![]));
+            SERVED.with_borrow_mut(|v| v.extend(served));
+            (text, t)
+        }).collect()
+    });
+    for (i, (text, _)) in blocks.iter().enumerate() {
         if i > 0 { println!(); }
-        // a project that cannot be read is an anomaly line of its own block, never a silent gap
-        PROJECT_ROOT.with_borrow_mut(|p| *p = Some(r.clone()));
-        if let Err(e) = at(r).and_then(|c| command(&c, "status", a)) {
-            println!("{} · source unavailable: {e} · Next: `taskq status --project {}` after fixing its config or board token", project_name(r), project_name(r));
+        println!("{text}");
+    }
+    if timing {
+        eprintln!("| Project | {} | total |", blocks.iter().flat_map(|b| b.1.iter().map(|x| x.0)).fold(Vec::<&str>::new(), |mut v, n| { if !v.contains(&n) { v.push(n); } v }).join(" | "));
+        for (r, (_, t)) in roots.iter().zip(&blocks) {
+            eprintln!("| {} | {} | {:.2} |", project_name(r), t.iter().map(|(_, s)| format!("{s:.2}")).collect::<Vec<_>>().join(" | "), t.iter().map(|x| x.1).sum::<f64>());
         }
+        eprintln!("wall {:.2} s", started.elapsed().as_secs_f64());
     }
     PROJECT_ROOT.with_borrow_mut(|p| *p = None);
     unseen();
@@ -4106,23 +4189,9 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 v["decide"] = decide;
                 json_output(&serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, a.one("json-file"))?;
             } else {
-                // R6 A3: an unreadable deploy wait or board quota is an anomaly row, never an `unknown` line
-                let mut extra = vec![];
-                // § 2 Deploy: closed tasks still waiting for their first deploy, a live board read
-                let deploys = deploy::status(b, deploy::config(&cfg.root).as_ref()).unwrap_or_else(|e| {
-                    extra.push(format!("- deploy wait unreadable: {} · Next: rerun `taskq status`; check the board token", compact(&e, 160)));
-                    vec![]
-                });
-                let quota = requests::quota(&b.quota());
-                if quota.starts_with("Board quota: unknown") {
-                    extra.push("- board quota unread: no core budget headers on this read · Next: rerun `taskq status`; a lasting gap is a board client defect".into());
-                }
-                SERVED.with_borrow_mut(|v| v.push(snap.served()));
-                println!("{}", snap.text_extra(cfg, &c.raw, Some(&decide), extra)?);
-                for l in deploys { println!("{l}"); }
-                if !quota.starts_with("Board quota: unknown") { println!("{quota}"); }
-                // § 6: the live service's open setup gaps follow the report
-                for l in data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default() { println!("{l}"); }
+                let (text, served) = status_text(c, a, Some((snap, decide)), &mut vec![])?;
+                SERVED.with_borrow_mut(|v| v.push(served));
+                println!("{text}");
             }
             Ok(())
         }

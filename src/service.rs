@@ -510,6 +510,9 @@ pub fn views_asked(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCa
             issues = board.issues(None)?;
         }
     }
+    // #2291: a page boundary that shifts mid-list repeats an issue; one view per number keeps Running rows unique
+    let mut seen = HashSet::new();
+    issues.retain(|i| seen.insert(i.number));
     let open: HashSet<u64> = issues.iter().map(|i| i.number).collect();
     let request = crate::health::request_of(&issues);
     let (hosts, tasks): (Vec<Issue>, Vec<Issue>) = issues.into_iter().filter(|i| i.trusted).partition(is_host);
@@ -7655,6 +7658,15 @@ Open: none";
         s.pass().unwrap();
         assert_eq!(rt_of(&task(&b,n)).unwrap().0,"codex");
         assert!(b.comments(n).unwrap().iter().any(|c|c.body.contains("weighted pick codex")));
+    }
+
+    // #2291 A2: a listing that repeats an issue (page shift) yields one view, so one Running row
+    #[test]
+    fn views_drop_repeated_listing_rows() {
+        let b=Fake::default();let n=b.create("twice","",&["taskq".into()]).unwrap();
+        let again=b.state.borrow().issues[0].clone();b.state.borrow_mut().issues.push(again);
+        let (v,_)=views(&b,&mut Default::default(),&mut Default::default(),300).unwrap();
+        assert_eq!(v.iter().filter(|v|v.issue.number==n).count(),1);
     }
 
     // #2189 A3/A4/A7, §4 Balancing: count every project and use native per-account quota observations.
