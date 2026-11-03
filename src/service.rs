@@ -664,6 +664,7 @@ pub struct Service<'a> {
     host_issue: Option<u64>,
     /// Rebuilt from board ownership; heartbeat projection only, never a launch/release authority.
     observations: BTreeMap<(u64,u64),core::Execution>,
+    ownership_waits: BTreeMap<(u64,u64),String>,
     /// Owner comments of the last pass (§ 4): task, comment id, text, card.
     /// State of each open task in the previous pass, for `events`.
     seen: HashMap<u64, State>,
@@ -975,7 +976,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1113,6 +1114,7 @@ impl<'a> Service<'a> {
         }
         self.pending_releases.remove(&(task,attempt,execution));
         self.observations.remove(&(task,execution));
+        self.ownership_waits.remove(&(task,execution));
         self.cache.remove(&task);
         self.retire_reservations(BTreeSet::from([(task,attempt)]));
     }
@@ -1205,8 +1207,18 @@ impl<'a> Service<'a> {
                 else { read=core::project(task, &crate::board::entries(self.board,task)?, false); &read.executions };
             // Open-list absence, label removal and missing history never release known ownership.
             self.observations.retain(|(n,id),old| {
-                let terminal=*n==task && !self.kids.iter().any(|k|k.task==task && k.execution==*id)
-                    && current.iter().any(|x|x.id==*id && x.attempt==old.attempt && x.host==old.host && x.runtime==old.runtime && x.release.is_some());
+                if *n!=task {return true;}
+                let reason = match current.iter().find(|x|x.id==*id) {
+                    None => Some("execution absent from trusted history".into()),
+                    Some(x) if x.attempt!=old.attempt => Some(format!("attempt mismatch: observed {}, board {}",old.attempt,x.attempt)),
+                    Some(x) if x.host!=old.host => Some(format!("host mismatch: observed {}, board {}",old.host,x.host)),
+                    Some(x) if x.runtime!=old.runtime => Some(format!("runtime mismatch: observed {}, board {}",old.runtime,x.runtime)),
+                    Some(x) if x.release.is_none() => Some("matching terminal release absent from trusted history".into()),
+                    _ => None,
+                };
+                let terminal=reason.is_none() && !self.kids.iter().any(|k|k.task==task && k.execution==*id);
+                if let Some(reason)=reason {self.ownership_waits.insert((*n,*id),reason);}
+                else {self.ownership_waits.remove(&(*n,*id));}
                 if terminal {released.insert((task,old.attempt));}
                 !terminal
             });
@@ -1254,7 +1266,10 @@ impl<'a> Service<'a> {
         // #1594: a child of this process hands over through the runtime adapter (lifecycle_waits); the rest wait on the verdict
         for ((task,id),x) in self.observations.iter().filter(|_|!exit) {
             let signals=self.signals(*task,x);
-            if signals.child.is_none() && crate::snapshot::verdict(&signals).0!="ended" {waits.insert(format!("#{task} unresolved execution {id}"));}
+            if signals.child.is_none() && crate::snapshot::verdict(&signals).0!="ended" {
+                let reason=self.ownership_waits.get(&(*task,*id)).map(String::as_str).unwrap_or("matching terminal release not yet observed");
+                waits.insert(format!("#{task} unresolved execution {id} attempt {} ({reason})",x.attempt));
+            }
         }
         for (task,_,_) in &self.pending_releases {waits.insert(format!("#{task} release unconfirmed"));}
         waits.into_iter().collect()
@@ -5219,6 +5234,53 @@ Open: none")).unwrap();
         next.host = Some(std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p)))));
         next.pass().unwrap();
         assert_eq!(next.kids.iter().map(|k| k.task).collect::<Vec<_>>(), vec![n], "the next generation resumes it");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // #2285: replay #2252's closed history with the old Mac execution still observed.
+    // Retain the fence until exact terminal releases are read; closure alone is never exit.
+    #[test]
+    fn closed_2252_releases_reach_reexec_in_one_pass() {
+        let root = std::env::temp_dir().join(format!("taskq-closed-reexec-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let b = Fake::default();
+        let n = b.create("Closed history", "", &[TASK_LABEL.into()]).unwrap();
+        let history: Vec<core::Entry> = serde_json::from_str(include_str!("../tests/fixtures/reexec-2252.json").trim_start_matches('\u{feff}')).unwrap();
+        let mut c = cfg("mac"); c.root = root.clone(); c.install = root.clone();
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Err("fixture holds launches".into()))));
+        let mut s = Service::new(&b, &c, "fixture", Box::new(|_| panic!("restart must not launch")));
+        s.host = Some(host.clone());
+        for e in &history {
+            b.state.borrow_mut().next_id = e.id - 1;
+            b.comment(n, &e.body).unwrap();
+            if e.id == 6595390316 {
+                s.observe_ownership(&views(&b, &mut Default::default(), &mut Default::default(), c.ttl).unwrap().0).unwrap();
+                assert!(s.observations.contains_key(&(n, e.id)));
+            }
+        }
+        b.close(n).unwrap();
+        assert_eq!(task(&b, n).state, State::Closed);
+        let key = (n, 6595390316);
+        let original = s.observations[&key].clone();
+        for reason in ["attempt mismatch", "host mismatch", "runtime mismatch"] {
+            let mut mismatch = original.clone();
+            match reason {
+                "attempt mismatch" => mismatch.attempt += 1,
+                "host mismatch" => mismatch.host = "other".into(),
+                _ => mismatch.runtime = "other".into(),
+            }
+            s.observations.insert(key, mismatch);
+            s.observe_ownership(&[]).unwrap();
+            let waits = s.handoff_waits(true, false); // Unix handover; Windows exits without these observations.
+            assert!(waits.iter().any(|w| w.contains(reason)), "an overdue wait must explain the unmatched release: {waits:?}");
+            let line = crate::restart_line(&json!({"restart_waits": waits, "restart_overdue": true})).unwrap();
+            assert!(line.contains("pending over 600 s") && line.contains(reason));
+            assert!(s.observations.contains_key(&key), "mismatch must retain ownership");
+        }
+        s.observations.insert(key, original);
+        { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
+        assert!(handover_pass(&mut s, &host, &root), "released history must reach re-exec: {:?}", s.handoff_waits(true, false));
+        assert!(s.observations.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 
