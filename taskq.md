@@ -57,7 +57,7 @@ Acceptance items `A1.`, `A2.` never renumber; each is an observable result check
 Listed as `held` whatever its log; no version admits it. `taskq start N [M..]` checks all first, then in order writes `start` and adds `taskq`; a person adding `taskq` starts it (service writes `start`). Labels: `q-<state>` (projection; `waiting`: `q-blocked`); type `code|docs|research|asset`; `p0|p1|p2` (lower first, absent: 2; `p0` passes focus, § 4);
 `run-<runtime>` (none: § 4 Filter); `prefer-claude|prefer-codex|prefer-antigravity` (soft worker preference, §4); `host-<name>` (none: `any` hosts, § 4; `add --host` takes a heartbeat's name); `needs-<x>` (only hosts with x in `has`, § 9); `assignee-only` (start only when the board's user is an assignee); any other. Reserved: `taskq-host`.
 ### Task text
-`add`/`start` refuse unknown rule IDs, `taskq` commands; `Rules: IDs|all` scopes [gate](docs/design/rule-ids.md).
+`add`/`start` refuse unknown rule IDs and commands; issue `Rules: IDs|all` scopes the [gate](docs/design/rule-ids.md).
 ## 2. Log and states
 A log entry is a trusted author's comment with first line `taskq: <kind> [<arg>] [attempt <id>]`; the rest is text. Entries fold in comment-id order; edited (`updated_at` after `created_at`) or unknown-kind ones are ignored. A hand-typed entry counts like a command.
 The CLI form `taskq answer K` or `taskq answer N.K` (no colon, N = this task) counts as `answer K`. In `ask` a comment whose whole body is K or option K's text (trimmed, any case, `K. ` optional) of the open card counts as `answer K` if one option matches; `fold` ignores other comments.
@@ -254,7 +254,7 @@ Looks/sound: one line each (R13).
 - Standalone: [onboarding](docs/design/standalone-onboarding.md); [telemetry](docs/design/standalone-telemetry.md): local SQLite/WAL, 30 days, async only under revocable `taskq-telemetry/1`. `profile export`: analysis; `guide`: agents. Migration keeps legacy rows (R1).
 - README: header, three-part setup (install phrase; repository and Issues-as-board permission, existing or new private; optional SDD request), purpose, three visual examples, shots, disclosures and final line: [README rules](docs/design/readme-plan.md#contract-detail).
 ### [menu]
-[menu]: docs/design/menu.md#contract-detail "Menu, tray, history JSON, events"
+[menu]: docs/design/menu.md#contract-detail
 ## Linked detail
 - [docs/design/status-report.md](docs/design/status-report.md#contract-detail): R6 report, task summary, status.json, events.
 - [docs/design/commands.md](docs/design/commands.md#contract-detail): Command table, add format, op ids, receipts, acknowledgements.
