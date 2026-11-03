@@ -451,7 +451,7 @@ pub struct Host {
 
 /// R6 anomaly kinds whose source defect has an open held fix task (#2256 answer 1): the row names it.
 // ponytail: drop each entry once its task lands; the anomaly row then shows without a fix link.
-pub const ANOMALY_FIXES: [(&str, u64); 4] = [("remote-control", 2261), ("progress", 2262), ("headroom", 2263), ("running", 2264)];
+pub const ANOMALY_FIXES: [(&str, u64); 3] = [("remote-control", 2261), ("progress", 2262), ("running", 2264)];
 
 /// R10 A1: hosts serving projects no board of this view carries: each host's largest `queue` row count against the
 /// boards that carry its heartbeat. Rows of other projects stay anonymous (private names), so only counts compare.
@@ -1010,7 +1010,7 @@ impl Snapshot {
             if h.focus.as_deref() == Some("unknown") { anomalies.push(format!("- host {} · focus unknown: it admits nothing · {doctor}", h.name)); }
             let rts: Vec<&String> = h.balancing["weights"].as_object().into_iter().flat_map(|w| w.keys()).collect();
             for (kind, key, what) in [("running", "running", "running count"), ("headroom", "headroom", "quota headroom")] {
-                let missing: Vec<&str> = rts.iter().filter(|rt| { let v = &h.balancing["runtimes"][rt.as_str()]["load"][key]; v.is_null() }).map(|rt| rt.as_str()).collect();
+                let missing: Vec<&str> = rts.iter().filter(|rt| { let l = &h.balancing["runtimes"][rt.as_str()]["load"]; l[key].is_null() && (key != "headroom" || l["headroom_reason"].is_null()) }).map(|rt| rt.as_str()).collect();
                 if !missing.is_empty() { anomalies.push(format!("- host {} · {what} not reported for {} · {doctor}{}", h.name, missing.join(", "), fix(kind))); }
             }
             for q in h.queue_rows(self.observed) {
@@ -1115,7 +1115,8 @@ impl Snapshot {
             + &h.balancing["weights"].as_object().map(|weights|weights.iter().map(|(rt,w)| {
                 let load=&h.balancing["runtimes"][rt]["load"];
                 let running=load["running"].as_u64().map(|n|format!(" running {n} /")).unwrap_or_default();
-                format!(" {rt}{running} weight {w}{}",load["headroom"].as_f64().map(|n|format!(" (headroom {:.1}%)",n*100.0)).unwrap_or_default())
+                format!(" {rt}{running} weight {w}{}",load["headroom"].as_f64().map(|n|format!(" (headroom {:.1}%)",n*100.0))
+                    .or_else(||load["headroom_reason"].as_str().map(|c|format!(" (headroom n/a: {})",cell(c)))).unwrap_or_default())
             }).collect::<String>()).unwrap_or_default()
             + &h.tray.as_ref().map(|code| format!(" tray {code}")).unwrap_or_default()
             + &h.requests.as_ref().map(|n| format!(" {n} req/h{}", h.github.map(|g| format!(" (github.com {g})")).unwrap_or_default())).unwrap_or_default())).collect();
