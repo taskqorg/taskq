@@ -71,6 +71,8 @@ pub trait Proc {
     /// Read-only progress source and current input byte boundary; never an execution verdict.
     fn progress_source(&self)->Result<(PathBuf,u64),String> {Err("native progress source unavailable".into())}
     fn job(&self)->Option<String> {None}
+    /// #2261: this execution's native session and background job, for its runtime's `session_link`; None: no session link.
+    fn session_spec(&self)->Option<(NativeSpec,Option<String>)> {None}
     /// Save missing native recovery identity after launch without surrendering the handle on failure.
     fn checkpoint(&mut self, _cfg:&crate::service::Config, _launch:&Launch, _execution:u64)->Result<(),String> { Err("native recovery checkpoint unsupported".into()) }
     fn native_identity(&self)->Result<coreq::process::Identity,String> { Err("native process identity unavailable for handover".into()) }
@@ -768,12 +770,6 @@ fn optimizer_settings(spec: &NativeSpec) -> serde_json::Value {
         .filter(|(k, _)| k == "AGENTQ_OPTIMIZATION" || k == "AGENTQ_LAUNCHER")
         .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned().into())).collect();
     serde_json::json!({"env":env})
-}
-
-/// Claude's daemon ignores launcher env; resume overlays only optimizer keys, preserving saved native policy.
-fn background_base(mut base: Command, spec: &NativeSpec) -> Command {
-    if spec.resume { base.args(["--settings", &optimizer_settings(spec).to_string()]); }
-    base
 }
 
 /// A Claude turn spec without TaskQ arguments: native job reads and stops.
@@ -1987,7 +1983,7 @@ impl ClaudeTurn {
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),
             announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, handed:false,released:false, launch_error:None,
             resumed: l.resume.is_some().then(std::time::Instant::now), lost: None };
-        let out=agent(&l.rt)?.background_launch(background_base(c, &spec), &spec, &turn.input, std::time::Duration::from_secs(30))?;
+        let out=agent(&l.rt)?.background_launch(c, &spec, &turn.input, std::time::Duration::from_secs(30))?;
         turn.finish_launch(out)?;
         Ok(turn)
     }
@@ -2036,6 +2032,11 @@ impl ClaudeTurn {
 
 impl Proc for ClaudeTurn {
     fn progress_source(&self)->Result<(PathBuf,u64),String> {if self.accepted {Ok((self.log.clone(),0))} else {Err("native input not accepted".into())}}
+    /// Every background launch passes `--remote-control` (`ClaudeTurn::start`), so the link is requested.
+    fn session_spec(&self)->Option<(NativeSpec,Option<String>)> {
+        Some((NativeSpec { root: self.root.clone(), session: self.session.clone(), resume: false, args: vec!["--remote-control".into()],
+            home: self.native_home(), env: vec![] }, (!self.id.is_empty()).then(|| self.id.clone())))
+    }
     fn checkpoint(&mut self,cfg:&crate::service::Config,l:&Launch,execution:u64)->Result<(),String> {
         self.recovery=Some(Recovery {install:cfg.install.clone(),root:cfg.root.clone(),task:l.task,attempt:l.attempt,execution,runtime:l.rt.clone()});
         let rows=self.agents()?;
@@ -2267,6 +2268,12 @@ pub fn open_link(arg: &str, wait: bool) -> Result<(), String> {
 /// Windows `explorer` exits 1 after it opened the link; only `open`'s 0 is success elsewhere.
 fn opened(windows: bool, code: Option<i32>) -> bool {
     code == Some(0) || windows && code == Some(1)
+}
+
+/// #2261: a heartbeat absence cause, `<cause>[: <detail>]`, on one line of at most 160 characters.
+pub fn absence(cause: &str, detail: Option<&str>) -> String {
+    let text = detail.and_then(|d| d.lines().map(str::trim).find(|l| !l.is_empty())).map_or_else(|| cause.to_string(), |d| format!("{cause}: {d}"));
+    text.chars().take(160).collect()
 }
 
 /// Only a URL registered by the native session is a Remote Control link.
@@ -3363,7 +3370,8 @@ finally:
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    // A3/A4/R9: daemon-backed turns need session env, including on resume; saved policy stays untouched.
+    // A3/A4/R9: a daemon-backed start carries session env; a resume passes no flags, because Claude copies a job resumed
+    // with flags into a new conversation (#2262), so the job keeps the settings saved at its start.
     #[cfg(unix)]
     #[test]
     fn optimization_reaches_background_settings_and_operator_attribution() {
@@ -3377,22 +3385,20 @@ finally:
                     "--permission-mode".into(), "dontAsk".into(), "--name".into(), "retained name".into()], home: None,
                 env: vec![("AGENTQ_OPTIMIZATION".into(), "off".into())] };
             optimization("claude", &mut spec, None).unwrap();
-            let out = agent("claude").unwrap().background_launch(background_base(Command::new(&client), &spec), &spec, "fixture input", std::time::Duration::from_secs(10)).unwrap().unwrap();
+            let out = agent("claude").unwrap().background_launch(Command::new(&client), &spec, "fixture input", std::time::Duration::from_secs(10)).unwrap().unwrap();
             let args: Vec<String> = String::from_utf8(out.stdout).unwrap().lines().map(String::from).collect();
+            if resume {
+                assert_eq!(args, ["--bg", "--resume", "saved-native-id"], "a flagged resume starts a copy job (#2262)");
+                continue;
+            }
             assert_eq!(args.iter().filter(|a| a.as_str() == "--settings").count(), 1);
             let settings: serde_json::Value = serde_json::from_str(&args[args.iter().position(|a| a == "--settings").unwrap() + 1]).unwrap();
             assert_eq!(settings["env"]["AGENTQ_OPTIMIZATION"], "off");
             assert_eq!(settings["env"]["AGENTQ_LAUNCHER"], "taskq");
-            if resume {
-                assert_eq!(args.len(), 5, "only optimizer settings, --bg and exact native resume");
-                assert_eq!(&args[2..], &["--bg", "--resume", "saved-native-id"]);
-                assert_eq!(settings["env"].as_object().unwrap().len(), 2, "no permission, model or attempt override");
-            } else {
-                assert_eq!(settings["env"]["TASKQ_INSTALL"], "invented");
-                assert_eq!(settings["hooks"]["SessionStart"], serde_json::json!([]));
-                assert!(args.windows(2).any(|a| a == ["--permission-mode", "dontAsk"]));
-                assert!(args.windows(2).any(|a| a == ["--name", "retained name"]));
-            }
+            assert_eq!(settings["env"]["TASKQ_INSTALL"], "invented");
+            assert_eq!(settings["hooks"]["SessionStart"], serde_json::json!([]));
+            assert!(args.windows(2).any(|a| a == ["--permission-mode", "dontAsk"]));
+            assert!(args.windows(2).any(|a| a == ["--name", "retained name"]));
         }
         std::fs::remove_file(client).unwrap();
     }
