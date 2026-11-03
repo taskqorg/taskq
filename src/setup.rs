@@ -678,11 +678,23 @@ mod tests {
         let queued = |t: &str| { assert_eq!(t, "019a-b2"); Ok(()) };
         let refused = |_: &str| -> Res<()> { Err("codex queue failed for thread 019a-b2".into()) };
         let never = |_: &str| -> Res<()> { panic!("no thread to submit") };
-        let Launched::Job { job, session, url } = codex_thread(started, "", Some(0), queued) else { panic!("thread not launched") };
+        let Launched::Job { job, session, url } = codex_thread("codex-app", started, "", Some(0), queued) else { panic!("thread not launched") };
         assert_eq!((job.as_str(), session.as_deref(), url.as_deref()), ("019a-b2", Some("019a-b2"), Some("codex://threads/019a-b2")));
-        assert!(matches!(codex_thread("", "Error: 401 Unauthorized", Some(1), never), Launched::NoStart(r) if r.starts_with(LOGIN)));
-        assert!(matches!(codex_thread("", "model overloaded", Some(1), never), Launched::NoStart(r) if !r.starts_with(LOGIN)));
-        assert!(matches!(codex_thread(started, "", Some(0), refused), Launched::Unknown(r) if r.contains("019a-b2")));
-        assert!(matches!(codex_thread(r#"{"type":"thread.started","thread_id":"x&calc"}"#, "", Some(0), never), Launched::Unknown(_)));
+        assert!(matches!(codex_thread("codex-app", "", "Error: 401 Unauthorized", Some(1), never), Launched::NoStart(r) if r.starts_with(LOGIN)));
+        assert!(matches!(codex_thread("codex-app", "", "model overloaded", Some(1), never), Launched::NoStart(r) if !r.starts_with(LOGIN)));
+        assert!(matches!(codex_thread("codex-app", started, "", Some(0), refused), Launched::Unknown(r) if r.contains("019a-b2")));
+        assert!(matches!(codex_thread("codex-app", r#"{"type":"thread.started","thread_id":"x&calc"}"#, "", Some(0), never), Launched::Unknown(_)));
+    }
+
+    // #2324: the login cause comes from the AgentQ adapter for both runtimes. Risk: taskq matches runtime text itself,
+    // so a login prompt reads as a generic failure or an untrusted workspace as a sign-in.
+    #[test]
+    fn launch_cause_comes_from_the_adapter() {
+        use crate::runtime::launch_cause as refusal;
+        assert_eq!(refusal("claude", "Not logged in · Please run /login"), Some("login-required"));
+        assert_eq!(refusal("claude", "Error: Workspace not trusted"), Some("workspace-untrusted"));
+        assert_eq!(refusal("codex", "Error: 401 Unauthorized"), Some("login-required"));
+        assert_eq!(refusal("codex-app", "please log in again"), Some("login-required"));
+        assert_eq!(refusal("codex", "model overloaded"), None);
     }
 }

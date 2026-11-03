@@ -318,6 +318,8 @@ pub(crate) fn agent(rt: &str) -> Result<&'static dyn agentq_runtime::agent::Runt
 }
 
 /// AgentQ's report of `rt`'s log text; None for a runtime without an adapter.
+/// The AgentQ cause for launch output `text` of `rt` (`workspace-untrusted`, `session-missing`, `login-required`); taskq matches no runtime text itself.
+pub(crate) fn launch_cause(rt: &str, text: &str) -> Option<&'static str> { agent(rt).ok()?.launch_refusal(text).map(|c| c.0) }
 pub(crate) fn classify(rt: &str, text: &str) -> Option<agentq_runtime::agent::Report> { agent(rt).ok().map(|a| a.classify(text)) }
 
 /// Model use of the attempt log after byte `pos` (§ 4 Profiling), read by AgentQ `agent::usage`; context tokens are
@@ -644,7 +646,7 @@ pub fn codex_thread(log: &Path) -> Option<String> {
 pub fn missing_cli(rt: &str) -> Option<String> {
     let a = of(rt);
     if a.has("user-bin") { return (!which(a.bin).is_absolute()).then(|| format!("{} {} CLI not found on the service PATH", a.name, a.bin)); }
-    let r = agent(rt).ok()?.ready(None);
+    let r = agent(rt).ok()?.ready(None, None);
     (r.install.state == "missing").then_some(r.install.detail)
 }
 
@@ -1313,7 +1315,7 @@ fn claude_input(root:&Path,text:&str,launch:Option<&Launch>)->Result<(String,cra
         let x=crate::core::Execution {id:execution,attempt:l.attempt,through:l.attempt,host:String::new(),runtime:l.rt.clone(),accepted:false,release:None,usage_hold:None};
         let path=execution_input(root,l.task,l.attempt,execution)?;
         if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file())
-            && refused_launch(root,l.task,&x).is_some_and(|r| agent(&l.rt).ok().and_then(|a| a.launch_refusal(&r)).is_some()) {
+            && refused_launch(root,l.task,&x).is_some_and(|r| launch_cause(&l.rt,&r)==Some("workspace-untrusted")) {
             // A definite no-start may reuse its immutable input. The next binding clears this proof before submission.
             let file=File::open(&path).map_err(|e|e.to_string())?;
             let file=coreq::file_lock::try_lock_shared_file(file).map_err(|e|e.to_string())?;
@@ -2012,7 +2014,7 @@ impl ClaudeTurn {
             let record=serde_json::json!({"type":"claude.launch","stdout":stdout,"stderr":stderr,"status":status});
             if let Err(e)=File::options().append(true).open(&self.log).and_then(|mut file|writeln!(file,"{record}")) {log!("Claude refused launch not recorded: {e}");}
             // #1555: the board text names the root and its remedy, never its path.
-            if agent(RUNTIMES[0]).ok().and_then(|a| a.launch_refusal(&stderr)).is_some() {
+            if launch_cause(RUNTIMES[0],&stderr)==Some("workspace-untrusted") {
                 return Err(StartError::trust_setup());
             }
             return Err(StartError {message:format!("Claude background launch refused: {}",public_line(&refusal,&self.root,200)),class:"other",reportable:false,no_start:true});
