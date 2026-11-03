@@ -642,6 +642,26 @@ pub fn dev_enabled(repo:&str,install:&Path)->bool { repo==RELEASE_REPO&&channel(
 /// The demand file of the dev install (#2311): `taskq service dev-build` writes it; a build start clears it.
 pub fn dev_request(install:&Path)->PathBuf { install.join("dev").join("request") }
 
+/// #2321: a ready task's `Depends on` issue of this board closed at `closed`, after the installed dev commit's commit
+/// time (`git show`, no board request), writes the request; once per close time (`dev/dep-closed` keeps the newest that
+/// wrote one), so a merge commit timed before its own close never requests again after it installs. True when written.
+#[cfg(unix)]
+pub fn dev_dep_request(install:&Path,root:&Path,closed:Option<i64>)->bool {
+    let dir=install.join("dev");
+    let read=|f:&str|fs::read_to_string(dir.join(f)).ok().map(|s|s.trim().to_string()).filter(|s|!s.is_empty());
+    let Some(closed)=closed else {return false};
+    if read("dep-closed").and_then(|t|t.parse::<i64>().ok()).is_some_and(|t|closed<=t) {return false;}
+    let Some(sha)=read("installed") else {return false};
+    let commit=crate::tools::run("dev.installed",command("git").arg("-C").arg(root).args(["show","-s","--format=%ct",&sha]),std::time::Duration::from_secs(30))
+        .ok().and_then(|o|String::from_utf8_lossy(&o).trim().parse::<i64>().ok());
+    // an installed SHA the root does not hold reads unknown: no request
+    if !commit.is_some_and(|c|closed>c) {return false;}
+    let _=fs::create_dir_all(&dir);
+    let ok=coreq::write_durable(&dir.join("dep-closed"),&closed.to_string()).and_then(|_|coreq::write_durable(&dev_request(install),"dependency")).is_ok();
+    if ok {log!("dev install: requested; a ready task's dependency closed after installed {sha}");}
+    ok
+}
+
 /// One project pass of the dev install ([detail](docs/design/host-service.md#dev-install)): fold the script's
 /// report, start the newest green SHA on request, return the `status.json` `dev` value. State lives in `<install>/dev/`.
 #[cfg(unix)]
@@ -1363,6 +1383,39 @@ mod tests {
         assert_eq!((v["installed"].as_str(),v["failed"].as_str()),(Some(b.as_str()),None),"success clears the failed SHA");
         fs::remove_dir_all(&install).unwrap();
         }
+    }
+
+    // Chain: § 8 item 1 dev request from a dependency (#2321). Risk: a ready task waits on a merge the dev host never
+    // builds without a PM step, a dependency installed already requests a build, or the same close requests again
+    // after its own merge commit (timed before the close) installs.
+    #[cfg(unix)]
+    #[test]
+    fn dev_request_follows_a_dependency_closed_after_the_installed_commit() {
+        let base=std::env::temp_dir().join(format!("taskq-dev-dep-{}",std::process::id()));
+        let _=fs::remove_dir_all(&base);
+        let (root,install)=(base.join("root"),base.join("install"));
+        fs::create_dir_all(install.join("dev")).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let git=|args:&[&str]|{
+            let o=std::process::Command::new("git").arg("-C").arg(&root).args(["-c","user.name=t","-c","user.email=t@example.invalid"]).args(args)
+                .env("GIT_COMMITTER_DATE","@1000 +0000").env("GIT_AUTHOR_DATE","@1000 +0000").output().unwrap();
+            assert!(o.status.success(),"git {args:?}: {}",String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        git(&["init","-q"]);git(&["commit","-q","--allow-empty","-m","installed"]);
+        let request=dev_request(&install);
+        assert!(!dev_dep_request(&install,&root,Some(2000)),"no installed SHA: unknown, no request");
+        fs::write(install.join("dev/installed"),"f".repeat(40)).unwrap();
+        assert!(!dev_dep_request(&install,&root,Some(2000)),"an installed SHA the root lacks: no request");
+        fs::write(install.join("dev/installed"),git(&["rev-parse","HEAD"])).unwrap();
+        assert!(!dev_dep_request(&install,&root,None),"no ready task with a done dependency");
+        assert!(!dev_dep_request(&install,&root,Some(1000))&&!dev_dep_request(&install,&root,Some(900)),"closed before the installed commit: installed");
+        assert!(!request.exists());
+        assert!(dev_dep_request(&install,&root,Some(1001))&&request.exists(),"closed after the installed commit: requested");
+        fs::remove_file(&request).unwrap();
+        assert!(!dev_dep_request(&install,&root,Some(1001))&&!request.exists(),"the same close requests once");
+        assert!(dev_dep_request(&install,&root,Some(1500))&&request.exists(),"a newer close requests again");
+        fs::remove_dir_all(&base).unwrap();
     }
 
     // Chain: § 8 item 1 dev install gate (#1406). Risk: a root checked out before scripts/dev-install.sh existed never

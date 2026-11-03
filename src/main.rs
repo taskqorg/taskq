@@ -1586,7 +1586,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
         if !quiet && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
-            dev = platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
+            // #2321: a ready task whose dependency closed after the installed commit requests the build itself
+            platform::dev_dep_request(&cfg.install, &cfg.root, s.dep_closed);
+            dev =platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
                 if dev_ci.as_ref().is_some_and(|(s, t)| s == sha && t.elapsed().as_secs() < 300) { return Err("checked".into()); }
                 dev_ci = Some((sha.into(), Instant::now()));
                 c.board.merge_ci_green(sha)

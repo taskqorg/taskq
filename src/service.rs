@@ -361,9 +361,10 @@ pub struct Blocker {
     pub reason: String,
 }
 
-/// Closed dependencies already read, `None` when done (§ 4 budget): an issue of this board until the open-issue list
-/// shows it again; of another repository only when done. `ponytail:` a done foreign issue reopened later is not seen.
-pub type DepCache = HashMap<core::Dep, Option<String>>;
+/// Closed dependencies already read, reason `None` when done (§ 4 budget), with the board close time of that same read
+/// (#2321 dev request): an issue of this board until the open-issue list shows it again; of another repository only
+/// when done. `ponytail:` a done foreign issue reopened later is not seen.
+pub type DepCache = HashMap<core::Dep, (Option<String>, Option<i64>)>;
 
 /// The `Depends on` issues of `body` that are not done (§ 1): open, closed other than completed, or unreadable.
 /// `open` is this board's open-issue list when the caller read it.
@@ -375,7 +376,7 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
         }
         let reason = match done.get(&dep) {
             _ if listed => Some("open".to_string()),
-            Some(r) => r.clone(),
+            Some((r, _)) => r.clone(),
             None => match dep.repo.as_deref().map_or_else(|| b.issue(dep.n), |r| b.foreign(r, dep.n)) {
                 Err(e) => Some(format!("unknown: {e}")),
                 Ok(i) if i.open => Some("open".into()),
@@ -389,7 +390,7 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
                         }
                     }
                     if dep.repo.is_none() || r.is_none() {
-                        done.insert(dep.clone(), r.clone());
+                        done.insert(dep.clone(), (r.clone(), i.closed));
                     }
                     r
                 }
@@ -398,6 +399,16 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
         let url = dep.repo.as_deref().map_or_else(|| b.url(dep.n), |r| b.foreign_url(r, dep.n));
         reason.map(|reason| Blocker { dep, url, reason })
     }).collect()
+}
+
+/// #2321 dev request: the newest board close time of a done `Depends on` issue of this board among ready tasks, from
+/// the closes `views` already read (no extra board request); unknown close times count as none.
+pub fn newest_dep_close(views: &[View], deps: &DepCache) -> Option<i64> {
+    views.iter().filter(|v| v.projection.task.state == State::Ready)
+        .flat_map(|v| core::depends(&core::dep_body(&v.issue.body, &v.projection.task)))
+        .filter(|d| d.repo.is_none())
+        .filter_map(|d| deps.get(&d).and_then(|(r, at)| r.is_none().then_some(*at).flatten()))
+        .max()
 }
 
 /// § 4 step 5 ask card of a task closed during a worker attempt (#1950); its answer resumes the attempt.
@@ -636,6 +647,8 @@ pub struct Service<'a> {
     delivered: HashMap<u64, u64>,
     cache: CommentCache,
     deps: DepCache,
+    /// #2321: [`newest_dep_close`] of the last full pass; the taskq-repo dev host requests a build from it.
+    pub dep_closed: Option<i64>,
     /// Label fix streaks: wanted label, stale labels, passes, board time after the last write, reported.
     label_fixes: HashMap<u64, (String, Vec<String>, u32, i64, bool)>,
     cancelled_publications: HashMap<u64, u64>,
@@ -979,7 +992,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), dep_closed: None, label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1920,6 +1933,7 @@ impl<'a> Service<'a> {
             (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
             self.listed = views.iter().map(|v| v.issue.number).collect();
         }
+        self.dep_closed = newest_dep_close(&views, &self.deps);
         let now = self.board.now()?;
         let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
         // § 3 Runtime accounts: a runtime with several accounts takes its hold from the account record (`account_pass`)
@@ -8136,6 +8150,33 @@ Open: none";
         assert_eq!((task(&b, open).state, task(&b, own).state), (State::Ready, State::Doing), "labelled host skips the unlabelled task");
         service(&b, &cfg("mac"), Default::default()).pass().unwrap();
         assert_eq!(task(&b, open).state, State::Doing, "an any host still takes unlabelled work");
+    }
+
+    // Chain: § 8 item 1 dev request from a dependency (#2321). Risk: the dev host never sees a ready task's newly
+    // closed dependency, counts one of a task that is not ready or of another repository, or reads the board again.
+    #[test]
+    fn ready_tasks_carry_their_newest_dependency_close() {
+        let b = Fake::default();
+        let (old, new, open) = (b.create("old", "", &[]).unwrap(), b.create("new", "", &[]).unwrap(), b.create("open", "", &[]).unwrap());
+        b.state.borrow_mut().foreign.push(("dashq".into(), Issue { number: 7, open: false, closed: Some(i64::MAX), reason: Some("completed".into()), ..Default::default() }));
+        b.close(old).unwrap();
+        b.create("A", &format!("Depends on #{old}\nDepends on dashq#7"), &["taskq".into()]).unwrap();
+        b.create("W", &format!("Depends on #{open}\nDepends on #{new}"), &["taskq".into()]).unwrap();
+        b.create("H", &format!("Depends on #{new}"), &["q-held".into()]).unwrap();
+        b.close(new).unwrap();
+        let mut deps = DepCache::new();
+        let (v, _) = views(&b, &mut CommentCache::new(), &mut deps, 300).unwrap();
+        let at = |n| b.issue(n).unwrap().closed;
+        assert_eq!(newest_dep_close(&v, &deps), at(old), "only a ready task's done dependency of this board counts");
+        let late = b.create("B", &format!("Depends on #{new}"), &["taskq".into()]).unwrap();
+        let (v, _) = views(&b, &mut CommentCache::new(), &mut deps, 300).unwrap();
+        assert!(at(new) > at(old));
+        assert_eq!(newest_dep_close(&v, &deps), at(new), "a newly ready task's dependency close");
+        // A2: the close time comes with the dependency read the pass already made; a cached one is not read again
+        let closed = at(new);
+        b.state.borrow_mut().fail_issue_read = Some((new, 1));
+        let (v, _) = views(&b, &mut CommentCache::new(), &mut deps, 300).unwrap();
+        assert_eq!((newest_dep_close(&v, &deps), task(&b, late).state), (closed, State::Ready), "no second read of #{new}");
     }
 
     // Chain: § 1 `Depends on <repo>#N` (#1126). Risk: a task blocked by another repository never starts, starts on a
