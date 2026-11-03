@@ -1604,7 +1604,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             ("execution_waits", json!(s.execution_waits)), ("capacity", s.capacity_json()), ("hold", json!(s.hold)), ("access", json!(access.iter().map(|e| e.json()).collect::<Vec<_>>())), ("agents", json!(agents.as_ref().map(|a| &a.1))),
             ("stop_progress",json!(s.stop_progress)), ("poll", json!(cfg.poll)),
             ("restart_overdue", json!(host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart_overdue)))),
-            ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
+            ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| restart_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
             ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("dev", dev), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health()),
             ("tidy", fs::read_to_string(d.join("tidy.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)), ("setup", setup)]
@@ -2502,12 +2502,18 @@ fn restart_line(status: &Value) -> Option<String> {
     Some(format!("Restart: {overdue}waits for {}", w.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")))
 }
 
+/// #2254: status names an unreadable child exit's reason, so a stuck re-exec reads as an incident, not "running unknown".
+fn restart_waits(s: &Service, stopping:bool) -> Vec<String> {
+    lifecycle_waits(s, stopping).into_iter().map(|w| {
+        let reason = w.strip_prefix('#').and_then(|n| n.parse::<u64>().ok()).and_then(|n| s.kids.iter().find(|k| k.task == n)?.unknown.as_ref());
+        match reason { Some(e) => format!("{w} ({e})"), None => w }
+    }).collect()
+}
+
 /// § 8 step 3: what a pending re-exec waits for. Windows waits for every live child; elsewhere CLI children and
 /// Claude background turns with a saved native identity pass over (#1407); codex-app turns wait.
 fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
-    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || if cfg!(windows) {runtime::exit_waits(&k.rt,k.proc.as_ref())} else {runtime::handover_waits(&k.rt,k.proc.as_ref())}).map(|k| match &k.unknown {
-        // #2254: an unreadable exit names its reason, so a stuck re-exec reads as an incident, not "running unknown"
-        Some(e) => format!("#{} ({e})", k.task), None => format!("#{}", k.task) }).collect();
+    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || if cfg!(windows) {runtime::exit_waits(&k.rt,k.proc.as_ref())} else {runtime::handover_waits(&k.rt,k.proc.as_ref())}).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
     // a refused resume (#1601) or Stop (#1769) leaves a childless attempt to the next start
     w.extend(s.handoff_waits(true, cfg!(windows) && !stopping));
