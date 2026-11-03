@@ -434,6 +434,30 @@ pub struct Host {
     pub reports: Option<String>,
     /// The text after `account ` of the heartbeat's account lines ([`crate::runtime::accounts::heartbeat_rows`]).
     pub accounts: Vec<String>,
+    /// Heartbeat `queue {json}` (#2255): every project of the host service; none from older hosts.
+    pub queue: Option<crate::host::Queues>,
+    /// The project ttl this row was read with: the heartbeat's liveness.
+    pub ttl: i64,
+}
+
+/// #2255: ready work without a spawn this long on a live host with free capacity reads STALLED.
+pub const STALL_AFTER: i64 = 600;
+
+impl Host {
+    /// #2255: one row per project the host service serves; STALLED needs a live heartbeat, ready work waiting
+    /// [`STALL_AFTER`] without a spawn and a runtime neither full nor disabled.
+    pub fn queue_rows(&self, observed: i64) -> Vec<Value> {
+        let Some(q) = &self.queue else { return vec![] };
+        let fresh = live(observed - self.updated, self.ttl);
+        let runtimes = self.balancing["runtimes"].as_object();
+        let free = runtimes.map(|r| r.values().any(|v| v["full"] == false && v["disabled"] == false));
+        q.projects.iter().map(|p| {
+            let waited = p.waiting.filter(|_| p.ready > 0).map(|w| observed - w);
+            let stalled = fresh && free == Some(true) && waited.is_some_and(|w| w >= STALL_AFTER);
+            json!({"project": p.project, "ready": fresh.then_some(p.ready), "spawn": p.spawn, "waiting": waited, "restart": q.restart.map(|r| observed - r),
+                "free": free, "stalled": stalled, "reason": p.reason})
+        }).collect()
+    }
 }
 
 pub struct Snapshot {
@@ -549,6 +573,8 @@ pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
         answer: h.body.lines().find_map(|l| l.strip_prefix("doctor-answer ")).map(str::to_string),
         reports: h.body.lines().find_map(|l| l.strip_prefix("doctor-reports ")).map(str::to_string),
         accounts: h.body.lines().filter_map(|l| l.strip_prefix("account ")).map(str::to_string).collect(),
+        queue: h.body.lines().find_map(|l| l.strip_prefix("queue ")).and_then(|j| serde_json::from_str(j).ok()),
+        ttl,
     }
 }
 
@@ -831,6 +857,7 @@ impl Snapshot {
                 let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
                 if h.balancing["schema"]==2 {r["balancing"]=h.balancing.clone();}
                 if let Some(l) = &h.link { r["link"] = json!(l) }
+                if h.queue.is_some() { r["queue"] = json!(h.queue_rows(self.observed)) }
                 r
             }).collect::<Vec<_>>(),
             "capabilities": caps})
@@ -973,6 +1000,18 @@ impl Snapshot {
         if !hs.is_empty() {
             out.push(String::new());
             out.push(format!("Hosts: {}", hs.join(", ")));
+        }
+        // quiet rows (no ready work, no pending restart) stay in `--json` only
+        let queues: Vec<String> = self.hosts.iter().flat_map(|h| h.queue_rows(self.observed).into_iter().filter(|r| r["ready"] != 0 || r["restart"].is_i64()).map(move |r| {
+            let when = |v: &Value| v.as_i64().map_or("none".into(), |s| age(s));
+            format!("- {} {} ready {} · last spawn {} · restart pending {}{}", h.name, r["project"].as_str().unwrap_or("other project"),
+                r["ready"].as_u64().map_or("unknown".into(), |n| n.to_string()), r["spawn"].as_i64().map_or("none".into(), crate::board::stamp),
+                when(&r["restart"]), if r["stalled"] == true { format!(" · STALLED {}: {}", when(&r["waiting"]), r["reason"].as_str().unwrap_or("no reason logged")) } else { String::new() })
+        })).collect();
+        if !queues.is_empty() {
+            out.push(String::new());
+            out.push("Queues:".into());
+            out.extend(queues);
         }
         Ok(out.join("\n"))
     }
@@ -1156,6 +1195,33 @@ mod tests {
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
         assert!(line.contains("mac v1.0 ") && !line.split(", ").next().unwrap().contains("stale") && line.split(", ").nth(1).unwrap().ends_with(" stale"), "{line}");
+    }
+
+    // Chain: #2255 heartbeat `queue` -> status `Queues:` rows. Case 2026-11-03: win hung on re-exec 00:42-01:51Z,
+    // ready work in taskq and another project never spawned, status showed only `running unknown`. Risk: a host with
+    // ready work and free capacity stalls unseen; a short wait, an empty queue or a full host reads as a stall.
+    #[test]
+    fn queue_rows_flag_the_2026_11_03_win_stall_on_every_project() {
+        let at = |t: &str| crate::board::iso(&format!("2026-11-03T{t}:00Z")).unwrap();
+        let body = |full: bool, ready: u64, waiting: &str| format!("version 4.6.61\nbalancing {}\nqueue {}",
+            json!({"schema": 1, "mode": "any", "default_runtime": "claude", "allowed_runtimes": null, "auto_reroute": false, "has": [], "focus": ["all"], "routing": [],
+                "runtimes": crate::runtime::RUNTIMES.iter().map(|rt| (rt.to_string(), json!({"code": "hold", "reason": format!("{rt}: hold; see host diagnostics"),
+                    "full": full, "disabled": false, "quota": []}))).collect::<serde_json::Map<_, _>>()}),
+            json!({"restart": at("00:42"), "projects": [
+                {"project": "taskqorg/taskq", "ready": ready, "spawn": at("00:30"), "waiting": at(waiting), "reason": "host restart pending"},
+                {"project": null, "ready": 1, "spawn": null, "waiting": at(waiting), "reason": "host restart pending"}]}));
+        let snap = |observed: &str, full, ready, waiting: &str| {
+            let beat = board::Issue { title: "taskq host win".into(), body: body(full, ready, waiting), updated: at(observed) - 30, trusted: true, ..Default::default() };
+            from_views("board", &crate::board::Fake::default(), &crate::tests::cfg(), at(observed), &[], &[beat])
+        };
+        let stalled = |s: &Snapshot| s.json()["hosts"][0]["queue"].as_array().unwrap().iter().map(|r| r["stalled"] == true).collect::<Vec<_>>();
+        let hang = snap("00:55", false, 2, "00:42");
+        let text = hang.text(&crate::tests::cfg(), &json!({})).unwrap();
+        assert!(text.contains("Queues:\n- win taskqorg/taskq ready 2 · last spawn 2026-11-03T00:30:00Z · restart pending 13m · STALLED 13m: host restart pending\n- win other project ready 1 · last spawn none · restart pending 13m · STALLED 13m: host restart pending"), "{text}");
+        assert_eq!(stalled(&hang), [true, true]);
+        assert_eq!(stalled(&snap("00:51", false, 2, "00:42")), [false, false], "9 min is not yet a stall");
+        assert_eq!(stalled(&snap("00:55", true, 2, "00:42")), [false, false], "a full host is not stalled");
+        assert_eq!(stalled(&snap("00:55", false, 0, "00:42")), [false, true], "no ready work in taskq, the other project still waits");
     }
 
     // Chain: § 4 Host link heartbeat key. Risk: an untrusted `taskq host` issue publishes a key that hosts then serve.

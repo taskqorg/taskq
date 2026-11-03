@@ -579,6 +579,9 @@ impl Kid {
 
 pub struct Service<'a> {
     last_spawn: Option<u64>,
+    /// #2255: this project's queue row and the restart pending since, in board time.
+    queue: crate::host::Queue,
+    restart_since: Option<i64>,
     headroom_error: Option<String>,
     progress: HashMap<(u64,u64,u64),(crate::runtime::progress::Reader,Value,bool)>,
     // Native UTC sampling is independent of the board reply/pass-start clock.
@@ -950,7 +953,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { progress_clock: |_| crate::runtime::now(), last_spawn: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1710,7 +1713,17 @@ impl<'a> Service<'a> {
         lines.extend(kids.iter().map(|(t, a)| format!("#{t} {a}")));
         lines.extend(self.kids.iter().filter_map(|k| k.session_url.as_ref().map(|u| format!("session #{} {} {u}", k.task, k.attempt))));
         lines.extend(self.execution_statuses().iter().map(|s|format!("execution {}",serde_json::to_string(s).unwrap())));
+        lines.push(format!("queue {}", serde_json::to_string(&self.queues()).unwrap()));
         lines.join("\n")
+    }
+
+    /// #2255: this project's row first, named; every other project of the service follows anonymous.
+    fn queues(&self) -> crate::host::Queues {
+        let mut projects = vec![crate::host::Queue { project: Some(self.cfg.repo.clone()), ..self.queue.clone() }];
+        if let Some(h) = self.host.as_ref().and_then(|h| h.lock().ok()) {
+            projects.extend(h.queues.iter().filter(|(r, _)| **r != self.cfg.root).map(|(_, q)| q.clone()));
+        }
+        crate::host::Queues { restart: self.restart_since, projects }
     }
 
     /// #2194 [health checks](../docs/design/host-service.md#health-checks-2194): token reads, version against the
@@ -2871,6 +2884,7 @@ impl<'a> Service<'a> {
     /// #1616: each ready row of this pass's snapshot carries this host's decision; a row it did not reach keeps
     /// `unknown`, reason `no host decision`. A review awaiting its reviewer carries it too (#1685).
     fn decided(&mut self, decided: BTreeMap<u64, (&'static str, String)>) {
+        self.track_queue(&decided);
         let me = self.cfg.me.clone();
         let balancing=serde_json::to_value(self.balancing()).unwrap_or(Value::Null);
         let Some(snapshot) = &mut self.snapshot else { return };
@@ -2883,6 +2897,23 @@ impl<'a> Service<'a> {
                 r.admission = Some(crate::snapshot::Admission { code, reason: reason.clone(), observed, host: Some(me.clone()) });
             }
         }
+    }
+
+    /// #2255: ready work this host may serve that this pass did not admit, and since when it waits without a spawn. Labels, routing, missing
+    /// capabilities and focus refuse on purpose and do not count; a pending restart names itself as the reason.
+    fn track_queue(&mut self, decided: &BTreeMap<u64, (&'static str, String)>) {
+        let now = self.board.now().unwrap_or_else(|_| crate::runtime::now());
+        let restart = self.host.as_ref().and_then(|h| h.lock().ok().map(|h| h.restart)).unwrap_or(false);
+        self.restart_since = if restart { self.restart_since.or(Some(now)) } else { None };
+        let counted: Vec<_> = decided.values().filter(|(c, _)| !matches!(*c, "admitted" | "labels" | "host" | "capability" | "focus")).collect();
+        let q = &mut self.queue;
+        q.ready = counted.len() as u64;
+        q.waiting = if counted.is_empty() { None } else { q.waiting.or(Some(now)) };
+        q.reason = counted.first().map(|(_, r)| if restart { "host restart pending".into() } else { r.clone() });
+        // other boards see this row anonymous and with the admission code only: a reason may quote this project's tasks
+        let generic = counted.first().map(|(c, _)| if restart { "host restart pending".into() } else { c.to_string() });
+        let row = crate::host::Queue { project: None, reason: generic, ..q.clone() };
+        if let Some(mut h) = self.host.as_ref().and_then(|h| h.lock().ok()) { h.queues.insert(self.cfg.root.clone(), row); }
     }
 
     /// The view's log while nothing this pass wrote the task (every write drops its cache entry), else a fresh read:
@@ -2945,6 +2976,8 @@ impl<'a> Service<'a> {
         if role=="worker" && self.cfg.claim==crate::host::ClaimMode::Any && label(&v.issue,"host-").is_none() {
             self.last_spawn=self.last_spawn.max(Some(id));
         }
+        let at = self.board.now().unwrap_or_else(|_| crate::runtime::now());
+        (self.queue.spawn, self.queue.waiting) = (Some(at), Some(at));
         for r in self.reserved.iter_mut().filter(|r| r.0 == n && r.1 == 0) { r.1 = id; }
         if let Some(host) = &self.host { if let Ok(mut h) = host.lock() { h.claimed(&self.cfg.root, n, id); } }
         let l = Launch { files: String::new(), execution: None, task: n, title: v.issue.title.clone(), attempt: id, role: role.into(), rt: rt.into(), session, url: self.board.url(n), resume: None };
@@ -4832,6 +4865,35 @@ Open: none")).unwrap();
         drop((sa,sb));std::fs::remove_dir_all(base).unwrap();
     }
 
+    // Chain: #2255 restart pending -> each project's queue row -> one heartbeat `queue` line for every project. Case
+    // 2026-11-03: win hung on re-exec, ready work in two projects never spawned. Risk: the heartbeat hides the
+    // waiting queue, names another (private) project on this board, or a spawn leaves the wait running.
+    #[test]
+    fn heartbeat_queue_lists_every_project_waiting_on_a_pending_restart() {
+        let base=std::env::temp_dir().join(format!("taskq-queue-{}",crate::runtime::uuid()));
+        let policy=crate::host::Policy::parse(json!({"limits":{"claude":2},"load_gate":{"enabled":false}}),"invented").unwrap();
+        let host=std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(policy.clone()))));
+        let (ba,bb)=(Fake::default(),Fake::default());
+        let mut ca=cfg("invented");ca.root=base.join("a");ca.install=base.clone();let mut cb=ca.clone();cb.root=base.join("b");cb.repo="o/private".into();
+        for root in [&ca.root,&cb.root] {std::fs::create_dir_all(crate::dot(root)).unwrap();}
+        let (mut sa,mut sb)=(service(&ba,&ca,Default::default()),service(&bb,&cb,Default::default()));
+        for s in [&mut sa,&mut sb] {s.host=Some(host.clone());s.reload(Ok(policy.cap.clone()));s.sync_host();}
+        host.lock().unwrap().restart=true;
+        ba.create("Queued","",&[TASK_LABEL.into()]).unwrap();bb.create("Queued too","",&[TASK_LABEL.into()]).unwrap();
+        sb.pass().unwrap();sa.pass().unwrap();
+        assert!(sa.kids.is_empty()&&sb.kids.is_empty(),"a pending restart admits nothing");
+        let queue=|s:&Service|serde_json::from_str::<crate::host::Queues>(s.heartbeat_body().lines().find_map(|l|l.strip_prefix("queue ")).unwrap()).unwrap();
+        let q=queue(&sa);
+        assert!(q.restart.is_some(),"{q:?}");
+        let rows:Vec<_>=q.projects.iter().map(|p|(p.project.clone(),p.ready,p.spawn,p.waiting.is_some(),p.reason.as_deref())).collect();
+        assert_eq!(rows,[(Some(ca.repo.clone()),1,None,true,Some("host restart pending")),(None,1,None,true,Some("host restart pending"))]);
+        assert!(!sa.heartbeat_body().contains("o/private"),"another project stays anonymous on this board");
+        host.lock().unwrap().restart=false;sa.pass().unwrap();
+        let q=queue(&sa);
+        assert_eq!((sa.kids.len(),q.restart,q.projects[0].spawn.is_some(),q.projects[0].ready,q.projects[0].waiting),(1,None,true,0,None),"{q:?}");
+        drop((sa,sb));std::fs::remove_dir_all(base).unwrap();
+    }
+
     // Chain: § 3 poisoned authority -> each project's retained handles -> verified slot rebuild.
     // Risk: clearing poison early drops another project's occupancy and allows a launch above the host limit.
     #[test]
@@ -5607,7 +5669,7 @@ Open: none")).unwrap();
     // splits one machine into several Hosts rows or breaks the one-service-per-host check.
     #[test]
     fn heartbeat_body_lists_version_service_machine_focus() {
-        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ") && !l.starts_with("balancing ")).collect::<Vec<_>>().join("\n");
+        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ") && !l.starts_with("balancing ") && !l.starts_with("queue ")).collect::<Vec<_>>().join("\n");
         let b = Fake::default();
         let c = cfg("win");
         let mut s = service(&b, &c, Default::default());
