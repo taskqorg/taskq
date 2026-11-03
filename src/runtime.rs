@@ -1425,17 +1425,9 @@ pub fn adopt(root:&Path,install:&Path,k:&crate::data::KidLine,x:&crate::core::Ex
     Ok(Box::new(CliTurn {proc:native,log,pos:k.offset,start:k.offset,stopping:false,accepted:false,read_error:None,session,native:Some(k.process.clone()),recovery:None}))
 }
 
-/// § 8 step 3 outside Windows: a Codex app turn waits for a re-exec, and so does a Claude turn without a saved native
-/// identity (#1407); CLI children pass over.
-pub fn handover_waits(rt:&str,p:&dyn Proc)->bool {
-    let a=of(rt);
-    a.app || a.remote&&p.native_identity().is_err()
-}
-
-/// § 8 step 3 on Windows: the image exit waits for every live child and every Codex app turn. #2228: a turn whose
-/// process was never observed (pid 0, e.g. an ambiguous Claude job after a hand-in) is childless; the next image
-/// reads its unresolved execution from the board, like #1435, instead of the exit waiting for it forever.
-pub fn exit_waits(rt:&str,p:&dyn Proc)->bool {of(rt).app || p.id()!=0}
+/// § 8 step 3: only a Codex app turn defers a re-exec. CLI children run on from their release folder (Windows ones in
+/// their own job) and a Claude turn without a saved native identity is rebuilt from the board by the next image (#2297).
+pub fn handover_waits(rt:&str)->bool {of(rt).app}
 
 /// Reconnect observation only. This path cannot submit a prompt, queue a turn or change access.
 pub fn recover(root:&Path,install:&Path,task:u64,x:&crate::core::Execution)->Result<Box<dyn Proc>,String> {
@@ -4962,7 +4954,7 @@ finally:
             let turn=ClaudeTurn {root:root.clone(),log,session:String::new(),id:"c37eb75a".into(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,mode:"dontAsk".into(),input,
                 _input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,released:false,launch_error:None,resumed:None,lost:None};
             s.kids.push(crate::service::Kid {unknown:None,stopping:false,session_url:None,execution:a,task:n,attempt:a,rt:"claude".into(),proc:Box::new(turn)});
-            assert!(crate::lifecycle_waits(&s,false).contains(&format!("#{n}")),"no native identity: re-exec defers");
+            assert!(!crate::lifecycle_waits(&s,false).contains(&format!("#{n}")),"#2297: a turn without native identity passes to the next image");
             s.kids[0].proc.checkpoint(&c,&l,a).unwrap();
             assert!(!crate::lifecycle_waits(&s,false).contains(&format!("#{n}")),"saved native identity: re-exec passes over the live turn");
             crate::save_kids(&s,&root).unwrap();
@@ -5059,7 +5051,7 @@ finally:
 
     // #1561 Chain: live Claude handle -> recorded process exits -> handover pass -> board exit -> handover.
     // Defect: every pass failed with "child identity changed during handover" and the pending update never ran.
-    // Retained: before the board exit the record stays and one error names the execution; after it the handover completes.
+    // Retained: before the board exit the record stays for the next image (#2297); after it the record resolves.
     #[cfg(unix)]
     #[test]
     fn exited_process_resolves_from_board_exit_at_handover() {
@@ -5080,8 +5072,8 @@ finally:
         s.kids.push(crate::service::Kid {unknown:None,stopping:false,session_url:None,execution:a,task:n,attempt:a,rt:"claude".into(),proc:Box::new(turn)});
         let path=crate::kids_path(&root,&root).unwrap();
         let saved=std::fs::read_to_string(&path).unwrap();
-        assert_eq!(crate::save_kids(&s,&root).unwrap_err(),format!("#{n} execution {a}: recorded native process exited; handover waits for its board release"));
-        assert_eq!(std::fs::read_to_string(&path).unwrap(),saved,"an unreleased record stays");
+        crate::save_kids(&s,&root).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(),saved,"#2297: an unreleased record stays and the handover goes on");
         b.comment(n,&format!("taskq: released {a} exit attempt {a}\nop-id: release-{a}")).unwrap();
         crate::save_kids(&s,&root).unwrap();
         assert!(crate::kids_file(&root,&root).unwrap().is_empty(),"board exit resolves the record; handover completes");

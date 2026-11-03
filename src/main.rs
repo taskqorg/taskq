@@ -1839,23 +1839,18 @@ fn save_kids(s: &Service, root: &Path) -> Res<()> {
     };
     let mut kids=vec![];
     for k in &s.kids {
-        let line=data::KidLine {task:k.task,attempt:k.attempt,runtime:k.rt.clone(),process:k.proc.native_identity()?,execution:k.execution,offset:k.proc.input_offset()?,job:k.proc.job()};
-        match recorded(&line) {
-            ("running",_)=>{},
-            // #1561: a recorded process that exited resolves from its board exit; until then one error names the wait.
-            ("ended",_) if exited(k.task,k.attempt,k.execution,&k.rt)? => continue,
-            (_,why)=>return Err(format!("#{} execution {}: {why}; handover waits for its board release",k.task,k.execution)),
-        }
+        // #2297: a child without native identity leaves no record; the next image rebuilds it from the board (§ 3 unknown)
+        let Ok(process)=k.proc.native_identity() else {continue};
+        let line=data::KidLine {task:k.task,attempt:k.attempt,runtime:k.rt.clone(),process,execution:k.execution,offset:k.proc.input_offset()?,job:k.proc.job()};
+        // #1561: a recorded process that exited resolves from its board exit; any other record passes to the next image (#2297)
+        if recorded(&line).0=="ended" && exited(k.task,k.attempt,k.execution,&k.rt)? {continue}
         kids.push(line);
     }
     let mut kept=vec![];
     for old in kids_file(&s.cfg.install,root)? {
         if kids.contains(&old) { continue; }
-        if !exited(old.task,old.attempt,old.execution,&old.runtime)? {
-            // #1435: a Windows exit keeps the record for the next image instead of holding the update on it
-            if !cfg!(windows) { return Err("unresolved native recovery record cannot be discarded during handover".into()); }
-            kept.push(old);
-        }
+        // #1435, #2297: an unresolved record passes to the next image instead of holding the update on it
+        if !exited(old.task,old.attempt,old.execution,&old.runtime)? { kept.push(old); }
     }
     kids.extend(kept);
     write_kids(&s.cfg.install,root,&kids)
@@ -2525,10 +2520,9 @@ fn restart_waits(s: &Service, stopping:bool) -> Vec<String> {
     }).collect()
 }
 
-/// § 8 step 3: what a pending re-exec waits for. Windows waits for every live child; elsewhere CLI children and
-/// Claude background turns with a saved native identity pass over (#1407); codex-app turns wait.
+/// § 8 step 3: what a pending re-exec waits for: codex-app turns only; every other child runs on (#2297).
 fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
-    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || if cfg!(windows) {runtime::exit_waits(&k.rt,k.proc.as_ref())} else {runtime::handover_waits(&k.rt,k.proc.as_ref())}).map(|k| format!("#{}", k.task)).collect();
+    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || runtime::handover_waits(&k.rt)).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
     // a refused resume (#1601) or Stop (#1769) leaves a childless attempt to the next start
     w.extend(s.handoff_waits(true, cfg!(windows) && !stopping));
@@ -6286,8 +6280,8 @@ mod tests {
         assert_eq!(recorded(&a).0,"running");
         assert_eq!(recorded(&e),("ended","recorded native process exited".into()));
         assert!(!pre_boot(&a) && !pre_boot(&e),"a process of this boot is never retired as pre-boot");
-        let held=save_kids(&s,&root).unwrap_err();
-        assert!(held.contains("recorded native process exited; handover waits"),"{held}");
+        save_kids(&s,&root).unwrap();
+        assert_eq!(kids_file(&root,&root).unwrap(),vec![a.clone(),e],"#2297: the ended record passes to the next image until its board exit");
         b.comment(m,&format!("taskq: released {ended} exit attempt {ended}")).unwrap();
         save_kids(&s,&root).unwrap();
         assert_eq!(kids_file(&root,&root).unwrap(),vec![a],"the ended record resolves from its board exit; the live one is kept");

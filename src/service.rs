@@ -4648,29 +4648,35 @@ Open: none")).unwrap();
         assert!(!crate::lifecycle_waits(&s,true).is_empty(),"stop still waits");
     }
 
-    // #2228: on win a handed-in Claude resume whose native job stayed ambiguous (pid 0) held the 4.6.59 image exit
-    // forever ("restart pending over 600 s; waits for taskq #2188"). Risk kept: live children, app turns and Stop wait.
+    // #2228: on win a handed-in Claude resume whose native job stayed ambiguous (pid 0) held the 4.6.59 image exit.
+    // #2297: the 4.6.64 win upgrade then waited over 600 s: a live codex child deferred the exit, and every pass failed
+    // "handoff unknown: Claude original process identity unavailable" on the pid-0 turn, so no project was prepared.
+    // Retained: app turns and Stop wait; the live child runs on and the next image rebuilds both from the board.
     #[test]
-    fn windows_exit_passes_turn_without_observed_process() {
+    fn upgrade_passes_live_child_and_turn_without_observed_process() {
         struct NoPid;
         impl Proc for NoPid {
             fn exited(&mut self) -> Result<Option<i32>, String> {Err("Claude original input matches multiple native candidates; inspect them before release".into())}
             fn kill(&mut self) -> Result<(), String> {Err("Claude stop identity unavailable".into())}
             fn id(&self) -> u32 {0}
+            fn native_identity(&self)->Result<coreq::process::Identity,String> {Err("Claude original process identity unavailable".into())}
         }
         let b=Fake::default();
         let c=cfg("mac");
+        std::fs::create_dir_all(crate::dot(&c.root)).unwrap();
         let mut s=service(&b,&c,Default::default());
         s.ownership_known=true;
         let kid=|task,rt:&str,proc:Box<dyn Proc>|Kid {unknown:None,stopping:false,session_url:None,execution:task,task,attempt:task,rt:rt.into(),proc};
         s.kids.push(kid(1,"claude",Box::new(NoPid)));
-        assert!(!crate::runtime::exit_waits("claude",&NoPid),"no observed process: the image exit passes over it");
-        assert!(crate::runtime::exit_waits("codex-app",&NoPid),"an app turn still defers the exit");
-        assert!(crate::runtime::exit_waits("claude",&FakeProc(Rc::new(RefCell::new(None)))),"a live child still defers the exit");
-        if cfg!(windows) {assert!(crate::lifecycle_waits(&s,false).is_empty(),"{:?}",crate::lifecycle_waits(&s,false));}
-        assert_eq!(crate::lifecycle_waits(&s,true),["#1"],"stop still waits");
-        s.kids.push(kid(2,"claude",Box::new(FakeProc(Rc::new(RefCell::new(None))))));
-        if cfg!(windows) {assert_eq!(crate::lifecycle_waits(&s,false),["#2"]);}
+        s.kids.push(kid(2,"codex",Box::new(FakeProc(Rc::new(RefCell::new(None))))));
+        assert!(crate::runtime::handover_waits("codex-app"),"an app turn still defers the exit");
+        assert!(crate::lifecycle_waits(&s,false).is_empty(),"{:?}",crate::lifecycle_waits(&s,false));
+        assert_eq!(crate::lifecycle_waits(&s,true),["#1","#2"],"stop still waits");
+        let mut h=crate::host::Host::new(Err("fixture".into()));
+        assert!(h.begin_pass(&c.root));h.restart=true;
+        crate::report_handoff(&s,&mut h,&c.root,false).unwrap();
+        assert!(h.handoff_ready(),"one pass prepares the re-exec: {:?}",h.handoff_wait());
+        let _=std::fs::remove_dir_all(&c.root);
     }
 
     // Chain: #1359 § 3 claim -> launch -> acceptance, one pass. Risk: a claim rereads the task log the pass just read.
@@ -5118,9 +5124,10 @@ Open: none")).unwrap();
             h.sync(&healthy, vec![]);
         }
         let n = b.create("Owned", "", &[TASK_LABEL.into()]).unwrap();
-        let a = b.comment(n, "taskq: spawn worker claude:fixture invented").unwrap();
+        // #2297: a codex-app turn is the one child a re-exec still waits for
+        let a = b.comment(n, "taskq: spawn worker codex-app:fixture invented").unwrap();
         let exit = Rc::new(RefCell::new(None));
-        s.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution: a, task: n, attempt: a, rt: "claude".into(), proc: Box::new(FakeProc(exit.clone())) });
+        s.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution: a, task: n, attempt: a, rt: "codex-app".into(), proc: Box::new(FakeProc(exit.clone())) });
         s.pass().unwrap();s.rebuild();
         { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
         // This is the monitor entered after a reduced-loop panic: no board pass and no lease renewal.
@@ -5134,7 +5141,7 @@ Open: none")).unwrap();
         drop(h); std::fs::remove_dir_all(root).unwrap();
     }
 
-    // #1402 A1: restart pending, a live claude kid without a native identity defers the handover; once it exits and
+    // #1402 A1: restart pending, a live codex-app turn defers the handover (#2297: the only child kind); once it exits and
     // is released, the next pass reports prepared. Risk: a released worker keeps the host on the old image.
     #[test]
     fn released_kid_lets_the_next_pass_prepare_the_restart() {
@@ -5145,9 +5152,9 @@ Open: none")).unwrap();
         let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
         let mut s = service(&b, &c, Default::default()); s.host = Some(host.clone());
         let n = b.create("Owned", "", &[TASK_LABEL.into()]).unwrap();
-        let a = b.comment(n, "taskq: spawn worker claude:fixture invented").unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex-app:fixture invented").unwrap();
         let exit = Rc::new(RefCell::new(None));
-        s.kids.push(Kid { unknown:Some("native observation deferred; pass budget exhausted".into()), stopping:false, session_url:None, execution: a, task: n, attempt: a, rt: "claude".into(), proc: Box::new(FakeProc(exit.clone())) });
+        s.kids.push(Kid { unknown:Some("native observation deferred; pass budget exhausted".into()), stopping:false, session_url:None, execution: a, task: n, attempt: a, rt: "codex-app".into(), proc: Box::new(FakeProc(exit.clone())) });
         { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
         let project_pass = |s: &mut Service| {
             assert!(host.lock().unwrap().begin_pass(&root));
@@ -5316,6 +5323,7 @@ Open: none")).unwrap();
     // #2285 Mac repro: #2252 closed while this service still held the handle of its resumed execution 6595390316,
     // which Claude ran as a copied job. Stop needs the input in the saved conversation, so it failed every pass and
     // the re-exec waited for an owner kickstart although the board held that execution's exact Exit release.
+    // #2297: the live handle no longer holds the re-exec; it is never killed, retired or released twice.
     #[test]
     fn closed_2252_board_exit_retires_the_copied_job_handle() {
         struct Copied { live: Rc<std::cell::Cell<bool>>, released: bool }
@@ -5346,13 +5354,9 @@ Open: none")).unwrap();
         { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
         let releases = || b.comments(n).unwrap().iter().filter(|e| e.body.starts_with("taskq: released 6595390316")).count();
         let before = releases();
-        // A live process contradicting the board Exit is never killed or retired; the overdue wait names it.
-        assert!(!handover_pass(&mut s, &host, &root));
-        let line = crate::restart_line(&json!({"restart_waits": crate::restart_waits(&s, false), "restart_overdue": true})).unwrap();
-        assert!(line.contains("pending over 600 s") && line.contains("released by Exit on the board, native process still running"), "{line}");
-        live.set(false);
-        assert!(handover_pass(&mut s, &host, &root), "board Exit plus native exit must reach re-exec: {:?}", crate::lifecycle_waits(&s, false));
-        assert!(s.kids.is_empty());
+        // A live process contradicting the board Exit is never killed or retired, and runs on past the re-exec.
+        assert!(handover_pass(&mut s, &host, &root), "{:?}", crate::lifecycle_waits(&s, false));
+        assert_eq!(s.kids.len(), 1);
         assert_eq!(releases(), before, "the existing release stands; no second release is written");
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -5512,7 +5516,7 @@ Open: none")).unwrap();
         let held=std::mem::take(&mut s.kids);
         let discarded=crate::save_kids(&s,&root);
         s.kids=held;
-        assert!(discarded.unwrap_err().contains("unresolved"));
+        discarded.unwrap();
         assert_eq!(crate::kids_file(&install,&root).unwrap(),rows,"a missing handle cannot erase recovery evidence");
         // A second failed checkpoint must not prevent emergency cancellation.
         let l=Launch {files: String::new(), execution:None,task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"codex".into(),session:"-".into(),url:String::new(),resume:None};
