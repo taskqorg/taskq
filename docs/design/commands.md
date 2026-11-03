@@ -19,7 +19,7 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 
 | Command | Does |
 |---|---|
-| `taskq labels` / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H] [--rules IDs\|all] [--conversation ID --op-id ID]` / `taskq start N [M..]` | §6 labels; add: `#<N> held`; §1 start |
+| `taskq labels` / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H] [--rules IDs\|all] [--gate] [--conversation ID --op-id ID]` / `taskq start N [M..]` | §6 labels; add: `#<N> held` (`--gate`: label `needs-gate` and a `gate` entry, op id `<id>.gate`); §1 start |
 | `taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]` | § 1 create/optional-start receipts; `add` routing/scope/dependency flags apply |
 | `taskq ask N --text Q [--option O..] [--recommend K] [--link URL..]` | question card |
 | `taskq answer N --text A` / `taskq answer N.K [M.K..]` / `taskq pick N.K --text R` | owner's answer or option pick, all checked first; `pick`: § 2 PM view |
@@ -27,7 +27,7 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 | `taskq requeue N [--text T]` / `taskq steer N --text T` | back to `ready` / text to the live worker |
 | `taskq later N [--text T] [--blocker #M\|--until UTC] [--stage A<k>..]` / `taskq failed N --text R` | park (§ 7) / hold |
 | `taskq close N [M..] [--text VERDICT]` | publish (§ 7) and close; one failure never stops the rest |
-| `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | § 7 owner approval of the current result (refused with `TASKQ_ATTEMPT`) / recipe run |
+| `taskq approve N [--sha SHA]` / `taskq gate N` / `taskq recipe NAME --run ID [--goal G] [--start]` | § 7 owner approval of the current result (refused with `TASKQ_ATTEMPT`) / gate a held or ready task: label `needs-gate`, then a `gate` entry; other states refused / recipe run |
 | `taskq status [--only L,..] [--json] [--timing]` / `taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]]` | Read-only R6; `--only`: any label (absent: all); `--timing`: per-project section seconds on stderr. JSON/history: [menu](menu.md#contract-detail) |
 | `taskq inbox N [--json]` / `taskq retro` | task text, folded state and log (a requeue says what to fix); `--json`: progress, answers `{by, at, revision, option, text, read}`; with `TASKQ_ATTEMPT` of the live attempt, either form reacts `eyes` to each unreacted owner note (§ 2) after reading it (GitHub; GitLab: unknown, no receipt); `retro`: owner session (§ 4) on use-case proposals and board `ask`/`answer`/`requeue` history, filing accepted ones via `add` |
 | `taskq issue N [--comment T\|--label L] [--op-id ID] [--json]` | read any board issue, or add a comment or label: [detail](issue-command.md#contract-detail) |

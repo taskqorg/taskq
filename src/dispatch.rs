@@ -518,7 +518,8 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
             // § 7: no publication before the owner's approval of this result; the current policy decides (B4 fencing)
             let sha = t.result.unwrap_or_default();
             let r = Receipt::rejected(n, op, format!("gate is {}: the owner has not approved {}", t.gate.map_or("required", Gate::name), &sha[..sha.len().min(7)]));
-            Receipt { state: Some(t.state.name()), next: format!("Owner: `taskq approve {n}`, or pick the approve option."), ..r }
+            let next = if agent() { format!("Ask the owner with first option `approve {} and close`; the owner's approve binds this result, then close.", &sha[..sha.len().min(7)]) } else { format!("Owner: `taskq approve {n}`, or pick the approve option.") };
+            Receipt { state: Some(t.state.name()), next, ..r }
         }
         State::Review => {
             let sha = t.result.unwrap_or_default();
@@ -697,6 +698,26 @@ pub fn approve(b: &dyn Board, root: &Path, n: u64, sha: Option<&str>, op: &Op, a
         return Receipt { state: Some(t.state.name()), ..Receipt::rejected(n, op, format!("{s} is not the current result {}", &result[..result.len().min(7)])) };
     }
     act_as(b, root, n, "approve", &[&result], "", op, None, None)
+}
+
+/// § 7 Recipes and owner gates: gate a held or ready task before work (#2310); a gate only adds the owner's approve,
+/// so anyone may set it. The `needs-gate` label goes first, so no N-1 host, which ignores `gate`, claims the task in
+/// between (§ 8). A retried op id returns its first receipt.
+pub fn gate(b: &dyn Board, root: &Path, n: u64, op: &Op) -> Receipt {
+    let (issue, t, _) = match current(b, n) {
+        Ok(x) => x,
+        Err(e) => return Receipt::rejected(n, op, e),
+    };
+    let retry = op.id.is_some() && entries(b, n).is_ok_and(|l| l.iter().any(|e| !e.edited && core::op_id(n, &e.body) == op.id.as_deref()));
+    if !retry && !matches!(t.state, State::Held | State::Ready) {
+        return Receipt { state: Some(t.state.name()), ..Receipt::rejected(n, op, format!("#{n} is {}: `gate` only on a held or ready task", t.state.name())) };
+    }
+    if !retry && !issue.labels.iter().any(|l| l == "needs-gate") {
+        if let Err(e) = b.labels(n, &["needs-gate".into()], &[]) {
+            return Receipt { state: Some(t.state.name()), ..Receipt::rejected(n, op, e) };
+        }
+    }
+    act(b, root, n, "gate", &[], "", op)
 }
 
 /// `pick N.K --text R`: the PM's view of an open `ask` card; never an answer (§ 2).

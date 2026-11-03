@@ -84,7 +84,7 @@ const USAGE: &str = "taskq agents
  taskq reroute --from <runtime> --to <runtime> [--json]
  taskq accounts [--json] | taskq accounts enable|disable|move <runtime> <label> [<position>] | taskq accounts add <runtime> <label>
  taskq labels
- taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all] [--conversation ID --op-id ID]
+ taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all] [--gate] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N [M..]
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
@@ -94,7 +94,7 @@ const USAGE: &str = "taskq agents
  taskq result N --sha SHA --checks C.. --text T [--option O.. --recommend K --link URL..]
  taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M|--until UTC] [--stage A<k>..]
  taskq steer N --text T | taskq failed N --text T
- taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
+ taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA] | taskq gate N
  taskq recipe NAME --run ID [--goal G] [--start]
  taskq status [--project P..] [--only L,..] [--json] [--timing] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
@@ -161,7 +161,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear" | "timing") || k=="hosts"&&a.pos==["doctor"] || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "gate" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear" | "timing") || k=="hosts"&&a.pos==["doctor"] || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -174,7 +174,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
             Some("accounts") => 5,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -3275,6 +3275,13 @@ fn add_task(b: &dyn Board, root: &Path, raw: &Value, t: &NewTask, op: &Op) -> Re
     Ok(Receipt { op_id: op.id.clone(), ..r }.wake(root))
 }
 
+/// § 7 Recipes and owner gates: after a gated add (label `needs-gate` already set) the held task takes its `gate`
+/// entry, op id `<id>.gate`; a failed add or an ungated task keeps its receipt.
+fn gated(b: &dyn Board, root: &Path, r: Receipt, gate: bool, id: Option<&str>) -> Receipt {
+    if !(gate && r.ok()) { return r; }
+    act(b, root, r.task, "gate", &[], "", &Op { id: id.map(|i| format!("{i}.gate")), revision: None })
+}
+
 /// § 7 recipe run: every task is added held with op id `recipe.<name>.<version>.<run>.<k>` and read back; only then,
 /// with `start`, do they start. A rerun returns the first receipts.
 fn run_recipe(b: &dyn Board, root: &Path, raw: &Value, name: &str, run: &str, goal: Option<&str>, start: bool) -> Res<Vec<Receipt>> {
@@ -3284,7 +3291,7 @@ fn run_recipe(b: &dyn Board, root: &Path, raw: &Value, name: &str, run: &str, go
     for (k, item) in items.into_iter().enumerate() {
         let new = NewTask { deps: item.deps.iter().map(|d| made[d - 1]).collect(), ..item.task };
         let r = add_task(b, root, raw, &new, &Op { id: Some(base(k)), revision: None })?;
-        let r = if r.ok() && item.gate { act(b, root, r.task, "gate", &[], "", &Op { id: Some(format!("{}.gate", base(k))), revision: None }) } else { r };
+        let r = gated(b, root, r, item.gate, Some(&base(k)));
         let ok = r.ok();
         made.push(r.task);
         out.push(r);
@@ -4010,7 +4017,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 runtime: a.one("runtime").map(String::from),
                 priority: a.one("priority").map(String::from),
                 host: add_host(a.one("host"), cfg),
-                labels: vec![],
+                labels: if a.flags.contains_key("gate") { vec!["needs-gate".into()] } else { vec![] },
                 rules: a.one("rules").map(String::from),
             };
             if finding {
@@ -4044,10 +4051,13 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             } else if ["start", "source", "board", "evidence"].iter().any(|f| a.flags.contains_key(*f)) {
                 return Err("--start/--source/--board/--evidence require finding".into());
             }
-            emit(&[add_task(b, root, &c.raw, &new, &op).map_err(|e| serve_hint(e, cfg))?], json)
+            let r = add_task(b, root, &c.raw, &new, &op).map_err(|e| serve_hint(e, cfg))?;
+            let g = gated(b, root, r, a.flags.contains_key("gate"), op.id.as_deref());
+            emit(&[Receipt { op_id: op.id.clone(), ..g }], json)
         }
         "start" => emit(&start_tasks(b, root, &a.pos[1..], &op)?, json),
         "approve" => emit(&[dispatch::approve(b, root, a.num(1)?, a.one("sha"), &op, dispatch::agent())], json),
+        "gate" => emit(&[dispatch::gate(b, root, a.num(1)?, &op)], json),
         "recipe" => {
             let name = a.pos.get(1).ok_or("recipe name missing")?;
             emit(&run_recipe(b, root, &c.raw, name, a.need("run")?, a.one("goal"), a.flags.contains_key("start"))?, json)
@@ -5463,6 +5473,50 @@ mod tests {
         assert!(close_one(b, &c.cfg, spec, "ok", &Op::default()).ok());
         assert!(!b.issue(spec).unwrap().open);
         assert_eq!(current(b, code).unwrap().1.state, State::Ready, "the approved spec frees the coding task");
+    }
+
+    // Chain: § 7 Recipes and owner gates -> `add --gate` / `gate N` -> owner approve -> close (#2310). Defect:
+    // desiign#116 forbade publishing before owner acceptance, but only recipes could gate a task, so its reviewer
+    // looped on PM asks. Risk: the label lags the entry (an N-1 host claims it), a started task takes a late gate, or
+    // a gated result publishes unapproved.
+    #[test]
+    fn a_task_gated_by_add_or_gate_closes_only_after_the_owner_approves() {
+        let c = Ctx { cfg: cfg(), raw: json!({"create_claim_issue": 1}), board: Box::new(Fake::default()) };
+        let b = c.board.as_ref();
+        let run = |v: &[&str]| command(&c, v[0], &Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap());
+        b.create("create claims", "", &[]).unwrap();
+        run(&["add", "Design", "--goal", "G", "--acceptance", "no main before owner acceptance", "--gate", "--op-id", "d1"]).unwrap();
+        run(&["add", "Design", "--goal", "G", "--acceptance", "no main before owner acceptance", "--gate", "--op-id", "d1"]).unwrap();
+        let issues: Vec<_> = b.issues(None).unwrap().into_iter().filter(|i| service::is_held(i)).collect();
+        assert_eq!((issues.len(), b.issues(None).unwrap().len()), (1, 2), "a retried gated add adds nothing");
+        let n = issues[0].number;
+        assert_eq!(issues[0].labels, vec!["q-held".to_string(), "needs-gate".into()]);
+        assert_eq!(fold(n, &entries(b, n).unwrap(), false).gate, Some(core::Gate::Required));
+        assert_eq!(entries(b, n).unwrap().iter().filter(|e| core::kind(n, &e.body) == "gate").count(), 1);
+        // `gate N` on a ready task: the label lands before the entry; a retry is the first receipt
+        let m = b.create("Later gated", "## Goal\ng", &["taskq".into()]).unwrap();
+        assert!(dispatch::gate(b, &c.cfg.root, m, &Op { id: Some("g1".into()), revision: None }).ok());
+        assert!(b.issue(m).unwrap().labels.contains(&"needs-gate".to_string()));
+        assert!(dispatch::gate(b, &c.cfg.root, m, &Op { id: Some("g1".into()), revision: None }).ok(), "a retry is accepted");
+        assert_eq!(current(b, m).unwrap().1.gate, Some(core::Gate::Required));
+        // a started task takes no late gate
+        b.comment(m, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        let o = b.create("Running", "## Goal\ng", &["taskq".into()]).unwrap();
+        b.comment(o, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        let r = dispatch::gate(b, &c.cfg.root, o, &Op::default());
+        assert!(!r.ok() && r.reason.contains("only on a held or ready task") && !b.issue(o).unwrap().labels.contains(&"needs-gate".to_string()), "{}", r.text());
+        // A2, the desiign#116 shape: started, handed in, close refused, owner approve, close publishes: no PM ask
+        start_tasks(b, &c.cfg.root, &[n.to_string()], &Op::default()).unwrap();
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        let a = fold(n, &entries(b, n).unwrap(), false).attempt.unwrap();
+        b.comment(n, &entry("result", &[sha], Some(a), "")).unwrap();
+        let r = close_one(b, &c.cfg, n, "ok", &Op::default());
+        assert!(!r.ok() && r.reason.contains("gate is required") && b.issue(n).unwrap().open, "{}", r.text());
+        assert!(dispatch::approve(b, &c.cfg.root, n, Some(&sha[..7]), &Op::default(), false).ok());
+        assert!(close_one(b, &c.cfg, n, "ok", &Op::default()).ok());
+        assert!(!b.issue(n).unwrap().open);
+        assert!(run(&["finding", "F", "--goal", "G", "--acceptance", "a", "--gate"]).is_err(), "finding takes no --gate");
     }
 
     // Chain: § 7 delivery preset -> owner approval of the exact SHA -> publication receipt. Risk: `publish: pr` turns

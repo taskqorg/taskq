@@ -918,7 +918,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
              - {park},\n\
              - {ask}.\n{approval}{formats}",
             ask = ask(&q, n),
-            approval = if env.publish == "review-pr" { "Delivery review-pr: an otherwise done result needs the owner's approval: ask with Done naming task fit and merge-result CI, first option `approve <sha7> and close ★`.\n" } else { "" },
+            approval = if env.publish == "review-pr" { "Delivery review-pr: an otherwise done result needs the owner's approval: ask with Done naming task fit and merge-result CI, first option `approve <sha7> and close ★`.\n" } else { "Delivery review-pr: off; a gated task (`close` refuses: gate is required or stale) needs the same ask: Done naming task fit and merge-result CI, first option `approve <sha7> and close ★`.\n" },
             formats = FORMATS
         )
     } else {
