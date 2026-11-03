@@ -2832,8 +2832,9 @@ impl<'a> Service<'a> {
             if code=="load-gate" && self.gate.state(self.mono).0=="unknown" {code="unknown";}
             if matches!(code,"access"|"unknown"|"hold") {reason=format!("{rt}: {code}; see host diagnostics");}
             // #2264: the heartbeat reports occupancy even when headroom, capacity policy or a hold refuses admission
-            let load=(!self.cfg.weights.is_empty()).then(||self.load(rt,false).ok()).flatten();
+            let mut load=(!self.cfg.weights.is_empty()).then(||self.load(rt,false).ok()).flatten();
             if !self.cfg.weights.is_empty() && (self.headroom_error.is_some() || code=="admitted" && load.is_none()) {code="unknown";reason="weighted runtime load/headroom unknown".into();}
+            if code!="admitted" {if let Some(load)=&mut load {load.free=0;}}
             ((*rt).into(),RuntimeAvailability {load,code:code.into(),reason:reason.chars().take(160).collect(),full:self.full.contains(*rt),disabled:self.runtime_disabled(rt),quota:accounts.iter().filter(|l|l.starts_with(&format!("quota {rt} "))).cloned().collect()})
         }).collect();
         let mut has=self.cfg.has.clone();has.retain(|h|h!="gui");if self.gui().is_ok() {has.push("gui".into());}
@@ -7523,7 +7524,8 @@ Open: none";
     }
 
     // #2264 defect: unknown quota headroom dropped the whole load, so status showed "running count not reported" for a
-    // host with live workers. Kept: admission still refuses as unknown and peers never rank the refused runtime.
+    // host with live workers. Review also found free slots under refusals. Kept: running/headroom survive,
+    // refusals report free 0, admitted capacity stays available, and peers never rank the refused runtime.
     #[test]
     fn weighted_heartbeat_reports_running_when_headroom_unknown() {
         let b=Fake::default();
@@ -7541,9 +7543,19 @@ Open: none";
         let read=Balancing::read(&body).unwrap();
         for (rt,running) in [("claude",1),("codex",0)] {
             let r=&read.runtimes[rt];
-            assert_eq!((r.code.as_str(),r.load.as_ref().map(|l|(l.running,l.headroom))),("unknown",Some((running,None))),"{rt}");
+            assert_eq!((r.code.as_str(),r.load.as_ref().map(|l|(l.running,l.free,l.headroom))),("unknown",Some((running,0,None))),"{rt}");
         }
         assert!(s.runtime_load("claude").is_err(),"admission keeps refusing unknown headroom");
+        std::fs::remove_file(install.join(crate::runtime::headroom::FILE)).unwrap();
+        for refusal in ["admitted","focus","quota"] {
+            s.focus=if refusal=="focus" {vec![]} else {vec!["all".into()]};
+            if refusal=="quota" {s.limited.insert("claude".into(),(i64::MAX,true));}
+            let read=Balancing::read(&s.heartbeat_body()).unwrap();
+            let r=&read.runtimes["claude"];
+            assert_eq!(r.load.as_ref().map(|l|(l.running,l.free)),Some((1,if refusal=="admitted" {1}else{0})),"{refusal}");
+            assert_eq!(r.code=="admitted",refusal=="admitted");
+        }
+
         let v=views(&b,&mut Default::default(),&mut Default::default(),300).unwrap().0.remove(0);
         assert!(read.weighted_capacity(&v,false).is_err() || read.weighted_capacity(&v,false)==Ok(0.0));
         std::fs::remove_dir_all(&install).ok();
