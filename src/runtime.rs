@@ -1294,6 +1294,18 @@ fn app_reference(path:&Path)->Result<String,String> {
 }
 
 fn claude_input(root:&Path,text:&str,launch:Option<&Launch>)->Result<(String,crate::data::InputLock,PathBuf),String> {
+    if let Some(l)=launch.filter(|l| l.task>0) {
+        let execution=l.execution.ok_or("exact execution intent missing before native input creation")?;
+        let x=crate::core::Execution {id:execution,attempt:l.attempt,through:l.attempt,host:String::new(),runtime:l.rt.clone(),accepted:false,release:None,usage_hold:None};
+        let path=execution_input(root,l.task,l.attempt,execution)?;
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file())
+            && refused_launch(root,l.task,&x).is_some_and(|r| r.contains("Workspace not trusted")) {
+            // A definite no-start may reuse its immutable input. The next binding clears this proof before submission.
+            let file=File::open(&path).map_err(|e|e.to_string())?;
+            let file=coreq::file_lock::try_lock_shared_file(file).map_err(|e|e.to_string())?;
+            return Ok((claude_reference(&path)?,file,path));
+        }
+    }
     let (path,file)=turn_input(root,text,launch)?;
     Ok((claude_reference(&path)?,file,path))
 }
@@ -1390,18 +1402,19 @@ pub fn refused_launch(root:&Path,task:u64,x:&crate::core::Execution)->Option<Str
     let [log]=logs.iter().filter(|p|p.is_file()).collect::<Vec<_>>()[..] else {return None};
     let text=std::fs::read_to_string(log).ok()?;
     let mut bound=false;
+    let mut refusal=None;
     for line in text.lines().filter(|l|l.trim_start().starts_with('{')) {
         let v:serde_json::Value=serde_json::from_str(line).ok()?;
         if v["type"]=="taskq.input" {
-            if bound {return None;}
             bound=v["execution"].as_u64()==Some(x.id);
+            refusal=None;
         } else if bound && v["type"]=="claude.launch" {
             let status=v.get("status").map(|s|s.as_i64().and_then(|c|i32::try_from(c).ok()));
             if v.get("status").is_some_and(|s|!s.is_null() && !s.is_i64()) {return None;}
-            return claude_refusal(claude_returned_id(v["stdout"].as_str()?).is_some(),v["stderr"].as_str()?,status).map(|r|public_line(&r,root,200));
+            refusal=claude_refusal(claude_returned_id(v["stdout"].as_str()?).is_some(),v["stderr"].as_str()?,status).map(|r|public_line(&r,root,200));
         }
     }
-    None
+    refusal
 }
 
 /// Service start: the native handle of a saved kid. Claude reconnects to its background job; a CLI child is its saved
@@ -1490,6 +1503,9 @@ pub struct StartError {
 }
 
 impl StartError {
+    pub(crate) fn trust_setup() -> Self {
+        Self {message:"Claude trust setup refused; service retries automatically".into(),class:"trust-setup",reportable:false,no_start:true}
+    }
     pub fn admission(message: impl Into<String>) -> Self {
         Self {message:message.into(),class:"admission",reportable:false,no_start:true}
     }
@@ -1571,6 +1587,13 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
             .map_err(|e| StartError::admission(&e))?;
     }
     let home = crate::runtime::accounts::log_home(&l.rt, &log);
+    if l.rt == "claude" {
+        let config = home.clone().or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from));
+        owner::registered_trust(env.install, env.root, config.as_deref()).map_err(|e| {
+            log!("Claude trust setup: {e}");
+            StartError::admission("Claude trust setup pending; service retries automatically")
+        })?;
+    }
     if l.rt == "codex-app" {
         let (text, input_file, path) = app_input(env.root, &text, Some(l)).map_err(StartError::from)?;
         let binding=bind_input(&log,l,&path,&text,serde_json::json!({"thread":l.session}))?;
@@ -1977,7 +2000,7 @@ impl ClaudeTurn {
             if let Err(e)=File::options().append(true).open(&self.log).and_then(|mut file|writeln!(file,"{record}")) {log!("Claude refused launch not recorded: {e}");}
             // #1555: the board text names the root and its remedy, never its path.
             if stderr.contains("Workspace not trusted") {
-                return Err(StartError {message:format!("access refused: Claude does not trust this project root; {}",owner::trust_step("the project root")),class:"permission",reportable:false,no_start:true});
+                return Err(StartError::trust_setup());
             }
             return Err(StartError {message:format!("Claude background launch refused: {}",public_line(&refusal,&self.root,200)),class:"other",reportable:false,no_start:true});
         }
@@ -4457,6 +4480,28 @@ finally:
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    // A1 / R9: trust repair can retry a definite no-start, but never reuse uncertain input.
+    #[test]
+    fn trust_retry_reuses_only_a_definitely_refused_input() {
+        let root=std::env::temp_dir().join(format!("taskq-trust-input-{}",uuid()));
+        std::fs::create_dir_all(root.join(".taskq")).unwrap();
+        let l=Launch {files:String::new(),execution:Some(42),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:"claude".into(),session:String::new(),url:String::new(),resume:None};
+        let (input,lock,path)=claude_input(&root,"original input",Some(&l)).unwrap();
+        drop(lock);
+        assert!(claude_input(&root,"changed input",Some(&l)).is_err(),"unobserved submission stays fenced");
+        let log=log_path(&root,&l);
+        let binding=serde_json::json!({"type":"taskq.input","execution":42});
+        let refusal=serde_json::json!({"type":"claude.launch","stdout":"","stderr":"Workspace not trusted","status":1});
+        std::fs::write(&log,format!("{binding}\n{refusal}\n")).unwrap();
+        let (reused,lock,same)=claude_input(&root,"changed input",Some(&l)).unwrap();
+        assert_eq!(reused,input); assert_eq!(same,path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(),"original input");
+        drop(lock);
+        record_input(&log,&binding).unwrap();
+        assert!(claude_input(&root,"changed input",Some(&l)).is_err(),"lost retry response never permits replay");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     // Risk: a refused launch blocks its task forever, or a doubtful record releases a started job (#1557).
     #[test]
     fn saved_launch_records_reconcile_only_a_refusal() {
@@ -4480,6 +4525,9 @@ finally:
             ("empty stderr",vec![bind(44),launch("","",None)],false),
             ("other execution",vec![bind(43),refused.clone()],false),
             ("later binding",vec![bind(44),bind(45),refused.clone()],false),
+            ("retry response unknown",vec![bind(44),refused.clone(),bind(44)],false),
+            ("retry accepted",vec![bind(44),refused.clone(),bind(44),launch("backgrounded \u{b7} c37eb75a\n","",Some(0.into()))],false),
+            ("retry refused",vec![bind(44),refused.clone(),bind(44),refused.clone()],true),
             ("no record",vec![bind(44)],false),
         ] {
             std::fs::write(attempt_log(&root,"worker",7,42),lines.join("\n")).unwrap();
@@ -4537,7 +4585,7 @@ finally:
             if case=="no-start" {assert!(result.unwrap_err().no_start);}
             else if case=="untrusted" {
                 let e=result.unwrap_err();
-                assert!(e.no_start&&e.message.contains("does not trust")&&e.message.contains("run `claude`"),"{}",e.message);
+                assert!(e.no_start&&e.class()=="trust-setup"&&e.message.contains("service retries automatically"),"{}",e.message);
                 assert!(!e.message.contains(&root.display().to_string()),"board text never holds a local path");
             }
             else if case=="refused" {

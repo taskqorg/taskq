@@ -979,6 +979,15 @@ pub fn run(install: &Path) -> Res<()> {
         registry.refresh(install, began.elapsed().as_secs());
         restart.refresh(install);
         roots.clone_from(&registry.roots);
+        for root in &roots {
+            match crate::runtime::owner::registered_host_trust(install, root) {
+                Ok(lines) => for line in lines { crate::platform::log(&line); },
+                Err(e) => {
+                    let message = format!("Trust setup pending: {e}; service retries automatically");
+                    if reported != message { crate::platform::log(&message); reported = message; }
+                }
+            }
+        }
         let old = legacy(install,&roots);
         if hostname.is_empty() {hostname=crate::hostname();}
         let configured = match &old { Ok(()) => migrate_for_hostname(install, &roots,&hostname).and_then(|_| Policy::read_for_hostname(install,||hostname.clone())), Err(_) => Policy::read_for_hostname(install,||hostname.clone()) };
