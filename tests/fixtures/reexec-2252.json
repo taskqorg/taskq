@@ -1,0 +1,112 @@
+﻿[
+    {
+        "id":  6593126759,
+        "body":  "taskq: hold",
+        "edited":  false
+    },
+    {
+        "id":  6595289306,
+        "body":  "taskq: start",
+        "edited":  false
+    },
+    {
+        "id":  6595327803,
+        "body":  "taskq: spawn worker claude:3d61ac64-d7f1-4ea6-a494-cb66a2cf9c9c mac\nspillover: grace 60 s elapsed; weighted pick claude: running 4, weight 6, headroom unknown, effective 6.000; selected claude",
+        "edited":  false
+    },
+    {
+        "id":  6595331340,
+        "body":  "taskq: accepted 6595327803 attempt 6595327803\nop-id: accept-6595327803",
+        "edited":  false
+    },
+    {
+        "id":  6595348042,
+        "body":  "taskq: ask attempt 6595327803\nDone: prototype: same link targets as reference-style links, taskq.md 56581 to 55710 bytes, no COMPACT; issue names no rule IDs\nProblem: the rule-change gate fails on every taskq.md edit; the cut touches Linked detail, R5, R6, R12, §1, §2 Executable behavioral model, §3, §4, §4 Profiling, §5, §7, §7 Result and close verdicts, §8, §9 (text same meaning)\n1. approve these IDs - + A1 met, wording unchanged, only link syntax; - 14 IDs named ★\n2. close no change - + no rule edit; - COMPACT warning stays\nTo answer: `taskq answer 2252.K` or comment `K` or the option text.",
+        "edited":  false
+    },
+    {
+        "id":  6595359991,
+        "body":  "taskq: released 6595327803 exit attempt 6595327803\nop-id: release-6595327803",
+        "edited":  false
+    },
+    {
+        "id":  6595378379,
+        "body":  "taskq: answer 1\napprove these IDs - + A1 met, wording unchanged, only link syntax; - 14 IDs named",
+        "edited":  false
+    },
+    {
+        "id":  6595390316,
+        "body":  "taskq: executing 6595378379 attempt 6595327803\nop-id: execute-6595327803-6595378379-6595327803",
+        "edited":  false
+    },
+    {
+        "id":  6595654822,
+        "body":  "taskq: requeue",
+        "edited":  false
+    },
+    {
+        "id":  6595900955,
+        "body":  "taskq: released 6595327803 exit attempt 6595327803\nop-id: release-6595327803",
+        "edited":  false
+    },
+    {
+        "id":  6596059273,
+        "body":  "taskq: released 6595378379 exit attempt 6595327803\nop-id: release-6595378379",
+        "edited":  false
+    },
+    {
+        "id":  6596219848,
+        "body":  "taskq: released 6595390316 exit attempt 6595327803\nop-id: release-6595390316",
+        "edited":  false
+    },
+    {
+        "id":  6596225222,
+        "body":  "taskq: spawn worker claude:4d4ce367-c036-45fd-b36a-b28cea1b3580 win\nweighted host win: free weighted capacity 28.000; weighted pick claude: running 3, weight 6, headroom unknown, effective 6.000; selected claude",
+        "edited":  false
+    },
+    {
+        "id":  6596233292,
+        "body":  "taskq: accepted 6596225222 attempt 6596225222\nop-id: accept-6596225222",
+        "edited":  false
+    },
+    {
+        "id":  6596422790,
+        "body":  "taskq: result 3e0a75ae1e4ec5567d0f15aa65c16dccf439ede6 attempt 6596225222\nChanged: taskq.md drops below its size target with no COMPACT warning: 9 repeated links become reference links and 8 soft-wrapped paragraph lines join; rendered rules unchanged. PR https://github.com/taskqorg/taskq/pull/2270\nChecks: python3 scripts/check.py --lint (specq 269a999c) -- PASS, no COMPACT: 55685 bytes (target 55910), 272 lines (target 273)\nChecks: python3 scripts/check.py --rules --base origin/main -- changed IDs = exactly the 14 owner-approved IDs (answer 1)\nChecks: cargo +stable test --locked --bin taskq -- core:: runtime:: incident:: (Windows, taskq.md readers) -- 122 passed, 0 failed\nChecks: python3 scripts/check.py full (Windows) -- unknown: hit 590 s worker tool timeout, no failure before it; merge_group CI gates\nOpen: none",
+        "edited":  false
+    },
+    {
+        "id":  6596440291,
+        "body":  "taskq: released 6596225222 exit attempt 6596225222\nop-id: release-6596225222",
+        "edited":  false
+    },
+    {
+        "id":  6596441056,
+        "body":  "taskq: spawn reviewer claude:c3913ddc-3280-4005-ad27-ff5caa5cf4ff win\nweighted pick claude: running 0, weight 6, headroom unknown, effective 6.000; selected claude",
+        "edited":  false
+    },
+    {
+        "id":  6596451515,
+        "body":  "taskq: accepted 6596441056 attempt 6596441056\nop-id: accept-6596441056",
+        "edited":  false
+    },
+    {
+        "id":  6596489315,
+        "body":  "taskq: publish attempt 6596441056\nChanged: taskq.md drops below its 70% size target (55685 of 55910 bytes), so the contract lint prints no COMPACT warning; rules render unchanged (PR #2270).\nChecks: Task fit: A1 ok -- check.py --lint (specq 269a999c): main 56581 bytes COMPACT; result 3e0a75ae PASS, 0 COMPACT; GitHub-rendered HTML of main vs result identical\nChecks: rule gate -- changed IDs equal the 14 the owner approved (answer 1); PR CI plan, rust (ubuntu-latest), tests, shots pass\nChecks: merge-result CI pending on merge_group for 3e0a75ae1e4ec5567d0f15aa65c16dccf439ede6\nChecks: Implementation quality: none\nOpen: none",
+        "edited":  false
+    },
+    {
+        "id":  6596491557,
+        "body":  "taskq: enqueued MQE_lQDOU960Jc8AAAABMeNW084ABMFKzgOtqu4",
+        "edited":  false
+    },
+    {
+        "id":  6596493520,
+        "body":  "taskq: released 6596441056 exit attempt 6596441056\nop-id: release-6596441056",
+        "edited":  false
+    },
+    {
+        "id":  6596600907,
+        "body":  "taskq: close\nRepeats: publish 6596489315\n\ndelivery auto-merge r0: merged #2270 as fed65e09292b2cb9c8313bf829522ce1b95bc5cd; merge-result CI green",
+        "edited":  false
+    }
+]
