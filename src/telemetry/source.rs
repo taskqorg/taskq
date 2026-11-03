@@ -91,12 +91,9 @@ pub(super) fn prepare(install:&std::path::Path)->Res<Connection> {
     if path.try_exists().map_err(error)? {
         let db=Connection::open_with_flags(&path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(error)?;
         if installed(&db)? {
-            let text=super::legacy_text(install)?;
-            if let Ok(after)=super::legacy_offset(&db,&text) {
-                let after=after.unwrap_or(0);
-                if !text[after..].lines().any(super::telemetry) {
-                    let mut db=db;install_identity(&mut db)?;return Ok(db);
-                }
+            let (log,old)=super::legacy_scan(&db,install)?;
+            if log.offset(old.as_ref()).is_ok_and(|after|!log.pending(after)) {
+                let mut db=db;install_identity(&mut db)?;return Ok(db);
             }
         }
     }
@@ -119,9 +116,8 @@ pub(super) fn pending(db:&Connection,cursor:Option<&str>)->Res<Option<(i64,i64)>
 }
 
 fn drained(db:&Connection,install_root:&std::path::Path)->Res<()> {
-    let text=super::legacy_text(install_root)?;
-    let after=super::legacy_offset(db,&text)?.unwrap_or(0);
-    if text[after..].lines().any(super::telemetry) {return Err("legacy taskq.log has undrained telemetry; source import refused".into());}
+    let (log,old)=super::legacy_scan(db,install_root)?;
+    if log.pending(log.offset(old.as_ref())?) {return Err("legacy taskq.log has undrained telemetry; source import refused".into());}
     Ok(())
 }
 
