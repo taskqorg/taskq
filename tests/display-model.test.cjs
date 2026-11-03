@@ -14,12 +14,13 @@ const groups=[...page.matchAll(/<h2 class="section-heading task-group-heading"><
 assert.deepEqual(groups,fx.display.states.filter(s=>fx.projects[0].tasks.some(t=>t.state===s.id)).map(s=>s.name));
 const shown=[...page.matchAll(/data-card="[^"]*\/(\d+)"/g)].map(m=>Number(m[1]));
 assert.deepEqual(shown,[...fx.projects[0].tasks].sort((a,b)=>a.rank-b.rank).map(t=>t.n));
-const cliReady=[...fx.cli.matchAll(/^\| \[#(\d+) [^\n]*\| ready \|/gm)].map(m=>Number(m[1]));
+const section=name=>(fx.cli.split('\n\n').find(b=>b.split('\n').some(l=>l===name+':'||l.startsWith(name+':')))||'');
+const cliReady=[...section('Ready').matchAll(/^\| \[#(\d+) /gm)].map(m=>Number(m[1]));
 assert.deepEqual(cliReady,shown.filter(k=>fx.projects[0].tasks.find(t=>t.n===k).state==='ready'));
-for(const t of fx.projects[0].tasks.filter(t=>['held','later'].includes(t.state)))assert(fx.cli.includes(t.state_name+': [#'+t.n+' '),t.state);
+for(const t of fx.projects[0].tasks.filter(t=>['held','later'].includes(t.state)))assert(section('Held and stuck').includes('| [#'+t.n+' '),t.state);
 // age: the CLI stuck age and the page row age are one text
 const ask=fx.projects[0].tasks.find(t=>t.state==='ask');
-assert(fx.cli.includes('(ask, '+ask.age+')'));
+assert(fx.cli.includes('stuck '+ask.age+' |'));
 assert(page.includes('<span class="tqp-age">'+ask.age+'</span>'));
 // mode: the paused project reads paused on the page as the CLI Paused line does
 assert.equal(fx.projects[0].mode,'paused');assert(page.includes('Paused: running tasks finish'));

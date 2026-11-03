@@ -2,7 +2,7 @@
   "schema": 1,
   "contract": "https://github.com/taskqorg/taskq/blob/main/taskq.md",
   "commands": [
-    {"name": "status", "use": "taskq status [--only L,..] [--json]", "purpose": "Read the board report: tasks in work, questions, undecided reports (Decide; keep them in Next until decided), held, later, failed and stuck tasks, hosts."},
+    {"name": "status", "use": "taskq status [--project P..] [--only L,..] [--json]", "purpose": "The one manager view of every project: rows by who acts (Owner, PM with Decide and Held and stuck, Anomalies, Running with actor, Ready with why not started), each with one next action; act on these rows only."},
     {"name": "wait", "use": "taskq wait [--window MIN] [--only L,..]", "purpose": "Block until a task moves to ask, review with options, closed or failed; prints the move or tick."},
     {"name": "inbox", "use": "taskq inbox N [--json]", "purpose": "Read one task: its text, folded state, answers and log."},
     {"name": "add", "use": "taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all]", "purpose": "File a new task; it starts held until `start`; unknown rule IDs or commands in its text are refused."},

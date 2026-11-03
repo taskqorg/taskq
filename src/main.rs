@@ -96,7 +96,7 @@ const USAGE: &str = "taskq agents
  taskq steer N --text T | taskq failed N --text T
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
- taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
+ taskq status [--project P..] [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
  taskq deployed --version V --env E --range A..B [--host H] [--json]
@@ -236,6 +236,8 @@ struct Ctx {
     board: Box<dyn Board>,
 }
 
+// R10 A1: each status block's live hosts and their served-project counts, for the installation's anomaly rows
+thread_local!(static SERVED: std::cell::RefCell<Vec<Vec<(String, usize)>>> = const { std::cell::RefCell::new(vec![]) });
 thread_local!(static PROJECT_ROOT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) });
 
 fn find_root() -> Res<PathBuf> {
@@ -1595,7 +1597,11 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let mut status = coreq::status::common(&tool, &cfg.me, &project, at, r.err(), update.as_deref());
         // § 4 snapshot keys; before the first successful pass tasks are unknown, not an empty list
         match &s.snapshot {
-            Some(snap) => for (k, v) in snap.status_keys(error.as_deref()) { status[k] = v; },
+            Some(snap) => {
+                for (k, v) in snap.status_keys(error.as_deref()) { status[k] = v; }
+                // R6: the tray and PilotQ show the manager view's own rows
+                if let Ok(t) = snap.text(&s.cfg, &Value::Null) { status["report"] = json!(t); }
+            }
             None => { status["complete"] = json!(false); status["reason"] = json!(error.as_deref().unwrap_or("no board read yet")); status["tasks"] = json!([]); }
         }
         for (k, v) in [("focus", if focus_error.is_some() { Value::Null } else { json!(s.focus) }), ("focus_error", json!(focus_error)), ("focus_command",command), ("kids", json!(kids)), ("issues", json!(issues)), ("log", json!(log)),
@@ -3496,6 +3502,7 @@ fn run(argv: &[String]) -> Res<()> {
         }
         "tray" => tray(platform::default_install(), a.one("snapshot"), a.one("open").is_some(), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
         "" => Err("command missing; use `taskq help`".into()),
+        "status" if !a.flags.contains_key("closed") => status_all(&a),
         "reports"|"results" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
         _ => command(&ctx()?, cmd, &a),
     }
@@ -3772,6 +3779,70 @@ fn cleanup_lines(b: &dyn Board, cfg: &Config, a: &Args) -> Vec<String> {
     if lines.is_empty() { vec!["nothing to clean".into()] } else { lines }
 }
 
+/// R6 snapshot of one project: the board read, with ready rows the board alone leaves undecided taking this host's
+/// live admission from `status.json` (A3), and #1979 Decide from the collected reports (no board call).
+fn status_snapshot(c: &Ctx, a: &Args) -> (snapshot::Snapshot, Value) {
+    let mut snap = snapshot::read(&*c.board, &c.cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
+    let local = dot(&c.cfg.root).join("status.json");
+    if let Some(s) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, c.cfg.ttl)) { snap.overlay_admission(&s); }
+    (snap, reports::decide(&reports::cached(&c.cfg.root), reports::now()))
+}
+
+/// R10: `taskq status` covers every project of `<install>/projects` plus the current one; `--project P..` narrows to
+/// folder names or `owner/repo`. One project keeps the single-project command; several print one block each.
+fn status_all(a: &Args) -> Res<()> {
+    let here = find_root().ok();
+    let mut roots = host::projects(&platform::default_install()).unwrap_or_default();
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    if let Some(h) = &here { roots.retain(|r| canon(r) != canon(h)); roots.insert(0, h.clone()); }
+    let wanted: Vec<String> = a.all("project").iter().flat_map(|x| x.split([',', ' '])).filter(|x| !x.is_empty()).map(String::from).collect();
+    if !wanted.is_empty() {
+        roots.retain(|r| wanted.iter().any(|w| *w == project_name(r) || load(r).is_ok_and(|(cfg, _)| cfg.repo == *w)));
+        if roots.is_empty() { return Err(format!("--project {}: no listed project matches", wanted.join(" "))); }
+    }
+    let at = |root: &PathBuf| -> Res<Ctx> {
+        let (cfg, raw) = load(root)?;
+        let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
+        Ok(Ctx { cfg, raw, board })
+    };
+    // R10 A1: hosts serving projects outside this view close the report as anomaly rows
+    let unseen = || {
+        let rows = snapshot::unseen(&SERVED.take());
+        if !rows.is_empty() { println!("\nAnomalies:\n{}", rows.join("\n")); }
+    };
+    if roots.len() <= 1 {
+        let c = match roots.first() { Some(r) => at(r)?, None => ctx()? };
+        command(&c, "status", a)?;
+        if !a.flags.contains_key("json") { unseen(); }
+        return Ok(());
+    }
+    if a.flags.contains_key("json") {
+        let mut served = vec![];
+        let projects: Vec<Value> = roots.iter().map(|r| match at(r) {
+            Ok(c) => {
+                let (snap, decide) = status_snapshot(&c, a);
+                served.push(snap.served());
+                let mut v = snap.json();
+                if let Ok(t) = snap.text_with(&c.cfg, &c.raw, Some(&decide)) { v["report"] = json!(t); }
+                v["project"] = json!(project_name(r)); v["decide"] = decide; v
+            }
+            Err(e) => json!({"project": project_name(r), "complete": false, "reason": e}),
+        }).collect();
+        return json_output(&serde_json::to_string_pretty(&json!({"projects": projects, "unseen": snapshot::unseen(&served)})).map_err(|e| e.to_string())?, a.one("json-file"));
+    }
+    for (i, r) in roots.iter().enumerate() {
+        if i > 0 { println!(); }
+        // a project that cannot be read is an anomaly line of its own block, never a silent gap
+        PROJECT_ROOT.with_borrow_mut(|p| *p = Some(r.clone()));
+        if let Err(e) = at(r).and_then(|c| command(&c, "status", a)) {
+            println!("{} · source unavailable: {e} · Next: `taskq status --project {}` after fixing its config or board token", project_name(r), project_name(r));
+        }
+    }
+    PROJECT_ROOT.with_borrow_mut(|p| *p = None);
+    unseen();
+    Ok(())
+}
+
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
@@ -4018,21 +4089,28 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 println!("{value}");
                 return Ok(());
             }
-            let snap = snapshot::read(b, cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
-            // #1979 Decide: undecided reports from the collected projection, no board call
-            let decide = reports::decide(&reports::cached(&cfg.root), reports::now());
+            let (snap, decide) = status_snapshot(c, a);
             if a.flags.contains_key("json") {
                 let mut v = snap.json();
+                if let Ok(t) = snap.text_with(cfg, &c.raw, Some(&decide)) { v["report"] = json!(t); }
                 v["decide"] = decide;
                 json_output(&serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, a.one("json-file"))?;
             } else {
-                println!("{}", snap.text_with(cfg, &c.raw, Some(&decide))?);
+                // R6 A3: an unreadable deploy wait or board quota is an anomaly row, never an `unknown` line
+                let mut extra = vec![];
                 // § 2 Deploy: closed tasks still waiting for their first deploy, a live board read
-                match deploy::status(b, deploy::config(&cfg.root).as_ref()) {
-                    Ok(lines) => for l in lines { println!("{l}"); },
-                    Err(e) => println!("Waiting for deploy: unknown ({e})"),
+                let deploys = deploy::status(b, deploy::config(&cfg.root).as_ref()).unwrap_or_else(|e| {
+                    extra.push(format!("- deploy wait unreadable: {} · Next: rerun `taskq status`; check the board token", compact(&e, 160)));
+                    vec![]
+                });
+                let quota = requests::quota(&b.quota());
+                if quota.starts_with("Board quota: unknown") {
+                    extra.push("- board quota unread: no core budget headers on this read · Next: rerun `taskq status`; a lasting gap is a board client defect".into());
                 }
-                println!("{}", requests::quota(&b.quota()));
+                SERVED.with_borrow_mut(|v| v.push(snap.served()));
+                println!("{}", snap.text_extra(cfg, &c.raw, Some(&decide), extra)?);
+                for l in deploys { println!("{l}"); }
+                if !quota.starts_with("Board quota: unknown") { println!("{quota}"); }
                 // § 6: the live service's open setup gaps follow the report
                 for l in data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default() { println!("{l}"); }
             }
@@ -5241,7 +5319,7 @@ mod tests {
         run(&["add", "V", "--goal", "G", "--acceptance", "a"]).unwrap();
         let v = b.issues(None).unwrap().into_iter().filter(service::is_held).map(|i| i.number).max().unwrap();
         let text = snapshot::read(b, &c.cfg, &c.raw, &[]).text(&c.cfg, &c.raw).unwrap();
-        assert!(text.contains(&format!("Held: [#{u} U]")) && text.contains(&format!("[#{v} V]")), "{text}");
+        assert!(text.contains(&format!("| [#{u} U](")) && text.contains(&format!("| PM | `taskq start {u}` |")) && text.contains(&format!("[#{v} V]")), "{text}");
         let receipts = start_tasks(b, &c.cfg.root, &[u.to_string(), format!("#{v}")], &Op::default()).unwrap();
         assert_eq!(receipts.iter().map(|r| r.task).collect::<Vec<_>>(), vec![u, v]);
         assert!([u, v].iter().all(|&m| fold(m, &entries(b, m).unwrap(), false).state == State::Ready));
@@ -6338,7 +6416,7 @@ mod tests {
         b.create("taskq host mac", "version 4.0.0", &[service::HOST_LABEL.into()]).unwrap();
         let r = report(&b, &c, &Value::Null, &[]).unwrap();
         assert!(r.contains("In work 0 · Waiting for answer 1 · Ready 1"), "{r}");
-        assert!(r.contains(&format!("| [#{n} Ship \\| it](https://board/{n}) | ready |")), "{r}");
+        assert!(r.contains(&format!("| [#{n} Ship \\| it](https://board/{n}) | no host decision |")), "{r}");
         assert!(r.contains(&format!("{q}.1 left · {q}.2 right ★ |")), "only the star without a pick: {r}");
         assert!(r.contains("Hosts: mac v4.0.0"), "{r}");
         assert!(!inbox(&b, &c.root, q).unwrap().contains("Recommendation:"));
@@ -6732,7 +6810,7 @@ mod tests {
         let blocked = c.board.create("blocked", &format!("Depends on #{dep}"), &["taskq".into(), "selected".into()]).unwrap();
         let report = report(c.board.as_ref(), &c.cfg, &c.raw, &["selected".into()]).unwrap();
         assert!(report.contains(&format!("#{blocked} blocked")));
-        assert!(report.contains(&format!("blocked ([#{dep}](https://board/{dep}) open)")), "non-task dependency remains visible outside filter");
+        assert!(report.contains(&format!("dependency ([#{dep}](https://board/{dep}) open)")), "non-task dependency remains visible outside filter");
     }
 
     // Chain: § 5 piped owner reply -> CLI parsing -> shared dispatcher. Risk: OS arguments cap or alter the text.

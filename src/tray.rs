@@ -675,6 +675,7 @@ fn project(install: &Path, root: &str) -> Value {
         "incident_repo": crate::platform::RELEASE_REPO});
     out["routing"] = routing;
     out["events_error"] = json!(events_error);
+    out["report"] = s["report"].clone(); // R6: the manager view text for tray Attention
     out["incoming"] = s["incoming"].clone();
     // #1819: the stale line compares the board read age with the service poll
     out["poll"] = s["poll"].clone();

@@ -482,6 +482,24 @@ fn slot(project: &Path, task: u64, attempt: u64) -> Slot {
 }
 pub enum Maintenance {Update(Option<String>),Installation(String)}
 
+/// #2255: one project's queue as its last pass saw it, in board time. `project` is named only on the project's own
+/// board; other projects of the service stay anonymous there (a public board never names a private one).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Queue {
+    pub project: Option<String>,
+    /// Ready tasks this host may serve: admitted or held by this host, not refused by labels, routing or focus.
+    pub ready: u64,
+    pub spawn: Option<i64>,
+    /// Since when ready work waits without a spawn; reset by each spawn.
+    pub waiting: Option<i64>,
+    /// The first refusal of a waiting task; only its admission code for another project's row.
+    pub reason: Option<String>,
+}
+
+/// #2255: heartbeat `queue {json}`: the restart pending since, and the queue of every project the service serves.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Queues { pub restart: Option<i64>, pub projects: Vec<Queue> }
+
 pub struct Host {
     pub instance: String,
     pub policy: Res<Policy>,
@@ -519,6 +537,8 @@ pub struct Host {
     pub rebuilding: bool,
     rebuilt: BTreeSet<PathBuf>,
     published: BTreeMap<PathBuf, Instant>,
+    /// #2255: each project's last queue row.
+    pub queues: BTreeMap<PathBuf, Queue>,
 }
 
 impl Host {
@@ -527,7 +547,7 @@ impl Host {
             ready: BTreeSet::new(), external_ready:BTreeMap::new(), turn: None, held: None, restart: false, restart_woken:false, restart_overdue:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), passing: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
             request_since: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()), hour_start: crate::requests::totals(), last_hour: None,
             hosts_start: crate::requests::host_totals(), hosts_last_hour: None,
-            rebuilding: false, rebuilt: BTreeSet::new(), published: BTreeMap::new() }
+            rebuilding: false, rebuilt: BTreeSet::new(), published: BTreeMap::new(), queues: BTreeMap::new() }
     }
 
     pub fn reload(&mut self, policy: Res<Policy>) {
