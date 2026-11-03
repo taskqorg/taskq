@@ -50,12 +50,23 @@ fn observations(events:&[Value])->BTreeMap<String,(usize,f64,Option<i64>)> {
     rows
 }
 
-pub fn observe(install:&Path,rt:&str,log:&Path,now:i64)->Result<(),String> {
-    let Some(events)=super::events(log,0) else {return Ok(())};
+pub fn observe(install:&Path,rt:&str,log:&Path,now:i64)->Result<(),String> {observe_in(install,rt,log,now,super::rollout)}
+
+fn observe_in(install:&Path,rt:&str,log:&Path,now:i64,rollout:impl Fn(&str)->Option<std::path::PathBuf>)->Result<(),String> {
+    let Some(mut events)=super::events(log,0) else {return Ok(())};
+    let mut source=log.to_path_buf();
+    // #2263: `codex exec --json` logs carry no rate limits; the thread's rollout records them in `token_count`.
+    // ponytail: rereads the whole rollout each pass; read from a saved offset if rollouts grow large.
+    if rt=="codex" && observations(&events).is_empty() {
+        let thread=events.iter().rev().find(|e|e["type"]=="thread.started").and_then(|e|e["thread_id"].as_str()).map(String::from);
+        if let Some(path)=thread.and_then(|t|rollout(&t)) {
+            if let Some(rollout)=super::events(&path,0) {events=rollout;source=path;}
+        }
+    }
     let rows=observations(&events);
     if rows.is_empty() {return Ok(());}
     let label=super::accounts::of_log(log);
-    let modified=std::fs::metadata(log).and_then(|m|m.modified()).map_err(|e|e.to_string())?
+    let modified=std::fs::metadata(&source).and_then(|m|m.modified()).map_err(|e|e.to_string())?
         .duration_since(std::time::UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs() as i64;
     let at=now.min(modified);
     let marker=log.with_extension("headroom");
@@ -94,6 +105,18 @@ pub fn remaining(install:&Path,rt:&str,now:i64)->Result<Option<f64>,String> {
         .map(|o|o.remaining).min_by(f64::total_cmp))
 }
 
+/// #2263: why `remaining` has no fraction, so status names a cause instead of "unknown".
+pub fn cause(install:&Path,rt:&str,now:i64)->String {
+    let accounts=super::accounts::Host::read(install);
+    let Some(label)=accounts.active(rt,now) else {return "every account on quota hold".into()};
+    let latest=read(install).ok().and_then(|s|s.get(rt).and_then(|a|a.get(&label)).and_then(|w|w.values().map(|o|o.at).max()));
+    match latest {
+        None if rt=="claude" => format!("account {label}: Claude background jobs report no quota"),
+        None => format!("account {label}: no quota observation yet"),
+        Some(at) => format!("account {label}: last quota observation {} min ago",(now-at).max(0)/60),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +142,15 @@ mod tests {
         super::super::accounts::record_windows(&root,"claude","default",1300,&[("seven_day".into(),Some(7000))]).unwrap();
         assert_eq!(remaining(&root,"claude",1301).unwrap(),None,"a held account cannot supply headroom for a different launch account");
         assert!(super::super::accounts::Host::read(&root).active("claude",1401).is_none());
+        // #2263: a `codex exec --json` log has no rate limits; its thread rollout supplies them, else a named cause.
+        let exec=root.join("exec.jsonl");let rollout=root.join("rollout-x-t1.jsonl");
+        std::fs::write(&exec,"{\"type\":\"thread.started\",\"thread_id\":\"t1\"}\n").unwrap();
+        std::fs::write(&rollout,"{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":68.0,\"window_minutes\":10080}}}}\n").unwrap();
+        observe_in(&root,"codex",&exec,1500,|_|None).unwrap();
+        assert_eq!(remaining(&root,"codex",1500).unwrap(),None);
+        assert_eq!(cause(&root,"codex",1500),"account default: last quota observation 8 min ago");
+        observe_in(&root,"codex",&exec,1500,|t|(t=="t1").then(||rollout.clone())).unwrap();
+        assert!((remaining(&root,"codex",1500).unwrap().unwrap()-0.32).abs()<1e-9);
         std::fs::write(root.join(FILE),"bad").unwrap();assert!(remaining(&root,"codex",1400).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
