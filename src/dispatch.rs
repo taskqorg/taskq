@@ -493,7 +493,16 @@ pub fn close_checked(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op
     let r = close_body(b, cfg, n, verdict, op, check, &mut seen);
     let (outcome, err) = seen.2.unwrap_or(if r.ok() { ("ok", "none") } else { ("failed", crate::profile::class(&r.reason)) });
     crate::profile::stage("close", n, seen.0, &seen.1, Some(began.elapsed()), outcome, err, crate::profile::Usage::NoModel);
+    if r.ok() { review_result(cfg, n, seen.0, &seen.1, &child_env()); }
     r
+}
+
+/// #2283: a reviewer's close is its hand-in; the service then kills the closing review as replaced, so the
+/// `result` lifecycle event is recorded here or never.
+fn review_result(cfg: &Config, n: u64, attempt: u64, rt: &str, env: &ChildEnv) {
+    if attempt == 0 || own_attempt(n, env) != Some(attempt) { return; }
+    let pid = crate::telemetry::live_worker_pid(&cfg.install, Some(&cfg.root), n, attempt, attempt).unwrap_or_else(std::process::id);
+    crate::telemetry::record_worker(&cfg.install, &cfg.repo, &cfg.me, rt, "review", "result", n, attempt, pid, "ok", "close");
 }
 
 /// `seen`: the attempt and runtime once read, and an outcome override (a pending publication is retried).
@@ -867,6 +876,21 @@ pub fn recover(b: &dyn Board, root: &Path, rows: &[Row]) -> Vec<Receipt> {
 mod tests {
     use super::*;
     use crate::board::Fake;
+
+    #[test]
+    fn closing_review_records_its_result_event() {
+        let dir = std::env::temp_dir().join(format!("taskq-2283-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (_capture, _guard) = crate::profile::tests::collecting(&dir);
+        let mut c = crate::tests::cfg();
+        c.install = dir.clone();
+        let review = |env: ChildEnv| { review_result(&c, 7, 42, "codex", &env); crate::telemetry::worker_events(&dir).into_iter().filter(|e| e.event == "result").count() };
+        assert_eq!(review((Some("7".into()), Some("41".into()))), 0, "another attempt's child records nothing");
+        assert_eq!(review((None, None)), 0, "an owner close records nothing");
+        assert_eq!(review((Some("7".into()), Some("42".into()))), 1);
+        let ev = crate::telemetry::worker_events(&dir).into_iter().find(|e| e.event == "result").unwrap();
+        assert_eq!((ev.task, ev.attempt, ev.role.as_str(), ev.runtime.as_str()), (7, 42, "review", "codex"));
+    }
 
     // Chain: §5, #2137 A3. Recovery must not steal a live/foreign writer, and must finish a crashed partial label write.
     #[test]
