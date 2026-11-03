@@ -324,6 +324,41 @@ pub fn trust_gap(home: &Path, root: &Path) -> Vec<String> {
 pub fn trust(install: &Path, home: &Path, claude_pids: impl FnOnce() -> Res<Vec<String>>) -> Res<Vec<String>> {
     let roots = fs::read_to_string(install.join("projects")).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(String::new()) } else { Err(format!("project registry unreadable: {e}")) })?;
     let keys: Vec<String> = std::iter::once(dir(install)).chain(roots.lines().filter(|l| !l.trim().is_empty()).map(PathBuf::from)).map(|p| claude_key(&p)).collect();
+    trust_keys(home, &keys, claude_pids, false)
+}
+
+// Serialize TaskQ's project threads; Claude itself still requires the process guard below.
+static TRUST_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// R9: registration authorizes only this exact root. Missing trust is repaired, never an owner prompt.
+pub(crate) fn registered_trust(install: &Path, root: &Path, config: Option<&Path>) -> Res<Vec<String>> {
+    registered_trust_with(install, root, config, claude_pids)
+}
+
+pub(crate) fn registered_trust_with(install: &Path, root: &Path, config: Option<&Path>, pids: impl FnOnce() -> Res<Vec<String>>) -> Res<Vec<String>> {
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    if !crate::host::projects(install)?.contains(&root) { return Err("trust setup: root is not registered".into()); }
+    let home = match config {
+        Some(p) => p.to_path_buf(),
+        None => PathBuf::from(std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok_or("trust setup: host home unknown")?),
+    };
+    // A selected CLAUDE_CONFIG_DIR stores .claude.json inside that directory.
+    let key = claude_key(&root);
+    let mut keys = vec![key.clone()];
+    if cfg!(windows) { keys.push(key.replace('/', "\\")); }
+    trust_keys(&home, &keys, pids, true)
+}
+
+/// Host registration/startup prepares the default config; selected account configs are checked at launch.
+pub(crate) fn registered_host_trust(install: &Path, root: &Path) -> Res<Vec<String>> {
+    if !super::which("claude").is_file() { return Ok(vec![]); }
+    let config = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
+    registered_trust(install, root, config.as_deref())
+}
+
+fn trust_keys(home: &Path, keys: &[String], claude_pids: impl FnOnce() -> Res<Vec<String>>, automatic: bool) -> Res<Vec<String>> {
+    let _guard = TRUST_WRITE.lock().map_err(|_| "Claude trust writer unavailable")?;
+    let _file_lock = coreq::file_lock::try_lock(&home.join(".claude.json.taskq-lock")).map_err(|e| format!("Claude trust writer busy: {e}"))?;
     let path = home.join(CLAUDE_CONFIG);
     let text = match fs::read_to_string(&path) { Ok(t) => Some(t), Err(e) if e.kind() == std::io::ErrorKind::NotFound => None, Err(e) => return Err(format!("Claude config unreadable: {e}")) };
     let (next, changed) = trusted(text.as_deref(), &keys)?;
@@ -332,6 +367,7 @@ pub fn trust(install: &Path, home: &Path, claude_pids: impl FnOnce() -> Res<Vec<
     // Claude rewrites the whole file: a running one would drop the change, so the owner lets Claude write it (#1555)
     let pids = claude_pids().map_err(|e| format!("Claude processes unknown ({e}); trust unchanged"))?;
     if !pids.is_empty() {
+        if automatic { return Err("Claude trust setup pending: Claude runs; service retries when it exits".into()); }
         return Ok(changed.iter().flat_map(|k| [format!("Trust: {k} not trusted; Claude runs (pid {}), so onboard leaves the file", pids.join(", ")), trust_step(k)]).collect());
     }
     if let Some(t) = &text {

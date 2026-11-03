@@ -361,7 +361,7 @@ pub fn last(install: &Path, project: bool) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::owner::{claude_key, codex_thread, trust, trust_gap, trust_step, trusted};
+    use crate::runtime::owner::{claude_key, codex_thread, trust, trust_gap, trust_step};
 
     fn ok(_: &Path, _: &Request) -> Launched { Launched::Job { job: "abcd1234".into(), session: None, url: None } }
     fn unknown(_: &Path, _: &Request) -> Launched { Launched::Unknown("timeout".into()) }
@@ -515,6 +515,40 @@ mod tests {
         // idempotent: nothing to change reads no processes and writes nothing
         // A2 (#1555): a working host prints no trust line
         assert!(trust(&install, &home, || panic!("process list read with nothing to change")).unwrap().is_empty());
+    }
+
+    // A1 / R9: a fresh registered root must be trusted without manual onboarding, preserving config data.
+    #[test]
+    fn registered_root_trust_repairs_both_windows_spellings() {
+        let (install, home, root) = (tmp(), tmp(), tmp());
+        fs::write(install.join("projects"), format!("{}\n", root.canonicalize().unwrap().display())).unwrap();
+        let path = home.join(".claude.json");
+        let old = r#"{"numStartups":3,"projects":{}}"#;
+        fs::write(&path, old).unwrap();
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec!["42".into()])).unwrap_err().contains("service retries"));
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Err("inventory unavailable".into())).unwrap_err().contains("unknown"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), old, "live or unknown Claude never loses config data");
+        let key = claude_key(&root.canonicalize().unwrap());
+        let mut keys = vec![key.clone()];
+        if cfg!(windows) { keys.push(key.replace('/', "\\")); }
+        let result = crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec![]));
+        assert!(result.is_ok(), "{result:?}");
+        let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        for key in keys { assert_eq!(value["projects"][key]["hasTrustDialogAccepted"], true); }
+        assert_eq!(value["numStartups"], 3);
+        let backup = fs::read_dir(&home).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with(".claude.json.bak-onboard-")).unwrap();
+        assert_eq!(fs::read_to_string(backup.path()).unwrap(), old);
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec![])).unwrap().is_empty());
+        let unregistered = tmp();
+        let before = fs::read(&path).unwrap();
+        assert!(crate::runtime::owner::registered_trust_with(&install, &unregistered, Some(&home), || Ok(vec![])).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        fs::write(&path, "{").unwrap();
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec![])).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{", "invalid config is preserved");
+        fs::remove_file(&path).unwrap();
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec![])).is_ok(), "fresh config is created");
+        for p in [install, home, root, unregistered] { fs::remove_dir_all(p).unwrap(); }
     }
 
     // Risk (#1555, pilotq#3): `service install` registered a root Claude did not trust and said nothing.

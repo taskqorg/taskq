@@ -1989,13 +1989,17 @@ impl<'a> Service<'a> {
                 self.execution_waits.insert(task, "multiple unresolved executions; verify native ownership before recovery".into());
                 continue;
             }
-            // #1557: a launch the runtime refused submitted nothing; release it so the task can start again.
+            // A definite trust no-start keeps its pending input/attempt for service setup repair (R9).
             if let Some(refusal) = crate::runtime::refused_launch(&self.cfg.root, task, x) {
-                release_execution(self.board, task, x.attempt, x.id, "no-start")?;
-                self.retired(task, x.attempt, x.id, false);
                 let t = &v.projection.task;
-                if t.attempt == Some(x.attempt) && matches!(t.state, State::Doing | State::Review) {
-                    self.gone(task, t, x.attempt, &[], &format!("start failed: Claude background launch refused: {refusal}"))?;
+                if refusal.contains("Workspace not trusted") && t.attempt == Some(x.attempt) && matches!(t.state, State::Doing | State::Review) {
+                    self.retry_trust(v, x)?;
+                } else {
+                    release_execution(self.board, task, x.attempt, x.id, "no-start")?;
+                    self.retired(task, x.attempt, x.id, false);
+                    if t.attempt == Some(x.attempt) && matches!(t.state, State::Doing | State::Review) {
+                        self.gone(task, t, x.attempt, &[], &format!("start failed: Claude background launch refused: {refusal}"))?;
+                    }
                 }
                 continue;
             }
@@ -3137,6 +3141,26 @@ impl<'a> Service<'a> {
         }
     }
 
+    /// R9: recover only a definite trust no-start, keeping the same attempt and exact pending notes.
+    fn retry_trust(&mut self, v: &View, x: &core::Execution) -> Result<(), String> {
+        let t = &v.projection.task;
+        let (rt, session) = rt_of(t).ok_or("trust retry runtime missing")?;
+        let mut l = Launch { files: String::new(), execution: Some(x.id), task: v.issue.number, title: v.issue.title.clone(),
+            attempt: x.attempt, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: session.into(), url: self.board.url(v.issue.number), resume: None };
+        if x.through != x.attempt {
+            l.session = crate::runtime::native_session(rt, &crate::runtime::log_path(&self.cfg.root, &l)).ok_or("trust retry native session unknown")?;
+            let seen = v.projection.delivered(x.attempt).unwrap_or(0);
+            let notes: Vec<_> = v.comments.iter().filter(|c| t.inbox.contains(&c.id) && c.id > seen && c.id <= x.through).collect();
+            let text: Vec<_> = notes.iter().map(|c| core::delivery(v.issue.number, &v.log, c.id)).collect();
+            let inbox: Vec<_> = notes.iter().zip(&text).map(|(c, text)| (core::kind(v.issue.number, &c.body), text.as_str())).collect();
+            l.resume = Some(format!("{}\n{}", text.join("\n\n"), crate::runtime::turn_marker(&inbox)));
+        }
+        self.pending.insert((l.task, l.attempt));
+        self.execution_waits.insert(l.task, "Claude trust setup pending; service retries automatically".into());
+        self.held.push(l);
+        Ok(())
+    }
+
     #[tracing::instrument(name="service.Service.launch",skip_all)]
     /// `log`: this pass's read of the task (the view, or the claim's spawn readback); launch reads it again only to
     /// confirm its own writes (#1359).
@@ -3194,6 +3218,9 @@ impl<'a> Service<'a> {
             }
         });
         if started.as_ref().is_err_and(|e|e.class()=="admission") {
+            if started.as_ref().err().is_some_and(|e| e.to_string().starts_with("Claude trust setup")) {
+                self.execution_waits.insert(l.task, "Claude trust setup pending; service retries automatically".into());
+            }
             self.pending.insert((l.task,l.attempt));
             self.held.push(l);
             self.sync_host();
@@ -3237,6 +3264,12 @@ impl<'a> Service<'a> {
                     self.sync_host();
                     self.beat()?;
                     return Err(reason);
+                }
+                if e.class() == "trust-setup" {
+                    self.execution_waits.insert(l.task, "Claude trust setup pending; service retries automatically".into());
+                    self.pending.insert((l.task, l.attempt));
+                    self.held.push(l);
+                    return self.beat();
                 }
                 self.pending_releases.insert((l.task, l.attempt, execution));
                 release_execution(self.board, l.task, l.attempt, execution, "no-start")?;
@@ -3368,25 +3401,39 @@ mod tests {
     // Chain: saved refused launch -> no-start release -> admission. Risk: a refused Claude launch blocks its task forever (#1557).
     #[test]
     fn a_saved_refused_claude_launch_reconciles_as_no_start() {
-        for case in ["requeued","doing"] {
+        for case in ["requeued","doing","review"] {
             let root=std::env::temp_dir().join(format!("taskq-1557-{case}-{}",std::process::id()));
             std::fs::create_dir_all(root.join(".taskq")).unwrap();
             let b=Fake::default();let mut c=cfg("mac");c.root=root.clone();
             let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
-            let a=b.comment(n,"taskq: spawn worker claude:session mac").unwrap();
+            let worker=b.comment(n,"taskq: spawn worker claude:session mac").unwrap();
+            let (a,role)=if case=="review" {
+                b.comment(n,&format!("taskq: result {} attempt {worker}","a".repeat(40))).unwrap();
+                release_execution(&b,n,worker,worker,"exit").unwrap();
+                (b.comment(n,"taskq: spawn reviewer claude:session mac").unwrap(),"reviewer")
+            } else {(worker,"worker")};
             if case=="requeued" {b.comment(n,"taskq: requeue\ntrust set").unwrap();}
-            std::fs::write(crate::runtime::attempt_log(&root,"worker",n,a),format!("{}\n{}\n",
+            std::fs::write(crate::runtime::attempt_log(&root,role,n,a),format!("{}\n{}\n",
                 json!({"type":"taskq.input","execution":a}),json!({"type":"claude.launch","stdout":"","stderr":"Workspace not trusted"}))).unwrap();
             let launched=Rc::new(RefCell::new(0));let count=launched.clone();
-            let mut s=Service::new(&b,&c,"fixture",Box::new(move |_|{*count.borrow_mut()+=1;Err("fixture: stop after admission".into())}));
+            let mut s=Service::new(&b,&c,"fixture",Box::new(move |_| {
+                *count.borrow_mut()+=1;
+                if case!="requeued" && *count.borrow()<=2 { Err(crate::runtime::StartError::trust_setup()) }
+                else { Ok(Box::new(FakeProc(Rc::new(RefCell::new(None))))) }
+            }));
             s.recover=Some(Box::new(|_,_|panic!("a refused launch needs no native observer")));s.focus=vec!["all".into()];
             let first=s.pass();
             let log=entries(&b,n).unwrap();
-            assert_eq!(core::executions(n,&log)[0].release,Some(core::Release::NoStart),"{case}");
+            assert_eq!(core::executions(n,&log).last().unwrap().release,if case!="requeued" {None} else {Some(core::Release::NoStart)},"{case}");
             assert!(!s.execution_waits.get(&n).is_some_and(|w|w.contains("input")),"{case}: no 'accept input' wait");
-            if case=="doing" {
-                let gone=log.iter().find(|e|e.body.starts_with("taskq: gone")).expect("doing attempt ends");
-                assert!(gone.body.contains("refused: Workspace not trusted"),"{}",gone.body);
+            if case!="requeued" {
+                for _ in 0..4 { b.advance(60); s.pass().unwrap(); }
+                let log=entries(&b,n).unwrap();
+                assert_eq!(*launched.borrow(),3,"{case}: service retries setup and then starts the fresh input; first={first:?}; log={:?}; held={}; waits={:?}; cap={:?}",s.log,s.held.len(),s.execution_waits,s.cap);
+                assert!(core::executions(n,&log).last().unwrap().accepted,"fresh input starts after repair");
+                assert_eq!(core::fold(n,&log,false).retries,0);
+                assert!(!log.iter().any(|e| e.body.starts_with("taskq: gone") || e.body.starts_with("taskq: ask")), "trust setup must not charge retries or wait for the owner");
+                assert_eq!(core::fold(n, &log, false).attempt, Some(a));
             } else {
                 let _=s.pass();
                 assert_eq!(*launched.borrow(),1,"the requeued task is admitted again: {first:?} {:?}",s.log);

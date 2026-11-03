@@ -2799,9 +2799,9 @@ fn service(args: &Args) -> Res<()> {
             println!("{}",host::install_project(&cfg.install,&root)?);
             if let Some(l)=host_setup(&cfg) {println!("{l}");}
             for l in tools::gaps(&cfg.install,Some(&root)) {println!("{l}");}
-            // #1555: a root Claude does not trust starts no Claude worker; say so and how, without writing
-            if let Some(home)=std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-                for l in runtime::owner::trust_gap(Path::new(&home),&root.canonicalize().map_err(|e|e.to_string())?) {println!("{l}");}
+            match runtime::owner::registered_host_trust(&cfg.install, &root) {
+                Ok(lines) => for line in lines { println!("{line}"); },
+                Err(e) => println!("Trust setup pending: {e}; service retries automatically"),
             }
             // § 6: the tray's Add project runs this install, so a new project ends with its setup check
             setup_check_cmd(&root, false)
