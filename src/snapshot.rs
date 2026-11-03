@@ -1089,7 +1089,15 @@ impl Snapshot {
         // R6 Ready: why the service has not started it yet
         let ready: Vec<String> = self.tasks.iter().filter(|r| r.task.state == State::Ready).map(|r| {
             let a = r.admission.as_ref();
-            let why = r.wait().or_else(|| a.map(|a| if a.reason.is_empty() { a.code.to_string() } else if a.code == "unknown" { a.reason.to_string() } else { format!("{}: {}", a.code, a.reason) })).unwrap_or_else(|| "no host decision".into());
+            // #2290: each live host's own reason from its heartbeat queue row, so another host's refusal shows too;
+            // a board-level refusal (orphan host label, routing writer) holds on every host and keeps its own text
+            let board = a.is_some_and(|a| a.host.is_none() && (a.code == "host" || a.reason == ROUTING_WAIT));
+            let hosts: Vec<(&str, &String)> = self.hosts.iter().filter(|h| !board && live(self.observed - h.updated, cfg.ttl))
+                .filter_map(|h| Some((h.name.as_str(), h.queue.as_ref()?.projects.iter().find(|p| p.project.as_deref() == Some(&cfg.repo))?.tasks.get(&r.n)?)))
+                .collect();
+            // every host keeps its share of the 160-character reason
+            let hosts: Vec<String> = hosts.iter().map(|(h, why)| format!("{h}: {}", compact(why, (150 / hosts.len()).saturating_sub(h.chars().count() + 2).max(12)))).collect();
+            let why = (!hosts.is_empty()).then(|| hosts.join("; ")).or_else(|| r.wait()).or_else(|| a.map(|a| if a.reason.is_empty() { a.code.to_string() } else if a.code == "unknown" { a.reason.to_string() } else { format!("{}: {}", a.code, a.reason) })).unwrap_or_else(|| "no host decision".into());
             let next = match a.map(|a| a.code) {
                 Some("admitted") => "starting",
                 Some("capacity" | "load-gate") => "wait for a free slot",
@@ -1378,6 +1386,41 @@ mod tests {
         assert_eq!(stalled(&snap("00:51", false, 2, "00:42")), [false, false], "9 min is not yet a stall");
         assert_eq!(stalled(&snap("00:55", true, 2, "00:42")), [false, false], "a full host is not stalled");
         assert_eq!(stalled(&snap("00:55", false, 0, "00:42")), [false, true], "no ready work in taskq, the other project still waits");
+    }
+
+    // Chain: #2290 each host's admission pass -> its heartbeat `queue` row `tasks` -> status Ready row per host. Case
+    // 2026-11-03: taskq#2200 and agentq#210 sat ready on two hosts with `no host decision`. Risk: a host's refusal
+    // (weight, quota, claim mode, focus scope, label or load gate) stays invisible, a stale host or another
+    // project's row speaks for this board, or a long reason crowds out the other hosts.
+    #[test]
+    fn ready_rows_name_each_hosts_reason() {
+        let at = crate::board::iso("2026-11-03T12:00:00Z").unwrap();
+        let reasons = [
+            ("weight", "capacity: every candidate runtime has weight 0; pin one with run-<runtime>"),
+            ("quota", "usage-limit: claude: until 2026-11-03T15:00:00Z"),
+            ("claim mode", "host: spillover waits: primary mac has effective claude capacity; grace 60 s"),
+            ("scope", "focus: focus p0"),
+            ("label", "labels: conflicting run-* labels"),
+            ("load gate", "load-gate: host load gate or 30 s launch spacing"),
+        ];
+        let tasks = |shift: usize| json!(reasons.iter().enumerate().map(|(i, r)| ((i + 1).to_string(), json!(reasons[(i + shift) % reasons.len()].1))).collect::<serde_json::Map<_, _>>());
+        let beat = |name: &str, project: &str, age: i64, shift| board::Issue { title: format!("taskq host {name}"), trusted: true, updated: at - age,
+            body: format!("version 4.6.62\nqueue {}", json!({"restart": null, "projects": [{"project": project, "ready": 6, "spawn": null, "waiting": null, "reason": null, "tasks": tasks(shift)}]})), ..Default::default() };
+        let mut snap = from_views("board", &crate::board::Fake::default(), &crate::tests::cfg(), at, &[],
+            &[beat("mac", "o/r", 30, 0), beat("win", "o/r", 30, 1), beat("old", "o/r", 3600, 2), beat("other", "o/other", 30, 2)]);
+        snap.tasks = (1..=7).map(|n| Row { n, title: format!("T{n}"), url: format!("u{n}"), task: Task { state: State::Ready, ..Default::default() }, ..Default::default() }).collect();
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        let ready: Vec<&str> = text.lines().filter(|l| l.starts_with("| [#")).collect();
+        assert_eq!(ready.len(), 7, "A1: one line per unspawned ready task: {text}");
+        for (i, (kind, reason)) in reasons.iter().enumerate() {
+            let code = reason.split(':').next().unwrap();
+            let line = ready[i];
+            assert!(line.starts_with(&format!("| [#{} T{}](u{}) | mac: {code}", i + 1, i + 1, i + 1)), "A2 {kind}: {line}");
+            assert!(line.contains("; win: "), "A2 {kind}: the second host keeps its share: {line}");
+            assert!(!line.contains("old:") && !line.contains("other:"), "a stale host or another project never speaks: {line}");
+        }
+        assert!(ready[0].contains("mac: capacity: every candidate runtime has weight 0"), "{}", ready[0]);
+        assert!(ready[6].contains("| no host decision |"), "a task no host reported keeps the fallback: {}", ready[6]);
     }
 
     // Chain: § 4 Host link heartbeat key. Risk: an untrusted `taskq host` issue publishes a key that hosts then serve.

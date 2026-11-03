@@ -494,6 +494,9 @@ pub struct Queue {
     pub waiting: Option<i64>,
     /// The first refusal of a waiting task; only its admission code for another project's row.
     pub reason: Option<String>,
+    /// #2290: `<code>: <reason>` per ready task this pass did not admit; only on the project's own board row.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tasks: BTreeMap<u64, String>,
 }
 
 /// #2255: heartbeat `queue {json}`: the restart pending since, and the queue of every project the service serves.
