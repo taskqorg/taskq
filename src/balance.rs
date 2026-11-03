@@ -53,7 +53,7 @@ pub fn select(labels:&[String], reviewer:bool, default:&str, auto_reroute:bool, 
         match eligible(&rt) {
             Ok(actual)=>{
                 let reason=weights.get(&rt).zip(load.get(&rt)).map(|(w,l)|format!("weighted pick {rt}: running {}, weight {w}, headroom {}, effective {:.3}",
-                    l.running,l.headroom.map_or("unknown".into(),|h|format!("{:.1}%",h*100.0)),l.effective(*w)))
+                    l.running,l.headroom.map_or("not observed".into(),|h|format!("{:.1}%",h*100.0)),l.effective(*w)))
                     .unwrap_or_else(||format!("weighted fallback: selected {rt}"));
                 return Ok((actual,Some(if failures.is_empty() {reason}else{format!("{}; {reason}",failures.join("; "))})));
             },

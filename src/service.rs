@@ -265,7 +265,19 @@ impl Balancing {
 }
 
 pub(crate) fn balancing_status(body:&str)->Value {
-    Balancing::read(body).map_or(Value::Null,|b|serde_json::to_value(b).unwrap_or(Value::Null))
+    let mut v=Balancing::read(body).map_or(Value::Null,|b|serde_json::to_value(b).unwrap_or(Value::Null));
+    headroom_causes(&mut v,body);
+    v
+}
+
+/// #2263: `headroom <rt> <cause>` heartbeat lines name why a weighted runtime has no headroom fraction.
+/// A separate line, not a `Load` field: N-1 readers deny unknown balancing fields but ignore unknown lines.
+pub(crate) fn headroom_causes(v:&mut Value,body:&str) {
+    for (rt,cause) in body.lines().filter_map(|l|l.strip_prefix("headroom ")?.split_once(' ')) {
+        if let Some(load)=v["runtimes"].get_mut(rt).and_then(|r|r.get_mut("load")).filter(|l|l["headroom"].is_null()).and_then(|l|l.as_object_mut()) {
+            load.insert("headroom_reason".into(),json!(cause.chars().take(160).collect::<String>()));
+        }
+    }
 }
 
 pub fn is_task(i: &Issue) -> bool {
@@ -1065,7 +1077,7 @@ impl<'a> Service<'a> {
             let unknown = status.as_ref().err().or(acceptance.as_ref()).or(k.unknown.as_ref().filter(|_| k.stopping)).cloned();
             let child = crate::snapshot::Child { exited: matches!(status, Ok(Some(_))), unknown: unknown.as_deref(), stopping: k.stopping };
             match crate::snapshot::verdict(&crate::snapshot::Signals { local: true, child: Some(child), ..Default::default() }) {
-            ("ended", _) => match k.release(self.board,status.as_ref().unwrap().unwrap(),"") {
+            ("ended", _) => match k.release(self.board,status.as_ref().unwrap().unwrap(),&k.proc.lost_input().unwrap_or_default()) {
                 Ok(_)=>{
                     let code = status.as_ref().unwrap().unwrap();
                     let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
@@ -1701,8 +1713,16 @@ impl<'a> Service<'a> {
         self.limited.get(rt).map(|(at, reset)| format!("{} {}", if *reset { "until" } else { "probe" }, crate::board::stamp(*at))).unwrap_or_default()
     }
 
+    /// #2263: one `headroom <rt> <cause>` line per weighted runtime whose load has no headroom fraction.
+    fn headroom_lines(&self) -> Vec<String> {
+        let Ok(now)=self.board.now() else {return vec![]};
+        self.cfg.weights.keys().filter(|rt|self.runtime_load(rt).is_ok_and(|l|l.headroom.is_none()))
+            .map(|rt|format!("headroom {rt} {}",crate::runtime::headroom::cause(&self.cfg.install,rt,now))).collect()
+    }
+
     fn heartbeat_body(&self) -> String {
         let mut lines = vec![format!("version {}", self.version),format!("balancing {}",serde_json::to_string(&self.balancing()).unwrap())];
+        lines.extend(self.headroom_lines());
         if !self.instance.is_empty() {
             lines.push(format!("service {}", self.instance));
             lines.push(format!("diagnostics {}", self.service_diagnostics()));
@@ -2032,7 +2052,9 @@ impl<'a> Service<'a> {
                     let log = crate::runtime::attempt_log(&self.cfg.root, v.projection.task.role.as_deref().unwrap_or_default(), k.task, k.attempt);
                     crate::runtime::usage_limit(&log)
                 }).map(|reset| reset.filter(|r| *r > now).map_or((now + USAGE_PROBE, false), |r| (r, true)));
-                let evidence = hold.map_or(String::new(), |(at, reported)| format!("usage-limit {} {at}", if reported { "until" } else { "probe" }));
+                // #2272: a lost resumed input names its cause in the release and in the `gone` that requeues the task
+                let lost = k.proc.lost_input();
+                let evidence = hold.map_or_else(|| lost.clone().unwrap_or_default(), |(at, reported)| format!("usage-limit {} {at}", if reported { "until" } else { "probe" }));
                 let no_start=match k.release(self.board,code,&evidence) {Ok(no_start)=>no_start,Err(e)=>{k.unknown=Some(e);return true;}};
                 let exit_reason = k.proc.exit_error().map_or_else(|| format!("exit-{code}"), String::from);
                 crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, k.proc.id(), if code == 0 { "ok" } else { "failed" }, &exit_reason);
@@ -2041,7 +2063,7 @@ impl<'a> Service<'a> {
                 // This pass's view predates release; it cannot authorize a continuation before acceptance is resolved.
                 if by_n.get(&k.task).is_some_and(|v|v.projection.task.attempt==Some(k.attempt))
                     && (no_start || !matches!(accepted,Ok(Some(_)))) {touched.insert(k.task);}
-                if !no_start {exited.push((k.task, k.attempt, code, k.proc.exit_error()));}
+                if !no_start {exited.push((k.task, k.attempt, code, k.proc.exit_error(), lost.map(|l| (k.execution, l))));}
                 false
             }
             (("unknown", e), _) => { k.unknown=Some(e); true }
@@ -2049,7 +2071,7 @@ impl<'a> Service<'a> {
             }
         });
         for (task,attempt,execution,native) in retired.drain(..) { self.retired(task,attempt,execution,native); }
-        for (n, a, code, failure) in exited {
+        for (n, a, code, failure, lost) in exited {
             self.ended(n, a, by_n.get(&n).copied(), failure);
             if code == 0 && let Some(v) = by_n.get(&n) && let Some((rt,_)) = rt_of(&v.projection.task) {
                 let log = crate::runtime::attempt_log(&self.cfg.root,v.projection.task.role.as_deref().unwrap_or_default(),n,a);
@@ -2060,11 +2082,13 @@ impl<'a> Service<'a> {
             if let Some(v) = by_n.get(&n)
                 && v.projection.task.attempt == Some(a)
                 && matches!(v.projection.task.state, State::Doing | State::Review)
-                && !core::handed_in(n, &v.log, a, a.max(self.delivered(a)))
+                // #2272: a lost resumed input counts only hand-ins after its own intent, not the earlier `ask` it answers
+                && !core::handed_in(n, &v.log, a, lost.as_ref().map_or(a.max(self.delivered(a)), |(x, _)| *x))
             {
                 let t = &v.projection.task;
-                let text = format!("exit {code}{}", self.last_message(n, a, t));
-                self.exit_outcome(n, t, a, None, now, &text)?;
+                // #2272: and is requeued as `gone`, never continued with the same resume
+                if let Some((_, lost)) = lost { self.gone(n, t, a, &[], &format!("{lost}{}", self.last_message(n, a, t)))?; }
+                else { self.exit_outcome(n, t, a, None, now, &format!("exit {code}{}", self.last_message(n, a, t)))?; }
                 touched.insert(n);
             }
         }
@@ -2908,7 +2932,8 @@ impl<'a> Service<'a> {
     fn decided(&mut self, decided: BTreeMap<u64, (&'static str, String)>) {
         self.track_queue(&decided);
         let me = self.cfg.me.clone();
-        let balancing=serde_json::to_value(self.balancing()).unwrap_or(Value::Null);
+        let mut balancing=serde_json::to_value(self.balancing()).unwrap_or(Value::Null);
+        headroom_causes(&mut balancing,&self.headroom_lines().join("\n"));
         let Some(snapshot) = &mut self.snapshot else { return };
         if let Some(host)=snapshot.hosts.iter_mut().find(|h|h.name==me) {host.balancing=balancing;}
         let observed = snapshot.observed;
@@ -3416,6 +3441,54 @@ mod tests {
             assert!(x.accepted && x.release==Some(core::Release::Exit),"hand-in accepts and the stop releases ({board_accepted}): {x:?}");
             assert_eq!(starts.get(),1,"the ready task is admitted on the same pass ({board_accepted})");
             assert_ne!(task(&b,n).attempt,Some(a));
+        }
+    }
+
+    // Chain: #2272 answered Claude resume -> no native process or transcript input past the accept deadline -> lost exit.
+    // Risk: the task waits "for the agent to accept input" forever; an unaccepted exit the adapter did not prove lost
+    // loses the R6 input fence and is requeued.
+    #[test]
+    fn lost_resumed_input_releases_the_execution_and_requeues_the_task() {
+        struct Lost(bool);
+        impl Proc for Lost {
+            fn accepted(&mut self) -> Result<bool,String> { Ok(false) }
+            fn exited(&mut self) -> Result<Option<i32>,String> { Ok(Some(-1)) }
+            fn exit_error(&self) -> Option<&'static str> { self.0.then_some("lost-input") }
+            fn lost_input(&self) -> Option<String> {
+                self.0.then(|| "no native process after resume: Claude job done input not accepted 301 s after launch; released and requeued after 300 s".into())
+            }
+            fn kill(&mut self) -> Result<(),String> { Ok(()) }
+            fn id(&self) -> u32 { 0 }
+        }
+        for lost in [true, false] {
+            let b=Fake::default(); let n=b.create("T","",&[TASK_LABEL.into()]).unwrap(); let c=cfg("mac");
+            let a=b.comment(n,"taskq: spawn worker claude:session mac").unwrap();
+            accept_execution(&b,n,a,a,None).unwrap();
+            b.comment(n,&core::entry("ask",&[],Some(a),"Done: checked
+Problem: pick one
+1. Go ★")).unwrap();
+            release_execution(&b,n,a,a,"exit").unwrap();
+            let input=b.comment(n,"taskq: answer 1").unwrap();
+            let execution=b.comment(n,&core::entry("executing",&[&input.to_string()],Some(a),"")).unwrap();
+            let mut s=Service::new(&b,&c,"fixture",Box::new(|_|panic!("no start in this pass")));
+            s.adopt(Kid { unknown:None, stopping:false, session_url:None, execution, task:n, attempt:a, rt:"claude".into(), proc:Box::new(Lost(lost)) }).unwrap();
+            s.pass().unwrap();
+            s.pass().unwrap();
+            let log=entries(&b,n).unwrap();
+            let x=core::executions(n,&log).into_iter().find(|x|x.id==execution).unwrap();
+            assert!(!x.accepted && x.release==Some(core::Release::Exit),"the exit releases the exact execution ({lost}): {x:?}");
+            let gone=log.iter().find(|e|e.body.starts_with(&format!("taskq: gone attempt {a}")));
+            if lost {
+                let gone=gone.expect("a lost input posts gone");
+                assert!(gone.body.contains("no native process after resume"),"gone names the cause: {}",gone.body);
+                assert!(log.iter().any(|e|e.body.starts_with("taskq: released") && e.body.contains("no native process after resume")),"the release names the cause");
+                let t=task(&b,n);
+                assert_eq!((t.state,t.retries),(State::Ready,1),"the task returns to ready with one retry");
+            } else {
+                assert!(gone.is_none(),"an unaccepted exit not proven lost keeps the R6 input fence");
+                assert_eq!((task(&b,n).state,task(&b,n).attempt),(State::Doing,Some(a)));
+                assert!(s.execution_waits.get(&n).is_some_and(|w|w.contains("agent exited;")),"{:?}",s.execution_waits);
+            }
         }
     }
 
@@ -7504,9 +7577,25 @@ Open: none";
         let row=json["hosts"].as_array().unwrap().iter().find(|h|h["name"]=="win").unwrap();
         assert_eq!(row["balancing"]["weights"]["codex"],1);
         assert_eq!(row["balancing"]["runtimes"]["codex"]["load"]["running"],1);
-        assert!(snapshot.text(&w,&json!({})).unwrap().contains("codex running 1 / weight 1"));
+        let text=snapshot.text(&w,&json!({})).unwrap();
+        assert!(text.contains("codex running 1 / weight 1"));
+        // #2263 A1/A2: no observation names its cause in the heartbeat; status shows it and raises no anomaly row.
+        assert!(text.contains("claude running 1 / weight 1 (headroom n/a: account default: Claude background jobs report no quota)"),"{text}");
+        assert!(text.contains("(headroom n/a: account default: no quota observation yet)"),"{text}");
+        assert!(!text.contains("quota headroom not reported"),"{text}");
+        assert!(row["balancing"]["runtimes"]["codex"]["load"]["headroom_reason"].is_string());
         let body=win.heartbeat_body();
+        assert!(Balancing::read(&body).is_some(),"N-1 balancing shape unchanged");
         assert!(Balancing::read(&body).unwrap().last_spawn.is_some());
+        // #2263 review: an expired observation names a fixed time, so passes minutes apart keep an equal stable() body
+        // (an age in the cause would edit the heartbeat every pass, § 4 step 3).
+        std::fs::create_dir_all(&w.install).unwrap();let log=w.install.join("codex-turn.jsonl");
+        std::fs::write(&log,"{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":20,\"window_minutes\":300}}}}\n").unwrap();
+        let t=b.now().unwrap();crate::runtime::headroom::observe(&w.install,"codex",&log,t).unwrap();
+        b.state.borrow_mut().clock=t+400;let expired=win.heartbeat_body();
+        assert!(expired.contains(&format!("headroom codex account default: last quota observation {} expired",crate::board::stamp(t))),"{expired}");
+        b.state.borrow_mut().clock=t+700;
+        assert_eq!(stable(&expired),stable(&win.heartbeat_body()));
         let mut restarted=service(&b,&w,Default::default());
         let saved=Balancing::read(&b.issue(win.host_issue.unwrap()).unwrap().body).unwrap().last_spawn;
         restarted.pass().unwrap();
