@@ -460,6 +460,15 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         let executions:Vec<_>=v.projection.executions.iter().filter(|x|x.release.is_none() || recovery.is_some_and(|r|r.id==x.id))
             .map(|x| {
                 let mut value=execution_status(v.issue.number,x,hosts,observed,cfg.ttl);
+                if x.host == cfg.me && Some(x.attempt) == v.projection.task.attempt {
+                    if let Some(pid) = crate::telemetry::live_worker_pid(&cfg.install, Some(&cfg.root), v.issue.number, x.attempt, x.id) {
+                        value["process_id"] = json!(pid);
+                        if value["state"] == "unknown" {
+                            value["state"] = json!("running");
+                            value["reason"] = json!("");
+                        }
+                    }
+                }
                 // #1775 A3: `spawn reviewer` keeps `review`, so `changes` (state moves only) misses it; the current attempt's role is the fold's
                 let task=&v.projection.task;
                 value["role"]=json!(if task.attempt==Some(x.attempt) {task.role.as_deref()}

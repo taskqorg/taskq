@@ -1994,7 +1994,7 @@ impl Proc for ClaudeTurn {
     fn native_identity(&self)->Result<coreq::process::Identity,String> {self.native.clone().ok_or("Claude original process identity unavailable".into())}
     fn input_offset(&self)->Result<u64,String> {Ok(0)}
     fn accepted(&mut self) -> Result<bool, String> {
-        if self.accepted {Ok(true)} else if let Some(e)=&self.launch_error {Err(e.clone())} else {Ok(false)}
+        if self.accepted || self.handed {Ok(true)} else if let Some(e)=&self.launch_error {Err(e.clone())} else {Ok(false)}
     }
     fn accept(&mut self) { self.handed=true; }
     fn exited(&mut self) -> Result<Option<i32>, String> {
@@ -2097,15 +2097,19 @@ impl ClaudeTurn {
         let found=self.history.read(&path,self.before,&self.input,&self.log)?;
         if !found && !self.handed {return Ok(None);}
         self.accepted=true;
-        if row["status"]!="idle" && row["state"]!="done" && row["state"]!="blocked" {return Ok(None);}
+        if row["status"]!="idle" && row["state"]!="idle" && row["state"]!="done" && row["state"]!="blocked" {return Ok(None);}
         if !found {
             if row["state"]=="blocked" {return Ok(None);}
             claude_stop(&self.root, &self.id, self.native.as_ref(), self.handed, self.account().as_deref())?;
             self.done=true;
             return Ok(Some(0));
         }
-        if !self.history.ended {return Ok(None);}
+        if !self.history.ended && !self.handed {return Ok(None);}
         claude_stop(&self.root, &self.id, self.native.as_ref(), self.handed, self.account().as_deref())?;
+        if self.handed && !self.history.ended {
+            self.done=true;
+            return Ok(Some(0));
+        }
         self.complete()
     }
 }

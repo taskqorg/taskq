@@ -372,6 +372,31 @@
         "queued_bytes": 1,
         "queued_events": 1
       }
+    },
+    {
+      "product": "taskq",
+      "version": null,
+      "kind": "worker",
+      "operation": "spawn",
+      "trace": null,
+      "span": null,
+      "started_ms": 7,
+      "project": "o/r",
+      "host": "win",
+      "runtime": "claude",
+      "task": 1,
+      "attempt": 2,
+      "process_id": 3208,
+      "source": "work",
+      "from": "spawn",
+      "to": "claimed",
+      "outcome": "ok",
+      "error": "none",
+      "unknown": {
+        "version": "not-recorded",
+        "trace": "not-recorded",
+        "span": "not-recorded"
+      }
     }
   ]
 }

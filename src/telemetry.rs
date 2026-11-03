@@ -251,15 +251,53 @@ fn legacy_offset(db: &Connection, text: &str) -> Result<Option<usize>, String> {
 }
 
 /// Existing records have no event IDs: track stream position, never deduplicate by record contents.
+/// Rewritten or truncated `taskq.log` re-baselines from byte 0 with a recorded gap and logs once (#2237).
 fn import(db: &mut Connection, install: &Path, now: u64) -> Result<(), String> {
     let text = legacy_text(install)?;
-    let previous=legacy_offset(db,&text)?;let start=previous.unwrap_or(0);
-    if start == text.len() && previous.is_some() { return Ok(()); }
+    let previous_row: Option<String> = db.query_row("SELECT text FROM legacy WHERE id=1", [], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
+    let previous_val = previous_row.map(|s| serde_json::from_str::<serde_json::Value>(&s).map_err(|e| format!("legacy checkpoint: {e}"))).transpose()?;
+    let matches = |n: usize, digest: &str| text.get(..n).is_some_and(|s| (s.is_empty() || s.ends_with('\n')) && hash(s) == digest);
+    let mut prior_gaps = 0u64;
+    let mut prior_gap = None::<serde_json::Value>;
+    let (previous, rotated, rebaselined) = match previous_val.as_ref() {
+        None => (None, false, None),
+        Some(old) => {
+            let n = old["bytes"].as_u64().ok_or("legacy checkpoint: missing length")? as usize;
+            let digest = old["sha256"].as_str().ok_or("legacy checkpoint: missing digest")?;
+            let trimmed = old["trimmed_bytes"].as_u64().ok_or("legacy checkpoint: missing trimmed length")? as usize;
+            let trimmed_hash = old["trimmed_sha256"].as_str().ok_or("legacy checkpoint: missing trimmed digest")?;
+            prior_gaps = old["gaps"].as_u64().unwrap_or(0);
+            prior_gap = old.get("gap").cloned();
+            if matches(n, digest) {
+                (Some(n), false, None)
+            } else if trimmed > 0 && matches(trimmed, trimmed_hash) {
+                (Some(trimmed), true, None)
+            } else {
+                (None, false, Some((prior_gaps + 1, n, digest.to_string())))
+            }
+        }
+    };
+    let start = previous.unwrap_or(0);
+    if start == text.len() && previous.is_some() && !rotated && rebaselined.is_none() { return Ok(()); }
     let tail = &text.as_bytes()[text.len().saturating_sub((crate::data::LOG_MAX / 2) as usize)..];
     let tail = tail.iter().position(|c| *c == b'\n').map_or(tail, |i| &tail[i+1..]);
     // Store hashes only: service diagnostics are neither telemetry nor retained database payload.
     let tail = std::str::from_utf8(tail).map_err(|e| e.to_string())?;
-    let state = serde_json::json!({"bytes":text.len(),"sha256":hash(&text),"trimmed_bytes":tail.len(),"trimmed_sha256":hash(tail)}).to_string();
+    let mut state_obj = serde_json::json!({"bytes":text.len(),"sha256":hash(&text),"trimmed_bytes":tail.len(),"trimmed_sha256":hash(tail)});
+    if let Some((gaps, prev_bytes, ref prev_sha)) = rebaselined {
+        state_obj["gaps"] = serde_json::json!(gaps);
+        state_obj["gap"] = serde_json::json!({
+            "at_ms": now,
+            "previous_bytes": prev_bytes,
+            "previous_sha256": prev_sha,
+            "rebaselined_bytes": text.len(),
+            "rebaselined_sha256": hash(&text),
+        });
+    } else if prior_gaps > 0 {
+        state_obj["gaps"] = serde_json::json!(prior_gaps);
+        if let Some(gap) = prior_gap { state_obj["gap"] = gap; }
+    }
+    let state = state_obj.to_string();
     let added: Vec<_> = text[start..].lines().filter(|l| telemetry(l)).collect();
     if added.iter().any(|l| l.len() > LINE_MAX) { return Err("legacy telemetry record exceeds 64 KiB; file kept".into()); }
     space(db, added.iter().map(|l| l.len()).sum())?;
@@ -267,7 +305,14 @@ fn import(db: &mut Connection, install: &Path, now: u64) -> Result<(), String> {
     for line in added { insert(&tx, line, now)?; }
     tx.execute("INSERT INTO legacy(id,text) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET text=excluded.text", [&state]).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
-    checkpoint(db)
+    checkpoint(db)?;
+    if let Some((gaps, prev_bytes, _)) = rebaselined {
+        crate::platform::log(&format!(
+            "telemetry: legacy taskq.log rewritten or lost ({prev_bytes} -> {} bytes); re-baselined with recorded gap {gaps}; import resumed",
+            text.len()
+        ));
+    }
+    Ok(())
 }
 
 /// Metadata-only product records share the installed capture queue and its health.
@@ -446,9 +491,10 @@ fn has_legacy(install:&Path)->Result<bool,String> {
 
 /// Existing service owns archive retention; never create an empty replacement legacy sink.
 pub fn prune(install: &Path, now: u64) -> Result<(), String> {
-    if !has_legacy(install)?||source::preserved(install)? {return Ok(());}
+    if !has_legacy(install)? {return Ok(());}
     let mut db = open(install)?;
     import(&mut db, install, now)?;
+    if source::preserved(install)? {return checkpoint(&db);}
     loop {
         checkpoint(&db)?;
         let n = db.execute("DELETE FROM records WHERE seq IN (SELECT seq FROM records WHERE retained_ms < ?1 LIMIT 256)", [now.saturating_sub(WINDOW_MS).min(i64::MAX as u64) as i64]).map_err(|e| e.to_string())?;
@@ -456,6 +502,224 @@ pub fn prune(install: &Path, now: u64) -> Result<(), String> {
     }
     // Reuse free pages; no VACUUM copy and no transient second database.
     checkpoint(&db)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WorkerEvent {
+    pub at_ms: u64,
+    pub project: String,
+    pub host: String,
+    pub runtime: String,
+    pub role: String,
+    pub event: String,
+    pub task: u64,
+    pub attempt: u64,
+    pub pid: u32,
+    pub outcome: String,
+    pub reason: String,
+}
+
+fn code_token(s: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for ch in s.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | ':' | '-') {
+            out.push(ch);
+            prev_dash = ch == '-';
+        } else if !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
+        }
+        if out.len() >= 128 { break; }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() { fallback.to_string() } else { trimmed.to_string() }
+}
+
+fn project_token(s: &str) -> String {
+    let valid_part = |part: &str| !part.is_empty() && part.len() <= 128
+        && part.bytes().all(|c| c.is_ascii_alphanumeric() || b"._:-".contains(&c))
+        && !matches!(part, "." | "..");
+    if s.len() <= 128 && s.contains('/') && s.split('/').all(valid_part) {
+        s.to_string()
+    } else {
+        "other".to_string()
+    }
+}
+
+pub fn worker_observation(ev: &WorkerEvent) -> serde_json::Value {
+    let outcome = match ev.outcome.as_str() {
+        "ok" | "failed" | "refused" | "cancelled" | "retried" | "unknown" | "ask" => ev.outcome.as_str(),
+        _ => "unknown",
+    };
+    let event = code_token(&ev.event, "other");
+    let reason = code_token(&ev.reason, "none");
+    let error = if outcome == "ok" { "none".to_string() } else { reason.clone() };
+    serde_json::json!({
+        "product": "taskq",
+        "version": null,
+        "kind": "worker",
+        "operation": event,
+        "trace": null,
+        "span": null,
+        "started_ms": ev.at_ms.min(i64::MAX as u64),
+        "project": project_token(&ev.project),
+        "host": code_token(&ev.host, "unknown"),
+        "runtime": code_token(&ev.runtime, "other"),
+        "task": ev.task,
+        "attempt": ev.attempt,
+        "process_id": ev.pid,
+        "source": code_token(&ev.role, "work"),
+        "from": event,
+        "to": reason,
+        "outcome": outcome,
+        "error": error,
+        "unknown": {
+            "version": "not-recorded",
+            "trace": "not-recorded",
+            "span": "not-recorded"
+        }
+    })
+}
+
+fn decode_worker_observation(v: &serde_json::Value) -> Option<WorkerEvent> {
+    if v["kind"].as_str() != Some("worker") { return None; }
+    Some(WorkerEvent {
+        at_ms: v["started_ms"].as_u64().unwrap_or(0),
+        project: v["project"].as_str().unwrap_or("other").to_string(),
+        host: v["host"].as_str().unwrap_or("unknown").to_string(),
+        runtime: v["runtime"].as_str().unwrap_or("other").to_string(),
+        role: v["source"].as_str().unwrap_or("work").to_string(),
+        event: v["operation"].as_str().unwrap_or("other").to_string(),
+        task: v["task"].as_u64().unwrap_or(0),
+        attempt: v["attempt"].as_u64().unwrap_or(0),
+        pid: v["process_id"].as_u64().unwrap_or(0) as u32,
+        outcome: v["outcome"].as_str().unwrap_or("ok").to_string(),
+        reason: v["to"].as_str().unwrap_or("none").to_string(),
+    })
+}
+
+static WORKER_EVENTS: std::sync::Mutex<std::collections::BTreeMap<std::path::PathBuf, Vec<WorkerEvent>>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+#[allow(clippy::too_many_arguments)]
+pub fn record_worker(
+    install: &Path,
+    project: &str,
+    host: &str,
+    runtime: &str,
+    role: &str,
+    event: &str,
+    task: u64,
+    attempt: u64,
+    pid: u32,
+    outcome: &str,
+    reason: &str,
+) {
+    let at_ms = crate::profile::now_ms().unwrap_or(0);
+    let raw = WorkerEvent {
+        at_ms,
+        project: project.to_string(),
+        host: host.to_string(),
+        runtime: runtime.to_string(),
+        role: role.to_string(),
+        event: event.to_string(),
+        task,
+        attempt,
+        pid,
+        outcome: outcome.to_string(),
+        reason: reason.to_string(),
+    };
+    let obs = worker_observation(&raw);
+    let normalized = decode_worker_observation(&obs).unwrap_or(raw);
+    if let Ok(mut map) = WORKER_EVENTS.lock() {
+        let list = map.entry(install.to_path_buf()).or_default();
+        if list.len() >= 1024 {
+            list.drain(..512);
+        }
+        list.push(normalized);
+    }
+    let _ = coreq::telemetry::capture::observe(obs);
+}
+
+pub fn worker_events(install: &Path) -> Vec<WorkerEvent> {
+    let _ = tracing::dispatcher::get_default(|d| d.downcast_ref::<coreq::telemetry::capture::Capture>().cloned())
+        .map(|capture| capture.flush());
+    let mut out = Vec::new();
+    let path = install.join("telemetry.log/universal.sqlite3");
+    if path.try_exists().unwrap_or(false) {
+        if let Ok(reader) = tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(), || {
+            coreq::telemetry::Reader::open(&path)
+        }) {
+            let mut after = 0;
+            while let Ok(page) = reader.export_kinds(&["worker"], 0, after, 512) {
+                let Some(rows) = page["events"].as_array() else { break };
+                if rows.is_empty() { break; }
+                for row in rows {
+                    if let Some(ev) = decode_worker_observation(&row["observation"]) {
+                        out.push(ev);
+                    }
+                }
+                if page["more"] == false { break; }
+                let Some(next) = page["next"].as_i64() else { break };
+                after = next;
+            }
+        }
+    }
+    if let Ok(map) = WORKER_EVENTS.lock() {
+        if let Some(mem) = map.get(install) {
+            for ev in mem {
+                if !out.contains(ev) {
+                    out.push(ev.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Live worker pid for `(task, attempt, execution)` from telemetry or `.kids`; returns `Some(pid)` while the OS process lives (#2237).
+pub fn live_worker_pid(install: &Path, root: Option<&Path>, task: u64, attempt: u64, execution: u64) -> Option<u32> {
+    let check_events = |events: &[WorkerEvent]| -> Option<Option<u32>> {
+        let last = events.iter().rev().find(|e| {
+            e.task == task && (attempt == 0 || e.attempt == 0 || e.attempt == attempt || e.attempt == execution)
+                && matches!(e.event.as_str(), "spawn" | "heartbeat" | "slot-hold" | "result" | "alive-after-result" | "exit" | "slot-release" | "kill")
+        })?;
+        if matches!(last.event.as_str(), "exit" | "slot-release") {
+            return Some(None);
+        }
+        if last.pid > 1 && crate::runtime::alive(last.pid) {
+            return Some(Some(last.pid));
+        }
+        None
+    };
+    if let Ok(map) = WORKER_EVENTS.lock() {
+        if let Some(mem) = map.get(install) {
+            if let Some(res) = check_events(mem) {
+                return res;
+            }
+        }
+    }
+    if let Some(r) = root {
+        if let Ok(path) = crate::kids_path(install, r) {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                if let Ok((_, kids)) = crate::data::kids(&text) {
+                    if let Some(k) = kids.into_iter().find(|k| {
+                        k.task == task && (attempt == 0 || k.attempt == attempt || k.execution == execution || k.execution == attempt)
+                    }) {
+                        if k.process.pid > 1 && crate::runtime::alive(k.process.pid) {
+                            return Some(k.process.pid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let db_events = worker_events(install);
+    if let Some(res) = check_events(&db_events) {
+        return res;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -770,10 +1034,49 @@ mod tests {
         append(&d, "same\nsame\n", 100).unwrap();
         assert_eq!(read(&d, 100).unwrap().lines().count(), 6);
         std::fs::write(&p, "unrelated\n").unwrap();
-        assert!(read(&d, 100).unwrap_err().contains("coverage unknown"));
+        assert_eq!(read(&d, 100).unwrap().lines().count(), 6);
         let db = open(&d).unwrap();
         assert_eq!(db.query_row("SELECT count(*) FROM records", [], |r| r.get::<_,i64>(0)).unwrap(), 6);
+        let state: serde_json::Value = serde_json::from_str(&db.query_row("SELECT text FROM legacy WHERE id=1", [], |r| r.get::<_,String>(0)).unwrap()).unwrap();
+        assert_eq!(state["gaps"], 1);
+        assert_eq!(state["gap"]["rebaselined_bytes"], "unrelated\n".len());
         drop(db); std::fs::remove_dir_all(d).unwrap();
+    }
+    #[test]
+    fn rewritten_legacy_log_rebaselines_with_recorded_gap_logs_once_and_resumes_import() {
+        let d = dir(); let p = d.join("taskq.log");
+        let first = "taskq-profile {\"op\":\"spawn\",\"us\":5,\"error\":\"none\",\"at_ms\":10}\n";
+        std::fs::write(&p, first).unwrap();
+        prune(&d, 100).unwrap();
+        assert_eq!(read(&d, 100).unwrap(), first);
+        // Simulate preserved migration state (as on Windows) and an external taskq.log rewrite.
+        let mut db = open(&d).unwrap();
+        source::prepare(&d).unwrap();
+        assert!(source::preserved(&d).unwrap());
+        drop(db);
+        let rewritten = "service diagnostic line\ntaskq-profile {\"op\":\"spawn\",\"us\":9,\"error\":\"none\",\"at_ms\":20}\n";
+        std::fs::write(&p, rewritten).unwrap();
+        // Cycle 1 after rewrite: prune re-baselines with a recorded gap and imports the new telemetry line.
+        prune(&d, 200).unwrap();
+        db = open(&d).unwrap();
+        let state1: serde_json::Value = serde_json::from_str(&db.query_row("SELECT text FROM legacy WHERE id=1", [], |r| r.get::<_,String>(0)).unwrap()).unwrap();
+        assert_eq!(state1["gaps"], 1);
+        assert_eq!(state1["gap"]["at_ms"], 200);
+        assert_eq!(state1["gap"]["previous_bytes"], first.len());
+        assert_eq!(state1["gap"]["rebaselined_bytes"], rewritten.len());
+        drop(db);
+        // Cycle 2 without further rewrite: no error, no second gap, import resumes on appended lines.
+        prune(&d, 300).unwrap();
+        let appended = format!("{rewritten}taskq-profile {{\"op\":\"spawn\",\"us\":11,\"error\":\"none\",\"at_ms\":30}}\n");
+        std::fs::write(&p, &appended).unwrap();
+        prune(&d, 400).unwrap();
+        db = open(&d).unwrap();
+        let state2: serde_json::Value = serde_json::from_str(&db.query_row("SELECT text FROM legacy WHERE id=1", [], |r| r.get::<_,String>(0)).unwrap()).unwrap();
+        assert_eq!(state2["gaps"], 1, "subsequent cycles must not record additional gaps");
+        assert_eq!(state2["gap"]["at_ms"], 200);
+        drop(db);
+        assert_eq!(read(&d, 400).unwrap().lines().count(), 3, "retained history kept and new lines imported after re-baseline");
+        std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
     fn incomplete_legacy_record_is_unknown_but_new_collection_continues() {
