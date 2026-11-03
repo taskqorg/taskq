@@ -276,6 +276,12 @@ pub fn output(name: &'static str, command: &mut std::process::Command, budget: s
     }
 }
 
+/// #2239: a child that bounds its own waits (this binary's own CLI, an owner-run project script): wait for its exit,
+/// with no deadline of our own ([limits](docs/design/limits.md#contract-detail)). Any exit status is Ok, as in `output`.
+pub fn complete(name: &'static str, command: &mut std::process::Command) -> Result<std::process::Output,String> {
+    coreq::telemetry::capture::operation(name, || command.stdin(std::process::Stdio::null()).output().map_err(|e| format!("{name}: did not start: {e}")), |_| "spawn-failed")
+}
+
 /// § 8 update steps (coreq), then the sweep: Ok(Some(version)) when a new release became current; with `check`, when
 /// one is available.
 pub fn update(install: &Path, check: bool) -> Result<Option<String>, String> {

@@ -480,7 +480,7 @@ fn answer(install: &Path, m: &Value) -> Value {
     let prepare = || -> Result<_, String> {
         let args = answer_args(install, m)?;
         let root = Path::new(m["root"].as_str().unwrap());
-        let out = answer_cli(root, &["status".into(), "--json".into()], Duration::from_secs(30))?;
+        let out = answer_cli(root, &["status".into(), "--json".into()])?;
         let snapshot = serde_json::from_slice(&out).map_err(|_| "Invalid status JSON; refresh the project")?;
         answer_snapshot(&snapshot, m)?;
         Ok((root, args))
@@ -490,7 +490,7 @@ fn answer(install: &Path, m: &Value) -> Value {
         Err(e) => return response("rejected", &e, "Refresh the question or open it on the board."),
     };
     let r = answer_dispatch(m, &args, |args| {
-        match answer_cli(root, args, Duration::from_secs(60)) {
+        match answer_cli(root, args) {
             Ok(out) => serde_json::from_slice(&out).unwrap_or_else(|_| json!({"task": m["op"]["task"], "op_id": args[args.len()-3], "outcome": "unknown", "reason": "Invalid CLI receipt JSON", "next": "Check the board; retry the same operation id."})),
             Err(e) => json!({"task": m["op"]["task"], "op_id": args[args.len()-3], "outcome": "unknown", "reason": e, "next": "Check the board; retry the same operation id."}),
         }
@@ -504,8 +504,8 @@ fn answer(install: &Path, m: &Value) -> Value {
     out
 }
 
-/// § 5: keep text and JSON outside bounded process pipes; only the child lifetime/output diagnostics use CoreQ limits.
-fn answer_cli(root: &Path, args: &[String], budget: Duration) -> Result<Vec<u8>, String> {
+/// § 5: keep text and JSON outside process pipes; the own CLI bounds its board and lock waits, so wait for its exit (#2239).
+fn answer_cli(root: &Path, args: &[String]) -> Result<Vec<u8>, String> {
     let dir = std::env::temp_dir().join(format!("taskq-reply-{}", crate::runtime::uuid()));
     let mut options = fs::DirBuilder::new();
     #[cfg(unix)] { use std::os::unix::fs::DirBuilderExt; options.mode(0o700); }
@@ -519,7 +519,7 @@ fn answer_cli(root: &Path, args: &[String], budget: Duration) -> Result<Vec<u8>,
         while let Some(i)=argv.iter().position(|s|s=="--file") {argv.remove(i);files.push(argv.remove(i));}
         if !files.is_empty(){let path=dir.join("files.json");fs::write(&path,serde_json::to_vec(&files).map_err(|e|e.to_string())?).map_err(|e|format!("Cannot write attachment list: {e}"))?;argv.extend(["--files-from".into(),path.to_string_lossy().into_owned()]);}
         argv.extend(["--json-file".into(), output_path.to_string_lossy().into_owned()]);
-        let out = crate::platform::output("tray.answer-command", owner_command(root)?.args(&argv), budget)?;
+        let out = crate::platform::complete("tray.answer-command", owner_command(root)?.args(&argv))?;
         fs::read(&output_path).map_err(|e| if out.stderr.is_empty() { format!("JSON receipt unavailable: {e}") } else { String::from_utf8_lossy(&out.stderr).into_owned() })
     })();
     for path in [&input_path, &output_path, &output_path.with_extension("tmp"),&dir.join("files.json")] { let _ = fs::remove_file(path); }
@@ -996,7 +996,7 @@ fn queued_resources(_install:&Path,_root:&Path,_message:&Value)->crate::Res<Valu
 fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     if m["transcript"]!=true {return crate::reports::cached_history(root,m);}
     let mut c=owner_command(root)?;c.args(history_args(m));
-    let out=crate::platform::output("tray.history-read",&mut c,Duration::from_secs(60))?;
+    let out=crate::platform::complete("tray.history-read",&mut c)?;
     serde_json::from_slice(&out.stdout).map_err(|_|String::from_utf8_lossy(&out.stderr).lines().find(|l|!l.trim().is_empty()).unwrap_or("board history read failed").to_string())
 }
 
@@ -1017,7 +1017,7 @@ fn queued_reports(install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     if let Some(reason)=m["text"].as_str() {command.args(["--text",reason]);}
     if let Some(until)=m["until"].as_str().filter(|u|action=="later"&&crate::core::utc(u)) {command.args(["--until",until]);}
     command.arg("--json");
-    let out=crate::platform::output("tray.reports-command",&mut command,Duration::from_secs(180))?;
+    let out=crate::platform::complete("tray.reports-command",&mut command)?;
     if !out.status.success() {return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());}
     serde_json::from_slice(&out.stdout).map_err(|_|"report receipt invalid; refresh before retrying".into())
 }
@@ -2883,7 +2883,7 @@ fn pick_result(o:std::process::Output)->Result<Option<PathBuf>,String> {
 /// prints it with its fix ([host tools](docs/design/host-service.md#host-tools)).
 fn selftest(dir: &Path) -> Result<(), String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
-    let o = crate::platform::output("tray.selftest",crate::platform::command(me).arg("selftest").current_dir(dir).env("TASKQ_ROOT", dir).env("TASKQ_SELFTEST_TOOLS","off"),Duration::from_secs(30))?;
+    let o = crate::platform::complete("tray.selftest",crate::platform::command(me).arg("selftest").current_dir(dir).env("TASKQ_ROOT", dir).env("TASKQ_SELFTEST_TOOLS","off"))?;
     let text = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
     if o.status.success() { Ok(()) } else { Err(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("selftest failed").chars().take(160).collect()) }
 }
@@ -2911,7 +2911,8 @@ fn install_service(install: &Path, mut a: Value) -> Value {
         // a separate process group: launchctl must not take the tray with it
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut c, 0);
-        let o = crate::platform::output("tray.install", &mut c, Duration::from_secs(60))?;
+        // #2239: `service install` waits up to its own handover deadlines; a tray deadline would cut it short
+        let o = crate::platform::complete("tray.install", &mut c)?;
         let text = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
         if !o.status.success() {
             return Err(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("service install failed").to_string());
@@ -2940,7 +2941,7 @@ fn capacity(install:&Path,root: &Path,m: &Value) -> crate::Res<Value> {
             let request:crate::recovery::Request=serde_json::from_value(m["request"].clone()).map_err(|_|"invalid recovery request")?;
             command.arg("--request").arg(serde_json::to_string(&request).map_err(|e|e.to_string())?);
         }
-        let out=crate::platform::output("tray.recovery",&mut command,Duration::from_secs(60))?;
+        let out=crate::platform::complete("tray.recovery",&mut command)?;
         if !out.status.success() {return Err("Recovery read or write unconfirmed; inspect the board and reconcile the same selection".into());}
         return serde_json::from_slice(&out.stdout).map_err(|_|"Recovery receipt unreadable; reconcile the same selection".into());
     }
