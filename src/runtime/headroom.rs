@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, path::Path};
 use serde::{Serialize,Deserialize};
 use serde_json::Value;
 
-const FILE:&str="quota-headroom.json";
+pub(crate) const FILE:&str="quota-headroom.json";
 const TTL:i64=300;
 
 #[derive(Clone,Serialize,Deserialize)]

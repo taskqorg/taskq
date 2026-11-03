@@ -227,7 +227,8 @@ impl Balancing {
         if !local && v.issue.labels.iter().any(|l|l=="assignee-only") {return Err(("unknown","primary assignee eligibility unknown".into()));}
         let reviewer=v.projection.task.state==State::Review;
         let default=crate::labels::project_default(&v.issue.labels,reviewer,&self.routing,&self.default_runtime);
-        let load=self.runtimes.iter().filter_map(|(rt,r)|r.load.clone().map(|l|(rt.clone(),l))).collect();
+        // #2264: a refused runtime reports its occupancy too; only admitted ones rank, as before
+        let load=self.runtimes.iter().filter(|(_,r)|r.code=="admitted").filter_map(|(rt,r)|r.load.clone().map(|l|(rt.clone(),l))).collect();
         crate::balance::select(&v.issue.labels,reviewer,default,self.auto_reroute,&self.weights,&load,
             |rt| self.runtimes.get(rt).is_some_and(|r|r.disabled),
             |rt| {
@@ -2830,7 +2831,8 @@ impl<'a> Service<'a> {
             let (mut code,mut reason)=match outcome {Ok(_)=>("admitted",String::new()),Err(e)=>e};
             if code=="load-gate" && self.gate.state(self.mono).0=="unknown" {code="unknown";}
             if matches!(code,"access"|"unknown"|"hold") {reason=format!("{rt}: {code}; see host diagnostics");}
-            let load=(!self.cfg.weights.is_empty()).then(||self.runtime_load(rt).ok()).flatten();
+            // #2264: the heartbeat reports occupancy even when headroom, capacity policy or a hold refuses admission
+            let load=(!self.cfg.weights.is_empty()).then(||self.load(rt,false).ok()).flatten();
             if !self.cfg.weights.is_empty() && (self.headroom_error.is_some() || code=="admitted" && load.is_none()) {code="unknown";reason="weighted runtime load/headroom unknown".into();}
             ((*rt).into(),RuntimeAvailability {load,code:code.into(),reason:reason.chars().take(160).collect(),full:self.full.contains(*rt),disabled:self.runtime_disabled(rt),quota:accounts.iter().filter(|l|l.starts_with(&format!("quota {rt} "))).cloned().collect()})
         }).collect();
@@ -2883,22 +2885,29 @@ impl<'a> Service<'a> {
         if load.free>0 {Ok(rt.to_string())} else {Err(("capacity",format!("{rt} slots full")))}
     }
 
-    fn runtime_load(&self,rt:&str)->Result<crate::balance::Load,(&'static str,String)> {
-        let c=self.cap.as_ref().map_err(|_|("unknown",crate::snapshot::ADMISSION_UNKNOWN[1].to_string()))?;
-        let n=if c.auto {RUNTIMES.contains(&rt).then(||c.limits.get(rt).copied().unwrap_or(u32::MAX)).ok_or(("capability",format!("{rt} unknown runtime")))?}
-            else {*c.limits.get(rt).ok_or(("capacity",format!("{rt} not in limits")))?};
+    fn runtime_load(&self,rt:&str)->Result<crate::balance::Load,(&'static str,String)> {self.load(rt,true)}
+
+    /// `strict`: admission's load, refusing on any unknown input. Otherwise (#2264, heartbeat report) only unknown
+    /// occupancy refuses: unknown limits, policy or a hold report `free` 0, unknown headroom reports none.
+    fn load(&self,rt:&str,strict:bool)->Result<crate::balance::Load,(&'static str,String)> {
+        let limit=self.cap.as_ref().map_err(|_|("unknown",crate::snapshot::ADMISSION_UNKNOWN[1].to_string())).and_then(|c|
+            if c.auto {RUNTIMES.contains(&rt).then(||c.limits.get(rt).copied().unwrap_or(u32::MAX)).ok_or(("capability",format!("{rt} unknown runtime")))}
+            else {c.limits.get(rt).copied().ok_or(("capacity",format!("{rt} not in limits")))});
+        let n=match limit {Ok(n)=>n,Err(e) if strict=>return Err(e),Err(_)=>0};
         let own=self.entry().held.iter().filter(|r|r.2==rt).count();
         let mut running=own;
         let mut free=(n as usize).saturating_sub(own);
         if let Some(host)=&self.host {
             let h=host.lock().map_err(|_|("unknown",crate::snapshot::ADMISSION_UNKNOWN[2].to_string()))?;
-            if h.policy.is_err() || h.rebuilding {return Err(("unknown","host occupancy/policy recovery pending".into()));}
-            if h.restart || h.draining.contains(&self.cfg.root) || h.held.is_some() {return Err(("hold","host draining, restart or hold".into()));}
+            if h.rebuilding || strict && h.policy.is_err() {return Err(("unknown","host occupancy/policy recovery pending".into()));}
+            let hold=h.restart || h.draining.contains(&self.cfg.root) || h.held.is_some();
+            if strict && hold {return Err(("hold","host draining, restart or hold".into()));}
             running=h.used().get(rt).copied().unwrap_or(0);
-            free=free.min(h.remaining(&self.cfg.root,rt,c));
+            free=match (&self.cap,hold || h.policy.is_err()) {(Ok(c),false)=>free.min(h.remaining(&self.cfg.root,rt,c)),_=>0};
         }
         let headroom=if self.cfg.weights.is_empty() {None}else {
-            crate::runtime::headroom::remaining(&self.cfg.install,rt,self.board.now().map_err(|e|("unknown",e))?).map_err(|e|("unknown",e))?
+            let h=self.board.now().map_err(|e|("unknown",e)).and_then(|now|crate::runtime::headroom::remaining(&self.cfg.install,rt,now).map_err(|e|("unknown",e)));
+            match h {Ok(h)=>h,Err(e) if strict=>return Err(e),Err(_)=>None}
         };
         Ok(crate::balance::Load {running:running as u64,free:free as u64,headroom})
     }
@@ -7511,6 +7520,33 @@ Open: none";
         let saved=Balancing::read(&b.issue(win.host_issue.unwrap()).unwrap().body).unwrap().last_spawn;
         restarted.pass().unwrap();
         assert_eq!(Balancing::read(&restarted.heartbeat_body()).unwrap().last_spawn,saved);
+    }
+
+    // #2264 defect: unknown quota headroom dropped the whole load, so status showed "running count not reported" for a
+    // host with live workers. Kept: admission still refuses as unknown and peers never rank the refused runtime.
+    #[test]
+    fn weighted_heartbeat_reports_running_when_headroom_unknown() {
+        let b=Fake::default();
+        let install=std::env::temp_dir().join(format!("taskq-running-2264-{}",crate::runtime::uuid()));
+        std::fs::create_dir_all(&install).unwrap();
+        let mut c=cfg("win");c.install=install.clone();
+        c.weights=BTreeMap::from([("claude".into(),6),("codex".into(),2)]);
+        c.limits=BTreeMap::from([("claude".into(),2),("codex".into(),2)]);
+        let n=b.create("work","",&["taskq".into(),"run-claude".into()]).unwrap();
+        let mut s=service(&b,&c,Default::default());
+        s.pass().unwrap();
+        assert_eq!(task(&b,n).state,State::Doing);
+        std::fs::write(install.join(crate::runtime::headroom::FILE),"{\"bad\":1}").unwrap();
+        let body=s.heartbeat_body();
+        let read=Balancing::read(&body).unwrap();
+        for (rt,running) in [("claude",1),("codex",0)] {
+            let r=&read.runtimes[rt];
+            assert_eq!((r.code.as_str(),r.load.as_ref().map(|l|(l.running,l.headroom))),("unknown",Some((running,None))),"{rt}");
+        }
+        assert!(s.runtime_load("claude").is_err(),"admission keeps refusing unknown headroom");
+        let v=views(&b,&mut Default::default(),&mut Default::default(),300).unwrap().0.remove(0);
+        assert!(read.weighted_capacity(&v,false).is_err() || read.weighted_capacity(&v,false)==Ok(0.0));
+        std::fs::remove_dir_all(&install).ok();
     }
 
     // #2240 A1/A2, §4 Balancing: a weight-0 runtime takes no unpinned claim even when the others are full,
