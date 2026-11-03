@@ -1325,28 +1325,36 @@ fn adopt(s: &mut Service, install:&Path, root: &Path) -> Res<()> {
     if retired>0 { platform::log(&format!("{}: retired {retired} kid(s) started before this boot", root.display())); }
     let kids = kids_file(install,root)?;
     for k in kids {
-        if let Some(owned)=s.kids.iter().find(|owned|owned.task==k.task||owned.execution==k.execution) {
-            if owned.task==k.task&&owned.attempt==k.attempt&&owned.execution==k.execution&&owned.rt==k.runtime
-                &&owned.proc.native_identity()?==k.process {continue;}
-            return Err("native recovery differs from the retained handle; file kept".into());
+        // #2266: one row that cannot be adopted keeps its record and board reservation; the project loop runs on.
+        if let Err(e)=adopt_kid(s,install,root,k.clone()) {
+            platform::log(&format!("#{} execution {}: {e}; native recovery record kept, execution stays reserved",k.task,k.execution));
         }
-        let history=board::entries(s.board,k.task)?;
-        let execution=core::executions(k.task,&history).into_iter().find(|x|x.id==k.execution && x.attempt==k.attempt && x.host==s.cfg.me && x.runtime==k.runtime)
-            .ok_or("native recovery identity does not match board ownership; file kept")?;
-        match execution.release {
-            Some(core::Release::Exit)=>{
-                if runtime::released_execution_live(&k).map_err(|e|format!("released native scope unknown: {e}"))? {
-                    return Err("board exit contradicts a live native identity; file kept for reconciliation".into());
-                }
-                retire_kid(&s.cfg,k.task,k.attempt,k.execution)?;
-                continue;
-            },
-            Some(core::Release::NoStart)=>return Err("board no-start contradicts a recorded native process; file kept".into()),
-            None=>{},
-        }
-        let proc=runtime::adopt(root,install,&k,&execution)?;
-        s.adopt(Kid { unknown:None, stopping:false, session_url:None, execution:k.execution,task:k.task,attempt:k.attempt,rt:k.runtime,proc })?;
     }
+    Ok(())
+}
+
+fn adopt_kid(s: &mut Service, install:&Path, root: &Path, k:data::KidLine) -> Res<()> {
+    if let Some(owned)=s.kids.iter().find(|owned|owned.task==k.task||owned.execution==k.execution) {
+        if owned.task==k.task&&owned.attempt==k.attempt&&owned.execution==k.execution&&owned.rt==k.runtime
+            &&owned.proc.native_identity()?==k.process {return Ok(());}
+        return Err("native recovery differs from the retained handle; file kept".into());
+    }
+    let history=board::entries(s.board,k.task)?;
+    let execution=core::executions(k.task,&history).into_iter().find(|x|x.id==k.execution && x.attempt==k.attempt && x.host==s.cfg.me && x.runtime==k.runtime)
+        .ok_or("native recovery identity does not match board ownership; file kept")?;
+    match execution.release {
+        Some(core::Release::Exit)=>{
+            if runtime::released_execution_live(&k).map_err(|e|format!("released native scope unknown: {e}"))? {
+                return Err("board exit contradicts a live native identity; file kept for reconciliation".into());
+            }
+            retire_kid(&s.cfg,k.task,k.attempt,k.execution)?;
+            return Ok(());
+        },
+        Some(core::Release::NoStart)=>return Err("board no-start contradicts a recorded native process; file kept".into()),
+        None=>{},
+    }
+    let proc=runtime::adopt(root,install,&k,&execution)?;
+    s.adopt(Kid { unknown:None, stopping:false, session_url:None, execution:k.execution,task:k.task,attempt:k.attempt,rt:k.runtime,proc })?;
     Ok(())
 }
 
@@ -1787,7 +1795,7 @@ fn write_kids(install:&Path,root:&Path,kids:&[data::KidLine])->Res<()> {
     let owner=coreq::process::identity(std::process::id()).map_err(|e|e.to_string())?.ok_or("service native identity missing")?;
     let mut text=format!("pid {} {} executor-v1\n",owner.pid,owner.started);
     for k in kids {
-        text+=&format!("{} {} {} {} {} {} {}{}\n",k.task,k.attempt,k.runtime,k.process.pid,k.process.started,k.execution,k.offset,k.job.as_ref().map(|key|format!(" job-global:{key}")).unwrap_or_default());
+        text+=&format!("{} {} {} {} {} {} {}{}\n",k.task,k.attempt,k.runtime,k.process.pid,k.process.started,k.execution,k.offset,k.job.as_ref().map(|scope|format!(" {scope}")).unwrap_or_default());
     }
     data::kids(&text)?;
     let path=kids_path(install,root)?;
@@ -6149,6 +6157,33 @@ mod tests {
         assert_eq!(runtime::liveness(pid),Ok(false),"waitpid reaped the zombie");
         assert!(core::executions(n,&board::entries(&b,n).unwrap()).iter().any(|x|x.id==a && x.release==Some(core::Release::Exit)));
         save_kids(&s,&root).unwrap(); assert!(kids_file(&root,&root).unwrap().is_empty(),"handover completes");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // #2266 A2: one recovery row that cannot be adopted no longer ends the project loop.
+    // Risk: adopt(...)? stopped the project thread, so a dead execution beside it was never released and other hosts waited forever.
+    #[cfg(unix)]
+    #[test]
+    fn unadoptable_row_keeps_reservation_and_releases_dead_sibling() {
+        let root = std::env::temp_dir().join(format!("taskq-adopt-row-{}", runtime::uuid()));
+        fs::create_dir_all(dot(&root)).unwrap();
+        let b=Fake::default(); let (n,m)=(b.create("T","",&[service::TASK_LABEL.into()]).unwrap(),b.create("U","",&[service::TASK_LABEL.into()]).unwrap());
+        let (kept,dead)=(b.comment(n,"taskq: spawn worker codex:a win").unwrap(),b.comment(m,"taskq: spawn worker codex:b mac").unwrap());
+        let c=Config {root:root.clone(),install:root.clone(),..cfg()};
+        let ended=||{let mut child=std::process::Command::new("sleep").arg("30").spawn().unwrap(); let id=coreq::process::identity(child.id()).unwrap().unwrap(); child.kill().unwrap(); child.wait().unwrap(); id};
+        let (win,mac)=(ended(),ended());
+        let owner=coreq::process::identity(std::process::id()).unwrap().unwrap();
+        let path=kids_path(&root,&root).unwrap(); fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!("pid {} {} executor-v1\n{n} {kept} codex {} {} {kept} 0 job-kill:{}\n{m} {dead} codex {} {} {dead} 0\n",owner.pid,owner.started,win.pid,win.started,runtime::uuid(),mac.pid,mac.started)).unwrap();
+        for (t,a) in [(n,kept),(m,dead)] {fs::write(runtime::attempt_log(&root,"worker",t,a),"").unwrap();}
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|unreachable!()));
+        adopt(&mut s,&root,&root).unwrap();
+        assert_eq!(s.kids.len(),1); assert_eq!(s.kids[0].execution,dead);
+        let until=Instant::now()+Duration::from_secs(10);
+        while !s.kids.is_empty() {s.reap_owned(); assert!(Instant::now()<until,"dead sibling not reaped"); std::thread::sleep(Duration::from_millis(10));}
+        assert_eq!(core::executions(m,&board::entries(&b,m).unwrap())[0].release,Some(core::Release::Exit));
+        assert_eq!(core::executions(n,&board::entries(&b,n).unwrap())[0].release,None,"unadoptable row stays reserved");
+        assert_eq!(kids_file(&root,&root).unwrap().iter().map(|k|k.execution).collect::<Vec<_>>(),vec![kept],"its native recovery record is kept");
         let _ = fs::remove_dir_all(&root);
     }
 
