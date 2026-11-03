@@ -453,6 +453,17 @@ pub struct Host {
 // ponytail: drop each entry once its task lands; the anomaly row then shows without a fix link.
 pub const ANOMALY_FIXES: [(&str, u64); 4] = [("remote-control", 2261), ("progress", 2262), ("headroom", 2263), ("running", 2264)];
 
+/// R10 A1: hosts serving projects no board of this view carries: each host's largest `queue` row count against the
+/// boards that carry its heartbeat. Rows of other projects stay anonymous (private names), so only counts compare.
+pub fn unseen(boards: &[Vec<(String, usize)>]) -> Vec<String> {
+    let mut hosts: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for (name, n) in boards.iter().flatten() { let e = hosts.entry(name).or_default(); e.0 = e.0.max(*n); e.1 += 1; }
+    hosts.into_iter().filter(|(_, (n, seen))| n > seen).map(|(h, (n, seen))| {
+        let k = n - seen;
+        format!("- host {h} · serves {k} project{} outside this view · Next: add {} to `<install>/projects` here (R10) or run `taskq status` on {h}", if k == 1 { "" } else { "s" }, if k == 1 { "it" } else { "them" })
+    }).collect()
+}
+
 /// #2255: ready work without a spawn this long on a live host with free capacity reads STALLED.
 pub const STALL_AFTER: i64 = 600;
 
@@ -891,6 +902,11 @@ impl Snapshot {
         }
     }
 
+    /// R10 A1: each live host's count of served projects (its heartbeat `queue` rows) as read on this board.
+    pub fn served(&self) -> Vec<(String, usize)> {
+        self.hosts.iter().filter(|h| live(self.observed - h.updated, h.ttl)).filter_map(|h| h.queue.as_ref().map(|q| (h.name.clone(), q.projects.len()))).collect()
+    }
+
     /// `status --json` (§ 5).
     pub fn json(&self) -> Value {
         let caps: &[&str] = if self.source == "host" { &HOST_CAPS } else { &BOARD_CAPS };
@@ -919,7 +935,10 @@ impl Snapshot {
     pub fn text(&self, cfg: &Config, raw: &Value) -> Res<String> { self.text_with(cfg, raw, None) }
 
     /// R6 text report with the `Decide:` part of [`crate::reports::decide`] after Questions (#1979).
-    pub fn text_with(&self, cfg: &Config, raw: &Value, decide: Option<&Value>) -> Res<String> {
+    pub fn text_with(&self, cfg: &Config, raw: &Value, decide: Option<&Value>) -> Res<String> { self.text_extra(cfg, raw, decide, vec![]) }
+
+    /// [`Self::text_with`] plus anomaly rows the caller read outside the snapshot (deploy, board quota; R6 A3).
+    pub fn text_extra(&self, cfg: &Config, raw: &Value, decide: Option<&Value>, extra: Vec<String>) -> Res<String> {
         if let Some(r) = &self.reason {
             return Err(r.clone());
         }
@@ -988,6 +1007,7 @@ impl Snapshot {
         for h in &self.hosts {
             let fresh = live(self.observed - h.updated, cfg.ttl);
             if !fresh { anomalies.push(format!("- host {} · heartbeat stale {} · {doctor}", h.name, age(self.observed - h.updated))); continue; }
+            if h.focus.as_deref() == Some("unknown") { anomalies.push(format!("- host {} · focus unknown: it admits nothing · {doctor}", h.name)); }
             let rts: Vec<&String> = h.balancing["weights"].as_object().into_iter().flat_map(|w| w.keys()).collect();
             for (kind, key, what) in [("running", "running", "running count"), ("headroom", "headroom", "quota headroom")] {
                 let missing: Vec<&str> = rts.iter().filter(|rt| { let v = &h.balancing["runtimes"][rt.as_str()]["load"][key]; v.is_null() }).map(|rt| rt.as_str()).collect();
@@ -1045,6 +1065,7 @@ impl Snapshot {
                 }
             }
         }
+        anomalies.extend(extra);
         part(&mut out, "Anomalies:", anomalies);
         // R6 Running: who acts on each doing/review row
         let running: Vec<String> = self.tasks.iter()
@@ -1089,7 +1110,7 @@ impl Snapshot {
         part(&mut out, "Failed:\n| Task | Reason | Next |\n|---|---|---|", failed);
         // #1625: a heartbeat older than ttl is an anomaly row; unknown load values move there too
         let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}", h.name, h.version_text(), age(self.observed - h.updated),
-            h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
+            h.focus.as_ref().filter(|f| *f != "unknown").map(|f| format!(" focus {f}")).unwrap_or_default()
             + &h.limits.iter().map(|l| if l.starts_with("quota ") {format!(" {l}")} else {l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))}).collect::<String>()
             + &h.balancing["weights"].as_object().map(|weights|weights.iter().map(|(rt,w)| {
                 let load=&h.balancing["runtimes"][rt]["load"];
@@ -1120,7 +1141,7 @@ pub fn decide_text(d: &Value) -> Option<String> {
         return Some(format!("Decide: unknown ({})", compact(d["reason"].as_str().unwrap_or("reports not collected yet"), 160)));
     }
     let rows: Vec<String> = d["rows"].as_array()?.iter().map(|r| format!("| [#{} {}]({}) | {} | {} | {} |",
-        r["n"], cell(&compact(r["title"].as_str().unwrap_or(""), 60)), r["url"].as_str().unwrap_or(""), r["verdict"].as_str().unwrap_or("unknown"),
+        r["n"], cell(&compact(r["title"].as_str().unwrap_or(""), 60)), r["url"].as_str().unwrap_or(""), r["verdict"].as_str().unwrap_or("none"),
         age(r["age_s"].as_i64().unwrap_or(0)), cell(r["recommendation"].as_str().unwrap_or("")))).collect();
     if rows.is_empty() { return None; }
     Some(format!("Decide:\n| Report | Verdict | Age | Recommendation |\n|---|---|---|---|\n{}", rows.join("\n")))
@@ -1318,6 +1339,16 @@ mod tests {
         assert_eq!(same.version_text(), "4.6.62");
         let stale = Host { version: "4.6.61".into(), diagnostics: json!({"selected": {"value": "4.6.62", "state": "stale"}}), ..Default::default() };
         assert_eq!(stale.version_text(), "4.6.61", "a stale selection is not reported as pending");
+    }
+
+    // Chain: #2256 A1 heartbeat `queue` counts -> installation anomaly row. Case: win serves desiign, a project
+    // missing from this host's list, and its rows elsewhere are anonymous. Risk: that project drops out of the view.
+    #[test]
+    fn unseen_projects_are_an_anomaly_row() {
+        let w = |n| ("win".to_string(), n);
+        assert_eq!(super::unseen(&[vec![w(3)], vec![w(3), ("mac".into(), 1)]]),
+            ["- host win · serves 1 project outside this view · Next: add it to `<install>/projects` here (R10) or run `taskq status` on win"]);
+        assert!(super::unseen(&[vec![w(2)], vec![w(2)]]).is_empty(), "every served project on a read board: no row");
     }
 
     // Chain: #2255 heartbeat `queue` -> status `Queues:` rows. Case 2026-11-03: win hung on re-exec 00:42-01:51Z,

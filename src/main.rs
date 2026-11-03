@@ -236,6 +236,8 @@ struct Ctx {
     board: Box<dyn Board>,
 }
 
+// R10 A1: each status block's live hosts and their served-project counts, for the installation's anomaly rows
+thread_local!(static SERVED: std::cell::RefCell<Vec<Vec<(String, usize)>>> = const { std::cell::RefCell::new(vec![]) });
 thread_local!(static PROJECT_ROOT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) });
 
 fn find_root() -> Res<PathBuf> {
@@ -1595,7 +1597,11 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let mut status = coreq::status::common(&tool, &cfg.me, &project, at, r.err(), update.as_deref());
         // § 4 snapshot keys; before the first successful pass tasks are unknown, not an empty list
         match &s.snapshot {
-            Some(snap) => for (k, v) in snap.status_keys(error.as_deref()) { status[k] = v; },
+            Some(snap) => {
+                for (k, v) in snap.status_keys(error.as_deref()) { status[k] = v; }
+                // R6: the tray and PilotQ show the manager view's own rows
+                if let Ok(t) = snap.text(&s.cfg, &Value::Null) { status["report"] = json!(t); }
+            }
             None => { status["complete"] = json!(false); status["reason"] = json!(error.as_deref().unwrap_or("no board read yet")); status["tasks"] = json!([]); }
         }
         for (k, v) in [("focus", if focus_error.is_some() { Value::Null } else { json!(s.focus) }), ("focus_error", json!(focus_error)), ("focus_command",command), ("kids", json!(kids)), ("issues", json!(issues)), ("log", json!(log)),
@@ -3799,16 +3805,30 @@ fn status_all(a: &Args) -> Res<()> {
         let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
         Ok(Ctx { cfg, raw, board })
     };
+    // R10 A1: hosts serving projects outside this view close the report as anomaly rows
+    let unseen = || {
+        let rows = snapshot::unseen(&SERVED.take());
+        if !rows.is_empty() { println!("\nAnomalies:\n{}", rows.join("\n")); }
+    };
     if roots.len() <= 1 {
         let c = match roots.first() { Some(r) => at(r)?, None => ctx()? };
-        return command(&c, "status", a);
+        command(&c, "status", a)?;
+        if !a.flags.contains_key("json") { unseen(); }
+        return Ok(());
     }
     if a.flags.contains_key("json") {
+        let mut served = vec![];
         let projects: Vec<Value> = roots.iter().map(|r| match at(r) {
-            Ok(c) => { let (snap, decide) = status_snapshot(&c, a); let mut v = snap.json(); v["project"] = json!(project_name(r)); v["decide"] = decide; v }
+            Ok(c) => {
+                let (snap, decide) = status_snapshot(&c, a);
+                served.push(snap.served());
+                let mut v = snap.json();
+                if let Ok(t) = snap.text_with(&c.cfg, &c.raw, Some(&decide)) { v["report"] = json!(t); }
+                v["project"] = json!(project_name(r)); v["decide"] = decide; v
+            }
             Err(e) => json!({"project": project_name(r), "complete": false, "reason": e}),
         }).collect();
-        return json_output(&serde_json::to_string_pretty(&json!({"projects": projects})).map_err(|e| e.to_string())?, a.one("json-file"));
+        return json_output(&serde_json::to_string_pretty(&json!({"projects": projects, "unseen": snapshot::unseen(&served)})).map_err(|e| e.to_string())?, a.one("json-file"));
     }
     for (i, r) in roots.iter().enumerate() {
         if i > 0 { println!(); }
@@ -3819,6 +3839,7 @@ fn status_all(a: &Args) -> Res<()> {
         }
     }
     PROJECT_ROOT.with_borrow_mut(|p| *p = None);
+    unseen();
     Ok(())
 }
 
@@ -4071,16 +4092,25 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let (snap, decide) = status_snapshot(c, a);
             if a.flags.contains_key("json") {
                 let mut v = snap.json();
+                if let Ok(t) = snap.text_with(cfg, &c.raw, Some(&decide)) { v["report"] = json!(t); }
                 v["decide"] = decide;
                 json_output(&serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, a.one("json-file"))?;
             } else {
-                println!("{}", snap.text_with(cfg, &c.raw, Some(&decide))?);
+                // R6 A3: an unreadable deploy wait or board quota is an anomaly row, never an `unknown` line
+                let mut extra = vec![];
                 // § 2 Deploy: closed tasks still waiting for their first deploy, a live board read
-                match deploy::status(b, deploy::config(&cfg.root).as_ref()) {
-                    Ok(lines) => for l in lines { println!("{l}"); },
-                    Err(e) => println!("Waiting for deploy: unknown ({e})"),
+                let deploys = deploy::status(b, deploy::config(&cfg.root).as_ref()).unwrap_or_else(|e| {
+                    extra.push(format!("- deploy wait unreadable: {} · Next: rerun `taskq status`; check the board token", compact(&e, 160)));
+                    vec![]
+                });
+                let quota = requests::quota(&b.quota());
+                if quota.starts_with("Board quota: unknown") {
+                    extra.push("- board quota unread: no core budget headers on this read · Next: rerun `taskq status`; a lasting gap is a board client defect".into());
                 }
-                println!("{}", requests::quota(&b.quota()));
+                SERVED.with_borrow_mut(|v| v.push(snap.served()));
+                println!("{}", snap.text_extra(cfg, &c.raw, Some(&decide), extra)?);
+                for l in deploys { println!("{l}"); }
+                if !quota.starts_with("Board quota: unknown") { println!("{quota}"); }
                 // § 6: the live service's open setup gaps follow the report
                 for l in data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default() { println!("{l}"); }
             }
