@@ -27,6 +27,7 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 | `taskq requeue N [--text T]` / `taskq steer N --text T` | back to `ready` / text to the live worker |
 | `taskq later N [--text T] [--blocker #M\|--until UTC] [--stage A<k>..]` / `taskq failed N --text R` | park (§ 7) / hold |
 | `taskq close N [M..] [--text VERDICT]` | publish (§ 7) and close; one failure never stops the rest |
+| `taskq gate N` / `taskq add .. --gate` | § 7 owner gate on a held or ready task: label `needs-gate` and a `gate` entry |
 | `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | § 7 owner approval of the current result (refused with `TASKQ_ATTEMPT`) / recipe run |
 | `taskq status [--only L,..] [--json] [--timing]` / `taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]]` | Read-only R6; `--only`: any label (absent: all); `--timing`: per-project section seconds on stderr. JSON/history: [menu](menu.md#contract-detail) |
 | `taskq inbox N [--json]` / `taskq retro` | task text, folded state and log (a requeue says what to fix); `--json`: progress, answers `{by, at, revision, option, text, read}`; with `TASKQ_ATTEMPT` of the live attempt, either form reacts `eyes` to each unreacted owner note (§ 2) after reading it (GitHub; GitLab: unknown, no receipt); `retro`: owner session (§ 4) on use-case proposals and board `ask`/`answer`/`requeue` history, filing accepted ones via `add` |
