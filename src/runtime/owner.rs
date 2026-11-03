@@ -115,7 +115,7 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     let agent = match super::agent(&r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let input = read_brief(&path);
     use coreq::process::Failure;
-    let out = match agent.background_launch(super::background_base(c, &spec), &spec, &input, std::time::Duration::from_secs(30)) {
+    let out = match agent.background_launch(c, &spec, &input, std::time::Duration::from_secs(30)) {
         Err(e) => return Launched::NoStart(format!("Claude launch: {e}")),
         Ok(out) => out,
     };

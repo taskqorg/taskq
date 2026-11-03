@@ -233,7 +233,7 @@ pub struct Row {
     pub failed: Option<String>,
     /// Text of the last trusted `later` entry while `later` (R6 timed park reason).
     pub later: Option<String>,
-    /// Claude Remote Control URL of the current attempt from its host's heartbeat `session` line (§ 4).
+    /// Claude Remote Control URL of the current attempt from its host's heartbeat `session` line (§ 4), else that line's `unknown: <cause>` (#2261).
     pub session_url: Option<String>,
     /// Board time of the entry behind the last logged state change (§ 4 Tray age); `None`: no logged change.
     pub since: Option<i64>,
@@ -648,15 +648,16 @@ fn stage_history(v: &View) -> Vec<Value> {
     steps
 }
 
-/// `session #<N> <attempt> <url>` heartbeat lines (§ 4) by host name and attempt; only a canonical claude.ai URL.
+/// `session #<N> <attempt> <url>|unknown: <cause>` lines of trusted heartbeats (§ 4) by host name and attempt: a canonical claude.ai
+/// URL, or the `unknown: <cause>` text (#2261), which is never a link.
 pub fn session_urls(hosts: &[board::Issue]) -> HashMap<(String, u64), String> {
-    hosts.iter().flat_map(|h| {
+    hosts.iter().filter(|h| h.trusted).flat_map(|h| {
         let name = h.title.trim_start_matches("taskq host ").to_string();
         h.body.lines().filter_map(move |l| {
-            let w: Vec<&str> = l.strip_prefix("session #")?.split(' ').collect();
-            let [_, a, url] = w[..] else { return None };
-            runtime::remote_url(url).then_some(())?;
-            Some(((name.clone(), a.parse().ok()?), url.to_string()))
+            let (_, rest) = l.strip_prefix("session #")?.split_once(' ')?;
+            let (a, value) = rest.split_once(' ')?;
+            (runtime::remote_url(value) || value.starts_with("unknown: ")).then_some(())?;
+            Some(((name.clone(), a.parse().ok()?), value.to_string()))
         })
     }).collect()
 }
@@ -776,7 +777,7 @@ impl Row {
         if let Some(step) = &self.missing_reviewer { row["missing_reviewer"] = json!(step); }
         if let Some(w) = self.wait() { row["wait"] = json!(w); }
         if !self.unlinked.is_empty() { row["unlinked"] = json!(self.unlinked); }
-        if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
+        if let Some(u) = self.session_url.as_ref().filter(|u| runtime::remote_url(u)) { row["session_url"] = json!(u); }
         row["since"] = json!(self.since);
         row["created"] = json!(self.created);
         row["steps"] = json!(self.steps);
@@ -1083,7 +1084,9 @@ impl Snapshot {
             }
             if matches!(r.task.state, State::Doing | State::Review) {
                 if let Some(host) = session_link(cfg, raw, r).2 {
-                    anomalies.push(format!("- {} · {host} Remote Control URL not in the heartbeat · Next: open the session on {host}{}", link(r), fix("remote-control")));
+                    // #2261: the owning host's heartbeat names why the link is missing; none means that host never read it.
+                    let why = r.session_url.as_deref().and_then(|u| u.strip_prefix("unknown: ")).map_or_else(|| "not in the heartbeat".to_string(), |c| format!("unknown: {}", cell(&compact(c, 160))));
+                    anomalies.push(format!("- {} · {host} Remote Control URL {why} · Next: open the session on {host}{}", link(r), fix("remote-control")));
                 }
             }
         }
@@ -1333,6 +1336,25 @@ mod tests {
         let rows = snap.json()["tasks"].clone();
         assert_eq!((rows[0]["stuck"].clone(), rows[0]["age_s"].clone()), (json!(true), json!(9000)));
         assert_eq!((rows[1]["stuck"].clone(), rows[1].get("age_s")), (json!(false), None));
+    }
+
+    // Chain: #2261 heartbeat cause -> status anomaly. Risk: a heartbeat cause breaks the summary markdown or adds a link,
+    // or an untrusted host issue supplies the cause.
+    #[test]
+    fn session_link_cause_is_escaped_and_read_only_from_trusted_heartbeats() {
+        let cause = "unknown: failed | x\n[open](https://evil.example)";
+        let beat = |trusted| board::Issue { title: "taskq host win".into(), body: format!("session #1 7 {cause}"), trusted, ..Default::default() };
+        assert!(session_urls(&[beat(false)]).is_empty(), "untrusted heartbeat");
+        // a heartbeat line ends at the newline; the anomaly still escapes a cause that holds one
+        assert_eq!(session_urls(&[beat(true)]).get(&("win".to_string(), 7)).map(String::as_str), Some("unknown: failed | x"));
+        let task = Task { state: State::Doing, attempt: Some(7), session: Some("claude:s-1 win".into()), ..Default::default() };
+        let row = Row { n: 1, title: "T".into(), url: "u1".into(), task, accepted: true, session_url: Some(cause.into()), ..Default::default() };
+        let mut cfg = crate::tests::cfg();
+        cfg.me = "mac".into();
+        let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row], hosts: vec![] };
+        let text = snap.text(&cfg, &json!({})).unwrap();
+        let line = text.lines().find(|l| l.contains("Remote Control URL")).unwrap_or_else(|| panic!("{text}"));
+        assert!(line.contains(r"unknown: failed \| x \[open\](https://evil.example)") && !line.contains("[open]"), "{line}");
     }
 
     // Chain: #1625 R6 6 Hosts line. Risk: a host whose service stopped keeps reading as a plain age, never as down.
