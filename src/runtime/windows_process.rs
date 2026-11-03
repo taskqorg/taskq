@@ -12,6 +12,7 @@ unsafe extern "system" {
     fn AssignProcessToJobObject(job:Handle,process:Handle)->i32;
     fn IsProcessInJob(process:Handle,job:Handle,result:*mut i32)->i32;
     fn QueryInformationJobObject(job:Handle,class:u32,data:Handle,size:u32,returned:*mut u32)->i32;
+    fn SetInformationJobObject(job:Handle,class:u32,data:*const ExtendedLimits,size:u32)->i32;
     fn WaitForSingleObject(handle:Handle,milliseconds:u32)->u32;
     fn TerminateJobObject(job:Handle,code:u32)->i32;
     fn CreateToolhelp32Snapshot(flags:u32,pid:u32)->Handle;
@@ -46,12 +47,17 @@ struct ProcessEntry {size:u32,usage:u32,id:u32,heap:usize,module:u32,threads:u32
 #[repr(C)]
 #[derive(Default)]
 struct Thread {size:u32,usage:u32,id:u32,process:u32,priority:i32,delta:i32,flags:u32}
+/// JOBOBJECT_EXTENDED_LIMIT_INFORMATION (class 9); only `flags` is set.
+#[repr(C)]
+#[derive(Default)]
+struct ExtendedLimits {process_time:i64,job_time:i64,flags:u32,min_set:usize,max_set:usize,processes:u32,affinity:usize,priority:u32,scheduling:u32,io:[u64;6],process_memory:usize,job_memory:usize,peak_process:usize,peak_job:usize}
+const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE:u32=0x2000;
 #[repr(C)]
 #[derive(Default)]
 struct Accounting {user:i64,kernel:i64,period_user:i64,period_kernel:i64,faults:u32,total:u32,active:u32,terminated:u32}
 
-fn name(key:&str)->Result<Vec<u16>,String> {
-    if !crate::data::job_key(key) {return Err("native job identity invalid".into());}
+fn name(scope:&str)->Result<Vec<u16>,String> {
+    let (key,_)=crate::data::job_scope(scope).ok_or("native job identity invalid")?;
     Ok(format!("Global\\TaskQ-execution-{key}\0").encode_utf16().collect())
 }
 fn owned(raw:Handle,error:io::Error)->Result<OwnedHandle,String> {
@@ -197,12 +203,17 @@ pub struct Execution {
 }
 impl Execution {
     pub fn spawn(command:&mut Command)->Result<Self,StartError> {
-        let key=super::uuid();let wide=name(&key)?;
+        let key=format!("job-kill:{}",super::uuid());let wide=name(&key)?;
         let raw=unsafe {CreateJobObjectW(std::ptr::null_mut(),wide.as_ptr())};
         let error=io::Error::last_os_error();let collision=error.raw_os_error()==Some(183);
         let job=owned(raw,error)?;
         if collision {return Err("native job identity already exists; no process started".into());}
-        // Assignment precedes all user code. No breakaway or kill-on-close flags are set.
+        // #2266: once the last handle closes (service and launcher both gone) Windows ends every member, so a vanished name proves exit.
+        let limits=ExtendedLimits {flags:JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,..ExtendedLimits::default()};
+        if unsafe {SetInformationJobObject(job.as_raw_handle(),9,&limits,std::mem::size_of::<ExtendedLimits>() as u32)}==0 {
+            return Err(format!("native job kill-on-close unavailable; no process started: {}",io::Error::last_os_error()).into());
+        }
+        // Assignment precedes all user code. No breakaway flag is set.
         let child=command.creation_flags(0x08000004).spawn().map_err(|e|StartError::io(e,None))?;
         let observed=coreq::process::identity(child.id());
         let native=observed.as_ref().ok().and_then(Clone::clone);
@@ -229,8 +240,11 @@ impl Execution {
             },
         }
     }
+    /// #2266: a vanished kill-on-close scope whose launcher is gone (checked in `open`) is an ended execution.
     pub fn recover(native:coreq::process::Identity,key:&str)->Result<Self,String> {
-        Self::open(native,key)?.ok_or("native job name unavailable after handle loss; descendants may survive; native reconciliation required".into())
+        if let Some(scope)=Self::open(native.clone(),key)? {return Ok(scope);}
+        crate::data::missing_scope_exit(key)?;
+        Ok(Self {members:std::collections::BTreeMap::new(),child:None,native:Some(native),key:key.into(),job:None,assigned:true,scope_known:true,terminal:Some(-1),fault:None,cancelled:false})
     }
     pub fn open(native:coreq::process::Identity,key:&str)->Result<Option<Self>,String> {
         let wide=name(key)?;

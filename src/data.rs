@@ -201,6 +201,21 @@ pub struct KidLine {
     pub execution:u64, pub offset:u64, pub job:Option<String>,
 }
 
+/// #2266: a `kids` job scope token; `job-kill:` jobs end every member when their last handle closes, `job-global:` (older) ones do not.
+pub fn job_scope(token:&str)->Option<(&str,bool)> {
+    let (key,kill)=match token.strip_prefix("job-kill:") {Some(key)=>(key,true),None=>(token.strip_prefix("job-global:")?,false)};
+    job_key(key).then_some((key,kill))
+}
+
+/// #2266: a vanished job name proves exit only for a kill-on-close scope whose original root is gone.
+pub fn missing_scope_exit(token:&str)->Result<(),String> {
+    match job_scope(token) {
+        Some((_,true))=>Ok(()),
+        Some((_,false))=>Err("native job name unavailable after handle loss; descendants may survive; native reconciliation required".into()),
+        None=>Err("native job identity invalid".into()),
+    }
+}
+
 pub fn job_key(key:&str)->bool {
     key.len()==36 && key.bytes().enumerate().all(|(i,b)|if [8,13,18,23].contains(&i) {b==b'-'} else {b.is_ascii_digit() || (b'a'..=b'f').contains(&b)})
 }
@@ -222,9 +237,8 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
         let (fields,job)=match w.as_slice() {
             [_,_,_,_,_,_,_] =>(w.as_slice(),None),
             [fields @ ..,scope] if fields.len()==7 =>{
-                let key=scope.strip_prefix("job-global:")?;
-                if !job_key(key) {return None;}
-                (fields,Some(key.to_owned()))
+                job_scope(scope)?;
+                (fields,Some((*scope).to_owned()))
             },
             _=>return None,
         };
@@ -390,9 +404,15 @@ mod tests {
         assert_eq!(kids("pid 9 service executor-v1\n7 41 codex 123 child 43 40\n"), Ok((owner.clone(),vec![row.clone()])));
         let key="11111111-1111-4111-8111-111111111111";
         let scoped=format!("pid 9 service executor-v1\n7 41 codex 123 child 43 40 job-global:{key}\n");
-        let mut with_job=row.clone();with_job.job=Some(key.into());
-        assert_eq!(kids(&scoped),Ok((owner.clone(),vec![with_job])));
-        for scope in ["job-global:","job-global:../foreign","job-global:11111111-1111-4111-8111-11111111111G","job:11111111-1111-4111-8111-111111111111"] {assert!(kids(&format!("pid 9 service executor-v1\n7 41 codex 123 child 43 40 {scope}\n")).is_err());}
+        let mut with_job=row.clone();with_job.job=Some(format!("job-global:{key}"));
+        assert_eq!(kids(&scoped),Ok((owner.clone(),vec![with_job.clone()])));
+        with_job.job=Some(format!("job-kill:{key}"));
+        assert_eq!(kids(&format!("pid 9 service executor-v1\n7 41 codex 123 child 43 40 job-kill:{key}\n")),Ok((owner.clone(),vec![with_job])));
+        // #2266 A2: only a kill-on-close scope turns a vanished job name into exit; an older scope stays unknown.
+        assert_eq!(missing_scope_exit(&format!("job-kill:{key}")),Ok(()));
+        assert!(missing_scope_exit(&format!("job-global:{key}")).unwrap_err().contains("native reconciliation required"));
+        assert!(missing_scope_exit("job-kill:../foreign").is_err());
+        for scope in ["job-global:","job-kill:","job-global:../foreign","job-global:11111111-1111-4111-8111-11111111111G","job:11111111-1111-4111-8111-111111111111"] {assert!(kids(&format!("pid 9 service executor-v1\n7 41 codex 123 child 43 40 {scope}\n")).is_err());}
         assert!(kids(&(scoped+&format!("8 42 codex 124 other 44 0 job-global:{key}\n"))).is_err(),"one native scope cannot own two tasks");
         assert!(kids(&format!("pid 9 service executor-v1\n7 41 claude 123 child 43 0 job-global:{key}\n")).is_err());
         assert!(kids("pid 9\n7 41 codex 123 40\n").is_err(),"legacy cursors never identify an execution");

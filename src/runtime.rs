@@ -3548,11 +3548,13 @@ finally:
         }
         #[cfg(windows)]
         if std::env::var("TASKQ_NATIVE_OWNER_CASE").unwrap()=="ended" {
-            let error=crate::adopt(&mut service,&cfg.install,&root).unwrap_err();
-            assert!(error.contains("native reconciliation"),"{error}");
-            assert!(service.kids.is_empty());assert_eq!(crate::kids_file(&cfg.install,&root).unwrap().len(),1);
-            assert_eq!(crate::core::executions(task,&crate::board::entries(&b,task).unwrap())[0].release,None);
-            std::fs::write(root.join("verified"),"missing native scope; explicit unknown; evidence retained; no release or replay").unwrap();
+            // #2266 A1: owner and launcher killed -> the kill-on-close job is gone -> adopted as ended -> Exit release.
+            crate::adopt(&mut service,&cfg.install,&root).unwrap();
+            assert_eq!(service.kids.len(),1);assert_eq!(service.kids[0].proc.exited(),Ok(Some(-1)));
+            service.reap_owned();assert!(service.kids.is_empty());
+            assert_eq!(crate::core::executions(task,&crate::board::entries(&b,task).unwrap())[0].release,Some(crate::core::Release::Exit));
+            assert!(crate::kids_file(&cfg.install,&root).unwrap().is_empty());
+            std::fs::write(root.join("verified"),"vanished kill-on-close scope; ended; Exit released; record retired; no replay").unwrap();
             return;
         }
         crate::adopt(&mut service,&cfg.install,&root).unwrap();
@@ -3695,19 +3697,17 @@ finally:
             assert!(execution_live(&saved[0]).unwrap(),"scope-aware readback cannot retire surviving descendants");
             let mut service=crate::service::Service::new(&board,&cfg,"native-fixture",Box::new(|_|panic!("native reconstruction must not dispatch")));
             let mut proc:Box<dyn Proc>=if cold {
+                // #2266: the last handle closes with the launcher gone; kill-on-close ends the descendant.
                 drop(turn);
-                let error=crate::adopt(&mut service,&cfg.install,&root).unwrap_err();
-                assert!(error.contains("native reconciliation"),"{error}");
-                assert!(service.kids.is_empty());assert_eq!(crate::kids_file(&cfg.install,&root).unwrap().len(),1);
-                assert_eq!(crate::core::executions(task,&crate::board::entries(&board,task).unwrap())[0].release,None);
-                assert_eq!(coreq::process::identity(descendant.pid).unwrap(),Some(descendant.clone()),"unknown recovery cannot stop or release work");
-                // The fixture knows this exact descendant; product recovery has no such surviving observation.
-                coreq::process::terminate(&descendant).unwrap();
-                while coreq::process::identity(descendant.pid).unwrap().as_ref()==Some(&descendant) {assert!(std::time::Instant::now()<until,"fixture descendant cleanup timed out");std::thread::sleep(std::time::Duration::from_millis(10));}
-                assert_eq!(sentinel.exited(),Ok(None));sentinel.kill().unwrap();
+                while coreq::process::identity(descendant.pid).unwrap().as_ref()==Some(&descendant) {assert!(std::time::Instant::now()<until,"kill-on-close did not end the descendant");std::thread::sleep(std::time::Duration::from_millis(10));}
+                crate::adopt(&mut service,&cfg.install,&root).unwrap();
+                assert_eq!(service.kids.len(),1);assert_eq!(service.kids[0].proc.exited(),Ok(Some(-1)));
+                service.reap_owned();assert!(service.kids.is_empty());assert!(crate::kids_file(&cfg.install,&root).unwrap().is_empty());
+                assert_eq!(crate::core::executions(task,&crate::board::entries(&board,task).unwrap())[0].release,Some(crate::core::Release::Exit));
+                assert_eq!(sentinel.exited(),Ok(None),"another execution's job must remain live");sentinel.kill().unwrap();
                 while sentinel.exited().unwrap().is_none() {assert!(std::time::Instant::now()<until,"sentinel cleanup not confirmed");std::thread::sleep(std::time::Duration::from_millis(10));}
                 drop(service);drop(sentinel);std::fs::remove_dir_all(root).unwrap();
-                println!("cold=true: native scope unavailable; explicit unknown; protected evidence retained; no replay/release; exact fixture cleanup confirmed");
+                println!("cold=true: last job handle closed; kill-on-close ended the descendant; vanished scope adopted as ended; Exit released; record retired");
                 continue;
             } else {Box::new(turn)};
             assert_eq!(proc.exited(),Ok(None),"launcher exit cannot release a live descendant");
