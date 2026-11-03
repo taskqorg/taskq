@@ -196,28 +196,122 @@ fn insert(db: &Connection, line: &str, now: u64) -> Result<(), String> {
     Ok(())
 }
 
-fn legacy_text(install: &Path) -> Result<String, String> {
-    let mut text = String::new();
-    match std::fs::File::open(install.join("taskq.log")) {
-        Ok(f) => { f.take(LEGACY_MAX + 1).read_to_string(&mut text).map_err(|e| format!("legacy taskq.log: {e}"))?; }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(text),
-        Err(e) => return Err(format!("legacy taskq.log: {e}")),
+/// #2273: one streaming pass over taskq.log. Memory holds the rotation tail, one line head and the telemetry
+/// lines, never the whole file, so a log that outgrew rotation still imports, rotates and exports. The scan never writes it.
+/// Offsets and digests cover complete lines only: a diagnostic still being appended is outside the snapshot.
+struct LegacyLog {
+    bytes: usize, sha256: String, tail_bytes: usize, tail_sha256: String,
+    /// Digests of the prefixes that end at the requested line boundaries.
+    marks: Vec<(usize, String)>,
+    /// Telemetry lines with their start offsets, `str::lines` form.
+    telemetry: Vec<(usize, String)>,
+}
+
+impl LegacyLog {
+    fn digest(&self, n: usize) -> Option<&str> { self.marks.iter().find(|(at, _)| *at == n).map(|(_, d)| d.as_str()) }
+    /// The checkpoint offset this log still continues, and whether it continues the rotated tail.
+    fn matched(&self, old: &Checkpoint) -> Option<(usize, bool)> {
+        if self.digest(old.bytes) == Some(old.sha256.as_str()) { Some((old.bytes, false)) }
+        else if old.trimmed_bytes > 0 && self.digest(old.trimmed_bytes) == Some(old.trimmed_sha256.as_str()) { Some((old.trimmed_bytes, true)) }
+        else { None }
     }
-    if text.len() as u64 > LEGACY_MAX { return Err("legacy taskq.log exceeds migration bound; file kept".into()); }
-    let complete = text.rfind('\n').map_or(0, |i| i + 1);
-    if telemetry(&text[complete..]) { return Err("legacy telemetry record truncated; file kept".into()); }
+    fn offset(&self, old: Option<&Checkpoint>) -> Result<usize, String> {
+        match old {
+            None => Ok(0),
+            Some(old) => self.matched(old).map(|(n, _)| n).ok_or_else(|| "legacy taskq.log rewritten or lost; retained SQLite history kept; coverage unknown".to_string()),
+        }
+    }
+    fn after(&self, start: usize) -> impl Iterator<Item = &str> { self.telemetry.iter().filter(move |(at, _)| *at >= start).map(|(_, l)| l.as_str()) }
+    fn pending(&self, start: usize) -> bool { self.after(start).next().is_some() }
+}
+
+struct Checkpoint { bytes: usize, sha256: String, trimmed_bytes: usize, trimmed_sha256: String, gaps: u64, gap: Option<serde_json::Value> }
+
+fn legacy_checkpoint(db: &Connection) -> Result<Option<Checkpoint>, String> {
+    let row: Option<String> = db.query_row("SELECT text FROM legacy WHERE id=1", [], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
+    let Some(row) = row else { return Ok(None) };
+    let old = serde_json::from_str::<serde_json::Value>(&row).map_err(|e| format!("legacy checkpoint: {e}"))?;
+    Ok(Some(Checkpoint {
+        bytes: old["bytes"].as_u64().ok_or("legacy checkpoint: missing length")? as usize,
+        sha256: old["sha256"].as_str().ok_or("legacy checkpoint: missing digest")?.to_string(),
+        trimmed_bytes: old["trimmed_bytes"].as_u64().ok_or("legacy checkpoint: missing trimmed length")? as usize,
+        trimmed_sha256: old["trimmed_sha256"].as_str().ok_or("legacy checkpoint: missing trimmed digest")?.to_string(),
+        gaps: old["gaps"].as_u64().unwrap_or(0),
+        gap: old.get("gap").cloned(),
+    }))
+}
+
+/// Reads the checkpoint, then scans taskq.log once at its offsets.
+fn legacy_scan(db: &Connection, install: &Path) -> Result<(LegacyLog, Option<Checkpoint>), String> {
+    let old = legacy_checkpoint(db)?;
+    let at = old.as_ref().map_or(Vec::new(), |c| vec![c.bytes, c.trimmed_bytes]);
+    Ok((legacy_log(install, &at)?, old))
+}
+
+fn legacy_log(install: &Path, at: &[usize]) -> Result<LegacyLog, String> {
+    use std::io::{BufRead, Seek};
+    let fail = |e: std::io::Error| format!("legacy taskq.log: {e}");
+    let empty = hash("");
+    let mut log = LegacyLog { bytes: 0, sha256: empty.clone(), tail_bytes: 0, tail_sha256: empty.clone(), marks: Vec::new(), telemetry: Vec::new() };
+    if at.contains(&0) { log.marks.push((0, empty)); }
+    let file = match std::fs::File::open(install.join("taskq.log")) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(log),
+        Err(e) => return Err(fail(e)),
+    };
+    let mut input = std::io::BufReader::with_capacity(64 << 10, file);
+    let mut all = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut complete = all.clone();
+    let (mut offset, mut start, mut held) = (0usize, 0usize, 0usize);
+    // Head of the current line without its '\n': enough to classify it and to hold one bounded record.
+    let mut line = Vec::new();
+    loop {
+        let chunk = input.fill_buf().map_err(fail)?;
+        if chunk.is_empty() { break; }
+        let (n, end) = chunk.iter().position(|c| *c == b'\n').map_or((chunk.len(), false), |i| (i + 1, true));
+        all.update(&chunk[..n]);
+        let body = &chunk[..n - usize::from(end)];
+        line.extend_from_slice(&body[..body.len().min((LINE_MAX + 2).saturating_sub(line.len()))]);
+        input.consume(n);
+        offset += n;
+        if !end { continue; }
+        complete = all.clone();
+        if at.contains(&offset) { log.marks.push((offset, hex(complete.clone().finish()))); }
+        if telemetry(&line) {
+            let mut len = offset - start - 1;
+            if line.len() == len && line.ends_with(b"\r") { line.pop(); len -= 1; }
+            if len > LINE_MAX { return Err("legacy telemetry record exceeds 64 KiB; file kept".into()); }
+            held += offset - start;
+            if held as u64 > LEGACY_MAX { return Err("legacy telemetry exceeds migration bound; file kept".into()); }
+            let text = String::from_utf8(std::mem::take(&mut line)).map_err(|_| "legacy telemetry record is not UTF-8; file kept".to_string())?;
+            log.telemetry.push((start, text));
+        }
+        line.clear();
+        start = offset;
+    }
     // Only service diagnostics may bypass the profile lock while completing an append.
-    text.truncate(complete);
-    Ok(text)
+    if offset > start && telemetry(&line) { return Err("legacy telemetry record truncated; file kept".into()); }
+    log.bytes = start;
+    log.sha256 = hex(complete.finish());
+    // Rotation keeps the newest half; its digest lets the next pass continue the trimmed file.
+    let lo = start.saturating_sub((crate::data::LOG_MAX / 2) as usize);
+    let mut file = input.into_inner();
+    file.seek(std::io::SeekFrom::Start(lo as u64)).map_err(fail)?;
+    let mut tail = vec![0; start - lo];
+    file.read_exact(&mut tail).map_err(fail)?;
+    let tail = tail.iter().position(|c| *c == b'\n').map_or(&tail[..], |i| &tail[i + 1..]);
+    log.tail_bytes = tail.len();
+    log.tail_sha256 = hex(ring::digest::digest(&ring::digest::SHA256, tail));
+    Ok(log)
 }
 
-fn hash(text: &str) -> String {
-    ring::digest::digest(&ring::digest::SHA256, text.as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect()
-}
+fn hex(digest: ring::digest::Digest) -> String { digest.as_ref().iter().map(|b| format!("{b:02x}")).collect() }
 
-fn telemetry(line: &str) -> bool {
-    ["taskq-profile ", "taskq-stage ", "taskq-board ", "taskq-transition ", "taskq-requests "].iter().any(|p| line.starts_with(p))
-}
+fn hash(text: &str) -> String { hex(ring::digest::digest(&ring::digest::SHA256, text.as_bytes())) }
+
+const TELEMETRY: [&str; 5] = ["taskq-profile ", "taskq-stage ", "taskq-board ", "taskq-transition ", "taskq-requests "];
+
+fn telemetry(line: &[u8]) -> bool { TELEMETRY.iter().any(|p| line.starts_with(p.as_bytes())) }
 
 fn space(db: &Connection, bytes: usize) -> Result<(), String> {
     checkpoint(db)?;
@@ -232,74 +326,38 @@ fn space(db: &Connection, bytes: usize) -> Result<(), String> {
     Ok(())
 }
 
-fn legacy_offset(db: &Connection, text: &str) -> Result<Option<usize>, String> {
-    let previous: Option<String> = db.query_row("SELECT text FROM legacy WHERE id=1", [], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
-    let previous = previous.map(|s| serde_json::from_str::<serde_json::Value>(&s).map_err(|e| format!("legacy checkpoint: {e}"))).transpose()?;
-    let matches = |n: usize, digest: &str| text.get(..n).is_some_and(|s| (s.is_empty() || s.ends_with('\n')) && hash(s) == digest);
-    match previous.as_ref() {
-        None => Ok(None),
-        Some(old) => {
-            let n = old["bytes"].as_u64().ok_or("legacy checkpoint: missing length")? as usize;
-            let digest = old["sha256"].as_str().ok_or("legacy checkpoint: missing digest")?;
-            let trimmed = old["trimmed_bytes"].as_u64().ok_or("legacy checkpoint: missing trimmed length")? as usize;
-            let trimmed_hash = old["trimmed_sha256"].as_str().ok_or("legacy checkpoint: missing trimmed digest")?;
-            if matches(n, digest) { Ok(Some(n)) }
-            else if trimmed > 0 && matches(trimmed, trimmed_hash) { Ok(Some(trimmed)) }
-            else { Err("legacy taskq.log rewritten or lost; retained SQLite history kept; coverage unknown".into()) }
-        }
-    }
-}
 
 /// Existing records have no event IDs: track stream position, never deduplicate by record contents.
 /// Rewritten or truncated `taskq.log` re-baselines from byte 0 with a recorded gap and logs once (#2237).
 fn import(db: &mut Connection, install: &Path, now: u64) -> Result<(), String> {
-    let text = legacy_text(install)?;
-    let previous_row: Option<String> = db.query_row("SELECT text FROM legacy WHERE id=1", [], |r| r.get(0)).optional().map_err(|e| e.to_string())?;
-    let previous_val = previous_row.map(|s| serde_json::from_str::<serde_json::Value>(&s).map_err(|e| format!("legacy checkpoint: {e}"))).transpose()?;
-    let matches = |n: usize, digest: &str| text.get(..n).is_some_and(|s| (s.is_empty() || s.ends_with('\n')) && hash(s) == digest);
-    let mut prior_gaps = 0u64;
-    let mut prior_gap = None::<serde_json::Value>;
-    let (previous, rotated, rebaselined) = match previous_val.as_ref() {
+    let (log, old) = legacy_scan(db, install)?;
+    let (prior_gaps, prior_gap) = old.as_ref().map_or((0, None), |c| (c.gaps, c.gap.clone()));
+    let (previous, rotated, rebaselined) = match old.as_ref() {
         None => (None, false, None),
-        Some(old) => {
-            let n = old["bytes"].as_u64().ok_or("legacy checkpoint: missing length")? as usize;
-            let digest = old["sha256"].as_str().ok_or("legacy checkpoint: missing digest")?;
-            let trimmed = old["trimmed_bytes"].as_u64().ok_or("legacy checkpoint: missing trimmed length")? as usize;
-            let trimmed_hash = old["trimmed_sha256"].as_str().ok_or("legacy checkpoint: missing trimmed digest")?;
-            prior_gaps = old["gaps"].as_u64().unwrap_or(0);
-            prior_gap = old.get("gap").cloned();
-            if matches(n, digest) {
-                (Some(n), false, None)
-            } else if trimmed > 0 && matches(trimmed, trimmed_hash) {
-                (Some(trimmed), true, None)
-            } else {
-                (None, false, Some((prior_gaps + 1, n, digest.to_string())))
-            }
-        }
+        Some(old) => match log.matched(old) {
+            Some((n, rotated)) => (Some(n), rotated, None),
+            None => (None, false, Some((prior_gaps + 1, old.bytes, old.sha256.clone()))),
+        },
     };
     let start = previous.unwrap_or(0);
-    if start == text.len() && previous.is_some() && !rotated && rebaselined.is_none() { return Ok(()); }
-    let tail = &text.as_bytes()[text.len().saturating_sub((crate::data::LOG_MAX / 2) as usize)..];
-    let tail = tail.iter().position(|c| *c == b'\n').map_or(tail, |i| &tail[i+1..]);
+    if start == log.bytes && previous.is_some() && !rotated && rebaselined.is_none() { return Ok(()); }
     // Store hashes only: service diagnostics are neither telemetry nor retained database payload.
-    let tail = std::str::from_utf8(tail).map_err(|e| e.to_string())?;
-    let mut state_obj = serde_json::json!({"bytes":text.len(),"sha256":hash(&text),"trimmed_bytes":tail.len(),"trimmed_sha256":hash(tail)});
+    let mut state_obj = serde_json::json!({"bytes":log.bytes,"sha256":log.sha256,"trimmed_bytes":log.tail_bytes,"trimmed_sha256":log.tail_sha256});
     if let Some((gaps, prev_bytes, ref prev_sha)) = rebaselined {
         state_obj["gaps"] = serde_json::json!(gaps);
         state_obj["gap"] = serde_json::json!({
             "at_ms": now,
             "previous_bytes": prev_bytes,
             "previous_sha256": prev_sha,
-            "rebaselined_bytes": text.len(),
-            "rebaselined_sha256": hash(&text),
+            "rebaselined_bytes": log.bytes,
+            "rebaselined_sha256": log.sha256,
         });
     } else if prior_gaps > 0 {
         state_obj["gaps"] = serde_json::json!(prior_gaps);
         if let Some(gap) = prior_gap { state_obj["gap"] = gap; }
     }
     let state = state_obj.to_string();
-    let added: Vec<_> = text[start..].lines().filter(|l| telemetry(l)).collect();
-    if added.iter().any(|l| l.len() > LINE_MAX) { return Err("legacy telemetry record exceeds 64 KiB; file kept".into()); }
+    let added: Vec<_> = log.after(start).collect();
     space(db, added.iter().map(|l| l.len()).sum())?;
     let tx = db.transaction().map_err(|e| e.to_string())?;
     for line in added { insert(&tx, line, now)?; }
@@ -309,7 +367,7 @@ fn import(db: &mut Connection, install: &Path, now: u64) -> Result<(), String> {
     if let Some((gaps, prev_bytes, _)) = rebaselined {
         crate::platform::log(&format!(
             "telemetry: legacy taskq.log rewritten or lost ({prev_bytes} -> {} bytes); re-baselined with recorded gap {gaps}; import resumed",
-            text.len()
+            log.bytes
         ));
     }
     Ok(())
@@ -402,7 +460,7 @@ fn legacy_rows(install: &Path,cursor:Option<&str>,lock:Option<&crate::profile::L
     match std::fs::metadata(&path) {
         Err(e) if e.kind()==std::io::ErrorKind::NotFound => {
             if cursor.is_some() {return Err("legacy source: imported archive missing; coverage unknown".into());}
-            if legacy_text(install)?.lines().any(telemetry) {return Err("legacy telemetry awaits service import".into());}
+            if legacy_log(install,&[])?.pending(0) {return Err("legacy telemetry awaits service import".into());}
             return Ok(Vec::new());
         }
         Err(e)=>return Err(e.to_string()),Ok(_)=>{}
@@ -414,8 +472,8 @@ fn legacy_rows(install: &Path,cursor:Option<&str>,lock:Option<&crate::profile::L
     let app:i64=db.pragma_query_value(None,"application_id",|r|r.get(0)).map_err(|e|e.to_string())?;
     let version:i64=db.pragma_query_value(None,"user_version",|r|r.get(0)).map_err(|e|e.to_string())?;
     if app!=APP||version!=1 {return Err("legacy snapshot: foreign or unsupported schema; preserved".into());}
-    let text=legacy_text(install)?;let offset=legacy_offset(&db,&text)?.unwrap_or(0);
-    if text[offset..].lines().any(telemetry) {return Err("legacy telemetry awaits service import".into());}
+    let (log,old)=legacy_scan(&db,install)?;
+    if log.pending(log.offset(old.as_ref())?) {return Err("legacy telemetry awaits service import".into());}
     let after=source::pending(&db,cursor)?;
     let sql=if after.is_some() {"SELECT seq,retained_ms,line FROM records WHERE telemetry_epoch>?1 OR (telemetry_epoch=?1 AND seq>?2) ORDER BY telemetry_epoch,seq"} else {"SELECT seq,retained_ms,line FROM records WHERE ?1=-1 AND ?2=0 ORDER BY seq"};
     let mut statement=db.prepare(sql).map_err(|e|e.to_string())?;
@@ -486,7 +544,7 @@ fn export_snapshot(install:&Path,since:Option<u64>) -> Result<String,String> {
 
 fn has_legacy(install:&Path)->Result<bool,String> {
     Ok(install.join("telemetry.log/telemetry.sqlite3").try_exists().map_err(|e|e.to_string())?
-        || legacy_text(install)?.lines().any(telemetry))
+        || legacy_log(install,&[])?.pending(0))
 }
 
 /// Existing service owns archive retention; never create an empty replacement legacy sink.
@@ -1041,6 +1099,69 @@ mod tests {
         assert_eq!(state["gaps"], 1);
         assert_eq!(state["gap"]["rebaselined_bytes"], "unrelated\n".len());
         drop(db); std::fs::remove_dir_all(d).unwrap();
+    }
+    // A1/#2273: a log that outgrew the migration bound while imports failed still imports, rotates and exports.
+    // Rotation keeps its newest half, every telemetry record reaches the archive and the re-baseline is a recorded gap.
+    #[test]
+    fn oversized_legacy_log_imports_rotates_and_exports() {
+        let d = dir(); let p = d.join("taskq.log");
+        let record = |n: u64| format!("taskq-profile {{\"op\":\"spawn\",\"us\":{n},\"error\":\"none\",\"at_ms\":{n}}}\n");
+        std::fs::write(&p, record(1)).unwrap();
+        crate::profile::prune(&d).unwrap();
+        // A crash rewrote the head, so imports failed and rotation never ran while diagnostics kept arriving.
+        let mut big = format!("\0\0\0\n{}", record(2));
+        while big.len() as u64 <= LEGACY_MAX + (1 << 20) { big.push_str("service diagnostic line\n"); }
+        big.push_str(&"x".repeat(2 * LINE_MAX)); big.push('\n');
+        big.push_str(&record(3));
+        std::fs::write(&p, &big).unwrap();
+        drop(coreq::telemetry::Store::open(&d.join("telemetry.log/universal.sqlite3")).unwrap());
+        // Read-only export never re-baselines: coverage stays unknown until the owner's pass.
+        let e = export(&d, None).unwrap_err(); assert!(e.contains("rewritten or lost"), "{e}");
+        crate::profile::prune(&d).unwrap();
+        let kept = std::fs::read(&p).unwrap();
+        assert!(kept.len() as u64 <= crate::data::LOG_MAX / 2 && big.as_bytes().ends_with(&kept));
+        assert_eq!(read(&d, 200).unwrap(), format!("{}{}{}", record(1), record(2), record(3)));
+        let db = open(&d).unwrap();
+        let state: serde_json::Value = serde_json::from_str(&db.query_row("SELECT text FROM legacy WHERE id=1", [], |r| r.get::<_,String>(0)).unwrap()).unwrap();
+        assert_eq!(state["gaps"], 1, "the rotated file continues the checkpoint");
+        assert_eq!(state["gap"]["rebaselined_bytes"], big.len());
+        drop(db);
+        let rows: Vec<serde_json::Value> = export(&d, None).unwrap().lines().map(|s| serde_json::from_str(s).unwrap()).collect();
+        assert_eq!(rows[0]["sources"]["legacy"]["samples"], 3);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    // #2273: streaming keeps the import limits; refused logs stay byte for byte.
+    #[test]
+    fn legacy_telemetry_over_import_limits_is_refused_and_kept() {
+        let d = dir(); let p = d.join("taskq.log");
+        let line = format!("taskq-profile {}\n", "x".repeat(1000));
+        let text = line.repeat(LEGACY_MAX as usize / line.len() + 1);
+        std::fs::write(&p, &text).unwrap();
+        assert!(read(&d, 100).unwrap_err().contains("migration bound; file kept"));
+        assert!(crate::profile::prune(&d).unwrap_err().contains("migration bound; file kept"));
+        assert_eq!(std::fs::read(&p).unwrap(), text.as_bytes());
+        let long = format!("taskq-profile {}\n", "x".repeat(LINE_MAX));
+        std::fs::write(&p, &long).unwrap();
+        assert!(read(&d, 100).unwrap_err().contains("exceeds 64 KiB; file kept"));
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), long);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    // #2273: offsets, digests and the rotation tail cover complete lines; diagnostics may hold any bytes.
+    #[test]
+    fn legacy_scan_covers_complete_lines_only() {
+        let d = dir();
+        let complete = b"a\xff\r\ntaskq-stage s\r\n";
+        std::fs::write(d.join("taskq.log"), [&complete[..], b"partial diagnostic"].concat()).unwrap();
+        let log = legacy_log(&d, &[0, 3, 4, complete.len()]).unwrap();
+        let digest = |b: &[u8]| hex(ring::digest::digest(&ring::digest::SHA256, b));
+        assert_eq!((log.bytes, log.sha256.as_str()), (complete.len(), digest(complete).as_str()));
+        assert_eq!(log.digest(0), Some(hash("").as_str()));
+        assert_eq!(log.digest(4), Some(digest(&complete[..4]).as_str()));
+        assert_eq!(log.digest(3), None, "a checkpoint inside a line never matches");
+        assert_eq!(log.digest(complete.len()), Some(log.sha256.as_str()));
+        assert_eq!(log.telemetry, vec![(4, "taskq-stage s".to_string())]);
+        assert_eq!((log.tail_bytes, log.tail_sha256.as_str()), (complete.len() - 4, digest(&complete[4..]).as_str()));
+        std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
     fn rewritten_legacy_log_rebaselines_with_recorded_gap_logs_once_and_resumes_import() {
