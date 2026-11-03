@@ -19,6 +19,7 @@ r = Path(os.environ['STORE'])
 a = sys.argv[1:]
 if a[0] == 'api':
     if 'POST' in a:
+        with (r/'lock-attempts').open('a') as attempts: attempts.write('attempt\\n')
         try: (r/'lock').mkdir()
         except FileExistsError: sys.exit(1)
     else: (r/'lock').rmdir()
@@ -77,7 +78,13 @@ else: sys.exit(2)
     assert not (root/'lock').exists()
     print('PASS read failure preserves index and releases owned lock')
     (root/'lock').mkdir()
-    assert start('macos-aarch64', LOCK_WAIT='0').wait(timeout=10) != 0
+    # The unavailable lock makes 60 separate Python-stub launches; Windows process startup
+    # exceeded the old 10s wrapper. Keep the retry count and every no-write/no-steal assertion.
+    (root/'lock-attempts').write_text('')
+    started = time.monotonic()
+    assert start('macos-aarch64', LOCK_WAIT='0').wait(timeout=60 if os.name == 'nt' else 10) != 0
+    assert len((root/'lock-attempts').read_text().splitlines()) == 60
+    print(f'Unavailable lock: 60 attempts in {time.monotonic()-started:.2f}s')
     assert (root/'lock').exists()
     assert (root/'store/latest.json').read_bytes() == before
     print('PASS unavailable lock refuses writes without stealing')
