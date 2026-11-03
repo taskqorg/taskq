@@ -84,7 +84,7 @@ const USAGE: &str = "taskq agents
  taskq reroute --from <runtime> --to <runtime> [--json]
  taskq accounts [--json] | taskq accounts enable|disable|move <runtime> <label> [<position>] | taskq accounts add <runtime> <label>
  taskq labels
- taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all] [--conversation ID --op-id ID]
+ taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all] [--gate] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N [M..]
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
@@ -94,7 +94,7 @@ const USAGE: &str = "taskq agents
  taskq result N --sha SHA --checks C.. --text T [--option O.. --recommend K --link URL..]
  taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M|--until UTC] [--stage A<k>..]
  taskq steer N --text T | taskq failed N --text T
- taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
+ taskq close N [M..] [--text VERDICT] | taskq gate N | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
  taskq status [--project P..] [--only L,..] [--json] [--timing] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
@@ -161,7 +161,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear" | "timing") || k=="hosts"&&a.pos==["doctor"] || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear" | "timing" | "gate") || k=="hosts"&&a.pos==["doctor"] || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -174,7 +174,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
             Some("accounts") => 5,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -3275,6 +3275,14 @@ fn add_task(b: &dyn Board, root: &Path, raw: &Value, t: &NewTask, op: &Op) -> Re
     Ok(Receipt { op_id: op.id.clone(), ..r }.wake(root))
 }
 
+/// § 7 owner gate on a held or ready task: label `needs-gate`, then the `gate` entry (op id `<op>.gate`).
+fn gate_task(b: &dyn Board, root: &Path, n: u64, op: &Op) -> Receipt {
+    if let Err(e) = b.labels(n, &["needs-gate".into()], &[]) {
+        return Receipt::rejected(n, op, e);
+    }
+    act(b, root, n, "gate", &[], "", &Op { id: op.id.as_ref().map(|i| format!("{i}.gate")), revision: None })
+}
+
 /// § 7 recipe run: every task is added held with op id `recipe.<name>.<version>.<run>.<k>` and read back; only then,
 /// with `start`, do they start. A rerun returns the first receipts.
 fn run_recipe(b: &dyn Board, root: &Path, raw: &Value, name: &str, run: &str, goal: Option<&str>, start: bool) -> Res<Vec<Receipt>> {
@@ -4010,7 +4018,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 runtime: a.one("runtime").map(String::from),
                 priority: a.one("priority").map(String::from),
                 host: add_host(a.one("host"), cfg),
-                labels: vec![],
+                labels: if a.flags.contains_key("gate") { vec!["needs-gate".into()] } else { vec![] },
                 rules: a.one("rules").map(String::from),
             };
             if finding {
@@ -4044,8 +4052,11 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             } else if ["start", "source", "board", "evidence"].iter().any(|f| a.flags.contains_key(*f)) {
                 return Err("--start/--source/--board/--evidence require finding".into());
             }
-            emit(&[add_task(b, root, &c.raw, &new, &op).map_err(|e| serve_hint(e, cfg))?], json)
+            let r = add_task(b, root, &c.raw, &new, &op).map_err(|e| serve_hint(e, cfg))?;
+            let r = if r.ok() && a.flags.contains_key("gate") { gate_task(b, root, r.task, &op) } else { r };
+            emit(&[r], json)
         }
+        "gate" => emit(&[gate_task(b, root, a.num(1)?, &op)], json),
         "start" => emit(&start_tasks(b, root, &a.pos[1..], &op)?, json),
         "approve" => emit(&[dispatch::approve(b, root, a.num(1)?, a.one("sha"), &op, dispatch::agent())], json),
         "recipe" => {
@@ -5421,6 +5432,31 @@ mod tests {
         let receipts = start_tasks(b, &c.cfg.root, &[u.to_string(), format!("#{v}")], &Op::default()).unwrap();
         assert_eq!(receipts.iter().map(|r| r.task).collect::<Vec<_>>(), vec![u, v]);
         assert!([u, v].iter().all(|&m| fold(m, &entries(b, m).unwrap(), false).state == State::Ready));
+    }
+
+    // Chain: #2310 § 7 gate outside recipes. Risk: a task whose Acceptance forbids publishing closes (publishes)
+    // without owner approval, or a started task is gated after work began.
+    #[test]
+    fn add_gate_and_gate_n_require_owner_approval_before_close() {
+        let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };
+        let b = c.board.as_ref();
+        let run = |v: &[&str]| command(&c, v[0], &Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap());
+        run(&["add", "Spec only", "--goal", "Decide", "--acceptance", "no main before owner check", "--gate"]).unwrap();
+        run(&["add", "Later gated", "--goal", "Decide", "--acceptance", "a"]).unwrap();
+        let n: Vec<_> = b.issues(None).unwrap().iter().map(|i| i.number).collect();
+        for &m in &n[..1] {
+            assert!(b.issue(m).unwrap().labels.contains(&"needs-gate".to_string()));
+            assert_eq!(fold(m, &entries(b, m).unwrap(), false).gate, Some(core::Gate::Required));
+        }
+        assert_eq!(fold(n[1], &entries(b, n[1]).unwrap(), false).gate, None);
+        run(&["gate", &n[1].to_string()]).unwrap();
+        assert_eq!(fold(n[1], &entries(b, n[1]).unwrap(), false).gate, Some(core::Gate::Required));
+        assert!(b.issue(n[1]).unwrap().labels.contains(&"needs-gate".to_string()));
+        start_tasks(b, &c.cfg.root, &[n[0].to_string()], &Op::default()).unwrap();
+        b.comment(n[0], &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        let a = fold(n[0], &entries(b, n[0]).unwrap(), false).attempt.unwrap();
+        b.comment(n[0], &entry("result", &["0123456789abcdef0123456789abcdef01234567"], Some(a), "")).unwrap();
+        assert!(!close_one(b, &c.cfg, n[0], "ok", &Op::default()).ok() && b.issue(n[0]).unwrap().open);
     }
 
     // Chain: § 7 recipe run, held tasks, owner gate, close publication, dependants. Risk: a rerun duplicates tasks,
