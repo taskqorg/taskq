@@ -12,13 +12,14 @@ Linked from `taskq.md` [§ 1](../../taskq.md#1-tasks) and [§ 5](../../taskq.md#
 
 `add` writes these sections in that order, then dependencies: Goal 1-2 lines; Acceptance 1-8 items, one line each, unlabelled (a typed `A<n>.` is refused);
 
-Scope optional, 1-4 bullet lines; with `--op-id`, a last line `op-id: <id>` marks the create for read-only recovery. Title ≤ 80 characters; body lines ≤ 240. Short imperative sentences: Goal names the user outcome; each Acceptance a visible check; Scope a boundary. Headings on their own lines; one blank line between sections. More than eight checks: split before filing (R2).
+Scope optional, 1-4 bullet lines; `--rules "<ID>, <ID>|all"` adds a line `Rules: <IDs>` that scopes the [rule gate](rule-ids.md#contract-detail) and is refused unless each ID is a `taskq.md` rule ID; with `--op-id`, a last line `op-id: <id>` marks the create for read-only recovery. Title ≤ 80 characters; body lines ≤ 240. Short imperative sentences: Goal names the user outcome; each Acceptance a visible check; Scope a boundary. Headings on their own lines; one blank line between sections. More than eight checks: split before filing (R2).
+Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Acceptance, refuse each `R<n>`, `§<n>` or `§2.<k>` that `taskq.md` does not define and each `` `taskq <command>` `` span whose command is in neither `taskq help` nor `taskq.md`, naming every term; `new R14` names a rule the task adds. Scope and links are not read.
 
 ### Command table
 
 | Command | Does |
 |---|---|
-| `taskq labels` / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H] [--conversation ID --op-id ID]` / `taskq start N [M..]` | §6 labels; add: `#<N> held`; §1 start |
+| `taskq labels` / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H] [--rules IDs\|all] [--conversation ID --op-id ID]` / `taskq start N [M..]` | §6 labels; add: `#<N> held`; §1 start |
 | `taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]` | § 1 create/optional-start receipts; `add` routing/scope/dependency flags apply |
 | `taskq ask N --text Q [--option O..] [--recommend K] [--link URL..]` | question card |
 | `taskq answer N --text A` / `taskq answer N.K [M.K..]` / `taskq pick N.K --text R` | owner's answer or option pick, all checked first; `pick`: § 2 PM view |

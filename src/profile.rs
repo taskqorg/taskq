@@ -479,10 +479,37 @@ impl BoardOp {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Transition { #[serde(default, skip_serializing_if = "Option::is_none")] project: Option<String>, task: u64, entry: u64, from: String, to: String, prev_s: Option<u64>, rt: Option<String>, host: Option<String>, at_ms: Option<u64> }
+pub(crate) struct Transition { #[serde(default, skip_serializing_if = "Option::is_none")] project: Option<String>, task: u64, entry: u64, from: String, to: String, prev_s: Option<u64>, rt: Option<String>, host: Option<String>, at_ms: Option<u64>,
+    /// § 4 Profiling: a worker ask as `{"ask.<kind>.<cause>": 1}`; CoreQ admits `counts` without a new field
+    #[serde(default, skip_serializing_if = "Option::is_none")] counts: Option<BTreeMap<String, u64>> }
+
+const ASK_CAUSES: [&str; 6] = ["unknown-term", "rule-gate", "budget", "retry-limit", "spec-conflict", "other"];
+
+/// Kind and cause of a transition's `ask.<kind>.<cause>` count.
+fn ask_key(t: &Transition) -> Option<(&str, &str)> {
+    let c = t.counts.as_ref()?;
+    let (key, _) = c.iter().next().filter(|_| c.len() == 1)?;
+    key.strip_prefix("ask.")?.split_once('.').filter(|(k, c)| ["technical", "owner"].contains(k) && ASK_CAUSES.contains(c))
+}
+
+/// § 4 Profiling: kind (`technical`/`owner`) and cause of the worker ask that log `entry` text raised.
+pub(crate) fn ask_of(entry: &str) -> (&'static str, &'static str) {
+    // ponytail: keyword heuristic over the entry text; a typed cause field on `ask` if it misfiles often
+    let t = entry.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
+    let cause = if has(&["retry limit"]) { "retry-limit" }
+        else if has(&["unknown term"]) { "unknown-term" }
+        else if has(&["rule gate", "rule-change gate", "does not name"]) { "rule-gate" }
+        else if has(&["budget", "quota", "usage limit", "rate limit"]) { "budget" }
+        else if has(&["conflicts with taskq.md", "contract conflict", "spec conflict", "conflicts with the contract", "r13"]) { "spec-conflict" }
+        else { "other" };
+    // an owner action card has no options (§ 2 Ask card); a spec conflict is the owner's decision (R13)
+    let owner = cause == "spec-conflict" || !t.lines().any(|l| l.trim_start().starts_with("1. "));
+    (if owner { "owner" } else { "technical" }, cause)
+}
 
 impl Transition {
-    pub(crate) fn valid(&self)->bool {STATES.contains(&self.from.as_str())&&STATES.contains(&self.to.as_str())&&self.rt.as_deref().is_none_or(|rt|RUNTIMES.contains(&rt))}
+    pub(crate) fn valid(&self)->bool {STATES.contains(&self.from.as_str())&&STATES.contains(&self.to.as_str())&&self.rt.as_deref().is_none_or(|rt|RUNTIMES.contains(&rt))&&(self.counts.is_none()||ask_key(self).is_some())}
 }
 
 /// Admit typed metadata; optional collection failure never changes the observed operation.
@@ -505,11 +532,12 @@ pub fn board_as(kind: &'static str, took: std::time::Duration, outcome: &'static
 }
 
 /// One queue transition of `task` caused by log `entry`; `rt`/`host` of the attempt on either side.
-pub fn transition(task: u64, entry: u64, from: &'static str, to: &'static str, prev_s: Option<u64>, rt: Option<&str>, host: Option<&str>) {
+pub fn transition(task: u64, entry: u64, from: &'static str, to: &'static str, prev_s: Option<u64>, rt: Option<&str>, host: Option<&str>, ask: Option<(&str, &str)>) {
     // a host name is the operator's own short label; anything else is not kept
     let host = host.map(|h| if h.len() <= 64 && h.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)) { h } else { "other" });
     let r = Transition { project: PROJECT.with_borrow(Clone::clone), task, entry, from: from.into(), to: to.into(), prev_s,
-        rt: rt.map(|r| RUNTIMES.into_iter().find(|k| *k == r).unwrap_or("other").into()), host: host.map(Into::into), at_ms: now_ms() };
+        rt: rt.map(|r| RUNTIMES.into_iter().find(|k| *k == r).unwrap_or("other").into()), host: host.map(Into::into), at_ms: now_ms(),
+        counts: ask.map(|(k, c)| BTreeMap::from([(format!("ask.{k}.{c}"), 1)])) };
     #[cfg(test)]
     MOVED.with(|v| { *v.borrow_mut() += &format!("{TRANSITION_PREFIX}{}\n", serde_json::to_string(&r).unwrap()); });
     record(crate::telemetry::Sample::Transition(r));
@@ -555,12 +583,24 @@ fn render_system_summary(summary:&Summary) -> (String, String) {
             match r.prev_s { Some(s) => row.0.push(s), None => row.1 += 1 }
         }
         if rows.is_empty() { return Ok("Queue transitions: unknown (no observations)\n".into()); }
+        let mut asks: BTreeMap<(String, String, String), usize> = BTreeMap::new();
+        for sample in samples {
+            if let Some((k, c, at_ms)) = match sample { Sample::Transition(t) => ask_key(t).map(|(k, c)| (k.to_string(), c.to_string(), t.at_ms)), _ => None } {
+                let day = at_ms.map_or("unknown".into(), |ms| crate::board::stamp((ms / 1000) as i64)[..10].to_string());
+                *asks.entry((day, k, c)).or_default() += 1;
+            }
+        }
+        let mut tail = String::new();
+        if !asks.is_empty() {
+            tail = "\nWorker asks: per UTC day, kind and cause\n\n| Day | Kind | Cause | Count |\n|---|---|---|---:|\n".into();
+            for ((day, k, c), n) in asks { tail += &format!("| {day} | {k} | {c} | {n} |\n"); }
+        }
         let mut out = "Queue transitions: retained observations; moves while no service ran unknown\n\n| From | To | Runtime | Count | p50/p95/max s in previous state |\n|---|---|---|---:|---|\n".to_string();
         for ((f, t, rt), (mut s, unknown)) in rows {
             s.sort_unstable();
             out += &format!("| {} | {} | {rt} | {} | {} |\n", STATES[f], STATES[t], s.len() + unknown, in_state(&s, unknown));
         }
-        Ok(out)
+        Ok(out + &tail)
     };
     (board().unwrap_or_else(|e| format!("Board operations: unknown ({e})\n")), moves().unwrap_or_else(|e| format!("Queue transitions: unknown ({e})\n")))
 }
@@ -1587,7 +1627,7 @@ Changed: x"))];
     #[test]
     fn export_then_reports() {
         let t = |p: Option<&str>, task, from: &str, to: &str, prev_s, rt: Option<&str>, host: Option<&str>, at| format!("{TRANSITION_PREFIX}{}\n", serde_json::to_string(&Transition {
-            project: p.map(Into::into), task, entry: at, from: from.into(), to: to.into(), prev_s, rt: rt.map(Into::into), host: host.map(Into::into), at_ms: Some(at) }).unwrap());
+            project: p.map(Into::into), task, entry: at, from: from.into(), to: to.into(), prev_s, rt: rt.map(Into::into), host: host.map(Into::into), at_ms: Some(at), counts: None }).unwrap());
         let b = |op: &str, us, err: Option<&str>, remaining, at| format!("{BOARD_PREFIX}{}\n", serde_json::to_string(&BoardOp { op: op.into(), us,
             outcome: if err.is_some() { "failed" } else { "ok" }.into(), error: err.unwrap_or("none").into(), remaining, at_ms: Some(at) }).unwrap());
         let log = [

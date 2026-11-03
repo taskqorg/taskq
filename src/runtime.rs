@@ -961,7 +961,7 @@ const SPECQ_INDEX: &[&str] = &[
 /// One cap for the injected header, contract, core and index (§ 8).
 const RULES_CAP: usize = 128 * 1024;
 /// This release's TaskQ tool contract, used only for the documented setup/TaskQ fallback.
-const CONTRACT: &str = include_str!("../taskq.md");
+pub(crate) const CONTRACT: &str = include_str!("../taskq.md");
 const INDEX: &str = "\nIndex of other shared rules";
 
 fn rule_file(url: &str) -> Result<String, String> {

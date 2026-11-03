@@ -260,7 +260,7 @@ pub struct Proposal {
 impl Proposal {
     fn task(&self,n:u64)->crate::NewTask {
         crate::NewTask {conversation:None,title:self.title.clone(),goal:self.goal.clone(),acceptance:self.acceptance.clone(),scope:self.scope.clone(),
-            deps:vec![n],kind:self.kind.clone(),runtime:self.runtime.clone(),priority:self.priority.clone(),host:None,labels:vec![]}
+            deps:vec![n],kind:self.kind.clone(),runtime:self.runtime.clone(),priority:self.priority.clone(),host:None,labels:vec![],rules:None}
     }
 }
 
@@ -455,7 +455,7 @@ fn successor(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reaso
     let label=if action=="reopen" {"Reopen"}else{"Follow-up"};
     let task=crate::NewTask{conversation:None,title:format!("{label} #{n}"),
         goal:format!("{label} #{n}: {reason}"),acceptance:vec![format!("The operator's reason is addressed: {reason}")],
-        scope:vec![format!("Source: {}",b.url(n)),format!("Reason: {reason}")],deps:vec![n],kind:None,runtime:None,priority:None,host:None,labels:vec![]};
+        scope:vec![format!("Source: {}",b.url(n)),format!("Reason: {reason}")],deps:vec![n],kind:None,runtime:None,priority:None,host:None,labels:vec![],rules:None};
     crate::task_body(b,&task,&crate::Op::default())?;
     let hash=ring::digest::digest(&ring::digest::SHA256,reason.as_bytes());
     let hash:String=hash.as_ref().iter().map(|b|format!("{b:02x}")).collect();

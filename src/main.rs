@@ -84,7 +84,7 @@ const USAGE: &str = "taskq agents
  taskq reroute --from <runtime> --to <runtime> [--json]
  taskq accounts [--json] | taskq accounts enable|disable|move <runtime> <label> [<position>] | taskq accounts add <runtime> <label>
  taskq labels
- taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--conversation ID --op-id ID]
+ taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N [M..]
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
@@ -3071,6 +3071,67 @@ pub struct NewTask {
     pub host: Option<String>,
     /// Extra labels, e.g. `needs-gate`.
     pub labels: Vec<String>,
+    /// § 1 Task text: the rule IDs this task changes, or `all`; the rule gate passes edits inside them.
+    pub rules: Option<String>,
+}
+
+/// § 1 Task text: rule IDs (`R<n>`, `§<n>`, `§2.<k>`) and `taskq <command>` spans in goal or acceptance text that
+/// neither taskq.md nor the command catalog defines; `new R14` names a rule the task adds.
+fn unknown_terms(text: &str) -> Vec<String> {
+    // ponytail: checks the command word only; subcommand words when a vague subcommand causes an ask
+    let mut rules: Vec<String> = vec![];
+    let mut in_log = false;
+    for l in runtime::CONTRACT.lines() {
+        if let Some(h) = l.strip_prefix("### R") { rules.push(format!("R{}", h.split('.').next().unwrap_or(""))); }
+        if let Some(h) = l.strip_prefix("## ") {
+            let n = h.split('.').next().unwrap_or("");
+            in_log = n == "2";
+            if h.contains('.') && n.parse::<u32>().is_ok() { rules.push(format!("§{n}")); }
+        }
+        if in_log && l.starts_with("| ") {
+            if let Some(id) = l.trim_end_matches(['|', ' ']).rsplit('|').next().map(str::trim).filter(|id| id.parse::<u32>().is_ok()) { rules.push(format!("§2.{id}")); }
+        }
+    }
+    let catalog = format!("{USAGE}\n{PM_COMMANDS}\n{}", runtime::CONTRACT);
+    let commands: Vec<&str> = catalog.split("taskq ").skip(1).filter_map(|s| s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')).next()).collect();
+    let mut out: Vec<String> = vec![];
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let prev = if i > 0 { chars[i - 1] } else { ' ' };
+        let rule = (c == 'R' && !(prev.is_alphanumeric() || ".#/-_".contains(prev))) || c == '§';
+        if rule {
+            let mut j = i + 1;
+            if c == '§' && chars.get(j) == Some(&' ') { j += 1; }
+            let start = j;
+            while j < chars.len() && (chars[j].is_ascii_digit() || (chars[j] == '.' && chars.get(j + 1).is_some_and(char::is_ascii_digit) && c == '§')) { j += 1; }
+            let next = chars.get(j).copied().unwrap_or(' ');
+            if j > start && !next.is_alphanumeric() {
+                let id = format!("{}{}", if c == 'R' { "R" } else { "§" }, chars[start..j].iter().collect::<String>());
+                let fresh = chars[..i].iter().collect::<String>().to_lowercase().ends_with("new ");
+                if !fresh && !rules.contains(&id) && !out.contains(&id) { out.push(id); }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    for (k, span) in text.split('`').enumerate() {
+        if k % 2 == 1 {
+            if let Some(cmd) = span.strip_prefix("taskq ").and_then(|s| s.split_whitespace().next()) {
+                let term = format!("taskq {cmd}");
+                if !cmd.starts_with('-') && !commands.contains(&cmd) && !out.contains(&term) { out.push(term); }
+            }
+        }
+    }
+    out
+}
+
+/// § 1 Task text: add and start refuse goal or acceptance terms no contract or catalog defines, naming each.
+fn lint_terms(text: &str) -> Res<()> {
+    let bad = unknown_terms(text);
+    if bad.is_empty() { Ok(()) } else { Err(format!("unknown term: {}; fix the task text (taskq.md, `taskq help`) or write `new <ID>`", bad.join(", "))) }
 }
 
 /// Task body and create claim shared by direct adds and recipes; limits checked before any write.
@@ -3088,10 +3149,18 @@ fn task_body(b: &dyn Board, t: &NewTask, op: &Op) -> Res<(String, Vec<String>)> 
         one_line("--scope", &t.scope),
         limit("Acceptance", &acc, 1, 8, 240).map_err(|e| if acc.len() > 8 { format!("{e} (split the task, R2)") } else { e }),
         limit("Scope", &scope, 0, 4, 240),
+        lint_terms(&format!("{}\n{}", t.goal, t.acceptance.join("\n"))),
     ])?;
     let mut body = format!("## Goal\n{}\n\n## Acceptance\n{}\n", goal.join("\n"), acc.join("\n"));
     if !scope.is_empty() {
         body += &format!("\n## Scope\n{}\n", scope.join("\n"));
+    }
+    if let Some(r) = &t.rules {
+        let ids: Vec<&str> = r.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+        if ids != ["all"] && (ids.is_empty() || ids.iter().any(|id| !id.starts_with(['R', '§']) || !unknown_terms(id).is_empty())) {
+            return Err(format!("--rules {r}: takes contract rule IDs (R<n>, §<n>, §2.<k>, §<n> <Title>) comma-separated, or all"));
+        }
+        body += &format!("\nRules: {}\n", ids.join(", "));
     }
     if !t.deps.is_empty() {
         body += "\n";
@@ -3189,6 +3258,9 @@ fn start_tasks(b: &dyn Board, root: &Path, nums: &[String], op: &Op) -> Res<Vec<
         if !issue.trusted || !issue.open || !(held || op.id.is_some()) {
             return Err(format!("#{n} is not a held task; nothing started"));
         }
+        // § 1 Task text: only the Goal and Acceptance sections; Scope and links may name paths and issues
+        let text: String = issue.body.split("\n## ").map(|s| s.trim_start_matches("## ")).filter(|s| s.starts_with("Goal") || s.starts_with("Acceptance")).collect::<Vec<_>>().join("\n");
+        lint_terms(&text).map_err(|e| format!("#{n}: {e}; nothing started"))?;
     }
     ns.iter().map(|&n| {
         let op = if ns.len() > 1 { Op { id: op.id.as_ref().map(|id| format!("{id}.{n}")), revision: None } } else { op.clone() };
@@ -3738,6 +3810,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 priority: a.one("priority").map(String::from),
                 host: add_host(a.one("host"), cfg),
                 labels: vec![],
+                rules: a.one("rules").map(String::from),
             };
             if finding {
                 task_body(b, &new, &Op::default()).map_err(|e| serve_hint(e, cfg))?;
@@ -4780,6 +4853,30 @@ mod tests {
         assert_eq!(c.board.issues(None).unwrap().len(), 1, "a refused add files nothing");
         add("mac").unwrap();
         assert!(c.board.issues(None).unwrap().pop().unwrap().labels.contains(&"host-mac".into()));
+    }
+
+    // Chain: § 1 Task text, #2241 unknown term -> add/start refusal; declared rules -> body `Rules:` line for the gate.
+    // Risk: vague task text reaches a worker and comes back as a technical ask, or a known term is refused.
+    #[test]
+    fn add_and_start_refuse_unknown_terms_and_record_declared_rules() {
+        let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };
+        let run = |v: &[&str]| command(&c, "add", &Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap());
+        let e = run(&["add", "T", "--goal", "Fix R99 and §2.999", "--acceptance", "`taskq frobnicate 1` prints x"]).unwrap_err();
+        assert!(e.contains("unknown term: R99, §2.999, taskq frobnicate"), "{e}");
+        assert!(c.board.issues(None).unwrap().is_empty(), "a refused add files nothing");
+        run(&["add", "T", "--goal", "Amend R7, §2.3 and § 4; add new R14", "--acceptance", "`taskq status --json` and `taskq answer 1.2` work; see #12 and PR42", "--rules", "R7, §4 Profiling"]).unwrap();
+        let i = c.board.issues(None).unwrap().pop().unwrap();
+        assert!(i.body.contains("\nRules: R7, §4 Profiling\n"), "{}", i.body);
+        run(&["add", "T2", "--goal", "G", "--acceptance", "a", "--rules", "all"]).unwrap();
+        for bad in ["R99", "x", ""] {
+            assert!(run(&["add", "T3", "--goal", "G", "--acceptance", "a", "--rules", bad]).unwrap_err().contains("--rules"), "{bad}");
+        }
+        // a body edited after add is linted again at start, before any write
+        let n = c.board.create("U", "## Goal\nUse `taskq nope`\n\n## Acceptance\nA1. R0 holds\n\n## Scope\n- R99 path\n", &["q-held".into()]).unwrap();
+        let before = entries(&*c.board, n).unwrap().len();
+        let e = start_tasks(&*c.board, &c.cfg.root, &[n.to_string()], &Op::default()).unwrap_err();
+        assert_eq!(e, format!("#{n}: unknown term: R0, taskq nope; fix the task text (taskq.md, `taskq help`) or write `new <ID>`; nothing started"));
+        assert_eq!(entries(&*c.board, n).unwrap().len(), before);
     }
 
     // Chain: F1/F2 local finding -> held issue -> replay. Risk: duplicate or wrong-board writes.

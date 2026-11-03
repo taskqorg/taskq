@@ -66,7 +66,7 @@ fn fields(kind: &str) -> Res<&'static [(&'static str,&'static str)]> {
         "operation" => &[("op","operation"),("us","duration_us"),("error","error"),("at_ms","started_ms"),("counts","counts")],
         "stage" => &[("host","host"),("open","open"),("project","project"),("stage","operation"),("task","task"),("attempt","attempt"),("rt","runtime"),("us","duration_us"),("outcome","outcome"),("error","error"),("at_ms","started_ms"),("calls","calls"),("tokens","tokens"),("input_tokens","input_tokens"),("cache_read_tokens","cache_read_tokens"),("cache_write_tokens","cache_write_tokens"),("model","model"),("output_tokens","output_tokens"),("unknown","usage_status")],
         "board" => &[("op","operation"),("us","duration_us"),("outcome","outcome"),("error","error"),("remaining","remaining"),("at_ms","started_ms")],
-        "transition" => &[("project","project"),("task","task"),("entry","entry"),("from","from"),("to","to"),("prev_s","previous_seconds"),("rt","runtime"),("host","host"),("at_ms","started_ms")],
+        "transition" => &[("project","project"),("task","task"),("entry","entry"),("from","from"),("to","to"),("prev_s","previous_seconds"),("rt","runtime"),("host","host"),("at_ms","started_ms"),("counts","counts")],
         "requests" => &[("at_ms","started_ms")],
         _ => return Err("unknown semantic kind".into()),
     })
@@ -321,7 +321,7 @@ mod tests {
             r#"taskq-profile {"op":"spawn","us":9,"error":"none","at_ms":1,"trace":{"run":1,"process":2,"span":3,"parent":4},"counts":{"removed":1}}"#,
             r#"taskq-stage {"host":"win","open":true,"project":"o/r","stage":"build","task":1,"attempt":2,"rt":"claude","us":9,"outcome":"ok","error":"none","at_ms":1,"calls":2,"tokens":30,"input_tokens":10,"cache_read_tokens":15,"cache_write_tokens":5,"model":"claude-opus-5-5","output_tokens":3,"unknown":"app-turn"}"#,
             r#"taskq-board {"op":"close","us":12,"outcome":"ok","error":"none","remaining":4000,"at_ms":2}"#,
-            r#"taskq-transition {"project":"o/r","task":1,"entry":2,"from":"doing","to":"review","prev_s":30,"rt":"claude","host":"win","at_ms":3}"#,
+            r#"taskq-transition {"project":"o/r","task":1,"entry":2,"from":"doing","to":"ask","prev_s":30,"rt":"claude","host":"win","at_ms":3,"counts":{"ask.technical.rule-gate":1}}"#,
             r#"taskq-requests {"at_ms":4,"source":"cli status","ops":{"GET issues/N/comments":2}}"#,
         ];
         let sparse=[

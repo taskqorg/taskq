@@ -106,7 +106,7 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
                 title: format!("{what} over a day: {project} on {host}").chars().take(80).collect(),
                 goal,
                 acceptance: vec![format!("taskq cleanup --dry-run on host {} no longer prints the evidence lines of this task.", cfg.me)],
-                scope: vec![], deps: vec![], kind: None, runtime: None, priority: None, host: None, labels: vec![],
+                scope: vec![], deps: vec![], kind: None, runtime: None, priority: None, host: None, labels: vec![], rules: None,
             };
             let evidence: Vec<String> = lines.iter().take(4).map(|l| l.replace(['\r', '\n'], " ").chars().take(238).collect()).collect();
             let source = format!("{host}/tidy-{cond}/{project}-{since}");
@@ -2510,7 +2510,9 @@ impl<'a> Service<'a> {
                     let host = host_of(side);
                     if host.is_none_or(|h| h == self.cfg.me) {
                         let prev = entered.zip(at(id)).and_then(|(a, b)| u64::try_from(b - a).ok());
-                        crate::profile::transition(n, id, name(from), name(to), prev, rt_of(side).map(|r| r.0), host);
+                        // § 4 Profiling: a worker ask records its kind and cause
+                        let ask = (from.state == State::Doing && to.state == State::Ask).then(|| crate::profile::ask_of(comments.iter().find(|c| c.id == id).map_or("", |c| c.body.as_str())));
+                        crate::profile::transition(n, id, name(from), name(to), prev, rt_of(side).map(|r| r.0), host, ask);
                     }
                 }
             }
@@ -8323,6 +8325,35 @@ Open: none";
             // #1800: the close event names the successor and its state (#9 is not on the board)
             assert!(s.log.iter().any(|l| l.starts_with(&format!("#{} event close ", ns[0])) && l.ends_with(" replaced by #9 (unknown)")), "{:?}", s.log);
             assert_eq!(s.log.iter().any(|l| l == &format!("#{} task PR left open, state unknown: PR state unknown", ns[0])), fail, "{:?}", s.log);
+        }
+    }
+
+    // Chain: § 4 Profiling, #2241 worker ask -> `taskq-transition` record with kind and cause -> profile counts per day.
+    // Risk: an ask is not counted, counted under the wrong cause, or a non-ask move carries ask fields.
+    #[test]
+    fn a_worker_ask_records_its_kind_and_cause() {
+        let b = Fake::default();
+        let x = b.create("X", "", &["taskq".into()]).unwrap();
+        let mut c = cfg("mac");
+        c.limits.insert("claude".into(), 1);
+        let mut s = service(&b, &c, Default::default());
+        s.pass().unwrap();
+        let _ = crate::profile::take_moves();
+        let ax = task(&b, x).attempt.unwrap();
+        let card = "Done: ran the checks\nProblem: the rule gate does not name §4\n1. Name it - + passes; - edit ★\n2. Drop it - + small; - loses\nTo answer: taskq answer 1.1";
+        b.comment(x, &core::entry("ask", &[], Some(ax), card)).unwrap();
+        s.pass().unwrap();
+        let (records, report) = crate::profile::take_moves();
+        let r: Vec<serde_json::Value> = records.lines().map(|l| serde_json::from_str(l.strip_prefix("taskq-transition ").unwrap()).unwrap()).collect();
+        let ask: Vec<_> = r.iter().filter(|v| v["to"] == "ask").collect();
+        assert_eq!(ask.len(), 1, "{records}");
+        assert_eq!(ask[0]["counts"], serde_json::json!({"ask.technical.rule-gate": 1}), "{records}");
+        assert!(r.iter().filter(|v| v["to"] != "ask").all(|v| v.get("counts").is_none()), "{records}");
+        assert!(report.contains("Worker asks: per UTC day") && report.contains("| technical | rule-gate | 1 |"), "{report}");
+        for (text, want) in [("Problem: unknown term: R99\n1. a", ("technical", "unknown-term")), ("retry limit 3 reached by this requeue", ("owner", "retry-limit")),
+            ("Problem: usage limit hit\n1. wait", ("technical", "budget")), ("Problem: the task conflicts with taskq.md R2\n1. a", ("owner", "spec-conflict")),
+            ("Problem: log in to the board", ("owner", "other"))] {
+            assert_eq!(crate::profile::ask_of(text), want, "{text}");
         }
     }
 

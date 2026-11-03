@@ -5,7 +5,7 @@
     {"name": "status", "use": "taskq status [--only L,..] [--json]", "purpose": "Read the board report: tasks in work, questions, undecided reports (Decide; keep them in Next until decided), held, later, failed and stuck tasks, hosts."},
     {"name": "wait", "use": "taskq wait [--window MIN] [--only L,..]", "purpose": "Block until a task moves to ask, review with options, closed or failed; prints the move or tick."},
     {"name": "inbox", "use": "taskq inbox N [--json]", "purpose": "Read one task: its text, folded state, answers and log."},
-    {"name": "add", "use": "taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H]", "purpose": "File a new task; it starts held until `start`."},
+    {"name": "add", "use": "taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all]", "purpose": "File a new task; it starts held until `start`; unknown rule IDs or commands in its text are refused."},
     {"name": "start", "use": "taskq start N [M..]", "purpose": "Admit held tasks after reading them back from the board."},
     {"name": "answer", "use": "taskq answer N.K [M.K..] | taskq answer N --text A", "purpose": "Relay the owner's answer to an open question; never answer for the owner."},
     {"name": "pick", "use": "taskq pick N.K --text R", "purpose": "Mark the option the PM proposes to the owner; it is not an answer."},

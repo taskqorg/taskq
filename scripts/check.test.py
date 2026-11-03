@@ -113,6 +113,19 @@ assert unnamed({'changed': ['§8', '§80', '§8 Access'], 'removed': [], 'tests'
 assert unnamed(plural, 'sections4/90') == ['§9 (changed)', '§3 (changed)', '§4.1 (changed)', '§4 Profiling (changed)']
 print('PASS replays of bf4a2be9 and ecb1e57d fail unnamed and pass named')
 
+# Chain: §1 Task text, #2241 declared rule scope -> gate. Risk: an in-scope edit still asks, or the scope approves
+# an ID outside it (a sibling section, a longer number) or a removal without its destination.
+scoped = {'changed': ['§2', '§2.20', '§2 Ask card', '§20', 'R7'], 'removed': ['§2.3'], 'tests': ['§2.9']}
+removal = '§2.3 (removed; name `§2.3 -> <ID, file or none>`)'
+assert unnamed(scoped, '', 'Goal: x\nRules: §2') == ['§20 (changed)', 'R7 (changed)', removal]
+assert unnamed(scoped, '', 'Rules: section 2, R7') == ['§20 (changed)', removal]
+assert unnamed(scoped, '§2.3 -> none', 'Rules: all') == []
+assert unnamed(scoped, '', 'Rules: R70') == [f'{k} (changed)' for k in scoped['changed']] + ['§2.9 (tests)', removal]
+# a `Rules:` line quoted in ask context or an answer is task text, not a declared scope
+assert unnamed(scoped, 'Rules: all\n§2.3 -> none', '') == [f'{k} (changed)' for k in scoped['changed']] + ['§2.9 (tests)']
+assert unnamed(scoped, '§2.3 -> none', ' Rules: all\nRules: contract') == [f'{k} (changed)' for k in scoped['changed']] + ['§2.9 (tests)']
+print('PASS declared rule scope passes inside, asks outside')
+
 
 # #1818 / #1805: the owner picked the design, but Product appeared only in the ask's context.
 # Keep the real task_text -> approval gate boundary; the subprocesses return invented board data.
@@ -132,7 +145,7 @@ try:
             out = 'Design A is approved by the owner.'
         return SimpleNamespace(returncode=0, stdout=out.encode(), stderr=b'')
     subprocess.run = board_read
-    approved, error = check['task_text']('invented-base')
+    approved, _, error = check['task_text']('invented-base')
     assert error is None, error
     assert unnamed({'changed': ['Product', 'M2'], 'removed': [], 'tests': []}, approved) == [], approved
     assert 'R9' not in approved, 'the unchosen option is not approval'
