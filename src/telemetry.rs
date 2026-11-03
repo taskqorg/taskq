@@ -470,7 +470,15 @@ fn legacy_rows(install: &Path,cursor:Option<&str>,lock:Option<&crate::profile::L
         Err(e)=>return Err(e.to_string()),Ok(_)=>{}
     }
     if lock.is_none() {return Err("legacy archive appeared during snapshot; coverage unknown".into());}
-    let db=Connection::open_with_flags(&path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e|e.to_string())?;
+    // #2306: a WAL archive without -wal opens immutable, so a reader that cannot create -shm (worker sandbox) still
+    // reads it; the held log lock keeps the writer out. With a -wal the plain read-only open sees its frames.
+    let wal=std::path::PathBuf::from(format!("{}-wal",path.display()));
+    let db=if wal.try_exists().map_err(|e|e.to_string())? {
+        Connection::open_with_flags(&path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    } else {
+        let p=path.to_string_lossy().replace('\\',"/").replace('%',"%25").replace('?',"%3f").replace('#',"%23");
+        Connection::open_with_flags(format!("file:{}{p}?immutable=1",if p.starts_with('/') {""} else {"/"}),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY|rusqlite::OpenFlags::SQLITE_OPEN_URI)
+    }.map_err(|e|e.to_string())?;
     db.busy_timeout(std::time::Duration::from_secs(1)).map_err(|e|e.to_string())?;
     db.execute_batch("PRAGMA query_only=ON; BEGIN;").map_err(|e|e.to_string())?;
     let app:i64=db.pragma_query_value(None,"application_id",|r|r.get(0)).map_err(|e|e.to_string())?;
@@ -1087,6 +1095,29 @@ mod tests {
         assert!(export(&d,None).unwrap_err().contains("awaits service import"));
         assert_eq!(std::fs::read(&archive).unwrap(),before);assert_eq!(std::fs::read_to_string(d.join("taskq.log")).unwrap(),old);
         std::fs::remove_dir_all(d).unwrap();
+    }
+    // Chain: #2306 profile export in a worker sandbox. Risk: a reader that cannot write <install> fails on a WAL
+    // archive with "unable to open database file" because SQLite must create -shm.
+    #[cfg(unix)]
+    #[test]
+    fn export_reads_wal_archive_from_a_read_only_install() {
+        use std::os::unix::fs::PermissionsExt;
+        let d=dir();
+        drop(crate::profile::log_lock(&d.join("taskq.log")).unwrap());
+        append(&d,"taskq-profile {\"op\":\"spawn\",\"us\":7,\"error\":\"none\",\"at_ms\":2000000}\n",1).unwrap();
+        // the service keeps the universal store open, so its -wal/-shm exist; the closed legacy archive has neither
+        let store=coreq::telemetry::Store::open(&d.join("telemetry.log/universal.sqlite3")).unwrap();
+        let logs=d.join("telemetry.log");
+        assert!(!logs.join("telemetry.sqlite3-wal").exists()&&!logs.join("telemetry.sqlite3-shm").exists());
+        let before=std::fs::read(logs.join("telemetry.sqlite3")).unwrap();
+        std::fs::set_permissions(&logs,std::fs::Permissions::from_mode(0o555)).unwrap();
+        let out=export(&d,Some(1000));
+        std::fs::set_permissions(&logs,std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out=out.unwrap();
+        let head:serde_json::Value=serde_json::from_str(out.lines().next().unwrap()).unwrap();
+        assert_eq!(head["sources"]["legacy"]["samples"],1,"{out}");
+        assert_eq!(std::fs::read(logs.join("telemetry.sqlite3")).unwrap(),before);
+        drop(store);std::fs::remove_dir_all(d).unwrap();
     }
     #[test]
     fn legacy_retry_append_rotation_and_identical_events() {
