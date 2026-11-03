@@ -309,14 +309,22 @@ pub fn trust_step(folder: &str) -> String { format!("Next: run `claude` in {fold
 /// `service install` (#1555): the new root's trust, read only; nothing when trusted or Claude has no config here.
 pub fn trust_gap(home: &Path, root: &Path) -> Vec<String> {
     let key = claude_key(root);
+    match trust_state(home, root) {
+        Ok(None | Some(true)) => vec![],
+        Ok(Some(false)) => vec![format!("Trust: {key} not trusted; Claude workers cannot start here"), trust_step(&key)],
+        Err(e) => vec![format!("Trust: {key} unknown (Claude config unreadable: {e})")],
+    }
+}
+
+/// Whether Claude trusts `root` per `<home>/.claude.json`, read only: `None` without a Claude config (#1555, #2300).
+pub fn trust_state(home: &Path, root: &Path) -> Result<Option<bool>, String> {
     let v: serde_json::Value = match fs::read_to_string(home.join(CLAUDE_CONFIG)) {
-        Ok(t) => match serde_json::from_str(&t) { Ok(v) => v, Err(e) => return vec![format!("Trust: {key} unknown (Claude config unreadable: {e})")] },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
-        Err(e) => return vec![format!("Trust: {key} unknown (Claude config unreadable: {e})")],
+        Ok(t) => serde_json::from_str(&t).map_err(|e| e.to_string())?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
     };
     // Claude walks parent folders: a trusted parent covers the root
-    if root.ancestors().any(|p| v["projects"][claude_key(p)]["hasTrustDialogAccepted"] == true) { return vec![]; }
-    vec![format!("Trust: {key} not trusted; Claude workers cannot start here"), trust_step(&key)]
+    Ok(Some(root.ancestors().any(|p| v["projects"][claude_key(p)]["hasTrustDialogAccepted"] == true)))
 }
 
 /// Onboarding trust (#1546): `<install>/setup` and every registered root get `hasTrustDialogAccepted` in
