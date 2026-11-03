@@ -4357,6 +4357,55 @@ Problem: pick one
         assert!(closes[0].body.contains(&format!("merged #240 in o/x as {merge}; merge-result CI green")), "A1: {}", closes[0].body);
     }
 
+    // Chain: section 7 Publication routes, the result is the merge commit of a PR of another repository (#2308) ->
+    // status names that PR while its merge-result CI runs -> green -> one close naming it, no board-repository PR.
+    // Defect (#2302 agentq#206): the PR read as a mention, the row showed the board repository's compare HTTP 404 and an
+    // empty reviewer slot, and close had no path. Retained: the close waits for the merge result's merge_group CI.
+    #[test]
+    fn a_result_merged_in_another_repository_names_its_pr_and_closes() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let n = b.create("Invented merged foreign PR", "", &["taskq".into()]).unwrap();
+        let (head, merge) = ("a".repeat(40), "b".repeat(40));
+        let text = "Changed: o/x#206 merged as bbbbbbb\nChecks: A1 ok\nOpen: none";
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        let result = core::entry("result", &[&merge], Some(a), text);
+        b.comment(n, &result).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        let publish = core::entry("publish", &[], Some(r), text);
+        b.comment(n, &publish).unwrap();
+        let green = Rc::new(std::cell::Cell::new(false));
+        let (g, h, m) = (green.clone(), head.clone(), merge.clone());
+        b.state.borrow_mut().publish = "queue-foreign".into();
+        b.state.borrow_mut().publisher = Some(crate::board::replying_to(&crate::board::github::KIND, move |method, url, _| {
+            assert_eq!(method, "GET", "no publication write: {url}");
+            if let Some(rest) = url.strip_prefix("https://api.github.com/repos/o/r") {
+                return if rest.starts_with(&format!("/issues/{n}/comments")) {
+                    Ok(json!([result.clone(), publish.clone()].iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "author_association": "OWNER",
+                        "created_at": "2026-10-30T00:00:00Z", "updated_at": "2026-10-30T00:00:00Z", "user": {"login": "owner"}})).collect::<Vec<_>>()))
+                } else { panic!("board repository read {method} {url}") };
+            }
+            let rest = url.strip_prefix("https://api.github.com/repos/o/x").unwrap_or_else(|| panic!("read outside o/x: {method} {url}"));
+            let runs = if g.get() { json!([{"head_sha": m, "event": "merge_group", "status": "completed", "conclusion": "success", "name": "ci", "check_suite_id": 5}]) } else { json!([]) };
+            Ok(if rest == format!("/compare/main...{m}") { json!({"status": "identical"}) }
+                else if rest == "/pulls/206" { json!({"number": 206, "state": "closed", "merged_at": "x", "merge_commit_sha": m, "head": {"ref": "pin", "sha": h}, "base": {"ref": "main"}}) }
+                else if rest == "/rules/branches/main" { json!([{"type": "merge_queue"}]) }
+                else if rest.starts_with("/actions/runs?") { json!({"workflow_runs": runs}) }
+                else if rest.contains("/check-runs") { json!({"check_runs": [{"name": "ci", "status": "completed", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 5}}]}) }
+                else if rest.ends_with("/status") { json!({"total_count": 0}) }
+                else { panic!("unexpected {method} {url}") })
+        }));
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a waiting publication")));
+        s.pass().unwrap();
+        let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+        let reason = row["publication"]["reason"].as_str().unwrap_or_default();
+        assert!(reason.starts_with("o/x#206: merge_group CI not green on merge result"), "A2: the row names the PR of o/x: {row}");
+        green.set(true);
+        s.pass().unwrap();
+        let closes: Vec<_> = b.comments(n).unwrap().into_iter().filter(|e| e.body.starts_with("taskq: close")).collect();
+        assert_eq!((task(&b, n).state, closes.len()), (State::Closed, 1));
+        assert!(closes[0].body.contains(&format!("merged #206 in o/x as {merge}; merge-result CI green")), "A1: {}", closes[0].body);
+    }
+
     // Chain: § 7 rule 9 -> worker closes its own task -> § 1 dependency unknown -> § 4 step 5 reopen + one ask (#1950).
     // Risk (desiign#50): issue text said "write done and close"; the worker commented done and closed the issue, so the
     // close read as done, review was skipped and q-doing stayed on a closed issue.

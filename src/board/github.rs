@@ -399,11 +399,12 @@ impl GitHub {
 
     fn try_publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
         // #2061 (#2010 pilotq#200, #2015 dashq#241): a task PR of another repository publishes there, before any board
-        // repository read; a named PR that is not this task's (head `taskq-<N>` or the result) is only a mention
+        // repository read; a named PR that is not this task's (head `taskq-<N>`, the result, or #2308 the result as its
+        // merge commit) is only a mention
         let mut unread = None;
         for (repo, p) in self.foreign_prs(n)? {
             match self.api.call("GET", &format!("{}/repos/{repo}/pulls/{p}", self.api.root), None).and_then(|r| r.json()) {
-                Ok(pr) if pr["head"]["ref"] == format!("taskq-{n}") || pr["head"]["sha"] == sha => {
+                Ok(pr) if pr["head"]["ref"] == format!("taskq-{n}") || pr["head"]["sha"] == sha || landed(&pr, sha) => {
                     return self.publish_foreign(&repo, pr, (n, sha, mode, title, task_line), root, enqueued);
                 }
                 Ok(_) => {},
@@ -478,14 +479,17 @@ impl GitHub {
     /// repository whose API the caller scoped (#2047), else the board repository's `taskq-<N>` PRs publish.
     fn publish_in(&self, status: &str, foreign: Option<&Value>, (n, sha, mode, title, task_line): (u64, &str, &str, &str, &str), root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
         let branch = format!("taskq-{n}");
+        // #2308 (#2302 agentq#206): the result is the merge commit of the named PR of another repository; that merge is
+        // the publication, qualified by its CI below whatever the route, never read as an unqualified `already on main`
+        let at_merge = foreign.is_some_and(|pr| landed(pr, sha));
         // No commit, or the SHA is already on main: verify ancestry, close.
-        if matches!(status, "identical" | "behind") {
+        if matches!(status, "identical" | "behind") && !at_merge {
             return Ok(Publish::Done(format!("{sha} already on main")));
         }
-        if mode == "direct" && foreign.is_some() {
+        if mode == "direct" && foreign.is_some() && !at_merge {
             return Ok(Publish::Blocked("publication PR is in another repository; `direct` moves only the board repository's main".into()));
         }
-        if mode == "direct" {
+        if mode == "direct" && !at_merge {
             if let Some(fail) = self.ci(sha)? { return Ok(Publish::Failed(fail)); }
             let head = self.api.call("GET", &format!("/git/ref/heads/{branch}"), None)?.json()?;
             if head["object"]["sha"] != sha {
@@ -513,7 +517,7 @@ impl GitHub {
             let merged_prs: Vec<&Value> = closed.as_array().into_iter().flatten().filter(|p| !p["merged_at"].is_null()).collect();
             if foreign.is_some() && merged_prs.is_empty() { return Ok(Publish::Blocked(format!("publication PR closed unmerged at result {sha}"))); }
             // #1820 (pilotq #106): a PR merged at a rebased head is the publication when it carries the result's patch
-            let found = merged_prs.iter().find(|p| p["head"]["sha"] == sha).map(|p| (*p, String::new()))
+            let found = merged_prs.iter().find(|p| p["head"]["sha"] == sha || landed(p, sha)).map(|p| (*p, String::new()))
                 .or_else(|| merged_prs.iter().find_map(|p| self.same_patch(p, sha).ok().flatten()
                     .map(|by| (*p, format!(" (head {:.7}, the result's {by})", s(&p["head"], "sha"))))));
             if let Some((pr, note)) = found {
@@ -673,6 +677,12 @@ fn result_links(n: u64, log: &[crate::core::Entry]) -> Vec<String> {
 /// `main-moved` requeues the task; the worker reviews the PR head and delivers it as a new result.
 fn head_moved(number: &Value, head: &str, sha: &str) -> Publish {
     Publish::MainMoved(format!("PR #{number} head {head:.7} is not the result {sha:.7}; deliver the PR head as a new result"))
+}
+
+/// #2308: PR `pr` is merged and its merge commit is the result `sha`: a worker that merged the PR itself reports the
+/// merge commit, not the PR head.
+fn landed(pr: &Value, sha: &str) -> bool {
+    !pr["merged_at"].is_null() && pr["merge_commit_sha"] == sha
 }
 
 impl Board for GitHub {
