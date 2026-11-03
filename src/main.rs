@@ -109,6 +109,7 @@ const USAGE: &str = "taskq agents
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
  taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]
  taskq service onboard
+ taskq service dev-build (macOS channel dev)
  taskq service app-server --action prepare|launch|observe|cancel|reconcile --request JSON
  taskq service slots --identity PID | --action reserve|observe|release --request JSON [--json]
  taskq service stop [--mode drain|full] (macOS)
@@ -1581,7 +1582,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         if !quiet { for l in pm_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // docs/design/host-link.md: the same speaker listens on the host link and publishes its key
         if !quiet { s.link = link.tick(&cfg.install, &cfg.root, s.snapshot.as_ref()).to_string(); }
-        // § 8 item 1: only the Mac thread of the taskq checkout on channel dev; merge_group CI read at most every 5 minutes per SHA
+        // § 8 item 1: only the Mac thread of the taskq checkout on channel dev, on request (#2311); merge_group CI read at most every 5 minutes per SHA
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
         if !quiet && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
@@ -2265,7 +2266,20 @@ fn dev_line(dev: &Value) -> String {
     let mut line = format!("Dev: installed {}", sha("installed").unwrap_or("unknown".into()));
     if let Some(p) = sha("pending") { line += &format!(" · pending {p}{}", if dev["building"] == true { " (building)" } else { "" }); }
     if let Some(f) = sha("failed") { line += &format!(" · failed {f}"); }
+    if dev["requested"] == true { line += " · requested"; }
     line
+}
+
+/// § 8 item 1 (#2311): request one dev build; the service starts the newest green main SHA on its next pass.
+fn dev_build_cmd(a: &Args, install: &Path) -> Res<()> {
+    if a.pos.len() != 2 || !a.flags.is_empty() { return Err("usage: taskq service dev-build".into()); }
+    let channel = platform::channel(install)?;
+    if channel != "dev" { return Err(format!("channel {channel}: dev builds run only on channel dev (taskq service channel dev)")); }
+    let request = platform::dev_request(install);
+    fs::create_dir_all(request.parent().unwrap_or(install)).map_err(|e| e.to_string())?;
+    coreq::write_durable(&request, "requested")?;
+    println!("Dev build requested; the host service starts the newest green main SHA on its next pass");
+    Ok(())
 }
 
 fn channel_cmd(a: &Args) -> Res<()> {
@@ -2652,7 +2666,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"app-server"|"channel"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"app-server"|"channel"|"dev-build"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -2681,6 +2695,7 @@ fn service(args: &Args) -> Res<()> {
         return onboard_cmd(&platform::default_install());
     }
     if sub == "channel" {return channel_cmd(args);}
+    if sub == "dev-build" {return dev_build_cmd(args, &platform::default_install());}
     if sub=="complete-stop" {
         platform::service_log();
         if args.pos.len()!=2||args.all("request").len()!=1||args.flags.keys().any(|key|!["request","json"].contains(&key.as_str())) {return Err("usage: taskq service complete-stop --request ID [--json]".into());}
@@ -4969,6 +4984,18 @@ mod tests {
         assert_eq!(parse(&["add", "T", "--goal", "G", "--acceptance", "A", "--acceptance", "B"]).unwrap().all("acceptance"), vec!["A", "B"]);
         assert_eq!(parse(&["service", "channel", "dev", "extra"]).err().unwrap(), "unused positional arguments: extra");
         assert_eq!(channel_cmd(&parse(&["service", "channel", "beta"]).unwrap()).err().unwrap(), "channel must be dev or live");
+        // #2311: `service dev-build` writes the dev request only on channel dev
+        let install = std::env::temp_dir().join(format!("taskq-dev-build-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&install);
+        fs::create_dir_all(&install).unwrap();
+        let build = parse(&["service", "dev-build"]).unwrap();
+        assert!(dev_build_cmd(&build, &install).unwrap_err().starts_with("channel live:"), "live host: refused");
+        assert!(!platform::dev_request(&install).exists());
+        fs::write(install.join("host.json"), r#"{"channel":"dev"}"#).unwrap();
+        dev_build_cmd(&build, &install).unwrap();
+        assert!(platform::dev_request(&install).exists(), "dev host: request written");
+        assert_eq!(parse(&["service", "dev-build", "x"]).err().unwrap(), "unused positional arguments: x");
+        fs::remove_dir_all(&install).unwrap();
         for v in [vec!["close", "1", "2"], vec!["answer", "1.1", "2.1"], vec!["service", "focus", "code", "docs"], vec!["service", "channel"], vec!["service", "channel", "dev"], vec!["service", "channel", "live"]] {
             assert!(parse(&v).is_ok());
         }
