@@ -8816,7 +8816,7 @@ Open: none";
         writeln!(hot,"{}",json!({"timestamp":crate::board::stamp(sampled),"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
         hot.set_times(fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH+std::time::Duration::from_secs(sampled as u64))).unwrap();
         s.pass().unwrap();
-        assert_eq!(s.progress[&(n,a,a)].1["status"],"active","valid source appended after pass start is not future");
+        assert_eq!(s.progress[&(n,a,a)].1["status"],"active","valid source appended after pass start is not future: {}",s.progress[&(n,a,a)].1);
         assert_eq!(s.progress[&(n,a,a)].1["last_event"],sampled);
         let row=s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().json();
         assert!(row["heartbeat"]["progress"]["observed"].as_i64().unwrap()>s.snapshot.as_ref().unwrap().observed);
