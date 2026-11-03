@@ -9048,6 +9048,26 @@ Open: none";
         assert_eq!((task(&b, bad).state, task(&b, bad).until), (State::Later, None), "a bad time parks untimed");
     }
 
+    // Chain: § 2 Stages worker park -> timed wake -> next stage ready (#2289). Risk: a finished stage parks the task in
+    // `later` until a person requeues it, or the wake drops the recorded stages.
+    #[test]
+    fn stage_boundary_continues_without_a_human_step() {
+        let b = Fake::default();
+        b.state.borrow_mut().clock = crate::board::iso("2026-11-03T10:00:00Z").unwrap();
+        let c = cfg("mac");
+        let n = b.create("Staged", "## Acceptance\nA1. a\nA2. b\n", &["taskq".into()]).unwrap();
+        let w = b.comment(n, "taskq: spawn worker codex:w mac").unwrap();
+        // the entry `later --stage A1` writes for a worker without --until or --blocker
+        b.comment(n, &core::entry("later", &["until", "2026-11-03T10:00:00Z"], Some(w), "Reason: A1 done\nStages: A1")).unwrap();
+        assert_eq!(task(&b, n).state, State::Later);
+        let mut s = service(&b, &c, Default::default());
+        s.pass().unwrap();
+        let t = task(&b, n);
+        assert!(matches!(t.state, State::Ready | State::Doing), "{t:?}");
+        assert_eq!((t.stages, t.retries), (vec!["A1".to_string()], 0), "the next attempt continues at A2");
+        assert!(!b.state.borrow().comments.iter().any(|(i, c)| *i == n && c.body.starts_with("taskq: requeue") && !c.body.contains("Timed park ended")), "only the service requeued");
+    }
+
     // Chain: R6 stuck review -> service log (#1752). Risk: a review no host can start sits silent for hours.
     #[test]
     fn review_without_reviewer_logs_stuck_once() {

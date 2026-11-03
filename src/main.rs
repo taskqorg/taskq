@@ -598,8 +598,8 @@ fn labelled_acceptance(items: &[String]) -> Res<()> {
 }
 
 /// The `later` arguments (§ 7 rule 3): a worker park names one blocker issue or, when only time is left, a UTC time;
-/// only the owner or PM parks without either.
-fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, staged: bool, task: Option<String>, attempt: Option<String>) -> Res<Vec<&'a str>> {
+/// only the owner or PM parks without either. `staged` is the current UTC time of a `--stage` park.
+fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, staged: Option<&'a str>, task: Option<String>, attempt: Option<String>) -> Res<Vec<&'a str>> {
     let worker = attempt.is_some() && task.is_some_and(|t| t.parse() == Ok(n));
     match (blocker, until) {
         (Some(_), Some(_)) => return Err("--blocker and --until exclude each other: a park waits for one of them".into()),
@@ -607,9 +607,10 @@ fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, staged: bo
         (None, Some(u)) => return Ok(vec!["until", u]),
         _ => {}
     }
-    // § 2 Stages: a stage park may wait for the owner or PM without a blocker or time
+    // § 2 Stages: a worker stage park alone wakes at once, so the next stage starts without a human step (#2289)
     match blocker {
-        None if worker && !staged => Err("a worker park needs --blocker #M (file the blocker as a held task first) or, when only time is left, --until <UTC> (§ 7)".into()),
+        None if worker && let Some(now) = staged => Ok(vec!["until", now]),
+        None if worker => Err("a worker park needs --blocker #M (file the blocker as a held task first) or, when only time is left, --until <UTC> (§ 7)".into()),
         None => Ok(vec![]),
         Some(_) if !worker => Err("--blocker is for a worker park; the owner or PM adds `Depends on #M` or parks with later".into()),
         Some(r) if !core::blocker_ref(r) || r == format!("#{n}") => Err(format!("bad --blocker {r}: one #M or <repo>#M, not this task")),
@@ -4005,7 +4006,8 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "later" => {
             let n = a.num(1)?;
             let staged = a.all("stage");
-            let args = park(n, a.one("blocker"), a.one("until"), !staged.is_empty(), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?;
+            let now = board::stamp(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64));
+            let args = park(n, a.one("blocker"), a.one("until"), (!staged.is_empty()).then_some(now.as_str()), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?;
             let text = if staged.is_empty() { text.to_string() } else { stage_text(text, &staged, &b.issue(n)?.body)? };
             emit(&[act(b, root, n, cmd, &args, &text, &op)], json)
         }
@@ -4302,19 +4304,19 @@ mod tests {
     fn worker_park_needs_one_blocker_or_time() {
         let w = || (Some("7".to_string()), Some("42".to_string()));
         let (t, a) = w();
-        assert!(super::park(7, None, None, false, t, a).unwrap_err().contains("--blocker"));
-        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), None, false, t, a).is_err(), "{bad}"); }
+        assert!(super::park(7, None, None, None, t, a).unwrap_err().contains("--blocker"));
+        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), None, None, t, a).is_err(), "{bad}"); }
         let (t, a) = w();
-        assert_eq!(super::park(7, Some("dashq#36"), None, false, t, a).unwrap(), ["dashq#36"]);
-        assert!(super::park(7, None, None, false, None, None).unwrap().is_empty());
-        assert!(super::park(7, None, None, false, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
-        assert!(super::park(7, Some("#12"), None, false, None, None).is_err());
+        assert_eq!(super::park(7, Some("dashq#36"), None, None, t, a).unwrap(), ["dashq#36"]);
+        assert!(super::park(7, None, None, None, None, None).unwrap().is_empty());
+        assert!(super::park(7, None, None, None, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
+        assert!(super::park(7, Some("#12"), None, None, None, None).is_err());
         let (t, a) = w();
-        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), false, t, a).unwrap(), ["until", "2026-11-05T09:00:00Z"], "a worker waiting only for time parks with it");
-        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), false, None, None).unwrap(), ["until", "2026-11-05T09:00:00Z"]);
-        assert!(super::park(7, None, Some("2026-11-05"), false, None, None).unwrap_err().contains("bad --until"));
+        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), None, t, a).unwrap(), ["until", "2026-11-05T09:00:00Z"], "a worker waiting only for time parks with it");
+        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), None, None, None).unwrap(), ["until", "2026-11-05T09:00:00Z"]);
+        assert!(super::park(7, None, Some("2026-11-05"), None, None, None).unwrap_err().contains("bad --until"));
         let (t, a) = w();
-        assert!(super::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), false, t, a).unwrap_err().contains("exclude"));
+        assert!(super::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), None, t, a).unwrap_err().contains("exclude"));
     }
 
     // #2137 A3: reroute reads back ready pins, refuses active/unreleased work, and never rewrites other labels.
@@ -4379,7 +4381,10 @@ mod tests {
     #[test]
     fn stage_park_records_acceptance_items() {
         let (t, a) = (Some("7".to_string()), Some("42".to_string()));
-        assert!(super::park(7, None, None, true, t, a).unwrap().is_empty(), "a stage park may wait for the owner");
+        assert_eq!(super::park(7, None, None, Some("2026-11-03T10:00:00Z"), t, a).unwrap(), ["until", "2026-11-03T10:00:00Z"], "a worker stage park wakes at once (#2289)");
+        assert!(super::park(7, None, None, Some("2026-11-03T10:00:00Z"), None, None).unwrap().is_empty(), "an owner or PM stage park still holds");
+        let (t, a) = (Some("7".to_string()), Some("42".to_string()));
+        assert_eq!(super::park(7, Some("#9"), None, Some("2026-11-03T10:00:00Z"), t, a).unwrap(), ["#9"], "a blocker still parks on it");
         let body = "## Goal\ng\n\n## Acceptance\nA1. a\nA2. b\n- A3. c\n";
         assert_eq!(super::stage_text("Reason: soak\nNext: A3", &["A2".into(), "A1".into()], body).unwrap(), "Reason: soak\nNext: A3\nStages: A1 A2");
         assert_eq!(super::stage_text("", &["A3".into()], body).unwrap(), "Stages: A3");

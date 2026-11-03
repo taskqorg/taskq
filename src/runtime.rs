@@ -903,7 +903,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         l.role, l.title, l.attempt
     );
     let park = format!("`{q} later {n} --blocker #M --text \"Reason: <blocker>\nNext: <what #M delivers>\"` (blocker filed as held task #M first; our own broken check: fix it here when small; resumes when #M closes); waiting only for elapsed time, no code fix: `{q} later {n} --until <UTC> --text \"Reason: <what the time gives>\"` (resumes then; never requeue); \
-        Acceptance items done, more left (multi-stage task): add `--stage A<k>` per finished item, with `--until`, `--blocker` or alone for the owner (the next attempt continues at the first open stage in this worktree)");
+        Acceptance items done, more left (multi-stage task): add `--stage A<k>` per finished item, alone to continue at once, or with `--until` or `--blocker` (the next attempt continues at the first open stage in this worktree)");
     let body = if l.role == "reviewer" {
         format!(
             "Review the result SHA against each Acceptance item `A<k>` and taskq.md, and GitHub PR CI green on the merge result (merge_group); private fallback uses exact-SHA CI; other routes follow the contract. Requeue only for\n\
