@@ -73,16 +73,15 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
-    codex_thread(&stdout, &stderr, out.status.code(), |thread| super::app_submit(thread, &read_brief(&path)))
+    codex_thread(&r.runtime, &stdout, &stderr, out.status.code(), |thread| super::app_submit(thread, &read_brief(&path)))
 }
 
 /// The handshake's answer: no thread is a definite no-start; a thread whose brief is not queued is unknown.
-pub(crate) fn codex_thread(stdout: &str, stderr: &str, code: Option<i32>, submit: impl FnOnce(&str) -> Res<()>) -> Launched {
+pub(crate) fn codex_thread(rt: &str, stdout: &str, stderr: &str, code: Option<i32>, submit: impl FnOnce(&str) -> Res<()>) -> Launched {
     let thread = stdout.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
         .find(|v| v["type"] == "thread.started").and_then(|v| v["thread_id"].as_str().map(String::from));
     let Some(thread) = thread else {
-        let text = format!("{stdout}{stderr}").to_lowercase();
-        if text.contains("401") || text.contains("login") || text.contains("log in") { return Launched::NoStart(format!("{LOGIN} Codex asked for login")); }
+        if super::launch_cause(rt, &format!("{stdout}{stderr}")) == Some("login-required") { return Launched::NoStart(format!("{LOGIN} Codex asked for login")); }
         return Launched::NoStart(format!("Codex handshake started no thread (exit {})", code.map_or("unknown".into(), |c| c.to_string())));
     };
     // the id reaches the app URL and, on Windows, a shell: only a plain id
@@ -129,8 +128,11 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     let stderr = String::from_utf8_lossy(&out.stderr);
     let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
     // Claude refuses before it starts anything: a definite no-start, never `interrupted`.
-    if !out.status.success() && agent.launch_refusal(&stderr).is_some() { return Launched::NoStart(format!("{ACCESS} Claude workspace not trusted: {}", workdir.display())); }
-    if !out.status.success() && (stderr.contains("/login") || stderr.contains("Not logged in")) { return Launched::NoStart(format!("{LOGIN} Claude Code asked for login")); }
+    match (out.status.success(), agent.launch_refusal(&stderr).map(|c| c.0)) {
+        (false, Some("workspace-untrusted")) => return Launched::NoStart(format!("{ACCESS} Claude workspace not trusted: {}", workdir.display())),
+        (false, Some("login-required")) => return Launched::NoStart(format!("{LOGIN} Claude Code asked for login")),
+        _ => {}
+    }
     match stdout.lines().find_map(|l| l.strip_prefix("backgrounded · ").and_then(|s| s.split_whitespace().next())) {
         // One link read at launch, never after: the Claude session manager owns the session from here.
         Some(id) if out.status.success() && super::native_job_id(id) => {
