@@ -3510,7 +3510,7 @@ finally:
             let output=result.unwrap();
             for line in String::from_utf8_lossy(&output.stdout).lines().filter(|l|l.starts_with("intermediate native readback")) {println!("{phase}: {line}");}
             assert_eq!(coreq::process::identity(identity.pid).unwrap(),None);
-            let expected=if cfg!(windows) && phase=="ended" {"missing native scope; explicit unknown; evidence retained; no release or replay"}
+            let expected=if cfg!(windows) && phase=="ended" {"vanished kill-on-close scope; ended; Exit released; record retired; no replay"}
                 else {"same native execution; acceptance unknown; exit read back; no replay"};
             assert_eq!(std::fs::read_to_string(root.join("verified")).unwrap(),expected);
             println!("{phase}: native pid={} survived owner crash; {expected}; no model dispatched",identity.pid);
