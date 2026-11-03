@@ -225,6 +225,7 @@ impl LegacyLog {
     fn pending(&self, start: usize) -> bool { self.after(start).next().is_some() }
 }
 
+#[derive(Debug)]
 struct Checkpoint { bytes: usize, sha256: String, trimmed_bytes: usize, trimmed_sha256: String, gaps: u64, gap: Option<serde_json::Value> }
 
 fn legacy_checkpoint(db: &Connection) -> Result<Option<Checkpoint>, String> {
@@ -408,8 +409,11 @@ pub(crate) fn visit_samples(install:&Path,kinds:&[&str],accept:impl FnMut(usize,
         let legacy_lock=legacy_snapshot_lock(install)?;
         let reader=path.try_exists().map_err(|e|e.to_string())?.then(||coreq::telemetry::Reader::open(&path)).transpose()?;
         let cursor=reader.as_ref().map(|r|r.import_cursor("taskq.legacy")).transpose()?.flatten();
-        let rows=legacy_rows(install,cursor.as_deref(),legacy_lock.as_ref())?;
+        let (rows,checkpoint)=legacy_rows(install,cursor.as_deref(),legacy_lock.as_ref())?;
         drop(legacy_lock);
+        if let Some(checkpoint)=checkpoint.filter(|c|c.gaps>0) {
+            return Err(format!("legacy import coverage unknown: {} recorded recovery gap(s)",checkpoint.gaps));
+        }
         let archive=rows.into_iter().map(|(_,_,line)|line+"\n").collect::<String>();
         semantic::visit_samples(reader.as_ref(),kinds,&archive,accept)
     })
@@ -455,13 +459,13 @@ fn legacy_snapshot_lock(install:&Path)->Result<Option<crate::profile::LogLock>,S
 }
 
 /// Transitional archive view; caller holds the shared budget before opening the target snapshot.
-fn legacy_rows(install: &Path,cursor:Option<&str>,lock:Option<&crate::profile::LogLock>) -> Result<Vec<(i64,i64,String)>,String> {
+fn legacy_rows(install: &Path,cursor:Option<&str>,lock:Option<&crate::profile::LogLock>) -> Result<(Vec<(i64,i64,String)>,Option<Checkpoint>),String> {
     let path=install.join("telemetry.log/telemetry.sqlite3");
     match std::fs::metadata(&path) {
         Err(e) if e.kind()==std::io::ErrorKind::NotFound => {
             if cursor.is_some() {return Err("legacy source: imported archive missing; coverage unknown".into());}
             if legacy_log(install,&[])?.pending(0) {return Err("legacy telemetry awaits service import".into());}
-            return Ok(Vec::new());
+            return Ok((Vec::new(),None));
         }
         Err(e)=>return Err(e.to_string()),Ok(_)=>{}
     }
@@ -484,7 +488,7 @@ fn legacy_rows(install: &Path,cursor:Option<&str>,lock:Option<&crate::profile::L
     if rows.iter().any(|(seq,received,line)|*seq<=0||*received<0||line.len()>LINE_MAX) {
         return Err("legacy snapshot: invalid retained record".into());
     }
-    Ok(rows)
+    Ok((rows,old))
 }
 
 fn legacy_export(since:Option<u64>,rows:Vec<(i64,i64,String)>,present:bool)->Result<(serde_json::Value,String),String> {
@@ -520,9 +524,14 @@ fn export_snapshot(install:&Path,since:Option<u64>) -> Result<String,String> {
     let reader=coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3"))?;
     let cursor=reader.import_cursor("taskq.legacy")?;
     let present=legacy_lock.is_some();
-    let rows=legacy_rows(install,cursor.as_deref(),legacy_lock.as_ref())?;
+    let (rows,checkpoint)=legacy_rows(install,cursor.as_deref(),legacy_lock.as_ref())?;
     drop(legacy_lock);
-    let (legacy,old)=legacy_export(since,rows,present)?;
+    let (mut legacy,old)=legacy_export(since,rows,present)?;
+    if let Some(checkpoint)=checkpoint.filter(|c|c.gaps>0) {
+        legacy["import_gaps"]=json!(checkpoint.gaps);
+        legacy["last_import_gap"]=json!(checkpoint.gap);
+        legacy["unknown"]=json!("legacy-import-recovery-gap; legacy-retention-not-recorded");
+    }
     let since_i64=since.unwrap_or(0).min(i64::MAX as u64) as i64;
     let mut page=reader.export(since_i64,0,1024)?;
     let mut universal=page.clone();
@@ -1128,6 +1137,18 @@ mod tests {
         drop(db);
         let rows: Vec<serde_json::Value> = export(&d, None).unwrap().lines().map(|s| serde_json::from_str(s).unwrap()).collect();
         assert_eq!(rows[0]["sources"]["legacy"]["samples"], 3);
+        assert_eq!(rows[0]["sources"]["legacy"]["import_gaps"], 1);
+        assert_eq!(rows[0]["sources"]["legacy"]["last_import_gap"], state["gap"]);
+        assert!(report_samples(&d,semantic::KINDS).err().unwrap().contains("1 recorded recovery gap"));
+        // Moving all source rows to the shared store must not erase source coverage metadata.
+        assert_eq!(migrate(&d).unwrap(), 3);
+        let header:serde_json::Value=serde_json::from_str(export(&d,Some(0)).unwrap().lines().next().unwrap()).unwrap();
+        assert_eq!(header["sources"]["legacy"]["samples"],0);
+        assert_eq!(header["sources"]["legacy"]["import_gaps"],1);
+        assert_eq!(header["sources"]["universal"]["samples"],3);
+        std::fs::write(d.join("projects"), "").unwrap();
+        assert!(crate::profile::watch(&d,Some("1h")).unwrap().contains("Board: unknown (legacy import coverage unknown: 1 recorded recovery gap(s))"));
+        assert!(report_samples(&d,semantic::KINDS).err().unwrap().contains("1 recorded recovery gap"));
         std::fs::remove_dir_all(d).unwrap();
     }
     // #2273: streaming keeps the import limits; refused logs stay byte for byte.
