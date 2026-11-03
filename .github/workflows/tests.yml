@@ -48,11 +48,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # docs/testing.md: rustup restores the self-hosted runner's toolchain when cargo is missing.
+      - if: matrix.os == 'macos-latest'
+        shell: bash
+        run: command -v cargo >/dev/null || sh scripts/install-rustup.sh
       # Restore only; cache.yml saves it on main pushes, so PR and queue runs never churn it.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: rust
           save-if: false
+          cache-bin: ${{ matrix.os != 'macos-latest' }}
       - run: python3 scripts/check.py
   windows-gnu:
     needs: plan

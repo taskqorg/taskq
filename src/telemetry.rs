@@ -843,6 +843,10 @@ mod tests {
         assert!(!premature,"receipt settled while its dispatcher still owned the collector");
         std::fs::remove_dir_all(d).unwrap();
     }
+    // #2329: both fixture processes acknowledge on a slow disk (as CoreQ's fixtures do), and the parent's waits outlast
+    // that deadline. Production keeps the 3 s default; the fixture proves handover, not append speed.
+    const SLOW_DISK:std::time::Duration=std::time::Duration::from_secs(60);
+    const HANDOVER_BUDGET:std::time::Duration=std::time::Duration::from_secs(150);
     // A2/#1309: an older tray owns an incompatible IPC writer when the new host starts.
     // The heartbeat is the existing tray exit protocol; history and a new durable receipt must survive.
     #[test]
@@ -856,7 +860,7 @@ mod tests {
                 .args(["--exact","telemetry::tests::tray_handover_process","--ignored","--nocapture"])
                 .env("TASKQ_HANDOVER_FIXTURE",&d).env("TASKQ_HANDOVER_MODE",mode).env("TASKQ_HANDOVER_FAULT",fault).stdin(Stdio::null()).spawn().unwrap());
             let mut tray=spawn("tray");
-            let until=std::time::Instant::now()+std::time::Duration::from_secs(15);
+            let until=std::time::Instant::now()+HANDOVER_BUDGET;
             while !d.join("ready").exists() {
                 assert!(tray.0.try_wait().unwrap().is_none(),"old tray failed before readiness");
                 assert!(std::time::Instant::now()<until,"old tray did not start");
@@ -904,7 +908,7 @@ mod tests {
     fn tray_handover_process() {
         let d=std::path::PathBuf::from(std::env::var_os("TASKQ_HANDOVER_FIXTURE").unwrap());
         if std::env::var("TASKQ_HANDOVER_MODE").unwrap()=="tray" {
-            let _runtime=install_capture(&d).unwrap();
+            let runtime=install_capture(&d).unwrap();runtime.acknowledge_within(SLOW_DISK).unwrap();
             let span=tracing::info_span!("old.tray");{let _entered=span.enter();}
             drop(span);coreq::telemetry::capture::qualify().unwrap();
             let endpoint=d.join("telemetry.log/telemetry-ipc/endpoint");
@@ -914,7 +918,7 @@ mod tests {
             std::fs::write(endpoint,serde_json::to_vec(&value).unwrap()).unwrap();
             let pid=std::process::id().to_string();
             std::fs::write(d.join("tray"),&pid).unwrap();std::fs::write(d.join("ready"),"").unwrap();
-            let until=std::time::Instant::now()+std::time::Duration::from_secs(15);
+            let until=std::time::Instant::now()+HANDOVER_BUDGET;
             while std::fs::read_to_string(d.join("tray")).unwrap()==pid {
                 assert!(std::time::Instant::now()<until,"old tray never received the handover");
                 std::thread::sleep(std::time::Duration::from_millis(10));
@@ -935,6 +939,7 @@ mod tests {
                     if let Some(line)=capture.pass(&d) {assert_eq!(line,"Telemetry: collecting","one line per state change");}
                 }
             } else {assert_eq!(capture.pass(&d).as_deref(),Some("Telemetry: collecting"),"new host collector unavailable");}
+            capture.runtime.as_ref().unwrap().acknowledge_within(SLOW_DISK).unwrap();
             let span=tracing::info_span!("new.host.receipt");let _entered=span.enter();
             coreq::telemetry::capture::CommandReceipt::current().unwrap().checkpoint("observed").unwrap();
             coreq::telemetry::capture::qualify().unwrap();
