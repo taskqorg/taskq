@@ -9029,6 +9029,10 @@ Open: none";
         assert_eq!(no_proc[0].host, "mac");
         assert_eq!(no_proc[0].pid, 0);
         assert_eq!(no_proc[0].reason, "running-2-alive-0");
-        std::fs::remove_dir_all(&dir).unwrap();
+        // ponytail: best-effort cleanup; Windows keeps telemetry handles open (os error 32) until process exit.
+        drop(s);
+        drop(_guard);
+        drop(_capture);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
