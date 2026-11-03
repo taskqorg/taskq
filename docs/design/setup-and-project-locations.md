@@ -69,3 +69,17 @@ Extend backlog streams 1, 6, 9 and 11. First reconcile coreq's installer/service
 | S-A8 | Retry/cancel/upgrade from an existing install preserves files, settings, registration and service ownership; verify release integrity and readback on each supported platform |
 
 The existing Rust runtime already uses explicit `current_dir(env.root)` and a no-home-search brief in `src/runtime.rs`; these are baseline mechanisms, not proof of all adapter behavior or the reported macOS cause. This specification records the required audit and acceptance, not a reproduced incident fix.
+
+## Install and signing
+
+Contract detail for [taskq.md § 8 Install and signing](../../taskq.md#install-and-signing); it binds like the contract.
+
+Target, not in force until its installer tasks ship ([R8](../../taskq.md#r8-the-contract-is-the-sot-and-matches-code), [R12](../../taskq.md#r12-unverified-means-unknown)). Install is one click: one downloaded installer per OS installs the binary, host service and tray, sets up the signing step and ends with `service check` ([§ 6](../../taskq.md#6-setup)).
+
+It needs no agent session, onboarding conversation or terminal step; the only other clicks are prompts the OS itself requires. Adding a project stays § 6.
+
+**Signing step.** Install and every update verify the release (checksums, provenance: [service detail](host-service.md#contract-detail)), sign each binary and `TaskQ.app` in one step, then check each signature against the step's requirement before activation; a failure keeps `current`.
+
+Now: macOS signs locally with the [`TaskQ Local Signing` identity](worker-permissions.md#macos-signing-identity), which the installer creates when missing. Windows signs with a self-signed code-signing certificate the installer creates per machine (non-exportable key, code signing only), trusted once per machine at first install.
+
+**Later.** Developer ID signing plus notarization on macOS and trusted signing on Windows replace only the signing step: signing moves to release CI; install and update keep verify, then check. Other rules and details (TCC grants, updates, rollback, Access) name the step's requirement, never a certificate, so a switch edits only this section.

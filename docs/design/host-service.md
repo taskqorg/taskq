@@ -285,6 +285,14 @@ Linked from `taskq.md` [§ 4](../../taskq.md#4-service) and [§ 8](../../taskq.m
 
 5. Windows setup runs outside MSIX; host rollback counts starts. macOS: every binary starts signed as a release by the [signing step](../../taskq.md#install-and-signing); no `<install>` entry named Resources or Contents ([detail](worker-permissions.md#contract-detail)).
 
+### Project attachment
+
+Contract detail for [taskq.md § 8 Project attachment](../../taskq.md#project-attachment).
+
+Before attachment or admission holds, `service install` preflights filesystem wake/lock eligibility and board credentials/access without implicit login, token copy or grants. Windows refuses WSL UNC wake paths before native locking. Only complete, error-free project readback observes the original command.
+
+`service install --cancel ID` reconciles an exact unused attachment before or after registry publication, following verified ownership and project drain, including joined failures before execution. Preserve original registry bytes and audit receipts; unknown execution refuses removal.
+
 ## Native stop and restart conditions
 
 On Mac, Stop offers Drain (let owned work finish) and Full stop (cancel owned execution immediately, including offline) under R11/E2. Both persist the reviewed host hold before stopping; unknown execution or board reconciliation keeps completion unresolved. Other platforms retain Drain. Stop verifies the exact native daemon exit and retains the autostart unit. It does not add a login observer or timer. The Windows unit also repeats every 5 minutes (CoreQ, IgnoreNew), so an exited service starts again with no person while `service.lock` keeps a second one waiting; Stop disables only that repeat trigger, and the service enables it again (adding it to an older unit) each time it starts: logon, install or restart. The result states the native restart condition: macOS/Windows retain their logon trigger; Linux retains the enabled user unit, which starts with its user manager or an explicit service install. With linger, another SSH login does not restart that manager. Explicit service install can start the stopped host on every platform. On Mac, restart, logon and install do not clear the reviewed Stop hold: admission remains held until reviewed recovery (#1285). Ordinary `service release` refuses that hold; #1285 delivers its selective recovery, so this change provides no clearing path. Restart/stop/uninstall share command identity and observed native outcomes; none infer worker termination from the daemon's exit.
