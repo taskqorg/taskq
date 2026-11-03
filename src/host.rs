@@ -498,6 +498,8 @@ pub struct Host {
     pub restart: bool,
     /// Projects were woken for this handover; later passes keep `poll` (#1357).
     restart_woken: bool,
+    /// #2254: the handover stayed pending past its 600 s bound; status shows a host incident.
+    pub restart_overdue: bool,
     pub stopping: bool,
     pub stop_controller:Option<crate::host_control::Control>,
     /// Each thread reports active turns/children before the host considers an image switch.
@@ -522,7 +524,7 @@ pub struct Host {
 impl Host {
     pub fn new(policy: Res<Policy>) -> Self {
         Self { instance:crate::runtime::uuid(),policy, capacity_command:None, slots: BTreeMap::new(), gate: Gate::default(), began: Instant::now(), last: None,
-            ready: BTreeSet::new(), external_ready:BTreeMap::new(), turn: None, held: None, restart: false, restart_woken:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), passing: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
+            ready: BTreeSet::new(), external_ready:BTreeMap::new(), turn: None, held: None, restart: false, restart_woken:false, restart_overdue:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), passing: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
             request_since: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()), hour_start: crate::requests::totals(), last_hour: None,
             hosts_start: crate::requests::host_totals(), hosts_last_hour: None,
             rebuilding: false, rebuilt: BTreeSet::new(), published: BTreeMap::new() }
@@ -1133,6 +1135,7 @@ pub fn run(install: &Path) -> Res<()> {
         }}
         let handover=h.restart&&!h.stopping;
         if !handover {stuck=None;}
+        h.restart_overdue=stuck==Some(u64::MAX);
         if !h.restart {waits_reported.clear();}
         if h.restart {
             let wait=h.handoff_wait();

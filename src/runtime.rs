@@ -1818,13 +1818,22 @@ fn claude_stop(root: &Path, id: &str, known: Option<&coreq::process::Identity>, 
     if matches!(claude_exit(row, known, handed),Ok(true)) { return Ok(()); }
     let budget = observation_left(std::time::Duration::from_secs(10));
     if budget.is_zero() { return Err("Claude stop unavailable or timed out; state unknown".into()); }
-    let spec = claude_spec(root, home);
-    agentq_runtime::agent::background_stop(crate::platform::command(which("claude")), &spec, &agentq_runtime::agent::BackgroundJob::read(row, &spec, id)?, budget)
+    let (spec, job) = claude_stop_job(root, row, id, home)?;
+    agentq_runtime::agent::background_stop(crate::platform::command(which("claude")), &spec, &job, budget)
         .map_err(|e| format!("claude stop: {e}"))?;
     // Native stop acknowledges the request first; the service owns later retries/readback.
     let rows = claude_agents_in(root, home)?;
     let row = rows.iter().find(|v| v["id"] == id).ok_or("stopped Claude session disappeared; state unknown")?;
     if claude_exit(row, known, handed)? { Ok(()) } else { Err("Claude stop still pending; do not launch another turn".into()) }
+}
+
+/// #2254: a worker that entered a project worktree moves its native job cwd below the project root; the stop
+/// then binds that cwd, never one outside the root, else every stop refuses and the drain never completes.
+fn claude_stop_job(root: &Path, row: &serde_json::Value, id: &str, home: Option<&Path>) -> Result<(agentq_runtime::agent::Spec, agentq_runtime::agent::BackgroundJob), String> {
+    let cwd = row["cwd"].as_str().and_then(|p| Path::new(p).canonicalize().ok()).filter(|c| root.canonicalize().is_ok_and(|r| c.starts_with(r)));
+    let spec = claude_spec(cwd.as_deref().unwrap_or(root), home);
+    let job = agentq_runtime::agent::BackgroundJob::read(row, &spec, id)?;
+    Ok((spec, job))
 }
 
 /// #2221: a hand-in this attempt wrote is board evidence its turn ran. With no recorded process to compare, a
@@ -4987,6 +4996,24 @@ finally:
     }
 
     // Chain: native job schema -> observation -> release fence.
+    // #2254 defect: a worker that entered `.worktrees/taskq-N` left its native job cwd below the project root; every
+    // stop refused "background project differs", the kid stayed unknown and the Windows re-exec waited forever.
+    // Kept protection: a cwd outside the project root still refuses.
+    #[test]
+    fn claude_stop_binds_worktree_job_inside_project_only() {
+        let base=std::env::temp_dir().join(format!("taskq-2254-{}",uuid()));
+        let (root,tree,other)=(base.join("project"),base.join("project/.worktrees/taskq-2239"),base.join("other"));
+        for d in [&tree,&other] {std::fs::create_dir_all(d).unwrap();}
+        let row=|cwd:&Path|serde_json::json!({"id":"c37eb75a","kind":"background","cwd":cwd,"sessionId":uuid(),"state":"idle","pid":4242});
+        for cwd in [&root,&tree] {
+            let (spec,job)=claude_stop_job(&root,&row(cwd),"c37eb75a",None).unwrap();
+            assert_eq!(spec.root.canonicalize().unwrap(),cwd.canonicalize().unwrap());
+            assert_eq!((job.id.as_str(),job.pid),("c37eb75a",Some(4242)));
+        }
+        assert_eq!(claude_stop_job(&root,&row(&other),"c37eb75a",None).err().as_deref(),Some("background project differs"));
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
     // Risk: missing optional fields or a new state fabricate exit or hide observation failures.
     #[test]
     fn claude_native_state_requires_exit_evidence() {
