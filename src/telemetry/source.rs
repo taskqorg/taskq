@@ -92,9 +92,11 @@ pub(super) fn prepare(install:&std::path::Path)->Res<Connection> {
         let db=Connection::open_with_flags(&path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(error)?;
         if installed(&db)? {
             let text=super::legacy_text(install)?;
-            let after=super::legacy_offset(&db,&text)?.unwrap_or(0);
-            if !text[after..].lines().any(super::telemetry) {
-                let mut db=db;install_identity(&mut db)?;return Ok(db);
+            if let Ok(after)=super::legacy_offset(&db,&text) {
+                let after=after.unwrap_or(0);
+                if !text[after..].lines().any(super::telemetry) {
+                    let mut db=db;install_identity(&mut db)?;return Ok(db);
+                }
             }
         }
     }
@@ -171,8 +173,9 @@ mod tests {
         let partial=serde_json::json!({"bytes":LINE.len(),"sha256":super::super::hash(LINE),"trimmed_bytes":0,"trimmed_sha256":super::super::hash("")});
         archive.execute("INSERT INTO legacy(id,text) VALUES(1,?1)",[partial.to_string()]).unwrap();
         assert!(import(&mut archive,&target,&dir).unwrap_err().contains("rewritten"));
-        assert!(super::super::import(&mut archive,&dir,now() as u64).is_err());archive.execute("DELETE FROM legacy",[]).unwrap();
         super::super::import(&mut archive,&dir,now() as u64).unwrap();
+        let state:serde_json::Value=serde_json::from_str(&archive.query_row("SELECT text FROM legacy WHERE id=1",[],|r|r.get::<_,String>(0)).unwrap()).unwrap();
+        assert_eq!(state["gaps"],1);
         assert_eq!(import(&mut archive,&target,&dir).unwrap(),2);
         let before=target.export(0,0,1024).unwrap();
         std::fs::write(dir.join("taskq.log"),"rewritten\n").unwrap();

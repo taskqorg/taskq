@@ -1259,7 +1259,7 @@ fn poll_wait(poll: u64, complete: bool, children: bool, poked: bool, snapshot: O
 }
 
 /// Read-only recovery evidence; failed identity reads and a still-live foreign owner prevent takeover.
-fn kids_path(install:&Path,root:&Path)->Res<PathBuf> {
+pub(crate) fn kids_path(install:&Path,root:&Path)->Res<PathBuf> {
     let root=root.canonicalize().map_err(|e|format!("native recovery root unavailable: {e}"))?;
     let root=root.to_str().ok_or("native recovery root is not UTF-8")?;
     let hash:String=ring::digest::digest(&ring::digest::SHA256,root.as_bytes()).as_ref().iter().map(|b|format!("{b:02x}")).collect();

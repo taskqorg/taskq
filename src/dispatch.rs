@@ -455,6 +455,16 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
     }
     let projection = core::project(n, &log, deps);
     let (t, rev) = (projection.task, projection.revision);
+    if kind == "result" {
+        if let Ok((cfg, _)) = crate::load(root) {
+            let att = attempt.or(before_write.task.attempt).unwrap_or(0);
+            let session = before_write.task.session.as_deref().unwrap_or_default();
+            let rt = session.split(':').next().filter(|s| !s.is_empty()).unwrap_or("other");
+            let host = session.split(' ').nth(1).filter(|s| !s.is_empty()).unwrap_or(&cfg.me);
+            let pid = crate::telemetry::live_worker_pid(&cfg.install, Some(root), n, att, att).unwrap_or_else(std::process::id);
+            crate::telemetry::record_worker(&cfg.install, &cfg.repo, host, rt, "work", "result", n, att, pid, "ok", args.first().copied().unwrap_or("handed-in"));
+        }
+    }
     if let Err(e) = service::project(b, &issue, &t) {
         return unknown(e);
     }
