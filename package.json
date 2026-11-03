@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@preact/signals": "2.11.3",
-    "@taskq/coreq": "https://codeload.github.com/taskqorg/coreq/tar.gz/17eb4b9f7894b5550e6b30e191302b905a360c0b",
+    "@taskq/coreq": "https://codeload.github.com/taskqorg/coreq/tar.gz/b78ca64cac615500b57b4a04983e79333035dd65",
     "preact": "11.0.1",
     "prismjs": "1.30.0",
     "wouter-preact": "3.13.0"
