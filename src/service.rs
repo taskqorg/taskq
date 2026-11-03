@@ -265,7 +265,19 @@ impl Balancing {
 }
 
 pub(crate) fn balancing_status(body:&str)->Value {
-    Balancing::read(body).map_or(Value::Null,|b|serde_json::to_value(b).unwrap_or(Value::Null))
+    let mut v=Balancing::read(body).map_or(Value::Null,|b|serde_json::to_value(b).unwrap_or(Value::Null));
+    headroom_causes(&mut v,body);
+    v
+}
+
+/// #2263: `headroom <rt> <cause>` heartbeat lines name why a weighted runtime has no headroom fraction.
+/// A separate line, not a `Load` field: N-1 readers deny unknown balancing fields but ignore unknown lines.
+pub(crate) fn headroom_causes(v:&mut Value,body:&str) {
+    for (rt,cause) in body.lines().filter_map(|l|l.strip_prefix("headroom ")?.split_once(' ')) {
+        if let Some(load)=v["runtimes"].get_mut(rt).and_then(|r|r.get_mut("load")).filter(|l|l["headroom"].is_null()).and_then(|l|l.as_object_mut()) {
+            load.insert("headroom_reason".into(),json!(cause.chars().take(160).collect::<String>()));
+        }
+    }
 }
 
 pub fn is_task(i: &Issue) -> bool {
@@ -1701,8 +1713,16 @@ impl<'a> Service<'a> {
         self.limited.get(rt).map(|(at, reset)| format!("{} {}", if *reset { "until" } else { "probe" }, crate::board::stamp(*at))).unwrap_or_default()
     }
 
+    /// #2263: one `headroom <rt> <cause>` line per weighted runtime whose load has no headroom fraction.
+    fn headroom_lines(&self) -> Vec<String> {
+        let Ok(now)=self.board.now() else {return vec![]};
+        self.cfg.weights.keys().filter(|rt|self.runtime_load(rt).is_ok_and(|l|l.headroom.is_none()))
+            .map(|rt|format!("headroom {rt} {}",crate::runtime::headroom::cause(&self.cfg.install,rt,now))).collect()
+    }
+
     fn heartbeat_body(&self) -> String {
         let mut lines = vec![format!("version {}", self.version),format!("balancing {}",serde_json::to_string(&self.balancing()).unwrap())];
+        lines.extend(self.headroom_lines());
         if !self.instance.is_empty() {
             lines.push(format!("service {}", self.instance));
             lines.push(format!("diagnostics {}", self.service_diagnostics()));
@@ -2908,7 +2928,8 @@ impl<'a> Service<'a> {
     fn decided(&mut self, decided: BTreeMap<u64, (&'static str, String)>) {
         self.track_queue(&decided);
         let me = self.cfg.me.clone();
-        let balancing=serde_json::to_value(self.balancing()).unwrap_or(Value::Null);
+        let mut balancing=serde_json::to_value(self.balancing()).unwrap_or(Value::Null);
+        headroom_causes(&mut balancing,&self.headroom_lines().join("\n"));
         let Some(snapshot) = &mut self.snapshot else { return };
         if let Some(host)=snapshot.hosts.iter_mut().find(|h|h.name==me) {host.balancing=balancing;}
         let observed = snapshot.observed;
@@ -7504,9 +7525,25 @@ Open: none";
         let row=json["hosts"].as_array().unwrap().iter().find(|h|h["name"]=="win").unwrap();
         assert_eq!(row["balancing"]["weights"]["codex"],1);
         assert_eq!(row["balancing"]["runtimes"]["codex"]["load"]["running"],1);
-        assert!(snapshot.text(&w,&json!({})).unwrap().contains("codex running 1 / weight 1"));
+        let text=snapshot.text(&w,&json!({})).unwrap();
+        assert!(text.contains("codex running 1 / weight 1"));
+        // #2263 A1/A2: no observation names its cause in the heartbeat; status shows it and raises no anomaly row.
+        assert!(text.contains("claude running 1 / weight 1 (headroom n/a: account default: Claude background jobs report no quota)"),"{text}");
+        assert!(text.contains("(headroom n/a: account default: no quota observation yet)"),"{text}");
+        assert!(!text.contains("quota headroom not reported"),"{text}");
+        assert!(row["balancing"]["runtimes"]["codex"]["load"]["headroom_reason"].is_string());
         let body=win.heartbeat_body();
+        assert!(Balancing::read(&body).is_some(),"N-1 balancing shape unchanged");
         assert!(Balancing::read(&body).unwrap().last_spawn.is_some());
+        // #2263 review: an expired observation names a fixed time, so passes minutes apart keep an equal stable() body
+        // (an age in the cause would edit the heartbeat every pass, § 4 step 3).
+        std::fs::create_dir_all(&w.install).unwrap();let log=w.install.join("codex-turn.jsonl");
+        std::fs::write(&log,"{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":20,\"window_minutes\":300}}}}\n").unwrap();
+        let t=b.now().unwrap();crate::runtime::headroom::observe(&w.install,"codex",&log,t).unwrap();
+        b.state.borrow_mut().clock=t+400;let expired=win.heartbeat_body();
+        assert!(expired.contains(&format!("headroom codex account default: last quota observation {} expired",crate::board::stamp(t))),"{expired}");
+        b.state.borrow_mut().clock=t+700;
+        assert_eq!(stable(&expired),stable(&win.heartbeat_body()));
         let mut restarted=service(&b,&w,Default::default());
         let saved=Balancing::read(&b.issue(win.host_issue.unwrap()).unwrap().body).unwrap().last_spawn;
         restarted.pass().unwrap();
