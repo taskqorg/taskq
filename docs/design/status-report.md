@@ -4,7 +4,7 @@ The human report and the status file that every surface reads.
 
 ## Contract detail
 
-Linked from `taskq.md` [R6](../../taskq.md#r6-human-report) and [§ 4](../../taskq.md#4-service); this text binds like the contract (R8, R13).
+Linked from `taskq.md` [R6](../../taskq.md#r6-human-report), [§ 2](../../taskq.md#2-log-and-states) and [§ 4](../../taskq.md#4-service); this text binds like the contract (R8, R13).
 
 ### Report parts
 
@@ -23,6 +23,13 @@ Tray/browser project summaries and task rows (M3) reuse [shared project blocks](
 
 - Each pass writes `<root>/.taskq/status.json` for `service status`, tray and DashQ: coreq.md common keys, service state, § 5 snapshot (`tasks` with § 2 `revision`; failed passes keep rows with `complete` false), `capacity` (limits, gate, admission, reservations), `requests`, `incident`, `agents` (§ 5, probed ≤ every 5 min), § 8 `access` and `reports` counts (rows: `reports.json`): `service status --json` ≤ 256 KB for 7 boards. `diagnostics`: selected `current` (CoreQ), health `healthy` (§8), lifecycle (consumer), CoreQ (Cargo.lock); [detail](service-version-producer.md#contract-detail). Capacity publishes on each sample; missing or older than `ttl` reads unknown ([specq](https://github.com/taskqorg/specq/blob/main/engineering/verification.md)). Failed publication is logged, blocks release-health marking and preserves supervision.
 - Events: a pass appends to `<root>/.taskq/events` one line `<board time> #<N> close|failed|ask|blocked|gone <id>` per observed move (`blocked`: to `waiting`) and new `gone` entry; 30-day bound; offline moves are missing. An R6 stuck task (`review` too) logs `#N event stuck <state> <age>` once until it moves; [churn](profiling.md#contract-detail): >100 notes or >5 unaccepted spawns in 1 h. Detail: [menu](menu.md#contract-detail).
+
+### Task summary comment
+
+Contract detail for [§ 2 Summary](../../taskq.md#2-log-and-states). The summary comment's lines: `**<State>**`, `result <sha7>` while open, the PR/MR link, the close's merge receipt or `<role> running`, joined by ` · `; then in `ask` the open card, in `review` the result's `Changed:`/`Open:` (a pending publication's once written), when closed the close verdict's, in `later`/`failed` `Reason:` with its first line;
+then `Files: ` with ≤ 3 file links of the issue body and outcome entries (newest outcome first, body last; uploads or a file extension), then `and [N more](<comment>)`.
+
+With `deploy`, a delivered task's summary shows `Merged, waiting for deploy` until its first `deployed` entry, which removes it with the label. Then one line per configured environment, in its order, from its first entry: `<project> <version> · <env> · <UTC time>`, then ` · <host>` if named. A no-change close shows none. `taskq status` adds `Waiting for deploy: N tasks, oldest <age>`, each task linked.
 
 ### Snapshot contract
 

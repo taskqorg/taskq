@@ -256,3 +256,11 @@ full, latest = release_index('4.7.1', fast, {'taskq-4.7.1-macos-aarch64': 'dd', 
 assert full == 'aa  taskq-4.7.1-linux-x86_64\ndd  taskq-4.7.1-macos-aarch64\nbb  taskq-4.7.1-windows-x86_64.exe\n', 'macos joins the published sums'
 assert sorted(latest['files']) == ['linux-x86_64', 'macos-aarch64', 'windows-x86_64']
 print('PASS release index publishes OS files as they arrive')
+
+# #2236: the contract lint's above-target markers stay visible locally and as CI annotations.
+warn = check['compact_warnings']
+report = 'taskq.md: 60024 bytes\nCOMPACT: taskq.md: 60024 bytes > target 55910 (cap 79872)\nPASS\n'
+assert warn(report) == ['Warning: COMPACT: taskq.md: 60024 bytes > target 55910 (cap 79872); file one compaction task (specq engineering/contracts.md#size-budgets)']
+assert warn(report, True)[0].startswith('::warning::COMPACT: taskq.md: 60024 bytes')
+assert warn('taskq.md: 55898 bytes\nPASS\n') == []
+print('PASS contract lint COMPACT markers surface as warnings')

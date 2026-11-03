@@ -2,9 +2,21 @@
 
 ## Contract detail
 
-[taskq.md §3](../../taskq.md#local-external-consumer-slots-r1-r3-r9-r12) defines the authority (R1/R3/R9/R12). PilotQ #265 consumes this boundary; it does not create tasks or impersonate workers.
+[taskq.md §3](../../taskq.md#local-external-consumer-slots-r1-r3-r9-r12) links the authority below (R1/R3/R9/R12); it binds like the contract. PilotQ #265 consumes this boundary; it does not create tasks or impersonate workers.
 
 Minimum consumer API version: `taskq.slots/1`, advertised by a fresh `taskq service status --json` at `service.slots_protocol: 1`. The first release containing TaskQ #2100 is required; 4.6.57 without that change is unsupported. Check the advertised protocol, not a guessed release number. Ordinary released PDS/PilotQ integration is qualified by the PM; source fixtures and CI do not establish it.
+
+## Slot authority
+
+`taskq service slots`: an owner-account local CLI exchange via the resource operation store and host mutex; no task/attempt, scheduler or network API; no grant, limit, permission, focus or model change; workers cannot submit.
+
+`taskq.slots/1` binds caller, operation, secret release key, registered root, runtime, native caller identity, boot and admission deadline; reserve/observe/release reconcile it; mismatched input or release authority refuses. Durable readback precedes `reserved`; only a fresh matching host-generation receipt permits a turn.
+
+Only the service admits a slot, under the runtime/project/host limits, load gate, spacing, emergency hold, draining and recovery barriers of workers/reviewers. It ignores task focus, never changes focus or admits tasks; pending external roots share project round-robin, task passes never clear their demand.
+
+Release attests the consumer ended its whole turn, tools included; irreversible, idempotent, acknowledged after the service removes the slot. Caller exit, silence, post-admission expiry and service restart never prove release: retain occupancy; absent/unreadable caller liveness or unknown boot reads unknown.
+
+Only same-release-key completion or a verified later boot releases a slot. Queued expired/dead callers never start; terminal receipts have bounded retention. [Consumer protocol](#contract-detail).
 
 ## Call and readback
 

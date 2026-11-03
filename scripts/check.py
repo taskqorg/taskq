@@ -328,7 +328,7 @@ def rule_gate(base):
 
 
 # taskq.md R8: the shared contract lint (specq engineering/contracts.md#lint) at the pinned specq commit.
-SPECQ = '39e6024037fb69e68a84180c04fb7ac53eddb9f9'
+SPECQ = '269a999c4e7c54781260a70305cff5f7cecdf572'
 CONTRACT_LINT = Path('engineering/scripts/contract_lint.py')
 
 
@@ -338,6 +338,23 @@ def contract_lint(root=ROOT):
         if (base / CONTRACT_LINT).is_file():
             return [sys.executable, str(base / CONTRACT_LINT), 'taskq.md']
     return None
+
+
+def compact_warnings(output, ci=False):
+    """taskq.md R8: each specq `COMPACT:` marker (above the 70% target of the declared budget) becomes a visible warning."""
+    prefix = '::warning::' if ci else 'Warning: '
+    return [f'{prefix}{line.strip()}; file one compaction task (specq engineering/contracts.md#size-budgets)'
+            for line in output.splitlines() if line.startswith('COMPACT:')]
+
+
+def run_lint(command, timeout=None):
+    """Runs the contract lint, echoes its report and surfaces COMPACT markers; a lint failure still fails."""
+    done = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding='utf-8', timeout=timeout)
+    print(done.stdout + done.stderr, end='', flush=True)
+    for warning in compact_warnings(done.stdout, bool(os.environ.get('GITHUB_ACTIONS'))):
+        print(warning, flush=True)
+    if done.returncode:
+        raise subprocess.CalledProcessError(done.returncode, command)
 
 
 def changes(base):
@@ -382,7 +399,7 @@ def main():
         command = contract_lint()
         if command is None:
             raise SystemExit(f'contract lint unknown (R12): no specq {SPECQ} checkout at .specq')
-        subprocess.run(command, cwd=ROOT, check=True)
+        run_lint(command)
         return
     if args.rules:
         failed = rule_gate(args.base)
@@ -424,7 +441,8 @@ def main():
         if not os.environ.get('GITHUB_ACTIONS'):
             lint = contract_lint()
             if lint:
-                run(lint)
+                print('+', ' '.join(lint), flush=True)
+                run_lint(lint, BUDGET - (time.monotonic() - started))
             else:
                 print(f'Contract lint: unknown (R12), no specq {SPECQ[:12]} checkout at .specq; CI runs it', flush=True)
         found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))]
