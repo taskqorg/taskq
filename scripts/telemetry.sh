@@ -8,7 +8,8 @@
 #     legacy_offset error ("rewritten or lost") repeats. A recorded recovery gap is disclosed, not a stall.
 #   scripts/telemetry.sh trace N [--since 24h] [--project OWNER/REPO]
 #     Every retained worker, stage and transition observation of task N from `profile export` alone, then
-#     per attempt which lifecycle events are present (spawn, heartbeat, result, exit, slot-hold, slot-release).
+#     per attempt which lifecycle events are present (spawn, heartbeat, result, exit, slot-hold, slot-release),
+#     and the close transition. PASS needs every attempt complete and the task closed in the window.
 #
 # Env: TASKQ_INSTALL (default: %LOCALAPPDATA%\taskq or ~/.local/share/taskq), TASKQ (binary; default:
 # <install>/taskq[.exe], then taskq on PATH), TASKQ_FIX (commit the release must contain; default #2280).
@@ -139,6 +140,11 @@ ok = True
 attempts = {}
 for o in rows:
     if o["kind"] == "worker": attempts.setdefault((o.get("project"), o.get("attempt")), []).append(o)
+for (proj, att), evs in list(attempts.items()):
+    # A monitor anomaly (e.g. running-no-process) without any lifecycle event is not an attempt of its own.
+    if not {e.get("operation") for e in evs} & set(need):
+        print("observation only %s (%s): %s" % (att, proj, ", ".join(sorted({e.get("operation") for e in evs}))))
+        del attempts[(proj, att)]
 if not attempts: print("no worker events for task %d" % task); ok = False
 for (proj, att), evs in attempts.items():
     seen = {e.get("operation") for e in evs}
@@ -148,8 +154,11 @@ for (proj, att), evs in attempts.items():
     print("attempt %s (%s, %s): %s%s" % (att, proj, role, "all lifecycle events present" if not missing else "missing " + ", ".join(missing),
           "; empty fields " + ", ".join(blank) if blank else ""))
     ok = ok and not missing
-print("verdict: %s" % ("PASS (spawn to exit traced for every attempt)" if ok else "FAIL (lifecycle gap above)"))
-sys.exit(0 if ok else 1)
+closed = [o for o in rows if o["kind"] == "transition" and o.get("to") == "closed"]
+print("close: %s" % ("%s->closed at %s" % (closed[-1].get("from"), utc(closed[-1].get("started_ms"))) if closed else "none in window"))
+if not ok: print("verdict: FAIL (lifecycle gap above)"); sys.exit(1)
+if not closed: print("verdict: unknown (every attempt traced; task not closed in window)"); sys.exit(2)
+print("verdict: PASS (spawn to close traced for every attempt)")
 ' "$task" "$project" "$since" <"$TMP"
 }
 
