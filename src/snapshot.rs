@@ -229,6 +229,8 @@ pub struct Row {
     pub accepted: bool,
     /// `Depends on` issues that keep it waiting (§ 1).
     pub deps: Vec<service::Blocker>,
+    /// Local `Depends on #N` numbers of the issue text, done or not: the dev install `need` trigger (§ 8 item 1, #2311).
+    pub depends: Vec<u64>,
     /// Text of the last trusted `failed` entry.
     pub failed: Option<String>,
     /// Text of the last trusted `later` entry while `later` (R6 timed park reason).
@@ -567,6 +569,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         missing_reviewer: missing_reviewer.clone(),
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
+        depends: core::depends(&v.issue.body).into_iter().filter(|d| d.repo.is_none()).map(|d| d.n).collect(),
         admission: if v.projection.task.state==State::Ready && v.projection.reroute.is_some() {
             Some(Admission {code:"unknown",reason:ROUTING_WAIT.into(),observed,host:None})
         } else {board_admission(&v.projection.task, &v.issue.labels, &v.blockers, hosts, observed)},
@@ -1255,7 +1258,7 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { heartbeat: Value::Null, worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
+            executions: vec![], accepted: false, deps: vec![], depends: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -1279,7 +1282,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { heartbeat: Value::Null, worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
+            executions: vec![], accepted: true, deps: vec![], depends: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -1326,7 +1329,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { heartbeat: Value::Null, worker: None, conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
+            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], depends: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("| ") && l.contains("stuck")).collect::<Vec<_>>(), ["| [#1 T](u1) | owner · stuck 2h | answer the Owner row |"], "{text}");

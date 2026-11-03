@@ -1585,7 +1585,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
         if !quiet && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
-            dev = platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
+            // #2311: ready tasks only; a dependency they wait on is not merged yet
+            let deps: Vec<u64> = s.snapshot.as_ref().map(|x| x.tasks.iter().filter(|r| r.task.state == State::Ready && r.deps.is_empty()).flat_map(|r| r.depends.clone()).collect()).unwrap_or_default();
+            dev = platform::dev_tick(&cfg.install, &cfg.root, &deps, &mut |sha| {
                 if dev_ci.as_ref().is_some_and(|(s, t)| s == sha && t.elapsed().as_secs() < 300) { return Err("checked".into()); }
                 dev_ci = Some((sha.into(), Instant::now()));
                 c.board.merge_ci_green(sha)
@@ -2265,6 +2267,7 @@ fn dev_line(dev: &Value) -> String {
     let mut line = format!("Dev: installed {}", sha("installed").unwrap_or("unknown".into()));
     if let Some(p) = sha("pending") { line += &format!(" · pending {p}{}", if dev["building"] == true { " (building)" } else { "" }); }
     if let Some(f) = sha("failed") { line += &format!(" · failed {f}"); }
+    if dev["requested"] == true { line += " · requested"; }
     line
 }
 
@@ -2652,7 +2655,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"app-server"|"channel"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"app-server"|"channel"|"dev-install"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -2681,6 +2684,15 @@ fn service(args: &Args) -> Res<()> {
         return onboard_cmd(&platform::default_install());
     }
     if sub == "channel" {return channel_cmd(args);}
+    // § 8 item 1 (#2311): the explicit dev install trigger; the next project pass builds the newest green main SHA
+    if sub == "dev-install" {
+        let install=platform::default_install();
+        if platform::channel(&install)!=Ok("dev") {return Err("dev-install needs host.json channel dev".into());}
+        fs::create_dir_all(install.join("dev")).map_err(|e|e.to_string())?;
+        coreq::write_durable(&install.join("dev/request"),"requested").map_err(|e|format!("dev install request not written: {e}"))?;
+        println!("dev install requested; the service builds the newest green main SHA on its next pass");
+        return Ok(());
+    }
     if sub=="complete-stop" {
         platform::service_log();
         if args.pos.len()!=2||args.all("request").len()!=1||args.flags.keys().any(|key|!["request","json"].contains(&key.as_str())) {return Err("usage: taskq service complete-stop --request ID [--json]".into());}

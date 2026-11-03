@@ -627,11 +627,29 @@ fn channel_update(install:&Path,fetch:&dyn Fn(&str,&Path)->Result<(),String>)->R
     Ok(None)
 }
 
-/// § 8 item 1 dev install: the SHA to start now. None on `live`, while a build runs, or for the installed or an
-/// already started SHA (a started SHA never restarts, so a failed build is not retried); `ci` is read only after that.
-pub fn dev_next(channel:&str,main:Option<&str>,installed:Option<&str>,started:Option<&str>,building:bool,ci:&mut dyn FnMut(&str)->Result<(),String>)->Option<String> {
-    let sha=main.filter(|m|channel=="dev"&&!building&&Some(*m)!=installed&&Some(*m)!=started)?;
+/// § 8 item 1 dev install: the SHA to start now. None on `live`, while a build runs, for the installed SHA, or without
+/// a trigger (#2311): an explicit `request`, or `need` (a ready task depends on a merge the installed build lacks).
+/// `need` never restarts an already started SHA, so a failed build is not retried; a request retries it. `main` is the
+/// newest main SHA, so merges that land while no trigger is present coalesce into one build. `ci` is read only after that.
+pub fn dev_next(channel:&str,main:Option<&str>,installed:Option<&str>,started:Option<&str>,building:bool,request:bool,need:bool,ci:&mut dyn FnMut(&str)->Result<(),String>)->Option<String> {
+    let sha=main.filter(|m|channel=="dev"&&!building&&Some(*m)!=installed&&(request||need&&Some(*m)!=started))?;
     ci(sha).ok().map(|_|sha.to_string())
+}
+
+/// § 8 item 1 `need` trigger (#2311): whether the merge commit of a local dependency in `deps` (the commit whose message
+/// carries `Task: https://github.com/taskqorg/taskq/issues/<n>`) is on `origin/main` of `root` but not in `installed`.
+/// `ponytail:` reads the root's `origin/main` as last fetched (worktree creation and cleanup fetch it); a dependency
+/// merged after that fetch triggers on the pass after the next fetch, or by `taskq service dev-install`.
+pub fn dev_needed(root:&Path,installed:Option<&str>,deps:&[u64])->bool {
+    deps.iter().any(|n|{
+        let grep=format!("--grep=^Task: https://github.com/{RELEASE_REPO}/issues/{n}$");
+        let Ok(o)=command("git").arg("-C").arg(root).args(["log","-1","--format=%H",&grep,"origin/main"]).stderr(std::process::Stdio::null()).output() else {return false};
+        let merge=String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if !o.status.success()||merge.is_empty() {return false;}
+        let Some(installed)=installed else {return true};
+        // exit 1: not an ancestor; other failures (unknown SHA) count as not needed
+        command("git").arg("-C").arg(root).args(["merge-base","--is-ancestor",&merge,installed]).stderr(std::process::Stdio::null()).status().is_ok_and(|s|s.code()==Some(1))
+    })
 }
 
 /// § 8 item 1 dev install gate: repo and channel only; the script comes from the fetched SHA (`dev_spawn`), so a
@@ -639,9 +657,10 @@ pub fn dev_next(channel:&str,main:Option<&str>,installed:Option<&str>,started:Op
 pub fn dev_enabled(repo:&str,install:&Path)->bool { repo==RELEASE_REPO&&channel(install)==Ok("dev") }
 
 /// One project pass of the dev install ([detail](docs/design/host-service.md#dev-install)): fold the script's
-/// report, start the next SHA, return the `status.json` `dev` value. State lives in `<install>/dev/`.
+/// report, start the next SHA on a trigger, return the `status.json` `dev` value. State lives in `<install>/dev/`;
+/// `deps` are the local `Depends on` numbers of the project's ready tasks.
 #[cfg(unix)]
-pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),String>)->serde_json::Value {
+pub fn dev_tick(install:&Path,root:&Path,deps:&[u64],ci:&mut dyn FnMut(&str)->Result<(),String>)->serde_json::Value {
     let dir=install.join("dev");
     let _=fs::create_dir_all(&dir);
     let read=|f:&str|fs::read_to_string(dir.join(f)).ok().map(|s|s.trim().to_string()).filter(|s|!s.is_empty());
@@ -661,14 +680,18 @@ pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),Stri
             .ok_or_else(||format!("`git ls-remote origin refs/heads/main` printed no main SHA: {:?}",String::from_utf8_lossy(&o).trim())))
         .map_err(|e|log!("dev install: {e}")).ok();
     let (installed,started,failed)=(read("installed"),read("started"),read("failed"));
-    if let Some(sha)=dev_next("dev",main.as_deref(),installed.as_deref(),started.as_deref(),building,ci) {
+    let request=dir.join("request").exists();
+    // the request is spent once main is installed; `need` is read only when a build could start
+    if request&&main.is_some()&&main==installed {let _=fs::remove_file(dir.join("request"));}
+    let need=!request&&!building&&main.is_some()&&main!=installed&&main!=started&&dev_needed(root,installed.as_deref(),deps);
+    if let Some(sha)=dev_next("dev",main.as_deref(),installed.as_deref(),started.as_deref(),building,request,need,ci) {
         match coreq::write_durable(&dir.join("started"),&sha).and_then(|_|dev_spawn(root,&sha,&dir)) {
-            Ok(())=>log!("dev install: start {sha}"),
+            Ok(())=>{log!("dev install: start {sha} ({})",if request {"requested"} else {"ready task needs it"});let _=fs::remove_file(dir.join("request"));}
             Err(e)=>log!("dev install: {sha} not started: {e}"),
         }
     }
     let pending=main.filter(|m|Some(m)!=installed.as_ref()&&Some(m)!=failed.as_ref());
-    serde_json::json!({"installed":installed,"pending":pending,"failed":failed,"building":building})
+    serde_json::json!({"installed":installed,"pending":pending,"failed":failed,"building":building,"requested":dir.join("request").exists()})
 }
 
 /// Runs the `scripts/dev-install.sh` of `sha` itself, so the primary checkout's own edits never matter. The build
@@ -1311,22 +1334,26 @@ mod tests {
         fs::remove_dir_all(&install).unwrap();
     }
 
-    // Chain: § 8 item 1 dev install (#1388). Risk: a dev Mac never installs a green main merge, installs one with red or
-    // pending CI, reinstalls the same or a failed SHA in a loop, starts a second build, or a live host builds at all.
+    // Chain: § 8 item 1 dev install (#1388, #2311). Risk: a dev Mac never installs a green main merge, installs one with
+    // red or pending CI, reinstalls the same or a failed SHA in a loop, starts a second build, a live host builds at all,
+    // or (#2311) a build starts on a merge with no trigger: one build per merge held spawns for a quarter of the day.
     #[test]
     fn dev_install_starts_each_green_main_sha_once() {
         let (a,b)=("a".repeat(40),"b".repeat(40));
         let mut reads=vec![];
         let mut green=|sha:&str|{reads.push(sha.to_string());Ok(())};
-        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,&mut green),Some(b.clone()),"new green SHA installs");
-        assert_eq!(dev_next("dev",Some(&a),Some(&a),None,false,&mut green),None,"same SHA: no-op");
-        assert_eq!(dev_next("dev",Some(&b),Some(&a),Some(&b),false,&mut green),None,"started or failed SHA: not retried");
-        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,true,&mut green),None,"one build at a time");
-        assert_eq!(dev_next("live",Some(&b),Some(&a),None,false,&mut green),None,"channel live: no-op");
-        assert_eq!(dev_next("dev",None,Some(&a),None,false,&mut green),None,"unknown main SHA waits");
-        assert_eq!(reads,vec![b.clone()],"CI is read only for a SHA that could start");
+        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,false,false,&mut green),None,"no trigger: a green merge waits");
+        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,true,false,&mut green),Some(b.clone()),"request installs the newest SHA");
+        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,false,true,&mut green),Some(b.clone()),"ready task need installs the newest SHA");
+        assert_eq!(dev_next("dev",Some(&a),Some(&a),None,false,true,true,&mut green),None,"same SHA: no-op");
+        assert_eq!(dev_next("dev",Some(&b),Some(&a),Some(&b),false,false,true,&mut green),None,"need: started or failed SHA not retried");
+        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,true,true,true,&mut green),None,"one build at a time");
+        assert_eq!(dev_next("live",Some(&b),Some(&a),None,false,true,true,&mut green),None,"channel live: no-op");
+        assert_eq!(dev_next("dev",None,Some(&a),None,false,true,true,&mut green),None,"unknown main SHA waits");
+        assert_eq!(reads,vec![b.clone(),b.clone()],"CI is read only for a SHA that could start");
+        assert_eq!(dev_next("dev",Some(&b),Some(&a),Some(&b),false,true,false,&mut |_|Ok(())),Some(b.clone()),"request retries a failed SHA");
         for ci in ["merge_group CI not green on merge result","CI tests pending"] {
-            assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,&mut |_|Err(ci.into())),None,"red or pending CI waits");
+            assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,true,true,&mut |_|Err(ci.into())),None,"red or pending CI waits");
         }
         // the script's report folds once into installed/failed; a started SHA stays started, so it never restarts
         #[cfg(unix)] {
@@ -1336,11 +1363,11 @@ mod tests {
         fs::write(install.join("dev/installed"),&a).unwrap();
         fs::write(install.join("dev/started"),&b).unwrap();
         fs::write(install.join("dev/result"),format!("{b} failed\n")).unwrap();
-        let v=dev_tick(&install,&install,&mut |_|panic!("no main SHA outside a checkout"));
+        let v=dev_tick(&install,&install,&[],&mut |_|panic!("no main SHA outside a checkout"));
         assert_eq!((v["installed"].as_str(),v["failed"].as_str(),v["building"].as_bool()),(Some(a.as_str()),Some(b.as_str()),Some(false)));
         assert!(!install.join("dev/result").exists(),"report read once");
         fs::write(install.join("dev/result"),format!("{b} installed")).unwrap();
-        let v=dev_tick(&install,&install,&mut |_|Ok(()));
+        let v=dev_tick(&install,&install,&[],&mut |_|Ok(()));
         assert_eq!((v["installed"].as_str(),v["failed"].as_str()),(Some(b.as_str()),None),"success clears the failed SHA");
         fs::remove_dir_all(&install).unwrap();
         }
@@ -1383,7 +1410,11 @@ mod tests {
         service_log();
         project_log(base.join("project.log"));
         let mut read=None;
-        dev_tick(&install,&root,&mut |s|{read=Some(s.to_string());Ok(())});
+        dev_tick(&install,&root,&[],&mut |s|{read=Some(s.to_string());Ok(())});
+        assert!(read.is_none()&&!install.join("dev/started").exists(),"#2311: no trigger, no CI read, no build");
+        fs::write(install.join("dev/request"),"requested").unwrap();
+        dev_tick(&install,&root,&[],&mut |s|{read=Some(s.to_string());Ok(())});
+        assert!(!install.join("dev/request").exists(),"the start spends the request");
         assert_eq!(read.as_deref(),Some(sha.as_str()),"CI read for the new main SHA");
         assert_eq!(fs::read_to_string(install.join("dev/started")).unwrap().trim(),sha);
         assert!(fs::read_to_string(base.join("project.log")).unwrap().contains(&format!("dev install: start {sha}")));
@@ -1398,10 +1429,11 @@ mod tests {
             fs::write(w.join("scripts/dev-install.sh"),format!("echo '{message}'\necho \"$1 failed\" > \"$(dirname \"$0\")/result\"\nexit 1\n")).unwrap();
             git(&w,&["add","scripts"]);git(&w,&["commit","-qm",message]);git(&w,&["push","-q","origin","main"]);
             let failed_sha=git(&w,&["rev-parse","HEAD"]);
-            dev_tick(&install,&root,&mut |_|Ok(()));
+            fs::write(install.join("dev/request"),"requested").unwrap();
+            dev_tick(&install,&root,&[],&mut |_|Ok(()));
             for _ in 0..100 { if install.join("dev/result").exists() {break;} std::thread::sleep(std::time::Duration::from_millis(100)); }
             assert!(install.join("dev/result").exists(),"failed build reports completion");
-            dev_tick(&install,&root,&mut |_|Ok(()));
+            dev_tick(&install,&root,&[],&mut |_|Ok(()));
             let path=format!("dev/{failed_sha}.install.log");
             assert!(fs::read_to_string(install.join(&path)).unwrap().contains(message),"failed SHA retains its output");
             assert!(fs::read_to_string(base.join("project.log")).unwrap().contains(&format!("dev install: {failed_sha} failed; see {path}")),"failure names retained log");
@@ -1411,6 +1443,23 @@ mod tests {
         }
         let first=fs::read_to_string(base.join("first-sha")).unwrap();
         assert!(fs::read_to_string(install.join(format!("dev/{first}.install.log"))).unwrap().contains("first install failed"),"next SHA leaves first failure intact");
+        // #2311 need trigger: a ready task depends on #7, whose merge is on origin/main but not in the installed build
+        let before=git(&w,&["rev-parse","HEAD"]);
+        fs::write(w.join("seven"),"7\n").unwrap();
+        git(&w,&["add","seven"]);git(&w,&["commit","-qm","seven (#70)\n\nTask: https://github.com/taskqorg/taskq/issues/7"]);git(&w,&["push","-q","origin","main"]);
+        let seven=git(&w,&["rev-parse","HEAD"]);
+        fs::remove_file(root.join(".git/refs/remotes/origin/main.lock")).unwrap();
+        git(&root,&["fetch","-q","origin"]);
+        assert!(dev_needed(&root,Some(&before),&[7]),"merge missing from the installed build");
+        assert!(dev_needed(&root,None,&[7]),"no installed build");
+        assert!(!dev_needed(&root,Some(&seven),&[7]),"installed build holds the merge");
+        assert!(!dev_needed(&root,Some(&before),&[8]),"dependency without a merge on main");
+        assert!(!dev_needed(&root,Some(&before),&[]),"no ready dependents");
+        fs::write(install.join("dev/installed"),&before).unwrap();
+        let _=fs::remove_file(install.join("dev/lock/pid"));
+        dev_tick(&install,&root,&[7],&mut |_|Ok(()));
+        assert_eq!(fs::read_to_string(install.join("dev/started")).unwrap().trim(),seven,"need starts the newest main SHA");
+        assert!(fs::read_to_string(base.join("project.log")).unwrap().contains(&format!("dev install: start {seven} (ready task needs it)")));
 
         fs::remove_dir_all(&base).unwrap();
     }
