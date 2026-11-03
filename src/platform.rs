@@ -1180,11 +1180,29 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    /// Defect #2305: one Windows append outlasted CoreQ's 3 s flush wait, so `flush().unwrap()` failed on a healthy store.
+    /// Retries only that unacknowledged wait, bounded at 30 s; any other flush error still fails. Returns the retries.
+    fn flush_settled(mut unacknowledged: impl FnMut()) -> usize {
+        let capture=tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().cloned()).unwrap();
+        let until=std::time::Instant::now()+std::time::Duration::from_secs(30);
+        let mut retries=0;
+        loop {
+            match capture.flush() {
+                Ok(())=>return retries,
+                Err(e) if e.starts_with("telemetry flush unacknowledged (")&&std::time::Instant::now()<until=>{retries+=1;unacknowledged();}
+                Err(e)=>panic!("{e}"),
+            }
+        }
+    }
+
     // Chain: § 4 service log lines. Risk: a line without its UTC time, or one message split over lines.
     // Chain: short adapter -> silent/nonzero dependency -> bounded response and private failure evidence.
+    // #2305: the store write lock is held until the first flush misses its deadline, as one slow Windows append did.
     #[test]
     fn short_dependency_outputs_are_bounded_and_preserve_nonzero_receipts() {
-        crate::with_test_capture(|store,_| {
+        crate::with_test_capture(|store,dir| {
+            let write=fs::OpenOptions::new().write(true).open(dir.join("db.write.lock")).unwrap();write.lock().unwrap();
+            let mut write=Some(write);
             let fixture=|mode:&str| {
                 let mut command=std::process::Command::new(std::env::current_exe().unwrap());
                 command.args(["--exact","platform::tests::short_dependency_child","--ignored","--nocapture"]).env("TASKQ_SHORT_DEPENDENCY",mode);command
@@ -1196,7 +1214,7 @@ mod tests {
             let receipt=output("fixture.nonzero",&mut fixture("nonzero"),std::time::Duration::from_secs(5)).unwrap();
             assert_eq!(receipt.status.code(),Some(7));
             assert!(String::from_utf8_lossy(&receipt.stderr).contains("private dependency receipt"));
-            tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().unwrap().flush().unwrap());
+            assert_eq!(flush_settled(||drop(write.take())),1,"the append held past the flush deadline");
             let export=store.export(0,0,1024).unwrap();let rows=export["events"].as_array().unwrap();
             for class in ["timeout","exit"] {assert!(rows.iter().any(|r|r["observation"]["error"]==class));}
             assert!(!export.to_string().contains("private dependency receipt"));
@@ -1744,7 +1762,7 @@ mod tests {
             fs::remove_file(root.join(".taskq/status.json")).unwrap();
             sweep(&install,&shim);
             assert!(install.join("releases/4.0.2").exists(),"missing project status cannot authorize release deletion");
-            tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().unwrap().flush().unwrap());
+            flush_settled(||{});
             let export=store.export(0,0,1024).unwrap();
             for class in ["registry-unreadable","version-unknown"] {
                 assert!(export["events"].as_array().unwrap().iter().any(|row|row["observation"]["error"]==class),"missing cleanup failure {class}");
