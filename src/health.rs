@@ -22,6 +22,43 @@ const TOKEN: [(&str, &str, &str); 3] = [
     ("Contents", "token-contents", "Contents: Read"),
     ("Pull requests", "token-pulls", "Pull requests: Read and write"),
 ];
+/// The GitLab token scopes and project role of each permission of [`TOKEN`] (#2246): `api` writes issues and merge
+/// requests, `read_api` or `read_repository` reads files; Reporter (20) reads the repository, Developer (30) opens
+/// merge requests.
+const GITLAB: [(&str, &[&str], u64, &str); 3] = [
+    ("Issues", &["api"], 20, "scope api and role Reporter or higher"),
+    ("Contents", &["api", "read_api", "read_repository"], 20, "scope read_api, read_repository or api and role Reporter or higher"),
+    ("Pull requests", &["api"], 30, "scope api and role Developer or higher"),
+];
+
+/// The grant the owner gives for permission `name` on a GitHub or GitLab board.
+fn grant(name: &str, gitlab: bool) -> &'static str {
+    if gitlab { GITLAB.iter().find(|g| g.0 == name).map_or("", |g| g.3) } else { TOKEN.iter().find(|t| t.0 == name).map_or("", |t| t.2) }
+}
+
+/// GitLab `access` (#2246): the token's own scopes and state (`GET /personal_access_tokens/self`) and the token user's
+/// project role (`GET /projects/:id` permissions), one probe per permission of [`TOKEN`]. Any unread fact is unknown
+/// with its cause, never ok.
+pub fn gitlab_access(token: &Result<Value, String>, project: &Result<Value, String>) -> Vec<(&'static str, Probe)> {
+    let level = project.as_ref().map(|p| ["project_access", "group_access"].iter().filter_map(|k| p["permissions"][k]["access_level"].as_u64()).max().unwrap_or(0));
+    GITLAB.iter().map(|(name, scopes, min, _)| (*name, match token {
+        Err(e) => Probe::Unknown(format!("token scopes unread: {e}")),
+        Ok(t) if t["active"] == false || t["revoked"] == true => Probe::Gap("token inactive, revoked or expired".into()),
+        Ok(t) => {
+            let have: Vec<&str> = t["scopes"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            if !scopes.iter().any(|s| have.contains(s)) {
+                Probe::Gap(format!("scopes {} lack {}", if have.is_empty() { "none".into() } else { have.join(" ") }, scopes.join(" or ")))
+            } else {
+                match &level {
+                    Ok(l) if l >= min => Probe::Ok,
+                    Ok(l) => Probe::Gap(format!("project role {l} below {min}")),
+                    Err(e) => Probe::Unknown(format!("project role unread: {e}")),
+                }
+            }
+        }
+    })).collect()
+}
+
 /// Every check id; a heartbeat `doctor` line carries only these.
 pub const IDS: [&str; 6] = ["token-issues", "token-contents", "token-pulls", "version", "reports", "service-error"];
 
@@ -64,11 +101,12 @@ fn short(e: &str) -> String {
 }
 
 /// `token-*`: one item per permission of [`TOKEN`] from the board's [`access`](crate::board::Board::access) probes.
-pub fn token_items(repo: &str, access: &[(&'static str, Probe)]) -> Vec<Item> {
-    TOKEN.iter().map(|(name, id, grant)| match access.iter().find(|(n, _)| n == name).map(|(_, p)| p) {
+pub fn token_items(repo: &str, gitlab: bool, access: &[(&'static str, Probe)]) -> Vec<Item> {
+    TOKEN.iter().map(|(name, id, _)| (name, id, grant(name, gitlab))).map(|(name, id, grant)| match access.iter().find(|(n, _)| n == name).map(|(_, p)| p) {
         Some(Probe::Ok) => Item::ok(*id, format!("token grants {grant} on {repo}")),
-        Some(Probe::Gap(why)) => Item::gap(*id, format!("token lacks {grant} on {repo} ({why})"),
-            format!("owner: edit the fine-grained board token, Repository permissions > {grant}, for {repo}")),
+        Some(Probe::Gap(why)) => Item::gap(*id, format!("token lacks {grant} on {repo} ({why})"), if gitlab {
+            format!("owner: give the GitLab board token {grant} on {repo}")
+        } else { format!("owner: edit the fine-grained board token, Repository permissions > {grant}, for {repo}") }),
         Some(Probe::Unknown(e)) => Item::unknown(*id, format!("token {name} read on {repo} unknown: {}", short(e)),
             "check the network and the board, then run `taskq doctor` again"),
         None => Item::unknown(*id, format!("token {name} check unsupported on this board"), "check the board token permissions in the board settings"),
@@ -84,21 +122,66 @@ pub fn version_item(installed: &str, latest: &Result<String, String>) -> Item {
     }
 }
 
-/// `reports`: the cached report collection ([`crate::reports::cached`]). A collection is complete while single reports
-/// stay unreadable (#2195), so a report row with a reason is a gap too.
-pub fn reports_item(cached: &Value) -> Item {
+/// The report rows of a complete collection whose source is unreadable and whose report still waits for the owner. A
+/// decided report (hidden: answered, dropped, made, accepted) whose source went missing needs nothing more (#2246).
+fn unreadable(cached: &Value) -> Vec<&Value> {
+    cached["reports"].as_array().into_iter().chain(cached["history"].as_array()).flatten()
+        .filter(|r| r["kind"] == "report" && r["reason"].is_string() && r["visible"] != false).collect()
+}
+
+/// Why the `reports` check is not ok, as heartbeat-safe words (#2246): one cause of [`REPORT_CAUSES`], then up to five
+/// `#<N>` and `+<more>`; `None` when ok. Never report text, paths or response bodies.
+pub fn reports_detail(cached: &Value) -> Option<String> {
     if cached["complete"] != true {
-        return Item::gap("reports", format!("report collection incomplete: {}", cached["reason"].as_str().unwrap_or("reason unknown")),
-            "run `taskq service status`; if collection stays incomplete, run `taskq service restart`");
+        let reason = cached["reason"].as_str().unwrap_or_default();
+        return Some(if reason.contains("stale") { "stale" } else if reason.contains("not collected") { "uncollected" } else { "incomplete" }.into());
     }
-    let failed: Vec<&Value> = cached["reports"].as_array().into_iter().chain(cached["history"].as_array()).flatten()
-        .filter(|r| r["kind"] == "report" && r["reason"].is_string()).collect();
-    let Some(first) = failed.first() else { return Item::ok("reports", "report collection complete"); };
-    let reason = short(first["reason"].as_str().unwrap_or_default());
-    let fix = if failed.iter().any(|r| r["reason"].as_str().is_some_and(|e| matches!(http_status(e), Some(401 | 403)))) {
-        "owner: grant the board token Contents: Read, then run `taskq doctor` again"
-    } else { "open the named report with `taskq results <n>` and follow up or reopen its task" };
-    Item::gap("reports", format!("{} report(s) unreadable, first #{}: {reason}", failed.len(), first["n"]), fix)
+    let failed = unreadable(cached);
+    let status = |r: &&Value| r["reason"].as_str().and_then(http_status);
+    let cause = if failed.is_empty() { return None }
+        else if failed.iter().any(|r| matches!(status(r), Some(401 | 403))) { "denied" }
+        else if failed.iter().all(|r| r["missing"] == true || status(r) == Some(404)) { "missing" } else { "unreadable" };
+    let mut words = vec![cause.to_string()];
+    words.extend(failed.iter().take(5).map(|r| format!("#{}", r["n"])));
+    if failed.len() > 5 { words.push(format!("+{}", failed.len() - 5)); }
+    Some(words.join(" "))
+}
+
+/// The causes a `doctor-reports` line may name.
+const REPORT_CAUSES: [&str; 6] = ["stale", "uncollected", "incomplete", "denied", "missing", "unreadable"];
+
+/// A heartbeat `doctor-reports` text: its cause and task numbers; `None` when invalid.
+fn parse_reports(text: &str) -> Option<(&str, Vec<&str>)> {
+    let mut w = text.split(' ');
+    let cause = w.next().filter(|c| REPORT_CAUSES.contains(c))?;
+    let rest: Vec<&str> = w.collect();
+    rest.iter().all(|t| t.strip_prefix('#').or_else(|| t.strip_prefix('+')).is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))).then_some((cause, rest))
+}
+
+/// The fix for a `reports` cause on `host`; `numbers` are the named reports.
+fn reports_fix(cause: &str, numbers: &[&str], host: &str, gitlab: bool) -> String {
+    let list = numbers.join(" ");
+    let first = numbers.first().map_or("<n>", |n| n.trim_start_matches('#'));
+    match cause {
+        "stale" | "uncollected" | "incomplete" => format!("report collection {cause} on {host}: run `taskq service status` there; `taskq service restart` if it stays"),
+        "denied" => format!("reports {list} unreadable (HTTP 401/403): owner: give the board token of {host} {}", grant("Contents", gitlab)),
+        "missing" => format!("reports {list} have no source file at their result SHA: on {host} run `taskq results {first} --action followup` or `--action reopen`"),
+        _ => format!("reports {list} unreadable: on {host} run `taskq results {first}` to read the error"),
+    }
+}
+
+/// `reports`: the cached report collection ([`crate::reports::cached`]). A collection is complete while single reports
+/// stay unreadable (#2195), so a report row with a reason is a gap too, until its report is decided (#2246).
+pub fn reports_item(cached: &Value, gitlab: bool) -> Item {
+    let Some(detail) = reports_detail(cached) else { return Item::ok("reports", "report collection complete") };
+    let (cause, numbers) = parse_reports(&detail).unwrap_or(("incomplete", vec![]));
+    let fix = reports_fix(cause, &numbers, "this host", gitlab);
+    if cached["complete"] != true {
+        return Item::gap("reports", format!("report collection incomplete: {}", cached["reason"].as_str().unwrap_or("reason unknown")), fix);
+    }
+    let failed = unreadable(cached);
+    let reason = short(failed[0]["reason"].as_str().unwrap_or_default());
+    Item::gap("reports", format!("{} undecided report(s) unreadable ({cause}: {}), first: {reason}", failed.len(), numbers.join(" ")), fix)
 }
 
 /// `service-error`: the last pass error of the project's `status.json` (`age` in seconds).
@@ -108,26 +191,26 @@ pub fn error_item(status: Result<Option<Value>, String>, age: Option<u64>, ttl: 
             None => Item::ok("service-error", "last service pass had no error"),
             Some(e) => Item::gap("service-error", format!("last service pass failed: {}", short(e)), "read `taskq service status` and fix the named cause"),
         },
-        Ok(Some(_)) => Item::unknown("service-error", "service status is stale; the service may be stopped", "run `taskq service status`; start it with `taskq service install`"),
+        Ok(Some(_)) => Item::unknown("service-error", "service status is stale; the service may be stopped", "run `taskq service status`; if stopped, `taskq service restart`"),
         Ok(None) => Item::unknown("service-error", "no service status; no service ran this project here", "run `taskq service install`"),
         Err(e) => Item::unknown("service-error", format!("service status unreadable: {}", short(&e)), "run `taskq service status`"),
     }
 }
 
 /// All checks of one board; `latest` is the latest release read once per run.
-pub fn board_items(b: &dyn crate::board::Board, repo: &str, root: &Path, install: &Path, latest: &Result<String, String>) -> Vec<Item> {
-    let mut items = token_items(repo, &b.access());
+pub fn board_items(b: &dyn crate::board::Board, repo: &str, gitlab: bool, root: &Path, install: &Path, latest: &Result<String, String>) -> Vec<Item> {
+    let mut items = token_items(repo, gitlab, &b.access());
     let installed = crate::platform::tool(install).current().unwrap_or_else(|| crate::platform::VERSION.into());
     items.push(version_item(&installed, latest));
-    items.push(reports_item(&crate::reports::cached(root)));
+    items.push(reports_item(&crate::reports::cached(root), gitlab));
     let path = crate::dot(root).join("status.json");
     items.push(error_item(crate::data::json(&path), crate::file_age(&path), crate::snapshot::ttl(root)));
     items
 }
 
 /// The checks of a board whose board did not open: the token reads are unknown with the cause.
-pub fn unopened(repo: &str, e: &str) -> Vec<Item> {
-    token_items(repo, &TOKEN.iter().map(|(n, ..)| (*n, Probe::Unknown(format!("board not opened: {e}")))).collect::<Vec<_>>())
+pub fn unopened(repo: &str, gitlab: bool, e: &str) -> Vec<Item> {
+    token_items(repo, gitlab, &TOKEN.iter().map(|(n, ..)| (*n, Probe::Unknown(format!("board not opened: {e}")))).collect::<Vec<_>>())
 }
 
 /// `taskq doctor` lines of one board: `ok|gap|unknown <id>: <text>`, then `  fix: ...` under each open item.
@@ -187,12 +270,28 @@ pub struct Asked { pub id: Result<String, String>, pub waited: u64 }
 
 /// Whether host `h` can answer: its heartbeat is live and carries health checks.
 fn answers(h: &Host, now: i64, ttl: i64) -> bool {
-    crate::snapshot::live(now - h.updated, ttl) && h.doctor.as_deref().and_then(parse).is_some()
+    live(h, now, ttl) && h.doctor.as_deref().and_then(parse).is_some()
 }
 
-/// `taskq doctor --hosts` on one board: asks every live host that runs health checks to run them now through the
-/// request issue, then reads each unanswered heartbeat fresh every `poll` seconds until all answer or `wait` passes.
-pub fn ask(b: &dyn crate::board::Board, hosts: &mut [Host], now: i64, ttl: i64, wait: u64, poll: u64, sleep: &dyn Fn(u64)) -> Asked {
+/// Whether heartbeat `h` is fresh at board time `now`. A heartbeat read after `now` was taken is fresh: its board
+/// `updated_at` can only be later than the reader's earlier `Date` (#2246: a negative age read `<1m old; unreachable`).
+fn live(h: &Host, now: i64, ttl: i64) -> bool {
+    crate::snapshot::live((now - h.updated).max(0), ttl)
+}
+
+/// Host `h` read fresh by its issue (`GET`, not the list that lags minutes behind); unchanged when unreadable.
+fn reread(b: &dyn crate::board::Board, h: &mut Host, ttl: i64) {
+    if let Ok(issue) = b.issue(h.issue).and_then(|i| if i.trusted && crate::service::is_host(&i) { Ok(i) } else { Err("not a trusted heartbeat".into()) }) {
+        let now = b.now().unwrap_or(issue.updated);
+        *h = crate::snapshot::host(&issue, now, ttl);
+    }
+}
+
+/// `taskq doctor --hosts`, step one on one board: re-reads every heartbeat the list shows stale (a listed heartbeat may
+/// lag, #2246), then asks every live host that runs health checks to run them now through the request issue.
+pub fn request(b: &dyn crate::board::Board, hosts: &mut [Host], now: i64, ttl: i64) -> Asked {
+    for h in hosts.iter_mut().filter(|h| !live(h, now, ttl)) { reread(b, h, ttl); }
+    let now = b.now().unwrap_or(now);
     if !hosts.iter().any(|h| answers(h, now, ttl)) { return Asked { id: Err("no live host runs health checks".into()), waited: 0 }; }
     let id: String = crate::runtime::uuid().chars().filter(char::is_ascii_alphanumeric).take(12).collect();
     let posted = b.issues(None).and_then(|issues| {
@@ -201,31 +300,50 @@ pub fn ask(b: &dyn crate::board::Board, hosts: &mut [Host], now: i64, ttl: i64, 
             None => b.create(REQUEST_TITLE, &request_body(&id), &[crate::service::HOST_LABEL.into()]).map(|_| ()),
         }
     });
-    if let Err(e) = posted { return Asked { id: Err(format!("request not posted: {}", short(&e))), waited: 0 }; }
-    let pending = |hosts: &[Host]| hosts.iter().enumerate().filter(|(_, h)| answers(h, now, ttl) && h.answer.as_deref() != Some(id.as_str())).map(|(i, _)| i).collect::<Vec<_>>();
-    let mut waited = 0;
-    while waited < wait {
-        let open = pending(hosts);
-        if open.is_empty() { break; }
-        sleep(poll);
-        waited += poll;
-        for i in open {
-            // one fresh read per unanswered heartbeat: the issue list may lag minutes behind
-            if let Ok(issue) = b.issue(hosts[i].issue).and_then(|i| if i.trusted && crate::service::is_host(&i) { Ok(i) } else { Err("not a trusted heartbeat".into()) }) {
-                hosts[i] = crate::snapshot::host(&issue, now + waited as i64, ttl);
-            }
-        }
-    }
-    Asked { id: Ok(id), waited }
+    match posted { Ok(()) => Asked { id: Ok(id), waited: 0 }, Err(e) => Asked { id: Err(format!("request not posted: {}", short(&e))), waited: 0 } }
 }
 
-/// One fix line for check `id` on `host`.
-pub fn fix(id: &str, repo: &str, host: &str) -> String {
+/// One board of a `--hosts` run: its board, hosts, request and the hosts still to answer.
+pub struct Ask<'a> { pub board: &'a dyn crate::board::Board, pub hosts: Vec<Host>, pub asked: Asked, pending: Vec<usize> }
+
+impl<'a> Ask<'a> {
+    /// The hosts of `board` that can answer the posted request; none when it was not posted.
+    pub fn new(board: &'a dyn crate::board::Board, hosts: Vec<Host>, asked: Asked, now: i64, ttl: i64) -> Self {
+        let pending = if asked.id.is_ok() { (0..hosts.len()).filter(|&i| answers(&hosts[i], now, ttl)).collect() } else { vec![] };
+        Ask { board, hosts, asked, pending }
+    }
+}
+
+/// `taskq doctor --hosts`, step two for every board at once: reads each unanswered heartbeat fresh every `poll` seconds
+/// until all answer or `wait` passes in all, so the wait is one per run, not one per board (#2246).
+pub fn collect(asks: &mut [Ask], ttl: i64, wait: u64, poll: u64, sleep: &dyn Fn(u64)) {
+    let mut waited = 0;
+    while waited < wait && asks.iter().any(|a| !a.pending.is_empty()) {
+        sleep(poll);
+        waited += poll;
+        for a in asks.iter_mut() {
+            let Ok(id) = a.asked.id.clone() else { continue };
+            for &i in &a.pending { reread(a.board, &mut a.hosts[i], ttl); }
+            let hosts = &a.hosts;
+            a.pending.retain(|&i| hosts[i].answer.as_deref() != Some(id.as_str()));
+        }
+    }
+    for a in asks.iter_mut() { a.asked.waited = waited; }
+}
+
+/// One fix line for check `id` on `host`; `reports` is the host's `doctor-reports` text.
+pub fn fix(id: &str, status: &str, repo: &str, host: &str, gitlab: bool, reports: Option<&str>) -> String {
     match TOKEN.iter().find(|t| t.1 == id) {
-        Some((_, _, grant)) => format!("owner: grant the board token of {host} {grant} for {repo}"),
+        // #2246: an unread permission is no missing grant
+        Some(_) if status == "unknown" => format!("run `taskq doctor` on {host}: it names why the token read failed"),
+        Some((name, ..)) if gitlab => format!("owner: give the GitLab board token of {host} {} on {repo}", grant(name, true)),
+        Some((name, ..)) => format!("owner: grant the board token of {host} {} for {repo}", grant(name, false)),
         None => match id {
             "version" => format!("run `taskq update` on {host}"),
-            "reports" => format!("run `taskq service status` on {host}; restart its service if collection stays incomplete"),
+            "reports" => match reports.and_then(parse_reports) {
+                Some((cause, numbers)) => reports_fix(cause, &numbers, host, gitlab),
+                None => format!("run `taskq doctor` on {host}: its version names no report cause"),
+            },
             _ => format!("run `taskq doctor` on {host} and fix the named service error"),
         },
     }
@@ -233,26 +351,26 @@ pub fn fix(id: &str, repo: &str, host: &str) -> String {
 
 /// One `--hosts` row: host, version, `ok|gap|unknown`, the open ids, the reason of an unknown and one fix line. With a
 /// posted request, a host that did not answer it reads unknown; without one, the last published result stands.
-pub fn host_row(h: &Host, repo: &str, now: i64, ttl: i64, asked: Option<&Asked>) -> Value {
+pub fn host_row(h: &Host, repo: &str, gitlab: bool, now: i64, ttl: i64, asked: Option<&Asked>) -> Value {
     let unknown = |reason: String, fix: String| json!({"host": h.name, "version": h.version, "state": "unknown", "gaps": [], "reason": reason, "fix": fix});
-    let age = now - h.updated;
-    if !crate::snapshot::live(age, ttl) {
-        return unknown(format!("heartbeat {} old; host unreachable", crate::age(age)), format!("start the service on {}: `taskq service install`", h.name));
+    if !live(h, now, ttl) {
+        return unknown(format!("heartbeat {} old, read fresh; its service is not writing", crate::age(now - h.updated)),
+            format!("on {}: `taskq service status`; if stopped, `taskq service restart`; if retired, close its heartbeat issue", h.name));
     }
     let Some((at, open)) = h.doctor.as_deref().and_then(parse) else {
         return unknown(format!("version {} runs no health checks", h.version), format!("run `taskq update` on {}", h.name));
     };
     match asked.map(|a| &a.id) {
         Some(Ok(id)) if h.answer.as_deref() != Some(id.as_str()) => return unknown(
-            format!("no answer to the request within {}s; host busy or unreachable", asked.map_or(0, |a| a.waited)),
-            format!("run `taskq service status` on {}, then `taskq doctor --hosts` again", h.name)),
+            format!("live heartbeat, no answer to the request within {}s: its service has not run a pass since", asked.map_or(0, |a| a.waited)),
+            format!("on {}: `taskq service status` shows the stuck pass; then `taskq doctor --hosts` again", h.name)),
         Some(Ok(_)) => {}
         _ if now - at > STALE => return unknown(format!("health checks {} old", crate::age(now - at)), format!("run `taskq service restart` on {}", h.name)),
         _ => {}
     }
     let state = if open.is_empty() { "ok" } else if open.iter().any(|(_, s)| s == "gap") { "gap" } else { "unknown" };
     let gaps: Vec<String> = open.iter().map(|(id, s)| if s == "gap" { id.clone() } else { format!("{id} (unknown)") }).collect();
-    let fixes: Vec<String> = open.iter().map(|(id, _)| fix(id, repo, &h.name)).collect();
+    let fixes: Vec<String> = open.iter().map(|(id, s)| fix(id, s, repo, &h.name, gitlab, h.reports.as_deref())).collect();
     json!({"host": h.name, "version": h.version, "state": state, "gaps": gaps, "reason": null, "fix": (!fixes.is_empty()).then(|| fixes.join("; "))})
 }
 
@@ -276,7 +394,7 @@ pub fn worker_rows(s: &crate::snapshot::Snapshot, ttl: i64) -> Vec<Value> {
         let output = alive.is_ok() && warning.is_none() && h["progress"]["status"] == "active";
         let account = match s.hosts.iter().find(|x| x.name == host) {
             None => "unknown: host heartbeat missing".to_string(),
-            Some(x) if !crate::snapshot::live(s.observed - x.updated, ttl) => format!("unknown: host heartbeat {} old", crate::age(s.observed - x.updated)),
+            Some(x) if !crate::snapshot::live((s.observed - x.updated).max(0), ttl) => format!("unknown: host heartbeat {} old", crate::age(s.observed - x.updated)),
             Some(x) if x.logins.iter().any(|l| l == rt) => format!("login {rt} off"),
             Some(x) => match x.limits.iter().find(|l| l.split(' ').next() == Some(rt)) {
                 Some(l) => format!("limit {l}"),
@@ -304,27 +422,28 @@ fn table(rows: &[Vec<String>]) -> Vec<String> {
     rows.iter().map(|r| r.iter().zip(&width).map(|(cell, w)| format!("{cell:<w$}")).collect::<Vec<_>>().join("  ").trim_end().to_string()).collect()
 }
 
-/// `taskq doctor --hosts` lines of one board: the host table, then the worker table.
-pub fn hosts_lines(repo: &str, hosts: &[Value], workers: &[Value]) -> Vec<String> {
+/// `taskq doctor --hosts` lines of every board (#2246: one run, one table): the host table, then the worker table. Each
+/// row carries its `board`; a board that could not be read is one host row with host `-` and the cause.
+pub fn hosts_lines(hosts: &[Value], workers: &[Value]) -> Vec<String> {
     let text = |v: &Value| v.as_str().unwrap_or("-").to_string();
-    let mut rows = vec![["host", "version", "state", "gaps", "fix"].map(String::from).to_vec()];
+    let mut out = vec![];
+    let mut rows = vec![["board", "host", "version", "state", "gaps", "fix"].map(String::from).to_vec()];
     rows.extend(hosts.iter().map(|h| {
         let gaps = h["gaps"].as_array().filter(|g| !g.is_empty()).map(|g| g.iter().map(text).collect::<Vec<_>>().join(", "));
-        vec![text(&h["host"]), text(&h["version"]), text(&h["state"]), gaps.unwrap_or_else(|| text(&h["reason"])), text(&h["fix"])]
+        vec![text(&h["board"]), text(&h["host"]), text(&h["version"]), text(&h["state"]), gaps.unwrap_or_else(|| text(&h["reason"])), text(&h["fix"])]
     }));
-    let mut out = vec![format!("board {repo}")];
-    out.extend(table(&rows).into_iter().map(|l| format!("  {l}")));
-    if hosts.is_empty() { out.push("  no host heartbeat on this board".into()); }
+    if hosts.is_empty() { out.push("no host heartbeat on any board".into()); } else { out.extend(table(&rows)); }
     let alive = |w: &Value| if w["alive"] == true { "yes".to_string() } else { format!("unknown: {}", text(&w["alive_reason"])) };
     let stalled = |w: &Value| match w["stalled"].as_bool() {
         Some(true) => format!("yes: {}", w["reason"].as_str().unwrap_or("reason unknown")),
         Some(false) => "no".to_string(),
         None => "unknown".to_string(),
     };
-    let mut rows = vec![["worker", "task", "attempt", "runtime", "alive", "stalled", "account"].map(String::from).to_vec()];
-    rows.extend(workers.iter().map(|w| vec![text(&w["host"]), format!("#{}", w["task"]), w["attempt"].to_string(), text(&w["runtime"]),
+    let mut rows = vec![["board", "worker", "task", "attempt", "runtime", "alive", "stalled", "account"].map(String::from).to_vec()];
+    rows.extend(workers.iter().map(|w| vec![text(&w["board"]), text(&w["host"]), format!("#{}", w["task"]), w["attempt"].to_string(), text(&w["runtime"]),
         alive(w), stalled(w), text(&w["account"])]));
-    if workers.is_empty() { out.push("  no running worker".into()); } else { out.extend(table(&rows).into_iter().map(|l| format!("  {l}"))); }
+    out.push(String::new());
+    if workers.is_empty() { out.push("no running worker".into()); } else { out.extend(table(&rows)); }
     out
 }
 
@@ -338,18 +457,39 @@ mod tests {
     // Protection: a 403 on the contents read is a `token-contents` gap naming the permission, the status and one fix.
     #[test]
     fn doctor_names_a_token_without_contents_read() {
-        let items = token_items("o/r", &[("Issues", Probe::Ok), ("Contents", Probe::Gap("HTTP 403".into())), ("Pull requests", Probe::Ok)]);
+        let items = token_items("o/r", false, &[("Issues", Probe::Ok), ("Contents", Probe::Gap("HTTP 403".into())), ("Pull requests", Probe::Ok)]);
         let c = items.iter().find(|i| i.id == "token-contents").unwrap();
         assert_eq!((c.status, c.text.as_str()), ("gap", "token lacks Contents: Read on o/r (HTTP 403)"));
         assert!(c.fix.as_deref().unwrap().contains("Contents: Read"), "{:?}", c.fix);
         assert!(items.iter().filter(|i| i.id != "token-contents").all(|i| i.status == "ok"));
         assert_eq!(line(7, &items), "doctor 7 token-contents:gap");
         assert_eq!(http_status("GET /commits?per_page=1: HTTP 403 Resource not accessible"), Some(403));
-        assert!(token_items("o/r", &[]).iter().all(|i| i.status == "unknown"), "an unsupported board is unknown, never ok");
+        assert!(token_items("o/r", false, &[]).iter().all(|i| i.status == "unknown"), "an unsupported board is unknown, never ok");
+    }
+
+    // Chain: § 6 GitLab board token -> `taskq doctor` token checks (#2246 A2). Risk: GitLab boards had no token
+    // probe, so every token cell read unknown and a read-only token passed setup unnoticed. Protection: the token's own
+    // scopes and the project role decide each permission; a missing scope or a low role is a gap with a GitLab fix,
+    // an unread fact stays unknown.
+    #[test]
+    fn doctor_checks_gitlab_token_scopes_and_role() {
+        let dev = Ok(json!({"permissions": {"project_access": {"access_level": 30}, "group_access": null}}));
+        let full = gitlab_access(&Ok(json!({"active": true, "revoked": false, "scopes": ["api"]})), &dev);
+        assert!(full.iter().all(|(_, p)| *p == Probe::Ok), "{full:?}");
+        let read = gitlab_access(&Ok(json!({"active": true, "scopes": ["read_api"]})), &Ok(json!({"permissions": {"group_access": {"access_level": 20}}})));
+        assert_eq!(read, vec![("Issues", Probe::Gap("scopes read_api lack api".into())), ("Contents", Probe::Ok), ("Pull requests", Probe::Gap("scopes read_api lack api".into()))]);
+        let low = gitlab_access(&Ok(json!({"active": true, "scopes": ["api"]})), &Ok(json!({"permissions": {"project_access": {"access_level": 20}}})));
+        assert_eq!(low[2].1, Probe::Gap("project role 20 below 30".into()));
+        assert!(matches!(gitlab_access(&Ok(json!({"active": false, "scopes": ["api"]})), &dev)[0].1, Probe::Gap(_)));
+        assert!(gitlab_access(&Err("HTTP 401".into()), &dev).iter().all(|(_, p)| matches!(p, Probe::Unknown(_))), "unread scopes: unknown, never ok");
+        let items = token_items("g/p", true, &read);
+        assert_eq!(items[0].fix.as_deref(), Some("owner: give the GitLab board token scope api and role Reporter or higher on g/p"));
+        assert!(!items.iter().filter_map(|i| i.fix.as_deref()).any(|f| f.contains("fine-grained")), "no GitHub fix on GitLab");
     }
 
     // Chain: § 8 update -> `taskq doctor` version check (#2194 A1, A4). Risk: a host stayed on an old release with no
     // sign in doctor. Protection: behind the latest release is a gap with `taskq update`; an unread release is unknown.
+    // #2246: a stale service status names restart, never `service install` for a service that exists.
     #[test]
     fn doctor_flags_an_outdated_version() {
         let v = version_item("4.6.58", &Ok("4.6.60".into()));
@@ -357,111 +497,147 @@ mod tests {
         assert_eq!(version_item("4.6.60", &Ok("4.6.60".into())).status, "ok");
         assert_eq!(version_item("4.7.0-dev.1", &Ok("4.6.60".into())).status, "ok", "a newer dev build is not behind");
         assert_eq!(version_item("4.6.58", &Err("no network".into())).status, "unknown");
-        let r = reports_item(&json!({"complete": false, "reason": "Report collection is stale; waiting for the service"}));
+        let r = reports_item(&json!({"complete": false, "reason": "Report collection is stale; waiting for the service"}), false);
         assert_eq!((r.status, r.text.as_str()), ("gap", "report collection incomplete: Report collection is stale; waiting for the service"));
-        assert_eq!(reports_item(&json!({"complete": true})).status, "ok");
+        assert_eq!(reports_item(&json!({"complete": true}), false).status, "ok");
         let e = error_item(Ok(Some(json!({"error": "board unavailable: HTTP 502\ndetail"}))), Some(5), 120);
         assert_eq!((e.status, e.text.as_str()), ("gap", "last service pass failed: board unavailable: HTTP 502"));
         assert_eq!(error_item(Ok(Some(json!({"error": null}))), Some(5), 120).status, "ok");
-        assert_eq!(error_item(Ok(Some(json!({"error": null}))), Some(500), 120).status, "unknown", "a stale status is unknown");
+        let stale = error_item(Ok(Some(json!({"error": null}))), Some(500), 120);
+        assert_eq!(stale.status, "unknown", "a stale status is unknown");
+        assert!(!stale.fix.unwrap().contains("install"), "an existing service is restarted, not installed");
         assert_eq!(error_item(Ok(None), None, 120).status, "unknown");
     }
 
-    // Chain: reports collection (#2195) -> `taskq doctor` reports check (#2194 A1). Risk: one unreadable report kept
-    // the collection complete, so doctor read ok while the owner's screen showed a raw 403 for that report.
-    // Protection: a report row with a reason is a gap naming the count, the first task and one fix; a 403 asks for
-    // Contents: Read, task rows without a hand-in stay ok.
+    // Chain: reports collection (#2195) -> `taskq doctor` reports check -> heartbeat `doctor-reports` -> `--hosts`
+    // (#2194 A1, #2246 A2). Risk: decided historical reports whose source went 404 kept a `reports` gap on every host
+    // with no cause, and an undecided unreadable report read ok. Protection: only undecided report rows count; the
+    // gap and the heartbeat name the cause and the reports; the `--hosts` fix follows the cause.
     #[test]
-    fn doctor_reports_unreadable_rows_of_a_complete_collection() {
+    fn doctor_reports_name_missing_reports_and_skip_decided_ones() {
         let ok = reports_item(&json!({"complete": true, "reports": [{"kind": "report", "n": 4, "reason": null}],
-            "history": [{"kind": "task", "n": 5, "reason": "No accepted hand-in recorded; result details unknown"}]}));
-        assert_eq!(ok.status, "ok");
-        let bad = reports_item(&json!({"complete": true, "reports": [{"kind": "report", "n": 4, "reason": null}],
-            "history": [{"kind": "report", "n": 7, "reason": "#7 source: GET /contents/x: HTTP 403 Resource not accessible"},
-                {"kind": "report", "n": 8, "missing": true, "reason": "#8 source: HTTP 404"}]}));
-        assert_eq!((bad.status, bad.text.as_str()), ("gap", "2 report(s) unreadable, first #7: #7 source: GET /contents/x: HTTP 403 Resource not accessible"));
-        assert_eq!(bad.fix.as_deref(), Some("owner: grant the board token Contents: Read, then run `taskq doctor` again"));
-        let gone = reports_item(&json!({"complete": true, "reports": [{"kind": "report", "n": 8, "missing": true, "reason": "#8 source: HTTP 404"}]}));
-        assert_eq!((gone.status, gone.fix.as_deref()), ("gap", Some("open the named report with `taskq results <n>` and follow up or reopen its task")));
+            "history": [{"kind": "task", "n": 5, "reason": "No accepted hand-in recorded; result details unknown"},
+                {"kind": "report", "n": 6, "visible": false, "missing": true, "reason": "#6 source: HTTP 404"}]}), false);
+        assert_eq!(ok.status, "ok", "a decided report with a gone source needs nothing");
+        let rows = json!({"complete": true, "reports": [{"kind": "report", "n": 4, "reason": null}],
+            "history": [{"kind": "report", "n": 7, "visible": true, "reason": "#7 source: GET /contents/x: HTTP 403 Resource not accessible"},
+                {"kind": "report", "n": 8, "missing": true, "reason": "#8 source: HTTP 404"}]});
+        assert_eq!(reports_detail(&rows).as_deref(), Some("denied #7 #8"));
+        let bad = reports_item(&rows, false);
+        assert_eq!((bad.status, bad.text.as_str()), ("gap", "2 undecided report(s) unreadable (denied: #7 #8), first: #7 source: GET /contents/x: HTTP 403 Resource not accessible"));
+        assert_eq!(bad.fix.as_deref(), Some("reports #7 #8 unreadable (HTTP 401/403): owner: give the board token of this host Contents: Read"));
+        let many: Vec<Value> = (1..=7).map(|n| json!({"kind": "report", "n": n, "missing": true, "reason": "source: HTTP 404"})).collect();
+        let gone = json!({"complete": true, "reports": many});
+        assert_eq!(reports_detail(&gone).as_deref(), Some("missing #1 #2 #3 #4 #5 +2"));
+        assert_eq!(reports_detail(&json!({"complete": false, "reason": "Reports not collected yet"})).as_deref(), Some("uncollected"));
+        assert_eq!(fix("reports", "gap", "o/r", "win", false, Some("missing #1 #2 +2")),
+            "reports #1 #2 +2 have no source file at their result SHA: on win run `taskq results 1 --action followup` or `--action reopen`");
+        assert_eq!(fix("reports", "gap", "o/r", "win", false, Some("evil text")), "run `taskq doctor` on win: its version names no report cause", "only known causes");
     }
 
     // Chain: § 4 step 3 heartbeat `doctor` line -> `taskq doctor --hosts` (#2194 A2, A4). Risk: a dead or old host
-    // read as healthy, or a hand-written heartbeat injected text into the table. Protection: a stale heartbeat reads
-    // unknown `host unreachable`, a host without a valid line reads unknown with its version, unknown ids are refused.
+    // read as healthy, a hand-written heartbeat injected text, or (#2246 A1, A2) a heartbeat updated after the reader's
+    // clock read `<1m old; host unreachable` with `service install`. Protection: a heartbeat newer than `now` is live; a
+    // stale one names the silent service and restart; an old host reads unknown with its version; unknown ids refused.
     #[test]
-    fn doctor_hosts_reads_unreachable_and_old_hosts_unknown() {
+    fn doctor_hosts_reads_stale_and_old_hosts_unknown_and_fresh_ones_live() {
         let host = |name: &str, updated, version: &str, doctor: Option<&str>| Host { name: name.into(), version: version.into(), updated, doctor: doctor.map(String::from), ..Default::default() };
         let now = 10_000;
-        let gone = host_row(&host("mac", now - 1500, "4.6.60", Some("9000 ok")), "o/r", now, 120, None);
-        assert_eq!((gone["state"].as_str(), gone["reason"].as_str()), (Some("unknown"), Some("heartbeat 25m old; host unreachable")));
-        let old = host_row(&host("lin", now - 10, "4.6.50", None), "o/r", now, 120, None);
+        let gone = host_row(&host("mac", now - 1500, "4.6.60", Some("9000 ok")), "o/r", false, now, 120, None);
+        assert_eq!((gone["state"].as_str(), gone["reason"].as_str()), (Some("unknown"), Some("heartbeat 25m old, read fresh; its service is not writing")));
+        assert!(!gone["fix"].as_str().unwrap().contains("install"), "{gone}");
+        let ahead = host_row(&host("pds", now + 30, "4.6.60", Some("9990 ok")), "o/r", false, now, 120, None);
+        assert_eq!(ahead["state"], "ok", "a heartbeat written after the reader's clock is fresh: {ahead}");
+        let old = host_row(&host("lin", now - 10, "4.6.50", None), "o/r", false, now, 120, None);
         assert_eq!((old["state"].as_str(), old["reason"].as_str()), (Some("unknown"), Some("version 4.6.50 runs no health checks")));
-        let gap = host_row(&host("win", now - 10, "4.6.58", Some("9900 token-contents:gap version:gap")), "o/r", now, 120, None);
+        let gap = host_row(&host("win", now - 10, "4.6.58", Some("9900 token-contents:gap version:gap")), "o/r", false, now, 120, None);
         assert_eq!(gap["state"], "gap");
         assert_eq!(gap["gaps"], json!(["token-contents", "version"]));
         assert_eq!(gap["fix"], "owner: grant the board token of win Contents: Read for o/r; run `taskq update` on win");
-        assert_eq!(host_row(&host("ok", now - 10, "4.6.60", Some("9900 ok")), "o/r", now, 120, None)["state"], "ok");
-        let lapsed = host_row(&host("ok", now - 10, "4.6.60", Some("100 ok")), "o/r", now, 120, None);
+        let gl = host_row(&host("pds", now - 10, "4.6.62", Some("9900 token-pulls:gap")), "g/p", true, now, 120, None);
+        assert_eq!(gl["fix"], "owner: give the GitLab board token of pds scope api and role Developer or higher on g/p");
+        let unread = host_row(&host("pds", now - 10, "4.6.62", Some("9900 token-issues:unknown")), "g/p", true, now, 120, None);
+        assert_eq!(unread["fix"], "run `taskq doctor` on pds: it names why the token read failed", "an unread token asks for no grant");
+        assert_eq!(host_row(&host("ok", now - 10, "4.6.60", Some("9900 ok")), "o/r", false, now, 120, None)["state"], "ok");
+        let lapsed = host_row(&host("ok", now - 10, "4.6.60", Some("100 ok")), "o/r", false, now, 120, None);
         assert_eq!(lapsed["state"], "unknown", "a result the service stopped refreshing is unknown");
         assert_eq!(parse("9900 rm-rf:gap"), None, "only known ids");
         assert_eq!(parse("9900 version:fine"), None, "only known statuses");
         assert_eq!(parse("9900"), None);
-        let lines = hosts_lines("o/r", &[gone, gap], &[json!({"host": "win", "task": 7, "attempt": 42, "runtime": "claude", "alive": true, "stalled": false, "reason": null, "account": "ok (account work)"})]);
-        assert!(lines.iter().any(|l| l.contains("mac") && l.contains("unknown") && l.contains("host unreachable")), "{lines:#?}");
-        assert!(lines.iter().any(|l| l.starts_with("  win ") && l.contains("#7") && l.contains("claude") && l.contains("yes")), "{lines:#?}");
+        let tag = |mut v: Value, b: &str| { v["board"] = json!(b); v };
+        let lines = hosts_lines(&[tag(gone, "o/r"), tag(gap, "o/r"), tag(gl, "g/p")],
+            &[json!({"board": "g/p", "host": "win", "task": 7, "attempt": 42, "runtime": "claude", "alive": true, "stalled": false, "reason": null, "account": "ok (account work)"})]);
+        assert!(lines[0].starts_with("board") && lines[0].contains("host"), "one host table with a board column: {lines:#?}");
+        assert!(lines.iter().any(|l| l.starts_with("o/r") && l.contains("mac") && l.contains("not writing")), "{lines:#?}");
+        assert!(lines.iter().any(|l| l.starts_with("g/p") && l.contains("pds")), "{lines:#?}");
+        assert!(lines.iter().any(|l| l.starts_with("g/p ") && l.contains("#7") && l.contains("claude") && l.contains("yes")), "{lines:#?}");
     }
 
-    // Chain: `taskq doctor --hosts` request issue -> service pass -> heartbeat `doctor-answer` (#2194 A2). Risk: the
-    // table re-read cached heartbeats, so a host whose checks had not run since a token change read healthy, and a
-    // host that never ran the request read as checked. Protection: the request goes out on the board as one reused
-    // `taskq doctor` issue no heartbeat parser reads as a host; a host that answers reads its fresh result, one that
-    // does not answer within the wait reads unknown with the wait, stale and old hosts are not waited for.
+    // Chain: `taskq doctor --hosts` request issue -> service pass -> heartbeat `doctor-answer` (#2194 A2, #2246 A1).
+    // Risk: a lagging issue list showed a live host stale, every board waited 300s in turn (14 boards: 70 minutes),
+    // and a silent host read `busy or unreachable`. Protection: a listed-stale heartbeat is read fresh before the
+    // request; one wait covers every board and stops once all answer; a silent live host names its stuck service.
     #[test]
-    fn doctor_hosts_requests_every_host_and_reads_a_silent_host_unknown() {
+    fn doctor_hosts_requests_every_board_at_once_and_reads_a_silent_host_unknown() {
         use crate::board::{Board, Fake};
-        let b = Fake::default();
+        let (b, c) = (Fake::default(), Fake::default());
         b.advance(10_000);
-        let beat = |name: &str, body: &str| b.create(&format!("taskq host {name}"), body, &[crate::service::HOST_LABEL.into()]).unwrap();
-        let (win, lin) = (beat("win", "version 4.6.61\ndoctor 9990 ok"), beat("lin", "version 4.6.61\ndoctor 9990 ok"));
-        beat("old", "version 4.6.50");
+        c.advance(10_000);
+        let beat = |b: &Fake, name: &str, body: &str| b.create(&format!("taskq host {name}"), body, &[crate::service::HOST_LABEL.into()]).unwrap();
+        let (win, lin) = (beat(&b, "win", "version 4.6.61\ndoctor 9990 ok"), beat(&b, "lin", "version 4.6.61\ndoctor 9990 ok"));
+        let mac = beat(&b, "mac", "version 4.6.61\ndoctor 9990 ok");
+        beat(&b, "old", "version 4.6.50");
+        let pds = beat(&c, "pds", "version 4.6.61\ndoctor 9990 ok");
         let ttl = 120;
         let read = |b: &Fake| b.issues(None).unwrap().iter().filter(|i| crate::service::is_host(i)).map(|i| crate::snapshot::host(i, b.now().unwrap(), ttl)).collect::<Vec<_>>();
         let mut hosts = read(&b);
-        hosts.push(Host { name: "mac".into(), version: "4.6.61".into(), updated: 1_000, doctor: Some("900 ok".into()), ..Default::default() });
+        // the list lags: mac reads two hours old there while its heartbeat is fresh
+        hosts.iter_mut().find(|h| h.name == "mac").unwrap().updated = 1_000;
+        let mut gone = read(&c);
         let now = b.now().unwrap();
-        // win's service sees the request on its next pass and answers with a fresh result; lin never answers
+        let asked = request(&b, &mut hosts, now, ttl);
+        assert!(hosts.iter().find(|h| h.name == "mac").unwrap().updated > 1_000, "a listed-stale heartbeat is read fresh");
+        let other = request(&c, &mut gone, now, ttl);
+        let id = asked.id.clone().unwrap();
+        let mut asks = vec![Ask::new(&b, hosts, asked, now, ttl), Ask::new(&c, gone, other, now, ttl)];
+        // win, mac and pds answer on their next pass; lin never answers
         let slept = std::cell::Cell::new(0);
         let answer = |_| {
             slept.set(slept.get() + 1);
             let id = request_of(&b.issues(None).unwrap()).expect("request on the board");
             b.edit(win, &format!("version 4.6.61\ndoctor {now} token-pulls:gap\n{}", answer_line(&id))).unwrap();
+            b.edit(mac, &format!("version 4.6.61\ndoctor {now} ok\n{}", answer_line(&id))).unwrap();
+            let id = request_of(&c.issues(None).unwrap()).expect("request on the second board");
+            c.edit(pds, &format!("version 4.6.61\ndoctor {now} ok\n{}", answer_line(&id))).unwrap();
         };
-        let asked = ask(&b, &mut hosts, now, ttl, 60, 20, &answer);
-        let id = asked.id.clone().unwrap();
-        assert_eq!((asked.waited, slept.get()), (60, 3), "waits the full time for the silent live host");
+        collect(&mut asks, ttl, 60, 20, &answer);
+        assert_eq!((asks[0].asked.waited, asks[1].asked.waited, slept.get()), (60, 60, 3), "one wait for both boards, full for the silent host");
         let requests: Vec<_> = b.issues(None).unwrap().into_iter().filter(|i| i.title == REQUEST_TITLE).collect();
         assert_eq!(requests.len(), 1);
         assert!(!crate::service::is_host(&requests[0]), "an old host's heartbeat parser ignores the request");
         assert_eq!(request_of(&requests), Some(id.clone()));
-        let rows: Vec<Value> = hosts.iter().map(|h| host_row(h, "o/r", now + 60, ttl, Some(&asked))).collect();
+        let rows: Vec<Value> = asks[0].hosts.iter().map(|h| host_row(h, "o/r", false, now + 60, ttl, Some(&asks[0].asked))).collect();
         let row = |name: &str| rows.iter().find(|r| r["host"] == name).unwrap().clone();
         assert_eq!((row("win")["state"].as_str(), &row("win")["gaps"]), (Some("gap"), &json!(["token-pulls"])), "the answer's fresh result");
-        assert_eq!((row("lin")["state"].as_str(), row("lin")["reason"].as_str()), (Some("unknown"), Some("no answer to the request within 60s; host busy or unreachable")));
-        assert_eq!(row("mac")["reason"], "heartbeat 2h old; host unreachable");
+        assert_eq!(row("mac")["state"], "ok", "a host the list showed stale answers");
+        assert_eq!((row("lin")["state"].as_str(), row("lin")["reason"].as_str()), (Some("unknown"), Some("live heartbeat, no answer to the request within 60s: its service has not run a pass since")));
         assert_eq!(row("old")["reason"], "version 4.6.50 runs no health checks");
+        assert_eq!(host_row(&asks[1].hosts[0], "g/p", true, now + 60, ttl, Some(&asks[1].asked))["state"], "ok");
         // the next request edits the same issue and stops waiting once every live host answered
         b.edit(lin, &format!("version 4.6.61\ndoctor {now} ok")).unwrap();
         let mut hosts = read(&b);
-        let both = |_| {
+        let again = request(&b, &mut hosts, b.now().unwrap(), ttl);
+        let mut asks = vec![Ask::new(&b, hosts, again, b.now().unwrap(), ttl)];
+        let all = |_| {
             let id = request_of(&b.issues(None).unwrap()).unwrap();
-            for n in [win, lin] { b.edit(n, &format!("version 4.6.61\ndoctor {now} ok\n{}", answer_line(&id))).unwrap(); }
+            for n in [win, lin, mac] { b.edit(n, &format!("version 4.6.61\ndoctor {now} ok\n{}", answer_line(&id))).unwrap(); }
         };
-        let again = ask(&b, &mut hosts, b.now().unwrap(), ttl, 300, 20, &both);
-        assert_eq!(again.waited, 20, "no wait once all answered");
+        collect(&mut asks, ttl, 300, 20, &all);
+        assert_eq!(asks[0].asked.waited, 20, "no wait once all answered");
         assert_eq!(b.issues(None).unwrap().iter().filter(|i| i.title == REQUEST_TITLE).count(), 1, "one reused request issue");
-        assert_ne!(again.id.unwrap(), id, "every run is a new request");
-        let mut none = vec![Host { name: "mac".into(), updated: 1_000, doctor: Some("900 ok".into()), ..Default::default() }];
-        assert!(ask(&b, &mut none, now, ttl, 60, 20, &|_| panic!("nothing to wait for")).id.is_err(), "no live host: no request");
+        assert_ne!(asks[0].asked.id.as_ref().unwrap(), &id, "every run is a new request");
+        let mut none = vec![Host { name: "gone".into(), issue: 9999, updated: 1_000, doctor: Some("900 ok".into()), ..Default::default() }];
+        assert!(request(&b, &mut none, now, ttl).id.is_err(), "no live host: no request");
     }
 
     // Chain: § 4 heartbeat lease, execution observation and account lines -> `taskq doctor --hosts` workers (#2194
@@ -504,7 +680,7 @@ mod tests {
         assert_eq!(get(6)["account"], "unknown: no fresh claude account facts", "no account line and no output: unknown, never ok");
         assert_eq!((&get(7)["alive"], &get(7)["account"]), (&json!(true), &json!("ok (runtime output fresh)")));
         assert_eq!(get(8)["account"], "unknown: host heartbeat 15m old", "a stale heartbeat's account line is no evidence");
-        let lines = hosts_lines("o/r", &[], &w);
+        let lines = hosts_lines(&[], &w);
         assert!(lines.iter().any(|l| l.contains("#3") && l.contains("unknown: owning host heartbeat stale")), "{lines:#?}");
     }
 }
