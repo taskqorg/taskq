@@ -641,7 +641,7 @@ fn stage_history(v: &View) -> Vec<Value> {
 /// `session #<N> <attempt> <url>` heartbeat lines (§ 4) by host name and attempt; only a canonical claude.ai URL.
 /// #2261: `session #<N> <attempt> none <cause>` names why the attempt log has no URL yet (Err).
 pub fn session_urls(hosts: &[board::Issue]) -> HashMap<(String, u64), Result<String, String>> {
-    hosts.iter().flat_map(|h| {
+    hosts.iter().filter(|h| h.trusted).flat_map(|h| {
         let name = h.title.trim_start_matches("taskq host ").to_string();
         h.body.lines().filter_map(move |l| {
             let mut w = l.strip_prefix("session #")?.splitn(3, ' ');
@@ -1071,7 +1071,7 @@ impl Snapshot {
             }
             if matches!(r.task.state, State::Doing | State::Review) {
                 if let Some(host) = session_link(cfg, raw, r).2 {
-                    let why = r.session_reason.as_deref().map_or_else(|| "Remote Control URL not in the heartbeat".into(), |w| format!("no Remote Control URL: {w}"));
+                    let why = r.session_reason.as_deref().map_or_else(|| "Remote Control URL not in the heartbeat".into(), |w| format!("no Remote Control URL: {}", cell(&w.chars().take(120).collect::<String>())));
                     anomalies.push(format!("- {} · {host} {why} · Next: open the session on {host}{}", link(r), fix("remote-control")));
                 }
             }
