@@ -2969,9 +2969,11 @@ impl<'a> Service<'a> {
         q.ready = counted.len() as u64;
         q.waiting = if counted.is_empty() { None } else { q.waiting.or(Some(now)) };
         q.reason = counted.first().map(|(_, r)| if restart { "host restart pending".into() } else { r.clone() });
+        // #2290: every unadmitted ready task names this host's reason on its own board, refusals by labels or focus too
+        q.tasks = decided.iter().filter(|(_, (c, _))| *c != "admitted").map(|(n, (c, r))| (*n, crate::compact(&format!("{c}: {r}"), 120))).collect();
         // other boards see this row anonymous and with the admission code only: a reason may quote this project's tasks
         let generic = counted.first().map(|(c, _)| if restart { "host restart pending".into() } else { c.to_string() });
-        let row = crate::host::Queue { project: None, reason: generic, ..q.clone() };
+        let row = crate::host::Queue { project: None, reason: generic, tasks: BTreeMap::new(), ..q.clone() };
         if let Some(mut h) = self.host.as_ref().and_then(|h| h.lock().ok()) { h.queues.insert(self.cfg.root.clone(), row); }
     }
 
@@ -5020,9 +5022,13 @@ Open: none")).unwrap();
         let rows:Vec<_>=q.projects.iter().map(|p|(p.project.clone(),p.ready,p.spawn,p.waiting.is_some(),p.reason.as_deref())).collect();
         assert_eq!(rows,[(Some(ca.repo.clone()),1,None,true,Some("host restart pending")),(None,1,None,true,Some("host restart pending"))]);
         assert!(!sa.heartbeat_body().contains("o/private"),"another project stays anonymous on this board");
+        // #2290: this board's row names the task's refusal; the anonymous row never lists another project's tasks
+        assert_eq!((q.projects[0].tasks.keys().copied().collect::<Vec<_>>(),q.projects[1].tasks.is_empty()),(vec![1],true),"{q:?}");
+        assert!(q.projects[0].tasks[&1].starts_with("hold: "),"{q:?}");
         host.lock().unwrap().restart=false;sa.pass().unwrap();
         let q=queue(&sa);
         assert_eq!((sa.kids.len(),q.restart,q.projects[0].spawn.is_some(),q.projects[0].ready,q.projects[0].waiting),(1,None,true,0,None),"{q:?}");
+        assert!(q.projects[0].tasks.is_empty(),"an admitted task leaves the list: {q:?}");
         drop((sa,sb));std::fs::remove_dir_all(base).unwrap();
     }
 
