@@ -2150,7 +2150,7 @@ fn balance_cli(a:&Args) -> Res<()> {
         for arg in args {
             let (rt,n)=arg.split_once('=').ok_or("balance needs runtime=N")?;
             if value["weights"].get(rt).is_some() {return Err(format!("duplicate weight {rt}"));}
-            value["weights"][rt]=json!(n.parse::<u32>().map_err(|_|"weight must be an integer 1..1000000")?);
+            value["weights"][rt]=json!(n.parse::<u32>().map_err(|_|"weight must be an integer 0..1000000")?);
         }
         let weights=balance::weights(&value)?;
         host::write_capacity(&install,&policy.me,&CapEdit {weights:Some(weights.clone()),..Default::default()},None)?;

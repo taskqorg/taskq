@@ -253,9 +253,11 @@ impl Balancing {
             let r=&self.runtimes[&rt];
             if r.code!="admitted" || self.allowed_runtimes.as_ref().is_some_and(|a|!a.contains(&rt)) || needs_gui(&v.issue) && !r.full {continue;}
             let load=r.load.as_ref().ok_or("weighted host occupancy unknown")?;
+            // Weight 0 (#2240): no unpinned capacity; a run-* pin counts its free slots like an unweighted runtime.
             match self.weights.get(&rt) {
-                Some(w)=>weighted+=load.free as f64*load.effective(*w),
-                None=>fallback+=load.free as f64,
+                Some(0) if !labels.iter().any(|l|l.starts_with("run-"))=>{},
+                Some(w) if *w>0=>weighted+=load.free as f64*load.effective(*w),
+                _=>fallback+=load.free as f64,
             }
         }
         Ok(if weighted>0.0 {weighted}else{fallback})
@@ -2811,7 +2813,7 @@ impl<'a> Service<'a> {
         let mut load=BTreeMap::new();
         if !self.cfg.weights.is_empty() && !v.issue.labels.iter().any(|l|l.starts_with("run-")) {
             if let Some(e)=&self.headroom_error {return Err(("unknown",e.clone()));}
-            for rt in self.cfg.weights.keys() {
+            for rt in self.cfg.weights.iter().filter(|w|*w.1>0).map(|w|w.0) {
                 match self.runtime_load(rt) {
                     Ok(l)=>{load.insert(rt.clone(),l);},
                     Err(e) if e.0=="unknown"=>return Err(e),
@@ -7402,6 +7404,29 @@ Open: none";
         let saved=Balancing::read(&b.issue(win.host_issue.unwrap()).unwrap().body).unwrap().last_spawn;
         restarted.pass().unwrap();
         assert_eq!(Balancing::read(&restarted.heartbeat_body()).unwrap().last_spawn,saved);
+    }
+
+    // #2240 A1/A2, §4 Balancing: a weight-0 runtime takes no unpinned claim even when the others are full,
+    // a run-* pin still spawns on it, and status shows the zero weight.
+    #[test]
+    fn zero_weight_runtime_claims_only_pins() {
+        let b=Fake::default();
+        let mut c=cfg("mac");c.weights=BTreeMap::from([("claude".into(),1),("codex".into(),0)]);
+        c.limits=BTreeMap::from([("claude".into(),1),("codex".into(),2)]);
+        let mut mac=service(&b,&c,Default::default());
+        let first=b.create("first","",&["taskq".into()]).unwrap();
+        let second=b.create("second","",&["taskq".into()]).unwrap();
+        mac.pass().unwrap();
+        assert_eq!(rt_of(&task(&b,first)).unwrap().0,"claude");
+        mac.pass().unwrap();
+        assert_eq!(task(&b,second).state,State::Ready,"weight 0 is never a fallback");
+        let pinned=b.create("pinned","",&["taskq".into(),"run-codex".into()]).unwrap();
+        mac.pass().unwrap();
+        assert_eq!(rt_of(&task(&b,pinned)).unwrap().0,"codex");
+        assert_eq!(task(&b,second).state,State::Ready);
+        let (v,h)=views(&b,&mut Default::default(),&mut Default::default(),300).unwrap();
+        let snapshot=crate::snapshot::from_views("board",&b,&c,b.now().unwrap(),&v,&h);
+        assert!(snapshot.text(&c,&json!({})).unwrap().contains("codex running 1 / weight 0"));
     }
 
     // #2138 A2-A4/R13: mode and collaborator policy must reach real claims; preserve strict pins by default.
