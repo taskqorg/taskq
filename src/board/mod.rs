@@ -2395,6 +2395,53 @@ mod tests {
         for pass in 0..2 { assert_eq!(h.publish(1, &sha, "pr", "title", "Task: invented"), want, "pass {pass}"); }
     }
 
+    // #2308 defect (#2302 agentq#206): a worker merged the PR of another repository itself and handed in the merge
+    // commit; that PR was read as a mention (head neither `taskq-<N>` nor the result), the board repository's compare
+    // was HTTP 404 and the publication waited every pass with no path to close. Chain: publication -> the named PR
+    // merged as the result -> its merge-result CI -> close naming that repository. Retained: a merged PR at another
+    // merge commit stays a mention; a failed merge-result CI blocks, never closes unqualified.
+    #[test]
+    fn a_result_merged_as_another_repositorys_merge_commit_closes_there() {
+        use crate::core::entry;
+        let (sha, head) = ("a".repeat(40), "d".repeat(40));
+        for case in ["queue", "queue-red", "no-queue", "direct", "other-merge"] {
+            let log = [entry("result", &[&sha], Some(1), "Changed: o/x PR o/x#206 merged.\nChecks: A1 ok\nOpen: none")];
+            let (sha2, head2) = (sha.clone(), head.clone());
+            let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+                assert_eq!(method, "GET", "no publication write: {url}");
+                let reply = |status: u16, v: Value| Ok(Reply { status, headers: vec![], body: v.to_string(), operation: operation(method) });
+                if let Some(rest) = url.strip_prefix("https://api.github.com/repos/o/r") {
+                    return if rest.starts_with("/compare/") && case == "other-merge" { reply(404, json!({"message": "Not Found"})) }
+                        else if rest.starts_with("/issues/1/comments") {
+                            reply(200, json!(log.iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "created_at": "2026-10-30T00:00:00Z",
+                                "updated_at": "2026-10-30T00:00:00Z", "author_association": "OWNER", "user": {"login": "owner"}})).collect::<Vec<_>>()))
+                        } else { panic!("board repository read {url}") };
+                }
+                let rest = url.strip_prefix("https://api.github.com/repos/o/x").unwrap_or_else(|| panic!("read outside o/x: {url}"));
+                let merge = if case == "other-merge" { "b".repeat(40) } else { sha2.clone() };
+                let suite = |ok: &str| json!({"workflow_runs": [{"head_sha": sha2, "event": "merge_group", "status": "completed", "conclusion": ok, "name": "Test", "check_suite_id": 5}]});
+                let checks = json!({"check_runs": [{"app": {"slug": "github-actions"}, "check_suite": {"id": 5}, "status": "completed", "conclusion": "success", "name": "Test"}]});
+                reply(200, if rest == "/pulls/206" {
+                    json!({"number": 206, "state": "closed", "merged_at": "x", "merge_commit_sha": merge, "head": {"ref": "coreq-pin", "sha": head2}, "base": {"ref": "main"}})
+                } else if rest == format!("/compare/main...{sha2}") { json!({"status": "identical"}) }
+                else if rest == "/rules/branches/main" { if case == "no-queue" { json!([]) } else { recorded("rules-merge-queue") } }
+                else if rest.starts_with("/actions/runs?") { assert!(rest.contains(&sha2)); suite(if case == "queue-red" { "failure" } else { "success" }) }
+                else if rest.contains("/check-runs") { assert!(rest.contains(if case == "no-queue" { &head2 } else { &sha2 }), "{case}: {rest}"); checks }
+                else if rest.ends_with("/status") { json!({"total_count": 0}) }
+                else { panic!("{case}: unexpected {method} {url}") })
+            }));
+            let mode = if case == "direct" { "direct" } else { "pr" };
+            let got = h.resume_publication(1, &sha, mode, "title", "Task: invented", std::path::Path::new("missing-worktree"), false);
+            match case {
+                // A1: the merge in o/x is the publication; it closes with its merge-result CI, no taskq PR
+                "queue" | "direct" => assert_eq!(got, Publish::Done(format!("merged #206 in o/x as {sha}; merge-result CI green")), "{case}"),
+                "no-queue" => assert_eq!(got, Publish::Done(format!("merged #206 in o/x as {sha}; exact-SHA CI green on {head}")), "{case}"),
+                "queue-red" => assert!(matches!(&got, Publish::Blocked(e) if e.starts_with("o/x#206: PR #206 merged as ") && e.contains("failure")), "{case}: {got:?}"),
+                _ => assert!(matches!(&got, Publish::Pending(e) if e.contains("names no task PR of another repository")), "{case}: {got:?}"),
+            }
+        }
+    }
+
     // Chain: section 7 private fallback real Git fetch/rebase/leased push, or conflict/dirty preservation.
     // An HTTP-only fixture cannot prove preservation of the worktree or the pushed branch.
     #[test]
