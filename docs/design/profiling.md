@@ -64,6 +64,14 @@ Each call of the board adapter is one `taskq-board` line with one kind:
 | `write` | an issue create or edit |
 | `publish` | the § 7 publication |
 
+## Worker asks
+
+A `doing` to `ask` transition carries `counts: {"ask.<kind>.<cause>": 1}`; CoreQ admits `counts` on every kind, so no new field waits on a CoreQ release.
+
+- Kind: `owner` for an owner action (a card without options) or a spec conflict; else `technical`.
+- Cause, from the ask entry text: `retry-limit`, `unknown-term`, `rule-gate`, `budget` (budget, quota, usage or rate limit), `spec-conflict` (conflicts with taskq.md, R13), else `other`. The match is by keyword; a misfiled cause is a reason for a typed cause on `ask`.
+- `taskq profile` shows a `Worker asks` table after Queue transitions: count per UTC day, kind and cause.
+
 ## Analysis guide
 
 `taskq profile guide` prints the embedded [analysis guide](profile-guide.md) without store, board or network access. It rejects `--since`. The operator brief names it for time, context, usage and cost questions.

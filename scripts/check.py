@@ -139,10 +139,23 @@ def rule_findings(base_docs, head_docs, test_diff):
     return {'changed': changed, 'removed': removed, 'tests': tests}
 
 
-def unnamed(findings, task_text):
-    """Findings the task text does not name; a removal also needs `<ID> -> <destination>`."""
+def in_scope(rule, bodies):
+    """§1 Task text: an issue body's `Rules: <IDs|all>` line (`add --rules`) declares the changed rule IDs; an ID covers
+    its rows and subsections. Only issue bodies count: ask context and answers can quote a `Rules:` line."""
+    for line in re.findall(r'^Rules: (.+)$', bodies, re.M):
+        if line.strip() == 'all':
+            return True
+        for scope in re.split(r'\s*,\s*', line.strip()):
+            scope = re.sub(r'^(?:§\s*|[Ss]ection\s*)(?=\d)', '§', scope)
+            if scope and (rule == scope or rule.startswith((scope + '.', scope + ' '))):
+                return True
+    return False
+
+
+def unnamed(findings, task_text, bodies=''):
+    """Findings the task text neither names nor `bodies` declare in scope; a removal also needs `<ID> -> <destination>`."""
     named = cited(task_text, set(sum(findings.values(), [])))
-    missing = [f'{k} ({kind})' for kind in ('changed', 'tests') for k in findings[kind] if k not in named]
+    missing = [f'{k} ({kind})' for kind in ('changed', 'tests') for k in findings[kind] if k not in named and not in_scope(k, bodies)]
     for k in findings['removed']:
         if not re.search(id_pattern(k).pattern + r'\s*(?:->|→)\s*\S', task_text):
             missing.append(f'{k} (removed; name `{k} -> <ID, file or none>`)')
@@ -285,24 +298,26 @@ def approval_text(comments, task):
 
 
 def task_text(base):
-    """Issue bodies plus owner decisions with their selected asks; None when the board evidence is unknown."""
+    """Issue bodies plus owner decisions with their selected asks, and the bodies alone; None when the board evidence is unknown."""
     log = subprocess.check_output(['git', 'log', '--format=%B', f'{base}..HEAD'], cwd=ROOT).decode()
     tasks = sorted(set(re.findall(r'^Task:\s*https://github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)\s*$', log, re.M)))
     if not tasks:
-        return None, f'no `Task: https://github.com/<repo>/issues/<N>` line in commits {base}..HEAD'
-    parts = []
+        return None, '', f'no `Task: https://github.com/<repo>/issues/<N>` line in commits {base}..HEAD'
+    parts, bodies = [], []
     for repo, n in tasks:
         for args in (['--jq', '.body // ""', f'repos/{repo}/issues/{n}'],
                      ['--paginate', '--slurp', f'repos/{repo}/issues/{n}/comments']):
             done = subprocess.run(['gh', 'api', *args], cwd=ROOT, capture_output=True, timeout=60)
             if done.returncode:
-                return None, f'{repo}#{n} unreadable: {done.stderr.decode(errors="replace").strip()[:200]}'
+                return None, '', f'{repo}#{n} unreadable: {done.stderr.decode(errors="replace").strip()[:200]}'
             try:
                 out = done.stdout.decode()
                 parts.append(approval_text([c for page in json.loads(out) for c in page], n) if '--slurp' in args else out)
+                if '--slurp' not in args:
+                    bodies.append(out)
             except (ValueError, TypeError, KeyError) as error:
-                return None, f'{repo}#{n} approval evidence unreadable: {error}'
-    return '\n'.join(parts), None
+                return None, '', f'{repo}#{n} approval evidence unreadable: {error}'
+    return '\n'.join(parts), '\n'.join(bodies), None
 
 
 def rule_gate(base):
@@ -320,10 +335,10 @@ def rule_gate(base):
         print('Rule gate: no rule or rule-citing test changed')
         return None
     print('Rule gate: ' + '; '.join(f'{kind} {", ".join(v)}' for kind, v in findings.items() if v))
-    text, unknown = task_text(base)
+    text, bodies, unknown = task_text(base)
     if text is None:
         return f'rule gate unknown (R12): {unknown}'
-    left = unnamed(findings, text)
+    left = unnamed(findings, text, bodies)
     return f'rule gate: the task does not name {", ".join(left)} (docs/design/rule-ids.md#contract-detail)' if left else None
 
 

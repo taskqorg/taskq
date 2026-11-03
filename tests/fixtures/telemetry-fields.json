@@ -217,10 +217,13 @@
       "task": 1,
       "entry": 2,
       "from": "doing",
-      "to": "review",
+      "to": "ask",
       "previous_seconds": 30,
       "runtime": "claude",
-      "host": "win"
+      "host": "win",
+      "counts": {
+        "ask.technical.rule-gate": 1
+      }
     },
     {
       "product": "taskq",
