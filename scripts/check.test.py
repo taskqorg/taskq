@@ -46,7 +46,12 @@ assert names('src/x.rs', '#[cfg(test)]\nmod t {\n    fn f() { "claude"; }\n}\nle
 assert names('src/x.rs', '#[cfg(test)]\npub(crate) mod tests {\n"codex";\n}') == []
 # Name-prefixed literals count.
 assert names('src/x.rs', 's.starts_with("claude:")') == ['src/x.rs:1: s.starts_with("claude:")']
-assert names('src/runtime.rs', 'rt == "codex-app"') == names('src/runtime/owner.rs', '".claude.json"') == []
+assert names('src/runtime/owner.rs', '".claude.json"') == []
+# #2271: the adapter keeps names as table data, never as a branch; capability lookups pass.
+for path in ['src/runtime.rs', 'src/runtime/owner.rs', 'src/linux_sandbox.rs']:
+    for planted in ['if rt == "codex-app" {}', 'if "claude" == rt {}', '"antigravity" => x,', 'matches!(rt, "claude" | "codex")', 'binding["runtime"]!="codex"']:
+        assert names(path, planted) == [f'{path}:1: {planted}'], (path, planted)
+    assert names(path, 'Adapter { name: RUNTIMES[1], bin: "codex" }\nif of(rt).has("thread-link") {}\nwhich("claude")') == [], path
 assert names('src/windows_sandbox.rs', '"codex"') == names('src/windows_sandbox/acl.rs', '"claude"') == names('src/linux_sandbox.rs', 'CODEX_HOME') == []
 # #1593: a planted bypass in main.rs or a former exception fails, native names included
 for planted in ['if k.runtime=="claude" {}', 'if k.runtime=="antigravity" {}', 'tasklist claude.exe', 'home.join(".claude.json")', 'env("CODEX_HOME", h)', 'env_remove("CODEX_THREAD_ID")']:

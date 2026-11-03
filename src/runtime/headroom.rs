@@ -57,7 +57,7 @@ fn observe_in(install:&Path,rt:&str,log:&Path,now:i64,rollout:impl Fn(&str)->Opt
     let mut source=log.to_path_buf();
     // #2263: `codex exec --json` logs carry no rate limits; the thread's rollout records them in `token_count`.
     // ponytail: rereads the whole rollout each pass; read from a saved offset if rollouts grow large.
-    if rt=="codex" && observations(&events).is_empty() {
+    if super::of(rt).has("rollout-quota") && observations(&events).is_empty() {
         let thread=events.iter().rev().find(|e|e["type"]=="thread.started").and_then(|e|e["thread_id"].as_str()).map(String::from);
         if let Some(path)=thread.and_then(|t|rollout(&t)) {
             if let Some(rollout)=super::events(&path,0) {events=rollout;source=path;}
@@ -111,7 +111,7 @@ pub fn cause(install:&Path,rt:&str,now:i64)->String {
     let Some(label)=accounts.active(rt,now) else {return "every account on quota hold".into()};
     let latest=read(install).ok().and_then(|s|s.get(rt).and_then(|a|a.get(&label)).and_then(|w|w.values().map(|o|o.at).max()));
     match latest {
-        None if rt=="claude" => format!("account {label}: Claude background jobs report no quota"),
+        None if super::of(rt).has("background") => format!("account {label}: Claude background jobs report no quota"),
         None => format!("account {label}: no quota observation yet"),
         // A fixed board time, not an age: the heartbeat body stays equal across passes until the state changes (§ 4 step 3).
         Some(at) => format!("account {label}: last quota observation {} expired",crate::board::stamp(at)),

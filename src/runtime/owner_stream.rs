@@ -4,7 +4,7 @@ use crate::setup::Request;
 use std::{fs,io::Write,path::Path,time::Duration};
 use serde_json::{json,Value};
 type Res<T> = Result<T,String>;
-pub fn handles(runtime:&str)->bool {runtime=="antigravity"}
+pub fn handles(runtime:&str)->bool {super::of(runtime).has("stream-input")}
 pub fn log(own:&Path)->std::path::PathBuf {own.join("native.jsonl")}
 fn input(own:&Path,text:&str)->Res<()> {
     let mut file=fs::OpenOptions::new().create(true).append(true).open(log(own)).map_err(|_|"Native input log unavailable")?;
@@ -18,11 +18,11 @@ fn start(own:&Path,r:&Request,mut command:std::process::Command)->Res<String> {
     let root=r.root.as_deref().map_or(own,Path::new);
     let args=arguments(r);
     let args:Vec<_>=args.iter().map(String::as_str).collect();
-    let selected=super::optimized(spec(&mut command,agentq_runtime::agent::Client::Antigravity,root,"-",&args))?;
+    let selected=super::optimized(&r.runtime,spec(&mut command,root,"-",&args))?;
     fs::write(own.join("brief.txt"),&r.brief).map_err(|_|"Owner brief unavailable")?;
     let text=super::owner::read_brief(&own.join("brief.txt"));
     input(own,&text)?;
-    let mut turn=agentq_runtime::agent::Turn::start(command,&selected,&log(own),&text)?;
+    let mut turn=super::agent(&r.runtime)?.turn(command,&selected,&log(own),&text,&agentq_runtime::agent::Process::default())?;
     let identity_result=coreq::process::identity(turn.id());
     let identity=identity_result.as_ref().ok().and_then(|i|i.clone());
     let checkpoint=identity.as_ref().ok_or("Native process already exited; acceptance unknown").and_then(|identity|coreq::write_durable(&own.join("native-process.json"),&json!({"identity":{"pid":identity.pid,"started":identity.started},"session":null}).to_string()).map_err(|_|"Native identity save unknown; no replay"));
@@ -38,7 +38,7 @@ fn start(own:&Path,r:&Request,mut command:std::process::Command)->Res<String> {
     checkpoint?;
     let until=std::time::Instant::now()+Duration::from_secs(10);
     loop {
-        if let Some(session)=session(&fs::read_to_string(log(own)).map_err(|_|"Native session read unknown; no replay")?)? {return Ok(session);}
+        if let Some(session)=session(&r.runtime,&fs::read_to_string(log(own)).map_err(|_|"Native session read unknown; no replay")?)? {return Ok(session);}
         if own.join("native-exit.json").exists()||std::time::Instant::now()>=until {return Err("Antigravity session receipt unknown; original launch retained, never replayed".into());}
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -61,8 +61,8 @@ pub fn command(own:&Path,r:&Request,resume:bool)->Res<std::process::Command> {
     let session=r.session.as_deref().filter(|s|super::plain_thread(s)).ok_or("Native session identity unknown")?;
     native_source(session)?;
     let args=arguments(r);let args:Vec<_>=args.iter().map(String::as_str).collect();
-    let selected=super::optimized(spec(&mut command,agentq_runtime::agent::Client::Antigravity,root,session,&args))?;
-    Ok(agentq_runtime::agent::command(command,&selected))
+    let selected=super::optimized(&r.runtime,spec(&mut command,root,session,&args))?;
+    super::agent(&r.runtime)?.command(command,&selected)
 }
 fn native_source(session:&str)->Res<()> {
     let home=std::env::var_os("HOME").or_else(||std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from).ok_or("Native home unknown")?;
@@ -76,13 +76,13 @@ fn readable_source(path:&Path)->Res<()> {
     if tables==0 {return Err("Native conversation database has no supported state; no input sent".into());}Ok(())
 }
 /// agy may ignore a missing --conversation. Never send until its own startup receipt binds the expected ID.
-pub fn ready(own:&Path,expected:&str,offset:u64,child:&mut std::process::Child)->Res<()> {
+pub fn ready(own:&Path,rt:&str,expected:&str,offset:u64,child:&mut std::process::Child)->Res<()> {
     use std::io::{Read,Seek,SeekFrom};let until=std::time::Instant::now()+Duration::from_secs(10);
     loop {
         let mut file=fs::File::open(log(own)).map_err(|_|"Native startup receipt unavailable; input not sent")?;
         if file.metadata().map_err(|_|"Native startup source size unknown")?.len()<offset{return Err("Native startup source changed; input not sent".into());}
         file.seek(SeekFrom::Start(offset)).map_err(|_|"Native startup boundary unknown")?;let mut text=String::new();file.take(16*1024*1024).read_to_string(&mut text).map_err(|_|"Native startup read failed; input not sent")?;
-        if let Some(session)=session(&text)? {return if session==expected {Ok(())}else{Err("Antigravity returned a different session; input not sent, no fallback".into())};}
+        if let Some(session)=session(rt,&text)? {return if session==expected {Ok(())}else{Err("Antigravity returned a different session; input not sent, no fallback".into())};}
         if child.try_wait().map_err(|_|"Native startup liveness unknown")?.is_some()||std::time::Instant::now()>=until {return Err("Native startup identity unverified; input not sent".into());}
         std::thread::sleep(Duration::from_millis(25));
     }
@@ -102,10 +102,10 @@ pub fn holder(own:&Path,r:&Request)->Res<bool> {
     let ended:Value=serde_json::from_slice(&fs::read(own.join("native-exit.json")).map_err(|_|"Native execution release unknown; no input sent")?).map_err(|_|"Native exit receipt unreadable")?;
     if ended["identity"]!=native["identity"]||ended["session"].as_str()!=r.session.as_deref()||ended["outcome"]=="unknown" {return Err("Native session completion unverified; no input sent".into());}Ok(false)
 }
-pub fn session(text:&str)->Res<Option<String>> {
+pub fn session(rt:&str,text:&str)->Res<Option<String>> {
     let mut session=None;
     for value in text.lines().filter_map(|l|serde_json::from_str::<Value>(l).ok()) {
-        if let Some(id)=agentq_runtime::agent::antigravity_session(&value.to_string()) {
+        if let Some(id)=super::classify(rt,&value.to_string()).and_then(|r|r.session) {
             if !super::plain_thread(&id)||session.as_ref().is_some_and(|old|old!=&id){return Err("Native conversation identity changed; no replay".into());}session=Some(id);
         }
     }Ok(session)
@@ -113,13 +113,13 @@ pub fn session(text:&str)->Res<Option<String>> {
 pub fn transcript(own:&Path,r:&Request)->Res<std::path::PathBuf> {
     let path=log(own);let mut bytes=vec![];
     use std::io::Read;fs::File::open(&path).and_then(|f|f.take(65536).read_to_end(&mut bytes)).map_err(|_|"Native Antigravity stream unavailable")?;let text=String::from_utf8_lossy(&bytes);
-    if session(&text)?.as_deref()!=r.session.as_deref(){return Err("Native Antigravity source identity changed".into());}Ok(path)
+    if session(&r.runtime,&text)?.as_deref()!=r.session.as_deref(){return Err("Native Antigravity source identity changed".into());}Ok(path)
 }
 pub fn write_input(own:&Path,text:&str)->Res<()> {input(own,text)}
-pub fn outcome(text:&str)->String {
+pub fn outcome(rt:&str,text:&str)->String {
     let rows:Vec<Value>=text.lines().filter_map(|line|serde_json::from_str(line).ok()).collect();
-    let report=agentq_runtime::agent::Report::read(agentq_runtime::agent::Client::Antigravity,"",&rows,None);
-    if report.outcome=="unknown" {"unknown: native Antigravity completion unverified".into()}else if report.outcome=="ok" {"success".into()}else{format!("failed: {}",report.outcome)}
+    let outcome=rows.last().and_then(|v|super::classify(rt,&v.to_string())).map_or("unknown",|r|r.outcome);
+    if outcome=="unknown" {"unknown: native Antigravity completion unverified".into()}else if outcome=="ok" {"success".into()}else{format!("failed: {outcome}")}
 }
 pub fn accepted(own:&Path,r:&Request,turn:&crate::dialogue::Turn)->Res<bool> {
     use std::io::{Read,Seek,SeekFrom};
@@ -129,7 +129,7 @@ pub fn accepted(own:&Path,r:&Request,turn:&crate::dialogue::Turn)->Res<bool> {
     if file.metadata().map_err(|_|"Native acceptance size unknown")?.len()<offset{return Err("Native acceptance source shrank".into());}
     file.seek(SeekFrom::Start(offset)).map_err(|_|"Native acceptance offset unavailable")?;
     let mut text=String::new();file.take(16*1024*1024).read_to_string(&mut text).map_err(|_|"Native acceptance unreadable")?;
-    if session(&text)?.as_deref()!=r.session.as_deref(){return Ok(false);}
+    if session(&r.runtime,&text)?.as_deref()!=r.session.as_deref(){return Ok(false);}
     Ok(text.lines().filter_map(|l|serde_json::from_str::<Value>(l).ok()).any(|v|v["event"]=="step_update"&&v["step_update"]["step_type"]=="user_input"&&v["step_update"]["state"]=="DONE"))
 }
 
@@ -141,7 +141,7 @@ mod tests {
     fn native_stream_fences_identity_and_unknown_release() {
         let session_id="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
         let text=format!("{}\n{}\n",json!({"event":"init","conversation_id":session_id}),json!({"event":"result","result":{"conversation_id":session_id,"status":"SUCCESS","response":"literal response"}}));
-        assert_eq!(session(&text).unwrap().as_deref(),Some(session_id));assert_eq!(outcome(&text),"success");assert!(session(&(text+&json!({"conversationId":"foreign-conversation"}).to_string())).is_err());
+        assert_eq!(session("antigravity",&text).unwrap().as_deref(),Some(session_id));assert_eq!(outcome("antigravity",&text),"success");assert!(session("antigravity",&(text+&json!({"conversationId":"foreign-conversation"}).to_string())).is_err());
         let root=std::env::temp_dir().join(format!("taskq-owner-stream-{}",super::super::uuid()));fs::create_dir_all(&root).unwrap();
         let r:Request=serde_json::from_value(json!({"schema":2,"id":"invented","created":1,"host":"invented","platform":"invented","client":"invented","runtime":"antigravity","targets":[],"brief":"invented","state":"launched","session":session_id})).unwrap();
         let current=coreq::process::identity(std::process::id()).unwrap().unwrap();let identity=json!({"pid":current.pid,"started":current.started});fs::write(root.join("native-process.json"),json!({"identity":identity}).to_string()).unwrap();assert_eq!(holder(&root,&r),Ok(true));
@@ -162,7 +162,7 @@ mod tests {
             let offset=fs::metadata(log(&root)).unwrap().len();
             writeln!(fs::OpenOptions::new().append(true).open(log(&root)).unwrap(),"{}",json!({"event":"init","conversation_id":"foreign-native-session"})).unwrap();
             let marker=root.join("input-received");let mut child=Command::new("sh").args(["-c","if read input; then touch \"$1\"; fi","fixture"]).arg(&marker).stdin(Stdio::piped()).spawn().unwrap();
-            assert!(ready(&root,"expected-native-session",offset,&mut child).unwrap_err().contains("different session"));drop(child.stdin.take());assert!(child.wait().unwrap().success());assert!(!marker.exists());
+            assert!(ready(&root,"antigravity","expected-native-session",offset,&mut child).unwrap_err().contains("different session"));drop(child.stdin.take());assert!(child.wait().unwrap().success());assert!(!marker.exists());
         }
         fs::remove_dir_all(root).unwrap();
     }

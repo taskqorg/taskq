@@ -29,19 +29,26 @@ ADAPTER_EXCEPTIONS = {'src/runtime.rs', 'src/linux_sandbox.rs', 'src/windows_san
 # Runtime names, bare or name-prefixed, and the native names only the adapter may know (#1593).
 RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app|antigravity)(:[^"]*)?"|claude\.exe|\.claude\.json|CODEX_HOME|CODEX_THREAD_ID')
 TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(pub(\([\w:]+\))?\s+)?mod\s+\w+\s*\{')
+# #2271: inside the adapter a runtime name is table data or its own code path, never a branch: code asks the
+# adapter's capabilities (`of(rt).has(..)`) instead of comparing or matching a name.
+_NAMES = r'"(claude|codex|codex-app|antigravity|agy)"'
+RUNTIME_BRANCH = re.compile(rf'(==|!=)\s*{_NAMES}|{_NAMES}\s*(==|!=|=>|\|)|matches!\([^)]*{_NAMES}')
 
 
 def runtime_names(path, text):
-    """Runtime name literals, bare or name-prefixed, in non-test Rust outside the runtime adapter and the named exceptions."""
-    if path in ADAPTER_EXCEPTIONS or path.startswith(('src/runtime/', 'src/windows_sandbox/')) or path.endswith('_tests.rs'):
+    """Runtime name literals, bare or name-prefixed, in non-test Rust outside the runtime adapter and the named exceptions;
+    inside the adapter, runtime-name branches."""
+    if path.endswith('_tests.rs'):
         return []
+    adapter = path in ADAPTER_EXCEPTIONS or path.startswith(('src/runtime/', 'src/windows_sandbox/'))
+    pattern = RUNTIME_BRANCH if adapter else RUNTIME_NAME
     # Blank only `#[cfg(test)] mod x { .. }` bodies, keeping line numbers; other code stays scanned.
     # ponytail: a module ends at its first column-0 `}`; an early end only adds hits, never hides one
     for m in reversed(list(TEST_MOD.finditer(text))):
         close = text.find('\n}', m.end())
         end = len(text) if close < 0 else close + 2
         text = text[:m.start()] + re.sub(r'[^\n]', ' ', text[m.start():end]) + text[end:]
-    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(text.splitlines(), 1) if RUNTIME_NAME.search(line)]
+    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(text.splitlines(), 1) if pattern.search(line)]
 
 
 # docs/design/rule-ids.md#contract-detail: rule IDs, the rule-change gate and coverage.
@@ -464,7 +471,7 @@ def main():
                 print(f'Contract lint: unknown (R12), no specq {SPECQ[:12]} checkout at .specq; CI runs it', flush=True)
         found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))]
         if found:
-            raise SystemExit('runtime name outside the runtime adapter (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
+            raise SystemExit('runtime name outside the runtime adapter or runtime-name branch (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])
