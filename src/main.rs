@@ -618,6 +618,12 @@ fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, staged: Op
     }
 }
 
+/// § 7 rule 3 (#2288): the local `#M` of a worker park when it is an open held task, which the park starts.
+fn held_blocker(b: &dyn Board, r: &str) -> Option<u64> {
+    let m = r.strip_prefix('#')?.parse().ok()?;
+    b.issue(m).is_ok_and(|i| i.open && service::is_held(&i)).then_some(m)
+}
+
 /// § 2 Stages: `text` with the `Stages:` line of `later --stage`; each stage is an Acceptance item of `body`.
 fn stage_text(text: &str, staged: &[String], body: &str) -> Res<String> {
     let ids = core::acceptance(body);
@@ -4092,7 +4098,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let now = board::stamp(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64));
             let args = park(n, a.one("blocker"), a.one("until"), (!staged.is_empty()).then_some(now.as_str()), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?;
             let text = if staged.is_empty() { text.to_string() } else { stage_text(text, &staged, &b.issue(n)?.body)? };
-            emit(&[act(b, root, n, cmd, &args, &text, &op)], json)
+            let mut out = vec![act(b, root, n, cmd, &args, &text, &op)];
+            // § 7 rule 3 (#2288): the worker's held local blocker starts with its park, so neither waits for the PM
+            if let Some(m) = a.one("blocker").filter(|_| out[0].ok()).and_then(|r| held_blocker(b, r)) {
+                out.extend(start_tasks(b, root, &[m.to_string()], &Op::default())?);
+            }
+            emit(&out, json)
         }
         "steer" | "failed" => {
             let n = a.num(1)?;
@@ -5409,6 +5420,9 @@ mod tests {
         assert!(text.contains(&format!("| PM: names open #{u} without Depends on | add `Depends on #{u}`, then `taskq start {v}` |")), "{text}");
         assert!(text.contains(&format!("| PM | `taskq start {w}` |")), "{text}");
         assert_eq!(snap.tasks.iter().find(|r| r.n == v).unwrap().json()["unlinked"], json!([u]));
+        // #2288: a worker park on a held local blocker starts it; a started task or another repo's issue is not one
+        assert_eq!(held_blocker(b, &format!("#{v}")), Some(v));
+        assert_eq!((held_blocker(b, &format!("#{n}")), held_blocker(b, "dashq#5"), held_blocker(b, "#999")), (None, None, None));
         b.close(w).unwrap();
         let receipts = start_tasks(b, &c.cfg.root, &[u.to_string(), format!("#{v}")], &Op::default()).unwrap();
         assert_eq!(receipts.iter().map(|r| r.task).collect::<Vec<_>>(), vec![u, v]);
