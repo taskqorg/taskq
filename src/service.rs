@@ -1691,9 +1691,12 @@ impl<'a> Service<'a> {
     /// latest release the host doctor read, report collection and the last pass error, as the heartbeat `doctor` line.
     fn refresh_health(&mut self) {
         let latest = crate::health::cached_latest(&self.cfg.install);
-        let items = crate::health::board_items(self.board, &self.cfg.repo, &self.cfg.root, &self.cfg.install, &latest);
+        let items = crate::health::board_items(self.board, &self.cfg.repo, self.cfg.board.name == "gitlab", &self.cfg.root, &self.cfg.install, &latest);
         let at = self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now());
-        self.health = Some((std::time::Instant::now(), crate::health::line(at, &items)));
+        let mut line = crate::health::line(at, &items);
+        // #2246: a reports gap names its cause and reports on the heartbeat
+        if let Some(d) = crate::health::reports_detail(&crate::reports::cached(&self.cfg.root)) { line.push_str(&format!("\ndoctor-reports {d}")); }
+        self.health = Some((std::time::Instant::now(), line));
     }
 
     /// #1819: the next pass reads `task`'s comments from the board, not from the cache.

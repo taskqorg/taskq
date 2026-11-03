@@ -430,6 +430,8 @@ pub struct Host {
     pub issue: u64,
     /// Heartbeat `doctor-answer <id>`: the last `taskq doctor --hosts` request this host answered (#2194).
     pub answer: Option<String>,
+    /// Heartbeat `doctor-reports <cause> #<N>..`: why the last `reports` check was not ok (#2246).
+    pub reports: Option<String>,
     /// The text after `account ` of the heartbeat's account lines ([`crate::runtime::accounts::heartbeat_rows`]).
     pub accounts: Vec<String>,
 }
@@ -536,6 +538,7 @@ pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
         logins: h.body.lines().filter_map(|l| l.strip_prefix("login ")?.strip_suffix(" off")).map(str::to_string).collect(),
         issue: h.number,
         answer: h.body.lines().find_map(|l| l.strip_prefix("doctor-answer ")).map(str::to_string),
+        reports: h.body.lines().find_map(|l| l.strip_prefix("doctor-reports ")).map(str::to_string),
         accounts: h.body.lines().filter_map(|l| l.strip_prefix("account ")).map(str::to_string).collect(),
     }
 }

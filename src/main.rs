@@ -2811,48 +2811,70 @@ fn doctor_cmd(a: &Args) -> Res<()> {
     let roots = host::projects(&install).ok().filter(|r| !r.is_empty()).or_else(|| find_root().ok().map(|r| vec![r])).unwrap_or_default();
     let latest = if hosts { Err("not read".into()) } else { platform::latest_release(&install) };
     let (mut seen, mut boards) = (std::collections::BTreeSet::new(), vec![]);
+    // #2246: `--hosts` reads every board first, asks all hosts at once and waits once for the whole run
+    let mut opened: Vec<(Config, Box<dyn board::Board>, snapshot::Snapshot)> = vec![];
+    let (mut host_rows, mut worker_rows) = (vec![], vec![]);
+    let unread = |repo: &str, e: &str| json!({"board": repo, "host": "-", "version": "-", "state": "unknown", "gaps": [], "reason": format!("board unread: {e}"),
+        "fix": "check the board token and network on this host, then `taskq doctor --hosts` again"});
     for root in roots {
         let (cfg, raw) = match load(&root) {
             Ok(v) => v,
             Err(e) => {
-                out.push(format!("project {}: unknown: {e}", project_name(&root)));
+                if hosts { host_rows.push(unread(&project_name(&root), &e)); } else { out.push(format!("project {}: unknown: {e}", project_name(&root))); }
                 boards.push(json!({"project": project_name(&root), "error": e}));
                 continue;
             }
         };
         if !seen.insert(cfg.repo.clone()) { continue; }
+        let gitlab = cfg.board.name == "gitlab";
         let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install));
         if !hosts {
             let items = match &board {
-                Ok(b) => health::board_items(b.as_ref(), &cfg.repo, &cfg.root, &cfg.install, &latest),
-                Err(e) => health::unopened(&cfg.repo, e),
+                Ok(b) => health::board_items(b.as_ref(), &cfg.repo, gitlab, &cfg.root, &cfg.install, &latest),
+                Err(e) => health::unopened(&cfg.repo, gitlab, e),
             };
             out.extend(health::lines(&cfg.repo, &items));
             boards.push(json!({"board": cfg.repo, "items": items.iter().map(check::Item::json).collect::<Vec<_>>()}));
             continue;
         }
-        let b = match &board {
+        let b = match board {
             Ok(b) => b,
             Err(e) => {
-                out.push(format!("board {}: unknown: {e}", cfg.repo));
+                host_rows.push(unread(&cfg.repo, &e));
                 boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
                 continue;
             }
         };
-        let mut s = snapshot::read(b.as_ref(), &cfg, &raw, &[]);
+        let s = snapshot::read(b.as_ref(), &cfg, &raw, &[]);
         if let Some(e) = &s.reason {
-            out.push(format!("board {}: unknown: {e}", cfg.repo));
+            host_rows.push(unread(&cfg.repo, e));
             boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
             continue;
         }
-        // #2194 A2: every live host with health checks runs them now and answers in its heartbeat
-        if !json_out { eprintln!("board {}: asking every host to run its health checks (up to {}s)", cfg.repo, health::ASK_WAIT); }
-        let asked = health::ask(b.as_ref(), &mut s.hosts, s.observed, cfg.ttl, health::ASK_WAIT, health::ASK_POLL, &|t| std::thread::sleep(std::time::Duration::from_secs(t)));
-        let now = s.observed + asked.waited as i64;
-        let rows: Vec<Value> = s.hosts.iter().map(|h| health::host_row(h, &cfg.repo, now, cfg.ttl, Some(&asked))).collect();
-        let workers = health::worker_rows(&s, cfg.ttl);
-        out.extend(health::hosts_lines(&cfg.repo, &rows, &workers));
-        boards.push(json!({"board": cfg.repo, "hosts": rows, "workers": workers}));
+        opened.push((cfg, b, s));
+    }
+    if hosts {
+        let ttl = opened.iter().map(|(c, ..)| c.ttl).max().unwrap_or(TTL);
+        let lists: Vec<Vec<snapshot::Host>> = opened.iter_mut().map(|(_, _, s)| std::mem::take(&mut s.hosts)).collect();
+        let mut asks: Vec<health::Ask> = opened.iter().zip(lists).map(|((cfg, b, s), mut list)| {
+            let asked = health::request(b.as_ref(), &mut list, s.observed, cfg.ttl);
+            health::Ask::new(b.as_ref(), list, asked, b.now().unwrap_or(s.observed), cfg.ttl)
+        }).collect();
+        if !json_out { eprintln!("doctor: asked every host of {} board(s) to run its health checks (up to {}s in all)", asks.len(), health::ASK_WAIT); }
+        health::collect(&mut asks, ttl, health::ASK_WAIT, health::ASK_POLL, &|t| std::thread::sleep(std::time::Duration::from_secs(t)));
+        let answered: Vec<(Vec<snapshot::Host>, health::Asked)> = asks.into_iter().map(|a| (a.hosts, a.asked)).collect();
+        for ((cfg, b, s), (list, asked)) in opened.iter_mut().zip(answered) {
+            s.hosts = list;
+            let now = b.now().unwrap_or(s.observed + asked.waited as i64);
+            let tag = |mut v: Value| { v["board"] = json!(cfg.repo); v };
+            let rows: Vec<Value> = s.hosts.iter().map(|h| tag(health::host_row(h, &cfg.repo, cfg.board.name == "gitlab", now, cfg.ttl, Some(&asked)))).collect();
+            let workers: Vec<Value> = health::worker_rows(s, cfg.ttl).into_iter().map(tag).collect();
+            if rows.is_empty() { host_rows.push(json!({"board": cfg.repo, "host": "-", "version": "-", "state": "unknown", "gaps": [], "reason": "no host heartbeat", "fix": "install a host service for this board: `taskq service install` in its project"})); }
+            host_rows.extend(rows.iter().cloned());
+            worker_rows.extend(workers.iter().cloned());
+            boards.push(json!({"board": cfg.repo, "hosts": rows, "workers": workers}));
+        }
+        out.extend(health::hosts_lines(&host_rows, &worker_rows));
     }
     if json_out {
         let mut v = json!({"boards": boards});

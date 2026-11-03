@@ -288,6 +288,13 @@ impl GitLab {
 }
 
 impl Board for GitLab {
+    /// #2246: GitLab token facts are the token's own scopes and the user's role on the project, two reads, no write
+    /// probe.
+    fn access(&self) -> Vec<(&'static str, crate::check::Probe)> {
+        let get = |url: &str| self.api.call("GET", url, None).and_then(|r| r.json());
+        crate::health::gitlab_access(&get(&format!("{}/personal_access_tokens/self", self.api.root)), &get(""))
+    }
+
     fn canonical_labels(&self) -> Result<bool> {
         self.api.canonical_labels()
     }
