@@ -233,11 +233,35 @@ parked = [spawn, comment(2, 'taskq: later attempt 1'), comment(3, 'taskq: requeu
           comment(6, 'taskq: answer\nProduct retained reading approved\nop-id: resumed\nrevision: 5')]
 assert 'Product retained reading approved' in approval(parked), 'stage Later must not discard a later owner decision'
 for invalid in [parked[:2] + parked[3:],
-                [spawn, comment(2, 'taskq: later #99 attempt 1')] + parked[2:],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct\nop-id: stale-stage\nrevision: 2')],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', author_association='NONE')],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', updated_at='edited')]]:
     assert approval(invalid) == '', 'stage parks retain admission, unsupported-transition, revision and trust fences'
+# #2232: a worker `later <ref> attempt` park (§2 row 23) made the gate unknown, so #2210's later §8 pick never approved.
+history_2210 = [comment(1, 'taskq: hold'), comment(2, 'taskq: start'), comment(3, 'taskq: spawn worker claude:invented win'),
+                comment(4, 'taskq: accepted 3 attempt 3'), comment(5, 'taskq: later coreq#116 attempt 3\nReason: coreq orders pre-releases lexically'),
+                comment(6, 'taskq: released 3 exit attempt 3'), comment(7, 'taskq: spawn worker claude:invented mac'),
+                comment(8, 'taskq: spawn worker claude:ignored win'),
+                comment(9, 'taskq: ask attempt 7\nDone: branch\nProblem: Tag coreq v0.19.1\nTo answer: `taskq answer 2210 --text <done>`.'),
+                comment(10, 'taskq: requeue\nPM tagged coreq v0.19.1.'), comment(11, 'taskq: spawn worker claude:invented mac'),
+                comment(12, 'taskq: result ' + 'd'*40 + ' attempt 11'), comment(13, 'taskq: spawn reviewer claude:invented win'),
+                comment(14, 'taskq: ask attempt 13\nDone: reviewed PR\nProblem: §8 changed: dev builds X.Y.Z-yymmdd-N.\n'
+                            '1. Approve §8 dev version format - + PR can merge; - none ★\n2. Keep §8 unchanged - + no change; - task unmet\n'
+                            'To answer: `taskq answer 2210.K` or comment `K` or the option text.'),
+                comment(15, 'taskq: answer 1\nApprove §8 dev version format - + PR can merge; - none'),
+                comment(16, 'taskq: executing 15 attempt 13')]
+replay = lambda history: check['approval_text'](history, 2210)
+text = replay(history_2210)
+assert '§8 changed' in text and 'Approve §8' in text and 'Keep §8' not in text, text
+unbound = lambda body, **fields: replay(history_2210[:14] + [comment(15, body, **fields)])
+for rejected in [unbound('taskq: answer 1 attempt 13'), unbound('taskq: answer 1\nop-id: stale\nrevision: 9'),
+                 unbound('1', author_association='NONE'), unbound('1', updated_at='edited')]:
+    assert '§8' not in rejected, rejected
+assert '§8' not in replay(history_2210[:14]), 'an unanswered ask grants nothing after a park'
+assert '§8' not in unbound('taskq: answer\nOwner approves'), 'an answer without a pick grants nothing'
+assert 'Keep §8' not in replay(history_2210[:14] + [comment(15, '1')]) and 'Keep §8' in replay(history_2210[:14] + [comment(15, '2')])
+assert '§8' not in replay(history_2210[:5] + [comment(7, 'taskq: ask attempt 3\nProblem: §8\n1. yes\n2. no'), comment(8, '1')]), \
+    'the parked attempt cannot ask after the park'
 # #2202: `taskq answer 2194 --text "2194.1 note"` resumed #2194, but the gate read no pick and stayed red.
 section6 = comment(2, 'taskq: ask attempt 1\nProblem: A4 changes rule Shared project bootstrap.\n1. approve the edit\n2. drop the edit')
 noted = lambda body: check['approval_text']([spawn, section6, comment(3, body)], 2194)
