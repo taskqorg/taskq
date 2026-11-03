@@ -78,6 +78,9 @@ pub trait Proc {
     fn accepted(&mut self) -> Result<bool, String> { Err("native input acceptance unavailable; reconcile this execution".into()) }
     /// #2221: the board holds a hand-in this attempt wrote after the execution began, so the execution took its input.
     fn accept(&mut self) {}
+    /// #2285: the board holds this execution's exact Exit release; `exited` may then confirm the process ended
+    /// without the input evidence a live stop needs. It proves exit only, never input acceptance.
+    fn released(&mut self) {}
     /// The exit code once the child has exited; `Err` is an unknown read (§ 4 reconciliation), never an exit.
     fn exited(&mut self) -> Result<Option<i32>, String>;
     fn exit_error(&self) -> Option<&'static str> { None }
@@ -1448,7 +1451,7 @@ pub fn recover(root:&Path,install:&Path,task:u64,x:&crate::core::Execution)->Res
         "claude"=>Ok(Box::new(ClaudeTurn {root:root.clone(),log,session:if x.id==x.attempt {String::new()} else {binding["native"]["session"].as_str().unwrap_or_default().to_owned()},
             id:String::new(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,mode:"unknown: recovered observer".into(),input,_input_file:input_file,pid:0,done:false,failure:None,
             native:saved.map(|k|k.process),recovery:Some(Recovery {install:install.into(),root:root.clone(),task,attempt:x.attempt,execution:x.id,runtime:"claude".into()}),
-            handed:false,launch_error:Some("recovered execution; original native input acceptance pending".into()),resumed:None,lost:None})),
+            handed:false,released:false,launch_error:Some("recovered execution; original native input acceptance pending".into()),resumed:None,lost:None})),
         "codex-app"=>{
             let thread=binding["native"]["thread"].as_str().filter(|s|s.len()>1 && s.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-')).ok_or("native App thread identity missing; inspect original handshake, never requeue")?.to_owned();
             Ok(Box::new(AppTurn {root,history:AppHistory::default(),hand:None,log,text:input,_input:Some(input_file),binding:Some(binding),thread,done:0,rollout:None,running:app_running,control:app_cancel,cancelled:false,
@@ -1666,6 +1669,8 @@ pub struct ClaudeTurn {
     failure: Option<&'static str>,
     /// #2221: this attempt handed in on the board after the execution began.
     handed: bool,
+    /// #2285: the board holds this execution's exact Exit release; proves exit only, never input acceptance.
+    released: bool,
     launch_error: Option<String>,
     /// #2272: launch time of a resume of a saved conversation; None for a new conversation and a recovered observer.
     resumed: Option<std::time::Instant>,
@@ -1909,14 +1914,15 @@ impl ClaudeTurn {
         let (id,session,_)=matched.pop().ok_or_else(missing)?;
         // #2221: a resume with flags can make Claude continue in a copy with a new conversation. Only this attempt's
         // board hand-in lets the copy that holds this exact input stand in for the saved conversation.
-        if !self.session.is_empty() && session!=self.session && !self.handed {return Err(format!("Claude original input found in copied job {id}; conversation identity differs; inspect native state"));}
+        if !self.session.is_empty() && session!=self.session && !self.handed && !self.released {return Err(format!("Claude original input found in copied job {id}; conversation identity differs; inspect native state"));}
         let before=if session==self.session {self.before} else {0};
-        if !self.history.read(&claude_transcript_in(home,&session)?,before,&self.input,&self.log)? && !self.handed {
+        let read=self.history.read(&claude_transcript_in(home,&session)?,before,&self.input,&self.log)?;
+        if !read && !self.handed && !self.released {
             return Err(missing());
         }
         self.id=id;
         self.session=session;
-        self.accepted=true;
+        self.accepted=read || self.handed;
         Ok(())
     }
 
@@ -1949,7 +1955,7 @@ impl ClaudeTurn {
             spec.env.retain(|(k, _)| !["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"].iter().any(|r| k == r));
         }
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),
-            announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, handed:false, launch_error:None,
+            announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, handed:false,released:false, launch_error:None,
             resumed: l.resume.is_some().then(std::time::Instant::now), lost: None };
         let out=agentq_runtime::agent::background_launch(background_base(c, &spec), &spec, &turn.input, std::time::Duration::from_secs(30))?;
         turn.finish_launch(out)?;
@@ -2015,12 +2021,19 @@ impl Proc for ClaudeTurn {
         if self.accepted || self.handed {Ok(true)} else if let Some(e)=&self.launch_error {Err(e.clone())} else {Ok(false)}
     }
     fn accept(&mut self) { self.handed=true; }
+    fn released(&mut self) { self.released=true; }
     fn exited(&mut self) -> Result<Option<i32>, String> {
         if self.done { return Ok(Some(if self.failure.is_some() {-1} else {0})); }
         let rows = self.agents()?;
         let home=self.native_home();
         self.recover_job(&rows,home.as_deref())?;
         let row = rows.iter().find(|v| v["id"] == self.id).ok_or("Claude session unavailable; state unknown")?;
+        // #2285: a board Exit needs only native exit; a live job contradicts it and stays running
+        if self.released && !self.accepted && !self.handed {
+            if !claude_exit(row, self.native.as_ref(), true)? {return Ok(None);}
+            self.done=true;
+            return Ok(Some(0));
+        }
         let observed=self.observe(row);
         if self.accepted {self.launch_error=None;}
         if matches!(observed,Ok(None)) && self.launch_error.is_some() {return Err(self.launch_error.clone().unwrap());}
@@ -4516,7 +4529,7 @@ finally:
             assert_eq!((record["task"].as_u64(),record["attempt"].as_u64(),record["execution"].as_u64()),(Some(7),Some(42),Some(44)));
             assert_eq!(record["input"],input);assert!(!written.contains("private task body"));
             let mut turn=ClaudeTurn {root:root.clone(),log:log.clone(),session:l.session.clone(),id:if case=="copy" {uuid()} else {String::new()},
-                announced:false,accepted:false,history:ClaudeHistory::default(),before:10,mode:"dontAsk".into(),input:input.clone(),_input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,launch_error:None,resumed:None,lost:None};
+                announced:false,accepted:false,history:ClaudeHistory::default(),before:10,mode:"dontAsk".into(),input:input.clone(),_input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,released:false,launch_error:None,resumed:None,lost:None};
             if case=="log" {std::fs::remove_file(&log).unwrap();std::fs::create_dir(&log).unwrap();}
             let output=match case {
                 "timeout"=>Err(coreq::process::Failure::Timeout),
@@ -4606,7 +4619,7 @@ finally:
             if case=="large-locator" {std::fs::write(&locator,"x".repeat(1024*1024+1)).unwrap();}
             if case=="large-unrelated" {std::fs::write(&b,"x".repeat(8*1024*1024+1)).unwrap();}
             let mut turn=ClaudeTurn {root:root.clone(),log:root.join("attempt.log"),session:if matches!(case,"resume"|"old") || shared {session.clone()} else if case=="copied" {other.clone()} else {String::new()},id:if matches!(case,"known"|"two-jobs"|"resume") {"c37eb75a".into()} else {String::new()},
-                announced:false,accepted:false,history:ClaudeHistory::default(),before:usize::from(matches!(case,"resume"|"old") || shared),mode:"dontAsk".into(),input:input.clone(),_input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,launch_error:Some("launch response lost".into()),resumed:None,lost:None};
+                announced:false,accepted:false,history:ClaudeHistory::default(),before:usize::from(matches!(case,"resume"|"old") || shared),mode:"dontAsk".into(),input:input.clone(),_input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,released:false,launch_error:Some("launch response lost".into()),resumed:None,lost:None};
             let plain=if cfg!(windows) {PathBuf::from(root.to_str().unwrap().trim_start_matches(r"\\?\"))} else {root.join("projects/..")};
             let cwd=match case {"foreign"=>root.parent().unwrap(),"native-cwd"=>plain.as_path(),_=>root.as_path()};
             let mut rows=vec![serde_json::json!({"id":"c37eb75a","kind":"background","sessionId":session,"cwd":cwd,"state":"working"})];
@@ -4667,7 +4680,7 @@ finally:
         let input_path=evidence.join("input.txt");let input=std::fs::read_to_string(&input_path).unwrap();
         let log=evidence.join("candidate-readback.log");File::create(&log).unwrap();
         let mut turn=ClaudeTurn {root,log,session:String::new(),id:String::new(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,
-            mode:"inherited-probe".into(),input,_input_file:coreq::file_lock::try_lock_shared_file(File::open(input_path).unwrap()).unwrap(),pid,native:Some(coreq::process::Identity {pid,started:identity["started"].as_str().unwrap().into()}),recovery:None,done:false,failure:None,handed:false,launch_error:Some("fixture: launch reply lost".into()),resumed:None,lost:None};
+            mode:"inherited-probe".into(),input,_input_file:coreq::file_lock::try_lock_shared_file(File::open(input_path).unwrap()).unwrap(),pid,native:Some(coreq::process::Identity {pid,started:identity["started"].as_str().unwrap().into()}),recovery:None,done:false,failure:None,handed:false,released:false,launch_error:Some("fixture: launch reply lost".into()),resumed:None,lost:None};
         assert_eq!(turn.exited(),Ok(Some(0)));
         assert_eq!(turn.accepted(),Ok(true));assert_eq!(turn.id,result["job"].as_str().unwrap());
         assert_eq!(turn.session,result["session"].as_str().unwrap());
@@ -4734,11 +4747,15 @@ finally:
         // The § 4 recovery shape: saved session from the binding, no job id, no recorded process.
         let mut t=ClaudeTurn {root:root.clone(),log:root.join("attempt.log"),session:saved.clone(),id:String::new(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,
             mode:"unknown: recovered observer".into(),input,_input_file:lock,pid:0,native:None,recovery:Some(Recovery {root:root.clone(),install,task:2188,attempt:10,execution:11,runtime:"claude".into()}),
-            done:false,failure:None,handed:false,launch_error:Some("recovered execution; original native input acceptance pending".into()),resumed:None,lost:None};
+            done:false,failure:None,handed:false,released:false,launch_error:Some("recovered execution; original native input acceptance pending".into()),resumed:None,lost:None};
         let refused=t.recover_job(&rows,Some(&root)).unwrap_err();
         assert!(refused.contains("copied job 94f2ba2a"),"no hand-in: the copy stays refused: {refused}");
         assert!(t.id.is_empty() && !t.accepted && t.persist().is_err());
         assert!(claude_exit(&done,None,false).is_err(),"no hand-in: a terminal row alone is no exit");
+        // #2285: a board Exit release lets the copy stand in for its exit; acceptance still needs the transcript readback
+        t.released();
+        t.recover_job(&rows,Some(&root)).unwrap();
+        assert_eq!((t.id.as_str(),t.accepted,t.handed),("94f2ba2a",t.history.ended,false),"a board Exit is no hand-in");
         t.accept();
         t.recover_job(&rows,Some(&root)).unwrap();
         assert_eq!((t.id.as_str(),t.session.as_str()),("94f2ba2a",copy.as_str()),"the hand-in adopts the copy holding this exact input");
@@ -4765,7 +4782,7 @@ finally:
         let session=uuid();
         let (input,lock,_)=claude_input(&root,"answered resume body",None).unwrap();
         let mut t=ClaudeTurn {root:root.clone(),log:root.join("attempt.log"),session:session.clone(),id:"5d1e0b7a".into(),announced:false,accepted:false,history:ClaudeHistory::default(),before:3,
-            mode:"dontAsk".into(),input,_input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,launch_error:None,
+            mode:"dontAsk".into(),input,_input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,released:false,launch_error:None,
             resumed:Some(std::time::Instant::now()),lost:None};
         let mut row=serde_json::json!({"id":"5d1e0b7a","kind":"background","sessionId":session,"cwd":root,"state":"done"});
         let early=t.observe(&row).unwrap_err();
@@ -4806,7 +4823,7 @@ finally:
         let mut child=Command::new(std::env::current_exe().unwrap()).args(["--exact","runtime::tests::stop_child","--ignored"])
             .stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
         let mut t=ClaudeTurn {root:root.clone(),log,session:l.session.clone(),id:"c37eb75a".into(),announced:false,accepted:true,history:ClaudeHistory::default(),before:0,mode:"fixture".into(),input,
-            _input_file:lock,pid:0,native:None,recovery:Some(Recovery {root:root.clone(),install:install.clone(),task:7,attempt:42,execution:42,runtime:"claude".into()}),done:false,failure:None,handed:false,launch_error:None,resumed:None,lost:None};
+            _input_file:lock,pid:0,native:None,recovery:Some(Recovery {root:root.clone(),install:install.clone(),task:7,attempt:42,execution:42,runtime:"claude".into()}),done:false,failure:None,handed:false,released:false,launch_error:None,resumed:None,lost:None};
         let row=serde_json::json!({"id":t.id,"sessionId":t.session,"pid":child.id(),"state":"working"});
         t.capture_identity(&row).unwrap();let original=t.native_identity().unwrap();
         std::fs::write(install.join("native"),"fixture: unavailable recovery directory").unwrap();
@@ -4943,7 +4960,7 @@ finally:
             std::fs::write(root.join("native-pid"),pid.to_string()).unwrap();
             agents("working",Some(pid));
             let turn=ClaudeTurn {root:root.clone(),log,session:String::new(),id:"c37eb75a".into(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,mode:"dontAsk".into(),input,
-                _input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,launch_error:None,resumed:None,lost:None};
+                _input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,released:false,launch_error:None,resumed:None,lost:None};
             s.kids.push(crate::service::Kid {unknown:None,stopping:false,session_url:None,execution:a,task:n,attempt:a,rt:"claude".into(),proc:Box::new(turn)});
             assert!(crate::lifecycle_waits(&s,false).contains(&format!("#{n}")),"no native identity: re-exec defers");
             s.kids[0].proc.checkpoint(&c,&l,a).unwrap();
@@ -4990,7 +5007,7 @@ finally:
         let turn=|task:u64,id:&str|ClaudeTurn { root:root.clone(), log:root.join(format!("{task}.log")), session:String::new(),
             id:id.into(), announced:false, accepted:true, history:ClaudeHistory::default(), before:0, mode:"dontAsk".into(),
             input:"input".into(), _input_file:coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid:0, native:None,
-            recovery:Some(Recovery {install:install.clone(),root:root.clone(),task,attempt:task*10,execution:task*10,runtime:"claude".into()}), done:false, failure:None, handed:false, launch_error:None, resumed:None, lost:None };
+            recovery:Some(Recovery {install:install.clone(),root:root.clone(),task,attempt:task*10,execution:task*10,runtime:"claude".into()}), done:false, failure:None, handed:false,released:false, launch_error:None, resumed:None, lost:None };
         let row=|id:&str,pid:u32|serde_json::json!({"id":id,"state":"working","pid":pid});
         let mut a=turn(1557,"c2fc6503");
         a.capture_identity(&row("c2fc6503",first.id())).unwrap();a.persist().unwrap();
@@ -5023,7 +5040,7 @@ finally:
         let turn=|accepted:bool,session:&str|ClaudeTurn { root:root.clone(), log:root.join("1592.log"), session:session.into(),
             id:"c37eb75a".into(), announced:false, accepted, history:ClaudeHistory::default(), before:0, mode:"dontAsk".into(),
             input:"input".into(), _input_file:coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid:0, native:Some(recorded.clone()),
-            recovery:Some(Recovery {install:install.clone(),root:root.clone(),task:1592,attempt:10,execution:11,runtime:"claude".into()}), done:false, failure:None, handed:false, launch_error:None, resumed:None, lost:None };
+            recovery:Some(Recovery {install:install.clone(),root:root.clone(),task:1592,attempt:10,execution:11,runtime:"claude".into()}), done:false, failure:None, handed:false,released:false, launch_error:None, resumed:None, lost:None };
         let session="0b6c3f4e-8f2a-4c1d-9e7b-5a2d1c3b4e6f";
         let row=serde_json::json!({"id":"c37eb75a","sessionId":session,"state":"working","pid":new.id()});
         let fenced=|mut t:ClaudeTurn|{let e=t.capture_identity(&row).unwrap_err();assert!(e.contains("process changed"),"{e}");assert_eq!(t.native.as_ref(),Some(&recorded));};
@@ -5058,7 +5075,7 @@ finally:
         child.kill().unwrap();child.wait().unwrap();
         let turn=ClaudeTurn { root:root.clone(), log:root.join("attempt.log"), session:String::new(), id:"c37eb75a".into(), announced:false, accepted:true,
             history:ClaudeHistory::default(), before:0, mode:"dontAsk".into(), input:"input".into(),
-            _input_file:coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid:0, native:Some(native), recovery:None, done:false, failure:None, handed:false, launch_error:None, resumed:None, lost:None };
+            _input_file:coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid:0, native:Some(native), recovery:None, done:false, failure:None, handed:false,released:false, launch_error:None, resumed:None, lost:None };
         let mut s=crate::service::Service::new(&b,&c,"test",Box::new(|_|unreachable!()));
         s.kids.push(crate::service::Kid {unknown:None,stopping:false,session_url:None,execution:a,task:n,attempt:a,rt:"claude".into(),proc:Box::new(turn)});
         let path=crate::kids_path(&root,&root).unwrap();
@@ -5099,7 +5116,7 @@ finally:
         File::create(&log).unwrap();
         let mut t = ClaudeTurn { root:root.clone(), log, session:uuid(),
             id: "c37eb75a".into(), announced: false, accepted:false, history:ClaudeHistory::default(), before: 0, mode: "dontAsk".into(),
-            input: "invented input".into(), _input_file: coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid: 0, native:None, recovery:None, done: false, failure: None, handed:false, launch_error:None, resumed:None, lost:None };
+            input: "invented input".into(), _input_file: coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid: 0, native:None, recovery:None, done: false, failure: None, handed:false,released:false, launch_error:None, resumed:None, lost:None };
         assert!(native_job_id(&t.id));
         assert!(native_job_id(&uuid()));
         for id in ["--all","../c37eb75a","c37eb75a --all","invented-job",""] {assert!(!native_job_id(id));}

@@ -2132,6 +2132,26 @@ impl<'a> Service<'a> {
                     deferred.get_or_insert(k.execution);
                     k.unknown=Some("native observation deferred; cancellation pending".into());return true;
                 }
+                // #2285: a closed or replaced attempt whose exact execution the board already released by Exit needs
+                // only native exit (runtime-qualification.md:465); a live or unreadable process stays a named wait
+                let exit=match by_n.get(&k.task) {
+                    Some(v)=>Ok(v.projection.executions.clone()),
+                    None=>crate::board::entries(self.board,k.task).map(|l|core::project(k.task,&l,false).executions),
+                };
+                let exit=exit.map(|x|x.into_iter().any(|x|x.id==k.execution && x.attempt==k.attempt && x.host==self.cfg.me
+                    && x.runtime==k.rt && x.release==Some(core::Release::Exit)));
+                if let Ok(true)=exit {
+                    k.proc.released();
+                    match crate::runtime::observe_until(native_until,||k.proc.exited()) {
+                        Ok(Some(_))=>{
+                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
+                            released.insert(k.execution);stopped.push((k.task,k.attempt));
+                            return false;
+                        }
+                        Ok(None)=>{k.unknown=Some(format!("execution {} released by Exit on the board, native process still running",k.execution));return true;}
+                        Err(e)=>{k.unknown=Some(format!("execution {} released by Exit on the board, native exit unconfirmed: {e}",k.execution));return true;}
+                    }
+                }
                 let handed = by_n.get(&k.task).is_some_and(|v| core::handed_in(k.task, &v.log, k.attempt, k.execution));
                 let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
                 let pid_before = k.proc.id();
@@ -5281,6 +5301,48 @@ Open: none")).unwrap();
         { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
         assert!(handover_pass(&mut s, &host, &root), "released history must reach re-exec: {:?}", s.handoff_waits(true, false));
         assert!(s.observations.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // #2285 Mac repro: #2252 closed while this service still held the handle of its resumed execution 6595390316,
+    // which Claude ran as a copied job. Stop needs the input in the saved conversation, so it failed every pass and
+    // the re-exec waited for an owner kickstart although the board held that execution's exact Exit release.
+    #[test]
+    fn closed_2252_board_exit_retires_the_copied_job_handle() {
+        struct Copied { live: Rc<std::cell::Cell<bool>>, released: bool }
+        impl Proc for Copied {
+            fn released(&mut self) { self.released = true; }
+            fn exited(&mut self) -> Result<Option<i32>, String> {
+                if !self.released { return Err("Claude original input found in copied job; inspect native state".into()); }
+                Ok((!self.live.get()).then_some(0))
+            }
+            fn kill(&mut self) -> Result<(), String> { Err("Claude original input found in copied job; inspect native state".into()) }
+            fn id(&self) -> u32 { 0 }
+        }
+        let root = std::env::temp_dir().join(format!("taskq-closed-exit-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let b = Fake::default();
+        let n = b.create("Closed history", "", &[TASK_LABEL.into()]).unwrap();
+        let history: Vec<core::Entry> = serde_json::from_str(include_str!("../tests/fixtures/reexec-2252.json").trim_start_matches('\u{feff}')).unwrap();
+        for e in &history { b.state.borrow_mut().next_id = e.id - 1; b.comment(n, &e.body).unwrap(); }
+        b.close(n).unwrap();
+        let mut c = cfg("mac"); c.root = root.clone(); c.install = root.clone();
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Err("fixture holds launches".into()))));
+        let mut s = Service::new(&b, &c, "fixture", Box::new(|_| panic!("restart must not launch")));
+        s.host = Some(host.clone());
+        let live = Rc::new(std::cell::Cell::new(true));
+        s.kids.push(Kid { task: n, attempt: 6595327803, execution: 6595390316, rt: "claude".into(), proc: Box::new(Copied { live: live.clone(), released: false }), unknown: None, stopping: false, session_url: None });
+        { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
+        let releases = || b.comments(n).unwrap().iter().filter(|e| e.body.starts_with("taskq: released 6595390316")).count();
+        let before = releases();
+        // A live process contradicting the board Exit is never killed or retired; the overdue wait names it.
+        assert!(!handover_pass(&mut s, &host, &root));
+        let line = crate::restart_line(&json!({"restart_waits": crate::restart_waits(&s, false), "restart_overdue": true})).unwrap();
+        assert!(line.contains("pending over 600 s") && line.contains("released by Exit on the board, native process still running"), "{line}");
+        live.set(false);
+        assert!(handover_pass(&mut s, &host, &root), "board Exit plus native exit must reach re-exec: {:?}", crate::lifecycle_waits(&s, false));
+        assert!(s.kids.is_empty());
+        assert_eq!(releases(), before, "the existing release stands; no second release is written");
         std::fs::remove_dir_all(root).unwrap();
     }
 
