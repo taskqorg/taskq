@@ -242,8 +242,13 @@ fn hook_binaries(v: &Value, out: &mut Vec<String>) {
 pub fn hook_item(agentq: &Path, files: &[std::path::PathBuf]) -> Item {
     const ID: &str = "agentq-hook";
     const ONBOARD: &str = "run `agentq onboard --yes`: it installs the current launcher and rewrites the hooks";
-    if !agentq.exists() { return Item::ok(ID, "agentq is not installed"); }
     let unknown = |what: String| Item::unknown(ID, what, "run `agentq doctor`; if it names no cause, `agentq onboard --yes`");
+    match std::fs::metadata(agentq) {
+        Ok(m) if m.is_dir() => {},
+        Ok(_) => return unknown("agentq install folder is not a directory".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Item::ok(ID, "agentq is not installed"),
+        Err(e) => return unknown(format!("agentq install folder unreadable: {}", short(&e.to_string()))),
+    }
     let mut hooks = vec![];
     for f in files {
         let name = f.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -269,8 +274,11 @@ pub fn hook_item(agentq: &Path, files: &[std::path::PathBuf]) -> Item {
     };
     for (file, bin) in &hooks {
         let path = if bin.contains(['/', '\\']) { std::path::PathBuf::from(bin) } else { agentq.join(agentq_exe()) };
-        let same = std::fs::metadata(&path).is_ok_and(|m| m.len() == release.len() as u64) && std::fs::read(&path).is_ok_and(|b| b == release);
-        if !same {
+        let binary = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => return unknown(format!("agentq hook in {file} binary unreadable: {}", short(&e.to_string()))),
+        };
+        if binary != release {
             return Item::gap(ID, format!("agentq hook in {file} runs {}, not the current release {current}", path.display()), ONBOARD);
         }
     }
@@ -318,7 +326,7 @@ pub fn board_items(b: &dyn crate::board::Board, repo: &str, gitlab: bool, root: 
         Some(h) => trust_item(h, &root.canonicalize().unwrap_or_else(|_| root.to_path_buf())),
         None => Item::unknown("claude-trust", "no home folder (HOME, USERPROFILE) to read the Claude config from", "run `taskq service install` as the OS user that runs Claude"),
     });
-    match crate::agentq::root() {
+    match crate::platform::agentq_root() {
         Ok(a) => {
             items.push(hook_item(&a, &hook_files(home.as_deref())));
             items.push(data_item(&a));
@@ -892,6 +900,39 @@ mod tests {
         let h = Host { name: "mac".into(), version: "4.7.0".into(), updated: now - 10, doctor: Some("9900 agentq-hook:gap".into()), ..Default::default() };
         let row = host_row(&h, "o/r", false, now, 120, None);
         assert_eq!((row["state"].as_str(), row["fix"].as_str()), (Some("gap"), Some("run `agentq onboard --yes` on mac: its client hooks run an old agentq (`taskq doctor` names the hook)")), "{row}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // R12 / #2300 A1: failed filesystem observations must not claim an old hook or an absent install.
+    // Keep the stale-byte regression above; these cases protect distinct metadata and binary-read failures.
+    #[test]
+    fn doctor_hook_read_failures_are_unknown() {
+        let base = scratch("hook-unreadable");
+        let agentq = base.join("agentq");
+        let exe = agentq_exe();
+        std::fs::create_dir_all(agentq.join("releases/1.2.0")).unwrap();
+        std::fs::write(agentq.join("current"), "1.2.0").unwrap();
+        std::fs::write(agentq.join("releases/1.2.0").join(exe), b"current").unwrap();
+        let hook = base.join("hooks.json");
+        std::fs::write(&hook, json!({"command": "agentq hook antigravity PreToolUse"}).to_string()).unwrap();
+        let files = vec![hook];
+        assert_eq!(hook_item(&agentq, &files).status, "unknown", "missing hook binary is unread, not proved old");
+        std::fs::create_dir(agentq.join(exe)).unwrap();
+        assert_eq!(hook_item(&agentq, &files).status, "unknown", "a directory cannot be read as a hook binary");
+        let blocked = base.join("file");
+        std::fs::write(&blocked, "not a directory").unwrap();
+        assert_eq!(hook_item(&blocked, &files).status, "unknown", "an install path that is a file is not an absent install");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(hook_item(&blocked.join("agentq"), &files).status, "unknown", "install metadata failure is not absence");
+            let parent = base.join("denied");
+            std::fs::create_dir_all(parent.join("agentq")).unwrap();
+            std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let denied = hook_item(&parent.join("agentq"), &files);
+            std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert_eq!(denied.status, "unknown", "inaccessible install root must not read as not installed");
+        }
         let _ = std::fs::remove_dir_all(&base);
     }
 

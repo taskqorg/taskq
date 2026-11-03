@@ -10,6 +10,13 @@ pub use coreq::{Tool, quiet, write_atomic};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// AgentQ install layout, shared by host health checks and optional desktop onboarding.
+pub fn agentq_root()->crate::Res<PathBuf> {
+    let key=if cfg!(windows){"LOCALAPPDATA"}else{"HOME"};
+    let base=std::env::var_os(key).map(PathBuf::from).filter(|p|p.is_absolute()).ok_or_else(||format!("{key} unavailable"))?;
+    Ok(if cfg!(windows){base.join("agentq")}else{base.join(".local/share/agentq")})
+}
+
 /// #1445: temp file, flush, rename, then the folder entry; a power loss leaves the old or the new record.
 /// ponytail: a temp torn by a power cut stays beside the record (one name per pid); sweep them if they pile up.
 pub fn write_synced(p: &Path, text: &str) -> Result<(), String> {
