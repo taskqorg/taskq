@@ -1015,7 +1015,8 @@ impl<'a> Service<'a> {
         self.beat_reduced(false)
     }
 
-    /// The heartbeat of a reduced or observe pass: at most every `ttl / 5`, at once when its children changed.
+    /// The heartbeat of a reduced or observe pass: read at most every `ttl / 5`, at once when its children changed;
+    /// written like a full pass (§ 8 step 3): every `ttl / 3` or on a change outside `at`/diagnostics times.
     fn beat_reduced(&mut self, changed: bool) -> Result<(), String> {
         if changed || self.reduced_at.is_none_or(|t| self.mono.saturating_sub(t) >= (self.cfg.ttl / 5).max(1) as u64) {
             self.reduced_at = Some(self.mono);
@@ -1023,7 +1024,7 @@ impl<'a> Service<'a> {
                 let hb = self.board.issue(n)?;
                 let now = self.board.now()?;
                 let body = self.heartbeat_body();
-                if now - hb.updated >= self.cfg.ttl / 5 || !hb.body.lines().filter(|l| !l.starts_with("at ")).eq(body.lines()) {
+                if now - hb.updated >= self.cfg.ttl / 3 || stable(&hb.body) != stable(&body) {
                     self.board.edit(n, &format!("{body}\nat {now}"))?;
                 }
             }
@@ -6193,6 +6194,31 @@ Open: none")).unwrap();
         let mut d: Value = serde_json::from_str(&line["diagnostics ".len()..]).unwrap();
         d["running"]["value"] = json!("9.9.9");
         assert_ne!(stable(&body), stable(&body.replace(line, &format!("diagnostics {d}"))), "a changed diagnostics value is written at once");
+    }
+
+    // Chain: § 8 step 3, board budget. Risk: a reduced or observe pass (Stop barrier, quarantine) rewrote the
+    // heartbeat every ttl / 5 because live diagnostics times changed its raw lines; one PATCH a minute per project.
+    #[test]
+    fn reduced_heartbeat_ignores_diagnostics_times_and_writes_at_a_third_of_ttl() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        let mut s = service(&b, &c, Default::default());
+        s.instance="abcdef012345".into();
+        let beat = |b: &Fake| b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host mac").map(|i| i.updated).unwrap();
+        s.pass().unwrap();
+        let (mut writes, mut last) = (0, beat(&b));
+        for t in 1..=360 {
+            b.advance(10);
+            s.mono = t * 10;
+            assert!(b.now().unwrap() - beat(&b) < c.ttl, "lease stays fresh between reduced passes");
+            let mut d = s.service_diagnostics();
+            d["observed"] = json!(b.now().unwrap());
+            d["running"]["at"] = json!(b.now().unwrap());
+            *s.diagnostics.borrow_mut() = Some((std::time::Instant::now(), d));
+            s.reduced().unwrap();
+            if beat(&b) != last { writes += 1; last = beat(&b); }
+        }
+        assert!(writes <= 3600 / (c.ttl / 3), "{writes} reduced writes in an hour, want at most one per ttl / 3");
     }
 
     // Chain: § 4 heartbeat, status.json hosts (#1729 A3). Risk: after a sleep the pass reads this host's heartbeat
