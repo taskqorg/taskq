@@ -41,7 +41,8 @@ jobs:
     strategy:
       matrix:
         os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
-    runs-on: ${{ matrix.os }}
+    # docs/testing.md: macOS runs on the self-hosted Apple-silicon runner; the matrix value keeps the required check name.
+    runs-on: ${{ matrix.os == 'macos-latest' && fromJSON('["self-hosted", "macOS", "ARM64", "taskq-mac"]') || matrix.os }}
     timeout-minutes: 16
     steps:
       - uses: actions/checkout@v4
