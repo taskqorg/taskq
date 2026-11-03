@@ -1827,6 +1827,9 @@ impl ClaudeHistory {
     }
 }
 
+/// A native cwd that canonicalizes to the project root or a path below it; anything else is another project.
+fn inside_root(root: &Path, cwd: &str) -> bool { Path::new(cwd).canonicalize().is_ok_and(|c| c.starts_with(root)) }
+
 /// Native intent locates a candidate; only its user-message readback can establish acceptance.
 fn claude_job_input(home:&Path,id:&str,session:&str,root:&Path,input:&str,budget:&mut u64)->Result<bool,String> {
     #[derive(serde::Deserialize)]
@@ -1840,7 +1843,7 @@ fn claude_job_input(home:&Path,id:&str,session:&str,root:&Path,input:&str,budget
     let value:Result<Input,_>=serde_json::from_reader(&mut reader);
     *budget=budget.checked_sub(limit-reader.limit()).ok_or("Claude recovery scan exceeds 8 MiB; original submission remains unknown")?;
     let value=value.map_err(|_|"Claude native input locator invalid")?;
-    if value.session!=session || Path::new(&value.cwd).canonicalize().map_err(|_|"Claude native input locator project unavailable")?!=root {
+    if value.session!=session || !inside_root(root,&value.cwd) {
         return Err("Claude native input locator identity differs from native job list".into());
     }
     Ok(value.intent.as_deref().is_some_and(|text|text.trim()==input))
@@ -1917,9 +1920,10 @@ impl ClaudeTurn {
             if row["kind"]=="interactive" {continue;}
             if row["kind"]!="background" {return Err("Claude recovery job kind unknown".into());}
             let root=row["cwd"].as_str().ok_or("Claude recovery project unknown")?;
-            // Native --cwd includes descendants; TaskQ submits the exact canonical project root.
+            // Native --cwd includes descendants; TaskQ submits the canonical project root.
             // #1627: native rows name the plain path; Windows canonical paths carry the `\\?\` prefix.
-            if Path::new(root).canonicalize().ok().as_deref()!=Some(self.root.as_path()) {continue;}
+            // #2262: a worker that entered a project worktree moves the job cwd below the root (as #2254 for stop).
+            if !inside_root(&self.root,root) {continue;}
             let session=row["sessionId"].as_str().filter(|s|s.len()==36 && native_job_id(s)).ok_or("Claude recovery session unknown")?;
             let id=row["id"].as_str().filter(|id|native_job_id(id)).ok_or("Claude native job identity unavailable during recovery")?;
             let same=session==self.session;
@@ -4887,6 +4891,34 @@ finally:
         let handed=fresh.observe(&row);
         assert!(handed!=Ok(Some(-1)) && fresh.lost_input().is_none() && !fresh.done,"a hand-in is acceptance, never a lost input: {handed:?}");
         let _=std::fs::remove_dir_all(root);
+    }
+
+    // Defect #2262: a recovered Claude execution whose worker entered `.worktrees/taskq-N` never matched its native
+    // job (cwd below the root), so acceptance stayed pending and status showed "progress source unavailable" until
+    // hand-in. Protection kept: a job whose cwd lies outside the project root is never adopted.
+    #[test]
+    fn recovered_worktree_claude_job_is_accepted_and_reports_progress() {
+        let base=std::env::temp_dir().join(format!("taskq-claude-wt-{}",uuid()));
+        let root=base.join("project");
+        for d in ["projects/a",".worktrees/taskq-7"] {std::fs::create_dir_all(root.join(d)).unwrap();}
+        std::fs::create_dir_all(base.join("other")).unwrap();
+        let (root,other)=(root.canonicalize().unwrap(),base.join("other").canonicalize().unwrap());
+        let session=uuid();
+        let (input,lock,_)=claude_input(&root,"worktree task body",None).unwrap();
+        let line=|v:serde_json::Value|v.to_string()+"\n";
+        std::fs::write(root.join("projects/a").join(format!("{session}.jsonl")),line(serde_json::json!({"type":"user","message":{"content":input}}))
+            +&line(serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}))).unwrap();
+        let mut t=ClaudeTurn {root:root.clone(),log:root.join("attempt.log"),session:session.clone(),id:String::new(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,
+            mode:"unknown: recovered observer".into(),input,_input_file:lock,pid:0,native:None,recovery:None,
+            done:false,failure:None,handed:false,released:false,launch_error:Some("recovered execution; original native input acceptance pending".into()),resumed:None,lost:None};
+        let row=|cwd:&Path|serde_json::json!({"id":"5be0c1d2","kind":"background","sessionId":session,"cwd":cwd,"state":"working"});
+        let refused=t.recover_job(&[row(&other)],Some(&root)).unwrap_err();
+        assert!(refused.contains("original input not found") && !t.accepted,"outside the root stays unknown: {refused}");
+        assert!(t.progress_source().is_err());
+        t.recover_job(&[row(&root.join(".worktrees/taskq-7"))],Some(&root)).unwrap();
+        assert!(t.accepted && t.id=="5be0c1d2","worktree job adopted");
+        assert_eq!(t.progress_source().map(|(p,_)|p),Ok(root.join("attempt.log")),"native progress readable");
+        let _=std::fs::remove_dir_all(base);
     }
 
     // Chain: native identity -> failed/retried protected checkpoint -> cold observer -> exact process exit.
