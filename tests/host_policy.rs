@@ -278,7 +278,7 @@ fn weighted_balance_cli_preserves_host_policy() {
     let text=run(&["balance"],false);assert!(text.status.success());
     assert!(String::from_utf8_lossy(&text.stdout).contains("\"claude\":2"));
     let original=fs::read(root.join("host.json")).unwrap();
-    for args in [vec!["balance","claude=0"],vec!["balance","codex=-1"],vec!["balance","unknown=1"],vec!["balance","codex=1.5"],vec!["balance","codex=1","codex=2"],vec!["balance","--clear","codex=1"]] {
+    for args in [vec!["balance","claude=1000001"],vec!["balance","codex=-1"],vec!["balance","unknown=1"],vec!["balance","codex=1.5"],vec!["balance","codex=1","codex=2"],vec!["balance","--clear","codex=1"]] {
         assert!(!run(&args,false).status.success(),"{args:?}");
         assert_eq!(fs::read(root.join("host.json")).unwrap(),original);
     }
@@ -287,6 +287,9 @@ fn weighted_balance_cli_preserves_host_policy() {
     assert!(run(&["balance","codex=3"],false).status.success());
     let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
     assert_eq!(saved["weights"],json!({"codex":3}),"replace, not merge");
+    assert!(run(&["balance","claude=0"],false).status.success(),"weight 0 saves");
+    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"],json!({"claude":0}));
     assert!(run(&["balance","--clear"],false).status.success());
     let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
     assert_eq!(saved["weights"],json!({}));assert_eq!(saved["limits"],json!({"claude":4,"codex":2}));

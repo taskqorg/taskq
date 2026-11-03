@@ -7,8 +7,8 @@ pub type Weights = BTreeMap<String, u32>;
 pub fn weights(value: &serde_json::Value) -> Res<Weights> {
     let Some(value) = value.get("weights") else { return Ok(Weights::new()) };
     value.as_object().ok_or("weights must be an object")?.iter().map(|(rt,n)| {
-        let n = n.as_u64().filter(|n| (1..=1_000_000).contains(n) && crate::runtime::CLI_RUNTIMES.contains(&rt.as_str()))
-            .ok_or("weights need CLI runtime names and integers 1..1000000")?;
+        let n = n.as_u64().filter(|n| (0..=1_000_000).contains(n) && crate::runtime::CLI_RUNTIMES.contains(&rt.as_str()))
+            .ok_or("weights need CLI runtime names and integers 0..1000000")?;
         Ok((rt.clone(),n as u32))
     }).collect()
 }
@@ -32,7 +32,10 @@ pub fn select(labels:&[String], reviewer:bool, default:&str, auto_reroute:bool, 
     if weights.is_empty() || labels.iter().any(|l|l.starts_with("run-")) {
         return crate::labels::select_project(labels,reviewer,default,auto_reroute,disabled,eligible);
     }
+    // Weight 0: unpinned work and review never take this runtime, not even as fallback; `run-*` pins returned above.
     let mut candidates=crate::labels::candidates(labels,reviewer,default);
+    candidates.retain(|rt|weights.get(rt)!=Some(&0));
+    if candidates.is_empty() {return Err(("capacity","every candidate runtime has weight 0; pin one with run-<runtime>".into()));}
     candidates.sort_by(|a,b| {
         let rank=|rt:&str|weights.get(rt).zip(load.get(rt)).map(|(w,l)| {
             let effective=l.effective(*w);(l.running as f64/effective,effective)
@@ -93,7 +96,27 @@ mod tests {
         load.values_mut().for_each(|l|l.running=0);
         load.get_mut("claude").unwrap().headroom=Some(0.1);
         assert_eq!(pick(&weights,&load,&[],"",false).0,"codex","empty runtimes still honor headroom");
-        for v in [serde_json::json!({"weights":null}),serde_json::json!({"weights":{"codex":0}}),serde_json::json!({"weights":{"bogus":1}}),serde_json::json!({"weights":{"claude":1.5}})] {assert!(super::weights(&v).is_err());}
+        assert_eq!(super::weights(&serde_json::json!({"weights":{"antigravity":0}})).unwrap()["antigravity"],0);
+        for v in [serde_json::json!({"weights":null}),serde_json::json!({"weights":{"bogus":1}}),serde_json::json!({"weights":{"claude":1.5}})] {assert!(super::weights(&v).is_err());}
+    }
+
+    // #2240 A2, §4 Balancing: weight 0 excludes a runtime from unpinned work and review, fallback included;
+    // a run-* pin still takes it. Protects against a zero-weight runtime being picked when others are unavailable.
+    #[test]
+    fn zero_weight_runtime_only_by_pin() {
+        let weights=BTreeMap::from([("claude".into(),1),("codex".into(),1),("antigravity".into(),0)]);
+        let load:BTreeMap<String,Load>=["claude","codex","antigravity"].map(|rt|(rt.into(),Load{running:0,free:3,headroom:None})).into();
+        let busy=|rt:&str|if rt=="antigravity" {Ok(rt.into())}else{Err(("capacity",format!("{rt} full")))};
+        for review in [false,true] {
+            for default in ["antigravity","claude"] {
+                let err=select(&[],review,default,false,&weights,&load,|_|false,busy).unwrap_err();
+                assert!(!err.1.contains("antigravity"),"weight 0 is never a fallback: {err:?}");
+                assert_eq!(select(&["prefer-antigravity".into()],review,default,false,&weights,&load,|_|false,|rt|Ok(rt.into())).unwrap().0,"claude");
+            }
+            assert_eq!(select(&["run-antigravity".into()],review,"claude",false,&weights,&load,|_|false,busy).unwrap().0,"antigravity");
+        }
+        let only=BTreeMap::from([("antigravity".into(),0)]);
+        assert_eq!(select(&[],false,"antigravity",false,&only,&load,|_|false,|rt|Ok(rt.into())).unwrap().0,"claude","unweighted runtimes keep fallback");
     }
 
     // #2189 A5/A7, §4 Balancing: ties rotate and spare weighted capacity wins.

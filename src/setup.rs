@@ -382,6 +382,18 @@ mod tests {
         fs::remove_dir_all(install).unwrap();
     }
 
+    // #2240 A2: owner weights never touch a visible session that names its runtime, weight 0 included.
+    #[test]
+    fn owner_session_keeps_zero_weight_runtime() {
+        let install=tmp();
+        fs::write(install.join("host.json"),r#"{"weights":{"claude":0}}"#).unwrap();
+        let r=open_id(&install,&install,"zero weight","owner-2240","claude",false).unwrap();
+        assert_eq!(r.runtime,"claude");
+        step(&install,ok).unwrap();
+        assert_eq!(open_id(&install,&install,"zero weight","owner-2240","claude",true).unwrap().state,"launched");
+        fs::remove_dir_all(install).unwrap();
+    }
+
     // #1464 A5: a duplicate/crossed request never creates a second session, even after service launch.
     #[test]
     fn owner_request_retries_read_the_same_record_and_refuse_changed_input() {
