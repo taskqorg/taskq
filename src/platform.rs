@@ -627,10 +627,11 @@ fn channel_update(install:&Path,fetch:&dyn Fn(&str,&Path)->Result<(),String>)->R
     Ok(None)
 }
 
-/// § 8 item 1 dev install: the SHA to start now. None on `live`, while a build runs, or for the installed or an
-/// already started SHA (a started SHA never restarts, so a failed build is not retried); `ci` is read only after that.
-pub fn dev_next(channel:&str,main:Option<&str>,installed:Option<&str>,started:Option<&str>,building:bool,ci:&mut dyn FnMut(&str)->Result<(),String>)->Option<String> {
-    let sha=main.filter(|m|channel=="dev"&&!building&&Some(*m)!=installed&&Some(*m)!=started)?;
+/// § 8 item 1 dev install: the SHA to start now. None on `live`, without a request (#2311: on demand only), while a
+/// build runs, or for the installed or an already started SHA (a started SHA never restarts, so a failed build is not
+/// retried); `ci` is read only after that. `main` is the newest main SHA, so one build coalesces every merge before it.
+pub fn dev_next(channel:&str,requested:bool,main:Option<&str>,installed:Option<&str>,started:Option<&str>,building:bool,ci:&mut dyn FnMut(&str)->Result<(),String>)->Option<String> {
+    let sha=main.filter(|m|channel=="dev"&&requested&&!building&&Some(*m)!=installed&&Some(*m)!=started)?;
     ci(sha).ok().map(|_|sha.to_string())
 }
 
@@ -638,8 +639,11 @@ pub fn dev_next(channel:&str,main:Option<&str>,installed:Option<&str>,started:Op
 /// root checked out before the script existed still installs (#1406).
 pub fn dev_enabled(repo:&str,install:&Path)->bool { repo==RELEASE_REPO&&channel(install)==Ok("dev") }
 
+/// The demand file of the dev install (#2311): `taskq service dev-build` writes it; a build start clears it.
+pub fn dev_request(install:&Path)->PathBuf { install.join("dev").join("request") }
+
 /// One project pass of the dev install ([detail](docs/design/host-service.md#dev-install)): fold the script's
-/// report, start the next SHA, return the `status.json` `dev` value. State lives in `<install>/dev/`.
+/// report, start the newest green SHA on request, return the `status.json` `dev` value. State lives in `<install>/dev/`.
 #[cfg(unix)]
 pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),String>)->serde_json::Value {
     let dir=install.join("dev");
@@ -655,20 +659,33 @@ pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),Stri
         let _=fs::remove_file(dir.join("result"));
     }
     let building=read("lock/pid").and_then(|p|p.parse().ok()).is_some_and(crate::runtime::alive);
+    let request=dev_request(install);
+    let (installed,started,failed)=(read("installed"),read("started"),read("failed"));
+    // #2311: no request, no `git ls-remote` and no build
+    if !request.exists() {
+        return serde_json::json!({"installed":installed,"pending":null,"failed":failed,"building":building,"requested":false});
+    }
     // #1856: a failed or empty read is logged with its command; `main` then reads unknown and nothing starts
     let main=crate::tools::run("dev.main",command("git").arg("-C").arg(root).args(["ls-remote","origin","refs/heads/main"]),std::time::Duration::from_secs(30))
         .and_then(|o|String::from_utf8_lossy(&o).split_whitespace().next().map(String::from).filter(|s|s.len()==40&&s.bytes().all(|c|c.is_ascii_hexdigit()))
             .ok_or_else(||format!("`git ls-remote origin refs/heads/main` printed no main SHA: {:?}",String::from_utf8_lossy(&o).trim())))
         .map_err(|e|log!("dev install: {e}")).ok();
-    let (installed,started,failed)=(read("installed"),read("started"),read("failed"));
-    if let Some(sha)=dev_next("dev",main.as_deref(),installed.as_deref(),started.as_deref(),building,ci) {
+    let mut requested=true;
+    if main.is_some()&&main==installed {
+        log!("dev install: request cleared; main {} is installed",installed.as_deref().unwrap_or_default());
+        let _=fs::remove_file(&request);
+        requested=false;
+    }
+    if let Some(sha)=dev_next("dev",requested,main.as_deref(),installed.as_deref(),started.as_deref(),building,ci) {
+        let _=fs::remove_file(&request);
+        requested=false;
         match coreq::write_durable(&dir.join("started"),&sha).and_then(|_|dev_spawn(root,&sha,&dir)) {
             Ok(())=>log!("dev install: start {sha}"),
             Err(e)=>log!("dev install: {sha} not started: {e}"),
         }
     }
     let pending=main.filter(|m|Some(m)!=installed.as_ref()&&Some(m)!=failed.as_ref());
-    serde_json::json!({"installed":installed,"pending":pending,"failed":failed,"building":building})
+    serde_json::json!({"installed":installed,"pending":pending,"failed":failed,"building":building,"requested":requested})
 }
 
 /// Runs the `scripts/dev-install.sh` of `sha` itself, so the primary checkout's own edits never matter. The build
@@ -1311,22 +1328,24 @@ mod tests {
         fs::remove_dir_all(&install).unwrap();
     }
 
-    // Chain: § 8 item 1 dev install (#1388). Risk: a dev Mac never installs a green main merge, installs one with red or
-    // pending CI, reinstalls the same or a failed SHA in a loop, starts a second build, or a live host builds at all.
+    // Chain: § 8 item 1 dev install (#1388, on demand #2311). Risk: a requested dev build never installs the green main
+    // SHA, installs one with red or pending CI, reinstalls the same or a failed SHA in a loop, starts a second build,
+    // a live host builds at all, or a merge builds with no request (135-200 build min/day, spawns 12.9/h -> 4.5/h).
     #[test]
-    fn dev_install_starts_each_green_main_sha_once() {
+    fn dev_install_starts_a_requested_green_main_sha_once() {
         let (a,b)=("a".repeat(40),"b".repeat(40));
         let mut reads=vec![];
         let mut green=|sha:&str|{reads.push(sha.to_string());Ok(())};
-        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,&mut green),Some(b.clone()),"new green SHA installs");
-        assert_eq!(dev_next("dev",Some(&a),Some(&a),None,false,&mut green),None,"same SHA: no-op");
-        assert_eq!(dev_next("dev",Some(&b),Some(&a),Some(&b),false,&mut green),None,"started or failed SHA: not retried");
-        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,true,&mut green),None,"one build at a time");
-        assert_eq!(dev_next("live",Some(&b),Some(&a),None,false,&mut green),None,"channel live: no-op");
-        assert_eq!(dev_next("dev",None,Some(&a),None,false,&mut green),None,"unknown main SHA waits");
+        assert_eq!(dev_next("dev",false,Some(&b),Some(&a),None,false,&mut green),None,"no request: a new green SHA waits");
+        assert_eq!(dev_next("dev",true,Some(&b),Some(&a),None,false,&mut green),Some(b.clone()),"requested green SHA installs");
+        assert_eq!(dev_next("dev",true,Some(&a),Some(&a),None,false,&mut green),None,"same SHA: no-op");
+        assert_eq!(dev_next("dev",true,Some(&b),Some(&a),Some(&b),false,&mut green),None,"started or failed SHA: not retried");
+        assert_eq!(dev_next("dev",true,Some(&b),Some(&a),None,true,&mut green),None,"one build at a time");
+        assert_eq!(dev_next("live",true,Some(&b),Some(&a),None,false,&mut green),None,"channel live: no-op");
+        assert_eq!(dev_next("dev",true,None,Some(&a),None,false,&mut green),None,"unknown main SHA waits");
         assert_eq!(reads,vec![b.clone()],"CI is read only for a SHA that could start");
         for ci in ["merge_group CI not green on merge result","CI tests pending"] {
-            assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,&mut |_|Err(ci.into())),None,"red or pending CI waits");
+            assert_eq!(dev_next("dev",true,Some(&b),Some(&a),None,false,&mut |_|Err(ci.into())),None,"red or pending CI waits");
         }
         // the script's report folds once into installed/failed; a started SHA stays started, so it never restarts
         #[cfg(unix)] {
@@ -1336,8 +1355,8 @@ mod tests {
         fs::write(install.join("dev/installed"),&a).unwrap();
         fs::write(install.join("dev/started"),&b).unwrap();
         fs::write(install.join("dev/result"),format!("{b} failed\n")).unwrap();
-        let v=dev_tick(&install,&install,&mut |_|panic!("no main SHA outside a checkout"));
-        assert_eq!((v["installed"].as_str(),v["failed"].as_str(),v["building"].as_bool()),(Some(a.as_str()),Some(b.as_str()),Some(false)));
+        let v=dev_tick(&install,&install,&mut |_|panic!("no request: no main SHA read, no CI read"));
+        assert_eq!((v["installed"].as_str(),v["failed"].as_str(),v["building"].as_bool(),v["requested"].as_bool()),(Some(a.as_str()),Some(b.as_str()),Some(false),Some(false)));
         assert!(!install.join("dev/result").exists(),"report read once");
         fs::write(install.join("dev/result"),format!("{b} installed")).unwrap();
         let v=dev_tick(&install,&install,&mut |_|Ok(()));
@@ -1371,7 +1390,6 @@ mod tests {
         fs::create_dir_all(w.join("scripts")).unwrap();
         fs::write(w.join("scripts/dev-install.sh"),script).unwrap();
         git(&w,&["add","scripts"]);git(&w,&["commit","-qm","new"]);git(&w,&["push","-q","origin","main"]);
-        let sha=git(&w,&["rev-parse","HEAD"]);
         assert!(!root.join("scripts/dev-install.sh").exists());
         // #1633: another fetch in the root holds origin/main's ref lock; the install must not need that ref
         let tracking=git(&root,&["rev-parse","origin/main"]);
@@ -1382,9 +1400,18 @@ mod tests {
         // the start line goes to this thread's project log
         service_log();
         project_log(base.join("project.log"));
+        // #2311: a green merge with no request starts nothing
+        dev_tick(&install,&root,&mut |_|panic!("no request: no CI read"));
+        assert!(!install.join("dev/started").exists(),"no request: nothing starts");
+        // a request takes the newest green main SHA and clears when the build starts
+        fs::write(w.join("README"),"newest main\n").unwrap();
+        git(&w,&["add","README"]);git(&w,&["commit","-qm","newest"]);git(&w,&["push","-q","origin","main"]);
+        let sha=git(&w,&["rev-parse","HEAD"]);
+        fs::write(dev_request(&install),"").unwrap();
         let mut read=None;
-        dev_tick(&install,&root,&mut |s|{read=Some(s.to_string());Ok(())});
-        assert_eq!(read.as_deref(),Some(sha.as_str()),"CI read for the new main SHA");
+        let v=dev_tick(&install,&root,&mut |s|{read=Some(s.to_string());Ok(())});
+        assert_eq!(read.as_deref(),Some(sha.as_str()),"CI read for the newest main SHA");
+        assert!(!dev_request(&install).exists()&&v["requested"]==false,"request cleared on start");
         assert_eq!(fs::read_to_string(install.join("dev/started")).unwrap().trim(),sha);
         assert!(fs::read_to_string(base.join("project.log")).unwrap().contains(&format!("dev install: start {sha}")));
         let done=install.join("dev/install.sh.done");
@@ -1398,6 +1425,7 @@ mod tests {
             fs::write(w.join("scripts/dev-install.sh"),format!("echo '{message}'\necho \"$1 failed\" > \"$(dirname \"$0\")/result\"\nexit 1\n")).unwrap();
             git(&w,&["add","scripts"]);git(&w,&["commit","-qm",message]);git(&w,&["push","-q","origin","main"]);
             let failed_sha=git(&w,&["rev-parse","HEAD"]);
+            fs::write(dev_request(&install),"").unwrap();
             dev_tick(&install,&root,&mut |_|Ok(()));
             for _ in 0..100 { if install.join("dev/result").exists() {break;} std::thread::sleep(std::time::Duration::from_millis(100)); }
             assert!(install.join("dev/result").exists(),"failed build reports completion");
@@ -1411,6 +1439,13 @@ mod tests {
         }
         let first=fs::read_to_string(base.join("first-sha")).unwrap();
         assert!(fs::read_to_string(install.join(format!("dev/{first}.install.log"))).unwrap().contains("first install failed"),"next SHA leaves first failure intact");
+        // a request while main is already installed clears and starts nothing
+        let main=git(&w,&["rev-parse","HEAD"]);
+        fs::write(install.join("dev/installed"),&main).unwrap();
+        fs::remove_file(install.join("dev/started")).unwrap();
+        fs::write(dev_request(&install),"").unwrap();
+        dev_tick(&install,&root,&mut |_|panic!("installed main: no CI read"));
+        assert!(!dev_request(&install).exists()&&!install.join("dev/started").exists(),"installed main: request cleared, nothing started");
 
         fs::remove_dir_all(&base).unwrap();
     }

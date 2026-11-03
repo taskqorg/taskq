@@ -5,7 +5,7 @@
 # `taskq service channel live` (#1325). Builds in a detached worktree beside the
 # primary checkout, so local edits there are never touched. Under a running host service, install makes the build
 # current and waits until the service re-execs into it, handing running children over (#894, #1306).
-# On channel dev the host service runs this for each new main SHA with green CI (docs/design/host-service.md#dev-install):
+# On channel dev the host service runs this on request (`taskq service dev-build`) for the newest main SHA with green CI (docs/design/host-service.md#dev-install):
 # `dev/lock` keeps one install at a time, `dev/result` reports the outcome to the service.
 set -eu
 d=$HOME/.local/share/taskq
