@@ -2873,7 +2873,9 @@ fn host_setup(cfg: &Config) -> Option<String> {
     if !Path::new(cmd).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
         return Some(format!("host setup: `{cmd}` refused: not a path inside the project root"));
     }
-    let ran = tools::run("host.setup", platform::command(cfg.root.join(cmd)).current_dir(&cfg.root), std::time::Duration::from_secs(300))
+    // #2239: the owner runs `service install` and can interrupt it; the script takes as long as the project needs
+    let ran = platform::complete("host.setup", platform::command(cfg.root.join(cmd)).current_dir(&cfg.root))
+        .and_then(|o| if o.status.success() {Ok(())} else {Err(format!("{}: {}", o.status, String::from_utf8_lossy(&o.stderr).lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no error output")))})
         .and_then(|_| fs::create_dir_all(cfg.root.join(".taskq")).and_then(|_| fs::write(check::host_setup_stamp(&cfg.root), format!("{cmd}\n"))).map_err(|e| e.to_string()));
     Some(match ran { Ok(()) => format!("host setup: `{cmd}` done"), Err(e) => format!("host setup: `{cmd}` failed: {e}") })
 }
