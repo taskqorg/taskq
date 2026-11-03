@@ -5398,10 +5398,18 @@ mod tests {
         let before = entries(b, u).unwrap().len();
         assert!(run(&["start", &u.to_string(), &n.to_string()]).is_err_and(|e| e.contains(&format!("#{n}"))));
         assert_eq!(entries(b, u).unwrap().len(), before, "a bad number in the list writes nothing");
-        run(&["add", "V", "--goal", "G", "--acceptance", "a"]).unwrap();
+        // #2288: a held body naming an open task without `Depends on` gets the deps hint; one with `--deps` does not
+        run(&["add", "V", "--goal", &format!("Runs after #{u}"), "--acceptance", "a"]).unwrap();
         let v = b.issues(None).unwrap().into_iter().filter(service::is_held).map(|i| i.number).max().unwrap();
-        let text = snapshot::read(b, &c.cfg, &c.raw, &[]).text(&c.cfg, &c.raw).unwrap();
+        run(&["add", "W", "--goal", &format!("Runs after #{u}"), "--acceptance", "a", "--deps", &u.to_string()]).unwrap();
+        let w = b.issues(None).unwrap().into_iter().filter(service::is_held).map(|i| i.number).max().unwrap();
+        let snap = snapshot::read(b, &c.cfg, &c.raw, &[]);
+        let text = snap.text(&c.cfg, &c.raw).unwrap();
         assert!(text.contains(&format!("| [#{u} U](")) && text.contains(&format!("| PM | `taskq start {u}` |")) && text.contains(&format!("[#{v} V]")), "{text}");
+        assert!(text.contains(&format!("| PM: names open #{u} without Depends on | add `Depends on #{u}`, then `taskq start {v}` |")), "{text}");
+        assert!(text.contains(&format!("| PM | `taskq start {w}` |")), "{text}");
+        assert_eq!(snap.tasks.iter().find(|r| r.n == v).unwrap().json()["unlinked"], json!([u]));
+        b.close(w).unwrap();
         let receipts = start_tasks(b, &c.cfg.root, &[u.to_string(), format!("#{v}")], &Op::default()).unwrap();
         assert_eq!(receipts.iter().map(|r| r.task).collect::<Vec<_>>(), vec![u, v]);
         assert!([u, v].iter().all(|&m| fold(m, &entries(b, m).unwrap(), false).state == State::Ready));
@@ -6898,6 +6906,8 @@ mod tests {
         let catalog: Value = serde_json::from_str(PM_COMMANDS).unwrap();
         let text = help(false).unwrap();
         assert!(text.starts_with(USAGE));
+        // #2288: help tells the PM to start dependents with `--deps` and hold only for read-back
+        assert!(text.contains("gets `--deps N` and is started at once") && text.contains("hold is only for the read-back"), "{text}");
         for c in catalog["commands"].as_array().unwrap() {
             let (name, usage) = (c["name"].as_str().unwrap(), c["use"].as_str().unwrap());
             let mut words = name.split(' ');

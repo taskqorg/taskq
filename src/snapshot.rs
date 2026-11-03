@@ -259,6 +259,8 @@ pub struct Row {
     pub churn: Option<Churn>,
     /// § 7 text of the accepted `result` entry behind the current result; `None` without a result.
     pub verdict: Option<String>,
+    /// #2288: open tasks a held body names without any `Depends on` line; start it with `Depends on` instead of holding.
+    pub unlinked: Vec<u64>,
 }
 
 /// § 4 Churn counts of one task's board notes: all notes, `spawn` and `accepted` entries.
@@ -515,6 +517,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
     let mut open: Vec<&View> = views.iter().filter(|v| v.projection.task.state != State::Closed).collect();
     open.sort_by_key(|v| (service::priority(&v.issue), v.issue.number));
     let urls = session_urls(hosts);
+    let numbers: Vec<u64> = open.iter().map(|v| v.issue.number).collect();
     let tasks = open.into_iter().map(|v| {
         let recovery=input_recovery(v);
         let last=v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created);
@@ -580,6 +583,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         verdict: v.projection.task.result.as_ref().and_then(|_| v.projection.changes.iter().rev()
             .find_map(|(id, _, _)| v.log.iter().find(|e| e.id == *id && e.body.starts_with("taskq: result "))))
             .map(|e| core::entry_text(v.issue.number, &e.body).to_string()),
+        unlinked: if v.projection.task.state == State::Held { unlinked(v.issue.number, &v.issue.body, &numbers) } else { vec![] },
         created: Some(v.issue.created).filter(|t| *t > 0),
         steps: stage_history(v),
         since: v.projection.changes.last().and_then(|(id, ..)| v.comments.iter().find(|c| c.id == *id)).map(|c| c.created),
@@ -588,6 +592,16 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
     }}).collect();
     let hosts = hosts.iter().map(|h| host(h, observed, cfg.ttl as i64)).collect();
     Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
+}
+
+/// #2288: open task numbers `#N` in a held `body` that has no `Depends on` line (§ 1); a local `#N` only, never `repo#N`.
+// ponytail: names only open tasks of this snapshot; an open non-task issue goes unflagged
+fn unlinked(n: u64, body: &str, open: &[u64]) -> Vec<u64> {
+    if !core::depends(body).is_empty() { return vec![]; }
+    let mut out: Vec<u64> = body.match_indices('#').filter(|(i, _)| !body[..*i].ends_with(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '/'))
+        .filter_map(|(i, _)| body[i + 1..].split(|c: char| !c.is_ascii_digit()).next()?.parse().ok())
+        .filter(|m| *m != n && open.contains(m)).collect();
+    out.sort(); out.dedup(); out
 }
 
 /// One host of a heartbeat issue `h` read at `observed`.
@@ -761,6 +775,7 @@ impl Row {
         if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); }
         if let Some(step) = &self.missing_reviewer { row["missing_reviewer"] = json!(step); }
         if let Some(w) = self.wait() { row["wait"] = json!(w); }
+        if !self.unlinked.is_empty() { row["unlinked"] = json!(self.unlinked); }
         if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
         row["since"] = json!(self.since);
         row["created"] = json!(self.created);
@@ -984,6 +999,10 @@ impl Snapshot {
         let held: Vec<String> = self.tasks.iter().filter_map(|r| {
             let n = r.n;
             let (reason, next) = match r.task.state {
+                State::Held if !r.unlinked.is_empty() => {
+                    let m: Vec<String> = r.unlinked.iter().map(|m| format!("#{m}")).collect();
+                    (format!("PM: names open {} without Depends on", m.join(", ")), format!("add `Depends on {}`, then `taskq start {n}`", m[0]))
+                }
                 State::Held => ("PM".to_string(), format!("`taskq start {n}`")),
                 State::Waiting => {
                     let deps: Vec<String> = r.deps.iter().map(|b| format!("[{}]({}) {}", b.dep.name(), b.url, cell(&compact(&b.reason, 80)))).collect();
@@ -1236,7 +1255,7 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { heartbeat: Value::Null, worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -1260,7 +1279,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { heartbeat: Value::Null, worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -1307,7 +1326,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { heartbeat: Value::Null, worker: None, conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("| ") && l.contains("stuck")).collect::<Vec<_>>(), ["| [#1 T](u1) | owner · stuck 2h | answer the Owner row |"], "{text}");
