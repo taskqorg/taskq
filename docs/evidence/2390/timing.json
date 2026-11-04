@@ -1,0 +1,47 @@
+{
+  "source_sha": "b9cbba8f400e42a78bc58e1ef502f46de5b89d7c",
+  "source_pr": 2371,
+  "bridge": 1,
+  "baseline_bundle": "1793820775-97cf9558ce92",
+  "adopted_bundle": "1793827248-b9cbba8f400e",
+  "publication": {
+    "merged_utc": "2026-11-04T21:29:32Z",
+    "ui_live_run": 41916713527,
+    "run_created_utc": "2026-11-04T21:30:25Z",
+    "publish_job_utc": ["2026-11-04T21:30:28Z", "2026-11-04T21:30:51Z"],
+    "pointer_asset_utc": "2026-11-04T21:30:49Z",
+    "public_read_old_utc": "2026-11-04T21:31:03Z",
+    "public_read_new_utc": "2026-11-04T21:31:32Z"
+  },
+  "windows_webview2": {
+    "binary": "v4.6.78",
+    "binary_sha256": "58a666729494071c26e9b2be9b3a58657b5d59e13716e078cec2b55debaaf60a",
+    "manual_check_pressed": false,
+    "check_first_scratch_mtime_utc": "2026-11-04T21:36:18.685Z",
+    "bundle_staged_mtime_utc": "2026-11-04T21:36:23.354Z",
+    "conversations_last_old_sample_utc": "2026-11-04T21:36:23.76Z",
+    "conversations_first_reloaded_sample_utc": "2026-11-04T21:36:26.12Z",
+    "state_current_mtime_utc": "2026-11-04T21:36:33.153Z",
+    "seconds": {
+      "pointer_to_check": 329.685,
+      "check_to_staged": 4.669,
+      "staged_to_conversations_reload_max": 2.77,
+      "check_to_commit": 14.468,
+      "pointer_to_conversations_reload_max": 337.116,
+      "pointer_to_commit": 344.153,
+      "run_created_to_commit": 368.153
+    },
+    "menu_page_switch": "not sampled; the menu was hidden during adoption and the new page was read at 2026-11-04T21:42:33Z",
+    "precision": "store times are file mtimes, sampled every 500 ms; page times are coarse UI Automation samples"
+  },
+  "mac_wkwebview_pm_reported": {
+    "proof": "https://github.com/taskqorg/taskq/raw/abee80d2fd4f4c02f6441028e78393a127ffadc2/2390/8a730fcefdfc-native-proof.md",
+    "proof_sha256": "8a730fcefdfc8033cf2982cf4ffd09e7f0497177be9a40cdf3aea53ebbe7f282",
+    "state": "https://github.com/taskqorg/taskq/raw/0a0077431b18cefb0c3a4b07143cda1c14b340d7/2390/98a5614e0e73-after-adoption.json",
+    "state_sha256": "98a5614e0e735d80c098eb6859d50a36b84ca0fc4b928c92f3526042c5e7accc",
+    "check_utc": "2026-11-04T21:43:42.788Z",
+    "staged_utc": "2026-11-04T21:43:45.849Z",
+    "commit_utc": "2026-11-04T21:43:52.670Z",
+    "seconds": { "pointer_to_check": 773.788, "check_to_commit": 9.882, "pointer_to_commit": 783.670 }
+  }
+}
