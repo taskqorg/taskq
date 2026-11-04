@@ -12,7 +12,7 @@ pub const KIND: Kind = Kind {
     reload_token: true,
     token_env: &["GH_TOKEN", "GITHUB_TOKEN"],
     api,
-    board: |api| Box::new(GitHub { api, rules: Default::default(), open: Default::default() }),
+    board: |api| Box::new(GitHub { api, rules: Default::default(), open: Default::default(), heartbeat: Default::default() }),
 };
 
 pub const TOKEN_ERROR: &str = "GitHub board token missing, empty or unreadable; owner must install it in <install>/token; never run gh auth login";
@@ -39,6 +39,8 @@ pub struct GitHub {
     rules: std::cell::RefCell<Option<(u64, String, Result<Value>)>>,
     /// The last open-issue list, reused while the changed-since probe finds nothing new (#1819, #1968).
     open: std::cell::RefCell<Option<Open>>,
+    /// A confirmed own heartbeat survives lagging list refreshes, scoped to the credential generation.
+    heartbeat: std::cell::RefCell<Option<(u64, Issue)>>,
 }
 
 struct Open {
@@ -121,7 +123,11 @@ impl GitHub {
             }
         }
         // a failed list keeps nothing: the next pass reads in full
-        let list = self.open_issues()?;
+        let mut list = self.open_issues()?;
+        if let Some((_, written)) = self.heartbeat.borrow().as_ref().filter(|(g, _)| *g == self.api.generation.get()) {
+            if let Some(row) = list.iter_mut().find(|i| i.number == written.number && i.trusted && crate::service::is_host(i)
+                && i.updated > 0 && i.updated < written.updated) { *row = written.clone(); }
+        }
         let known = seen.iter().chain(&list).filter(|i| task(i)).map(|i| (i.number, i.updated)).collect();
         let listed = *self.api.clock.borrow();
         *self.open.borrow_mut() = Some(Open { at: std::time::Instant::now(), listed, reused: false, list: list.clone(), known });
@@ -847,6 +853,9 @@ impl Board for GitHub {
         // #2083: the probe does not see this host's heartbeat write; its reply patches the kept list, so the next
         // pass reads the new `updated_at` and does not write again
         let issue = reply.json().map(|v| parse_issue(&v)).ok().filter(|i| i.number == n && i.open && !task(i));
+        if let Some(issue) = issue.as_ref().filter(|i| i.trusted && crate::service::is_host(i)) {
+            *self.heartbeat.borrow_mut() = Some((self.api.generation.get(), issue.clone()));
+        }
         if let (Some(issue), Some(o)) = (issue, self.open.borrow_mut().as_mut()) {
             if let Some(at) = o.list.iter().position(|i| i.number == n) { o.list[at] = issue; }
         }
@@ -854,11 +863,13 @@ impl Board for GitHub {
     }
 
     fn close(&self, n: u64) -> Result<()> {
+        self.heartbeat.borrow_mut().take_if(|(_, i)| i.number == n);
         self.forget();
         self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "state": "closed" }))).map(|_| ())
     }
 
     fn reopen(&self, n: u64) -> Result<()> {
+        self.heartbeat.borrow_mut().take_if(|(_, i)| i.number == n);
         self.forget();
         self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "state": "open" }))).map(|_| ())
     }
@@ -1074,6 +1085,64 @@ mod admission_tests {
 mod token_tests {
     use super::*;
 
+    // #2352/R12: a lagging full list must not undo a confirmed own heartbeat and bill another PATCH each poll.
+    // Keep periodic renewal and fresh newer board edits; this fixture substitutes HTTP, not native traffic.
+    #[test]
+    fn lagging_lists_do_not_repeat_confirmed_heartbeats() {
+        use std::{cell::Cell, rc::Rc};
+        use crate::board::{Reply, operation};
+        let start = iso("2026-11-04T12:00:00Z").unwrap();
+        let clock = Rc::new(Cell::new(start));
+        let written = Rc::new(Cell::new(start - 30));
+        let listing = Rc::new(Cell::new(0));
+        let (now, beat, mode) = (clock.clone(), written.clone(), listing.clone());
+        let mut api = api("github.com", "o/r", "invented-token");
+        api.transport = Some(Box::new(move |method, url, _| {
+            let updated = if method == "PATCH" { beat.set(now.get()); beat.get() }
+                else if mode.get() == 1 { beat.get() } else if mode.get() == 2 { now.get() }
+                else { beat.get().min(now.get() - 180).max(start - 30) };
+            let text = if mode.get() == 0 { "beat" } else { "board edit" };
+            let row = json!({"number":7,"title":"taskq host win","body":"beat","state":"open",
+                "updated_at":stamp(updated),"created_at":stamp(start - 3600),"author_association":"OWNER",
+                "labels":[{"name":"taskq-host"}]});
+            let body = if method == "PATCH" { row } else if mode.get() == 3 {
+                json!({"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}})
+            } else {
+                assert!(url.ends_with("/graphql"), "{method} {url}");
+                json!({"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},
+                    "nodes":[{"number":7,"title":"taskq host win","body":text,"updatedAt":stamp(updated),
+                        "createdAt":stamp(start - 3600),"authorAssociation":"OWNER","labels":{"nodes":[{"name":"taskq-host"}]}}]}}}})
+            };
+            Ok(Reply {status:200,headers:vec![],body:body.to_string(),operation:operation(method)})
+        }));
+        let h = GitHub {api,rules:Default::default(),open:Default::default(),heartbeat:Default::default()};
+        let mut writes = 0;
+        for pass in 0..60 {
+            clock.set(start + pass * 60);
+            h.forget(); // a busy board or an expired kept lease forces a full list
+            let list = h.issues(None).unwrap();
+            if clock.get() - list[0].updated >= 100 { h.edit(7,"beat").unwrap(); writes += 1; }
+            assert!(clock.get() - written.get() < 300, "renewal retains the lease");
+        }
+        assert!(writes <= 30, "confirmed writes must survive list lag: {writes} PATCHes/h");
+        eprintln!("lagging full lists: {writes} PATCHes/h; lease renewal retained");
+        for mode in [1, 2] {
+            listing.set(mode); h.forget();
+            assert_eq!(h.issues(None).unwrap()[0].body,"board edit","equal/newer edits win");
+        }
+        listing.set(3); h.forget();
+        assert!(h.issues(None).unwrap().is_empty(),"absent heartbeats are never reinserted");
+        listing.set(0);
+        h.api.generation.set(h.api.generation.get()+1); h.forget();
+        assert!(h.issues(None).unwrap()[0].updated < written.get(),"another credential cannot use the write");
+        for close in [true, false] {
+            h.edit(7,"beat").unwrap();
+            if close { h.close(7).unwrap(); } else { h.reopen(7).unwrap(); }
+            assert!(h.issues(None).unwrap()[0].updated < written.get(),"close/reopen invalidates the write");
+        }
+    }
+
+
     // #1840 A2: a known repository-access refusal has a plain cause; other failures retain their diagnostic.
     #[test]
     fn repository_access_failure_is_plain() {
@@ -1081,7 +1150,7 @@ mod token_tests {
             let mut api = api("github.com", "o/r", "invented-token");
             api.transport = Some(Box::new(move |_, _, _| Ok(super::super::Reply {status:200, headers:vec![], operation:"read",
                 body:json!({"errors":[{"type":kind,"message":"invented refusal"}]}).to_string()})));
-            let board = GitHub {api, rules:Default::default(), open:Default::default()};
+            let board = GitHub {api, rules:Default::default(), open:Default::default(), heartbeat:Default::default()};
             assert!(board.open_issues().unwrap_err().starts_with(expected));
         }
     }
