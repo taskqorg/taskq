@@ -1,0 +1,12 @@
+{
+  "synthetic": true,
+  "case": "exact-input-cache-and-corrupt-log-refusal",
+  "result_receipts": [
+    "87c6e7723712ae4123dd80d4d7ae0178ab12a02dff6c473658423981868c1011",
+    "f7293ad3ef7ea427d352a5e898b46a775d0f7b80ca0eca26aec856b49df8e516"
+  ],
+  "gate_receipt": "9ab7ef884c1cc29315b341376cfa93a0581f8b41d914cb44e290a98bf212e1b2",
+  "cache_key": "c3d8a33780cbd54041fedce4747f28af21c8420925374eeba86bb5739381ff52",
+  "verified": "same exact-input command receipt reused without a second callback; corrupt cached log then refused",
+  "changed_check_inputs": "disappearing-check case uses a distinct gate identity and remains unknown"
+}

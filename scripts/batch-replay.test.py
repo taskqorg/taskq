@@ -3,6 +3,7 @@ import copy
 import importlib.util
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 
 spec = importlib.util.spec_from_file_location('batch_replay', Path(__file__).with_name('batch-replay.py'))
@@ -80,6 +81,14 @@ class Replay(unittest.TestCase):
             self.assertEqual(result['outcome'], 'passed')
             replay = __import__('json').loads((self.root / 'receipts' / result['replay']).read_bytes())
             self.assertEqual(len(replay['orders']), {3: 6, 4: 24, 5: 120}[count])
+            for order in replay['orders']:
+                self.assertEqual(order['outcome'], 'passed')
+                body = (self.root / 'receipts' / order['receipt']).read_bytes()
+                self.assertEqual(b.digest(body), order['receipt'])
+                log = __import__('json').loads((self.root / 'receipts' / order['log_sha256']).read_bytes())
+                self.assertEqual([s['task'] for s in log['steps']], order['tasks'])
+                self.assertEqual(log['steps'][-1]['after_tree'], order['tree'])
+                self.assertTrue(all(s['exit_code'] == 0 for s in log['steps']))
             self.assertEqual(called, [list(range(1, count + 1))])
             for path in (self.root / 'receipts').iterdir():
                 if path.is_file():
@@ -187,13 +196,16 @@ class Replay(unittest.TestCase):
 
     def test_failed_original_diagnostics_keep_members_and_interactions(self):
         calls = []
+        command = ['python3', '-c', 'from pathlib import Path; assert not (Path("member-1").exists() and Path("member-2").exists()), "invented interacting failure"']
         def runner(repo, subset):
             ids = [m['task'] for m in subset]
             calls.append(ids)
             # Distinct files interact at the gate, not at patch application.
             self.assertEqual((repo / 'member-1').exists(), 1 in ids)
             self.assertEqual((repo / 'member-2').exists(), 2 in ids)
-            return (1 if {1, 2} <= set(ids) else 0), b'SYNTHETIC interaction\n'
+            done = subprocess.run(command, cwd=repo, capture_output=True)
+            return done.returncode, done.stdout + done.stderr
+        runner.command = command
         result = b.execute(self.repo, self.manifest(), self.root / 'receipts', runner)
         self.assertEqual(result['outcome'], 'failed')
         self.assertEqual(result['original_batch']['tasks'], [1, 2, 3])
@@ -203,7 +215,7 @@ class Replay(unittest.TestCase):
         full_only = b.localize([1, 2, 3], lambda s: {'tasks': list(s), 'outcome': 'passed'})
         self.assertTrue(full_only['interaction'])
         unknown = b.localize([1, 2, 3], lambda s: {'tasks': list(s), 'outcome': 'unknown'})
-        self.assertFalse(unknown['interaction'])
+        self.assertIsNone(unknown['interaction'])
         self.assertEqual(len(unknown['unknown']), 7)
         baseline = b.localize([1, 2, 3], lambda s: {'tasks': list(s), 'outcome': 'failed'})
         self.assertTrue(baseline['baseline_failed'])
@@ -216,6 +228,24 @@ class Replay(unittest.TestCase):
         with self.assertRaisesRegex(b.Refusal, 'immutable object differs'):
             b.store(root, b'invented receipt')
         self.assertEqual((root / key).read_bytes(), b'tampered')
+
+    def test_git_checkout_preserves_content_addressed_bytes(self):
+        body = b'{"invented":true}\n'
+        relative = 'docs/research/2395/receipts/' + b.digest(body)
+        path = self.repo / relative
+        path.parent.mkdir(parents=True)
+        path.write_bytes(body)
+        b.git(self.repo, '-c', 'core.autocrlf=true', 'add', relative)
+        path.unlink()
+        b.git(self.repo, '-c', 'core.autocrlf=true', 'checkout-index', '--force', relative)
+        self.assertNotEqual(path.read_bytes(), body, 'before: CRLF conversion breaks the receipt digest')
+        attributes = Path(__file__).resolve().parents[1] / '.gitattributes'
+        (self.repo / '.gitattributes').write_bytes(attributes.read_bytes())
+        path.write_bytes(body)
+        b.git(self.repo, '-c', 'core.autocrlf=true', 'add', '.gitattributes', relative)
+        path.unlink()
+        b.git(self.repo, '-c', 'core.autocrlf=true', 'checkout-index', '--force', relative)
+        self.assertEqual(path.read_bytes(), body, 'after: immutable evidence bypasses newline conversion')
 
     def test_gate_cannot_pass_after_changing_frozen_inputs(self):
         def runner(repo, subset):
@@ -233,7 +263,7 @@ class Replay(unittest.TestCase):
         b.git(self.repo, 'reset', '--hard', '--quiet', self.fixture['members'][1]['result_sha'])
         parent = self.head()
         (self.repo / 'tests').mkdir()
-        (self.repo / 'tests' / 'regression.test.cjs').write_text('throw Error("invented failing regression");\n')
+        (self.repo / 'tests' / 'regression.test.py').write_text('raise AssertionError("invented failing regression")\n')
         b.git(self.repo, 'add', '.')
         b.git(self.repo, 'commit', '-qm', 'Synthetic regression member')
         head = self.head()
@@ -249,8 +279,11 @@ class Replay(unittest.TestCase):
         item['delta_sha256'] = b.digest(b.delta(self.repo, parent, head))
         item['ci']['head_sha'] = item['ci']['observation']['head_sha'] = head
         m['frozen_head'] = head
+        command = ['python3', '-c', 'from pathlib import Path; import runpy; [runpy.run_path(str(p)) for p in sorted(Path("tests").glob("*.test.py"))]']
         def runner(repo, subset):
-            return (1 if (repo / 'tests' / 'regression.test.cjs').exists() else 0), b'SYNTHETIC disappearing check\n'
+            done = subprocess.run(command, cwd=repo, capture_output=True)
+            return done.returncode, done.stdout + done.stderr
+        runner.command = command
         result = b.execute(self.repo, m, self.root / 'receipts', runner)
         self.assertEqual(result['outcome'], 'failed')
         subset = next(r for r in result['diagnostics']['subsets'] if r['tasks'] == [1, 2])
@@ -258,6 +291,9 @@ class Replay(unittest.TestCase):
         self.assertEqual(subset['outcome'], 'unknown')
         self.assertIn('check inputs changed', subset['comparability'])
         self.assertIn([1, 2], result['diagnostics']['unknown'])
+        self.assertEqual(result['diagnostics']['minimal_failures'], [])
+        self.assertIn([3], result['diagnostics']['unresolved_failures'])
+        self.assertIsNone(result['diagnostics']['interaction'])
 
     def test_prepared_bundle_requires_reviewed_source_and_stays_pending(self):
         def no_gate(repo, subset):

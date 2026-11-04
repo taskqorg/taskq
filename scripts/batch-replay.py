@@ -184,12 +184,18 @@ def import_tree(source, target, head):
 
 def apply(repo, member):
     # Exact per-path blob/mode checks disallow fuzzy application to moved inputs.
-    require(entries(repo, git(repo, 'write-tree').decode().strip(), member['paths']) == member['before'],
+    before = git(repo, 'write-tree').decode().strip()
+    require(entries(repo, before, member['paths']) == member['before'],
             'replay input changed for task ' + str(member['task']))
-    git(repo, 'apply', '--cached', '--binary', data=member['patch'])
+    output = git(repo, 'apply', '--cached', '--binary', data=member['patch'])
+    after = git(repo, 'write-tree').decode().strip()
+    require(entries(repo, after, member['paths']) == member['after'], 'replay output changed')
+    return {'task': member['task'], 'argv': ['git', 'apply', '--cached', '--binary'],
+            'stdin_sha256': digest(member['patch']), 'before_tree': before,
+            'after_tree': after, 'stdout': output.decode(), 'exit_code': 0}
 
 
-def prepare(source, target, head, members):
+def prepare(source, target, head, members, receipts=None, identity=None):
     tree = import_tree(source, target, head)
     # Retain this exact reviewed commit as the bundle boundary, never a task branch.
     body = git(source, 'cat-file', 'commit', head)
@@ -205,12 +211,29 @@ def prepare(source, target, head, members):
     base_commit = git(target, 'commit-tree', base, '-p', head, data=b'Private experimental base\n').decode().strip()
     orders = []
     for order in itertools.permutations(members):
-        git(target, 'read-tree', base)
-        for m in order:
-            apply(target, m)
-        actual = git(target, 'write-tree').decode().strip()
-        require(actual == tree, 'replay order changed frozen tree')
-        orders.append({'tasks': [m['task'] for m in order], 'tree': actual})
+        started = time.monotonic()
+        began_at = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        steps, error, actual = [], None, None
+        try:
+            git(target, 'read-tree', base)
+            for m in order:
+                steps.append(apply(target, m))
+            actual = git(target, 'write-tree').decode().strip()
+            require(actual == tree, 'replay order changed frozen tree')
+        except Refusal as refused:
+            error = str(refused)
+        record = {**(identity or {}), 'schema': 1, 'tasks': [m['task'] for m in order],
+                  'frozen_source_head': head, 'experimental_base_head': base_commit,
+                  'experimental_base_tree': base, 'expected_tree': tree, 'tree': actual,
+                  'outcome': 'failed' if error else 'passed', 'started_utc': began_at,
+                  'elapsed_seconds': time.monotonic() - started}
+        if receipts is not None:
+            log = {'reset_argv': ['git', 'read-tree', base], 'steps': steps, 'error': error,
+                   'cwd': 'private temporary Git repository', 'git_wrapper': 'defined by tool digest'}
+            record['log_sha256'] = store(receipts, encoded(log))
+            record['receipt'] = store(receipts, encoded(record))
+        orders.append(record)
+        require(error is None, error)
     return base_commit, tree, orders
 
 
@@ -228,18 +251,23 @@ def checkout(repo, base, members):
 
 
 def localize(members, check):
-    """All nonempty proper subsets, stable order; includes non-monotone interactions."""
+    """All proper subsets including baseline; unknown checks cannot prove minimality."""
     outcomes = []
     for size in range(len(members)):
         for subset in itertools.combinations(members, size):
             outcomes.append(check(subset))
     failures = [r for r in outcomes if r['outcome'] == 'failed']
-    minimal = [r['tasks'] for r in failures if not any(set(s['tasks']) < set(r['tasks']) for s in failures)]
+    minimal = [r['tasks'] for r in failures if all(s['outcome'] == 'passed' for s in outcomes
+                                                if set(s['tasks']) < set(r['tasks']))]
+    unresolved = [r['tasks'] for r in failures if r['tasks'] not in minimal and
+                  not any(set(s['tasks']) < set(r['tasks']) for s in failures)]
+    unknown = [r['tasks'] for r in outcomes if r['outcome'] == 'unknown']
+    interaction = any(len(s) > 1 for s in minimal) or (not failures and not unknown)
     return {'subsets': outcomes, 'minimal_failures': minimal,
+            'unresolved_failures': unresolved,
             'baseline_failed': [] in minimal,
-            'interaction': any(len(s) > 1 for s in minimal) or
-                           (not failures and all(r['outcome'] == 'passed' for r in outcomes)),
-            'unknown': [r['tasks'] for r in outcomes if r['outcome'] == 'unknown']}
+            'interaction': True if interaction else None if unknown else False,
+            'unknown': unknown}
 
 
 def execute(source, manifest, receipts, runner=None, prepare_only=False):
@@ -248,10 +276,11 @@ def execute(source, manifest, receipts, runner=None, prepare_only=False):
     tool_id = store(receipts, Path(__file__).read_bytes())
     require(runner is None or manifest['synthetic'], 'fixture runner cannot qualify real tasks')
     identity = {'input': input_id, 'tool': tool_id, 'host': platform.node(),
+                'synthetic': manifest['synthetic'],
                 'platform': platform.platform(), 'python': sys.version,
                 'git': git(source, '--version').decode().strip()}
     if runner is not None:
-        identity['synthetic_gate_tool'] = digest(inspect.getsource(runner).encode())
+        identity['synthetic_gate_tool'] = store(receipts, inspect.getsource(runner).encode())
     if runner is None:
         versions = {}
         for name, argv in [('cargo', ['cargo', '+stable', '--version']),
@@ -267,7 +296,7 @@ def execute(source, manifest, receipts, runner=None, prepare_only=False):
     frozen, members = verify(source, manifest)
     with tempfile.TemporaryDirectory(prefix='taskq-private-replay-') as temp:
         repo = Path(temp)
-        base, tree, orders = prepare(source, repo, frozen, members)
+        base, tree, orders = prepare(source, repo, frozen, members, receipts, identity)
         original_gate = gate_identity(repo, tree)
         deltas = [{'task': m['task'], 'original_pr_base': m['original_pr_base'],
                    'original_merge_parent': m['parent'], 'merged': m['merged'],
@@ -277,7 +306,8 @@ def execute(source, manifest, receipts, runner=None, prepare_only=False):
                             'experimental_base_head': base, 'expected_tree': tree, 'orders': orders,
                             'deltas': deltas, 'original_gate_identity': original_gate,
                             'replay_command': ['git', 'apply', '--cached', '--binary']}))
-        command = [sys.executable, 'scripts/check.py', '--full']
+        command = (getattr(runner, 'command', ['synthetic callback', identity['synthetic_gate_tool']])
+                   if runner is not None else [sys.executable, 'scripts/check.py', '--full'])
         if prepare_only:
             head, replay_tree = checkout(repo, base, members)
             require(replay_tree == tree, 'prepared head differs from reviewed source tree')

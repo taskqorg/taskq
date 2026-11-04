@@ -1,0 +1,7 @@
+diff --git a/tests/regression.test.py b/tests/regression.test.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..04b33ca6f20911dbafb3d0b4d1745fda79aaf081
+--- /dev/null
++++ b/tests/regression.test.py
+@@ -0,0 +1 @@
++raise AssertionError("invented failing regression")
