@@ -197,7 +197,7 @@ pub fn history(n: u64, log: &[Entry], p: &core::Projection, comments: &[board::C
         let asked=revision.and_then(|r|comments.iter().find(|c|c.id==r));
         let worker=revision.and_then(|r|p.changes.iter().find(|(id,_,_)|*id==r).map(|(_,_,t)|t));
         (question, Answered { by: c.map(|c| c.author.clone()).unwrap_or_default(), text: shown, at: c.map(|c| c.created).filter(|t| *t > 0), read: c.and_then(|c| c.read), files,
-            source:Some(json!({"id":id,"question":revision,"asked_at":asked.map(|c|c.created),"attempt":worker.and_then(|t|t.attempt),"session":worker.and_then(|t|t.session.as_deref())})) })
+            source:Some(json!({"id":id,"question":revision,"asked_at":asked.map(|c|c.created),"attempt":worker.and_then(|t|t.attempt),"session":worker.and_then(|t|t.session.as_deref()),"role":worker.and_then(|t|t.role.as_deref())})) })
     }).collect()
 }
 
@@ -974,6 +974,13 @@ mod tests {
         assert_eq!(all.iter().filter_map(|(_,a)|a.source.as_ref().and_then(|s|s["id"].as_u64())).collect::<Vec<_>>(),[10,12,14],"F16: accepted spawn joins the questions, current question stays single");
         assert_eq!(all[0].1.text,log[0].body,"board source text remains exact");
         assert_eq!(answered_in(7, &log, &p, &comments), None, "the open question has no answer yet");
+        let mut review=log[..3].to_vec();
+        review.extend([(13,"taskq: result aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa attempt 10"),(14,"taskq: spawn reviewer codex:r win"),(15,"taskq: ask attempt 14\nDone: reviewed\nProblem: Reviewer choice"),(16,"taskq: answer\nContinue")].into_iter().map(|(id,body)|Entry{id,body:body.into(),edited:false}));
+        let projected=core::project(7,&review,false);
+        let history=history(7,&review,&projected,&[]);
+        let source=history.last().unwrap().1.source.as_ref().unwrap();
+        assert_eq!(source["role"],"reviewer","F16: an answered review question retains its original role");
+        assert_eq!(source["attempt"],14);assert_eq!(source["session"],"codex:r win");
     }
 
     // Chain: § 2 owner note -> live attempt inbox read -> `eyes` reaction -> Conversations history. Risk (#2188 A3): an

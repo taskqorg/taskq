@@ -19,6 +19,7 @@
     "src/task-controls.js",
     "src/task-dashboard.js",
     "src/task-health.js",
+    "src/task-pins.js",
     "src/task-views.js",
     "src/task-workspace.js",
     "src/tray-app.js",

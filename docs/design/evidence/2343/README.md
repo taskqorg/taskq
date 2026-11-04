@@ -82,6 +82,18 @@ Original observations and full expected results remain authoritative in the reta
 
 Owner answer 6629638004 approves the R6/R12 test scope, and the canonical rule gate accepts it without bypass. Technical metadata flows in Conversations under F15, and the unknown total uses Sigma under F09; health/unknown protections remain covered. The first full Rust run exposed the fixture failures described above. The canonical rerun uses the same immutable base, without another rebase; its exact candidate SHA and outcome are recorded on #2343. Native acceptance and merge-group CI remain separate (R12).
 
+## Reviewer correction: F16 and F19
+
+Reviewer note 6631007056 returned concrete acceptance gaps against the previous candidate `0b6b133b3cb133d79ea77c547365669472660a9a`. This correction implements the existing F16 and P-W1/CS5 requirements; it changes no owner decision or agent policy.
+
+- Long tool results replaced the text-pagination controls with a single truncated `<pre>`. The added case in `conversations-overflow.test.cjs` failed with `tool results expose Next text`; after the fix it traverses to the last page and back while retaining the full original result for Copy. Tool output remains literal text.
+- Answered questions omitted the source role. The history regression failed on missing `answered.source.role`; it now retains the original reviewer role, attempt and session through an accepted reviewer ask/answer sequence. The fixture uses a valid result SHA so the real review transition is exercised. Original worker questions, immutable question IDs, answer text and current-question deduplication remain protected.
+- The extended `closed-pins.browser.cjs` was run against a workspace bundle rebuilt from the exact previous candidate: it failed with `0 !== 3` on the independent missing-pin reads. The corrected browser case passes for exact GitHub/GitLab references, first explicit open, 24-hour expiry, unknown-state retention, and manual Unpin. Home and Conversations now use one shared pin reader/lifecycle. Unknown sources never acquire another task's identity or expire as closed.
+- Unavailable saved pins previously failed native Unpin with `Pin project missing`. The existing native readback regression now removes the exact saved reference and legacy key without a project lookup, preserving unrelated pins, archive preferences and partial-storage error protection. An unavailable row remains one navigation target; Retry and Unpin live in its detail header/reader.
+- Finished headers derive Pin/Unpin from the saved reference instead of always showing Unpin. Source-backed Finished tasks can be pinned. A missing closure time persists the first verified observation using the host clock; refresh cannot renew it, restart retains it, and a verified live task clears the old observation without losing its pin. Observation metadata cannot create an unsourced pin. Existing storage/readback failures still preserve the prior state.
+
+The canonical gate is rerun because this correction changes shared source code. It uses the same immutable base `8e8706fdc93ee2285d69c8b314a43dae4de0d8a2`; no second rebase is performed. Its exact candidate and outcome are recorded on #2343. F01 native Windows/macOS header, drag, Close and frame sizing, OS clipboard delivery and owner visual acceptance remain unverified; source/browser checks do not close those gaps (R12). No live installation or host policy changes are part of these fixes.
+
 ## Checks and artifacts
 
 Host: Windows; Node 24.5.0, Python 3.12.10, Cargo 1.99.0; Playwright 1.64.1. Chromium/WebKit instruments are isolated in the OS temporary browser cache. These are production web bundles with invented source data, not installed/native acceptance.
