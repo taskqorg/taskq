@@ -616,7 +616,7 @@ fn code_assist_with(token: &str, mut read: impl FnMut(&str) -> Result<Value, Str
 }
 
 fn code_assist_call(host: &str, method: &str, token: &str, body: &str) -> String {
-    format!("url = \"https://{host}/v1internal:{method}\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"Content-Type: application/json\"\nheader = \"User-Agent: antigravity\"\ndata = \"{body}\"\nmax-time = {HTTP_DEADLINE}\n")
+    format!("url = \"https://{host}/v1internal:{method}\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"Content-Type: application/json\"\nheader = \"User-Agent: antigravity/hub/2.28.2\"\ndata = \"{body}\"\nmax-time = {HTTP_DEADLINE}\n")
 }
 
 /// The account's Code Assist project; only characters safe inside a curl config line pass. The reply names no email,
@@ -677,7 +677,7 @@ fn oauth_windows(v: &Value) -> Result<Vec<Window>, &'static str> {
     let shape = "usage shape changed";
     let mut out = vec![];
     for (name, w) in v.as_object().ok_or(shape)? {
-        if !(name.starts_with("five_hour") || name.starts_with("seven_day")) || w.is_null() { continue; }
+        if !(name.starts_with("five_hour") || name.starts_with("seven_day")) || name == "seven_day_breakdown" || w.is_null() { continue; }
         if !valid_window(name) { return Err(shape); }
         let used = w["utilization"].as_f64().filter(|n| n.is_finite()).ok_or(shape)?;
         out.push(Window { name: name.clone(), used: percent(used), reset: w["resets_at"].as_str().and_then(utc) });
@@ -810,6 +810,11 @@ mod tests {
     // with a fixed reason, a missing reading fails the whole poll, and the row holds only bucket, percent, reset and id.
     #[test]
     fn code_assist_reads_buckets_or_a_fixed_reason() {
+        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2359/macos-antigravity-compatible-agent.json")).unwrap();
+        let windows = quota_windows(&native["response"]).unwrap();
+        assert_eq!(windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(),
+            [("gemini-weekly", 74), ("gemini-5h", 0), ("3p-weekly", 0), ("3p-5h", 0)]);
+        assert!(windows.iter().all(|w| w.reset.is_some()), "native resets survive");
         let summary = serde_json::json!({"groups": [
             {"displayName": "Gemini Models", "description": "provider text", "buckets": [
                 {"bucketId": "gemini-5h", "window": "5h", "remainingFraction": 0.8, "resetTime": "2026-11-04T10:00:00.123456Z", "description": "provider text"},
@@ -867,6 +872,7 @@ mod tests {
         let p = code_assist_with("invented-token", |call| {
             if call.contains(":loadCodeAssist") { return Ok(serde_json::json!({"cloudaicompanionProject": "invented-project"})); }
             assert!(call.contains("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"), "consumer quotas need the daily endpoint");
+            assert!(call.contains("User-Agent: antigravity/hub/2.28.2"), "the generic agent hides Gemini quotas on the native route");
             Ok(summary.clone())
         });
         assert_eq!(p.unknown, None);
@@ -893,6 +899,13 @@ mod tests {
     // Chain: R12: new structured limits retain legacy names and cannot turn an unreadable model cap into headroom.
     #[test]
     fn model_windows_claude_scoped_limits() {
+        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2359/macos-oauth-usage.json")).unwrap();
+        let windows = oauth_windows(&native["response"]).expect("native OAuth metadata must not hide Fable");
+        assert_eq!(windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(),
+            [("seven_day", 38), ("seven_day_fable", 4)]);
+        assert!(windows.iter().all(|w| w.reset.is_some()), "native resets survive");
+        assert_eq!(oauth_windows(&serde_json::json!({"seven_day": {"utilization": 38}, "seven_day_fable": {}})),
+            Err("usage shape changed"), "an unreadable quota window is still unknown");
         let v = serde_json::json!({"seven_day": {"utilization": 34}, "seven_day_fable": {"utilization": 1},
             "limits": [{"group": "weekly", "percent": 2, "scope": {"model": {"display_name": "Fable"}}},
                 {"group": "session", "percent": 10, "scope": {"model": {"id": "new-model"}}},
