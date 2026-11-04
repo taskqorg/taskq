@@ -1105,7 +1105,7 @@ impl<'a> Service<'a> {
                     let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
                     let exit_reason = k.proc.exit_error().map_or_else(|| format!("exit-{code}"), String::from);
                     crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, k.proc.id(), if code == 0 { "ok" } else { "failed" }, &exit_reason);
-                    retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli")));
+                    retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli"),k.proc.id()));
                     false
                 },
                 Err(e)=>{k.unknown=Some(e);true}
@@ -1114,19 +1114,26 @@ impl<'a> Service<'a> {
             _ => { k.unknown=None; true }
             }
         });
-        for (task,attempt,execution,native) in retired { self.retired(task,attempt,execution,native); }
+        for (task,attempt,execution,native,pid) in retired { self.retired(task,attempt,execution,native,pid); }
         if let Some(first)=deferred.and_then(|id|self.kids.iter().position(|k|k.execution==id)) {self.kids.rotate_left(first);}
     }
 
     /// Called only after release readback; retained children keep all their live metadata and capacity.
-    fn retired(&mut self, task:u64, attempt:u64, execution:u64, native:bool) {
+    fn retired(&mut self, task:u64, attempt:u64, execution:u64, native:bool, pid:u32) {
         let rt = self.observations.get(&(task, execution)).map(|x| x.runtime.clone())
             .or_else(|| self.reserved.iter().find(|(n, a, _)| *n == task && *a == attempt).map(|(_, _, r)| r.clone()))
             .or_else(|| self.begun.get(&attempt).map(|(_, r, _)| r.clone()))
             .unwrap_or_else(|| "other".into());
-        let pid = crate::telemetry::live_worker_pid(&self.cfg.install, Some(&self.cfg.root), task, attempt, execution).unwrap_or(0);
+        // R12: retirement is historical identity, never a liveness query. Recovery may have no handle.
+        let pid = if pid > 1 { pid } else {
+            crate::kids_path(&self.cfg.install, &self.cfg.root).ok()
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|text| crate::data::kids(&text).ok())
+                .and_then(|(_, kids)| kids.into_iter().find(|k| k.task == task && k.attempt == attempt && k.execution == execution))
+                .map_or(0, |k| k.process.pid)
+        };
         let role = self.begun.get(&attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
-        crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &rt, role, "slot-release", task, attempt, pid, "ok", "execution-released");
+        crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &rt, role, "slot-release", task, attempt, pid, if pid > 1 { "ok" } else { "unknown" }, if pid > 1 { "execution-released" } else { "execution-released-pid-unknown" });
         if native {
             if let Err(e)=crate::retire_kid(&self.cfg,task,attempt,execution) { self.log.push(format!("native recovery cleanup: {e}")); }
         }
@@ -1134,6 +1141,7 @@ impl<'a> Service<'a> {
         self.observations.remove(&(task,execution));
         self.ownership_waits.remove(&(task,execution));
         self.cache.remove(&task);
+        // The execution receipt above already reports this slot; do not emit an identity-free duplicate.
         self.retire_reservations(BTreeSet::from([(task,attempt)]));
     }
 
@@ -1142,11 +1150,6 @@ impl<'a> Service<'a> {
             if self.kids.iter().any(|k|k.task==task && k.attempt==attempt)
                 || self.observations.iter().any(|((n,_),x)|*n==task && x.attempt==attempt)
                 || self.held.iter().any(|l|l.task==task && l.attempt==attempt) {continue;}
-            for (n, a, rt) in &self.reserved {
-                if *n == task && *a == attempt {
-                    crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, rt, "work", "slot-release", task, attempt, 0, "ok", "reservation-retired");
-                }
-            }
             self.reserved.retain(|(n,a,_)|*n!=task || *a!=attempt);
             self.pending.remove(&(task,attempt));
         }
@@ -1237,13 +1240,13 @@ impl<'a> Service<'a> {
                 let terminal=reason.is_none() && !self.kids.iter().any(|k|k.task==task && k.execution==*id);
                 if let Some(reason)=reason {self.ownership_waits.insert((*n,*id),reason);}
                 else {self.ownership_waits.remove(&(*n,*id));}
-                if terminal {released.insert((task,old.attempt));}
+                if terminal {released.insert((task,old.attempt,*id));}
                 !terminal
             });
         }
         self.observations.extend(views.iter().flat_map(|v|v.projection.executions.iter().cloned()
             .filter(|x|x.host==self.cfg.me && x.release.is_none()).map(|x|((v.issue.number,x.id),x))));
-        self.retire_reservations(released);
+        for (task,attempt,execution) in released {self.retired(task,attempt,execution,false,0);}
         for ((task,_),x) in &self.observations {
             let reservation=(*task,x.attempt,x.runtime.clone());
             if !self.kids.iter().any(|k|k.task==*task && k.execution==x.id) && !self.reserved.contains(&reservation) {
@@ -1307,7 +1310,7 @@ impl<'a> Service<'a> {
             }
             self.held.remove(0);
             self.log.push(format!("#{task} held launch released for the restart"));
-            self.retired(task,attempt,execution,false);
+            self.retired(task,attempt,execution,false,0);
             released.push(task);
         }
         if !released.is_empty() {self.sync_host();}
@@ -1890,13 +1893,18 @@ impl<'a> Service<'a> {
         let mut wrote = false;
         let mut boot = None;
         for v in views {
-            for x in v.projection.executions.iter().filter(|x| x.host == self.cfg.me && x.release.is_none()) {
+            for x in &v.projection.executions {
+                if x.host != self.cfg.me || x.release.is_some() { continue; }
                 if self.kids.iter().any(|k| k.execution == x.id) { continue; }
                 let Some(intent) = v.comments.iter().find(|c| c.id == x.id && c.trusted).map(|c| c.created).filter(|t| *t > 0) else { continue };
                 let Ok(at) = *boot.get_or_insert_with(self.boot) else { continue };
                 let ("ended", proof) = crate::snapshot::verdict(&crate::snapshot::Signals { local: true, boot: Some((at, intent)), ..Default::default() }) else { continue };
                 match release_execution_text(self.board, v.issue.number, x.attempt, x.id, "exit", &proof) {
-                    Ok(()) => { wrote = true; self.log.push(format!("#{} released {} exit: {proof}", v.issue.number, x.id)); }
+                    Ok(()) => {
+                        wrote = true;
+                        self.retired(v.issue.number, x.attempt, x.id, false, 0);
+                        self.log.push(format!("#{} released {} exit: {proof}", v.issue.number, x.id));
+                    }
                     Err(e) => self.log.push(format!("#{} boot release: {e}", v.issue.number)),
                 }
             }
@@ -1907,7 +1915,7 @@ impl<'a> Service<'a> {
     fn pass_inner(&mut self, native_budget:std::time::Duration) -> Result<(), String> {
         for (task, attempt, execution) in self.pending_releases.clone() {
             release_execution(self.board, task, attempt, execution, "no-start")?;
-            self.retired(task,attempt,execution,false);
+            self.retired(task,attempt,execution,false,0);
         }
         let previous_fixes = std::mem::take(&mut self.label_fixes);
         let me = self.cfg.me.clone();
@@ -1991,7 +1999,7 @@ impl<'a> Service<'a> {
         }).filter(|(n, x)| self.lost_spawn(*n, x)).map(|(n, x)| (n, x.attempt)).collect();
         for (n, a) in stale_spawns {
             release_execution(self.board, n, a, a, "no-start")?;
-            self.retired(n, a, a, false);
+            self.retired(n, a, a, false, 0);
             released.insert(a);
             self.log.push(format!("#{n} lost spawn {a}: no attempt log on {me} and no longer the live attempt; released no-start"));
         }
@@ -2015,7 +2023,7 @@ impl<'a> Service<'a> {
                     self.retry_trust(v, x)?;
                 } else {
                     release_execution(self.board, task, x.attempt, x.id, "no-start")?;
-                    self.retired(task, x.attempt, x.id, false);
+                    self.retired(task, x.attempt, x.id, false, 0);
                     if t.attempt == Some(x.attempt) && matches!(t.state, State::Doing | State::Review) {
                         self.gone(task, t, x.attempt, &[], &format!("start failed: Claude background launch refused: {refusal}"))?;
                     }
@@ -2102,7 +2110,7 @@ impl<'a> Service<'a> {
                 let no_start=match k.release(self.board,code,&evidence) {Ok(no_start)=>no_start,Err(e)=>{k.unknown=Some(e);return true;}};
                 let exit_reason = k.proc.exit_error().map_or_else(|| format!("exit-{code}"), String::from);
                 crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, k.proc.id(), if code == 0 { "ok" } else { "failed" }, &exit_reason);
-                retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli")));
+                retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli"),k.proc.id()));
                 released.insert(k.execution);
                 // This pass's view predates release; it cannot authorize a continuation before acceptance is resolved.
                 if by_n.get(&k.task).is_some_and(|v|v.projection.task.attempt==Some(k.attempt))
@@ -2114,7 +2122,7 @@ impl<'a> Service<'a> {
             _ => { k.unknown=None; true }
             }
         });
-        for (task,attempt,execution,native) in retired.drain(..) { self.retired(task,attempt,execution,native); }
+        for (task,attempt,execution,native,pid) in retired.drain(..) { self.retired(task,attempt,execution,native,pid); }
         for (n, a, code, failure, lost) in exited {
             self.ended(n, a, by_n.get(&n).copied(), failure);
             if code == 0 && let Some(v) = by_n.get(&n) && let Some((rt,_)) = rt_of(&v.projection.task) {
@@ -2170,7 +2178,7 @@ impl<'a> Service<'a> {
                     k.proc.released();
                     match crate::runtime::observe_until(native_until,||k.proc.exited()) {
                         Ok(Some(_))=>{
-                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli")));
+                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli"),k.proc.id()));
                             released.insert(k.execution);stopped.push((k.task,k.attempt));
                             return false;
                         }
@@ -2190,7 +2198,7 @@ impl<'a> Service<'a> {
                     ("ended",_) => match k.release(self.board,stop.unwrap(),"") {
                         Ok(_)=>{
                             crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, pid_before, "ok", kill_reason);
-                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli")));
+                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli"),k.proc.id()));
                             released.insert(k.execution);stopped.push((k.task,k.attempt));
                         },
                         Err(e)=>{k.unknown=Some(e);return true;}
@@ -2200,7 +2208,7 @@ impl<'a> Service<'a> {
             }
             current
         });
-        for (task,attempt,execution,native) in retired { self.retired(task,attempt,execution,native); }
+        for (task,attempt,execution,native,pid) in retired { self.retired(task,attempt,execution,native,pid); }
         for (n, a) in stopped {
             self.ended(n, a, by_n.get(&n).copied(), None);
         }
@@ -2479,7 +2487,7 @@ impl<'a> Service<'a> {
                 } else {
                     self.log.push(format!("#{n} lost spawn {a}: no attempt log on {me} {age} s after the spawn; released no-start"));
                     release_execution(self.board, n, a, a, "no-start")?;
-                    self.retired(n, a, a, false);
+                    self.retired(n, a, a, false, 0);
                     self.execution_waits.remove(&n);
                     self.gone(n, t, a, &[], &format!("start failed: lost spawn {a}: no native start on {me} {age} s after the spawn"))?;
                     touched.insert(n);
@@ -3293,7 +3301,7 @@ impl<'a> Service<'a> {
                 }
                 self.pending_releases.insert((l.task, l.attempt, execution));
                 release_execution(self.board, l.task, l.attempt, execution, "no-start")?;
-                self.retired(l.task,l.attempt,execution,false);
+                self.retired(l.task,l.attempt,execution,false,0);
                 self.sync_host();
                 if e.reportable {
                     #[cfg(not(test))]
@@ -5648,6 +5656,10 @@ Open: none")).unwrap();
         }
         assert_eq!(*count.borrow(),1);
         assert_eq!(core::executions(n,&crate::board::entries(&b,n).unwrap())[0].release,Some(core::Release::Exit));
+        let events = crate::telemetry::worker_events(&install);
+        let release = events.iter().find(|e| e.task == n && e.attempt == a && e.event == "slot-release").unwrap();
+        assert_eq!(release.pid, pid, "R12: reduced reap retains the exited executor PID");
+
         assert_eq!(std::fs::read_to_string(path).unwrap(),"corrupt","failed recovery evidence is preserved");
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -9605,6 +9617,36 @@ Open: none";
         }
     }
 
+    // R12/#2337: recovery retains exact persisted executor identity, never a different execution or guessed PID.
+    #[test]
+    fn retirement_retains_recovery_pid_and_marks_missing_identity_unknown() {
+        let dir = std::env::temp_dir().join(format!("taskq-2337-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let b = Fake::default();
+        let mut c = cfg("mac");
+        c.root = dir.join("project");
+        c.install = dir.clone();
+        std::fs::create_dir_all(c.root.join(".taskq")).unwrap();
+        let mut s = service(&b, &c, Default::default());
+        s.begun.insert(42, ("worker".into(), "codex".into(), None));
+        let path = crate::kids_path(&c.install, &c.root).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Invented historical process identity: no live OS process is required for retirement telemetry.
+        std::fs::write(&path, "pid 12340 invented-owner executor-v1\n1 42 codex 12345 invented-start 43 0\n").unwrap();
+        for (execution, expected) in [(43, 12345), (44, 0)] {
+            s.retired(1, 42, execution, false, 0);
+            let events = crate::telemetry::worker_events(&dir);
+            let event = events.last().unwrap();
+            assert_eq!(event.pid, expected);
+            assert_eq!(event.outcome, if expected == 0 { "unknown" } else { "ok" });
+            assert_eq!(event.reason, if expected == 0 { "execution-released-pid-unknown" } else { "execution-released" });
+        }
+        std::fs::remove_file(path).unwrap();
+        s.retired(1, 42, 43, false, 0);
+        assert_eq!(crate::telemetry::worker_events(&dir).last().unwrap().outcome, "unknown");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     // #2237 Chain: worker lifecycle events -> telemetry universal store -> status readback and anomaly detection (A2, A3).
     // Risk: status reports 'Run state unknown' while a worker pid lives, or alive-after-result / running-no-process go unrecorded.
     #[test]
@@ -9667,8 +9709,11 @@ Open: none";
                 .unwrap_or_else(|| panic!("missing {expected} in {events:?}"));
             assert_eq!(ev.host, "mac");
             assert_eq!(ev.runtime, "claude");
+            assert_eq!(ev.pid, live_pid, "{expected} must retain executor identity after release");
             assert!(!ev.reason.is_empty());
         }
+        assert!(events.iter().filter(|e| e.task == n && e.attempt == attempt && e.event == "slot-release")
+            .all(|e| e.pid == live_pid), "duplicate slot release must preserve identity");
         let alive_after = events.iter().find(|e| e.task == n && e.event == "alive-after-result").unwrap();
         assert_eq!(alive_after.pid, live_pid);
         assert_eq!(alive_after.reason, "pid-alive-after-result");

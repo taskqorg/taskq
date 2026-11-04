@@ -622,6 +622,9 @@ mod tests {
     fn cancellation_is_owner_bound_bounded_and_never_replays_work() {
         for case in ["ok","client","owner","turn","null","method","refused","oversize","broadcast","malformed","drop","timeout","timeout-before-init","unrelated","directory-mode","socket-mode","symlink"] {
             let root=std::env::temp_dir().join(format!("qipc-{}",super::super::uuid()));fs::create_dir(&root).unwrap();
+            // R12: fixture ownership must be explicit even when the host umask permits group writes.
+            #[cfg(unix)]
+            fs::set_permissions(&root,fs::Permissions::from_mode(0o700)).unwrap();
             #[cfg(unix)]
             let path=root.join("s");
             #[cfg(windows)]

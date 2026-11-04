@@ -102,7 +102,7 @@ trace() {
 import json, sys, datetime
 task, project, since = int(sys.argv[1]), sys.argv[2], sys.argv[3]
 need = ["spawn", "heartbeat", "result", "exit", "slot-hold", "slot-release"]
-fields = ["task", "attempt", "host", "runtime", "process_id", "to"]
+fields = ["project", "task", "attempt", "host", "runtime", "source", "process_id", "to"]
 header = json.loads(sys.stdin.readline())
 rows = []
 for line in sys.stdin:
@@ -149,11 +149,16 @@ if not attempts: print("no worker events for task %d" % task); ok = False
 for (proj, att), evs in attempts.items():
     seen = {e.get("operation") for e in evs}
     missing = [n for n in need if n not in seen]
-    blank = sorted({f for e in evs for f in fields if e.get(f) in (None, "", "unknown", "other")})
-    role = "/".join(sorted({e.get("source") for e in evs}))
+    def invalid(e, f):
+        value = e.get(f)
+        if f in ("task", "attempt", "process_id"):
+            return type(value) is not int or value <= (1 if f == "process_id" else 0)
+        return value in (None, "", "unknown", "other")
+    blank = sorted({f for e in evs for f in fields if invalid(e, f)})
+    role = "/".join(sorted({str(e.get("source") or "unknown") for e in evs}))
     print("attempt %s (%s, %s): %s%s" % (att, proj, role, "all lifecycle events present" if not missing else "missing " + ", ".join(missing),
-          "; empty fields " + ", ".join(blank) if blank else ""))
-    ok = ok and not missing
+          "; invalid identity fields " + ", ".join(blank) if blank else ""))
+    ok = ok and not missing and not blank
 closed = [o for o in rows if o["kind"] == "transition" and o.get("to") == "closed"]
 print("close: %s" % ("%s->closed at %s" % (closed[-1].get("from"), utc(closed[-1].get("started_ms"))) if closed else "none in window"))
 if not ok: print("verdict: FAIL (lifecycle gap above)"); sys.exit(1)
