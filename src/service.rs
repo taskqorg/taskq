@@ -6213,11 +6213,13 @@ Open: none")).unwrap();
     // Chain: slow native children -> bounded observation round -> honest heartbeat -> fair next round.
     #[test]
     fn slow_observations_defer_without_releasing_and_rotate_fairly() {
+        // Windows file reads and scheduling can consume 10ms before the first fixture poll.
+        const POLL_MS:u64=if cfg!(windows) {100} else {10};
         struct Slow {task:u64,calls:Rc<RefCell<Vec<u64>>>}
         impl Proc for Slow {
             fn accepted(&mut self)->Result<bool,String> {Ok(true)}
             fn exited(&mut self)->Result<Option<i32>,String> {
-                self.calls.borrow_mut().push(self.task);std::thread::sleep(std::time::Duration::from_millis(25));Ok(None)
+                self.calls.borrow_mut().push(self.task);std::thread::sleep(std::time::Duration::from_millis(POLL_MS*5/2));Ok(None)
             }
             fn kill(&mut self)->Result<(),String> {Err("fixture must stay owned".into())}
             fn id(&self)->u32 {0}
@@ -6229,7 +6231,7 @@ Open: none")).unwrap();
         let calls=Rc::new(RefCell::new(vec![]));
         for kid in &mut s.kids {kid.proc=Box::new(Slow {task:kid.task,calls:calls.clone()});}
         for round in 1..=3 {
-            s.pass_inner(std::time::Duration::from_millis(10)).unwrap();
+            s.pass_inner(std::time::Duration::from_millis(POLL_MS)).unwrap();
             assert_eq!(calls.borrow().len(),round,"a slow poll must not delay status behind all children");
             assert_eq!(s.kids.len(),3);
             assert_eq!(s.kids.iter().filter(|k|k.unknown.is_some()).count(),2,"deferred observations must be unknown, not freshly healthy");
@@ -6239,7 +6241,7 @@ Open: none")).unwrap();
         assert_eq!(calls.borrow().iter().collect::<std::collections::HashSet<_>>().len(),3,"slow first child starved another execution");
         calls.borrow_mut().clear();
         for round in 1..=3 {
-            s.reap_owned_within(std::time::Duration::from_millis(10));
+            s.reap_owned_within(std::time::Duration::from_millis(POLL_MS));
             assert_eq!(calls.borrow().len(),round);assert_eq!(s.kids.len(),3);assert_eq!(s.kids.iter().filter(|k|k.unknown.is_some()).count(),2);
         }
         assert_eq!(calls.borrow().iter().collect::<std::collections::HashSet<_>>().len(),3,"reduced pass starved an execution");
@@ -6247,10 +6249,10 @@ Open: none")).unwrap();
         s.kids.clear();calls.borrow_mut().clear();
         let recovery_calls=calls.clone();
         s.recover=Some(Box::new(move |task,_| {
-            recovery_calls.borrow_mut().push(task);std::thread::sleep(std::time::Duration::from_millis(25));Err("fixture: native recovery unknown".into())
+            recovery_calls.borrow_mut().push(task);std::thread::sleep(std::time::Duration::from_millis(POLL_MS*5/2));Err("fixture: native recovery unknown".into())
         }));
         for round in 1..=3 {
-            s.pass_inner(std::time::Duration::from_millis(10)).unwrap();assert_eq!(calls.borrow().len(),round);
+            s.pass_inner(std::time::Duration::from_millis(POLL_MS)).unwrap();assert_eq!(calls.borrow().len(),round);
             assert_eq!(s.execution_waits.len(),3);assert!(s.kids.is_empty(),"unknown recovery cannot replay work");
         }
         assert_eq!(calls.borrow().iter().collect::<std::collections::HashSet<_>>().len(),3,"cold recovery starved an execution");
