@@ -126,6 +126,12 @@ pub(crate) fn disconnect_with(install: &Path, w: &mut dyn enroll::Wire) -> Res<O
     Ok(Some(format!("disconnected: {}", out.join("; "))))
 }
 
+/// Whether the active connection approved this board; no connection or an unreadable scope is no.
+pub fn approves(install: &Path, kind: &str, host: &str, repo: &str) -> bool {
+    let Ok(board) = BoardScope::new(kind, host, repo) else { return false };
+    active(install).ok().flatten().and_then(|a| approved(&a)).is_some_and(|b| b == board)
+}
+
 /// The approved board of an active connection; `None` for a scope this version cannot read.
 pub fn approved(active: &Value) -> Option<BoardScope> {
     let v = active["scope"]["value"].as_str().filter(|_| active["scope"]["name"] == SCHEMA)?;

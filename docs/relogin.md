@@ -57,4 +57,4 @@ The PM gives each account one login per host, ahead of need, so a later switch n
 
 1. On the host, as the service user, in a visible session (section 2): `taskq accounts add <runtime> <label>`.
 2. The owner signs in through the printed link or device code. The PM copies the code nowhere else.
-3. On the host, read back `taskq accounts`: the row shows the new label and an `id`. An `id` already listed on this host for that runtime means the owner signed in to the wrong or a duplicate account; disable the new label and report it.
+3. On the host, read back `taskq accounts`: the row shows the new label and an `id`, at the latest after the next usage poll, about 2 minutes later. An `id` already listed on this host for that runtime means the owner signed in to the wrong or a duplicate account; disable the new label and report it.

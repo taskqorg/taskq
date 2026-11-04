@@ -234,7 +234,7 @@ pub fn issue_write(board: &dyn Board, n: u64, write: IssueWrite, op_id: Option<&
             if label.trim().is_empty() || label.trim() != label || label.contains(',') {
                 return receipt("rejected", value, "label: one name without commas or edge spaces", "Pass --label NAME.");
             }
-            if label == crate::service::TASK_LABEL || label == "taskq-host" || label.starts_with("q-") {
+            if label == crate::service::TASK_LABEL || label == "taskq-host" || label == crate::runtime::usage::POLICY_LABEL || label.starts_with("q-") {
                 return receipt("rejected", value, &format!("label {label} is task state"), "Use the task command (start, requeue, ...).");
             }
             let present = || board.issue(n).map(|i| i.labels.iter().any(|l| l == label));
@@ -264,6 +264,7 @@ pub fn claim_issue_refusal(i: &Issue) -> Option<&'static str> {
     if !i.trusted { Some("its author is not trusted") }
     else if crate::service::is_task(i) || crate::service::is_held(i) { Some("it is a task") }
     else if i.labels.iter().any(|l| l == crate::service::HOST_LABEL) { Some("it is a host heartbeat") }
+    else if i.labels.iter().any(|l| l == crate::runtime::usage::POLICY_LABEL) { Some("it is the fleet account policy") }
     else { None }
 }
 

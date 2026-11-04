@@ -526,8 +526,9 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
             }
         }
     }
-    if accounts.error.is_some()||accounts.active("codex",runtime::accounts::now()).as_deref()!=Some(&r.account) {
-        return Err("selected host account unavailable or changed; no account fallback".into());
+    // A poll may rank another account first between preparation and launch; the prepared account stays.
+    if !accounts.usable("codex",&r.account,runtime::accounts::now()) {
+        return Err("selected host account unavailable; no account fallback".into());
     }
     let base=home.join(".codex");
     let account=canonical(&if r.account==runtime::accounts::DEFAULT {base.clone()}else{base.join(runtime::accounts::HOMES).join(&r.account)})?;

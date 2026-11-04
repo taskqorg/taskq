@@ -12,6 +12,7 @@ use agentq_runtime::agent::NativeSpec;
 mod app_control;
 pub mod accounts;
 pub mod headroom;
+pub mod usage;
 pub mod owner;
 pub mod owner_stream;
 pub mod choices;
@@ -2884,7 +2885,8 @@ pub struct Adapter {
     /// `stream-input` JSON input whose stream names the session; `user-bin` user-installed binary; `accounts` § 3
     /// runtime accounts; `json-status` JSON login status; `auth-file` Codex `auth.json`; `passive-writer` Codex CLI
     /// resume releases the app's writer lock; `rollout-quota` rate limits from the rollout; `log-account` every start
-    /// claims its log's account; `model-catalog` Codex model list.
+    /// claims its log's account; `model-catalog` Codex model list; `usage-rpc`, `usage-oauth` an account's read-only
+    /// usage route: the app-server call, or the provider's OAuth usage call.
     pub caps: &'static [&'static str],
     /// The AgentQ client that launches this runtime.
     /// AgentQ descriptor name (`agentq_runtime::agent::runtime`).
@@ -2915,12 +2917,12 @@ const CODEX_UPDATE: &str = "update Codex CLI (https://github.com/openai/codex#in
 const CODEX_RELOGIN: &str = "run `codex login --device-auth` with the PM (docs/relogin.md)";
 const ADAPTERS: [Adapter; 4] = [
     Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude",
-        caps: &["cli", "remote-control", "caller-session-id", "background", "accounts", "json-status", "project-trust"],
+        caps: &["cli", "remote-control", "caller-session-id", "background", "accounts", "json-status", "project-trust", "usage-oauth"],
         agent: "claude", native_home: claude_home, home_var: "CLAUDE_CONFIG_DIR", status: &["auth", "status"], device_login: &["auth", "login"],
         relogin: "run `claude auth login` with the PM (docs/relogin.md)", setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`",
         min: "2.1.296", update: "run `claude update`", history: "claude-native" },
     Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex",
-        caps: &["cli", "sandbox-args", "thread-link", "accounts", "auth-file", "passive-writer", "rollout-quota", "model-catalog"],
+        caps: &["cli", "sandbox-args", "thread-link", "accounts", "auth-file", "passive-writer", "rollout-quota", "model-catalog", "usage-rpc"],
         agent: "codex", native_home: codex_home, home_var: "CODEX_HOME", status: &["login", "status"], device_login: &["login", "--device-auth"],
         relogin: CODEX_RELOGIN, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads",
         min: "0.159.3", update: CODEX_UPDATE, history: "codex-rollout" },
