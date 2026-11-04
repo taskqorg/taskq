@@ -2,7 +2,7 @@
 
 [Owner request and acceptance](https://github.com/taskqorg/taskq/issues/2351) · [surface inventory](../../errors-surfaces.md) · [M14](../../menu.md#errors-and-service-notices).
 
-Baseline: `7edc9b21cfbeb493d503babe23ffbf85d7ce2077`. Implementation: `e8ee2656bad81f162699a0147fbc3299a4411c17`. The final evidence update changes no implementation code. Native captures followed the single rebase onto origin/main. They used an empty temporary installation and the invented `tests/fixtures/errors.js` state; no board, service policy, worker or owner session was changed.
+Baseline: `7edc9b21cfbeb493d503babe23ffbf85d7ce2077`. Initial implementation: `e8ee2656bad81f162699a0147fbc3299a4411c17`; review fixes: `bb50f7f17977c8f72febec7df455a25792d3e659`. Native captures followed the single rebase onto origin/main. They used an empty temporary installation and the invented `tests/fixtures/errors.js` state; no board, service policy, worker or owner session was changed.
 
 ## Failure before, pass after
 
@@ -49,3 +49,22 @@ The full canonical gate `python scripts/check.py --base 7edc9b21cfbeb493d503babe
 A final bridge-path probe then reproduced an `aiError` reaching the workspace controller with header count 0. The bridge fix forwards AI/workspace/AgentQ error notices and their explicit null readbacks to the same list in both windows. Its browser regression passed, followed by the canonical web-only gate `python scripts/check.py --base dd587d23643ff7274a52503869dbcb785ddb2a68` on `e8ee2656bad81f162699a0147fbc3299a4411c17` in 225.140s (11 Rust model cases, all Node/artifact checks and the changed browser check). The earlier full Rust/integration evidence remains applicable: no Rust implementation changed in this follow-up. The native captures and executable hash above are from this final implementation.
 
 Local contract lint remained unknown because the checker's pinned specq checkout was absent; CI runs that lint. Documentation-only validation of this final evidence update is recorded on the task/PR. R12: Linux/macOS and merge-result CI remain separate from these Windows observations; publication still requires green `merge_group` CI under §7.
+
+## Review fixes: partial recovery and saved destinations
+
+The reviewer requeued `22c024e28303d8c05d869013ecb158e0254d085c` for two M14 gaps. Both were reproduced before the fixes (R12):
+
+- `node tests/tray-running.test.cjs`, with the nine-project regression added, failed at `partial recovery retains the last complete host total`: actual `?`, expected `9`. All projects first report nine running agents, then fail; one recovers with no running agents while eight remain limited. A fresh heartbeat from that idle project must not erase the dated full total.
+- A Chromium probe of that candidate's built tray, restoring `settings/removed`, rendered the safe `Settings` fallback with header count `0`, expected `1`. The navigation diagnostic was stored but omitted from the header list, contrary to the surface inventory's Move verdict.
+
+The shared host renderer now retains its dated observation while affected project reads still fail, including partial recovery. Conflicting execution observations still refuse a known total; complete successful observations replace the retained total. The header includes the existing unavailable-destination diagnostic. These fixes implement A2/A4 and M14 without changing a contract decision (R13); no numbered R rule was amended.
+
+On `bb50f7f1`, the host regression passes with total `9`, Last known and 15m age through partial recovery, then current `0` after full recovery. The same nine-project browser regression passes for tray and Conversations, including retained rows, deduplication, fixed page height, cause recovery and Needs me. Removed Home and Settings destinations each show one readable fallback notice; polling preserves it, and valid navigation clears it. Existing unknown, partial, stale, conflict, runtime, receipt and draft protection remains.
+
+Native Windows WebView2 snapshots also passed on this implementation, using the same isolated-installation procedure and `errors` / `errors-conversations` routes, with output directories `review-errors` / `review-errors-conversations`. Executable SHA-256: `5d818cc79697ad288edcc5b7cb854fbb4a701ea71827c5423cb7de50ab71ef24`. Both themes rendered; this review set retains only two dark screens. Together with the earlier pair, the task has four review screens, below A6's ten-screen cap. These captures prove native rendering, not macOS or installed-release qualification (R12).
+
+The full canonical gate `python scripts/check.py --base 22c024e28303d8c05d869013ecb158e0254d085c` passed on `bb50f7f1` in 348.328s on Windows: 992 Rust unit cases, 21 integration cases, offline selftest, all Node/artifact checks and the changed browser instrument; 47 native/fixture cases remained explicitly ignored. The runner selected full because its scratch log was an untracked path; the log was then moved into ignored `.taskq`. Local pinned SpecQ contract lint is still unknown; CI runs it. The following commit adds only this evidence and the inspected PNGs; `git diff --check` passes. Merge-result `merge_group` CI remains the publication gate (§7/R12).
+
+![Review fix: native tray rate-limit list](review-errors/popover-dark-errors-16.png)
+
+![Review fix: native Conversations rate-limit list](review-errors-conversations/popover-dark-errors-conversations-16.png)
