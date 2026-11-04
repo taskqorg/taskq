@@ -1,0 +1,166 @@
+{
+ "external_input_mutation": {
+  "after": {
+   "pilot_tool_sha256": "86c406655341f12a68449e51fab07aa69e10780a3fbeed49eebff3d84013ee93",
+   "steps": [
+    {
+     "cache_key": "9f843d177f93e85db6eb3e00b3d25e181a079212f79ae46d08175390c65de2c9",
+     "exit_code": 0,
+     "external_bytes": "ok",
+     "original_batch_tasks": [
+      1,
+      2,
+      3
+     ],
+     "outcome": "passed",
+     "receipt": "e760c8859964a0293bd64baa483c40424c23592948854ec85434c18a5e912d90",
+     "step": "initial"
+    },
+    {
+     "cache_key": "9f843d177f93e85db6eb3e00b3d25e181a079212f79ae46d08175390c65de2c9",
+     "exit_code": 1,
+     "external_bytes": "bad",
+     "original_batch_tasks": [
+      1,
+      2,
+      3
+     ],
+     "outcome": "failed",
+     "receipt": "2dc83056db386939abfbe9332557ab85bde16b55cf991f761cd817081769cde5",
+     "step": "external bytes changed, same store"
+    },
+    {
+     "cache_key": "9f843d177f93e85db6eb3e00b3d25e181a079212f79ae46d08175390c65de2c9",
+     "exit_code": 1,
+     "external_bytes": "bad",
+     "original_batch_tasks": [
+      1,
+      2,
+      3
+     ],
+     "outcome": "failed",
+     "receipt": "6db9c3f76f7e73135358215d5e821e8b86b8cf18f0f6ad9c74fd68eab9324b40",
+     "step": "external bytes changed, fresh store"
+    }
+   ]
+  },
+  "before": {
+   "pilot_tool_sha256": "5d12937cd0ffd5373311d6274359dea3d8967d4a0174e91c6d6142f7b80eeb24",
+   "steps": [
+    {
+     "cache_key": "09090201dcde5c566e57a2327b97ecd3a2f3d892cd814f0fab1ff677974f6b9e",
+     "exit_code": 0,
+     "external_bytes": "ok",
+     "original_batch_tasks": [
+      1,
+      2,
+      3
+     ],
+     "outcome": "passed",
+     "receipt": "722ae24d9ebb3cd7f586123961dc82aca5f5e04b5d3262c276fad8fd65dc63ae",
+     "step": "initial"
+    },
+    {
+     "cache_key": "09090201dcde5c566e57a2327b97ecd3a2f3d892cd814f0fab1ff677974f6b9e",
+     "exit_code": 0,
+     "external_bytes": "bad",
+     "original_batch_tasks": [
+      1,
+      2,
+      3
+     ],
+     "outcome": "passed",
+     "receipt": "722ae24d9ebb3cd7f586123961dc82aca5f5e04b5d3262c276fad8fd65dc63ae",
+     "step": "external bytes changed, same store"
+    },
+    {
+     "cache_key": "09090201dcde5c566e57a2327b97ecd3a2f3d892cd814f0fab1ff677974f6b9e",
+     "exit_code": 1,
+     "external_bytes": "bad",
+     "original_batch_tasks": [
+      1,
+      2,
+      3
+     ],
+     "outcome": "failed",
+     "receipt": "a20ad25264f0bcdbeef6e6def0dc99dd5ccbdb979ea790e67b0c2e2c0b33309e",
+     "step": "external bytes changed, fresh store"
+    }
+   ]
+  },
+  "note": "exit_code is the executed gate result. Before the fix the second row returned the first execution, so its receipt repeats.",
+  "runner": "real default runner on a private checkout; invented stub reads one external file through the environment",
+  "synthetic": true
+ },
+ "real_replay_recheck": {
+  "equals_historical_replay_head_and_tree": true,
+  "expected_tree": "7300a5b79d6e0f5851990887bde393e722b62666",
+  "experimental_base_head": "437b96ac58375c3dab9c3c9966114832bd2ae503",
+  "frozen_source_head": "d82957095f9e8c2117ac56f64dbd1f4c2e1a0c29",
+  "historical_producer_tool_sha256": "5d12937cd0ffd5373311d6274359dea3d8967d4a0174e91c6d6142f7b80eeb24",
+  "historical_receipts_and_ci": "unchanged; produced by the historical tool, not by this one",
+  "input_sha256": "06d1dfd38f512508626900a1b209ecd95d05896fecdca19ef01aeef60dff46e3",
+  "orders": [
+   {
+    "outcome": "passed",
+    "tasks": [
+     2359,
+     2375,
+     2380
+    ],
+    "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+   },
+   {
+    "outcome": "passed",
+    "tasks": [
+     2359,
+     2380,
+     2375
+    ],
+    "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+   },
+   {
+    "outcome": "passed",
+    "tasks": [
+     2375,
+     2359,
+     2380
+    ],
+    "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+   },
+   {
+    "outcome": "passed",
+    "tasks": [
+     2375,
+     2380,
+     2359
+    ],
+    "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+   },
+   {
+    "outcome": "passed",
+    "tasks": [
+     2380,
+     2359,
+     2375
+    ],
+    "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+   },
+   {
+    "outcome": "passed",
+    "tasks": [
+     2380,
+     2375,
+     2359
+    ],
+    "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+   }
+  ],
+  "outcome": "pending",
+  "pilot_tool_sha256": "86c406655341f12a68449e51fab07aa69e10780a3fbeed49eebff3d84013ee93",
+  "replay_head": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
+  "scope": "preparation only with the changed tool: no gate, no publication, no qualification",
+  "synthetic": false
+ },
+ "schema": 1
+}
