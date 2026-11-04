@@ -801,7 +801,7 @@ receive:function(s){
     if(d.id!==view.diagnosticId&&remaining>0){execution.diagnose(d.selector,Math.min(60000,remaining),d.limit);view.diagnosticId=d.id;}
     return;
   }
-  if(s.aiError){view.aiSending=false;view.aiError=s.aiError;present();return;}
+  if(Object.hasOwn(s,'aiError')){view.aiSending=false;view.aiError=s.aiError;present();return;}
   // MP14: one board history page for the Completed view (tray `completed` read).
   if(s.completed){dashboard?.receive(s.completed);return;}
   if(!ports.workspace&&['action_error','focus_receipt','resources_receipt','capmsg','aiError'].some(k=>s[k]))return;

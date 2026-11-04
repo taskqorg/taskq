@@ -33,6 +33,12 @@ const fixture=require('./fixtures/errors.js'),base=require('./fixtures/task-work
   await page.evaluate(s=>taskq.receive(s),f.fresh);
   assert.match(await page.locator('.errors-entry [role=status]').innerText(),/navigation save failure/,'a status poll cannot clear an unconfirmed save');
   await page.evaluate(()=>taskq.receive({viewStateError:null}));assert.equal(await page.locator('.errors-entry .badge').innerText(),'0');
+  for(const channel of ['aiError','workspaceError','agentqError']){
+   await page.evaluate(channel=>taskq.receive({[channel]:'Invented '+channel+' bridge failure'}),channel);
+   assert.match(await page.locator('.errors-entry [role=status]').innerText(),new RegExp(channel),'bridge failure reaches the header');
+   await page.evaluate(channel=>taskq.receive({[channel]:null}),channel);
+   assert.equal(await page.locator('.errors-entry .badge').innerText(),'0','bridge readback clears its error without replacing the snapshot');
+  }
   assert.deepEqual(errors,[]);await page.close();
   if(surface==='tray'){
    const cold=await browser.newPage({viewport:{width:420,height:800}});await cold.setContent(fs.readFileSync('build/web/tray.html','utf8'));
