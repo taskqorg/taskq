@@ -1,0 +1,358 @@
+{
+  "schema": 1,
+  "kind": "synthetic_same_key_mutable_external_input_probe",
+  "candidate": "0441ad233818f1ba33bacdb07c25414ab2bb5ec5",
+  "actual_tool_sha256": "5d12937cd0ffd5373311d6274359dea3d8967d4a0174e91c6d6142f7b80eeb24",
+  "unsafe_persisted_pass_reproduced": true,
+  "same_gate_head": true,
+  "same_gate_identity": true,
+  "same_environment_hash": true,
+  "manifest": {
+    "schema": 1,
+    "synthetic": true,
+    "producer_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "producer_executable_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "repository": "invented/repo",
+    "members": [
+      {
+        "task": 1,
+        "attempt": 10,
+        "result_entry": 11,
+        "result_sha": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+        "pr": 1,
+        "source_export": {
+          "task": 1,
+          "state": "closed",
+          "result": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+          "source_readiness": {
+            "schema": 1,
+            "state": "source_ready",
+            "accepted_result_state": "proven",
+            "current_result_sha": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+            "evidence": {
+              "schema": 1,
+              "task": 1,
+              "attempt": 10,
+              "result_entry": 11,
+              "result_sha": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+              "url": "https://github.com/invented/repo/issues/1",
+              "frozen": {
+                "repository": "invented/repo",
+                "pr": 1,
+                "base": "ea07ceacf4df3e0b421423d494b9a1a807fdeb49",
+                "head": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "parent": "ea07ceacf4df3e0b421423d494b9a1a807fdeb49",
+                "merged": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "integration": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "ci_kind": "merge_group",
+                "ci_sha": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "ci_run_id": 1,
+                "ci_run_attempt": 1
+              },
+              "landed": {
+                "repository": "invented/repo",
+                "pr": 1,
+                "base": "ea07ceacf4df3e0b421423d494b9a1a807fdeb49",
+                "head": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "parent": "ea07ceacf4df3e0b421423d494b9a1a807fdeb49",
+                "merged": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "integration": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "ci_kind": "merge_group",
+                "ci_sha": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "ci_run_id": 1,
+                "ci_run_attempt": 1
+              }
+            },
+            "task": 1,
+            "url": "https://github.com/invented/repo/issues/1",
+            "attempt": 10,
+            "result_entry": 11,
+            "result_sha": "029c32073f4526d5cd04e63f49839b7f70e015d1"
+          }
+        },
+        "source_export_sha256": "c7b263be2e9b752d1de42ec6334eea5c2b8f86e6153345ff1f2a57d42d6ae1f9",
+        "dependencies": [],
+        "dependency_evidence": {
+          "task": 1,
+          "dependencies": [],
+          "body": "## Goal\nInvented independent fixture"
+        },
+        "delta_sha256": "bb959a7331b7f30826ceadfbcdbf3269b24d54f33db7d79716aad5e2b132dde8",
+        "ci": {
+          "run_id": 1,
+          "run_attempt": 1,
+          "conclusion": "success",
+          "head_sha": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+          "event": "merge_group",
+          "observation": {
+            "id": 1,
+            "run_attempt": 1,
+            "status": "completed",
+            "head_sha": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+            "event": "merge_group",
+            "conclusion": "success"
+          }
+        }
+      },
+      {
+        "task": 2,
+        "attempt": 20,
+        "result_entry": 21,
+        "result_sha": "065e91cca636b995d962eebe84287978134d1f61",
+        "pr": 2,
+        "source_export": {
+          "task": 2,
+          "state": "closed",
+          "result": "065e91cca636b995d962eebe84287978134d1f61",
+          "source_readiness": {
+            "schema": 1,
+            "state": "source_ready",
+            "accepted_result_state": "proven",
+            "current_result_sha": "065e91cca636b995d962eebe84287978134d1f61",
+            "evidence": {
+              "schema": 1,
+              "task": 2,
+              "attempt": 20,
+              "result_entry": 21,
+              "result_sha": "065e91cca636b995d962eebe84287978134d1f61",
+              "url": "https://github.com/invented/repo/issues/2",
+              "frozen": {
+                "repository": "invented/repo",
+                "pr": 2,
+                "base": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "head": "065e91cca636b995d962eebe84287978134d1f61",
+                "parent": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "merged": "065e91cca636b995d962eebe84287978134d1f61",
+                "integration": "065e91cca636b995d962eebe84287978134d1f61",
+                "ci_kind": "merge_group",
+                "ci_sha": "065e91cca636b995d962eebe84287978134d1f61",
+                "ci_run_id": 2,
+                "ci_run_attempt": 1
+              },
+              "landed": {
+                "repository": "invented/repo",
+                "pr": 2,
+                "base": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "head": "065e91cca636b995d962eebe84287978134d1f61",
+                "parent": "029c32073f4526d5cd04e63f49839b7f70e015d1",
+                "merged": "065e91cca636b995d962eebe84287978134d1f61",
+                "integration": "065e91cca636b995d962eebe84287978134d1f61",
+                "ci_kind": "merge_group",
+                "ci_sha": "065e91cca636b995d962eebe84287978134d1f61",
+                "ci_run_id": 2,
+                "ci_run_attempt": 1
+              }
+            },
+            "task": 2,
+            "url": "https://github.com/invented/repo/issues/2",
+            "attempt": 20,
+            "result_entry": 21,
+            "result_sha": "065e91cca636b995d962eebe84287978134d1f61"
+          }
+        },
+        "source_export_sha256": "e00fb47b669c6a18be60402ffa5bffb74be06f523e49219590c2e6006e5cb9f9",
+        "dependencies": [],
+        "dependency_evidence": {
+          "task": 2,
+          "dependencies": [],
+          "body": "## Goal\nInvented independent fixture"
+        },
+        "delta_sha256": "d549b5c6986fd83de72a7b0b267f554785ea738794c58a8478e0fd607c64cc74",
+        "ci": {
+          "run_id": 2,
+          "run_attempt": 1,
+          "conclusion": "success",
+          "head_sha": "065e91cca636b995d962eebe84287978134d1f61",
+          "event": "merge_group",
+          "observation": {
+            "id": 2,
+            "run_attempt": 1,
+            "status": "completed",
+            "head_sha": "065e91cca636b995d962eebe84287978134d1f61",
+            "event": "merge_group",
+            "conclusion": "success"
+          }
+        }
+      },
+      {
+        "task": 3,
+        "attempt": 30,
+        "result_entry": 31,
+        "result_sha": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+        "pr": 3,
+        "source_export": {
+          "task": 3,
+          "state": "closed",
+          "result": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+          "source_readiness": {
+            "schema": 1,
+            "state": "source_ready",
+            "accepted_result_state": "proven",
+            "current_result_sha": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+            "evidence": {
+              "schema": 1,
+              "task": 3,
+              "attempt": 30,
+              "result_entry": 31,
+              "result_sha": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+              "url": "https://github.com/invented/repo/issues/3",
+              "frozen": {
+                "repository": "invented/repo",
+                "pr": 3,
+                "base": "065e91cca636b995d962eebe84287978134d1f61",
+                "head": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+                "parent": "065e91cca636b995d962eebe84287978134d1f61",
+                "merged": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+                "integration": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+                "ci_kind": "merge_group",
+                "ci_sha": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+                "ci_run_id": 3,
+                "ci_run_attempt": 1
+              },
+              "landed": {
+                "repository": "invented/repo",
+                "pr": 3,
+                "base": "065e91cca636b995d962eebe84287978134d1f61",
+                "head": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+                "parent": "065e91cca636b995d962eebe84287978134d1f61",
+                "merged": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+                "integration": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+                "ci_kind": "merge_group",
+                "ci_sha": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+                "ci_run_id": 3,
+                "ci_run_attempt": 1
+              }
+            },
+            "task": 3,
+            "url": "https://github.com/invented/repo/issues/3",
+            "attempt": 30,
+            "result_entry": 31,
+            "result_sha": "a378938e8d875c20f7d9edb552e5712a236f04e5"
+          }
+        },
+        "source_export_sha256": "af15dee675f7b55ba3cf42d5a6f9363eaa23b3c83a38dbc06b8f46d2d19f572b",
+        "dependencies": [],
+        "dependency_evidence": {
+          "task": 3,
+          "dependencies": [],
+          "body": "## Goal\nInvented independent fixture"
+        },
+        "delta_sha256": "70c35c86fbf49c1089a704ea828f1270c8a1dc577ffd6d5b60c57dac5fae1f4a",
+        "ci": {
+          "run_id": 3,
+          "run_attempt": 1,
+          "conclusion": "success",
+          "head_sha": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+          "event": "merge_group",
+          "observation": {
+            "id": 3,
+            "run_attempt": 1,
+            "status": "completed",
+            "head_sha": "a378938e8d875c20f7d9edb552e5712a236f04e5",
+            "event": "merge_group",
+            "conclusion": "success"
+          }
+        }
+      }
+    ],
+    "frozen_head": "3c3196a489708f688dc518a8c1902ff3b02ade0e"
+  },
+  "manifest_sha256": "6099c90c051574fbb52c869403a71b9e2ab3093ada72ce64ff31e41ae736b07a",
+  "harness_source": "import os\nfrom pathlib import Path\nassert Path(os.environ[\"PILOT_EXTERNAL_CHECK_INPUT\"]).read_text()==\"ok\", \"outside check input changed\"\n",
+  "harness_sha256": "4ea51981f018446cc85b25b0a43ae84c7de7571d8d640d022974431e23911bb1",
+  "external_input": {
+    "path_template": "<OWNED_FIXTURE_ROOT>/external-check-input",
+    "environment_name": "PILOT_EXTERNAL_CHECK_INPUT",
+    "path_and_environment_value_unchanged": true,
+    "first_bytes": "ok",
+    "later_bytes": "bad",
+    "outside_all_private_checkout_trees": true
+  },
+  "results": [
+    {
+      "phase": "initial",
+      "outcome": "passed",
+      "observed_outcome": "passed",
+      "cache_key": "11860f26bf6fb7464ce818478f0ac8bbc62748daf1326fdcbc84afcffa0c9446",
+      "gate_head": "266e97a25fbc846167c1a6caccfa4605d145f926",
+      "gate_tree": "8362b42c65e1002dbe22aaf75c9a145a60f6560b",
+      "actual_gate_identity": "fd317d11f5bd1601edff7bec0f02dc8b97034ffe26b40e133570e4795d5fe844",
+      "original_gate_identity": "fd317d11f5bd1601edff7bec0f02dc8b97034ffe26b40e133570e4795d5fe844",
+      "environment_sha256": "ead4be2640c96f6b7dfdd0bb4d2ac2bd0d05c71375e5cdcc0c469e7b8fce3130",
+      "input": "6099c90c051574fbb52c869403a71b9e2ab3093ada72ce64ff31e41ae736b07a",
+      "tool": "5d12937cd0ffd5373311d6274359dea3d8967d4a0174e91c6d6142f7b80eeb24",
+      "receipt": "16ca14ca631ddfb0e2175ae76bb3918249dfde06ca4e8d0a61b2208dc0948f99",
+      "command_template": [
+        "<PYTHON_EXECUTABLE>",
+        "scripts/check.py",
+        "--full"
+      ],
+      "raw_command_sha256": "2e7629ab42f100311e7de60f307cf2839db0eeaea558c71b2e9bfcd28ef51cdc",
+      "raw_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitized_log": "",
+      "sanitized_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original_members": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "phase": "same-store-after-input-change",
+      "outcome": "passed",
+      "observed_outcome": "passed",
+      "cache_key": "11860f26bf6fb7464ce818478f0ac8bbc62748daf1326fdcbc84afcffa0c9446",
+      "gate_head": "266e97a25fbc846167c1a6caccfa4605d145f926",
+      "gate_tree": "8362b42c65e1002dbe22aaf75c9a145a60f6560b",
+      "actual_gate_identity": "fd317d11f5bd1601edff7bec0f02dc8b97034ffe26b40e133570e4795d5fe844",
+      "original_gate_identity": "fd317d11f5bd1601edff7bec0f02dc8b97034ffe26b40e133570e4795d5fe844",
+      "environment_sha256": "ead4be2640c96f6b7dfdd0bb4d2ac2bd0d05c71375e5cdcc0c469e7b8fce3130",
+      "input": "6099c90c051574fbb52c869403a71b9e2ab3093ada72ce64ff31e41ae736b07a",
+      "tool": "5d12937cd0ffd5373311d6274359dea3d8967d4a0174e91c6d6142f7b80eeb24",
+      "receipt": "16ca14ca631ddfb0e2175ae76bb3918249dfde06ca4e8d0a61b2208dc0948f99",
+      "command_template": [
+        "<PYTHON_EXECUTABLE>",
+        "scripts/check.py",
+        "--full"
+      ],
+      "raw_command_sha256": "2e7629ab42f100311e7de60f307cf2839db0eeaea558c71b2e9bfcd28ef51cdc",
+      "raw_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sanitized_log": "",
+      "sanitized_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original_members": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "phase": "fresh-store",
+      "outcome": "failed",
+      "observed_outcome": "failed",
+      "cache_key": "11860f26bf6fb7464ce818478f0ac8bbc62748daf1326fdcbc84afcffa0c9446",
+      "gate_head": "266e97a25fbc846167c1a6caccfa4605d145f926",
+      "gate_tree": "8362b42c65e1002dbe22aaf75c9a145a60f6560b",
+      "actual_gate_identity": "fd317d11f5bd1601edff7bec0f02dc8b97034ffe26b40e133570e4795d5fe844",
+      "original_gate_identity": "fd317d11f5bd1601edff7bec0f02dc8b97034ffe26b40e133570e4795d5fe844",
+      "environment_sha256": "ead4be2640c96f6b7dfdd0bb4d2ac2bd0d05c71375e5cdcc0c469e7b8fce3130",
+      "input": "6099c90c051574fbb52c869403a71b9e2ab3093ada72ce64ff31e41ae736b07a",
+      "tool": "5d12937cd0ffd5373311d6274359dea3d8967d4a0174e91c6d6142f7b80eeb24",
+      "receipt": "281365d3dab7bd22406c40a6dddda8a1589e0c833affaad7c109c69f623a6379",
+      "command_template": [
+        "<PYTHON_EXECUTABLE>",
+        "scripts/check.py",
+        "--full"
+      ],
+      "raw_command_sha256": "2e7629ab42f100311e7de60f307cf2839db0eeaea558c71b2e9bfcd28ef51cdc",
+      "raw_log_sha256": "743cee2e64644ee8545ffbfceaae1da1c88312a0bc4ef9dad5f9764fb56ea633",
+      "sanitized_log": "Traceback (most recent call last):\n  File \"<PRIVATE_REPLAY>/scripts/check.py\", line 3, in <module>\n    assert Path(os.environ[\"PILOT_EXTERNAL_CHECK_INPUT\"]).read_text()==\"ok\", \"outside check input changed\"\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: outside check input changed\n",
+      "sanitized_log_sha256": "2a984bcd9b73f423502ee8e2af7a04cfd64de793c8bccc79a0aede8a002a0869",
+      "original_members": [
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "scope": "Only owned temporary synthetic Git repositories and tiny fixture check.py; no project canonical/full suite, real TaskQ events, product edits, CI or runtime changes."
+}
