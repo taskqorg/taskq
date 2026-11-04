@@ -256,7 +256,7 @@ Looks/sound: one line each (R13).
 - Conversations preserves scope, visible selection and reading context; [Details and sidebar](docs/design/tray-workspace.md#conversations-sidebar-1808).
 - Closed pins: unpin after first open or 24 h; [P-W1](docs/design/menu-product.md#windows-and-task-pins).
 - Settings keeps twelve destinations with bounded summaries, useful Balancing/Recovery state and direct existing reviews; client facts once, project details available ([M8/M12](docs/design/menu.md#m8-implementation-boundary)).
-- Task identifiers share a keyboard/touch-accessible copy widget displaying `project#NNN`; status-bar versions reuse it with their exact displayed text ([workspace](docs/design/task-workspace.md)).
+- Every UI task identifier displays `project#NNN`; lists and headers share a keyboard/touch-accessible copy widget for it; status-bar versions reuse it with their exact displayed text ([workspace](docs/design/task-workspace.md)).
 - Home agent totals: confirmed lower bounds, accessible Partial/Unknown explanations without a standalone compact label, shared runtime icons, host age and cause ([M3](docs/design/menu.md#running-agents)); Sigma total first, subtle Held outline and scoped frozen-review Start ([K-A3/K-A6](docs/design/task-counters.md)).
 - Shared relative times, exact on hover/focus, future and unknown explicit: [D-A19](docs/design/ai-workspace.md#conversation-time-d-a19).
 - Menu/View/Settings wrap, no horizontal scroll; compact rows, growing input; M2 rail; M3/M1.2 opaque sticky Home host strip starts at its pinned position. Home has no Tasks heading; [filter row](docs/design/menu.md#m3-navigation-and-tasks) reuses current/previous views and grouping.

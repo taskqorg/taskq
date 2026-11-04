@@ -39,6 +39,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
  const textPages=new Map(),bodies=new Map(),receipts=new Map(),outcomes=new Map(),key=(root,n)=>root+'#'+n;
  const saved={},controllers=new Map(),displayedReads=new Set();
  const settled=r=>['accepted','drop','made','answered'].includes(r.decision);
+ const display=(root,n)=>copyLabel.task(projects.find(p=>p.root===root)?.name||'Board',n);
  const namespace=(r,kind)=>'result:'+(projects.find(p=>p.root===r.root)?.issues||r.root)+'#'+r.n+'@'+r.sha+':'+kind;
  const receiptKey=(root,n,sha)=>key(root,n)+'@'+sha;
  const active=op=>selected?.root===op.root&&selected.n===op.n&&selected.sha===op.sha;
@@ -127,14 +128,14 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
     if(op.action==='read')readFailure=reply.reason;
     if(r.report?.n===op.n&&r.report.sha===op.sha)remember(op,r.report);
     const made=Array.isArray(r.receipts)?r.receipts:[],uncertain=r.receipt?.task;
-    outcome(op,reply.reason+(made.length?' · Created held drafts: '+made.map(n=>'#'+n).join(', '):'')+(uncertain>0&&!made.includes(uncertain)?' · Unverified draft: #'+uncertain:''),undefined,shown);
+    outcome(op,reply.reason+(made.length?' · Created held drafts: '+made.map(n=>display(r.root,n)).join(', '):'')+(uncertain>0&&!made.includes(uncertain)?' · Unverified draft: '+display(r.root,uncertain):''),undefined,shown);
     api.readNext();draw();return true;
    }
    if(r.report?.n===op.n&&r.report.sha===op.sha){
     const p=pages.get(r.root),report=remember(op,r.report);if(op.action==='open'&&r.report.body!==undefined){const body={...r.report,root:r.root,lazy:false};cacheBody(body);if(shown)selected={...selected,...body};}
     if(p)p.rows=p.rows.map(row=>row.n!==op.n||row.sha!==op.sha?row:{...row,...report,closed:row.closed});
     if(selected&&selected.sha===op.sha&&key(selected.root,selected.n)===key(r.root,op.n))selected={...selected,...report,closed:selected.closed};
-    if(op.action!=='read')outcome(op,report.visible===false?(report.decision==='made'?'Created held drafts: '+(report.tasks_made||[]).map(n=>'#'+n).join(', '):'Report dropped.'):(op.action==='later'?(op.until?'Later: back in Decide on '+op.until.slice(0,10)+'.':'Kept in Reports for later.'):''),undefined,shown);
+    if(op.action!=='read')outcome(op,report.visible===false?(report.decision==='made'?'Created held drafts: '+(report.tasks_made||[]).map(n=>display(r.root,n)).join(', '):'Report dropped.'):(op.action==='later'?(op.until?'Later: back in Decide on '+op.until.slice(0,10)+'.':'Kept in Reports for later.'):''),undefined,shown);
     if(r.successor>0){outcome(op,'Created held draft. Read it back and start it separately.',{n:r.successor,url:r.successor_url||(typeof r.report.url==='string'?r.report.url.replace(/\d+$/,String(r.successor)):null)},shown);if(shown&&draft===op.action)draft=null;}
     if(op.action==='accept')outcome(op,'Result accepted.',undefined,shown);
    }else {if(op.action==='read')readFailure='Result read receipt unknown; waiting for service readback.';outcome(op,'Report receipt unknown; waiting for service readback.',undefined,shown);}

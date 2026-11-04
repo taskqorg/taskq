@@ -14,7 +14,7 @@ const api=execution.module('notificationPanel',{
    for(const r of byRoot.get(p.root)||[])add({...r,source:'result',resultKind:r.kind,kind:'close',at:r.closed,project:p.name});
    for(const e of p.events||[]){if(!kinds[e[1]]||e[1]==='close'&&closed.has(p.root+'#'+e[3]))continue;
     const task=tasks.get(e[3]),result=byTask.get(p.root+'#'+e[3]);
-    add({source:'event',root:p.root,project:p.name,n:e[3],at:e[0],kind:e[1],event:e[2],title:task?.title||result?.title||'Task #'+e[3]});
+    add({source:'event',root:p.root,project:p.name,n:e[3],at:e[0],kind:e[1],event:e[2],title:task?.title||result?.title||copyLabel.task(p.name,e[3])});
    }
   }
   return rows.sort((a,b)=>b.at-a.at||b.n-a.n||a.id.localeCompare(b.id));
