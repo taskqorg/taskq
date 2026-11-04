@@ -66,7 +66,7 @@ const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
       assert.equal(restart.instance,'origin');assert.deepEqual(restart.roots,['/fixture/project']);assert.equal(restart.expires_at,1300);
       assert.equal(await page.locator('[data-a=restart]').isDisabled(),true);
       await page.evaluate(r=>taskq.receive({capmsg:r}),{id:restart.id,root,state:'queued',received_receipt:'a'.repeat(32)});
-      assert.match(await page.locator('.host-restart').innerText(),/waits for #7, operator/);await fits();await shot('restart-pending');
+      assert.match(await page.locator('.host-restart').innerText(),/waits for taskq#7, operator/);await fits();await shot('restart-pending');
       restarting.lifecycle={id:restart.id,state:'observed',received_receipt:'a'.repeat(32),applied_receipt:'b'.repeat(32),observed_receipt:'c'.repeat(32),service_instance:'replacement'};
       restarting.service.instance='replacement';await page.evaluate(s=>taskq.receive(s),restarting);
       assert.match(await page.locator('.host-restart [role=status]').innerText(),/observed/);await fits();await shot('restart-observed');

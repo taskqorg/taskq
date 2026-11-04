@@ -32,7 +32,7 @@ async function check(fx,answer){
   const look=root=>[...root.querySelectorAll('*')].map(el=>{const c=getComputedStyle(el);return ['fontSize','lineHeight','color','backgroundColor','padding','gap','borderRadius','justifyContent'].map(k=>c[k]);});
   eq(look(existing),look(control.firstElementChild),'embedded block equals standalone pinned parent');control.remove();
   click('[data-finding=send]');await tick();eq(sent.length,1,'one create');eq(sent[0].board,fx.projects[1].board.url,'override board');eq(sent[0].start,false,'held request');
-  assert(text().includes('Task #2401 recorded'),'create receipt');assert(!find('[data-finding=send]'),'immutable send');click('[data-tqp=tasks][data-state=review]');
+  assert(text().includes('Task taskq#2401 recorded'),'create receipt');assert(!find('[data-finding=send]'),'immutable send');click('[data-tqp=tasks][data-state=review]');
   const linked={project:fx.projects[0],row:answer.rows[0]};composer.update({...fx,linked});
   const area=find('.qac textarea');area.closest('details').open=true;area.focus();area.value='Preserve my answer';area.dispatchEvent(new Event('input',{bubbles:true}));
   composer.update({...fx,linked});eq(find('.qac textarea').value,'Preserve my answer','answer draft');assert(find('.qac textarea')===document.activeElement,'answer focus');
@@ -45,7 +45,7 @@ async function check(fx,answer){
   setup();result=fx.receipts.unknown;review();const send=find('[data-finding=send]');send.click();send.click();await tick();eq(sent.length,1,'double submit');
   composer=mount();composer.update(fx);result=fx.receipts.held;click('[data-finding=reconcile]');await tick();eq(checked[0],sent[0],'reload immutable reconcile');eq(sent.length,1,'reconcile never creates');
   setup();input('start','yes');review();result=fx.receipts.partial;click('[data-finding=send]');await tick();eq(sent[0].start,true,'explicit start');
-  failCheck=true;click('[data-finding=reconcile]');await tick();assert(text().includes('Read failed')&&text().includes('Task #2401 recorded'),'partial receipt retained on failed read');
+  failCheck=true;click('[data-finding=reconcile]');await tick();assert(text().includes('Read failed')&&text().includes('Task '+fx.projects[0].name+'#2401 recorded'),'partial receipt retained on failed read');
   setup();saved={};composer=mount();composer.update({...fx,finding:{...fx.finding,mapping:undefined}});assert(!find('[data-field=project]:checked'),'no inferred project');
   // Leave the exact long-content fixture for manual inspection, not a synthetic pass screen.
   setup();assert(document.documentElement.scrollWidth<=innerWidth,'final fixture overflow');

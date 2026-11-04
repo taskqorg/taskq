@@ -1,5 +1,5 @@
 'use strict';
-const ui=require('./ui-runtime.js');
+const ui=require('./ui-runtime.js'),copyLabel=require('./copy-label.js');
 const execution=ui.execution;
 const replyFiles=require('./reply-files.js');
 
@@ -79,9 +79,9 @@ step:function(row, local, cap, ev, newId) {
 render:function(board, row, local, cap) {
     const q = row.question || {text: row.card || '', parsed: false, choices: [], evidence: []}, st = status(row, local, cap);
     const id = 'qac-' + String(board).replace(/[^\w-]/g, '_') + '-' + row.n, live = LIVE.includes(st), own = !(cap && cap.composer);
-    const what = local.op ? '#' + row.n + ' ' + (local.about || about(row, local.op)) : '';
+    const taskName = copyLabel.task(cap && cap.project, row.n), what = local.op ? taskName + ' ' + (local.about || about(row, local.op)) : '';
     let h = '<section class="qac" data-qac-state="' + st + '" aria-labelledby="' + id + '-t">';
-    h += '<p class="qac-head" id="' + id + '-t"><span class="qac-mark" aria-hidden="true">?</span> <a href="' + href(row.url) + '" target="_blank" rel="noopener">#' + esc(row.n) + '</a> ' + esc(row.title) + '</p>';
+    h += '<p class="qac-head" id="' + id + '-t"><span class="qac-mark" aria-hidden="true">?</span> <a href="' + href(row.url) + '" target="_blank" rel="noopener">' + esc(taskName) + '</a> ' + esc(row.title) + '</p>';
     if(own&&cap?.files&&st!=='read-only')h+=replyFiles.markup(local.files,!live);
     if (manageable(row, cap)) {
       h += cap?.paged?images(q):q.parsed ? lines(q) + images(q) : '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';

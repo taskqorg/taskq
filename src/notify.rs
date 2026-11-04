@@ -184,8 +184,8 @@ pub fn due(n: &mut Value, ps: &[Value], now: i64, bursts: &mut Bursts) -> Vec<Po
             let title = n["titles"][root][&key].as_str().or(known[&key].as_str()).map(String::from);
             // § 7: a close names its outcome, never a bare `Closed` (#1800)
             let head = match (num, e[4].as_str()) {
-                (Some(x), Some(o)) => format!("#{x} closed: {o}"),
-                (Some(x), None) => format!("#{x}"),
+                (Some(x), Some(o)) => format!("{name}#{x} closed: {o}"),
+                (Some(x), None) => format!("{name}#{x}"),
                 _ => String::new(),
             };
             let body = match &title {
@@ -264,7 +264,7 @@ pub fn grant_notices(n: &mut Value, ps: &[Value]) -> Vec<Post> {
 
 /// `Send test`: one sample of `kind` (its host mode decides the sound).
 pub fn sample(n: &Value, kind: &str, now: i64) -> Post {
-    Post { root: String::new(), n: None, title: format!("taskq · {}", label(kind)), body: "#1 Sample task".into(), sound: host(n, kind) == "sound", id: json!({"test": kind, "at": now}).to_string() }
+    Post { root: String::new(), n: None, title: format!("taskq · {}", label(kind)), body: "taskq#1 Sample task".into(), sound: host(n, kind) == "sound", id: json!({"test": kind, "at": now}).to_string() }
 }
 
 /// OS permission as the Settings page shows it: `allowed`, `blocked`, `not asked`, `asking` (the OS prompt is open),
@@ -523,7 +523,7 @@ mod tests {
         let ev = json!([[100, "ask", "5", 7], [200, "failed", "6", 7], [200, "close", "6", 8]]);
         let p = due(&mut n, &[proj(ev.clone())], 210, &mut Bursts::new());
         assert_eq!(p.len(), 1, "close is off by default");
-        assert_eq!((p[0].title.as_str(), p[0].body.as_str(), p[0].n, p[0].sound), ("p · Failed", "#7 Fix it", Some(7), false));
+        assert_eq!((p[0].title.as_str(), p[0].body.as_str(), p[0].n, p[0].sound), ("p · Failed", "p#7 Fix it", Some(7), false));
         // a restart reloads the saved value: nothing again
         let mut saved: Value = serde_json::from_str(&n.to_string()).unwrap();
         assert!(due(&mut saved, &[proj(ev)], 220, &mut Bursts::new()).is_empty());
@@ -597,9 +597,9 @@ mod tests {
         let mut saved: Value = serde_json::from_str(&n.to_string()).unwrap();
         let gone = json!({"root": "/p", "name": "p", "tasks": [], "events": [[200, "close", "6", 7], [201, "close", "8", 90, "replaced by #104 (ready)"]]});
         let p = due(&mut saved, &[gone], 210, &mut Bursts::new());
-        assert_eq!(p[0].body, "#7 Fix it");
+        assert_eq!(p[0].body, "p#7 Fix it");
         // #1800 (pilotq#90): a replaced close names its successor's state instead of a bare `Closed`
-        assert_eq!(p[1].body, "#90 closed: replaced by #104 (ready)");
+        assert_eq!(p[1].body, "p#90 closed: replaced by #104 (ready)");
         assert_eq!(serde_json::from_str::<Value>(&p[0].id).unwrap()["t"], "Fix it", "the click opens a card with its title");
         assert_eq!(saved["titles"]["/p"], json!({}), "only open tasks stay: bounded by the open tasks");
     }

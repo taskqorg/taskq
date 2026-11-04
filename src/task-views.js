@@ -21,7 +21,7 @@ const api=execution.module('taskViews',{
  current:function(model){return model.views.find(v=>v.id===model.selected)||model.views[0];},
  dirty:function(view){return JSON.stringify(view.saved)!==JSON.stringify(view.working);},
  scope:function(projects,criteria){return projects.filter(p=>!criteria.projects.length||criteria.projects.includes(api.identity(p)));},
- matches:function(t,query){return !query||[t.title,t.n,t.project,t.runtime,t.host,t.result].filter(v=>v!=null).join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase());},
+ matches:function(t,query){return !query||[t.title,t.n,t.project,t.project+'#'+t.n,t.runtime,t.host,t.result].filter(v=>v!=null).join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase());},
  // #1592: `rank` is the display model's global order (state, priority, number, board); rows without one go last.
  compare:function(a,b){return (a.rank??Infinity)-(b.rank??Infinity)||0;},
  save:function(model){const v=api.current(model);v.saved=api.criteria(v.working);},

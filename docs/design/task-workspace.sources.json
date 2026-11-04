@@ -7,6 +7,7 @@
     "src/answer-card.js",
     "src/app-shell.js",
     "src/conversations.js",
+    "src/copy-label.js",
     "src/errors.js",
     "src/notification-panel.js",
     "src/pm-composer.js",

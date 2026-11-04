@@ -82,7 +82,7 @@ console.log('PASS host restart scope, immutable request, different-generation ex
 context.S.service={state:'running',pid:731,instance:'origin'};
 Object.assign(context.S.projects[0],{service_pid:731,host_instance:'origin',age:0,alive:true,restart_waits:['#7','operator']});
 Object.assign(context.S.projects[1],{service_pid:731,host_instance:'old',age:0,alive:true,restart_waits:['#99']});
-assert.match(context.lifecycleWaits(),/waits for #7, operator/);assert(!context.lifecycleWaits().includes('#99'),'another generation cannot explain current readiness');
+assert.match(context.lifecycleWaits(),/waits for &lt;project&gt;#7, operator/);assert(!context.lifecycleWaits().includes('#99'),'another generation cannot explain current readiness');
 context.S.lifecycle={id:context.hostCommand.id,state:'applied',reason:'required restart receipt unavailable: store-full'};
 context.lifecycleReadback();assert.match(context.hostCommand.reason,/store-full/);
 console.log('PASS native-bound project waits and durable receipt failures remain visible');

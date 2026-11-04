@@ -8,7 +8,7 @@ const base={display:require('./fixtures/display-model.json').display,platform:'m
   await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:text=>messages.push(JSON.parse(text))};});
   const state={...base,navigation:{schema:1,current:{page:'home'},dashboard:{selected,views:[{id:'view-running',name:'Running',pinned:true,working:{states:['doing','review']}}]}}};
   await page.evaluate(s=>taskq.receive({updates:[s,{settingsWindow:true,viewsWindow:true}]}),state);
-  assert.equal(await page.locator('.head h1').innerText(),'Tasks');
+  assert.equal(await page.locator('.head h1').count(),0,'Home has no redundant heading');
   await page.evaluate(()=>{messages=[];});
   const partial={...state,projects:[{...project,complete:false,error:'Invented intermediate read',tasks_age_seconds:121}]};
   await page.evaluate(({partial,state})=>taskq.receive({updates:[partial,state,{viewStateError:null}]}),{partial,state});

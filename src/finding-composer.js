@@ -1,5 +1,5 @@
 'use strict';
-const ui=require('./ui-runtime.js');
+const ui=require('./ui-runtime.js'),copyLabel=require('./copy-label.js');
 const execution=ui.execution;
 
 const {fresh,problem,request,receipt,receiptText,mount}=execution.module("finding-composer",{
@@ -38,9 +38,9 @@ receipt:function(value){
     if(result.start?.outcome==='accepted' && (result.create.outcome!=='accepted'||result.start.task!==result.create.task))result.start={outcome:'unknown',reason:'Start receipt does not match the created issue'};
     return result;
   },
-receiptText:function(r,kind){
+receiptText:function(r,kind,project){
     if(!r)return '';
-    const text=r.outcome==='accepted'?(kind==='Create'?'Task #'+r.task+' recorded on the board':'Admission accepted; worker launch is not confirmed'):
+    const text=r.outcome==='accepted'?(kind==='Create'?'Task '+copyLabel.task(project,r.task)+' recorded on the board':'Admission accepted; worker launch is not confirmed'):
       r.outcome==='unknown'?'Outcome unknown':r.outcome==='stale'?'Stale request':'Request rejected';
     return '<p role="status">'+kind+': '+esc(text)+(r.reason?' · '+esc(r.reason):'')+(r.next?' · '+esc(r.next):'')+'</p>';
   },
@@ -65,7 +65,7 @@ paint:function(){
       if(input.revision!==d.revision&&!locked)h+='<p>Current source evidence: '+esc(input.sanitizedEvidence || 'None supplied')+'</p><button type="button" data-finding="review-source">I reviewed the changed source</button>';
       if(d.pending)h+='<p role="status">Checking the reviewed request…</p>';
       else if(d.receipt){
-        h+=receiptText(d.receipt.create,'Create')+receiptText(d.receipt.start,'Start');
+        h+=receiptText(d.receipt.create,'Create',p?.name)+receiptText(d.receipt.start,'Start',p?.name);
         if(d.request.start&&!d.receipt.start)h+='<p role="status">Start: outcome unknown; no receipt</p>';
         h+='<p>Task state does not verify source recovery.</p>';
         if(d.receipt.create.outcome==='unknown'||d.receipt.start?.outcome==='unknown'||(d.request.start&&!d.receipt.start))h+='<button type="button" data-finding="reconcile"'+(adapter.reconcile?'':' disabled')+'>Check same request (read only)</button>';

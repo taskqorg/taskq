@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 'use strict';
+const copyLabel=require('./copy-label.js');
 const {h}=require('preact'),ui=require('./ui-runtime.js'),{execution}=ui;
 // Use only tokenizer grammars; never let the dependency rewrite the document or fetch files.
 if(typeof window!=='undefined')window.Prism={manual:true,disableWorkerMessageHandler:true};
@@ -38,6 +39,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
  const textPages=new Map(),bodies=new Map(),receipts=new Map(),outcomes=new Map(),key=(root,n)=>root+'#'+n;
  const saved={},controllers=new Map(),displayedReads=new Set();
  const settled=r=>['accepted','drop','made','answered'].includes(r.decision);
+ const display=(root,n)=>copyLabel.task(projects.find(p=>p.root===root)?.name||'Board',n);
  const namespace=(r,kind)=>'result:'+(projects.find(p=>p.root===r.root)?.issues||r.root)+'#'+r.n+'@'+r.sha+':'+kind;
  const receiptKey=(root,n,sha)=>key(root,n)+'@'+sha;
  const active=op=>selected?.root===op.root&&selected.n===op.n&&selected.sha===op.sha;
@@ -126,14 +128,14 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
     if(op.action==='read')readFailure=reply.reason;
     if(r.report?.n===op.n&&r.report.sha===op.sha)remember(op,r.report);
     const made=Array.isArray(r.receipts)?r.receipts:[],uncertain=r.receipt?.task;
-    outcome(op,reply.reason+(made.length?' · Created held drafts: '+made.map(n=>'#'+n).join(', '):'')+(uncertain>0&&!made.includes(uncertain)?' · Unverified draft: #'+uncertain:''),undefined,shown);
+    outcome(op,reply.reason+(made.length?' · Created held drafts: '+made.map(n=>display(r.root,n)).join(', '):'')+(uncertain>0&&!made.includes(uncertain)?' · Unverified draft: '+display(r.root,uncertain):''),undefined,shown);
     api.readNext();draw();return true;
    }
    if(r.report?.n===op.n&&r.report.sha===op.sha){
     const p=pages.get(r.root),report=remember(op,r.report);if(op.action==='open'&&r.report.body!==undefined){const body={...r.report,root:r.root,lazy:false};cacheBody(body);if(shown)selected={...selected,...body};}
     if(p)p.rows=p.rows.map(row=>row.n!==op.n||row.sha!==op.sha?row:{...row,...report,closed:row.closed});
     if(selected&&selected.sha===op.sha&&key(selected.root,selected.n)===key(r.root,op.n))selected={...selected,...report,closed:selected.closed};
-    if(op.action!=='read')outcome(op,report.visible===false?(report.decision==='made'?'Created held drafts: '+(report.tasks_made||[]).map(n=>'#'+n).join(', '):'Report dropped.'):(op.action==='later'?(op.until?'Later: back in Decide on '+op.until.slice(0,10)+'.':'Kept in Reports for later.'):''),undefined,shown);
+    if(op.action!=='read')outcome(op,report.visible===false?(report.decision==='made'?'Created held drafts: '+(report.tasks_made||[]).map(n=>display(r.root,n)).join(', '):'Report dropped.'):(op.action==='later'?(op.until?'Later: back in Decide on '+op.until.slice(0,10)+'.':'Kept in Reports for later.'):''),undefined,shown);
     if(r.successor>0){outcome(op,'Created held draft. Read it back and start it separately.',{n:r.successor,url:r.successor_url||(typeof r.report.url==='string'?r.report.url.replace(/\d+$/,String(r.successor)):null)},shown);if(shown&&draft===op.action)draft=null;}
     if(op.action==='accept')outcome(op,'Result accepted.',undefined,shown);
    }else {if(op.action==='read')readFailure='Result read receipt unknown; waiting for service readback.';outcome(op,'Report receipt unknown; waiting for service readback.',undefined,shown);}
@@ -162,7 +164,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
    const p=projects.find(p=>p.root===r.root),ops=[...pending.values(),...Object.values(saved).filter(v=>['sending','unknown','partial'].includes(v.receipt?.state)).map(v=>v.request).filter(Boolean)];
    const blocked=ops.some(op=>op.root===r.root&&op.n===r.n&&op.sha===r.sha&&op.action!=='read'&&op.id!==saved[namespace(r,kind)]?.op?.id);
    const reason=r.lazy&&!bodies.has(receiptKey(r.root,r.n,r.sha))?'Reading the exact result source':!p?'Registered project unavailable':p.alive===false?'Project observation stale':p.complete===false?'Project observation incomplete':pages.get(r.root)?.unknown?pages.get(r.root).reason:r.reason?'Result unavailable: '+r.reason:blocked?'Another result operation needs readback':kind==='decision'&&settled(r)?'Report already decided':kind==='make'&&!r.tasks?.length?'No follow-up tasks proposed':kind==='make'&&settled(r)?'Report already decided':r.pending_decision==='make'&&kind!=='make'?'Make tasks needs readback':'';
-   return {answer:!reason,composer:true,reason};
+   return {answer:!reason,composer:true,reason,project:p?.name};
   },
   mount(menu){
    if(!selected)return;
@@ -197,7 +199,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
    const slot=kind=>h('div',{'data-result-card':kind,key:namespace(r,kind)});
    return h('article',{class:'report-card','aria-label':ordinary?'Completed result':'Research report'},
     h('div',{class:'conversation-tools'},h('span',{class:'meta'},(ordinary?'Finished':'Report')+' · '+(r.read?'Read':'New')+(!ordinary?' · '+(({accepted:'Accepted',drop:'Dropped',made:'Drafts created',answered:'Decided',later:'Later'})[r.decision]||'Decision open'):'')),
-     h('a',{href:r.url,'data-url':r.url},'#'+r.n),h('button',{'data-report':'previous',disabled:nav.index<=0},'Previous'),h('button',{'data-report':'next',disabled:nav.index>=nav.length-1},'Next')),
+     h('a',{href:r.url,'data-url':r.url,'aria-label':'Open task on the board'},icons.icon('external-link')),copyLabel.node(copyLabel.task(r.project||projects.find(p=>p.root===r.root)?.name||'Board',r.n)),h('button',{'data-report':'previous',disabled:nav.index<=0},'Previous'),h('button',{'data-report':'next',disabled:nav.index>=nav.length-1},'Next')),
     ordinary&&h('p',{class:'meta'},h('span',{class:tone},icons.icon(mark),outcome),r.merged&&h('span',null,' · '+r.merged),time.stamp(time.seconds(r.closed),'Task closed')),
     r.reason&&h('p',{role:'status'},'Result unknown: '+r.reason),
     !ordinary&&h('p',{class:'meta'},'Verdict: '+(r.experiment_verdict||'unknown'),time.stamp(time.seconds(r.closed),'Report closed')),
@@ -215,8 +217,8 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
     !ordinary&&r.body&&h('details',{'data-view-key':namespace(r,'full'),open:textPage(r,'full').open,onToggle:e=>{const page=textPage(r,'full');if(page.open!==e.currentTarget.open){page.open=e.currentTarget.open;draw();}}},h('summary',{'data-reading-key':'report:full',onClick:e=>{e.preventDefault();const page=textPage(r,'full');page.open=!page.open;e.currentTarget.parentElement.open=page.open;draw();}},'Full report'),textPage(r,'full').open&&textBody(r,r.body,'full')),
     notice&&h('p',{role:'status'},notice),
     !!(notice||successor||r.tasks_made?.length)&&![...pending.values()].some(op=>active(op)&&op.action!=='read')&&h('div',{class:'conversation-tools result-next'},
-     successor&&h('a',{href:successor.url,'data-url':successor.url},'1. Read held draft #'+successor.n+' ★'),
-     !!r.tasks_made?.length&&h('details',{'data-view-key':namespace(r,'drafts')},h('summary',null,'1. Read held drafts ★'),r.tasks_made.map(n=>h('a',{href:r.url?.replace(/\d+$/,String(n)),'data-url':r.url?.replace(/\d+$/,String(n)),key:n},'Read held draft #'+n))),
+     successor&&h('a',{href:successor.url,'data-url':successor.url},'1. Read held draft '+display(r.root,successor.n)+' ★'),
+     !!r.tasks_made?.length&&h('details',{'data-view-key':namespace(r,'drafts')},h('summary',null,'1. Read held drafts ★'),r.tasks_made.map(n=>h('a',{href:r.url?.replace(/\d+$/,String(n)),'data-url':r.url?.replace(/\d+$/,String(n)),key:n},'Read held draft '+display(r.root,n)))),
      h('button',{'data-report':'unresolved'},(successor||r.tasks_made?.length?'2. Next unresolved item':'1. Next unresolved item ★')),
      h('button',{'data-report':'stay'},(successor||r.tasks_made?.length?'3':'2')+'. Stay here')));
   }

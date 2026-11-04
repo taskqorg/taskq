@@ -18,7 +18,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
   assert.equal(await page.locator('.head [data-a=hide]').count(),0,'F01: native Close replaces application Close');
   assert.deepEqual(await page.locator('.window-controls>button').evaluateAll(es=>es.map(e=>e.getAttribute('aria-label'))),['Keep menu open','Always on top']);
   assert.equal(await page.locator('.menu').evaluate(e=>e.scrollWidth<=e.clientWidth+1),true,'wrapping toolbar fits');
-  assert.match(await page.locator('.status-footer').innerText(),/TaskQ v9.9.9/);
+  assert.match(await page.locator('.status-footer').innerText(),/TaskQ\s+v9.9.9/);
   await page.locator('.conversations-entry').click();assert(await page.evaluate(()=>messages.some(m=>m.a==='workspace'&&m.open.page==='conversations')));
   assert.equal(await page.evaluate(()=>messages.some(m=>/message-action|mark-read|answer/.test(m.a))),false,'entry acknowledges nothing');
   await page.locator('[data-route="'+long.root+'"]').first().click();

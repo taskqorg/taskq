@@ -6,11 +6,11 @@ const LABELS={start:'Start',stop:'Stop',later:'Later',retry:'Retry'},ICONS={star
 const {op,render,esc}=execution.module('task-controls',{
 esc:function(s){return String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');},
 op:function(row,action,prefix){return {id:prefix+'.'+action+'.'+row.n+'.'+row.revision,task:row.n,revision:row.revision,action};},
-render:function(row,{key='',url='',board='unknown',except=[]}={}){
+render:function(row,{key='',url='',board='unknown',except=[],project='Board'}={}){
   // #1781: icon controls with exact names, as in the approved menu details (input-scroll 05).
-  const asset=require('./ui-icons.js').asset;
-  const buttons=(row.controls||[]).filter(a=>LABELS[a]&&!except.includes(a)).map(a=>'<button data-a="control" data-control="'+a+'" data-key="'+esc(key)+'" class="compact-action" title="'+LABELS[a]+' #'+row.n+'" aria-label="'+LABELS[a]+' #'+row.n+'">'+asset(ICONS[a])+'</button>');
-  if(url)buttons.push('<a href="'+esc(url)+'" data-url="'+esc(url)+'" class="compact-action" title="Close #'+row.n+' on the board" aria-label="Close #'+row.n+' on the board">'+asset(board==='gitlab'?'gitlab':board==='github'?'github':'external-link')+'</a>');
+  const asset=require('./ui-icons.js').asset,id=esc(project+'#'+row.n);
+  const buttons=(row.controls||[]).filter(a=>LABELS[a]&&!except.includes(a)).map(a=>'<button data-a="control" data-control="'+a+'" data-key="'+esc(key)+'" class="compact-action" title="'+LABELS[a]+' '+id+'" aria-label="'+LABELS[a]+' '+id+'">'+asset(ICONS[a])+'</button>');
+  if(url)buttons.push('<a href="'+esc(url)+'" data-url="'+esc(url)+'" class="compact-action" title="Close '+id+' on the board" aria-label="Close '+id+' on the board">'+asset(board==='gitlab'?'gitlab':board==='github'?'github':'external-link')+'</a>');
   return buttons.length?'<span class="row task-controls">'+buttons.join('')+'</span>':'';
 }
 });

@@ -114,7 +114,7 @@ for(const compact of [true,false])for(const state of ['doing','review']){
  const overdue=q.task(p,{...row,state,heartbeat:{warning:'tool overdue <inspect>'}},false,compact);
  assert.match(healthy,/class="task-health-warning" aria-hidden="true"/);
  assert.match(unknown,/class="task-health-warning" role="status"/);
- if(!compact)assert.match(unknown,/tabindex="0"/);else assert(!unknown.includes('tabindex="0"'),'the whole row owns keyboard focus and exposes its warning');
+ if(!compact)assert.match(unknown,/tabindex="0"/);else assert.match(unknown,/<div role="button" tabindex="0"/,'the row keeps keyboard focus and its accessible warning');
  assert.match(overdue,/aria-label="tool overdue &lt;inspect&gt;"/);
  assert(!overdue.includes('tool overdue <inspect>'));
  assert.match(overdue,/data-icon="triangle-alert"/,'warning needs a visible bundled glyph, not only accessible text');

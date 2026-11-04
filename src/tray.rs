@@ -45,8 +45,8 @@ fn raise_request() -> PathBuf { std::env::temp_dir().join("taskq-tray.raise") }
 /// M15 Quit and Restart name the active work they wait for (doing and review tasks); `phase` is `Quitting` or
 /// `Restarting` once one is under way. App text says TaskQ, never service; menu labels stay within 32 characters.
 fn quit_label(st: &Value, phase: Option<&str>) -> String {
-    let work: Vec<String> = st["projects"].as_array().into_iter().flatten().flat_map(|p| p["tasks"].as_array().into_iter().flatten())
-        .filter(|t| matches!(t["state"].as_str(), Some("doing" | "review"))).map(|t| format!("#{}", t["n"])).collect();
+    let work: Vec<String> = st["projects"].as_array().into_iter().flatten().flat_map(|p| p["tasks"].as_array().into_iter().flatten().map(move |t| (p["name"].as_str().unwrap_or("Board"), t)))
+        .filter(|(_, t)| matches!(t["state"].as_str(), Some("doing" | "review"))).map(|(name, t)| format!("{name}#{}", t["n"])).collect();
     if work.is_empty() { return phase.map_or("No active work".into(), |p| format!("{p} TaskQ")); }
     let mut s = phase.map_or("Quit waits for".into(), |p| format!("{p} after"));
     for (i, w) in work.iter().enumerate() {
@@ -303,6 +303,40 @@ fn menu_palette(dark:bool,opacity:u64)->String {
         format!("--{key}:#{:02X}{:02X}{:02X}",channel(c[0]),channel(c[1]),channel(c[2]))
     }).collect::<Vec<_>>().join(";")
 }
+
+/// The drawable client size. Wry replaces a macOS window's content view, so tao's `inner_size` keeps its build-time value.
+#[cfg(target_os="macos")]
+fn client_size(window:&Window)->PhysicalSize<u32> {
+    use tao::platform::macos::WindowExtMacOS;
+    // SAFETY: the event loop owns this live NSWindow and calls us on its UI thread.
+    let window_ref=unsafe {&*(window.ns_window() as *const objc2_app_kit::NSWindow)};
+    let client=window_ref.contentRectForFrameRect(window_ref.frame()).size;
+    LogicalSize::new(client.width,client.height).to_physical(window.scale_factor())
+}
+#[cfg(not(target_os="macos"))]
+fn client_size(window:&Window)->PhysicalSize<u32> {window.inner_size()}
+
+/// A transparent window keeps background-only body opacity; the titlebar alone gets the ordinary material behind its controls.
+#[cfg(target_os="macos")]
+fn native_titlebar(window:&Window)->Result<(),String> {
+    use objc2_app_kit::{NSAutoresizingMaskOptions,NSVisualEffectBlendingMode,NSVisualEffectMaterial,NSVisualEffectState,NSVisualEffectView,NSWindowButton,NSWindowOrderingMode};
+    use tao::platform::macos::WindowExtMacOS;
+    let main=objc2::MainThreadMarker::new().ok_or("titlebar needs the UI thread")?;
+    // SAFETY: the event loop owns this live NSWindow and calls us on its UI thread.
+    let window_ref=unsafe {&*(window.ns_window() as *const objc2_app_kit::NSWindow)};
+    let close=window_ref.standardWindowButton(NSWindowButton::CloseButton).ok_or("window has no Close button")?;
+    let bar=unsafe {close.superview()}.ok_or("Close button has no titlebar view")?;
+    let backing=NSVisualEffectView::new(main);
+    backing.setMaterial(NSVisualEffectMaterial::Titlebar);
+    backing.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+    backing.setState(NSVisualEffectState::FollowsWindowActiveState);
+    backing.setFrame(bar.bounds());
+    backing.setAutoresizingMask(NSAutoresizingMaskOptions::ViewWidthSizable|NSAutoresizingMaskOptions::ViewHeightSizable);
+    bar.addSubview_positioned_relativeTo(&backing,NSWindowOrderingMode::Below,None);
+    Ok(())
+}
+#[cfg(not(target_os="macos"))]
+fn native_titlebar(_:&Window)->Result<(),String> {Ok(())}
 
 #[cfg(target_os="macos")]
 fn window_opacity(window:&Window,percent:u64)->Result<(),String> {
@@ -1680,6 +1714,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 });
                 match built {
                     Ok(x) => {
+                        if let Err(error)=native_titlebar(&x.0) {eprintln!("taskq tray: titlebar unchanged: {error}");}
                         if !views_shots && !conversation_shots && (settings.opacity_mode=="background" || settings.opacity<100) && let Err(error)=window_opacity(&x.0,settings.native_opacity()) {
                             settings.opacity_error=Some(format!("Menu opacity unavailable: {error}; Off shown"));
                             settings.opacity=100;
@@ -2252,7 +2287,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                             let area = work_area(&monitor);
                             (f64::from(area.2) / scale, f64::from(area.3) / scale)
                         });
-                        let outer=w.outer_size();let inner=w.inner_size();
+                        let outer=w.outer_size();let inner=client_size(w);
                         let frame=(outer.width.saturating_sub(inner.width),outer.height.saturating_sub(inner.height));
                         let max_w=(max_w-f64::from(frame.0)/scale).max(240.0);let max_h=(max_h-f64::from(frame.1)/scale).max(120.0);
                         let size = (width.max(240.0).min(max_w), height.max(120.0).min(max_h));
@@ -2278,7 +2313,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     }
                     "size-anchor" => {
                         settings.pin.size_anchor = if let Some(value)=m["value"].as_str().filter(|v| ["auto","top","bottom","fixed"].contains(v)) {value.into()} else {return};
-                        if settings.pin.size_anchor == "fixed" { let size=w.inner_size().to_logical::<f64>(w.scale_factor()); settings.pin.size=Some((size.width,size.height)); }
+                        if settings.pin.size_anchor == "fixed" { let size=client_size(w).to_logical::<f64>(w.scale_factor()); settings.pin.size=Some((size.width,size.height)); }
                         settings.save(&install);
                         reply!(&state(&install,&settings,dark,None,&adding,&mut sync));
                     }
@@ -2933,7 +2968,7 @@ fn native_header_drag(window:&Window)->bool {
     let Some(mtm)=objc2::MainThreadMarker::new() else{return false;};
     let Some(event)=objc2_app_kit::NSApplication::sharedApplication(mtm).currentEvent() else{return false;};
     objc2_app_kit::NSEvent::pressedMouseButtons()&1!=0&&event.window(mtm).is_some_and(|w|std::ptr::from_ref(&*w).cast::<std::ffi::c_void>()==window.ns_window().cast_const())
-        &&event.locationInWindow().y>f64::from(window.inner_size().height)/window.scale_factor()
+        &&event.locationInWindow().y>f64::from(client_size(window).height)/window.scale_factor()
 }
 
 /// A display's name in `tray.json`; unnamed: its origin.
@@ -3434,14 +3469,14 @@ mod tests {
     // work, the app shows itself as a service, or two trays run across install folders.
     #[test]
     fn quit_names_active_work_and_host_lock_is_single() {
-        let st = |ns: &[(u64, &str)]| json!({"projects": [{"tasks": ns.iter().map(|(n, s)| json!({"n": n, "state": s})).collect::<Vec<_>>()}]});
+        let st = |ns: &[(u64, &str)]| json!({"projects": [{"name": "p", "tasks": ns.iter().map(|(n, s)| json!({"n": n, "state": s})).collect::<Vec<_>>()}]});
         assert_eq!(quit_label(&st(&[]), None), "No active work");
-        assert_eq!(quit_label(&st(&[(12, "doing"), (13, "ready"), (14, "review")]), None), "Quit waits for #12 #14");
+        assert_eq!(quit_label(&st(&[(12, "doing"), (13, "ready"), (14, "review")]), None), "Quit waits for p#12 p#14");
         let many = quit_label(&st(&[(1001, "doing"), (1002, "doing"), (1003, "review"), (1004, "doing")]), Some("Quitting"));
-        assert_eq!(many, "Quitting after #1001 #1002 +2");
+        assert_eq!(many, "Quitting after p#1001 +3");
         assert!(many.len() <= 32);
         let restart = quit_label(&st(&[(1001, "doing"), (1002, "doing"), (1003, "review"), (1004, "doing")]), Some("Restarting"));
-        assert_eq!(restart, "Restarting after #1001 +3");
+        assert_eq!(restart, "Restarting after p#1001 +3");
         for phase in ["Quitting", "Restarting"] { assert_eq!(quit_label(&st(&[]), Some(phase)), format!("{phase} TaskQ")); }
         if let Some(held) = host_lock() {
             assert!(host_lock().is_none(), "a second tray on this host is refused");
