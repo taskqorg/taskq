@@ -1063,7 +1063,7 @@ impl Snapshot {
         if let Some(d) = decide_unknown { anomalies.push(format!("- {} · Next: rerun `taskq status` after the next service pass", d.trim_end())); }
         let stamp=|v:&Value|v.as_i64().filter(|at|*at>0).map(crate::board::stamp).unwrap_or("unknown".into());
         for r in &self.tasks {
-            if matches!(r.task.state, State::Ready | State::Waiting) && !r.labels.iter().any(|l| l == service::TASK_LABEL) {
+            if r.admission.as_ref().is_some_and(|a| a.code == "labels" && a.reason == START_LABELS) {
                 anomalies.push(format!("- {} · log {}; {START_LABELS} · Next: `taskq start {}`{}", link(r), r.task.state.name(), r.n, fix("start-labels")));
             }
             if let Some(warning) = r.health_warning() {
