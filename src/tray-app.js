@@ -70,8 +70,8 @@ gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();cons
 natural:function(){const c=menu.querySelector('.content'),b=c&&c.querySelector('.content-body'),all=menu.getBoundingClientRect().height;if(!b)return Math.ceil(all);const cs=getComputedStyle(c),edges=['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth'].reduce((n,k)=>n+(parseFloat(cs[k])||0),0);return Math.ceil(all-c.getBoundingClientRect().height+b.getBoundingClientRect().height+edges);},
 fit:function(){if(ports.workspace||ports.settings||ports.views)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:natural()});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
-actionNotices:function(){if(!ports.workspace)return view.workspaceError?h('p',{role:'alert'},view.workspaceError):'';const r=view.hostCommand||view.S?.lifecycle;const alert=text=>h('div',{class:'body alert',role:'alert'},text);
-  const items=[view.aiError&&alert(view.aiError),view.workspaceError&&alert(view.workspaceError),...view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>alert(p.name+': '+actionErrors.get(p.root).text)),r?.action==='uninstall'&&h('div',{class:'body meta',role:'status'},'Uninstall '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:''))].filter(Boolean);
+actionNotices:function(){if(!ports.workspace)return '';const r=view.hostCommand||view.S?.lifecycle;const alert=text=>h('div',{class:'body alert',role:'alert'},text);
+  const items=[...view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>alert(p.name+': '+actionErrors.get(p.root).text)),r?.action==='uninstall'&&h('div',{class:'body meta',role:'status'},'Uninstall '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:''))].filter(Boolean);
   return items.length?f(items):'';},
 lifecycleStart:function(root,action='restart',mode='drain'){
   if(view.hostCommand&&view.hostCommand.state!=='observed')return;
@@ -234,7 +234,7 @@ taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);retu
 syncLine:function(o){return syncView.row(o)||'';},
 staleLine:function(){return syncView.staleRow(view.S)||'';},
 // #1819: the snapshot as received, with the shared pending store laid over it.
-adopt:function(s){view.S=s;},
+adopt:function(s){view.S=errors.retain(s,view.S);},
 taskOrder:function(a,b){return require('./task-views.js').compare(a,b);},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
@@ -250,7 +250,6 @@ startHeld:function(targets){
   return true;
 },
 globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);const name=ts[0]?.state_name;return ts.length?h('details',{class:'group','data-view-key':'state:'+st,key:'state:'+st},h('summary',null,h('span',{class:color(st)},name),counter(ts.length,color(st),name)),ts.map(t=>taskRow(t,true))):'';},
-problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+p.age_text+' old: service not running?'):p.error?'service error: '+p.error:'';return e?h('button',{class:'project alert','data-a':'log','data-root':p.root,title:e,disabled:!p.log},h('span',null,icon('circle-alert'),p.name+': '+e),h('span',{class:'meta'},p.log?'Log':''),h('span')):'';},
 modeText:function(p){return {run:'Configured intake: '+(Array.isArray(p.focus)?p.focus.join(' ')||'off':'unknown'),paused:'Paused: running tasks finish, no new ones',watch:'Observation only: focus off'}[mode(p)];},
 admission:function(p){if(!ports.workspace)return api.operationLauncher('admission',p.root,'Review admission in '+p.name+'…');
   if(view.pending[p.root]&&!view.pending[p.root].unknown)return h('button',{class:'project',disabled:true},view.pending[p.root].text+'…');
@@ -348,7 +347,6 @@ agentq:function(settings=false){
   const rows=Array.isArray(A.runtimes)?A.runtimes:[],runtime=view.agentqRuntime||rows.find(r=>r.eligible)?.runtime,selected=rows.find(r=>r.runtime===runtime),targets=A.targets?.[runtime]||[];
   // #1702 A2: off or unreadable AgentQ is a status with its reason, not a setup prompt; taskq works without it
   if(A.kind==='stopped'||A.kind==='unknown')return h('section',{class:'group agentq','aria-label':'agentq '+A.kind},
-    view.agentqError&&h('div',{class:'body alert',role:'alert'},view.agentqError),
     h('div',{class:'row'},A.kind==='stopped'?'agentq off or unreachable':'agentq status unknown'),
     h('div',{class:'body meta'},A.host+' · '+A.platform),
     A.reason&&h('div',{class:'body',role:'status'},A.reason),
@@ -356,7 +354,6 @@ agentq:function(settings=false){
     h('div',{class:'options'},h('button',{'data-a':'agentq-check'},'Check again')));
   const session=A.setup?.url&&/^(https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+|codex:\/\/threads\/[A-Za-z0-9-]+)$/.test(A.setup.url)?h('a',{href:'#','data-url':A.setup.url},'Open session'):null;
   return h('section',{class:'group agentq','aria-label':A.kind==='shown'?'agentq is not installed':'agentq '+A.kind},
-    view.agentqError&&h('div',{class:'body alert',role:'alert'},view.agentqError),
     h('div',{class:'row'},A.kind==='shown'?(settings?'agentq not installed':'Save on repeated context'):A.kind==='setting-up'?'Setting up agentq…':A.kind==='stopped'?'agentq installed · service stopped':'agentq '+(A.kind==='unknown'?'status unknown':A.kind)),
     h('div',{class:'body meta'},A.host+' · '+A.platform),
     A.reason&&h('div',{class:'body',role:'status'},A.reason),
@@ -414,7 +411,7 @@ setup:function(){
 },
 attention:function(){
   const all=unique(view.S.projects.flatMap(tasks));
-  const parts=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p),api.managerView(p)]),globalGroup('ask',all),globalGroup('failed',all),answerNotices()].filter(Boolean);
+  const parts=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[api.managerView(p)]),globalGroup('ask',all),globalGroup('failed',all),answerNotices()].filter(Boolean);
   return parts.length?f(parts):'';
 },
 // R6/M3.7: the service's manager view (status.json `report`, same text as `taskq status`); anomaly rows lead, the full view folds
@@ -429,7 +426,7 @@ projects:function(){
     h('div',{class:'project-shortcuts'},h('button',{class:'project-overview','data-route':p.root,title:'Open '+p.name+' project overview'},p.name),h('div',{class:'project-actions'},
       p.issues?h('a',{class:'compact-action',href:p.issues,'data-url':p.issues,title:'Open '+p.name+' board','aria-label':'Open '+p.name+' board'},icon(p.board_kind)):button('link','Board unavailable: registered board missing',{disabled:true}),
       button('folder',p.root?'Open '+p.name+' project folder on this computer':'Project folder unavailable: registered root missing',{'data-a':'folder','data-root':p.root,disabled:!p.root,class:'compact-action'}))),
-    (p.alive!==true||p.error||mode(p)!=='run')&&h('div',{class:'body meta'},p.error||(p.alive!==true?'Status unknown: '+(p.age==null?'no status.json':p.age_text+' old'):modeText(p)||'Intake unknown')),
+    mode(p)!=='run'&&h('div',{class:'body meta'},modeText(p)||'Intake unknown'),
     h('details',{'data-view-key':'project-settings:'+p.root},api.disclosure('focus','Intake details'),h('div',{class:'body meta'},modeText(p)||'Configured intake unknown'),h('div',{class:'body meta'},'You asked: '+(p.request||'not recorded')),h('div',{class:'body meta'},'Readback: '+(p.age==null?'status unknown':p.age_text+' old')),api.operationLauncher('admission',p.root,'Review project admission…')))):h('div',{class:'body meta'},'No projects yet'),addProject());
 },
 controls:function(){
@@ -442,7 +439,7 @@ runningAgents:function(compact=false){
   // #1775 A3/R16: an unread run, or a stale read beside a fresh one, marks only its hosts partial (confirmed minima); a host is
   // unknown while no fresh project read holds a live heartbeat for it, so a stale read never shows zero. `partial` stays for the board task totals.
   let partial=false;
-  const sources=new Set(),seen=new Map();
+  const sources=new Set(),seen=new Map(),historical=new Map(),oldSeen=new Map();
   const add=(name,why)=>{if(!hosts.has(name))hosts.set(name,{name,age:null,age_text:null,live:false,reasons:new Set(),counts:new Map()});const host=hosts.get(name);if(why)host.reasons.add(why);return host;};
   for(const p of view.S.projects){
     const elapsed=Number.isFinite(p.age)&&p.age>=0&&Number.isFinite(p.tasks_age_seconds)&&p.tasks_age_seconds>=0?p.age+p.tasks_age_seconds:null;
@@ -458,12 +455,20 @@ runningAgents:function(compact=false){
       const age=Number.isFinite(h.age)?h.age:null,host=add(h.name,stale);
       host.beat=true;host.beatLive ||= h.live===true;host.live ||= h.live===true&&!stale;
       if(age!==null&&(host.age===null||age<host.age))Object.assign(host,{age,age_text:h.age_text});
+      if(p.error&&read&&elapsed!==null&&Number.isFinite(p.observed)&&Number.isFinite(h.updated)&&h.updated<=p.observed&&!historical.has(h.name))historical.set(h.name,{counts:new Map(),at:h.updated});
     }
     for(const t of Array.isArray(p.tasks)?p.tasks:[]){
       if(t.executions!=null&&!Array.isArray(t.executions))partial=true;
       for(const x of Array.isArray(t.executions)?t.executions:[]){
         if(!x||typeof x.host!=='string'){partial=true;sources.add((p.name||'Project')+': invalid execution observation; host unknown');continue;}
         const h=add(x.host||'Unknown host',stale);
+        const old=historical.get(x.host),valid=['worker','reviewer'].includes(x.role)&&typeof x.runtime==='string'&&x.runtime&&Number.isSafeInteger(x.id)&&x.id>0;
+        if(old&&(!valid||!Number.isFinite(x.observed)||x.observed>p.observed||!['running','ended','waiting'].includes(x.state)))old.invalid=true;
+        if(old&&valid&&Number.isFinite(x.observed)&&x.observed<=p.observed&&x.state==='running'){
+          const id=JSON.stringify([t.key||p.issues+'/'+t.n,x.id]),prior=oldSeen.get(id);
+          if(prior&&(prior.host!==x.host||prior.runtime!==x.runtime||prior.role!==x.role)){historical.delete(prior.host);historical.delete(x.host);}
+          else if(!prior){oldSeen.set(id,x);const counts=old.counts.get(x.runtime)||{worker:0,reviewer:0};counts[x.role]++;old.counts.set(x.runtime,counts);}
+        }
         // #1775 R16: a fresh ended or waiting execution is known and not running; only an unknown or stale one marks its host ?
         if(fresh&&['ended','waiting'].includes(x.state))continue;
         if(!fresh||x.live!==true||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.reasons.add('run state unknown; see service log');continue;}
@@ -499,7 +504,17 @@ runningAgents:function(compact=false){
   const alerts=(view.S.agents?.rows||[]).filter(r=>signAlert.includes(r.state)&&r.state!=='check-failed');
   const totals=host=>{const t=new Map([['Claude',0],['Codex',0],['Antigravity',0]]);for(const [rt,c] of host.counts)t.set(family(rt),(t.get(family(rt))||0)+c.worker+c.reviewer);return t;};
   for(const host of hosts.values())if(!host.live)host.reasons.add(!host.beat?'host observation missing':host.beatLive?'current execution data unavailable':host.age===null?'heartbeat freshness unknown':'stale heartbeat; current runs unknown');
-  const known=host=>host.live&&!host.reasons.has('conflicting execution observations');
+  const current=host=>host.live&&!host.reasons.has('conflicting execution observations');
+  for(const host of hosts.values()){
+    if(current(host)&&!host.reasons.size)hostObservations.set(host.name,{counts:new Map([...host.counts].map(([rt,c])=>[rt,{...c}])),at:view.S.now-(host.age||0)});
+    else if(!current(host)&&view.S.projects.some(p=>p.error&&p.hosts?.some(h=>h.name===host.name))){
+      const saved=hostObservations.get(host.name)||historical.get(host.name);
+      if(saved&&!saved.invalid&&Number.isFinite(view.S.now)&&saved.at<=view.S.now){host.counts=saved.counts;host.retained=true;host.age=Math.max(0,view.S.now-saved.at);host.age_text=errors.age({age:0,tasks_age_seconds:host.age}).replace(' old','');}
+    }
+  }
+  for(const name of hostObservations.keys())if(!hosts.has(name))hostObservations.delete(name);
+  const known=host=>current(host)||host.retained;
+  const partialHost=host=>!host.retained&&host.reasons.size>0;
   const sum=counts=>[...counts.values()].reduce((n,x)=>n+x,0);
   const value=(n,known,partial)=>!known||partial&&!n?'?':partial?'≥'+n:String(n);
   const mark=rt=>rt==='Codex'?'openai':rt==='Claude'?'claude':'bot';
@@ -508,13 +523,13 @@ runningAgents:function(compact=false){
   const out=[],sorted=[...hosts.values()].sort((a,b)=>a.name.localeCompare(b.name));
   const numberWidth=Math.max(3,...sorted.flatMap(host=>{const t=totals(host);return [sum(t),...t.values()].map(n=>value(n,known(host),host.reasons.size>0).length);}))+'ch';
   for(const host of sorted){
-    const unknown=!known(host),here=host.name===view.S.host,age=host.age!==null&&host.age>=0&&host.age_text?' · '+host.age_text+' old':' · age unknown',why=[...host.reasons].join('; '),t=totals(host),partial=host.reasons.size>0,total=value(sum(t),!unknown,partial),warnings=here?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
+    const unknown=!known(host),here=host.name===view.S.host,age=host.age!==null&&host.age>=0&&host.age_text?' · '+host.age_text+' old':' · age unknown',why=[...host.reasons].join('; '),t=totals(host),partial=partialHost(host),total=value(sum(t),!unknown,partial),warnings=here?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
     const runtimes=[...host.counts].sort(([a],[b])=>a.localeCompare(b));
     out.push(h('details',{class:'host-line','data-view-key':'host:'+host.name,key:'host:'+host.name},
       h('summary',{class:'host-breakdown',title:'Heartbeat'+age},h('strong',{class:'host-name'},host.name),
         h('span',{class:'host-runtime-split'},['Codex','Claude','Antigravity',...[...t.keys()].filter(rt=>!['Codex','Claude','Antigravity'].includes(rt))].map(rt=>runtime(rt,t.get(rt)||0,!unknown,partial))),
         h('span',{class:'host-row-total','aria-label':'Total running agents: '+total},h('span',{class:'host-number'},total)),
-        (unknown||partial||warnings.length>0)&&h('span',{class:'host-observation'},unknown?'Status unknown'+age:partial?'Partial observation'+age:'',why&&h('span',null,why),warnings.length>0&&h('span',{class:'host-warning'},'Sign-in: '+warnings.join(' · ')))),
+        (host.retained||unknown||partial||warnings.length>0)&&h('span',{class:'host-observation'},host.retained?'Last known'+age:unknown?'Status unknown'+age:partial?'Partial observation'+age:'',why&&h('span',null,why),warnings.length>0&&h('span',{class:'host-warning'},'Sign-in: '+warnings.join(' · ')))),
       h('div',{class:'body meta'},'Heartbeat'+age),unknown?h('div',{class:'body meta'},'Unknown: '+(why||'host observation missing or stale')):why&&h('div',{class:'body meta'},'Partial: '+why),
       !unknown&&(runtimes.length?h('div',{class:'body'},runtimes.map(([rt,c])=>h('div',null,rt+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')))):h('div',{class:'body meta'},partial?'No confirmed running agents; additional agents unknown':'No running agents')),
       here&&api.resourceMeters(latest),h('details',{'data-view-key':'host-facts:'+host.name},api.disclosure('sliders-horizontal','Resource details'),(here?facts:['CPU and memory: not collected for remote hosts','Slots and reservations: unknown for remote hosts']).map(t=>h('div',{class:'body meta'},t)))));
@@ -525,21 +540,22 @@ runningAgents:function(compact=false){
   const short=new Map(names.map(n=>{let k=3;while(k<n.length&&names.some(o=>o!==n&&o.slice(0,k)===n.slice(0,k)))k++;return [n,n.slice(0,k)];}));
   const warn=host=>host.name===view.S.host?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
   const text=host=>{const age=host.age!==null&&host.age>=0?host.age_text:'',busy=[...totals(host)].filter(([,n])=>n>0);
-   return [host.name,...(!known(host)?['runs unknown',...(age?[age+' old']:[]),...(host.reasons.size?[[...host.reasons].join('; ')]:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):[host.reasons.size?'no confirmed running agents':'idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
+   return [host.name,...(host.retained?['Last known',host.age_text+' old']:[]),...(!known(host)?['runs unknown',...(age?[age+' old']:[]),...(host.reasons.size?[[...host.reasons].join('; ')]:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):[host.reasons.size?'no confirmed running agents':'idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
   // UX30-06: host totals precede runtime totals; only nonconflicting fresh hosts establish a minimum.
-  const overall=new Map([['Codex',0],['Claude',0],['Antigravity',0]]);let anyKnown=false,uncertain=partial||!sorted.length;
-  for(const host of sorted){const t=totals(host);for(const rt of t.keys())if(!overall.has(rt))overall.set(rt,0);uncertain ||= !known(host)||host.reasons.size>0;if(!known(host))continue;anyKnown=true;for(const [rt,n] of t)overall.set(rt,overall.get(rt)+n);}
-  const chip=host=>{const shown=value(sum(totals(host)),known(host),host.reasons.size>0),label=text(host)+' · Total running agents: '+shown,w=warn(host);
+  const overall=new Map([['Codex',0],['Claude',0],['Antigravity',0]]);let anyKnown=false,uncertain=!sorted.length||view.S.projects.some(p=>!p.error&&(p.complete!==true||p.tasks_live!==true));
+  for(const host of sorted){const t=totals(host);for(const rt of t.keys())if(!overall.has(rt))overall.set(rt,0);uncertain ||= !known(host)||partialHost(host);if(!known(host))continue;anyKnown=true;for(const [rt,n] of t)overall.set(rt,overall.get(rt)+n);}
+  const chip=host=>{const shown=value(sum(totals(host)),known(host),partialHost(host)),label=text(host)+' · Total running agents: '+shown,w=warn(host);
     return h('span',{class:'host-chip'+(!known(host)?' unknown':''),'data-host':host.name,role:'img','aria-label':label,title:label,key:host.name},h('strong',null,short.get(host.name)),h('span',{class:'host-number'},shown),
-      !known(host)&&host.age_text&&h('span',{class:'meta'},host.age_text),w.length>0&&h('span',{class:'host-warning',title:'Sign-in: '+w.join(' · '),'aria-label':'Sign-in: '+w.join(' · ')},icon('circle-alert')));};
+      (!known(host)||host.retained)&&host.age_text&&h('span',{class:'meta'},(host.retained?'Last known · ':'')+host.age_text+' old'),w.length>0&&h('span',{class:'host-warning',title:'Sign-in: '+w.join(' · '),'aria-label':'Sign-in: '+w.join(' · ')},icon('circle-alert')));};
+  const retained=sorted.some(host=>host.retained);
   const completeness=anyKnown&&[...overall.values()].some(n=>n>0)?'Partial':'Unknown';
-  const explanation='All observed hosts · running agents'+(uncertain?' · '+completeness+': confirmed counts are lower bounds; additional agents unknown. '+[...sorted.filter(host=>!known(host)||host.reasons.size).map(host=>host.name+' · '+(host.age_text||'age unknown')+' · '+[...host.reasons].join('; ')),...sources].join('; '):' · complete fresh observations');
-  if(compact)return {label:strip.map(text).join('; ')||'Host unknown',meta:strip.length+' hosts · '+(uncertain?'observations incomplete':'current observations'),strip:h('span',{class:'host-overview'},h('span',{class:'host-strip'},strip.length?strip.map(chip):h('span',{class:'host-chip unknown'},'Hosts ?')),h('span',{class:'host-runtime-totals',title:explanation,'aria-label':explanation},[...overall].map(([rt,n])=>runtime(rt,n,anyKnown,uncertain)),uncertain&&h('span',{class:'host-completeness'},completeness)))};
+  const explanation='All observed hosts · running agents'+(retained?' · Last known; current execution unknown':uncertain?' · '+completeness+': confirmed counts are lower bounds; additional agents unknown. '+[...sorted.filter(host=>!known(host)||host.reasons.size).map(host=>host.name+' · '+(host.age_text||'age unknown')+' · '+[...host.reasons].join('; ')),...sources].join('; '):' · complete fresh observations');
+  if(compact)return {label:strip.map(text).join('; ')||'Host unknown',meta:strip.length+' hosts · '+(retained?'last known observations':uncertain?'observations incomplete':'current observations'),strip:h('span',{class:'host-overview'},h('span',{class:'host-strip'},strip.length?strip.map(chip):h('span',{class:'host-chip unknown'},'Hosts ?')),h('span',{class:'host-runtime-totals',title:explanation,'aria-label':explanation},[...overall].map(([rt,n])=>runtime(rt,n,anyKnown,uncertain)),retained?h('span',{class:'host-completeness'},'Last known'):uncertain&&h('span',{class:'host-completeness'},completeness)))};
   return h('section',{class:'group running-agents',style:{'--host-number-width':numberWidth},'aria-label':'Running agents'},h('div',{class:'host-grid-head','aria-label':'Host, Codex, Claude, Antigravity, Total running agents'},h('span',null,'Host'),['Codex','Claude','Antigravity','Total'].map(rt=>h('span',{title:rt,'aria-label':rt,role:'img'},icon(mark(rt))))),out,h('div',{class:'body meta'},'Registered project boards · '+(partial||all.some(c=>c.n===null)?'Tasks unknown':'Tasks: '+all.filter(c=>['doing','review'].includes(c.state)).map(c=>c.name+' '+c.n).join(' · '))),
     h('details',{'data-view-key':'run-definitions'},api.disclosure('info','Count definitions'),h('div',{class:'body meta'},'Running processes, occupied slots, reservations and board tasks are counted apart. ≥ means a confirmed minimum; Partial means additional agents are unknown; ? means no confirmed total. Reservations include pending or unconfirmed work; occupied slots can include other projects.')));
 },
 home:function(){
-  const faults=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
+  const faults=[setup()].filter(Boolean);
   const line=api.runningAgents(true);
   return f(api.staleLine(),h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('circle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),dashboard.list());
 },
@@ -559,7 +575,7 @@ routeBody:function(){
     case 'work':return f(h('div',{class:'body',role:'status'},api.admissionText(view.S.projects,true)),api.balancingSections());
     case 'stop':return api.stopPanel();
     case 'recovery':return f(api.heading('Hold on '+(view.S.host||'unknown host'),'rotate-ccw'),h('div',{class:'body',role:'status'},view.S.stop_hold?'Admission held · '+(view.S.stop_hold.mode||'mode unknown')+(view.S.stop_hold.selected_count!=null?' · '+view.S.stop_hold.selected_count+' selected':''):'No emergency hold reported'),api.hostService(),h('div',{class:'body meta'},'Recovery is for selected local tasks. Ordinary Resume cannot clear an emergency hold; unknown effects stay held.'),api.recoveryPanel());
-    case 'services':return f(api.heading(view.S.host||'This host','activity'),api.hostService(),view.S.projects.map(p=>problem(p)),api.operationLauncher('service',null,'Host maintenance in workspace…'),h('details',{'data-view-key':'service-projects'},api.disclosure('folder','Project observations · '+view.S.projects.length),view.S.projects.map(p=>[incidentNotice(p),service(p,false)])),view.S.agentq&&api.heading('AgentQ','bot'),view.S.agentq&&api.agentq(true));
+    case 'services':return f(api.heading(view.S.host||'This host','activity'),api.hostService(),api.operationLauncher('service',null,'Host maintenance in workspace…'),h('details',{'data-view-key':'service-projects'},api.disclosure('folder','Project observations · '+view.S.projects.length),view.S.projects.map(p=>[incidentNotice(p),service(p,false)])),view.S.agentq&&api.heading('AgentQ','bot'),view.S.agentq&&api.agentq(true));
     case 'about':return about();
     default:return home();
   }
@@ -659,7 +675,7 @@ openCard:function(o){const p=view.S?.projects.find(p=>p.root===o.root);if(p)send
 project:function(p){
   const ts=tasks(p),counters=TaskqProjectBlocks.counters(p.counts,p.root,p.name);
   const groups=view.S.display.states.map(({id:st,name})=>{const r=ts.filter(t=>t.state===st);return r.length?h('div',{class:'group',key:st},h('h2',{class:'section-heading task-group-heading'},h('span',null,name),counter(r.length,color(st),name),r.length>1&&startButton(r)),r.map(t=>taskRow(t))):'';}).filter(Boolean);
-  return f(h('section',{class:'tqp',dangerouslySetInnerHTML:{__html:counters}}),h('div',{class:'body meta'},modeText(p)),problem(p),incident(p,true),incidentNotice(p),
+  return f(h('section',{class:'tqp',dangerouslySetInnerHTML:{__html:counters}}),h('div',{class:'body meta'},modeText(p)),
   groups.length?groups:h('div',{class:'body muted'},'No open tasks'),answerNotices(p.issues),
   h('div',{class:'group'},admission(p)),capacity(p),notifyGroup(p),workEntry(p.root),service(p));},
 filteredTasks:function(p){if(p&&!view.dashboard){view.dashboard=require('./task-views.js').normalize(null,{taskFilter:view.taskFilter});require('./task-views.js').current(view.dashboard).working.projects=[require('./task-views.js').identity(p)];}return dashboard.list();},
@@ -686,16 +702,17 @@ settings:function(){
     widget({'data-route':'about'},icon('info'),'About and updates',(S.version?'v'+S.version:'version unknown')+(up?' · update '+up.update:''))]]];
   return f(sections.map(([label,rows])=>h('section',{class:'settings-section'},api.heading(label,label==='Display'?'type':'network'),rows)));},
 windowSettings:function(){const mode=view.S.size_anchor||'auto';return f(h('p',{class:'meta'},'Auto follows the actual tray opening direction. Dragging pins the window; explicit growth choices stay selected.'),h('fieldset',null,h('legend',null,'Window growth'),h('div',{class:'growth-options'},[['auto','Auto'],['top','Down'],['bottom','Up'],['fixed','Fixed']].map(([value,label])=>h('button',{'data-a':'size-anchor','data-value':value,'aria-pressed':String(mode===value)},h('span',{class:'growth-miniature','data-growth':value,'data-opening':view.S.auto_anchor==='bottom'?'up':'down','aria-hidden':'true'},h('i')),h('span',null,label))))),h('div',{class:'options'},button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Menu always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)})));},
+errors:function(){return errors.entry(view.S,[view.persistenceError,view.aiError,view.workspaceError,view.agentqError]);},
 head:function(){
   const p=view.S.projects?.find(p=>p.root===view.page),title=view.working?'Balancing':p?p.name:routes[view.page]||'Unavailable';
   const crumbs=p?h('a',{href:'#','data-route':'projects'},'Projects'):settingsPages.includes(view.page)&&view.page!=='settings'?h('a',{href:'#','data-route':'settings'},'Settings'):'';
   // R07/A4: a stable action row; Close is always last, Keep open, Always on top and the task pin have distinct names
-  if(ports.settings){const W=view.settingsChrome||{};return shell.bar({title,crumbs,home:'Settings home',back:view.page!=='settings'||renderer.entries().length>0,actions:[],windows:[button('always-on-top','Always on top',{'data-a':'settings-top','aria-pressed':String(!!W.top)}),button(W.maximized?'minimize-2':'maximize-2',W.maximized?'Restore window':'Enlarge window',{'data-a':'settings-enlarge','aria-pressed':String(!!W.maximized)}),button('x','Close settings',{'data-a':'hide'})]});}
-  if(ports.views)return shell.bar({title:'View · '+dashboard.current().name,actions:[],windows:[button('x','Close view window',{'data-a':'hide'})]});
+  if(ports.settings){const W=view.settingsChrome||{};return shell.bar({errors:api.errors(),title,crumbs,home:'Settings home',back:view.page!=='settings'||renderer.entries().length>0,actions:[],windows:[button('always-on-top','Always on top',{'data-a':'settings-top','aria-pressed':String(!!W.top)}),button(W.maximized?'minimize-2':'maximize-2',W.maximized?'Restore window':'Enlarge window',{'data-a':'settings-enlarge','aria-pressed':String(!!W.maximized)}),button('x','Close settings',{'data-a':'hide'})]});}
+  if(ports.views)return shell.bar({errors:api.errors(),title:'View · '+dashboard.current().name,actions:[],windows:[button('x','Close view window',{'data-a':'hide'})]});
   // R09/MP12, #1699 A2: one Conversations entry opens the thread screen at every count, the first unread thread with new events; the count is deduplicated, unknown never reads as zero; opening acknowledges nothing
   const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,title:'Open Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)),view.S.stop_modes&&button('octagon-x','Emergency stop',{'data-a':'stop-review'}),notificationPanel.entry(),button('settings','Settings',{'data-route':'settings'})];
   const windows=[button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)}),button('x','Close menu',{'data-a':'hide'})];
-  return shell.bar({title:view.page==='home'?'Tasks':title,crumbs,home:'Home',back:view.page!=='home'||renderer.entries().length>0||!!view.working,actions,windows});
+  return shell.bar({errors:api.errors(),title:view.page==='home'?'Tasks':title,crumbs,home:'Home',back:view.page!=='home'||renderer.entries().length>0||!!view.working,actions,windows});
 },
 draw:function(navigating=false){
   if(!view.S||view.resizing||ports.views&&!view.dashboard)return;
@@ -719,10 +736,9 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   menu.classList.toggle('background-only',smart);
   menu.style.setProperty('--background-alpha',(view.S.background_opacity??100)+'%');
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
-  const settingsError=view.persistenceError||view.S.opacity_error||view.S.settings_error;
   const title=view.working?'Balancing':view.taskFilter?'Tasks':p?p.name:routes[view.page];
   // P-W4: the View window is one scroll of compact sections; Display, Save, Reset and Done stay in its footer.
-  const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'+(settingsPages.includes(view.page)||view.page==='projects'?' settings-content':'')},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError||view.S.opacity_error?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
+  const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'+(settingsPages.includes(view.page)||view.page==='projects'?' settings-content':'')},view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
   // #1430: Preact keeps unchanged nodes, so a refresh leaves the textarea being typed in attached.
   renderer.render(tree,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
   view.drawn=true;
@@ -879,7 +895,7 @@ ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
 };
-const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,tasks,blockProject,unique,mode,counter,known,taskRow,taskOrder,startButton,globalGroup,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
+const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,tasks,blockProject,unique,mode,counter,known,taskRow,taskOrder,startButton,globalGroup,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
 function resourceSend(g,op){
   const capability=resourceCapability(g);
@@ -901,6 +917,7 @@ let batching=0,staged=null;
 // M3.26: native readback and its callbacks produce one DOM commit, fit and navigation save.
 const paint=(...args)=>{if(batching){staged=[!!(staged?.[0]||args[0])];return;}(ports.render||draw)(...args);};
 const present=execution.action('ui.render',paint);
+const errors=require('./errors.js'),hostObservations=new Map();
 const reports=require('./reports.js').create({send,draw:()=>present(),defer});
 const notificationPanel=require('./notification-panel.js').create({view,reports,send,draw:()=>present()});
 const {tick}=execution.module('ui.render',{tick:paint});

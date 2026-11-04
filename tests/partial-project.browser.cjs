@@ -10,7 +10,10 @@ const state={platform:'windows',host:'fixture',font:16,theme:'dark',now:fx.now,p
  const strip=page.locator('.filter-header');
  if(process.env.PROJECT_ERROR_EVIDENCE){fs.mkdirSync(process.env.PROJECT_ERROR_EVIDENCE,{recursive:true});await page.screenshot({path:process.env.PROJECT_ERROR_EVIDENCE+'/mixed-projects.png'});}
  assert.equal(await strip.locator('[data-a=all-tasks]').innerText(),'All tasks '+good.tasks.filter(t=>t.state!=='closed').length);
- assert.equal(await page.getByText('Broken: no access to the repository',{exact:true}).count(),1);
+ await page.locator('.errors-entry').click();
+ const fault=page.locator('.errors-list>li');assert.equal(await fault.count(),1);assert.match(await fault.innerText(),/no access to the repository/);
+ await fault.locator('summary').click();assert.match(await fault.locator('.error-projects').innerText(),/Broken/);
+ await page.locator('.errors-entry').click();
  assert(!((await page.locator('body').innerText()).includes('Partial: refresh the affected project or open its Board.')));
  assert.match(await strip.locator('[data-state=doing]').getAttribute('aria-label'),/Doing: 1/);
  // Project/search scope stays a presentation filter; missing-only data remains unknown rather than a healthy zero.

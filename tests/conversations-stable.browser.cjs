@@ -111,10 +111,10 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
    await page.evaluate(()=>taskq.receive({...fixture,ai:{...fixture.ai,error:'Invented workspace failure'}}));
    await page.evaluate(()=>taskq.receive({workspaceLocalError:'Invented draft save failure'}));
    assert.deepEqual(await geometry(),idle,'workspace and local errors cannot resize the reader');
-   assert.match(await page.locator('.feedback-message[role=alert]').innerText(),/Invented workspace failure/);
-   assert.match(await page.locator('.feedback-message[role=alert]').innerText(),/Invented draft save failure/,'a second failure remains visible and announced');
+   assert.match(await page.locator('.errors-entry [role=status]').innerText(),/Invented workspace failure/);
+   assert.match(await page.locator('.errors-entry [role=status]').innerText(),/Invented draft save failure/,'a second failure remains visible and announced');
    await page.evaluate(()=>taskq.receive({workspaceLocalError:{reason:'Invented object-shaped failure'}}));
-   assert.match(await page.locator('.feedback-message[role=alert]').innerText(),/Invented object-shaped failure/,'structured failures retain their readable reason');
+   assert.match(await page.locator('.errors-entry [role=status]').innerText(),/Invented object-shaped failure/,'structured failures retain their readable reason');
    assert.doesNotMatch(await page.locator('.feedback-message').innerText(),/\[object Object\]/,'status diagnostics never expose object coercion');
    await bootOwners();
   }
@@ -132,7 +132,7 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
   let expected='Keep original caret',start=5,end=13;
   for(let i=0;i<notices.length;i++){
    await page.evaluate(s=>taskq.receive(s),notices[i]);
-   const reason=notices[i].workspaceLocalError||notices[i].ai?.error;if(reason)assert.match(await page.locator('.feedback-message[role=alert]').innerText(),new RegExp(reason),'genuine notice stays visible and announced');
+   const reason=notices[i].workspaceLocalError||notices[i].ai?.error;if(reason)assert.match(await page.locator('.errors-entry [role=status]').innerText(),new RegExp(reason),'genuine notice stays visible and announced');
    assert(await input.evaluate(e=>e===retainedEditor&&e===document.activeElement),kind+' retains its actual editor node and focus');
    assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[start,end],kind+' retains caret/selection through notice '+i);
    assert.equal(await page.evaluate(()=>editorFocusCalls),0,kind+' background update must not issue a native focus request');

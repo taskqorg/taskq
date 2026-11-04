@@ -72,7 +72,6 @@ module.exports=execution.module('taskDashboard',{
     const loaded=ps.filter(p=>p.complete===true&&p.tasks_live!==false&&p.issues),names=loaded.map(p=>p.name),partial=[...new Set([...loaded.flatMap(p=>p.partial||[]),...view.S.display.all.partial.filter(n=>names.includes(n))])],missing=c.projects.filter(id=>!view.S.projects.some(p=>views.identity(p)===id));
     if(missing.length)partial.push('Selected projects unavailable');
     const counted=all.filter(t=>loaded.some(p=>p.root===t.root)),known=(loaded.length>0||ps.length===0)&&!partial.length;
-    const errors=ps.filter(p=>!loaded.includes(p)).map(p=>p.name+': '+(p.error||'Project snapshot incomplete or stale'));
     const counts={counts:view.S.display.states.map(({id,name})=>({state:id,name,n:known?counted.filter(t=>t.state===id).length:null})),open:known?counted.length:null};
     const listing=c.group==='combined'?rows.map(t=>app.taskRow(t,true)):api.unique(ps).map(p=>{
      const id=views.identity(p),group=rows.filter(t=>t.boardIdentity===id),sources=(loaded.some(q=>views.identity(q)===id)?loaded:ps).filter(q=>views.identity(q)===id),reason=sources.flatMap(q=>[...(q.partial||[]),...(q.complete!==true||q.tasks_live===false?[q.error||'Project snapshot incomplete or stale']:[]),...(view.S.display.all.partial.includes(q.name)?['Project task data incomplete']:[])]).join('; ');
@@ -80,7 +79,7 @@ module.exports=execution.module('taskDashboard',{
     });
     heldOffer=api.heldScope();const heldCount=heldOffer.known?heldOffer.targets.length:'?';
     const start={count:heldCount,label:'Start '+heldCount+' held · '+heldOffer.scope,disabled:!heldOffer.known||!heldOffer.targets.length||all.some(t=>t.state==='held'&&app.startPending(t))};
-    return h(Fragment,null,api.pins(),api.bar(),h('header',{class:'filter-header tqp'},h('div',{class:'state-filters',dangerouslySetInnerHTML:{__html:blocks.counters(counts.counts,'','Selected projects',partial,c.states,counts.open,start)}})),api.admissionReview(),errors.map(reason=>h('p',{class:'meta',role:'status',key:reason},reason)),app.answerNotices(),rows.length?listing:h('div',{class:'body meta'},!known?'Tasks unknown':'No matching tasks',' ',h('button',{'data-a':'filter-reset'},'Reset')));
+    return h(Fragment,null,api.pins(),api.bar(),h('header',{class:'filter-header tqp'},h('div',{class:'state-filters',dangerouslySetInnerHTML:{__html:blocks.counters(counts.counts,'','Selected projects',partial,c.states,counts.open,start)}})),api.admissionReview(),app.answerNotices(),rows.length?listing:h('div',{class:'body meta'},!known?'Tasks unknown':'No matching tasks',' ',h('button',{'data-a':'filter-reset'},'Reset')));
    },
    receive:function(page){const pin=[...pinReads.values()].find(e=>e.id===page.id&&e.root===page.root);if(!pin?.loading)return;ui.cancel(pin.timer);pin.loading=false;pin.reason=page.reason;pin.value=!page.reason&&page.tasks?.[0]?.n===pin.task?page.tasks[0]:null;if(!pin.value&&!pin.reason)pin.reason='Board response omitted the task';present();},
    outcome:function(t){return module.exports.outcome(t);},

@@ -679,6 +679,7 @@ fn project(install: &Path, root: &str) -> Value {
     out["incoming"] = s["incoming"].clone();
     // #1819: the stale line compares the board read age with the service poll
     out["poll"] = s["poll"].clone();
+    out["requests"] = s["requests"].clone();
     out["reports"] = crate::reports::freshness(crate::reports::stored(r,&s),now(),ttl,bad_report_reason(&s,live));
     for field in ["reports","history"] {for report in out["reports"][field].as_array_mut().into_iter().flatten(){if let Some(row)=report.as_object_mut(){row.remove("body");row.remove("verdict");row.remove("tasks");row.insert("lazy".into(),json!(true));}}}
 
@@ -1302,7 +1303,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let views_shots=snapshot.is_some() && routes.iter().any(|r|r=="views");
     if views_shots && routes.len()>1 {return Err("route views renders the View window alone; run it without other routes".into());}
     // #1699 A8: Conversations is the workspace surface, so its snapshot renders the workspace page alone at that window's size
-    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations"||r=="health-conversation");
+    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations"||r=="health-conversation"||r=="errors-conversations");
     if conversation_shots && routes.len()>1 {return Err("route conversations renders the workspace alone; run it without other routes".into());}
     if snapshot.is_some()&&routes.iter().any(|r|r=="reports")&&routes.len()>1 {return Err("route reports renders its menu cases alone".into());}
     let mut settings = Settings::load(&install);
@@ -2391,7 +2392,9 @@ const CONVERSATIONS: [(&str, &str); 4] = [
 // M1.1: explicit native-alpha cases; a webview snapshot alone cannot capture window alpha.
 const OPACITY_SHOTS:[(&str,&str,u64);5]=[("/* opacity: off */","whole",100),("/* opacity: contrast */","whole",90),("/* opacity: minimum */","whole",60),("/* background: clear */","background",0),("/* background: half */","background",50)];
 const ROUTES: [&str; 26] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "notification-settings", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
-const REPORT_SHOTS:[(&str,&str);12]=[
+const REPORT_SHOTS:[(&str,&str);14]=[
+    ("errors",concat!(include_str!("../tests/fixtures/errors.js"),"taskqErrorsShot.bind(null,'tray')")),
+    ("errors-conversations",concat!(include_str!("../tests/fixtures/errors.js"),"taskqErrorsShot.bind(null,'conversations')")),
     ("health-list",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'list')")),
     ("health-detail",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'detail')")),
     ("health-recovered",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'recovered')")),
