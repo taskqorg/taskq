@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Project-owned selected gate. Unknown impact runs the full Rust suite."""
 import argparse
+import hashlib
+import http.client
 import json
 import re
 import shutil
@@ -10,6 +12,7 @@ import subprocess
 import sys
 import time
 import tempfile
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 BUDGET = 900
@@ -362,14 +365,32 @@ def rule_gate(base):
 # taskq.md R8: the shared contract lint (specq engineering/contracts.md#lint) at the pinned specq commit.
 SPECQ = '269a999c4e7c54781260a70305cff5f7cecdf572'
 CONTRACT_LINT = Path('engineering/scripts/contract_lint.py')
+CONTRACT_LINT_SHA256 = 'f88032eb1210b9fadd98ee250c7371a732a6c7837c3917c026b974909f830835'
 
 
 def contract_lint(root=ROOT):
-    """The lint command over taskq.md from a specq checkout at `.specq` (CI) or the pinned cache, or None."""
-    for base in (root / '.specq', root / '.taskq' / 'specq' / SPECQ):
-        if (base / CONTRACT_LINT).is_file():
-            return [sys.executable, str(base / CONTRACT_LINT), 'taskq.md']
-    return None
+    """Resolve the verified pinned linter, preparing the local cache once when absent."""
+    cached = root / '.taskq' / 'specq' / SPECQ / CONTRACT_LINT
+    try:
+        source = next((path for path in (root / '.specq' / CONTRACT_LINT, cached) if path.is_file()), None)
+        path = source or cached
+        if source:
+            body = path.read_bytes()
+        else:
+            url = f'https://raw.githubusercontent.com/taskqorg/specq/{SPECQ}/{CONTRACT_LINT.as_posix()}'
+            with urllib.request.urlopen(url, timeout=10) as response:
+                body = response.read(128 * 1024 + 1)
+        if hashlib.sha256(body).hexdigest() != CONTRACT_LINT_SHA256:
+            raise ValueError('pinned linter SHA-256 mismatch')
+        if source is None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix='.lint-', dir=path.parent) as stage:
+                prepared = Path(stage) / 'contract_lint.py'
+                prepared.write_bytes(body)
+                os.replace(prepared, path)
+        return [sys.executable, str(path), 'taskq.md']
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        raise SystemExit(f'contract lint unknown (R12): cannot prepare specq {SPECQ}: {error}') from error
 
 
 def compact_warnings(output, ci=False):
@@ -425,12 +446,10 @@ def main():
     parser.add_argument('--full', action='store_true')
     parser.add_argument('--plan', action='store_true', help='print selection without running checks')
     parser.add_argument('--rules', action='store_true', help='run only the rule-change gate and coverage report')
-    parser.add_argument('--lint', action='store_true', help='run only the specq contract lint; a missing specq checkout fails')
+    parser.add_argument('--lint', action='store_true', help='prepare and run only the pinned specq contract lint')
     args = parser.parse_args()
     if args.lint:
         command = contract_lint()
-        if command is None:
-            raise SystemExit(f'contract lint unknown (R12): no specq {SPECQ} checkout at .specq')
         run_lint(command)
         return
     if args.rules:
@@ -462,6 +481,11 @@ def main():
         subprocess.run(command, cwd=ROOT, env=child_env, check=True, timeout=left)
 
     try:
+        # CI runs lint once in the plan job; local failures stop before tests or builds.
+        if not os.environ.get('GITHUB_ACTIONS'):
+            lint = contract_lint()
+            print('+', ' '.join(lint), flush=True)
+            run_lint(lint, BUDGET - (time.monotonic() - started))
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
         run([sys.executable, 'scripts/check.test.py'])
         run([sys.executable, 'scripts/live-probe.test.py'])
@@ -470,14 +494,6 @@ def main():
         failed = None if os.environ.get('GITHUB_ACTIONS') else rule_gate(args.base)
         if failed:
             raise SystemExit(failed)
-        # CI runs the contract lint once, in the plan job; local runs include it when specq is checked out.
-        if not os.environ.get('GITHUB_ACTIONS'):
-            lint = contract_lint()
-            if lint:
-                print('+', ' '.join(lint), flush=True)
-                run_lint(lint, BUDGET - (time.monotonic() - started))
-            else:
-                print(f'Contract lint: unknown (R12), no specq {SPECQ[:12]} checkout at .specq; CI runs it', flush=True)
         found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))]
         if found:
             raise SystemExit('runtime name outside the runtime adapter or runtime-name branch (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
