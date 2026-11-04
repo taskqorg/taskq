@@ -68,6 +68,7 @@ fn parse_policy(v: &Value) -> Result<Policy, String> {
             if !seen.insert(label) { return Err(format!("{FILE}: {rt} lists {label} twice")); }
             entries.push(Entry { label: label.into(), enabled });
         }
+        if entries.iter().any(|e| e.label != DEFAULT) { one_account(rt).map_err(|e| format!("{FILE}: {e}"))?; }
         p.insert(rt.clone(), entries);
     }
     Ok(p)
@@ -337,7 +338,7 @@ impl Host {
 
     /// The local rows of `taskq accounts`; `email` reads each home's login (None: unknown).
     pub fn rows(&self, host: &str, now: i64, email: impl Fn(&str, &str) -> Option<String>) -> Vec<Row> {
-        let mut rows: Vec<Row> = ["claude", "codex"].iter().flat_map(|rt| {
+        let mut rows: Vec<Row> = crate::runtime::CLI_RUNTIMES.iter().filter(|rt| applies(rt)).flat_map(|rt| {
             let active = self.active(rt, now);
             self.list(rt).into_iter().map(|e| {
                 let l = self.limit(rt, &e.label);
@@ -465,7 +466,8 @@ pub fn var(rt: &str) -> &'static str { crate::runtime::of(rt).home_var }
 /// Native default semantics depend on an absent override, even when the physical path is the same.
 pub fn environment<'a>(rt: &str, home: &'a Path) -> Option<(&'static str, &'a Path)> {
     let var = var(rt);
-    (std::env::var_os(var).is_some() || default_home(rt).as_deref() != Some(home)).then_some((var, home))
+    // a runtime with no home variable has only its native default
+    (!var.is_empty() && (std::env::var_os(var).is_some() || default_home(rt).as_deref() != Some(home))).then_some((var, home))
 }
 
 /// The home of a non-default account; None for `default` (the child keeps the service's own value).
@@ -574,7 +576,12 @@ fn guard() -> Result<(), String> {
 }
 
 fn runtime_arg(rt: &str) -> Result<&str, String> {
-    applies(rt).then_some(rt).ok_or_else(|| format!("runtime {rt} has no accounts; use claude or codex"))
+    applies(rt).then_some(rt).ok_or_else(|| format!("runtime {rt} has no accounts; use claude, codex or antigravity"))
+}
+
+/// A runtime with no home variable cannot keep a second login apart from its default.
+fn one_account(rt: &str) -> Result<(), String> {
+    if var(rt).is_empty() { Err(format!("{rt} has one `default` account per host until a per-account home is qualified")) } else { Ok(()) }
 }
 
 /// enable/disable/move on a list; the caller saves it.
@@ -620,6 +627,7 @@ fn append(p: &mut Policy, rt: &str, label: &str) -> Result<(), String> {
 pub fn add(install: &Path, rt: &str, label: &str) -> Result<String, String> {
     guard()?;
     let rt = runtime_arg(rt)?;
+    one_account(rt)?;
     let base = base(rt).ok_or("runtime home unknown: no home folder")?;
     let bin = crate::runtime::which(crate::runtime::of(rt).bin);
     if !bin.is_absolute() { return Err(format!("{} CLI not found on PATH", crate::runtime::of(rt).bin)); }
@@ -630,6 +638,7 @@ pub fn add(install: &Path, rt: &str, label: &str) -> Result<String, String> {
 
 fn add_in(install: &Path, rt: &str, label: &str, base: &Path, login: impl FnOnce(&Path, &[&str]) -> Result<bool, String>) -> Result<String, String> {
     let rt = runtime_arg(rt)?;
+    one_account(rt)?;
     if !valid_label(label) || label == DEFAULT { return Err("label: 1-32 of a-z, 0-9 and -, not `default`".into()); }
     let mut p = read_policy(install)?;
     if p.get(rt).is_some_and(|l| l.iter().any(|e| e.label == label)) { return Err(format!("{rt} already has account {label}")); }

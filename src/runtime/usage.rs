@@ -198,7 +198,7 @@ fn policy_issue(issues: &[Issue]) -> Option<&Issue> {
 /// `taskq accounts fleet`: one trusted comment on the board's one policy issue, created when absent.
 pub fn fleet_write(board: &dyn Board, op: &str, rt: &str, id: &str) -> Result<String, String> {
     if !matches!(op, "use" | "avoid" | "clear") { return Err("usage: taskq accounts fleet use|avoid|clear <runtime> <id>".into()); }
-    if !accounts::applies(rt) { return Err(format!("runtime {rt} has no accounts; use claude or codex")); }
+    if !accounts::applies(rt) { return Err(format!("runtime {rt} has no accounts; use claude, codex or antigravity")); }
     if !valid_id(id) { return Err("id: 8 hex digits, as `taskq accounts` shows it".into()); }
     let labels = [POLICY_LABEL.to_string()];
     board.ensure_labels(&labels)?;
@@ -453,6 +453,10 @@ impl Ids {
 /// The native read-only route of one account, chosen by adapter capability.
 pub fn fetch(rt: &str, label: &str, ids: &mut Ids) -> Poll {
     let a = super::of(rt);
+    // The `agy` login has no account home: one default account per host, read from the user's home.
+    if a.has("usage-code-assist") {
+        return if super::which(a.bin).is_absolute() { code_assist(rt) } else { Poll::failed("not installed") };
+    }
     let Some(home) = accounts::home(rt, label).or_else(|| accounts::base(rt)) else { return Poll::failed("no login") };
     if !home.is_dir() { return Poll::failed("no login"); }
     if a.has("usage-rpc") {
@@ -553,21 +557,102 @@ fn oauth(rt: &str, home: &Path) -> Poll {
         Err(reason) => return Poll::failed(reason),
     };
     let config = format!("url = \"https://api.anthropic.com/api/oauth/usage\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\nmax-time = {HTTP_DEADLINE}\n");
+    match https_json(&config).and_then(|v| oauth_windows(&v).map_err(String::from)) {
+        Ok(windows) => Poll { windows, ..Default::default() },
+        Err(reason) => Poll::failed(&reason),
+    }
+}
+
+/// One curl call whose config, with the token, goes through stdin and never an argument; the reply or a fixed reason.
+fn https_json(config: &str) -> Result<Value, String> {
     let out = match coreq::process::exchange("account.usage", crate::platform::command("curl").args(["-q", "-sS", "--proto", "=https", "-w", "\n%{http_code}", "--config", "-"]),
         config.as_bytes(), Duration::from_secs(HTTP_DEADLINE + 5)) {
         Ok(o) | Err(coreq::process::Failure::Exit(o)) => o,
-        Err(_) => return Poll::failed("network failed"),
+        Err(_) => return Err("network failed".into()),
     };
     let text = String::from_utf8_lossy(&out.stdout);
     let (body, code) = text.rsplit_once('\n').unwrap_or(("", &text));
     match code.trim().parse::<u16>() {
-        Ok(200) => match serde_json::from_str::<Value>(body).map_err(|_| "usage shape changed").and_then(|v| oauth_windows(&v)) {
-            Ok(windows) => Poll { windows, ..Default::default() },
-            Err(reason) => Poll::failed(reason),
-        },
-        Ok(0) | Err(_) => Poll::failed("network failed"),
-        Ok(code) => Poll::failed(&format!("call refused {code}")),
+        Ok(200) => serde_json::from_str(body).map_err(|_| "usage shape changed".into()),
+        Ok(0) | Err(_) => Err("network failed".into()),
+        Ok(code) => Err(format!("call refused {code}")),
     }
+}
+
+/// The two Code Assist calls with the `agy` login. Both endpoints are undocumented, so any other reply fails closed.
+fn code_assist(rt: &str) -> Poll {
+    let token = match agy_credentials(rt).and_then(|text| agy_token(&text, accounts::now())) {
+        Ok(token) => token,
+        Err(reason) => return Poll::failed(reason),
+    };
+    let load = match https_json(&code_assist_call("loadCodeAssist", &token, r#"{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}"#)) {
+        Ok(v) => v,
+        Err(reason) => return Poll::failed(&reason),
+    };
+    let project = code_assist_project(&load);
+    let body = project.map_or(r#"{}"#.to_string(), |p| format!(r#"{{\"project\":\"{p}\"}}"#));
+    let id = project.map(fingerprint);
+    match https_json(&code_assist_call("retrieveUserQuotaSummary", &token, &body)).and_then(|v| quota_windows(&v).map_err(String::from)) {
+        Ok(windows) => Poll { id, windows, unknown: None },
+        Err(reason) => Poll { id, ..Poll::failed(&reason) },
+    }
+}
+
+fn code_assist_call(method: &str, token: &str, body: &str) -> String {
+    format!("url = \"https://cloudcode-pa.googleapis.com/v1internal:{method}\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"Content-Type: application/json\"\nheader = \"User-Agent: antigravity\"\ndata = \"{body}\"\nmax-time = {HTTP_DEADLINE}\n")
+}
+
+/// The account's Code Assist project; only characters safe inside a curl config line pass. The reply names no email,
+/// so its fingerprint is the account id.
+fn code_assist_project(load: &Value) -> Option<&str> {
+    load["cloudaicompanionProject"].as_str().filter(|p| !p.is_empty() && p.len() <= 128 && p.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':')))
+}
+
+/// Every bucket of every model family, as `gemini-5h` or `3p-weekly`. A bucket with no reading fails the whole poll:
+/// a dropped bucket could be the exhausted one, and unknown is never healthy.
+fn quota_windows(v: &Value) -> Result<Vec<Window>, &'static str> {
+    let shape = "usage shape changed";
+    let mut out = vec![];
+    for bucket in v["groups"].as_array().ok_or(shape)?.iter().flat_map(|g| g["buckets"].as_array().into_iter().flatten()) {
+        let name = bucket["bucketId"].as_str().filter(|n| valid_window(n)).ok_or(shape)?;
+        let left = bucket["remainingFraction"].as_f64().filter(|f| (0.0..=1.0).contains(f)).ok_or(shape)?;
+        out.push(Window { name: name.to_string(), used: percent((1.0 - left) * 100.0), reset: bucket["resetTime"].as_str().and_then(utc) });
+    }
+    if out.is_empty() { Err(shape) } else { Ok(out) }
+}
+
+/// The `agy` login's access token: a token file, or the same text in the OS keyring, optionally base64 with go-keyring's
+/// prefix. Only characters safe inside a curl config line pass.
+fn agy_token(text: &str, now: i64) -> Result<String, &'static str> {
+    use base64::Engine;
+    let decoded = match text.trim().strip_prefix("go-keyring-base64:") {
+        Some(b) => base64::engine::general_purpose::STANDARD.decode(b.trim()).ok().and_then(|b| String::from_utf8(b).ok()).ok_or("usage shape changed")?,
+        None => text.to_string(),
+    };
+    let v: Value = serde_json::from_str(&decoded).map_err(|_| "no login")?;
+    let t = if v["token"].is_object() { &v["token"] } else { &v };
+    let token = t["access_token"].as_str().filter(|t| !t.is_empty()).ok_or("no login")?;
+    if !token.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.')) { return Err("usage shape changed"); }
+    let expiry = t["expiry"].as_str().and_then(utc).or_else(|| t["expiry_date"].as_i64().map(|ms| ms / 1000));
+    if expiry.is_some_and(|at| at <= now) { return Err("token expired"); }
+    Ok(token.to_string())
+}
+
+/// The login files of the `agy` CLI under the user's home, read only. A login held only in the Windows credential store
+/// reads as no login.
+fn agy_login_files() -> Vec<PathBuf> {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty());
+    home.map_or(vec![], |h| [".gemini/antigravity-cli/antigravity-oauth-token", ".gemini/oauth_creds.json"].iter().map(|f| Path::new(&h).join(f)).collect())
+}
+
+fn agy_credentials(rt: &str) -> Result<String, &'static str> {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(text) = keychain::read("gemini", rt)? { return Ok(text); }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = rt;
+    agy_login_files().iter().find_map(|f| std::fs::read_to_string(f).ok()).ok_or("no login")
 }
 
 /// Plan windows only: `five_hour` and the `seven_day` family; credits are no window.
@@ -605,7 +690,7 @@ fn credentials(rt: &str, home: &Path) -> Result<String, &'static str> {
     {
         // A home named by the home variable has its own keychain service, as the native login stores it.
         let suffix = accounts::environment(rt, home).map_or(String::new(), |(_, h)| format!("-{}", &sha256(h.to_string_lossy().as_bytes())[..8]));
-        if let Some(text) = keychain::read(&format!("Claude Code-credentials{suffix}"))? { return Ok(text); }
+        if let Some(text) = keychain::read(&format!("Claude Code-credentials{suffix}"), "")? { return Ok(text); }
     }
     #[cfg(not(target_os = "macos"))]
     let _ = rt;
@@ -628,13 +713,13 @@ mod keychain {
 
     /// A read that would prompt fails instead of showing a dialog; `None` is no item.
     /// ponytail: the interaction flag is per process; this is taskq's only keychain read, so nothing else sees it.
-    pub fn read(service: &str) -> Result<Option<String>, &'static str> {
+    pub fn read(service: &str, account: &str) -> Result<Option<String>, &'static str> {
         let (mut len, mut data, mut allowed) = (0u32, std::ptr::null_mut(), 1u8);
         // SAFETY: every pointer outlives its call; the item out-pointer may be null, and data is freed once below.
         let status = unsafe {
             let saved = SecKeychainGetUserInteractionAllowed(&mut allowed) == 0;
             SecKeychainSetUserInteractionAllowed(0);
-            let status = SecKeychainFindGenericPassword(std::ptr::null(), service.len() as u32, service.as_ptr(), 0, std::ptr::null(),
+            let status = SecKeychainFindGenericPassword(std::ptr::null(), service.len() as u32, service.as_ptr(), account.len() as u32, account.as_ptr(),
                 &mut len, &mut data, std::ptr::null_mut());
             SecKeychainSetUserInteractionAllowed(if saved { allowed } else { 1 });
             status
@@ -686,6 +771,91 @@ mod tests {
     }
 
     fn id(label: &str) -> String { fingerprint(&format!("{label}@example.com")) }
+
+    // Chain: capacity.md § Account usage and fleet policy, owner note on #2341: the `agy` login polled read-only. Risk: an
+    // undocumented reply reads as a healthy account, or a token reaches a row. Protection: any other shape is `unknown`
+    // with a fixed reason, a missing reading fails the whole poll, and the row holds only bucket, percent, reset and id.
+    #[test]
+    fn code_assist_reads_buckets_or_a_fixed_reason() {
+        let summary = serde_json::json!({"groups": [
+            {"displayName": "Gemini Models", "description": "provider text", "buckets": [
+                {"bucketId": "gemini-5h", "window": "5h", "remainingFraction": 0.8, "resetTime": "2026-11-04T10:00:00.123456Z", "description": "provider text"},
+                {"bucketId": "gemini-weekly", "window": "weekly", "remainingFraction": 0.0, "resetTime": "2026-11-09T00:00:00+01:00"}]},
+            {"displayName": "Claude and GPT models", "buckets": [{"bucketId": "3p-5h", "remainingFraction": 1}]}]});
+        let w = quota_windows(&summary).unwrap();
+        assert_eq!(w.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(), [("gemini-5h", 20), ("gemini-weekly", 100), ("3p-5h", 0)]);
+        assert_eq!(w[0].reset, utc("2026-11-04T10:00:00Z"));
+        assert_eq!(w[1].reset, utc("2026-11-08T23:00:00Z"), "an offset reset reads as UTC");
+        assert_eq!(w[2].reset, None);
+        for bad in [
+            serde_json::json!({}),
+            serde_json::json!({"groups": []}),
+            serde_json::json!({"groups": [{"buckets": []}]}),
+            serde_json::json!({"groups": [{"buckets": [{"bucketId": "gemini-5h"}]}]}),
+            serde_json::json!({"groups": [{"buckets": [{"bucketId": "gemini-5h", "remainingFraction": 1.5}]}]}),
+            serde_json::json!({"groups": [{"buckets": [{"bucketId": "has space", "remainingFraction": 0.5}]}]}),
+            serde_json::json!({"groups": [{"buckets": [{"bucketId": "gemini-5h", "remainingFraction": 0.5}, {"remainingFraction": 0.5}]}]}),
+        ] { assert_eq!(quota_windows(&bad), Err("usage shape changed"), "{bad}"); }
+
+        assert_eq!(code_assist_project(&serde_json::json!({"cloudaicompanionProject": "fine-project-1"})), Some("fine-project-1"));
+        for bad in [serde_json::json!({}), serde_json::json!({"cloudaicompanionProject": ""}), serde_json::json!({"cloudaicompanionProject": "a\"\nurl = \"x"})] {
+            assert_eq!(code_assist_project(&bad), None, "{bad}");
+        }
+        let call = code_assist_call("loadCodeAssist", "tok", "{}");
+        assert!(call.contains("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist") && call.contains("Bearer tok"), "{call}");
+
+        use base64::Engine;
+        let now = crate::board::iso("2026-11-04T10:00:00").unwrap();
+        let file = r#"{"token":{"access_token":"ya29.a-b_c","refresh_token":"never-used","expiry":"2026-11-04T11:00:00.5+00:00"}}"#;
+        assert_eq!(agy_token(file, now).as_deref(), Ok("ya29.a-b_c"));
+        let keyring = format!("go-keyring-base64:{}", base64::engine::general_purpose::STANDARD.encode(file));
+        assert_eq!(agy_token(&keyring, now).as_deref(), Ok("ya29.a-b_c"));
+        assert_eq!(agy_token(r#"{"access_token":"tok","expiry_date":1794787200000}"#, 1794787199).as_deref(), Ok("tok"));
+        assert_eq!(agy_token(r#"{"access_token":"tok","expiry_date":1794787200000}"#, 1794787200), Err("token expired"));
+        assert_eq!(agy_token(r#"{"token":{"access_token":"tok","expiry":"2026-11-04T09:00:00Z"}}"#, now), Err("token expired"));
+        assert_eq!(agy_token(r#"{"refresh_token":"only"}"#, now), Err("no login"));
+        assert_eq!(agy_token("not json", now), Err("no login"));
+        assert_eq!(agy_token(r#"{"access_token":"a\"b"}"#, now), Err("usage shape changed"));
+        assert_eq!(agy_token("go-keyring-base64:!!", now), Err("usage shape changed"));
+    }
+
+    // Chain: capacity.md: Antigravity keeps one default account per host until a per-account `agy` home is qualified. Risk:
+    // a second label or a missing native status reaches the launch path, or a poll row lists a token. Protection: every
+    // entry point keeps `default`, a fleet `use` of another id is unmet, and rows show only the polled facts.
+    #[test]
+    fn antigravity_has_one_default_account_with_rows_and_policy() {
+        let rt = "antigravity";
+        let d = dir("one-account");
+        assert!(accounts::add(&d, rt, "work").unwrap_err().contains("one `default` account"), "add refuses before any login");
+        std::fs::write(d.join(accounts::FILE), serde_json::json!({rt: [{"label": "default", "enabled": true}, {"label": "work", "enabled": true}]}).to_string()).unwrap();
+        assert!(accounts::read_policy(&d).unwrap_err().contains("one `default` account"), "a hand-edited list stays refused");
+        std::fs::remove_file(d.join(accounts::FILE)).unwrap();
+        assert_eq!(accounts::environment(rt, Path::new("elsewhere")), None, "no empty variable name reaches a child");
+        assert_eq!(super::super::account_email(rt, accounts::DEFAULT), None, "the bare binary is never run as a status probe");
+        assert_eq!(accounts::home(rt, accounts::DEFAULT), None);
+
+        let at = |line: &str| line.starts_with(&format!("limit {rt} "));
+        let poll = |id: Option<String>, used: u8| poll_with(&d, NOW, |r, label| {
+            if r != rt { return Poll::failed("no login"); }
+            assert_eq!(label, accounts::DEFAULT);
+            Poll { id: id.clone(), windows: vec![Window { name: "gemini-5h".into(), used, reset: None }], unknown: None }
+        }).unwrap();
+        poll(Some(fingerprint("project-1")), 30);
+        let lines = Host::read(&d).usage_lines(NOW);
+        let row = format!("limit {rt} default id {} window gemini-5h used 30 reset - at {}", fingerprint("project-1"), crate::board::stamp(NOW));
+        assert_eq!(lines.iter().filter(|l| at(l)).cloned().collect::<Vec<_>>(), [row]);
+        assert_eq!(Host::read(&d).active(rt, NOW).as_deref(), Some(accounts::DEFAULT));
+        let rows = Host::read(&d).rows("h", NOW, |_, _| None);
+        let own = rows.iter().find(|r| r.runtime == rt && r.label == accounts::DEFAULT).unwrap();
+        assert_eq!(own.id.as_deref(), Some(fingerprint("project-1").as_str()), "`taskq accounts` shows the polled id");
+
+        let policy = |preferred: Option<String>, avoid: &[String]| BTreeMap::from([(rt.to_string(), RuntimePolicy { preferred, avoid: avoid.iter().cloned().collect() })]);
+        fleet(&d, NOW, policy(Some(id("elsewhere")), &[]), vec![], None);
+        assert!(Host::read(&d).usage_lines(NOW).contains(&format!("account-policy unmet {rt} {}", id("elsewhere"))), "another account has no home here");
+        assert_eq!(Host::read(&d).active(rt, NOW).as_deref(), Some(accounts::DEFAULT), "unmet keeps the default");
+        fleet(&d, NOW, policy(None, &[fingerprint("project-1")]), vec![], None);
+        assert!(Host::read(&d).off(rt, NOW), "an avoided only account starts no new work");
+    }
 
     fn fleet(install: &Path, at: i64, policy: Policy, rows: Vec<String>, error: Option<&str>) {
         std::fs::write(install.join(FLEET), serde_json::to_string(&Fleet { at, policy, rows, error: error.map(String::from) }).unwrap()).unwrap();
@@ -1025,7 +1195,8 @@ for line in sys.stdin:
             let labels = policy.get(*rt).map_or(vec![accounts::DEFAULT.to_string()], |l| l.iter().filter(|e| e.enabled).map(|e| e.label.clone()).collect());
             for label in labels {
                 let home = accounts::home(rt, &label).or_else(|| accounts::base(rt)).unwrap();
-                let sign = || ["auth.json", ".credentials.json"].map(|f| std::fs::read(home.join(f)).ok().map(|b| sha256(&b)));
+                let files: Vec<PathBuf> = ["auth.json", ".credentials.json"].iter().map(|f| home.join(f)).chain(if super::super::of(rt).has("usage-code-assist") && super::super::which(super::super::of(rt).bin).is_absolute() { agy_login_files() } else { vec![] }).collect();
+                let sign = || files.iter().map(|f| std::fs::read(f).ok().map(|b| sha256(&b))).collect::<Vec<_>>();
                 let before = sign();
                 let started = Instant::now();
                 let p = fetch(rt, &label, &mut ids);
