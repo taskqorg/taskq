@@ -1,10 +1,10 @@
 {
  "external_input_mutation": {
   "after": {
-   "pilot_tool_sha256": "86c406655341f12a68449e51fab07aa69e10780a3fbeed49eebff3d84013ee93",
+   "pilot_tool_sha256": "4a7bc3b56bf633e90fc745fecb0c17794e8818148b48d2b0bbfb34b6255ef89c",
    "steps": [
     {
-     "cache_key": "9f843d177f93e85db6eb3e00b3d25e181a079212f79ae46d08175390c65de2c9",
+     "cache_key": "a846ba4c3cd04c7d9068de391e56680f33dc137f95a2a286fbe5ce375c517de2",
      "exit_code": 0,
      "external_bytes": "ok",
      "original_batch_tasks": [
@@ -13,11 +13,11 @@
       3
      ],
      "outcome": "passed",
-     "receipt": "e760c8859964a0293bd64baa483c40424c23592948854ec85434c18a5e912d90",
+     "receipt": "efbfd1b7acb58acd1724d1b0da33fe2c53cad7b7d7de6e4e1adeab830eef5db6",
      "step": "initial"
     },
     {
-     "cache_key": "9f843d177f93e85db6eb3e00b3d25e181a079212f79ae46d08175390c65de2c9",
+     "cache_key": "a846ba4c3cd04c7d9068de391e56680f33dc137f95a2a286fbe5ce375c517de2",
      "exit_code": 1,
      "external_bytes": "bad",
      "original_batch_tasks": [
@@ -26,11 +26,11 @@
       3
      ],
      "outcome": "failed",
-     "receipt": "2dc83056db386939abfbe9332557ab85bde16b55cf991f761cd817081769cde5",
+     "receipt": "263d3d4b08538819fdd9df6f2492eb29e9fde41e956425c033e6ca00527b0ac5",
      "step": "external bytes changed, same store"
     },
     {
-     "cache_key": "9f843d177f93e85db6eb3e00b3d25e181a079212f79ae46d08175390c65de2c9",
+     "cache_key": "a846ba4c3cd04c7d9068de391e56680f33dc137f95a2a286fbe5ce375c517de2",
      "exit_code": 1,
      "external_bytes": "bad",
      "original_batch_tasks": [
@@ -39,7 +39,7 @@
       3
      ],
      "outcome": "failed",
-     "receipt": "6db9c3f76f7e73135358215d5e821e8b86b8cf18f0f6ad9c74fd68eab9324b40",
+     "receipt": "f045f5f271fdc2f07af539301d5075a17b0990717319803dbcf1ce222c279377",
      "step": "external bytes changed, fresh store"
     }
    ]
@@ -157,7 +157,7 @@
    }
   ],
   "outcome": "pending",
-  "pilot_tool_sha256": "86c406655341f12a68449e51fab07aa69e10780a3fbeed49eebff3d84013ee93",
+  "pilot_tool_sha256": "4a7bc3b56bf633e90fc745fecb0c17794e8818148b48d2b0bbfb34b6255ef89c",
   "replay_head": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
   "scope": "preparation only with the changed tool: no gate, no publication, no qualification",
   "synthetic": false

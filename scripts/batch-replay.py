@@ -98,7 +98,6 @@ def gate_identity(repo, tree):
 
 
 def verify_member(repo, repository, m):
-    """One member's proof. Typed refusals run first so a stale proof launches no Git."""
     # This typed projection is produced by #2391. Never parse lifecycle comments here.
     export = m['source_export']
     require(digest(encoded(export)) == m['source_export_sha256'], 'source export tampered')
@@ -124,10 +123,32 @@ def verify_member(repo, repository, m):
             'task URL mismatch')
     require(f['head'] == landed['head'] == m['result_sha'], 'publication head moved')
     original = f['base']
+    if original is not None:
+        oid(repo, original)
+    parent, merged = oid(repo, landed['parent']), oid(repo, landed['merged'])
+    require(landed['integration'] == merged, 'merge relation unknown')
+    require(git(repo, 'rev-parse', merged + '^').decode().strip() == parent, 'merge parent mismatch')
+    oid(repo, m['result_sha'])
+    patch = delta(repo, parent, merged)
     source_base = m.get('source_delta_base', original)
     require(source_base is not None, 'source delta base unknown; replay base cannot replace it')
-    parent, merged = landed['parent'], landed['merged']
-    require(landed['integration'] == merged, 'merge relation unknown')
+    oid(repo, source_base)
+    require(git(repo, 'merge-base', parent, m['result_sha']).decode().strip() == source_base,
+            'source delta ancestor mismatch')
+    source_patch = delta(repo, source_base, m['result_sha'])
+    require(patch and source_patch, 'empty source delta')
+    parent_tree, merged_tree, objects = git(repo, 'rev-parse', parent + '^{tree}', merged + '^{tree}',
+                                            '--path-format=absolute', '--git-path', 'objects').decode().splitlines()
+    with tempfile.TemporaryDirectory(prefix='taskq-source-coverage-') as temp:
+        # Read frozen objects in place: the source stays unwritten and nothing is copied.
+        private = Path(temp)
+        git(private, 'init', '--quiet', '--template=')
+        (private / '.git' / 'objects' / 'info').mkdir(exist_ok=True)
+        (private / '.git' / 'objects' / 'info' / 'alternates').write_bytes(objects.encode() + b'\n')
+        git(private, 'read-tree', parent_tree)
+        git(private, 'apply', '--cached', '--binary', data=source_patch)
+        require(git(private, 'write-tree').decode().strip() == merged_tree, 'hidden extra or missing source changes')
+    require(digest(patch) == m['delta_sha256'], 'source delta tampered')
     ci = m['ci']
     require(ci['run_id'] > 0 and ci['run_attempt'] > 0 and ci['conclusion'] == 'success', 'CI run/attempt proof missing')
     expected_ci = merged if landed['ci_kind'] == 'merge_group' else m['result_sha']
@@ -139,29 +160,6 @@ def verify_member(repo, repository, m):
             ci['head_sha'] == observation['head_sha'] and observation['status'] == 'completed' and
             observation['event'] == ci['event'] and observation['conclusion'] == ci['conclusion'],
             'CI run/attempt differs from frozen API readback')
-    # One launch resolves every immutable input; an unknown object refuses.
-    commits = [parent, merged, m['result_sha'], source_base] + ([] if original is None else [original])
-    require(all(re.fullmatch('[0-9a-f]{40}', c) for c in commits), 'full immutable Git SHA required')
-    resolved = git(repo, 'rev-parse', *[c + '^{commit}' for c in commits], merged + '^', parent + '^{tree}',
-                   merged + '^{tree}', '--path-format=absolute', '--git-path', 'objects').decode().splitlines()
-    require(resolved[:len(commits)] == commits, 'unexpected Git object identity')
-    merged_parent, parent_tree, merged_tree, objects = resolved[len(commits):]
-    require(merged_parent == parent, 'merge parent mismatch')
-    patch = delta(repo, parent, merged)
-    require(git(repo, 'merge-base', parent, m['result_sha']).decode().strip() == source_base,
-            'source delta ancestor mismatch')
-    source_patch = delta(repo, source_base, m['result_sha'])
-    require(patch and source_patch, 'empty source delta')
-    with tempfile.TemporaryDirectory(prefix='taskq-source-coverage-') as temp:
-        # Read frozen objects in place: the source stays unwritten and nothing is copied.
-        private = Path(temp)
-        git(private, 'init', '--quiet', '--template=')
-        (private / '.git' / 'objects' / 'info').mkdir(exist_ok=True)
-        (private / '.git' / 'objects' / 'info' / 'alternates').write_bytes(objects.encode() + b'\n')
-        git(private, 'read-tree', parent_tree)
-        git(private, 'apply', '--cached', '--binary', data=source_patch)
-        require(git(private, 'write-tree').decode().strip() == merged_tree, 'hidden extra or missing source changes')
-    require(digest(patch) == m['delta_sha256'], 'source delta tampered')
     return {**m, 'patch': patch, 'paths': paths(repo, parent, merged), 'parent': parent, 'merged': merged,
             'source_patch': source_patch, 'original_pr_base': original}
 
