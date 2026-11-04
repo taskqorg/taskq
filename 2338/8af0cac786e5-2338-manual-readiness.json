@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "task": 2338,
+  "observed_utc": "2026-11-04T22:26:03.275619+00:00",
+  "manual_no_worker": true,
+  "hold_entry": 6623672925,
+  "implementation": {
+    "pr": 2339,
+    "url": "https://github.com/taskqorg/taskq/pull/2339",
+    "head": "87221deece85210ff3849a98c7bd7fe3530b2c1c",
+    "merged_sha": "59908111728262055f2ec4ce0869a9ac006ea268",
+    "merged_utc": "2026-11-04T06:33:23Z",
+    "full_merge_gate": {
+      "run_id": 41785478070,
+      "attempt": 1,
+      "head_sha": "59908111728262055f2ec4ce0869a9ac006ea268",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "plan",
+          "conclusion": "success"
+        },
+        {
+          "name": "shots",
+          "conclusion": "success"
+        },
+        {
+          "name": "windows-gnu",
+          "conclusion": "success"
+        },
+        {
+          "name": "rust (windows-latest)",
+          "conclusion": "success"
+        },
+        {
+          "name": "rust (ubuntu-latest)",
+          "conclusion": "success"
+        },
+        {
+          "name": "rust (macos-latest)",
+          "conclusion": "success"
+        },
+        {
+          "name": "tests",
+          "conclusion": "success"
+        }
+      ]
+    }
+  },
+  "acceptance": {
+    "A1": {
+      "project_plain_snapshot": "observed via actual taskq status --task2395 --transcript --json without --closed; returned plain project snapshot, not all-project wrapper",
+      "actual_tray_answer": "pending a real technical ask, reuse upcoming owner-approved action; no fabricated helper or answer"
+    },
+    "A2": {
+      "local_closed_history": {
+        "task": 2383,
+        "actual_command": "taskq status --closed --task2383 --transcript --json",
+        "items": 23,
+        "generation_present": true,
+        "outcome": "page returned",
+        "private_transcript_not_included": true
+      },
+      "remote_closed_history": {
+        "target": 2380,
+        "actual_command": "taskq status --closed --task2380 --transcript --json",
+        "outcome": "page returned after explicit one-page user approval",
+        "items": 18,
+        "generation_present": true,
+        "tool_results_exported": false,
+        "private_transcript_not_included": true,
+        "initial_auto_review_rejection": "resolved by materially new explicit user approval; single retry succeeded; no workaround or further page"
+      }
+    },
+    "A3": {
+      "source_and_cross_board_refusal_fixtures": "covered by actual green source merge gate and named PR fixtures",
+      "live_other_project_worker_and_refusal": "not newly qualified; no grant/credentials/security changes"
+    }
+  }
+}
