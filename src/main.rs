@@ -1585,7 +1585,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         if host.is_none() && hour.0.elapsed().as_secs() >= 3600 {
             let h = requests::diff(&budget.ops, &hour.1);
             log!("requests 1h: {}", requests::summary(&h, ""));
-            requests::record("service", &h);
+            requests::flush(requests::SERVICE);
             last_hour = Some(h);
             hour = (Instant::now(), budget.ops.clone());
         }
@@ -4391,9 +4391,7 @@ fn application() {
     // #1351: the command already took effect; hand queued receipts to the writer before the exit flush, which has the same bound.
     telemetry::settle(Duration::from_secs(10));
     // § 4 budget: this process's board requests by source, for `taskq profile`
-    if let Some(source) = requests::source(&args, std::env::var("TASKQ_ROLE").ok().as_deref()) {
-        requests::flush(&source);
-    }
+    requests::flush(&requests::source(&args, std::env::var("TASKQ_ROLE").ok().as_deref()));
     if let Err(e) = r {
         if e.is_empty() {
             crate::platform::exit(1);

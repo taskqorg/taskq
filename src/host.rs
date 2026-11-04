@@ -970,8 +970,11 @@ pub fn run(install: &Path) -> Res<()> {
     let mut registry = Registry::default();
     let mut restart=crate::lifecycle::Monitor::default();
     if let Err(e)=crate::setup::recover(install) {crate::platform::log(&e);}
+    let mut recorded=Instant::now();
     loop {
         if let Some(line)=telemetry.pass(install) {crate::platform::log(&line);}
+        // §4 Board request records: here, ahead of the handover paths that skip the rest of the tick.
+        if recorded.elapsed()>=crate::requests::RECORD_EVERY {crate::requests::flush(crate::requests::SERVICE);recorded=Instant::now();}
         // #1297: steady host passes fold like project passes (main.rs `service.loop`).
         let _repeating = tracing::info_span!("service.host.loop", coreq_repeating = true).entered();
         if let Err(e) = crate::profile::prune(install) { eprintln!("taskq: telemetry unknown: {e}"); }
@@ -1184,7 +1187,12 @@ pub fn run(install: &Path) -> Res<()> {
             if crate::restart_watch(&mut stuck,handover,began.elapsed().as_secs(),300) {log_all(install,&roots,&format!("restart pending over 600 s; waits for {waits}"));}
             h=shared.lock().unwrap_or_else(|e|e.into_inner());
             if h.handoff_ready() {
-                if h.stopping&&h.stop_controller.is_some() {drop(h);std::thread::sleep(std::time::Duration::from_secs(1));continue;}
+                if h.stopping&&h.stop_controller.is_some() {
+                    drop(h);
+                    // The controller may end this process at any tick.
+                    crate::requests::flush(crate::requests::SERVICE);crate::platform::drain_telemetry();
+                    std::thread::sleep(std::time::Duration::from_secs(1));continue;
+                }
                 let stopping=h.stopping;
                 drop(h);
                 if let Err(e)=crate::lifecycle::prepare(install,&instance) {
@@ -1193,6 +1201,8 @@ pub fn run(install: &Path) -> Res<()> {
                     std::thread::sleep(std::time::Duration::from_secs(1));continue;
                 }
                 if stopping {
+                    // The controller ends this process without its exit path.
+                    crate::requests::flush(crate::requests::SERVICE);crate::platform::drain_telemetry();
                     match crate::lifecycle::pending(install).and_then(|p|p.filter(|p|p.stops()).ok_or("prepared Stop binding unavailable".into())) {
                         Ok(p)=>match crate::host_control::dispatch(install,&p) {
                         Ok(control)=>{crate::platform::log(&format!("service stops: Stop {} controller ends this process",p.id()));shared.lock().unwrap_or_else(|e|e.into_inner()).stop_controller=Some(control);},
@@ -1208,6 +1218,7 @@ pub fn run(install: &Path) -> Res<()> {
                     use std::os::unix::process::CommandExt;
                     let mut command = crate::platform::command(crate::launcher(install));
                     command.args(["service", "run"]).current_dir(install).env_remove("TASKQ_ROOT");
+                    crate::requests::flush(crate::requests::SERVICE);
                     coreq::telemetry::capture::before_exec();
                     let e = command.exec();
                     return Err(format!("host re-exec: {e}"));
@@ -1230,7 +1241,6 @@ pub fn run(install: &Path) -> Res<()> {
         if hour.0.elapsed().as_secs() >= 3600 {
             let total = crate::requests::totals();
             let usage = crate::requests::diff(&total, &hour.1);
-            crate::requests::record("service", &usage);
             for root in &roots { append_project(install, root, &format!("requests 1h: {}", crate::requests::summary(&usage, ""))); }
             let mut h = shared.lock().unwrap_or_else(|e| e.into_inner());
             h.last_hour = Some(usage); h.hour_start = total.clone();
@@ -1670,6 +1680,100 @@ impl Panics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The real host loop of an empty fixture install in a child of this test binary. Release transport is refused at
+    /// a dead proxy and worker identity is removed, as in `tests/host_restart.rs`; no native unit exists there.
+    struct RecordsHost {base:PathBuf,install:PathBuf,log:PathBuf,child:std::process::Child}
+    impl RecordsHost {
+        fn start(name:&str,end:&str)->Self {
+            let base=std::env::temp_dir().join(format!("taskq-{name}-{}",crate::runtime::uuid()));
+            let install=base.join("install");fs::create_dir_all(&install).unwrap();
+            fs::write(install.join("projects"),"").unwrap();fs::write(install.join("host.json"),"{}").unwrap();
+            // Unix re-execs the install launcher: this one ends the new generation as Windows' restart exit does.
+            #[cfg(unix)] {
+                use std::os::unix::fs::PermissionsExt;
+                let launcher=install.join(crate::platform::tool(&install).exe_name());
+                fs::write(&launcher,"#!/bin/sh\nexit 75\n").unwrap();fs::set_permissions(&launcher,fs::Permissions::from_mode(0o700)).unwrap();
+            }
+            let log=base.join("service.log");
+            let mut command=std::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact","host::tests::board_records_child","--ignored","--nocapture"])
+                .env("TASKQ_RECORDS_CHILD",&install).env("TASKQ_RECORDS_END",end).current_dir(&install)
+                .env("TASKQ_INCIDENT_REPORTS","off").env("CURL_HOME",&base).env("NO_PROXY","").env("no_proxy","")
+                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(fs::File::create(&log).unwrap());
+            for key in ["TASKQ_ROOT","TASKQ_ATTEMPT","TASKQ_TASK","TASKQ_ROLE","COREQ_TRACE_CONTEXT"] {command.env_remove(key);}
+            for key in ["HTTP_PROXY","HTTPS_PROXY","ALL_PROXY","http_proxy","https_proxy","all_proxy"] {command.env(key,"http://127.0.0.1:9");}
+            let child=command.spawn().unwrap();
+            Self {base,install,log,child}
+        }
+        fn service_row(&self)->String {
+            crate::profile::report(&self.install).lines().find(|line|line.starts_with("| service |")).unwrap_or_default().to_string()
+        }
+        fn log(&self)->String {fs::read_to_string(&self.log).unwrap_or_default()}
+    }
+    impl Drop for RecordsHost {
+        fn drop(&mut self) {
+            let _=self.child.kill();let _=self.child.wait();
+            let _=fs::remove_dir_all(&self.base);
+        }
+    }
+
+    // Chain: §4 Board request records -> host loop restart -> telemetry -> `taskq profile`. Defect #2367: the service
+    // recorded its counts only each hour, so a restart lost every count of the hour and the table showed none. Risk
+    // kept: a handover loses counts, or records them twice (exact sums).
+    #[test]
+    fn restart_keeps_the_board_requests_counted_before_it() {
+        let mut host=RecordsHost::start("records-restart","restart");
+        let until=Instant::now()+std::time::Duration::from_secs(60);
+        let status=loop {
+            if let Some(status)=host.child.try_wait().unwrap() {break status;}
+            assert!(Instant::now()<until,"restart deadline: {}",host.log());
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert_eq!(status.code(),Some(75),"{}",host.log());
+        let row=host.service_row();
+        assert!(row.starts_with("| service | ")&&row.contains(" | 5 | GET issues/N 3, GET issues 2 |"),"{row:?}: {}",host.log());
+    }
+
+    // Chain: §4 Board request records -> periodic record -> kill -> `taskq profile`. Defect #2367: a killed service lost
+    // every count since its last hour. Risk kept: the host loop stops recording on its cadence, so a kill loses more
+    // than the bound. `RECORD_EVERY` is short under test; its release value is checked in `requests`.
+    #[test]
+    fn killed_service_keeps_the_board_requests_of_its_last_record() {
+        let mut host=RecordsHost::start("records-kill","kill");
+        let until=Instant::now()+std::time::Duration::from_secs(60);
+        while !host.service_row().contains(" | 3 | GET issues/N 3 |") {
+            assert!(host.child.try_wait().unwrap().is_none(),"child ended: {}",host.log());
+            assert!(Instant::now()<until,"no periodic record: {:?}: {}",host.service_row(),host.log());
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        host.child.kill().unwrap();host.child.wait().unwrap();
+        assert!(host.service_row().contains(" | 3 | GET issues/N 3 |"),"{:?}",host.service_row());
+    }
+
+    #[test]
+    #[ignore = "owned subprocess that runs the host loop"]
+    fn board_records_child() {
+        let Some(install)=std::env::var_os("TASKQ_RECORDS_CHILD").map(PathBuf::from) else {return};
+        let end=std::env::var("TASKQ_RECORDS_END").unwrap();
+        let worker=install.clone();
+        std::thread::spawn(move || {
+            for _ in 0..3 {crate::requests::tally("GET issues/N","api.github.com");}
+            if end!="restart" {return;}
+            for _ in 0..2 {crate::requests::tally("GET issues","api.github.com");}
+            // The published service answers the review; a real `service restart` submits the same request.
+            let until=Instant::now()+std::time::Duration::from_secs(30);
+            let reviewed=loop {
+                match crate::lifecycle::review(&worker,"records-restart") {
+                    Ok(reviewed)=>break reviewed,
+                    Err(e)=>assert!(Instant::now()<until,"{e}"),
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            };
+            crate::lifecycle::submit(&worker,&reviewed).unwrap();
+        });
+        run(&install).unwrap();
+    }
 
     // #1416: project `taskq` logs into the service's stderr file; a host line reaches every log once.
     #[test]
