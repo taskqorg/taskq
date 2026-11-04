@@ -17,7 +17,6 @@ No model selection or saved permission configuration was changed. No task/servic
 | UC-07 | `Split this plan into tasks.` | Agreed tasks via `add --hold`, successor `--deps`; explicit `start` later | golden `open dependency waits`, held/start traces |
 | UC-09 | `Answer #12 with 2.` | `taskq answer 12.2` after reading the current card and relaying the owner's pick | golden `hand-typed CLI form answers`; service `answer_resumes_the_same_session_and_requeue_stops_the_child` |
 | UC-13 | `Pause the service.` | `taskq service pause`, then readback; leave running attempts alone | §5 pause; service `p0_passes_any_focus_but_not_pause_or_limits` |
-| UC-02 | `Use Codex for the visuals.` | New agreed visual task via `add ... --runtime codex`; no global policy change | §5 add/runtime; service `waiting_and_filters_hold_admission` |
 
 ## Dropped rows
 
@@ -158,26 +157,7 @@ No tools used. Angle-bracket values are placeholders. "Observable" means what re
   - `service list` shows the project.
   - Focus stays `off` until the owner sets it.
 
-## 8. UC-02 "Use Codex for the visuals."
-
-- **Intent:** set the runtime for this one task only. Do not change `codex` options, limits, model or permissions (R9).
-- **Clarify:**
-  - Type: `asset`, or `code` if the visuals are UI code.
-  - Does it need a screen? A screen task needs `needs-screen` (and possibly macOS `codex-app`). Ask; do not assume.
-  - If the owner means a standing rule for all visual tasks, say no such config key exists and ask.
-- **Prerequisite check (read only):**
-  - `taskq agents` shows `codex` installed and logged in.
-  - Some host has `limits.codex` above 0.
-- **Command:**
-  ```
-  taskq add "<visual title>" --goal "<agreed goal>" --acceptance "<agreed visual check>" --type asset --runtime codex
-  ```
-- **Observable:**
-  - `#<N> ready` with label `run-codex`.
-  - After spawn, Session cell links `codex://threads/<id>`, or the pages wrapper.
-  - If no Codex-enabled host has focus or capacity, the task stays `ready`. Report that.
-
-## 9. "Install taskq from https://github.com/taskqorg/taskq and set it up for this project."
+## 8. "Install taskq from https://github.com/taskqorg/taskq and set it up for this project."
 
 - **No shell installer assumed.** The copyable install command is an accepted target, not shipped.
 
@@ -221,7 +201,7 @@ Preserve dirty work, unknown keys and ownership throughout.
 - Agreed write check, then readback.
 - Hand off to PM. Focus stays `off` until the owner sets it.
 
-## 10. "Install taskq from https://github.com/taskqorg/taskq and create project <name> from <idea or folder>."
+## 9. "Install taskq from https://github.com/taskqorg/taskq and create project <name> from <idea or folder>."
 
 Same gates as phrase 9, plus:
 
@@ -297,18 +277,11 @@ Session: `01a13751-e845-7612-bdf6-bd6040987a54`. One completed turn.
    ```
    Observable completion requires approved queue read/write verification, project registration and fresh service/host readback. These commands alone do not establish all of that. No shell installer is supplied or assumed.
 
-8. **UC-02 — “Use Codex for the visuals.”**  
-   For the new agreed visual task, propose:
-   ```text
-   taskq add "<agreed visual-task title>" --goal "<agreed visual outcome>" --acceptance "A1. <agreed observable visual check>" --runtime codex
-   ```
-   Resolve the task details before filing. Observable result: the issue has `run-codex` and the agreed acceptance. This selects Codex for this task; it changes no other settings. Installed and enabled does not itself prove login, free capacity or launch eligibility. “Visuals” does not automatically imply `codex-app` or screen access.
-
-9. **Existing project — “Install taskq from https://github.com/taskqorg/taskq and set it up for this project.”**  
+8. **Existing project — “Install taskq from https://github.com/taskqorg/taskq and set it up for this project.”**\
    This authorizes preparing setup from the named source. Resolve the exact folder and inspect existing files, TaskQ configuration, Git roots/remotes, account and repository visibility. Preserve dirty work, unknown keys and ownership.  
    Before applying setup, obtain confirmation of the concrete effects: installation, any Git/repository/remote changes, configuration, labels, access, service installation and the required incident-report disclosure. Existing repository visibility is read, not guessed or unnecessarily asked again. No `taskq setup` or shell installer is specified. After approval, applicable commands include `taskq labels`, `taskq selftest`, `taskq service install` and `taskq service status`. Completion requires verified queue read/write and PM handoff. Starting task admission needs an explicit scope instruction.
 
-10. **New project — “Install taskq from https://github.com/taskqorg/taskq and create project <name> from <idea or folder>.”**  
+9. **New project — “Install taskq from https://github.com/taskqorg/taskq and create project <name> from <idea or folder>.”**\
     Resolve the name, exact destination folder, source idea/folder, initial goal and acceptance. An idea alone does not authorize implementing unspecified product work. Inspect any existing content and ownership before proposing changes.  
     Confirm the exact account, repository name, visibility—new repositories default to **private**—and every concrete effect, including Git initialization, repository creation/publication, remote, configuration, labels, access, service and incident reporting. Apply only that approved list. No project-creation CLI or shell installer is supplied. Observable completion is the approved project and repository, verified queue read/write, service readback where approved, and PM handoff. Plans remain held until explicit start.
 
