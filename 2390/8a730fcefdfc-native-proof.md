@@ -1,0 +1,11 @@
+# Native Mac real GitHub UI adoption proof — TaskQ #2365 / #2390
+
+Source b9cbba8f400e42a78bc58e1ef502f46de5b89d7c (PR2371), exact merge-group CI41915284100 green. UI-only run41916713527 succeeded. GitHub ui-channel asset published2026-11-04T21:30:49Z; bundle1793827248-b9cbba8f400e bridge1. Pointer attestation verified with gh attestation verify. All four published SHA256SUMS entries verified; downloaded bytes equal actual adopted manifest/tray/workspace/operations on disk.
+
+Unchanged official released4.6.78 Mac binary SHA2560911360cb2afea8c8ecb782bb2ddbb835d1eb255e17c5e7c482159877ebf9754. Native WKWebView app PID68556 started20:13:33Z and remained the same through after-adoption ps21:48:12Z. Controlled private TASKQ_INSTALL and TMPDIR, no local publication override, no login/security/capacity changes or service restart.
+
+Automatic check first observed21:43:42.787690Z (scratch directory before fetch), bundle staged21:43:45.848709Z, current committed21:43:52.670036Z; monitor confirmation21:43:52.806609Z, bad map empty. No manual check clicked. Publication-to-commit783.670s (13m03.670s); publication-to-check773.788s (12m53.788s); check-to-commit9.882s. This is the normal15min polling wait, not a19.5s debug rehearsal.
+
+Actual native CUA observations: Conversations gained new accessible Copy v4.6.78 button; selected controlled thread stayed Mac live UI proof #2365. Do not send.; screenshot top visible marker082 before and after; draft2837bytes SHA256804576d9a5bf42b0b5ae86f32c167483a4207b665fa357adcd8acf25f291dc10 unchanged. Attached proof-notes.md69bytes remained in AX and bytes SHA25699edc93c37473561e120d155f3c44f57b9ba61e7dd761b99a3cfa2aa392956c9 unchanged. Menu also gained Copy v4.6.78; About shows Interface1793827248-b9cbba8f400e adopted while Tray installed4.6.78. Screenshots were visually inspected through CUA; persistent PNG export unavailable in this native API, so no invented screenshot file/link.
+
+Limits: private fixture has no registered projects, service or workers; it cannot prove live Mac service/worker noninterruption. Caret/focus preservation not claimed: focus moved before publication. Native Rust frame/titlebar changes in2363 are not delivered by UI-only bundle; normal binary release remains separate. Windows proof is owned by existing task2390 worker, not duplicated.
