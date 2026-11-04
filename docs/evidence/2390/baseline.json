@@ -1,0 +1,268 @@
+﻿{
+    "observed_utc":  "2026-11-04T19:59:19.1192519Z",
+    "source_sha":  "97cf9558ce92e067796fc309612ea471093850cd",
+    "release":  "v4.6.78",
+    "windows":  {
+                    "channel":  "live (host.json channel absent; contract default)",
+                    "binary_sha256":  "58a666729494071c26e9b2be9b3a58657b5d59e13716e078cec2b55debaaf60a",
+                    "published_binary_sha256":  "sha256:58a666729494071c26e9b2be9b3a58657b5d59e13716e078cec2b55debaaf60a",
+                    "service_pid":  41960,
+                    "tray_pid":  52132,
+                    "service_descendants":  [
+                                                {
+                                                    "pid":  41760,
+                                                    "parent":  41960,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  52132,
+                                                    "parent":  41960,
+                                                    "name":  "taskq.exe"
+                                                },
+                                                {
+                                                    "pid":  15188,
+                                                    "parent":  41960,
+                                                    "name":  "cmd.exe"
+                                                },
+                                                {
+                                                    "pid":  41336,
+                                                    "parent":  41960,
+                                                    "name":  "cmd.exe"
+                                                },
+                                                {
+                                                    "pid":  37912,
+                                                    "parent":  41960,
+                                                    "name":  "curl.exe"
+                                                },
+                                                {
+                                                    "pid":  54844,
+                                                    "parent":  52132,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  51884,
+                                                    "parent":  52132,
+                                                    "name":  "msedgewebview2.exe"
+                                                },
+                                                {
+                                                    "pid":  20112,
+                                                    "parent":  15188,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  49884,
+                                                    "parent":  15188,
+                                                    "name":  "node.exe"
+                                                },
+                                                {
+                                                    "pid":  27732,
+                                                    "parent":  41336,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  53928,
+                                                    "parent":  41336,
+                                                    "name":  "node.exe"
+                                                },
+                                                {
+                                                    "pid":  40248,
+                                                    "parent":  37912,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  40912,
+                                                    "parent":  51884,
+                                                    "name":  "msedgewebview2.exe"
+                                                },
+                                                {
+                                                    "pid":  45696,
+                                                    "parent":  51884,
+                                                    "name":  "msedgewebview2.exe"
+                                                },
+                                                {
+                                                    "pid":  37108,
+                                                    "parent":  51884,
+                                                    "name":  "msedgewebview2.exe"
+                                                },
+                                                {
+                                                    "pid":  51940,
+                                                    "parent":  51884,
+                                                    "name":  "msedgewebview2.exe"
+                                                },
+                                                {
+                                                    "pid":  35864,
+                                                    "parent":  51884,
+                                                    "name":  "msedgewebview2.exe"
+                                                },
+                                                {
+                                                    "pid":  45244,
+                                                    "parent":  49884,
+                                                    "name":  "codex.exe"
+                                                },
+                                                {
+                                                    "pid":  50120,
+                                                    "parent":  53928,
+                                                    "name":  "codex.exe"
+                                                },
+                                                {
+                                                    "pid":  34520,
+                                                    "parent":  45244,
+                                                    "name":  "agentq.exe"
+                                                },
+                                                {
+                                                    "pid":  53648,
+                                                    "parent":  45244,
+                                                    "name":  "node_repl.exe"
+                                                },
+                                                {
+                                                    "pid":  10540,
+                                                    "parent":  45244,
+                                                    "name":  "node.exe"
+                                                },
+                                                {
+                                                    "pid":  50368,
+                                                    "parent":  45244,
+                                                    "name":  "codex-code-mode-host.exe"
+                                                },
+                                                {
+                                                    "pid":  37816,
+                                                    "parent":  50120,
+                                                    "name":  "agentq.exe"
+                                                },
+                                                {
+                                                    "pid":  41316,
+                                                    "parent":  50120,
+                                                    "name":  "node_repl.exe"
+                                                },
+                                                {
+                                                    "pid":  54456,
+                                                    "parent":  50120,
+                                                    "name":  "node.exe"
+                                                },
+                                                {
+                                                    "pid":  47224,
+                                                    "parent":  50120,
+                                                    "name":  "codex-code-mode-host.exe"
+                                                },
+                                                {
+                                                    "pid":  46816,
+                                                    "parent":  45244,
+                                                    "name":  "powershell.exe"
+                                                },
+                                                {
+                                                    "pid":  42284,
+                                                    "parent":  34520,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  33864,
+                                                    "parent":  53648,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  38272,
+                                                    "parent":  34520,
+                                                    "name":  "agentq.exe"
+                                                },
+                                                {
+                                                    "pid":  37788,
+                                                    "parent":  10540,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  54732,
+                                                    "parent":  10540,
+                                                    "name":  "node_repl.exe"
+                                                },
+                                                {
+                                                    "pid":  42584,
+                                                    "parent":  50368,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  26480,
+                                                    "parent":  41316,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  30104,
+                                                    "parent":  37816,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  7184,
+                                                    "parent":  54456,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  54308,
+                                                    "parent":  37816,
+                                                    "name":  "agentq.exe"
+                                                },
+                                                {
+                                                    "pid":  20900,
+                                                    "parent":  54456,
+                                                    "name":  "node_repl.exe"
+                                                },
+                                                {
+                                                    "pid":  37468,
+                                                    "parent":  47224,
+                                                    "name":  "conhost.exe"
+                                                },
+                                                {
+                                                    "pid":  45752,
+                                                    "parent":  46816,
+                                                    "name":  "conhost.exe"
+                                                }
+                                            ],
+                    "embedded_bundle":  "1793820775-97cf9558ce92",
+                    "bridge":  1,
+                    "ui_store_present":  false,
+                    "native_active_bundle":  "unknown: no native page readback yet"
+                },
+    "hosts":  [
+                  {
+                      "issue":  1869,
+                      "host":  "pds18.ufobe.com",
+                      "version":  "4.6.78",
+                      "source":  "board heartbeat; binary hash and embedded bundle not read remotely"
+                  },
+                  {
+                      "issue":  745,
+                      "host":  "win",
+                      "version":  "4.6.78",
+                      "source":  "board heartbeat; binary hash and embedded bundle not read remotely"
+                  },
+                  {
+                      "issue":  722,
+                      "host":  "mac",
+                      "version":  "4.6.79-261104-10",
+                      "source":  "board heartbeat; binary hash and embedded bundle not read remotely"
+                  }
+              ],
+    "pointer":  {
+                    "url":  "https://github.com/taskqorg/taskq/releases/download/ui-channel/ui-latest-b1.json",
+                    "asset_updated_at":  "2026-11-04T19:55:36Z",
+                    "asset_digest":  "sha256:fc63719ab895a66d2cba30069c5032862b6089f1b5373ffb5405e3c57e68f3f1",
+                    "value":  {
+                                  "schema":  1,
+                                  "bundle":  "1793820775-97cf9558ce92",
+                                  "bridge":  1,
+                                  "tag":  "ui-1793820775-97cf9558ce92"
+                              }
+                },
+    "candidate":  {
+                      "task":  2363,
+                      "pr":  2371,
+                      "head_sha":  "72ccc1a78a6c861a4c9afd2b2d6076ec08b8fdf5",
+                      "state":  "open; not qualified or published",
+                      "bridge_file_changed":  false
+                  },
+    "acceptance":  {
+                       "A1":  "partial: Windows release hash and embedded manifest verified; remote binary/embedded identities unknown",
+                       "A2":  "pending existing UI-only task #2363 / PR #2371",
+                       "A3":  "not measured: equal pointer and embedded bundle",
+                       "A4":  "not run",
+                       "A5":  "not run"
+                   }
+}

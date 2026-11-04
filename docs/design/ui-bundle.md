@@ -13,7 +13,7 @@ Each page is one self-contained document with inlined scripts and styles. `scrip
 Bump it in the same change when a native message or snapshot field that an older page or binary depends on changes incompatibly; additive fields do not bump it.
 Binaries of an older bridge keep following the pointer for their own bridge, so they never see a bundle they cannot run.
 
-**Publication.** The PM pushes a merged `main` commit to `ui-live`. `release.yml` then runs only `publish-ui`: the same release check as a binary release, then `node scripts/build-web.cjs`, then prerelease `ui-<bundle>` with assets `taskq-ui-<bundle>-<file>`, `SHA256SUMS` and an attestation.
+**Publication.** The PM pushes a merged `main` commit to `ui-live`; a workflow dispatch never publishes a bundle, and one on any ref but `main` refuses before any publication. `release.yml` then runs only `publish-ui`: the same release check as a binary release, then `node scripts/build-web.cjs`, then prerelease `ui-<bundle>` with assets `taskq-ui-<bundle>-<file>`, `SHA256SUMS` and an attestation.
 Last it replaces `ui-latest-b<bridge>.json` on the fixed prerelease `ui-channel`. Neither release is ever marked latest, so `releases/latest` stays on the binary release and its assets, names and `SHA256SUMS` do not change.
 Trust is CoreQ R11: HTTPS to the repository and who can push to it; no signature is added.
 
