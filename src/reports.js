@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 'use strict';
+const copyLabel=require('./copy-label.js');
 const {h}=require('preact'),ui=require('./ui-runtime.js'),{execution}=ui;
 // Use only tokenizer grammars; never let the dependency rewrite the document or fetch files.
 if(typeof window!=='undefined')window.Prism={manual:true,disableWorkerMessageHandler:true};
@@ -197,7 +198,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
    const slot=kind=>h('div',{'data-result-card':kind,key:namespace(r,kind)});
    return h('article',{class:'report-card','aria-label':ordinary?'Completed result':'Research report'},
     h('div',{class:'conversation-tools'},h('span',{class:'meta'},(ordinary?'Finished':'Report')+' · '+(r.read?'Read':'New')+(!ordinary?' · '+(({accepted:'Accepted',drop:'Dropped',made:'Drafts created',answered:'Decided',later:'Later'})[r.decision]||'Decision open'):'')),
-     h('a',{href:r.url,'data-url':r.url},'#'+r.n),h('button',{'data-report':'previous',disabled:nav.index<=0},'Previous'),h('button',{'data-report':'next',disabled:nav.index>=nav.length-1},'Next')),
+     h('a',{href:r.url,'data-url':r.url,'aria-label':'Open task on the board'},icons.icon('external-link')),copyLabel.node(copyLabel.task(r.project||projects.find(p=>p.root===r.root)?.name||'Board',r.n)),h('button',{'data-report':'previous',disabled:nav.index<=0},'Previous'),h('button',{'data-report':'next',disabled:nav.index>=nav.length-1},'Next')),
     ordinary&&h('p',{class:'meta'},h('span',{class:tone},icons.icon(mark),outcome),r.merged&&h('span',null,' · '+r.merged),time.stamp(time.seconds(r.closed),'Task closed')),
     r.reason&&h('p',{role:'status'},'Result unknown: '+r.reason),
     !ordinary&&h('p',{class:'meta'},'Verdict: '+(r.experiment_verdict||'unknown'),time.stamp(time.seconds(r.closed),'Report closed')),

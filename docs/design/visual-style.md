@@ -118,4 +118,4 @@ The review bundle retains [Lucide/Feather notices](exploration/assets/icon-revie
 
 Windows and pins: [P-W1–P-W3](menu-product.md#windows-and-task-pins) use standard native OS chrome without duplicate application Close. Conversations uses native framing with a content toolbar, not a second titlebar. Keep useful task/navigation and Always on top controls; never reuse the same pin action for unrelated effects.
 
-Antigravity: the shared `assets/antigravity.svg` is the official https://antigravity.google/favicon.svg, bundled locally for runtime identity. Its shape/colors are retained; the provider retains trademark rights. No remote icon fetch occurs in the product. Every Antigravity runtime surface uses this one mark.
+Antigravity: the shared `assets/antigravity.svg` is the official https://antigravity.google/favicon.svg, bundled locally for runtime identity. Its recognizable path is rendered in currentColor, with no background, gradient or colored treatment in either theme; the provider retains trademark rights. No remote icon fetch occurs in the product. Every Antigravity runtime surface uses this one mark.

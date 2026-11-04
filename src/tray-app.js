@@ -1,4 +1,5 @@
 'use strict';
+const copyLabel=require('./copy-label.js');
 const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 const shell=require('./app-shell.js');
@@ -738,7 +739,7 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const title=view.working?'Balancing':view.taskFilter?'Tasks':p?p.name:routes[view.page];
   // P-W4: the View window is one scroll of compact sections; Display, Save, Reset and Done stay in its footer.
-  const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'+(settingsPages.includes(view.page)||view.page==='projects'?' settings-content':'')},view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
+  const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'+(settingsPages.includes(view.page)||view.page==='projects'?' settings-content':'')},view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',copyLabel.node(view.S.version?'v'+view.S.version:'version unknown')),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
   // #1430: Preact keeps unchanged nodes, so a refresh leaves the textarea being typed in attached.
   renderer.render(tree,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
   view.drawn=true;
@@ -838,9 +839,12 @@ ui.listen(menu,'scroll',e=>{const c=e.target;if(c.classList?.contains('content')
 ui.listen(menu,'pointerdown',()=>{view.pressedAt=performance.now();});
 for(const event of ['pointerup','pointercancel'])ui.listen(window,event,release,true);
 ui.listen(window,'blur',release);
-ui.listen(window,'resize',()=>present());
+// Content height does not change on a native height acknowledgement; only width can reflow it.
+let fittedWidth=window.innerWidth;
+ui.listen(window,'resize',()=>{const width=window.innerWidth;if(width!==fittedWidth){fittedWidth=width;present();}else{api.stickyFilters();dashboard.place();}});
 // Press end.
 
+copyLabel.mount(menu);
 ui.listen(menu,'click',e=>{
   if(dashboard.click(e))return;
   const crumb=e.target.closest('a[data-route]');if(crumb){e.preventDefault();if(crumb.dataset.route!==view.page||view.working||view.taskFilter)navigate(crumb.dataset.route);return;}
@@ -848,7 +852,7 @@ ui.listen(menu,'click',e=>{
   if(e.target.closest('.qac,.rsc'))return;
   if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{const c=dashboard.criteria();if(view.page!=='home'){c.projects=id?[require('./task-views.js').identity(view.S.projects.find(p=>p.root===id))]:[];c.states=[state];navigate('home');}else dashboard.set({states:c.states.includes(state)?c.states.filter(s=>s!==state):[...c.states,state]});}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
-  const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
+  const b=e.target.closest('button,.task-target[role=button]');if(!b||b.disabled||b.getAttribute('aria-disabled')==='true')return;const d=b.dataset;
   if(notificationPanel.click(b))return;
   if(reports.click(b,view.S.projects))return;
   if(d.historyBin!==undefined){view.historyBin=d.historyBin;present();return;}

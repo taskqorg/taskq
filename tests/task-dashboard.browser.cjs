@@ -75,12 +75,12 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   await p.locator('[data-a=all-tasks]').click();assert.equal(await list().count(),4);
   await (await query()).fill('');await p.locator('[data-a=view-editor]').click();await editor().locator('[data-facet=projects][data-value=""]').click();await editor().locator('[data-a=view-group][data-value=combined]').click();await editor().locator('[data-a=popup-close]').first().click();
   const identities=await list().locator('.task-identity').evaluateAll(es=>es.map(e=>e.textContent.trim().replace(/^GitHub /,'')));
-  assert.deepEqual(identities,['Alpha #5','Beta #1','Alpha #2','Alpha #3','Beta #3','Alpha #4'],'O2 one comparator with canonical repository tie');
+  assert.deepEqual(identities,['Alpha#5','Beta#1','Alpha#2','Alpha#3','Beta#3','Alpha#4'],'O2 one comparator with canonical repository tie');
   assert.equal(await p.locator('[data-a=row-menu],.row-menu').count(),0,'no right ellipsis or action column');
-  const identity=p.locator('.task-target').filter({hasText:'Alpha #5'});
+  const identity=p.locator('.task-target').filter({hasText:'Alpha#5'});
   // #1659 A2: the remote mark (proven remote run) then the Claude mark sit right before the current-stage elapsed time.
   assert.deepEqual(await list().filter({has:identity}).locator('.tqp-task-head').evaluate(e=>[...e.querySelectorAll('[data-icon],.tqp-age')].map(x=>x.dataset.icon||x.textContent)),['play','github','network','claude','4m']);
-  assert.equal(await list().filter({hasText:'Beta #1'}).locator('.task-stage.review').count(),1,'Review uses the purple review tone');
+  assert.equal(await list().filter({hasText:'Beta#1'}).locator('.task-stage.review').count(),1,'Review uses the purple review tone');
   // F13 replaces inline disclosure: reading and actions are checked in task-navigation.browser.cjs.
   await identity.hover();await identity.focus();assert.equal(await editor().count(),0,'hover/focus open nothing');
   await p.keyboard.press('Enter');assert.equal(await p.locator('.task-inline-details').count(),0);
@@ -90,13 +90,13 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   const pinned=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard).at(-1).navigation);
   pinned.dashboard.pins=[{ref:'github://example.org/org/alpha#5',title:alpha.tasks[1].title,url:alpha.issues+'/5'}];
   await p.evaluate(d=>taskq.receive({dashboard:d}),pinned.dashboard);
-  assert.equal(await list().count(),6,'pinned task appears once');assert.match(await p.locator('.task-pins').innerText(),/Alpha #5/);assert(await p.locator('.filter-header').evaluate(e=>!!(e.compareDocumentPosition(document.querySelector('.task-pins'))&Node.DOCUMENT_POSITION_FOLLOWING)),'global pins stay beneath the task filter');
+  assert.equal(await list().count(),6,'pinned task appears once');assert.match(await p.locator('.task-pins').innerText(),/Alpha#5/);assert(await p.locator('.filter-header').evaluate(e=>!!(e.compareDocumentPosition(document.querySelector('.task-pins'))&Node.DOCUMENT_POSITION_FOLLOWING)),'global pins stay beneath the task filter');
   await p.locator('[data-a=view-editor]').click();await editor().locator('[data-facet=states][data-value=held]').click();await editor().locator('[data-a=popup-close]').first().click();
-  assert.deepEqual(await list().locator('.task-identity').allTextContents(),['Alpha #5','Alpha #4'],'pin stays first outside the filter');
+  assert.deepEqual(await list().locator('.task-identity .copy-value').allTextContents(),['Alpha#5','Alpha#4'],'pin stays first outside the filter');
   await p.waitForFunction(()=>messages.some(m=>m.a==='set'&&m.navigation?.dashboard?.pins?.length===1));
   const pinnedContext=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard?.pins?.length===1).at(-1).navigation);
-  await p.close();p=await open({...state,navigation:pinnedContext});assert.match(await p.locator('.task-pins').innerText(),/Alpha #5/,'pins survive restart');
-  await select('completed');assert.match(await p.locator('.task-pins').innerText(),/Alpha #5/,'pins show in Completed');
+  await p.close();p=await open({...state,navigation:pinnedContext});assert.match(await p.locator('.task-pins').innerText(),/Alpha#5/,'pins survive restart');
+  await select('completed');assert.match(await p.locator('.task-pins').innerText(),/Alpha#5/,'pins show in Completed');
   const completed=await p.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open);assert.equal(completed.filter,'finished');assert.equal(completed.criteria.period,'30d');assert.equal(await p.locator('[data-completed],.task-transcript-page').count(),0,'the menu has no competing history reader');
   await select('all');pinnedContext.dashboard.pins=[];await p.evaluate(d=>taskq.receive({dashboard:d}),pinnedContext.dashboard);assert.equal(await p.locator('.task-pins').count(),0);
   // #1659 A4 (P-V1): custom views delete by keyboard, built-ins cannot; Undo restores the view and its context.

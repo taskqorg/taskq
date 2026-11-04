@@ -1,4 +1,5 @@
 'use strict';
+const copyLabel=require('./copy-label.js');
 const time=require('./relative-time.js');
 const {h}=require('preact'),{icon}=require('./ui-icons.js'),{execution}=require('./ui-runtime.js');
 const kinds={ask:'Question',close:'Finished',failed:'Failed',gone:'Attempt ended',blocked:'Blocked'};
@@ -74,7 +75,7 @@ const api=execution.module('notificationPanel',{
     const all=api.collapse(rows),groups=all.slice(state.start,state.start+64);
     return h('details',{class:'thread-events','data-view-key':'history:'+key,open:state.open,onToggle:e=>{if(state.open!==e.currentTarget.open){state.open=e.currentTarget.open;draw();}}},h('summary',{onClick:e=>{e.preventDefault();state.open=!state.open;e.currentTarget.parentElement.open=state.open;draw();}},'Earlier history'+(rows.length?' · '+rows.length+' events':'')),state.open&&[
      (rows.some(r=>!r.read)||entries.some(r=>!r.read))&&h('button',{'data-notification':'thread-read',disabled:!!view.messageBusy,onClick:()=>model.read(rows,entries)},'Mark thread read'),
-     groups.map(g=>{const r=g.rows[0],text=(r.read?'Read':'New')+' · '+(r.source==='result'&&r.resultKind!=='task'?'Report ready':kinds[r.kind])+' · '+r.project+' · #'+r.n;return h('div',{key:r.id,'data-event':r.id,class:'meta'},h('p',null,text,g.rows.length>1?' ×'+g.rows.length:'',time.stamp(time.seconds(r.at),'Event recorded'),!r.read&&h('button',{'data-notification':'group-read',disabled:!!view.messageBusy,onClick:()=>model.read(g.rows)},'Mark read')),g.rows.length>1?h('details',null,h('summary',null,'Source events'),g.rows.map(r=>h('p',{key:r.id,'data-event':r.id},r.event||r.kind,time.stamp(time.seconds(r.at),'Event recorded')))):null);}),
+     groups.map(g=>{const r=g.rows[0],text=(r.read?'Read':'New')+' · '+(r.source==='result'&&r.resultKind!=='task'?'Report ready':kinds[r.kind])+' · ';return h('div',{key:r.id,'data-event':r.id,class:'meta'},h('p',null,text,copyLabel.node(copyLabel.task(r.project,r.n)),g.rows.length>1?' ×'+g.rows.length:'',time.stamp(time.seconds(r.at),'Event recorded'),!r.read&&h('button',{'data-notification':'group-read',disabled:!!view.messageBusy,onClick:()=>model.read(g.rows)},'Mark read')),g.rows.length>1?h('details',null,h('summary',null,'Source events'),g.rows.map(r=>h('p',{key:r.id,'data-event':r.id},r.event||r.kind,time.stamp(time.seconds(r.at),'Event recorded')))):null);}),
      h('div',{class:'event-tools'},state.start>0&&h('button',{onClick:()=>{state.start=Math.max(0,state.start-64);draw();}},'Newer events'),state.start+64<all.length&&h('button',{onClick:()=>{state.start+=64;draw();}},'Older events')),
      typeof extra==='function'?extra():extra]);}
 

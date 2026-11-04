@@ -79,3 +79,12 @@ h1{font-size:1em;margin:6px 4px;overflow-wrap:anywhere}.footer{border-top:1px so
 .reports-section{flex-shrink:0}
 
 .history-legend i.new{background:var(--new)}
+
+.copy-label{display:inline-flex;align-items:center;max-width:100%;vertical-align:middle;gap:2px}
+.copy-value{overflow-wrap:anywhere;min-width:0}
+.copy-label-button{display:inline-flex;align-items:center;justify-content:center;flex:none;width:var(--target,32px);height:var(--target,32px);min-height:var(--target,32px);padding:4px;border:0;opacity:0}
+.copy-label-button svg{width:16px;height:16px;stroke:currentColor;fill:none}
+.copy-label:is(:hover,:focus-within) .copy-label-button{opacity:1}
+@media(hover:none),(pointer:coarse){.copy-label-button{opacity:1;width:44px;height:44px;min-height:44px}}
+.task-target[role=button]{cursor:pointer;color:inherit;text-align:start}
+.task-target[role=button]:focus-visible{outline:2px solid currentColor;outline-offset:-2px}

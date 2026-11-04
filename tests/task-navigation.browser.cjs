@@ -20,14 +20,14 @@ const snapshot={...require('./fixtures/display-model.json'),platform:'macos',fon
     const row=page.locator('[data-card="'+board+'/'+t.n+'"]'),trigger=row.locator('.task-target');
     const before=await page.evaluate(()=>sent.filter(m=>m.a==='workspace').length);
     await trigger.hover();await trigger.focus();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='workspace').length),before,'hover/focus never opens');
-    assert.equal(await row.locator('button,a,input,[tabindex]').count(),1,'whole row is the sole navigation target');
+    assert.equal(await row.locator('button,a,input,[tabindex]').count(),2,'row navigation and Copy are independent keyboard targets');
     await page.keyboard.press(t.n%2?'Enter':'Space');
     assert.equal(await page.locator('#taskq-popover,.task-inline-details').count(),0,t.state+': no competing inline reader');
     const destination=await page.evaluate(()=>sent.filter(m=>m.a==='workspace').at(-1).open);
     assert.deepEqual(destination,{page:'conversations',thread:'task:'+board+'/'+t.n,operation:null,root,board,task:t.n,revision:t.revision,...(t.state==='ask'?{target:{kind:'question',revision:t.revision}}:{})},'exact board/task/revision and question target');
     await workspace.evaluate(open=>taskq.receive({open}),destination);
     const head=workspace.locator('.sticky-object-head'),metadata=workspace.locator('.object-metadata');
-    assert.equal(await head.locator('h2').innerText(),'Alpha \u00b7 #'+t.n+' '+t.title);
+    assert.equal((await head.locator('h2').innerText()).replace(/\s+/g,' '),'Alpha#'+t.n+' '+t.title);
     assert.equal(await head.locator('[data-url="'+board+'/'+t.n+'"]').getAttribute('href'),board+'/'+t.n,'exact self-hosted GitLab forge target');
     assert.equal(await head.locator('[data-url="'+board+'/'+t.n+'"] svg title').textContent(),'GitLab','board action uses recorded provider identity');
     assert.equal(await metadata.locator('[data-url="'+t.native_session_url+'"]').getAttribute('href'),t.native_session_url,'native target remains explicit');
@@ -83,7 +83,7 @@ const snapshot={...require('./fixtures/display-model.json'),platform:'macos',fon
   const owner={id:'independent-draft',title:'Independent draft',root,text:'Keep this unsent draft',caret:[2,4],files:[],revision:1},workspace=await open('workspace',{...snapshot,conversations:{complete:true,items:[owner]}},{width:940,height:740});
   await workspace.evaluate(()=>taskq.receive({open:{page:'sessions'}}));
   const activity=workspace.locator('.conversation-row[data-thread="task:'+board+'/3"]');assert.match(await workspace.locator('.conversation-view summary').innerText(),/In progress/);
-  await activity.click();assert.equal(await workspace.locator('.thread-title').innerText(),'Alpha · #3 Preserve task 3');assert.match(await workspace.locator('.object-metadata').textContent(),/fixture.*worker.*202/s);
+  await activity.click();assert.equal(((await workspace.locator('.thread-title').innerText()).replace(/\s+/g,' ')).replace(/\s+/g,' '),'Alpha#3 Preserve task 3');assert.match(await workspace.locator('.object-metadata').textContent(),/fixture.*worker.*202/s);
   assert.match(await workspace.locator('.conversation-reader').innerText(),/Historical question: preserve this exact wording[\s\S]*Earlier choice[\s\S]*Earlier answer[\s\S]*Current problem/);
   await workspace.locator('[data-c-field=answer]').fill('Retain task answer draft');
   await workspace.locator('.conversation-row[data-thread="task:'+board+'/4"]').click();await activity.click();assert.equal(await workspace.locator('[data-c-field=answer]').inputValue(),'Retain task answer draft');
