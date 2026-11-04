@@ -7,10 +7,20 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-/// Historical source-record prefix; live summaries use capture once per CLI exit or service hour.
+/// Historical source-record prefix; live summaries use capture at each CLI exit and each service record.
 const RECORD: &str = "taskq-requests ";
-/// Requests of this process by operation, for its exit record.
+/// The source of the service's records.
+pub const SERVICE: &str = "service";
+/// §4 Board request records: the 5-minute loss bound less a margin for host ticks and the store's commit.
+const RECORD_SECONDS: u64 = 240;
+const _: () = assert!(RECORD_SECONDS + 60 <= 300, "a killed service loses at most its last 5 minutes");
+/// How often the running service records; short under test so a fixture host reaches it.
+#[cfg(not(test))] pub const RECORD_EVERY: Duration = Duration::from_secs(RECORD_SECONDS);
+#[cfg(test)] pub const RECORD_EVERY: Duration = Duration::from_secs(1);
+/// Requests of this process by operation since it started, for the hourly log and heartbeat.
 static PROCESS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+/// Requests of this process by operation not yet recorded to telemetry.
+static UNRECORDED: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 /// Billed requests of this process by API host (#2084): a host with GitHub and GitLab boards splits its rate.
 static HOSTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 /// The one operation GitHub never bills: the budget read itself.
@@ -270,15 +280,18 @@ pub fn api_host(root: &str) -> String {
     if !host.is_empty() && host.len() <= 100 && host.bytes().all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b)) { host } else { "*".into() }
 }
 
-/// Counts one request of this process to API host `host` for its exit record.
+/// Counts one request of this process to API host `host` for its next record.
 pub fn tally(op: &str, host: &str) {
     if let Ok(mut m) = PROCESS.lock() { *m.entry(op.into()).or_default() += 1; }
+    if let Ok(mut m) = UNRECORDED.lock() { *m.entry(op.into()).or_default() += 1; }
     if bills(op) && let Ok(mut m) = HOSTS.lock() { *m.entry(host.into()).or_default() += 1; }
 }
 
 /// Moves one request of this process to `<op> 304` (#1985): unbilled, so `host` loses it.
 pub fn untally(op: &str, host: &str) {
     if let Ok(mut m) = PROCESS.lock() { unbill(&mut m, op); }
+    // ponytail: a 304 answered after its request was recorded stays billed in that record; the request is still counted once.
+    if let Ok(mut m) = UNRECORDED.lock() { unbill(&mut m, op); }
     if bills(op) && let Ok(mut m) = HOSTS.lock() && let Some(n) = m.get_mut(host) { *n = n.saturating_sub(1); }
 }
 
@@ -291,35 +304,38 @@ pub fn heartbeat(hour: &BTreeMap<String, u64>, hosts: Option<&BTreeMap<String, u
 
 /// The source of a CLI process: `<role> <command>` (`service` adds its subcommand), from the positionals as dispatch
 /// parses them, so flags anywhere do not change it. Role `worker` or `reviewer` from `TASKQ_ROLE`, else `cli` (owner,
-/// PM, operator). None for `service run`: the service records each hour.
-pub fn source(argv: &[String], role: Option<&str>) -> Option<String> {
+/// PM, operator). `service run` is the service itself, whichever way its process ends.
+pub fn source(argv: &[String], role: Option<&str>) -> String {
     let args = crate::Args::parse(argv).map(|a| a.pos).unwrap_or_default();
     let word = |s: Option<&String>| s.filter(|s| !s.is_empty() && s.len() <= 30 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'))
         .map_or("*".to_string(), Clone::clone);
     let mut cmd = word(args.first());
     if cmd == "service" {
-        if args.get(1).is_some_and(|s| s == "run") { return None; }
+        if args.get(1).is_some_and(|s| s == "run") { return SERVICE.into(); }
         cmd = format!("service {}", word(args.get(1)));
     }
     let role = role.filter(|r| matches!(*r, "worker" | "reviewer")).unwrap_or("cli");
-    Some(format!("{role} {cmd}"))
+    format!("{role} {cmd}")
 }
 
-/// Submit one typed source observation; nothing when no request was sent.
-pub fn record(source: &str, ops: &BTreeMap<String, u64>) {
-    if ops.is_empty() { return; }
+/// Submit one typed source observation; nothing when no request was sent. False when the collector did not admit it.
+pub(crate) fn record(source: &str, ops: &BTreeMap<String, u64>) -> bool {
+    if ops.is_empty() { return true; }
     let at_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis().min(u64::MAX as u128) as u64);
     let usage = Usage { at_ms, source: source.into(), ops: ops.clone() };
-    if let Err(e) = crate::telemetry::record(crate::telemetry::Sample::Requests(usage)) {
+    let submitted = crate::telemetry::record(crate::telemetry::Sample::Requests(usage));
+    if let Err(e) = &submitted {
         use std::io::Write;
-        let _=writeln!(std::io::stderr(),"Board request record: unknown ({})", crate::profile::append_error(&e));
+        let _=writeln!(std::io::stderr(),"Board request record: unknown ({})", crate::profile::append_error(e));
     }
+    submitted.is_ok()
 }
 
-/// The exit record of this CLI process.
+/// Records the counts not yet recorded, at a CLI exit or on the service's cadence and clean ends. The lock is held
+/// across the submit: a concurrent flush cannot record the same counts, and a refused submit keeps them for the next.
 pub fn flush(source: &str) {
-    let ops = PROCESS.lock().map(|mut m| std::mem::take(&mut *m)).unwrap_or_default();
-    record(source, &ops);
+    let Ok(mut unrecorded) = UNRECORDED.lock() else { return };
+    if record(source, &unrecorded) { unrecorded.clear(); }
 }
 
 /// Validate historical metadata with the same normalization used by the request writer.
@@ -373,7 +389,7 @@ pub(crate) fn sources_samples(samples:&[crate::telemetry::Sample], now_ms: u64) 
     rows.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
     let total: u64 = rows.iter().map(|r| r.2).sum();
     let mut out = format!("Board requests by source: {total} in {start}..{now_ms} Unix ms ({coverage}); this host only; \
-        a CLI process counts at its exit, a service each hour; agent `gh`, PM chat tools and DashQ not counted\n\n\
+        a CLI process counts at its exit, a service every 4 min and at a clean end, so a killed service loses at most its last 5 min; agent `gh`, PM chat tools and DashQ not counted\n\n\
         | Source | Records | Requests | Top operations |\n|---|---:|---:|---|\n");
     for (source, n, sum, ops) in rows {
         let mut ops: Vec<_> = ops.into_iter().collect();
@@ -439,15 +455,15 @@ mod tests {
     #[test]
     fn requests_by_source_for_the_last_hour() {
         let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(source(&args(&["result", "1084"]), Some("worker")).unwrap(), "worker result");
-        assert_eq!(source(&args(&["status"]), Some("operator")).unwrap(), "cli status");
-        assert_eq!(source(&args(&["service", "status"]), None).unwrap(), "cli service status");
-        assert_eq!(source(&args(&["service", "run"]), None), None, "the service records its own hours");
-        assert_eq!(source(&args(&["C:\\secret path"]), None).unwrap(), "cli *");
-        assert_eq!(source(&[], None).unwrap(), "cli *");
-        assert_eq!(source(&args(&["--json", "status"]), None).unwrap(), "cli status", "a flag before the command");
-        assert_eq!(source(&args(&["--json", "service", "run"]), None), None, "service run with a flag first");
-        assert_eq!(source(&args(&["service", "--json", "run"]), None), None, "service run with a flag between");
+        assert_eq!(source(&args(&["result", "1084"]), Some("worker")), "worker result");
+        assert_eq!(source(&args(&["status"]), Some("operator")), "cli status");
+        assert_eq!(source(&args(&["service", "status"]), None), "cli service status");
+        assert_eq!(source(&args(&["service", "run"]), None), SERVICE, "the service keeps one source");
+        assert_eq!(source(&args(&["C:\\secret path"]), None), "cli *");
+        assert_eq!(source(&[], None), "cli *");
+        assert_eq!(source(&args(&["--json", "status"]), None), "cli status", "a flag before the command");
+        assert_eq!(source(&args(&["--json", "service", "run"]), None), SERVICE, "service run with a flag first");
+        assert_eq!(source(&args(&["service", "--json", "run"]), None), SERVICE, "service run with a flag between");
         let line = |at: u64, src: &str, ops: &[(&str, u64)]| format!("{RECORD}{}\n", serde_json::to_string(&Usage { at_ms: at,
             source: src.into(), ops: ops.iter().map(|(k, v)| (k.to_string(), *v)).collect() }).unwrap());
         let now = 10_000_000;
@@ -470,6 +486,106 @@ mod tests {
         crate::telemetry::read(&dir,wall).unwrap();
         assert!(crate::profile::report(&dir).contains("| worker result | 2 | 10 |"), "`taskq profile` prints the table");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Chain: §4 Board request records -> `taskq profile` hour table. Defect #2367: the table assumed one service record
+    // an hour. Risk kept: finer records sum wrongly per source and operation, or one older than the hour counts.
+    #[test]
+    fn hour_table_sums_the_finer_service_records() {
+        let line = |at: u64, src: &str, ops: &[(&str, u64)]| format!("{RECORD}{}\n", serde_json::to_string(&Usage { at_ms: at,
+            source: src.into(), ops: ops.iter().map(|(k, v)| (k.to_string(), *v)).collect() }).unwrap());
+        let now = 10_000_000;
+        // Sixteen records 4 minutes apart: the oldest lies exactly on the hour's start, outside it.
+        let mut text: String = (0..16).map(|i| line(now - i * RECORD_SECONDS * 1000, SERVICE, &[("GET issues/N", 2), ("GET issues/N 304", 1)])).collect();
+        text += &line(now - 1000, "cli status", &[("GET issues", 1)]);
+        let report = sources(&text, now);
+        assert!(report.starts_with("Board requests by source: 46 in 6400000..10000000 Unix ms (full hour)"), "{report}");
+        assert!(report.contains("| service | 15 | 45 | GET issues/N 30, GET issues/N 304 15 |\n| cli status | 1 | 1 | GET issues 1 |"), "{report}");
+        assert!(report.contains("a service every 4 min and at a clean end, so a killed service loses at most its last 5 min"), "{report}");
+    }
+
+    /// A child of this test binary with its own counts, over the telemetry store of `install`.
+    fn records_child(install: &std::path::Path, generation: &str) -> std::process::Child {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "requests::tests::service_records_child", "--ignored", "--nocapture"])
+            .env("TASKQ_REQUESTS_CHILD", install).env("TASKQ_REQUESTS_GENERATION", generation)
+            .env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().unwrap()
+    }
+
+    // Chain: §4 Board request records -> flush -> telemetry -> `taskq profile`. Defect #2367: the service lost its counts
+    // at a restart. Risk kept: a count is recorded twice or lost across records, a 304 answered around a record, a
+    // refused submit, or two generations; recording changes the hourly counts or sends a request.
+    #[test]
+    fn clean_ends_record_each_count_once() {
+        let install = std::env::temp_dir().join(format!("taskq-requests-clean-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&install).unwrap();
+        for generation in ["first", "second"] {
+            let output = records_child(&install, generation).wait_with_output().unwrap();
+            assert_eq!(output.status.code(), Some(75), "{generation}: {}", String::from_utf8_lossy(&output.stdout));
+        }
+        let report = crate::profile::report(&install);
+        std::fs::remove_dir_all(&install).unwrap();
+        assert!(report.contains("| service | 5 | 9 | GET issues/N 4, PATCH issues/N 2, POST issues/N/comments 2 |"), "{report}");
+    }
+
+    // Chain: §4 Board request records -> Stop path: flush and drain before its controller ends the process. Risk kept:
+    // counts submitted just before a process end are not durable when the controller terminates it.
+    #[test]
+    fn counts_drained_before_a_controller_kill_survive_it() {
+        use std::io::BufRead;
+        let install = std::env::temp_dir().join(format!("taskq-requests-stop-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&install).unwrap();
+        let mut child = records_child(&install, "stop");
+        let mut lines = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+        assert!(lines.any(|line| line.is_ok_and(|line| line == "drained")), "the child never drained");
+        child.kill().unwrap();child.wait().unwrap();
+        let report = crate::profile::report(&install);
+        std::fs::remove_dir_all(&install).unwrap();
+        assert!(report.contains("| service | 1 | 2 | PATCH issues/N 2 |"), "{report}");
+    }
+
+    #[test]
+    #[ignore = "owned subprocess with its own board request counts"]
+    fn service_records_child() {
+        let Some(install) = std::env::var_os("TASKQ_REQUESTS_CHILD").map(std::path::PathBuf::from) else { return };
+        let host = "api.github.com";
+        let unrecorded = || UNRECORDED.lock().unwrap().clone();
+        match std::env::var("TASKQ_REQUESTS_GENERATION").unwrap().as_str() {
+            "first" => {
+                tally("GET issues/N", host);tally("GET issues/N", host);tally("GET issues/N", host);
+                flush(SERVICE);
+                assert_eq!(unrecorded().get("GET issues/N"), Some(&3), "no collector admits the record, so the counts stay");
+                let _runtime = crate::telemetry::install_capture(&install).unwrap();
+                let (ops, hosts) = (totals(), host_totals());
+                flush(SERVICE);
+                assert!(unrecorded().is_empty());
+                assert_eq!((totals(), host_totals()), (ops, hosts), "a record is no board request and keeps the hourly counts");
+                tally("GET issues/N", host);untally("GET issues/N", host);tally("POST issues/N/comments", host);
+                flush(SERVICE);
+                flush(SERVICE);
+                // The 304 of a request already recorded: it stays counted once, never a second time as a 304.
+                tally("GET issues/N", host);
+                flush(SERVICE);
+                untally("GET issues/N", host);
+                assert!(unrecorded().is_empty());
+                tally("PATCH issues/N", host);tally("PATCH issues/N", host);
+                crate::platform::service_exit(75, "restart to 9.9.9");
+            }
+            "second" => {
+                let _runtime = crate::telemetry::install_capture(&install).unwrap();
+                tally("POST issues/N/comments", host);
+                crate::platform::service_exit(75, "restart to 9.9.9");
+            }
+            _ => {
+                let _runtime = crate::telemetry::install_capture(&install).unwrap();
+                tally("PATCH issues/N", host);tally("PATCH issues/N", host);
+                flush(SERVICE);
+                crate::platform::drain_telemetry();
+                println!("\ndrained");
+                std::thread::sleep(Duration::from_secs(120));
+            }
+        }
     }
 
     // Chain: § 4 board budget. Risk: an exhausted budget keeps sending requests, or a key leaks a branch or SHA.

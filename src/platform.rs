@@ -178,6 +178,9 @@ pub fn die(msg: &str) -> ! {
 /// § 4: a service exit first logs its code and reason (#1625: neither the launcher nor the Windows unit records them).
 pub fn service_exit(code: i32, reason: &str) -> ! {
     log(&format!("service exits {code}: {reason}"));
+    // §4 Board request records: a clean service end through here loses no count.
+    crate::requests::flush(crate::requests::SERVICE);
+    drain_telemetry();
     exit(code)
 }
 
