@@ -16,7 +16,15 @@ The owner-enabled `auto_reroute` exception removes a CLI `run-*` constraint only
 
 ## Owner weights and quota headroom
 
-[§4 Balancing](../../taskq.md#balancing) owns the ranking. Weights replace soft preference ranking when configured; stable runtime ties retain that preference. Unlisted CLI runtimes remain fallback after weighted candidates. Each candidate must still pass the existing admission checks; a held runtime cannot win by weight. Unknown common admission state still refuses. The explicit owner-enabled disabled-pin exception is unchanged.
+Contract detail for [§4 Balancing](../../taskq.md#balancing) (R8, R13).
+
+Owner runtime `weights` in host.json are integers 0..1000000 for CLI runtimes. Weight 0 never picks that runtime for unpinned work or review, fallback included, while `run-*` pins and owner sessions naming it still run there.
+`taskq balance claude=2 codex=1` replaces this local host's weights, `taskq balance --clear` restores preference/default routing. Workers cannot write them. Weights never change limits, grants, accounts or active attempts (R9).
+Unpinned new workers/reviewers choose the eligible weighted runtime with lowest running / effective weight. Effective weight is owner weight times the smallest fresh quota remaining fraction (floor 1%); ties prefer greater effective weight, then soft routing. Missing/stale headroom is unknown and uses unchanged weight; holds still exclude. Unweighted runtimes keep existing fallback.
+Unlabelled ready work chooses fresh eligible primary hosts by greatest sum of free slots times effective runtime weights. Ties rotate after the last trusted primary spawn host, initially host-name order. No weights keeps existing host claims. Stale/incompatible hosts are unknown and excluded from weighted spread, never reported as zero.
+Host pins, strict runtime pins and the existing auto_reroute exception, spillover, focus, grants, common gates and §3 fencing remain binding. Status shows per-host occupancy, weights and headroom; admission records actual runtime and pick reason. Compatible readers are required before enabling weights (§9). [Detail](#owner-weights-and-quota-headroom); four sections, `work` aliases: [configuration](configuration.md#balancing).
+
+Weights replace soft preference ranking when configured; stable runtime ties retain that preference. Unlisted CLI runtimes remain fallback after weighted candidates. Each candidate must still pass the existing admission checks; a held runtime cannot win by weight. Unknown common admission state still refuses. The explicit owner-enabled disabled-pin exception is unchanged.
 
 The service observes structured native quota metadata in its own attempt logs: Codex primary/secondary `used_percent` (from the thread rollout when the `codex exec --json` log has none), Claude `rate_limit_event` utilization (Claude background-job transcripts carry none). It retains the most recent observation per runtime/account/window in `<install>/quota-headroom.json`, using the host account lock. An attempt-log `.headroom` marker records its processed event IDs, so concurrent logs for one account cannot refresh each other's old observations. The existing attempt-log pruner removes orphaned markers; retained/live logs keep theirs. Re-reading the same event never refreshes its time. Only the account selected for a new launch contributes. Fractions expire after 300 seconds or the reported reset, whichever comes first; future, missing or stale observations are unknown. Unknown uses neutral weight; the heartbeat names its cause on a separate `headroom <rt> <cause>` line, which N-1 readers ignore, never as a new `load` field. Corrupt/unreadable observation storage refuses weighted launches. These observations never clear a quota hold, disable an account or change a capacity limit.
 
@@ -257,6 +265,12 @@ The re-login steps per runtime and OS are in the [re-login runbook](../relogin.m
 ## Runtime accounts
 
 Detail of [taskq.md § 3 Runtime accounts](../../taskq.md#runtime-accounts); it binds like the contract (R8, R13).
+
+Per CLI runtime (`claude`, `codex`, `antigravity`) each host keeps ordered, enabled/disabled login homes in `<install>/accounts.json` (none: the runtime's own `default` home). New starts take the best-ranked enabled, not usage-limited account; without fresh usage that is the first; resume, recovery and running children keep their attempt log's.
+A pre-work usage limit (§ 2) fails over to the next enabled account without a retry; the § 4 hold applies only when none is left; switches are logged. `taskq accounts` lists all hosts; enable, disable, reorder and add (device login, new TaskQ-owned home) write only the local host, never copy a login or print a token; emails stay on their host, never in heartbeats. [Detail](#runtime-accounts).
+Each host polls the usage of its enabled accounts and publishes `limit` heartbeat rows: an account fingerprint, percentages and resets only.
+Ranking prefers `use`, then greatest remaining above a host floor (default 15%), then unknown, then below the floor; the floor never holds work and a poll never releases a hold.
+`taskq accounts fleet` is the one write reaching other hosts: a trusted board entry each host applies to its own homes. A login exists per host and account in advance; switching selects a home and never moves a running attempt (R11). [Detail](#account-usage-and-fleet-policy).
 
 **Accounts.** An account is a named login home of one CLI runtime on one host. `claude` and `codex` have accounts; `codex-app` runs in the app's process with no launch environment and always uses Codex's `default` home.
 
