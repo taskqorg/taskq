@@ -47,4 +47,15 @@ render([{...project,tasks:[...project.tasks,{n:12,executions:[execution(22,'mac'
 assert.equal(host('mac'),'3');assert.deepEqual(totals(),{Codex:'2',Claude:'1',Antigravity:'1'});
 assert(c.runningAgents().includes('antigravity: 0 workers · 1 reviewer'));
 module.exports={project};
+// #2351 A4/M14: one recovered idle project cannot erase a dated multi-project total.
+const outage=require('./fixtures/errors.js')({});
+c.S.host=outage.fresh.host;
+c.S.now=outage.fresh.now;render(outage.fresh.projects);assert.equal(host('fixture'),'9');
+c.S.now=outage.failed.now;render(outage.failed.projects);assert.equal(host('fixture'),'9');
+const recovered={...outage.fresh.projects[0],observed:outage.failed.now,tasks:outage.fresh.projects[0].tasks.filter(t=>t.state==='ask')};
+render([recovered,...outage.failed.projects.slice(1)]);
+assert.equal(host('fixture'),'9','partial recovery retains the last complete host total');
+assert.match(strip(),/Last known.*15m/);assert.equal(totals().Codex,'9');
+render(outage.fresh.projects.map(p=>({...p,observed:outage.failed.now,tasks:[]})));
+assert.equal(host('fixture'),'0','full recovery replaces the dated total');assert.doesNotMatch(strip(),/Last known/);
 console.log('PASS UX30-06 / A1–A5: host/family totals, idle/partial/stale/conflict/duplicate/ended/runtime cases; roles, resources, source and sign-in preserved');

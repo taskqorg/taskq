@@ -15,7 +15,15 @@ const fixture=require('./fixtures/errors.js'),base=require('./fixtures/task-work
   assert.equal(await page.locator('.errors-entry .badge').innerText(),'1','one cause, not nine projects');
   assert.equal(await page.locator(rows).count(),before,'outage retains rows');
   assert.equal(await page.locator('.content').getByText(/HTTP 403|board requests paused/).count(),0,'no per-project error prose');
-  if(surface==='tray'){assert.match(await page.locator('[data-host=fixture]').innerText(),/9/);assert.match(await page.locator('[data-host=fixture]').getAttribute('aria-label'),/Last known.*15m/i);}
+  if(surface==='tray'){
+   assert.match(await page.locator('[data-host=fixture]').innerText(),/9/);assert.match(await page.locator('[data-host=fixture]').getAttribute('aria-label'),/Last known.*15m/i);
+   const mixed=structuredClone(f.failed);mixed.projects[0]={...f.fresh.projects[0],observed:f.failed.now,tasks:f.fresh.projects[0].tasks.filter(t=>t.state==='ask')};
+   await page.evaluate(s=>taskq.receive(s),mixed);
+   assert.match(await page.locator('[data-host=fixture]').innerText(),/9/,'one recovered idle project retains the full dated host total');
+   assert.match(await page.locator('[data-host=fixture]').getAttribute('aria-label'),/Last known.*15m/i);
+   assert.equal(await page.locator('.host-runtime-totals [data-runtime=Codex] .host-number').innerText(),'9');
+   await page.evaluate(s=>taskq.receive(s),f.failed);
+  }
   const height=await page.locator('.shell').evaluate(e=>e.getBoundingClientRect().height);
   await page.locator('.errors-entry').click();
   assert.equal(await page.locator('.errors-list>li').count(),1);
@@ -54,6 +62,18 @@ const fixture=require('./fixtures/errors.js'),base=require('./fixtures/task-work
    await narrow.evaluate(s=>{window.ipc={postMessage(){}};taskq.receive({...s,page:s.projects[0].root,stop_modes:true});document.querySelector('.menu').style.fontSize='40px';},f.failed);
    for(const selector of ['[data-a=back]','[data-a=hide]','.errors-entry']){const r=await narrow.locator(selector).boundingBox();assert(r.x>=0&&r.x+r.width<=321&&r.y>=0&&r.y+r.height<=601,'header controls remain reachable at 200% text');}
    await narrow.close();
+   for(const [saved,destination] of [['removed','Tasks'],['settings/removed','Settings']]){
+    const fallback=await browser.newPage();await fallback.setContent(fs.readFileSync('build/web/tray.html','utf8'));
+    await fallback.evaluate(({fresh,saved})=>{window.ipc={postMessage(){}};const {page,...s}=fresh;taskq.receive({...s,navigation:{schema:1,current:{page:saved}}});},{fresh:f.fresh,saved});
+    assert.equal(await fallback.locator('h1').innerText(),destination);
+    assert.equal(await fallback.locator('.errors-entry .badge').innerText(),'1','removed route fallback remains in the header');
+    await fallback.locator('.errors-entry').click();assert.match(await fallback.locator('.errors-list').innerText(),/Requested destination is no longer available/);
+    await fallback.evaluate(s=>{const {page,...snapshot}=s;taskq.receive(snapshot);},f.fresh);
+    assert.equal(await fallback.locator('.errors-entry .badge').innerText(),'1','polling retains the fallback diagnostic');
+    await fallback.locator('.errors-entry').click();
+    await fallback.locator(destination==='Tasks'?'[data-route=settings]':'[data-route=appearance]').click();assert.equal(await fallback.locator('.errors-entry .badge').innerText(),'0','valid navigation clears the fallback diagnostic');
+    await fallback.close();
+   }
   }
  }
  console.log('PASS nine-project outage: one cause, retained rows/host ages, stable height, recovery and Needs me');

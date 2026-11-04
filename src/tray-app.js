@@ -507,7 +507,7 @@ runningAgents:function(compact=false){
   const current=host=>host.live&&!host.reasons.has('conflicting execution observations');
   for(const host of hosts.values()){
     if(current(host)&&!host.reasons.size)hostObservations.set(host.name,{counts:new Map([...host.counts].map(([rt,c])=>[rt,{...c}])),at:view.S.now-(host.age||0)});
-    else if(!current(host)&&view.S.projects.some(p=>p.error&&p.hosts?.some(h=>h.name===host.name))){
+    else if(!host.reasons.has('conflicting execution observations')&&view.S.projects.some(p=>p.error&&p.hosts?.some(h=>h.name===host.name))){
       const saved=hostObservations.get(host.name)||historical.get(host.name);
       if(saved&&!saved.invalid&&Number.isFinite(view.S.now)&&saved.at<=view.S.now){host.counts=saved.counts;host.retained=true;host.age=Math.max(0,view.S.now-saved.at);host.age_text=errors.age({age:0,tasks_age_seconds:host.age}).replace(' old','');}
     }
@@ -702,7 +702,7 @@ settings:function(){
     widget({'data-route':'about'},icon('info'),'About and updates',(S.version?'v'+S.version:'version unknown')+(up?' · update '+up.update:''))]]];
   return f(sections.map(([label,rows])=>h('section',{class:'settings-section'},api.heading(label,label==='Display'?'type':'network'),rows)));},
 windowSettings:function(){const mode=view.S.size_anchor||'auto';return f(h('p',{class:'meta'},'Auto follows the actual tray opening direction. Dragging pins the window; explicit growth choices stay selected.'),h('fieldset',null,h('legend',null,'Window growth'),h('div',{class:'growth-options'},[['auto','Auto'],['top','Down'],['bottom','Up'],['fixed','Fixed']].map(([value,label])=>h('button',{'data-a':'size-anchor','data-value':value,'aria-pressed':String(mode===value)},h('span',{class:'growth-miniature','data-growth':value,'data-opening':view.S.auto_anchor==='bottom'?'up':'down','aria-hidden':'true'},h('i')),h('span',null,label))))),h('div',{class:'options'},button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Menu always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)})));},
-errors:function(){return errors.entry(view.S,[view.persistenceError,view.aiError,view.workspaceError,view.agentqError]);},
+errors:function(){return errors.entry(view.S,[view.unavailable,view.persistenceError,view.aiError,view.workspaceError,view.agentqError]);},
 head:function(){
   const p=view.S.projects?.find(p=>p.root===view.page),title=view.working?'Balancing':p?p.name:routes[view.page]||'Unavailable';
   const crumbs=p?h('a',{href:'#','data-route':'projects'},'Projects'):settingsPages.includes(view.page)&&view.page!=='settings'?h('a',{href:'#','data-route':'settings'},'Settings'):'';
