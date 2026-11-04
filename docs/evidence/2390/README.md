@@ -2,9 +2,84 @@
 
 Task #2390 finishes #2365 live A2. R8 and R12 keep source, native and temporal proof separate; unknown stays unknown. No rule changed.
 
-**Status: A1, A2, A3 and A5 have evidence. A4 is partial on WebView2. The composer attachment was not exercised, and the visible reading row moved.** All times are UTC on 2026-11-04.
+**Status: A1, A2, A3, A4 and A5 have evidence.** The first run left A4 partial on WebView2, because the composer attachment was not exercised and the visible reading row moved. The retest under PM decision `pm-2390-retest-a4-not-waive` closes that gap. All times are UTC on 2026-11-04.
 
-A4 retest in progress under PM decision `pm-2390-retest-a4-not-waive`. The sections below describe the first run. The retest baseline is in `retest-baseline.json`, and the picker findings are in `retest-picker.md`.
+## A4 retest on WebView2
+
+The A1 to A5 sections after this one describe the first run, and they are unchanged. The retest baseline is in `retest-baseline.json`, timing is in `retest-timing.json`, samples are in `retest-store-samples.jsonl` and `retest-watch.log`, and the picker findings are in `retest-picker.md`.
+
+**Publication.** PM moved `ui-live` to `3bc1c84f81d72e172940a568b40efff1946c7f73` (PR #2399, merged at 21:54:35, merge-group CI 41920350319 as PM reports). Run 41925130100 published bundle `1793829225-3bc1c84f81d7`, bridge 1. The id equals the commit time and SHA prefix.
+
+**This check was automatic.** The tray's own 15-minute poll fired, with the previous empty check at 22:21:19. PM later allowed one manual About check, and none was pressed. No debug flag or local publication override was used.
+
+**Source boundary.** `b9cbba8f..3bc1c84f` changes only docs/evidence, docs/testing.md and scripts. The new bundle therefore proves reload and retention, not a visible change. PR #2371 stays the visible change for A2, as the first run shows.
+
+| Step | Time | Seconds after pointer |
+|---|---|---|
+| Pointer asset created | 22:25:52 | 0 |
+| Check starts (first scratch folder) | 22:36:19.806 | 627.806 |
+| Bundle staged in the store | 22:36:23.246 | 631.246 |
+| `ui/state.json` current is the new bundle | 22:36:42.630 | 650.630 |
+| Conversations page gone (first sample) | 22:37:16.059 | 684.059 |
+| Conversations new page (first sample) | 22:37:18.122 | 686.122 |
+
+Bottlenecks, largest first:
+
+1. **Poll wait: 627.806 s, 96% of the 650.630 s to commit.**
+2. **Conversations reload: 52.813 s after staging and 33.429 s after the commit.** In the first run this took at most 2.77 s. The cause was not established, because the page keeps no record of a declined offer. This proof sent no input to this window after the 22:21 baseline, and owner input was not sampled. The source allows a retry every 15 s, and the page declines while it has input within 10 s or records in flight. `tray-requests.json` was written 67 ms before the page went, which fits the normal flush path. The commit came first, so another page satisfied the clean-start trial. Which page did was not read.
+3. Publication: 31 s from run creation to the pointer asset. PM held the push until this baseline was ready, so merge to push is not a system delay here.
+4. Check to commit: 22.824 s, with 3.440 s of download and verification.
+
+Retention:
+
+| Item | Before publication | After the reload |
+|---|---|---|
+| Service, tray | 41960 (19:50:55.158), 52132 (19:51:14.151) | Same PIDs and start times at 22:40:00 and 22:42:37 |
+| Binary | v4.6.78, `58a66672…` | Same at 22:41:42, and About shows `Tray installed 4.6.78`, `Service 4.6.78` |
+| Selected conversation | taskq#2390 | Same in the store and on screen |
+| Draft | `taskq#2390 controlled unsent draft - do not send` | Identical in the window at 22:37:18 and in the store at 22:41:42 |
+| Attachment chip | `taskq-2390-controlled-attachment.txt · 63 bytes`, with Remove | Same chip and Remove button at 22:37:18 and 22:37:24 |
+| Attachment bytes | Record and stored file SHA-256 `7558a886…cf114` | Record and stored file hash identical at 22:41:42 |
+| Reading anchor, stored | `{at:1544207,i:0,y:14,attempt:6642610592}` | Identical at 22:41:42 |
+| Reading row, semantic | `6 steps · 6 commands` at the top of the viewport, row y 413 | Same row, row y 413, composer y 476 |
+| Page | `42.788308.4.11.1.37` | `42.657432.4.19.1.37`, with one reload and no second one to 22:42:24 |
+
+The reading position held on the semantic row and in the stored anchor. Pixel values are informational: history y was -1405 at the baseline, -2876 after the resume at 22:26:29, and -1405 again after the reload, while the row stayed at y 413. Caret and focus are not claimed.
+
+Workers:
+
+- Codex PIDs 43820 (21:31:41.900), 40548 (22:25:07.918) and 55188 (22:29:03.127) are service descendants. All three kept their PIDs and start times through adoption, at 22:40:00 and 22:42:37.
+- This Claude worker, 35316 (21:57:35.957), stayed alive through the ask and through adoption. Its ancestry runs through WmiPrvSE, so it is not shown as a service descendant.
+- Baseline PIDs 53964, 54300 and 31032 ended before publication, so they say nothing about adoption. The pointer came at 22:25:52. In `retest-watch.log`, 53964 and 54300 last appear at 22:21:21 and 22:23:53, and 31032 never appears, because it ended before the next logged sample.
+- Task mapping was not read from the service. Menu ages at 22:40:55 (#2366 1 h, #2377 16 min, #2393 12 min) only fit the Codex start times.
+- Linux and Mac production workers were not measured. Mac real adoption is PM's fixture from the first run, and PM asked for no repeat.
+
+No replay: `op` and `receipt` stay null, nothing was sent, and the only board comment holding the draft phrase is still PM's earlier Mac note, 6641071072.
+
+Native images, each from the real window through `PrintWindow` and each inspected:
+
+- `native-conversations-retest-before.png`: old page before publication, with the draft, chip and reading row.
+- `native-conversations-retest-adopted.png`: new page at 22:37:35, with the same draft, chip and reading row. This proof had sent no input to this window since the baseline.
+- `native-menu-retest-adopted-sanitized.png`: menu at 22:40:55, footer TaskQ v4.6.78. The host row is masked, and rows below taskq are removed.
+- `native-about-retest-adopted.png`: `Interface 1793829225-3bc1c84f81d7 · adopted`, captured at 22:41:56.
+
+Not proved or still open:
+
+- The attachment came through real paste, which is a supported route. The picker route was not proved. Closing a Windows common file dialog hangs on this host, also in a separate process without TaskQ. See `retest-picker.md`.
+- Reload with the native picker open was seen once in the first run and was not retested. A file being chosen during that reload might be lost, so it stays a possible follow-up.
+- The native #2363 Rust changes are not in binary 4.6.78, and this proof does not show them. The native binary release follows this proof.
+
+Actions on the owner's real tray in this retest:
+
+- One synthetic tray click and UI Automation on `Open taskq#2390`, which moved selection from `serverq#47` and showed Conversations.
+- Real clicks on Attach at 22:08:42 and about 22:12:10, plus a file name by `WM_SETTEXT` and real keystrokes. I stopped my picker helpers 10656 and 10952, and my own probe dialogs and their children.
+- A real Ctrl+V with the clipboard set and cleared. The clipboard held no formats before this.
+- A Chrome probe with an isolated temp profile, launched twice. No click landed, and my processes were confirmed gone.
+- Foreground switching, and after adoption two more synthetic tray clicks and UI Automation on Settings, About, Remove, the draft, List and Return to view.
+
+Cleanup at 22:42 to 22:45: the chip was removed through its button, the draft is empty with no files in its record, the 63-byte controlled copy stays in the install's reply-file store because Remove only detaches it, selection is back on `serverq#47`, Settings and Conversations are closed, and the samplers are stopped. Tray and service were never restarted. Channels and logins were not changed. Send was never pressed. `ui/state.json` stays on the adopted bundle, as normal publication intends.
+
+Reproduce: use the Reproduce section below with `retest-sampler.cjs` and `retest-watch.ps1`, run 41925130100 and commit `3bc1c84f81d72e172940a568b40efff1946c7f73`.
 
 ## A1 Baseline
 
