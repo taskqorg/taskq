@@ -563,10 +563,39 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
     let row=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n));
     let host=row.map(|r|r.get("worker").unwrap_or(r)).filter(|w|w["attempt"]==read.attempt).and_then(|w|w["session"].as_str()).and_then(|s|s.split_whitespace().nth(1)).filter(|h|*h!=local);
     let Some(host)=host else {return serve(install,&read)};
-    let allow=crate::link::allowed(&raw)?;
-    let peer=crate::link::peers(&status,cfg.ttl,allow.as_deref()).into_iter().find(|p|p.host==host).ok_or_else(||format!("Host {host} publishes no live host link"))?;
+    remote_read(install,&cfg,&raw,&status,host,&read)
+}
+
+fn remote_read(install:&Path,cfg:&crate::Config,raw:&Value,status:&Value,host:&str,read:&crate::link::Read)->Res<Value> {
+    let allow=crate::link::allowed(raw)?;
+    let peer=crate::link::peers(status,cfg.ttl,allow.as_deref()).into_iter().find(|p|p.host==host).ok_or_else(||format!("Host {host} publishes no live host link"))?;
     let (mut relay,_)=crate::link::Dash::new(install)?;
-    crate::link::ask(install,&crate::link::key(install)?,&peer,&read,&mut relay)
+    crate::link::ask(install,&crate::link::key(install)?,&peer,read,&mut relay)
+}
+
+/// One page of a closed task's worker on another host of this project's board.
+pub(crate) fn closed_remote(install:&Path,root:&Path,host:&str,task:u64,attempt:u64,before:Option<u64>)->Res<Value> {
+    let (cfg,raw,status)=live_status(root)?;
+    let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("Worker board unknown")?;
+    remote_read(install,&cfg,&raw,&status,host,&crate::link::Read{board:board.into(),task,attempt,before,after:None})
+}
+
+fn board_root(install:&Path,board:&str)->Option<(PathBuf,crate::Config,Value,Value)> {
+    crate::host::project_paths(install).ok()?.into_iter().find_map(|root|{
+        let (cfg,raw,status)=live_status(&root).ok()?;
+        (status["issues"]==board).then_some((root,cfg,raw,status))
+    })
+}
+
+/// Principle 2: the live peers of the registered project serving `board`; none when this host does not serve it.
+pub(crate) fn board_peers(install:&Path,board:&str)->Vec<crate::link::Peer> {
+    board_root(install,board).map_or(vec![],|(_,cfg,raw,status)|crate::link::peers(&status,cfg.ttl,crate::link::allowed(&raw).unwrap_or(Some(vec![])).as_deref()))
+}
+
+/// A peer read of `read.board`; the sender was checked against that board's peers.
+pub(crate) fn serve_board(install:&Path,read:&crate::link::Read)->Res<Value> {
+    let (root,..)=board_root(install,&read.board).ok_or("Worker project is not served on this host")?;
+    serve_peer(install,&root,read)
 }
 
 /// Principles 3 and 7 of the [host link](../docs/design/host-link.md): one bounded page of the named attempt's live
@@ -583,17 +612,23 @@ pub(crate) fn serve(install:&Path,read:&crate::link::Read)->Res<Value> {
     Err(stale.unwrap_or_else(||"Worker project is not served on this host".into()))
 }
 
-/// Principle 2: a peer is a live host of the listening project's board, so its read serves only that board, never
-/// another registered project of this host.
+/// Principle 2: a peer is a live host of `root`'s board, so its read serves only that board, never another
+/// registered project of this host.
 pub(crate) fn serve_peer(install:&Path,root:&Path,read:&crate::link::Read)->Res<Value> {
-    serve_peer_with(install,root,read,|session,before,after|crate::dialogue::worker_transcript(session,&crate::runtime::attempt_log(root,"worker",read.task,read.attempt),before,after))
+    let log=crate::runtime::attempt_log(root,"worker",read.task,read.attempt);
+    serve_peer_with(install,root,read,|local|crate::closed_peer_session(root,local,read.task,read.attempt),|session,before,after|crate::dialogue::worker_transcript(session,&log,before,after))
 }
 
-fn serve_peer_with(install:&Path,root:&Path,read:&crate::link::Read,page:impl FnOnce(&str,Option<u64>,Option<u64>)->Res<Value>)->Res<Value> {
+fn serve_peer_with(install:&Path,root:&Path,read:&crate::link::Read,closed:impl FnOnce(&str)->Res<String>,page:impl FnOnce(&str,Option<u64>,Option<u64>)->Res<Value>)->Res<Value> {
     let (_,_,status)=live_status(root)?;
     if status["issues"]!=read.board.as_str() {return Err("Worker board is not the board of this host link".into())}
     let local=crate::host::Policy::read(install)?.me;
-    let mut value=worker_page(root,&local,&status,read,page)?;
+    // No open row and this host's own attempt log: a closed task's retained history. An unknown attempt reads as ended, no board call.
+    let open=status["tasks"].as_array().is_some_and(|rows|rows.iter().any(|r|r["n"]==read.task));
+    let mut value=if !open&&crate::runtime::attempt_log(root,"worker",read.task,read.attempt).exists() {
+        let mut v=page(&closed(&local)?,read.before,read.after)?;
+        v["following"]=json!(false);v["activity"]=json!("ended");v
+    } else {worker_page(root,&local,&status,read,page)?};
     // R12, section 7 rule 6: arbitrary tool output has no safe pattern-based redaction. Only view metadata and
     // the worker adapter's validated tool name may cross the host boundary; local reads retain the body.
     for item in value["items"].as_array_mut().into_iter().flatten().filter(|i|i["role"]=="tool") {
@@ -1028,6 +1063,31 @@ mod tests {
         assert_eq!(serve(&f.0,&read("board-b")).unwrap()["ended"],true,"the local panel path is unchanged");
     }
 
+    // Closed task on another host. Before: "Transcript is on host win; open it there" or an empty ended view.
+    // After: this host's retained attempt pages with tool output stripped, and only for the named board's peers.
+    #[test]
+    fn peers_read_closed_history_of_any_board_they_serve() {
+        let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/closed-history"}"#).unwrap();
+        fs::write(f.0.join("projects"),format!("{}\n",root.display())).unwrap();
+        fs::write(f.0.join("host.json"),"{}").unwrap();
+        let board="https://github.com/invented/closed-history/issues";
+        let status=json!({"pid":std::process::id(),"issues":board,"tasks_age_seconds":0,"complete":true,"observed":1000,"tasks":[],
+            "hosts":[{"name":"win","updated":1000,"link":format!("{} {}","ab".repeat(32),"cd".repeat(32))}]});
+        fs::write(root.join(".taskq/status.json"),status.to_string()).unwrap();
+        assert_eq!(board_peers(&f.0,board).len(),1,"a board other than the speaking one has peers");
+        assert!(board_peers(&f.0,"https://github.com/invented/other/issues").is_empty(),"a board this host does not serve has none");
+        let read=crate::link::Read{board:board.into(),task:7,attempt:71,before:None,after:None};
+        let unread=serve_peer_with(&f.0,&root,&read,|_|panic!("no log, no board read"),|_,_,_|panic!("no log, no page")).unwrap();
+        assert_eq!(unread["ended"],true);
+        fs::write(crate::runtime::attempt_log(&root,"worker",7,71),"").unwrap();
+        let value=serve_peer_with(&f.0,&root,&read,|_|Ok("codex:native".into()),|session,_,_|{assert_eq!(session,"codex:native");
+            Ok(json!({"start":0,"end":1,"size":1,"items":[{"role":"tool","text":"result","result":"invented-secret","at":0,"i":0}]}))}).unwrap();
+        assert!(!value.to_string().contains("invented-secret"));
+        assert_eq!((value["activity"].as_str(),value["following"].as_bool()),(Some("ended"),Some(false)));
+        assert!(serve_peer_with(&f.0,&root,&read,|_|Err("Worker transcript is available only on its host".into()),|_,_,_|panic!("refused")).is_err());
+    }
+
     // #2225 A2: cross-host reads cannot export arbitrary result text, structured output or tool images.
     #[test]
     fn peer_reads_omit_tool_result_bodies() {
@@ -1040,7 +1100,7 @@ mod tests {
         fs::write(root.join(".taskq/status.json"),status.to_string()).unwrap();
         for after in [None,Some(0)] {
             let read=crate::link::Read{board:status["issues"].as_str().unwrap().into(),task:7,attempt:71,before:None,after};
-            let value=serve_peer_with(&f.0,&root,&read,|_,_,_|Ok(json!({"start":0,"end":12,"size":12,"items":[
+            let value=serve_peer_with(&f.0,&root,&read,|_|unreachable!(),|_,_,_|Ok(json!({"start":0,"end":12,"size":12,"items":[
                 {"role":"tool","text":"result","result":"invented-unrecognized-secret","future_output":{"value":"invented-structured-secret"},"at":0,"i":0},
                 {"role":"tool","text":"image","image":{"src":"invented-private-image"},"at":0,"i":1},
                 {"role":"assistant","text":"done","at":0,"i":2}]}))).unwrap();

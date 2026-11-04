@@ -1138,17 +1138,42 @@ fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {
 }
 
 /// Read only: use the last accepted worker's native identity, only on its recorded host.
-fn closed_transcript(b: &dyn Board, n: u64, host: &str, before: Option<u64>) -> Res<Value> {
+/// The last recorded worker of a closed task: runtime, board session id, owning host, attempt.
+fn closed_worker(b: &dyn Board, n: u64) -> Res<(String, String, String, u64)> {
     let i = b.issue(n)?;
     if i.number != n || i.open || !service::is_task(&i) { return Err("Transcript requires a closed trusted task; refresh the project".into()); }
     let log = entries(b,n)?;
     let projection = core::project(n,&log,false);
     let t = projection.changes.iter().rev().map(|(_,_,t)|t).find(|t| t.role.as_deref()==Some("worker") && t.session.is_some()).ok_or("No recorded worker transcript")?;
     let (native,owner) = t.session.as_deref().unwrap_or_default().rsplit_once(' ').ok_or("Worker identity unavailable")?;
-    if owner != host { return Err(format!("Transcript is on host {owner}; open it there")); }
     let (runtime,session) = native.split_once(':').ok_or("Worker session unavailable")?;
-    let path = runtime::owner::transcript(runtime,session)?;
-    Ok(transcript::before(transcript::format(runtime),session,&path,before)?.json())
+    Ok((runtime.into(),session.into(),owner.into(),t.attempt.ok_or("Worker attempt unavailable")?))
+}
+
+/// The native session of `n`'s closed worker on this host: the board holds a job id for a remote-control launch, the
+/// attempt log the session, as a live read resolves it.
+fn closed_session(root: &Path, runtime: &str, id: &str, n: u64, attempt: u64) -> Res<String> {
+    let session = runtime::session_id(root,runtime,id,n,attempt,"worker");
+    if session=="-" || !runtime::plain_thread(&session) { return Err("Worker native session unknown".into()); }
+    Ok(session)
+}
+
+/// A closed worker's page: from its transcript on this host, else through `remote` (the host link) on its host.
+fn closed_transcript(b: &dyn Board, root: &Path, n: u64, host: &str, before: Option<u64>, remote: impl FnOnce(&str,u64)->Res<Value>) -> Res<Value> {
+    let (runtime,id,owner,attempt) = closed_worker(b,n)?;
+    if owner != host { return remote(&owner,attempt); }
+    let session = closed_session(root,&runtime,&id,n,attempt)?;
+    let path = runtime::owner::transcript(&runtime,&session)?;
+    Ok(transcript::before(transcript::format(&runtime),&session,&path,before)?.json())
+}
+
+/// Host link principle 3: the peer finds a closed worker's session on the board and its own attempt log, never in the request.
+pub(crate) fn closed_peer_session(root: &Path, local: &str, n: u64, attempt: u64) -> Res<String> {
+    let (cfg, raw) = load(root)?;
+    let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
+    let (runtime,id,owner,last) = closed_worker(&*board,n)?;
+    if owner != local || last != attempt { return Err("Worker transcript is available only on its host".into()); }
+    Ok(format!("{runtime}:{}",closed_session(root,&runtime,&id,n,attempt)?))
 }
 
 /// #1679: the PR/MR merge `close` read back (§ 7 `delivery <preset> r<R>: merged #P ..`, GitLab `merged !P`); none stays unknown.
@@ -1581,7 +1606,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         if !quiet { for l in policy_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         if !quiet { for l in pm_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // docs/design/host-link.md: the same speaker listens on the host link and publishes its key
-        if !quiet { s.link = link.tick(&cfg.install, &cfg.root, s.snapshot.as_ref()).to_string(); }
+        if !quiet { s.link = link.tick(&cfg.install, s.snapshot.as_ref()).to_string(); }
         // § 8 item 1: only the Mac thread of the taskq checkout on channel dev, on request (#2311); merge_group CI read at most every 5 minutes per SHA
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
@@ -3881,12 +3906,16 @@ fn status_text(c: &Ctx, a: &Args, read: Option<(snapshot::Snapshot, Value)>, t: 
 
 /// R10: `taskq status` covers every project of `<install>/projects` plus the current one; `--project P..` narrows to
 /// folder names or `owner/repo`. One project keeps the single-project command; several print one block each.
+fn json_here_only(json: bool, wanted: &[String], here: bool) -> bool { json && wanted.is_empty() && here }
+
 fn status_all(a: &Args) -> Res<()> {
     let here = find_root().ok();
     let mut roots = host::projects(&platform::default_install()).unwrap_or_default();
     let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
     if let Some(h) = &here { roots.retain(|r| canon(r) != canon(h)); roots.insert(0, h.clone()); }
     let wanted: Vec<String> = a.all("project").iter().flat_map(|x| x.split([',', ' '])).filter(|x| !x.is_empty()).map(String::from).collect();
+    // A JSON consumer inside a project (tray, PilotQ) reads that project's schema 1 snapshot, not a slow all-project read.
+    if json_here_only(a.flags.contains_key("json"),&wanted,here.is_some()) { roots.truncate(1); }
     if !wanted.is_empty() {
         roots.retain(|r| wanted.iter().any(|w| *w == project_name(r) || load(r).is_ok_and(|(cfg, _)| cfg.repo == *w)));
         if roots.is_empty() { return Err(format!("--project {}: no listed project matches", wanted.join(" "))); }
@@ -4209,7 +4238,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                     let n = n.parse::<u64>().ok().filter(|n|*n>0).ok_or("bad --task")?;
                     if a.flags.contains_key("transcript") {
                         let before = a.one("before").map(|v|v.parse::<u64>().map_err(|_|"bad --before")).transpose()?;
-                        json!({"transcript":closed_transcript(b,n,&cfg.me,before).map_or_else(|reason|json!({"reason":reason}),|v|v)})
+                        json!({"transcript":closed_transcript(b,&cfg.root,n,&cfg.me,before,|host,attempt|conversations::closed_remote(&cfg.install,&cfg.root,host,n,attempt,before)).map_or_else(|reason|json!({"reason":reason}),|v|v)})
                     } else { closed_pin(b,n,!cfg.board.closed_reason)? }
                 } else { closed_history(b,page,since,!cfg.board.closed_reason)? };
                 println!("{value}");
@@ -7241,6 +7270,15 @@ mod tests {
         assert_eq!(closed_history(&b, 1, Some(110), false).unwrap()["tasks"].as_array().unwrap().len(), 3, "period keeps closes at or after since");
     }
 
+    // Before: the tray's `status --json` got the all-project shape after 48 s and every control failed. After: one project.
+    #[test]
+    fn status_json_inside_a_project_reads_only_that_project() {
+        assert!(json_here_only(true,&[],true));
+        assert!(!json_here_only(false,&[],true),"text status still reports every listed project (R10)");
+        assert!(!json_here_only(true,&["other".into()],true),"--project narrows by name");
+        assert!(!json_here_only(true,&[],false),"outside a project JSON stays all-project");
+    }
+
     // #1829 A1/A2: a pin outside page one reads its exact board outcome; native reads cannot resume work or cross hosts.
     #[test]
     fn closed_pin_reads_exact_issue_and_fences_transcript() {
@@ -7256,11 +7294,23 @@ mod tests {
         assert_eq!(closed_pin(&b,1,true).unwrap()["tasks"][0]["outcome"],"success","§ 1 GitLab has no closure reason");
         b.state.borrow_mut().issues[0].open=true;
         assert_eq!(closed_pin(&b,1,true).unwrap()["tasks"][0]["state"],"open");
-        assert!(closed_transcript(&b,1,"mac",None).unwrap_err().contains("closed trusted task"));
+        let local = std::env::temp_dir().join(format!("taskq-closed-transcript-{}",runtime::uuid()));
+        let unreached = |_: &str, _: u64| -> Res<Value> { panic!("a local or refused read crossed the host link") };
+        assert!(closed_transcript(&b,&local,1,"mac",None,unreached).unwrap_err().contains("closed trusted task"));
         let spawn=b.comment(1,"taskq: spawn worker codex:invented1829 remote").unwrap();
         b.comment(1,&format!("taskq: result {} attempt {spawn}","a".repeat(40))).unwrap();
         b.close(1).unwrap();
-        assert!(closed_transcript(&b,1,"mac",None).unwrap_err().contains("on host remote"));
+        // Before: "Transcript is on host remote; open it there". After: the read goes to the worker's host.
+        let page = closed_transcript(&b,&local,1,"mac",Some(9),|host,attempt| Ok(json!({"host":host,"attempt":attempt}))).unwrap();
+        assert_eq!(page,json!({"host":"remote","attempt":spawn}));
+        // Before: a remote-control worker's board job id named no transcript. After: the attempt log names the session.
+        let job = b.comment(2,"taskq: spawn worker claude:88b43179-06e0-4c61-bf19-5cd156f22dd3 mac").unwrap();
+        b.comment(2,&format!("taskq: result {} attempt {job}","b".repeat(40))).unwrap();
+        fs::create_dir_all(dot(&local)).unwrap();
+        fs::write(runtime::attempt_log(&local,"worker",2,job),"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\"}\n").unwrap();
+        let (rt,id,owner,attempt) = closed_worker(&b,2).unwrap();
+        assert_eq!((owner.as_str(),attempt),("mac",job));
+        assert_eq!(closed_session(&local,&rt,&id,2,attempt).unwrap(),"3aae983f-ee51-4fa1-af25-7252766bec4b");
         b.state.borrow_mut().issues[0].trusted=false;
         assert!(closed_pin(&b,1,true).unwrap_err().contains("trusted task"));
         assert!(closed_pin(&b,999,false).is_err());
