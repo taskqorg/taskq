@@ -1,7 +1,8 @@
 #!/bin/sh
-# Chain check for the README shots CI verdict (taskq.md R12; #2024 A4): a changed UI source, capture input or Cargo.toml
-# version exits 2 (stale, CI warns); an image hash mismatch, a missing or non-PNG image, an unrecorded README image and
-# a missing or malformed manifest exit 1 (broken, CI fails). A staged DIR is checked like docs/shots.
+# Chain check for the README shots CI verdict (taskq.md R12; #2024 A4, #2342 A2): changed UI sources or capture inputs
+# exit 2 (stale, CI warns); a release version differing from Cargo.toml stays fresh. An image hash mismatch, a missing
+# or non-PNG image, an unrecorded README image or a missing/malformed manifest exits 1 (broken, CI fails).
+# A staged DIR is checked like docs/shots.
 set -eu
 src=$(cd "$(dirname "$0")" && pwd)/check.sh
 t=$(mktemp -d)
@@ -49,10 +50,10 @@ case_ 'capture input mismatch' 2
 manifest docs/shots "del m['captureInputs']['Cargo.lock']"
 case_ 'unrecorded capture input' 2
 manifest docs/shots "m['version'] = '1.2.2'"
-case_ 'manifest version mismatch' 2
+case_ 'release version differs from Cargo.toml' 0
 manifest docs/shots "m['images'][0]['sha256'] = '0' * 64"
 case_ 'image hash mismatch' 1
-manifest docs/shots "m['images'][0]['sha256'] = '0' * 64; m['version'] = '1.2.2'"
+manifest docs/shots "m['images'][0]['sha256'] = '0' * 64; m['captureInputs']['Cargo.lock'] = '0' * 64"
 case_ 'image hash mismatch beats stale' 1
 manifest docs/shots "m['images'].append({'file': 'b.png', 'sha256': '0' * 64})"
 case_ 'missing image' 1
@@ -73,6 +74,6 @@ case_ 'missing manifest' 1
 png staged > stage/a.png
 manifest stage pass
 case_ 'fresh staged directory' 0 stage
-manifest stage "m['version'] = '1.2.2'"
+manifest stage "m['captureInputs']['Cargo.lock'] = '0' * 64"
 case_ 'stale staged directory' 2 stage
 exit $fails
