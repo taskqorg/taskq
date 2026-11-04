@@ -1,0 +1,140 @@
+--- a/src/tray.rs
++++ b/src/tray.rs
+@@ -57,6 +57,8 @@
+ }
+
+ enum Ev {
++    /// #2375 instrument: one line of TASKQ_PROBE_SCRIPT.
++    Probe(String),
+     Tick,
+     /// M15: Quit TaskQ from the tray menu or Cmd+Q; a refused Quit returns its reason.
+     Quit,
+@@ -1321,8 +1323,47 @@
+         let render=json!({"operation":"js.ui.render.tick","kind":"method.aggregate","started_ms":crate::profile::now_ms().unwrap(),"counts":{"calls":1,"finished":1,"failed":0,"unknown":0},"outcome":"ok","error":"none"});
+         assert!(!calls.metadata(&render)&&!calls.failed);
+         let _=coreq::telemetry::capture::poll("tray.window.resize",0,||Ok::<_,&str>(()),|_|"observed");
++    }
++}
++// #2375 instrument: raw native events and one bounded scripted sequence; absent env means no effect.
++fn probe_log(mut row:Value){
++    use std::io::Write;
++    static START:std::sync::OnceLock<Instant>=std::sync::OnceLock::new();
++    let Some(path)=std::env::var_os("TASKQ_PROBE_LOG") else {return};
++    row["t"]=json!((START.get_or_init(Instant::now).elapsed().as_secs_f64()*1000.0).round()/1000.0);
++    row["epoch"]=json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0,|d|d.as_secs_f64()));
++    if let Ok(mut f)=fs::OpenOptions::new().create(true).append(true).open(path){let _=writeln!(f,"{row}");}
++}
++fn probe_geometry(w:&Window)->Value{
++    let (o,i,k)=(w.outer_size(),w.inner_size(),w.scale_factor());
++    let p=w.outer_position().map_or((0,0),|p|(p.x,p.y));
++    json!({"x":p.0,"y":p.1,"outer_w":o.width,"outer_h":o.height,"inner_w":i.width,"inner_h":i.height,"frame_h":o.height.saturating_sub(i.height),"bottom":p.1+o.height as i32,"scale":k})
++}
++#[cfg(target_os="macos")]
++fn probe_hit(w:&Window,wv:&WebView)->Value{
++    use wry::WebViewExtMacOS;
++    use tao::platform::macos::WindowExtMacOS;
++    use objc2_app_kit::{NSWindow,NSWindowButton};
++    use objc2::{msg_send,runtime::AnyObject};
++    // SAFETY: the event loop owns this live NSWindow and calls us on its UI thread.
++    unsafe{
++        let n=&*(w.ns_window() as *const NSWindow);
++        let frame=n.frame();
++        let theme:*mut AnyObject=msg_send![&*n.contentView().unwrap(),superview];
++        let name=|v:*mut AnyObject|if v.is_null(){"none".to_string()}else{(*v).class().name().to_string_lossy().into_owned()};
++        let close=n.standardWindowButton(NSWindowButton::CloseButton).unwrap();
++        let bounds=close.bounds();
++        let center=close.convertPoint_toView(objc2_foundation::NSPoint::new(bounds.size.width/2.0,bounds.size.height/2.0),None);
++        let mid=objc2_foundation::NSPoint::new(frame.size.width/2.0,frame.size.height-10.0);
++        let on_close:*mut AnyObject=msg_send![theme,hitTest:center];
++        let on_bar:*mut AnyObject=msg_send![theme,hitTest:mid];
++        let moves:bool=if on_bar.is_null(){false}else{msg_send![on_bar,mouseDownCanMoveWindow]};
++        let web:i32=msg_send![&*wv.webview(),_webProcessIdentifier];
++        json!({"close_center":[center.x,frame.size.height-center.y],"bar_mid":[mid.x,frame.size.height-mid.y],"hit_close":name(on_close),"hit_bar":name(on_bar),"bar_can_move_window":moves,"opaque":n.isOpaque(),"alpha":n.alphaValue(),"window":n.windowNumber(),"web_pid":web})
+     }
+ }
++#[cfg(not(target_os="macos"))]
++fn probe_hit(_:&Window,_:&WebView)->Value{Value::Null}
+ fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_loop::EventLoopProxy<Ev>, calls: &mut WebCalls) {
+     if calls.pending.contains_key(&0) {calls.fault("page-not-ready");return;}
+     let Some(id)=calls.begin(name,Instant::now()) else {return};
+@@ -1496,6 +1537,10 @@
+         crate::telemetry::diagnostic::poll(&install);
+         if matches!(event,Event::UserEvent(Ev::Tick)) {TICK_QUEUED.store(false,std::sync::atomic::Ordering::Relaxed);}
+         *flow = ControlFlow::Wait;
++        if let Event::WindowEvent{window_id,event:native_event,..}=&event && let Some((w,_))=&ui && w.id()==*window_id {
++            let kind=match native_event {WindowEvent::Resized(_)=>"resized",WindowEvent::Moved(_)=>"moved",WindowEvent::CloseRequested=>"close_requested",WindowEvent::Focused(true)=>"focused",WindowEvent::Focused(false)=>"unfocused",WindowEvent::ThemeChanged(_)=>"theme_changed",_=>""};
++            if !kind.is_empty() {let mut row=probe_geometry(w);row["kind"]=json!(kind);probe_log(row);}
++        }
+         let native=match &event {
+             Event::WindowEvent{event:WindowEvent::Resized(_),..}=>Some("tray.window.resize"),
+             Event::WindowEvent{event:WindowEvent::Moved(_),..}=>Some("tray.window.move"),
+@@ -1573,7 +1618,8 @@
+                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(true).with_resizable(false).with_always_on_top(settings.pin.top)
+                     .with_visible(snapshot.is_some()).with_inner_size(if routes.iter().any(|r|r.starts_with("health-")) {if conversation_shots {LogicalSize::new(1100.0,900.0)} else {LogicalSize::new(420.0,900.0)}} else if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots && routes.iter().any(|r|r!="conversations") {LogicalSize::new(1280.0,760.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
+                 // ordinary snapshots render off-screen; opacity evidence must remain visible and unoccluded (R12)
+-                let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots||opacity_shots{40.0}else{-20000.0}, if agentq_shots||opacity_shots{40.0}else{-20000.0})).with_always_on_top(opacity_shots).with_focused(false) } else { b };
++                let probing=std::env::var_os("TASKQ_PROBE_SCRIPT").is_some();
++                let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots||opacity_shots||probing{40.0}else{-20000.0}, if agentq_shots||opacity_shots||probing{40.0}else{-20000.0})).with_always_on_top(opacity_shots).with_focused(false) } else { b };
+                 #[cfg(windows)]
+                 let b = tao::platform::windows::WindowBuilderExtWindows::with_skip_taskbar(b, !settings.pin.pinned);
+                 let p = proxy.clone();
+@@ -2105,7 +2151,9 @@
+                         // M3.26: restore navigation and native window controls before the first fit escapes.
+                         reply!(&json!({"updates":[state(&install,&settings,dark,None,&adding,&mut sync),{"settingsWindow":true,"viewsWindow":true}]}));
+                     }
++                    "probe" => {let mut row=m.clone();row["kind"]=json!("page");probe_log(row);}
+                     "size" | "resize" => {
++                        probe_log(json!({"kind":"size_request","a":m["a"],"w":m["w"],"h":m["h"],"g":m["g"],"d":m["d"],"before":probe_geometry(w)}));
+                         let Some((width, height)) = m["w"].as_f64().zip(m["h"].as_f64()).filter(|(w, h)| w.is_finite() && h.is_finite()) else { return };
+                         let Some(scale) = m["d"].as_f64().filter(|k| k.is_finite() && (0.5..=8.0).contains(k)) else { return };
+                         let (max_w, max_h) = w.current_monitor().or_else(|| w.primary_monitor()).map_or((1920.0, 800.0), |monitor| {
+@@ -2318,6 +2366,49 @@
+             }
+             Event::UserEvent(Ev::Shot | Ev::Shot2) if web.failed => {}
+             // snapshot mode: per step push a state, wait for layout, capture, next
++            Event::UserEvent(Ev::Shot) if std::env::var_os("TASKQ_PROBE_SCRIPT").is_some() => {
++                if step==0 {
++                    step=1;
++                    let path=std::env::var("TASKQ_PROBE_SCRIPT").unwrap_or_default();
++                    let script=fs::read_to_string(path).unwrap_or_default();
++                    let p=proxy.clone();
++                    std::thread::spawn(move||for line in script.lines().filter(|l|!l.trim().is_empty()&&!l.starts_with('#')) {
++                        if let Some(ms)=line.strip_prefix("WAIT ").and_then(|v|v.trim().parse::<u64>().ok()) {std::thread::sleep(Duration::from_millis(ms));}
++                        else {let _=p.send_event(Ev::Probe(line.to_string()));}
++                    });
++                }
++            }
++            Event::UserEvent(Ev::Probe(line)) => {
++                let Some((w,wv))=&ui else {return};
++                let (verb,rest)=line.split_once(' ').unwrap_or((line.as_str(),""));
++                let mut row=probe_geometry(w);row["kind"]=json!("step");row["step"]=json!(line.chars().take(120).collect::<String>());probe_log(row);
++                match verb {
++                    "STATE" => {
++                        let f:Vec<&str>=rest.split(' ').collect();
++                        let (theme,page,font)=(f[0],f[1],f[2].parse().unwrap_or(16));
++                        w.set_theme(Some(if theme=="dark"{tao::window::Theme::Dark}else{tao::window::Theme::Light}));
++                        let mut s=settings.clone();s.font=font;
++                        let st=state(&install,&s,theme=="dark",Some((theme,page)),&Value::Null,&mut crate::pending::Pending::default());
++                        push(&mut web,&ui,&st);
++                    }
++                    "OPACITY" => {
++                        let f:Vec<&str>=rest.split(' ').collect();
++                        settings.opacity_mode=f[0].into();
++                        let value=f[1].parse().unwrap_or(100);
++                        if f[0]=="whole" {settings.opacity=value;} else {settings.opacity=100;settings.background_opacity=value;}
++                        let _=window_opacity(w,settings.native_opacity());
++                    }
++                    "COPY" => {if let Some((a,b))=rest.split_once(' ') {let _=fs::copy(a,b);}}
++                    "JS" => {let _=wv.evaluate_script(rest);}
++                    "TITLE" => w.set_title(rest),
++                    "POS" => {let f:Vec<i32>=rest.split(' ').filter_map(|v|v.parse().ok()).collect();w.set_outer_position(tao::dpi::LogicalPosition::new(f[0],f[1]));}
++                    "VISIBLE" => w.set_visible(rest=="1"),
++                    "HIT" => {let mut hit=probe_hit(w,wv);hit["kind"]=json!("hit");probe_log(hit);}
++                    "SHOT" => {let path=snapshot.clone().unwrap_or_default().join(rest);let _=fs::create_dir_all(path.parent().unwrap());let r=capture_screen(w,&path);probe_log(json!({"kind":"shot","name":rest,"outcome":r.err().unwrap_or("ok".into())}));}
++                    "EXIT" => {*flow=ControlFlow::Exit;}
++                    _ => {}
++                }
++            }
+             Event::UserEvent(Ev::Shot) => {
+                 let dir = snapshot.clone().unwrap_or_default();
+                 let steps = shots(&install, &routes);

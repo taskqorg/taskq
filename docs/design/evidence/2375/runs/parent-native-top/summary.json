@@ -1,0 +1,80 @@
+{
+ "label": "parent",
+ "case": "top",
+ "actions": {
+  "drag": {
+   "titlebar_alpha": 0,
+   "performed": false,
+   "before": [
+    40,
+    34,
+    360,
+    806
+   ],
+   "after": [
+    40,
+    34,
+    360,
+    806
+   ]
+  },
+  "grip": {
+   "found": true,
+   "before": [
+    40,
+    34,
+    360,
+    806
+   ],
+   "after": [
+    40,
+    34,
+    410,
+    806
+   ]
+  },
+  "anchor": {
+   "window": [
+    40,
+    34,
+    320,
+    432
+   ],
+   "client": [
+    320,
+    400
+   ],
+   "size_anchor": "fixed",
+   "saved_size": [
+    320.0,
+    400.0
+   ]
+  },
+  "copy": {
+   "expected": "storefront#100",
+   "change_after": 266,
+   "change_before": 265,
+   "copied": "storefront#100",
+   "items_restored": 1,
+   "restored": true
+  },
+  "close": {
+   "close_requested": true
+  }
+ },
+ "events": {
+  "resized": 24,
+  "moved": 3,
+  "close_requested": 1,
+  "focused": 0,
+  "unfocused": 0,
+  "size_request": 27
+ },
+ "hits": [
+  {
+   "hit_close": "_NSThemeCloseWidget",
+   "hit_bar": "NSTitlebarView",
+   "bar_can_move_window": true
+  }
+ ]
+}

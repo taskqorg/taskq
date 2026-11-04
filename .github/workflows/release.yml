@@ -8,12 +8,15 @@
 # resource controls assets, the telemetry sync wire fixture and field list, the status snapshot schema and fixture.
 # Release files carry build provenance attestations; once all three OSes are in, the final SHA256SUMS is attested
 # and README shots are dispatched for the tag. A failing selftest publishes nothing for its OS.
+# A ui-live push (a fast-forward to a tested main commit) publishes the tray and Conversations pages only, as its own
+# release that never becomes latest, and moves the channel pointer: no tag, no binary (docs/design/ui-bundle.md).
+# A dispatch never publishes the interface; on any ref but main it refuses in checks, before any publication.
 name: release
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
-    branches: [live]
+    branches: [live, ui-live]
 permissions:
   contents: read
 concurrency:
@@ -21,7 +24,45 @@ concurrency:
   queue: max
   cancel-in-progress: false
 jobs:
+  publish-ui:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ui-live'
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require selected tests on the exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: main
+        run: python3 .github/release-check.py
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node scripts/build-web.cjs build/ui
+      - id: stage
+        run: node scripts/ui-bundle-stage.cjs build/ui dist >> "$GITHUB_OUTPUT"
+      # v4.2.2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: dist/*
+      # The pointer moves last, so it never names a bundle whose files are not all up. A prerelease is never latest.
+      - name: Publish bundle, then move the channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.stage.outputs.tag }}
+          POINTER: ${{ steps.stage.outputs.pointer }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title "$TAG" --notes "Interface bundle; no binary."
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/taskq-ui-* dist/SHA256SUMS
+          gh release view ui-channel --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
+            gh release create ui-channel --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --latest=false --title ui-channel --notes "Interface bundle pointers, one per bridge version."
+          gh release upload ui-channel --repo "$GITHUB_REPOSITORY" --clobber "dist/$POINTER"
   tag:
+    if: github.ref_name != 'ui-live'
     needs: checks
     runs-on: ubuntu-latest
     permissions:
@@ -48,6 +89,7 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$TAG" --generate-notes
   checks:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/ui-live'
     runs-on: ubuntu-latest
     timeout-minutes: 16
     permissions:

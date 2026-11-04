@@ -22,9 +22,10 @@ const task={...report,n:13,title:'Recover interrupted requests once',kind:'task'
    const open=await page.evaluate(()=>sent.find(m=>m.a==='workspace'));assert.equal(open.open.page,'conversations');assert.equal(open.open.thread,'centre','the single Conversations entrance restores the common centre; New projection is covered by notifications.browser.cjs');assert.equal(await page.locator('.report-card').count(),0,'Notifications only deep-links');
   }else{
    if(width<621)await page.locator('[data-c=list]').click();
+   const openResult=n=>page.evaluate(({board,n})=>taskq.receive({open:{page:'conversations',root:'fixture',board,task:n}}),{board,n});
    const filter=async name=>{await page.locator('.conversation-view').evaluate(e=>e.open=true);await page.locator('[data-c=result-filter][data-filter='+name+']').click();};
    assert.equal(await page.locator('[data-report=toggle]').count(),0,'no separate Results surface');
-   await page.locator('[data-report=open][data-n="12"]').click();await page.locator('[data-result-card=decision] [data-choice="1"]').waitFor();
+   await openResult(12);await page.locator('[data-result-card=decision] [data-choice="1"]').waitFor();
    assert(await page.locator('.report-card').isVisible());assert.equal(await page.locator('.reports-section').count(),0);
    if(width>620)assert(await page.locator('.conversation-list').isVisible(),'reader preserves sidebar');
    assert.match(await page.locator('.report-card').innerText(),/Recommendation/);
@@ -36,18 +37,18 @@ const task={...report,n:13,title:'Recover interrupted requests once',kind:'task'
    const dateBefore=await page.evaluate(()=>sent.find(m=>m.a==='reports'&&m.action==='later'));assert.equal(dateBefore.until,'2099-01-02T12:00:00Z');assert.equal(await page.getByLabel('Revisit date').isEnabled(),false,'unknown delivery freezes the date');
    await page.evaluate(()=>{refuse=false;});await page.locator('[data-result-card=decision] [data-qac=retry]').click();await page.waitForFunction(()=>sent.filter(m=>m.a==='reports'&&m.action==='later').length===2);
    const dateAfter=await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='later').at(-1));assert.equal(dateAfter.id,dateBefore.id);assert.equal(dateAfter.until,dateBefore.until);await page.getByLabel('Revisit date').waitFor({state:'detached'});
-   if(width<621)await page.locator('[data-c=list]').click();await filter('decision');assert.equal(await page.locator('[data-report=open][data-n="12"]').count(),0,'future Later stays outside due attention');
-   await filter('finished');assert(await page.locator('[data-report=open][data-n="14"]').isVisible(),'decided history retained');
-   await page.locator('[data-report=open][data-n="13"]').click();assert.equal(await page.locator('[data-result-card=decision]').count(),0,'ordinary completions need no Accept');
+   if(width<621)await page.locator('[data-c=list]').click();await filter('decision');assert.equal(await page.locator('.task-target[data-task="12"]').count(),0,'future Later stays outside due attention');
+   await filter('finished');assert(await page.locator('.task-target[data-task="14"]').isVisible(),'decided history retained');
+   await openResult(13);assert.equal(await page.locator('[data-result-card=decision]').count(),0,'ordinary completions need no Accept');
    assert.match(await page.locator('.report-card').innerText(),/identity -- passed/);
    const other=page.locator('.result-other');if(!await other.evaluate(e=>e.open))await other.locator('summary').click();
    await page.locator('[data-result-card=correction] [data-choice="1"]').click();await page.locator('#result-reason').fill('Preserve the retry receipt');
    assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='reopen').length),0,'choice waits for reason submit');
-   await page.locator('[data-report=reason-send]').click();await page.getByText(/1. Read held draft #22/).waitFor();
+   await page.locator('[data-report=reason-send]').click();await page.getByText(/1. Read held draft Research#22/).waitFor();
    const op=await page.evaluate(()=>sent.find(m=>m.a==='reports'&&m.action==='reopen'));assert.equal(op.text,'Preserve the retry receipt');assert.equal(op.sha,sha);assert.equal(op.n,13);assert(await page.evaluate(()=>Object.values(locals).some(v=>v.request?.action==='reopen'&&v.receipt?.state==='accepted'&&v.successor===22)),'controller receipt save preserves immutable request and held link');
    if(out&&width===1100&&font===16&&theme==='dark'){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:path.join(out,'finished-conversations.png')});}
    // Unknown response retains the same operation and blocks other result cards. A late readback updates its source.
-   if(width<621)await page.locator('[data-c=list]').click();await page.locator('[data-report=open][data-n="12"]').click();await page.evaluate(()=>{refuse=true;});
+   if(width<621)await page.locator('[data-c=list]').click();await openResult(12);await page.evaluate(()=>{refuse=true;});
    await page.locator('[data-result-card=decision] [data-choice="1"]').click();await page.locator('[data-result-card=decision] [data-qac=retry]').waitFor();
    const before=await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='accept').at(-1));await page.evaluate(()=>{refuse=false;});await page.locator('[data-result-card=decision] [data-qac=retry]').click();
    await page.waitForFunction(()=>sent.filter(m=>m.a==='reports'&&m.action==='accept').length===2);const after=await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='accept').at(-1));assert.equal(after.id,before.id);assert.equal(after.sha,before.sha);
@@ -56,12 +57,12 @@ const task={...report,n:13,title:'Recover interrupted requests once',kind:'task'
    if(width===1100&&font===16&&theme==='dark'){
     await page.evaluate(()=>{const p=fixtureState.projects[0],template=p.reports.reports[1];p.reports.history=Array.from({length:250},(_,i)=>({...template,n:100+i,closed:100,read:true,decision:'accepted',visible:false,title:'History '+(100+i)}));taskq.receive(fixtureState);});
     // CS6: two 64-row pages include two current results and 126 same-time historical results.
-    await page.locator('[data-c=results-more]').click();assert.equal(await page.locator('[data-n="224"]').count(),1,'numeric task tie break keeps close-time boundary');assert.equal(await page.locator('[data-n="223"]').count(),0);
-    await page.evaluate(()=>{const p=fixtureState.projects[0];p.reports.history.unshift({...p.reports.history[0],n:999,closed:500});taskq.receive(fixtureState);});assert.equal(await page.locator('[data-n="224"]').count(),1,'new collection does not displace loaded boundary');
-    await page.locator('[data-c=results-more]').click();assert.equal(await page.locator('[data-n="160"]').count(),1,'More continues strictly after prior close-time/task cursor');
+    await page.locator('[data-c=results-more]').click();assert.equal(await page.locator('.task-target[data-task="224"]').count(),1,'numeric task tie break keeps close-time boundary');assert.equal(await page.locator('.task-target[data-task="223"]').count(),0);
+    await page.evaluate(()=>{const p=fixtureState.projects[0];p.reports.history.unshift({...p.reports.history[0],n:999,closed:500});taskq.receive(fixtureState);});assert.equal(await page.locator('.task-target[data-task="224"]').count(),1,'new collection does not displace loaded boundary');
+    await page.locator('[data-c=results-more]').click();assert.equal(await page.locator('.task-target[data-task="160"]').count(),1,'More continues strictly after prior close-time/task cursor');
     await page.evaluate(()=>{const p=fixtureState.projects[0];p.reports.history=[];p.reports.reports.push({...p.reports.reports[0],n:400,title:'PM outcome',conversation:'pm-result',read:true,decision:'none'});p.tasks=[{n:401,title:'Linked question',state:'ask',revision:5,updated:600,conversation:{id:'pm-question',brief:'Choose'}}];fixtureState.conversations.items=['pm-result','pm-question'].map((id,i)=>({id,root:'fixture',title:id,text:'Preserved PM draft',caret:[0,0],revision:1,files:[],sent:{root:'fixture',runtime:'claude',text:'Original PM request',files:[]},updated:700000-i*100000}));fixtureState.messages.entries=[{key:'f'.repeat(64),kind:'question',board:p.issues,root:p.root,task:401,revision:5,title:'Linked question',state:'ask'}];taskq.receive(fixtureState);});
     await filter('reply');assert.equal(await page.locator('.conversation-row[data-id="pm-question"]').count(),1,'linked question projects Needs reply onto PM');assert.equal(await page.locator('[data-thread="task:'+board+'/401"]').count(),0,'unopened PM task has no duplicate row');
-    await filter('all');await page.locator('[data-report=open][data-n="13"]').click();await page.locator('[data-report=unresolved]').click();assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-id'),'pm-result','Next resolves a composed PM sidebar row');
+    await filter('all');await openResult(13);await page.locator('[data-report=unresolved]').click();assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-id'),'pm-result','Next resolves a composed PM sidebar row');
     await page.getByRole('button',{name:'Read result and decide',exact:true}).click();assert(await page.locator('.report-card').isVisible(),await page.locator('main').innerText());assert.match(await page.locator('.conversation-detail').getAttribute('data-thread-id'),/^result:/,'PM result reading position uses its own source identity');assert.equal(await page.locator('[data-thread="task:'+board+'/400"]').count(),0,'reading linked outcome stays in its PM identity');await page.locator('[data-a=result-return]').click();assert.equal(await page.locator('[data-c-field=text]').inputValue(),'Preserved PM draft');
     await page.evaluate(({board,sha})=>{fixtureState.conversations.items.find(c=>c.id==='pm-result').archived=true;taskq.receive(fixtureState);taskq.receive({open:{page:'conversations',root:'fixture',board,task:400,sha}});},{board,sha});assert(await page.locator('.report-card').isVisible(),'archived PM result displays before read');assert.equal(await page.locator('[data-c=archive-list]').getAttribute('aria-pressed'),'true','exact result opens owning PM archive');
 

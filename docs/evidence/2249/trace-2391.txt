@@ -1,0 +1,60 @@
+release: 4.6.78
+contains 762d9db3: yes
+window: since 24h; universal 611933 rows, legacy 0 rows, legacy recorded gaps 1
+UTC | project | kind | role | event | attempt | host | runtime | pid | outcome | reason
+2026-11-04 19:57:16 | taskqorg/taskq | stage | - | claim | 6640660646 | win | codex | - | ok | none
+2026-11-04 19:57:22 | taskqorg/taskq | stage | - | start | 6640660646 | win | codex | - | ok | none
+2026-11-04 19:57:22 | taskqorg/taskq | worker | work | slot-hold | 6640660646 | win | codex | 41336 | ok | claimed
+2026-11-04 19:57:22 | taskqorg/taskq | worker | work | spawn | 6640660646 | win | codex | 41336 | ok | claimed
+2026-11-04 19:57:22 | taskqorg/taskq | stage | - | build | 6640660646 | win | codex | - | unknown | none
+2026-11-04 19:57:23 | taskqorg/taskq | worker | work | heartbeat | 6640660646 | win | codex | 41336 | ok | running
+2026-11-04 19:58:08 | taskqorg/taskq | transition | - | ready->doing | None | win | codex | - | unknown | unknown
+2026-11-04 19:58:13 | taskqorg/taskq | worker | work | heartbeat | 6640660646 | win | codex | 41336 | ok | running (x53 heartbeats to 2026-11-04 20:46:05)
+2026-11-04 20:46:30 | taskqorg/taskq | worker | work | result | 6640660646 | win | codex | 41336 | ok | 7d0f8ef593cf7ad33352484439decda317334a25
+2026-11-04 20:46:40 | taskqorg/taskq | transition | - | doing->review | None | win | codex | - | unknown | unknown
+2026-11-04 20:46:40 | taskqorg/taskq | worker | work | result | 6640660646 | win | codex | 41336 | ok | handed-in
+2026-11-04 20:46:40 | taskqorg/taskq | worker | work | alive-after-result | 6640660646 | win | codex | 41336 | failed | pid-alive-after-result
+2026-11-04 20:46:43 | taskqorg/taskq | worker | work | kill | 6640660646 | win | codex | 41336 | failed | pid-alive-after-result
+2026-11-04 20:46:45 | taskqorg/taskq | worker | work | heartbeat | 6640660646 | win | codex | 41336 | ok | stopping
+2026-11-04 20:47:39 | taskqorg/taskq | worker | work | result | 6640660646 | win | codex | 41336 | ok | handed-in
+2026-11-04 20:47:41 | taskqorg/taskq | worker | work | exit | 6640660646 | win | codex | 41336 | failed | exit--1
+2026-11-04 20:47:42 | taskqorg/taskq | worker | work | slot-release | 6640660646 | win | codex | 41336 | ok | execution-released
+2026-11-04 20:47:42 | taskqorg/taskq | stage | - | build | 6640660646 | win | codex | - | ok | none
+2026-11-04 20:47:46 | taskqorg/taskq | stage | - | claim | 6641725045 | win | claude | - | ok | none
+2026-11-04 20:47:50 | taskqorg/taskq | stage | - | start | 6641725045 | win | claude | - | ok | none
+2026-11-04 20:47:50 | taskqorg/taskq | worker | review | slot-hold | 6641725045 | win | claude | 0 | ok | claimed
+2026-11-04 20:47:50 | taskqorg/taskq | worker | review | spawn | 6641725045 | win | claude | 0 | ok | claimed
+2026-11-04 20:47:50 | taskqorg/taskq | stage | - | review | 6641725045 | win | claude | - | unknown | none
+2026-11-04 20:47:51 | taskqorg/taskq | worker | review | heartbeat | 6641725045 | win | claude | 0 | ok | running
+2026-11-04 20:48:47 | taskqorg/taskq | worker | review | heartbeat | 6641725045 | win | claude | 41228 | ok | running (x6 heartbeats to 2026-11-04 20:52:07)
+2026-11-04 20:53:38 | taskqorg/taskq | transition | - | review->ask | None | win | claude | - | unknown | unknown
+2026-11-04 20:53:40 | taskqorg/taskq | worker | review | result | 6641725045 | win | claude | 41228 | ok | handed-in
+2026-11-04 20:53:40 | taskqorg/taskq | worker | review | alive-after-result | 6641725045 | win | claude | 41228 | failed | pid-alive-after-result
+2026-11-04 20:53:43 | taskqorg/taskq | worker | review | heartbeat | 6641725045 | win | claude | 41228 | ok | running
+2026-11-04 20:54:38 | taskqorg/taskq | worker | review | result | 6641725045 | win | claude | 41228 | ok | handed-in
+2026-11-04 20:54:41 | taskqorg/taskq | worker | review | exit | 6641725045 | win | claude | 41228 | ok | exit-0
+2026-11-04 20:54:41 | taskqorg/taskq | worker | review | slot-release | 6641725045 | win | claude | 41228 | ok | execution-released
+2026-11-04 20:54:41 | taskqorg/taskq | stage | - | review | 6641725045 | win | claude | - | ask | none
+2026-11-04 21:11:08 | taskqorg/taskq | transition | - | ask->review | None | win | claude | - | unknown | unknown
+2026-11-04 21:11:08 | taskqorg/taskq | stage | - | ask | 6641725045 | win | claude | - | ok | none
+2026-11-04 21:11:16 | taskqorg/taskq | stage | - | start | 6641725045 | win | claude | - | ok | none
+2026-11-04 21:11:16 | taskqorg/taskq | worker | review | slot-hold | 6641725045 | win | claude | 0 | ok | resume
+2026-11-04 21:11:16 | taskqorg/taskq | worker | review | spawn | 6641725045 | win | claude | 0 | ok | resume
+2026-11-04 21:11:16 | taskqorg/taskq | stage | - | review | 6641725045 | win | claude | - | unknown | none
+2026-11-04 21:11:18 | taskqorg/taskq | worker | review | heartbeat | 6641725045 | win | claude | 0 | ok | running
+2026-11-04 21:11:53 | taskqorg/taskq | transition | - | review->merge-queue | None | win | claude | - | unknown | unknown
+2026-11-04 21:11:54 | taskqorg/taskq | worker | review | result | 6641725045 | win | claude | 53212 | ok | handed-in
+2026-11-04 21:11:54 | taskqorg/taskq | worker | review | alive-after-result | 6641725045 | win | claude | 53212 | failed | pid-alive-after-result
+2026-11-04 21:11:59 | taskqorg/taskq | worker | review | kill | 6641725045 | win | claude | 53212 | failed | pid-alive-after-result
+2026-11-04 21:12:00 | taskqorg/taskq | stage | - | close | 6641725045 | win | claude | - | ok | none
+2026-11-04 21:12:00 | taskqorg/taskq | worker | review | result | 6641725045 | win | claude | 53212 | ok | close
+2026-11-04 21:12:00 | taskqorg/taskq | worker | review | heartbeat | 6641725045 | win | claude | 53212 | ok | stopping
+2026-11-04 21:12:09 | taskqorg/taskq | worker | review | result | 6641725045 | win | claude | 53212 | ok | handed-in
+2026-11-04 21:12:12 | taskqorg/taskq | worker | review | exit | 6641725045 | win | claude | 53212 | ok | exit-0
+2026-11-04 21:12:12 | taskqorg/taskq | worker | review | slot-release | 6641725045 | win | claude | 53212 | ok | execution-released
+2026-11-04 21:12:12 | taskqorg/taskq | stage | - | review | 6641725045 | win | claude | - | ok | none
+2026-11-04 21:20:54 | taskqorg/taskq | transition | - | merge-queue->closed | None | None | None | - | unknown | unknown
+attempt 6640660646 (taskqorg/taskq, work): all lifecycle events present
+attempt 6641725045 (taskqorg/taskq, review): all lifecycle events present; invalid identity fields process_id
+close: merge-queue->closed at 2026-11-04 21:20:54
+verdict: FAIL (lifecycle gap above)

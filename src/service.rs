@@ -160,6 +160,10 @@ fn stable(body: &str) -> Vec<String> {
         if let Some((_,status))=l.strip_prefix("doctor ").and_then(|s|s.split_once(' ')) {
             return format!("doctor {status}");
         }
+        if let Some(mut binary)=l.strip_prefix("binary-evidence ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
+            if let Some(o)=binary.as_object_mut() {o.remove("observed");o.remove("native_observed");}
+            return format!("binary-evidence {binary}");
+        }
         if let Some(mut execution)=l.strip_prefix("execution ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
             if let Some(progress)=execution.get_mut("progress").and_then(Value::as_object_mut) {progress.remove("observed");}
             return format!("execution {execution}");
@@ -661,6 +665,7 @@ pub struct Service<'a> {
     pub version: String,
     started: u64,
     diagnostics: std::cell::RefCell<Option<(std::time::Instant,Value)>>,
+    binary: std::cell::RefCell<Option<(std::time::Instant,Value)>>,
     /// #2194: when the health checks last ran and their heartbeat `doctor` line.
     health: Option<(std::time::Instant, String)>,
     /// #2194: the last `taskq doctor --hosts` request these health checks answered.
@@ -776,6 +781,8 @@ pub struct Service<'a> {
     pub waits: BTreeMap<u64, String>,
     pub execution_waits: BTreeMap<u64, String>,
     pending_releases: BTreeSet<(u64, u64, u64)>,
+    /// Spawn reason by execution of a child whose PID is not known yet: `record_known_pid` records it at the readback.
+    unknown_pids: HashMap<u64, &'static str>,
     /// Children by attempt: role, runtime, and start with attempt log offset; `None` when adopted across a re-exec
     /// (§ 4 Profiling stages).
     begun: HashMap<u64, (String, String, Option<(std::time::Instant, u64)>)>,
@@ -1023,10 +1030,42 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
     Ok(since)
 }
 
+fn record_hold(cfg: &Config, rt: &str, role: &str, task: u64, attempt: u64, pid: u32, reason: &str) {
+    crate::telemetry::record_worker(&cfg.install, &cfg.repo, &cfg.me, rt, role, "slot-hold", task, attempt, pid, "ok", reason);
+    crate::telemetry::record_worker(&cfg.install, &cfg.repo, &cfg.me, rt, role, "spawn", task, attempt, pid, "ok", reason);
+}
+
+/// R12/#2380: a launch can return before its process is known, and Claude reports the PID at a later agents readback.
+/// slot-hold, spawn and the heartbeat of the launch carry a real PID, so they wait for this readback.
+fn record_known_pid(cfg: &Config, unknown_pids: &mut HashMap<u64, &'static str>, k: &Kid, role: &str) {
+    let pid = k.proc.id();
+    if pid <= 1 {return;}
+    let Some(reason) = unknown_pids.remove(&k.execution) else {return};
+    record_hold(cfg, &k.rt, role, k.task, k.attempt, pid, reason);
+    crate::telemetry::record_worker(&cfg.install, &cfg.repo, &cfg.me, &k.rt, role, "heartbeat", k.task, k.attempt, pid, "ok", if k.stopping { "stopping" } else { "running" });
+}
+
+/// R12: retirement and a slot with no handle name only the saved process identity of that execution; 0 when none is saved.
+fn saved_pid(cfg: &Config, task: u64, attempt: u64, execution: u64) -> u32 {
+    crate::kids_path(&cfg.install, &cfg.root).ok()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| crate::data::kids(&text).ok())
+        .and_then(|(_, kids)| kids.into_iter().find(|k| k.task == task && k.attempt == attempt && k.execution == execution))
+        .map_or(0, |k| k.process.pid)
+}
+
+/// #2380: without a saved PID the slot stays held and records nothing; a later launch or adoption records it.
+fn record_unresolved_hold(cfg: &Config, task: u64, attempt: u64, execution: u64, rt: &str) {
+    let pid = saved_pid(cfg, task, attempt, execution);
+    if pid > 1 {
+        crate::telemetry::record_worker(&cfg.install, &cfg.repo, &cfg.me, rt, "work", "slot-hold", task, attempt, pid, "ok", "unresolved-ownership");
+    }
+}
+
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), dep_closed: None, label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), fleet: Default::default(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), binary: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), dep_closed: None, label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), fleet: Default::default(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), unknown_pids: HashMap::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1119,6 +1158,7 @@ impl<'a> Service<'a> {
                 k.unknown=Some("native observation deferred; reduced pass budget exhausted".into());return true;
             }
             let status = crate::runtime::observe_until(until,||k.proc.exited());
+            record_known_pid(&self.cfg, &mut self.unknown_pids, k, self.begun.get(&k.attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" }));
             let mut acceptance = None;
             match crate::runtime::observe_until(until,||k.proc.accepted()) {
                 Ok(true) => match accept_execution(self.board,k.task,k.attempt,k.execution,None) {
@@ -1158,19 +1198,14 @@ impl<'a> Service<'a> {
             .or_else(|| self.begun.get(&attempt).map(|(_, r, _)| r.clone()))
             .unwrap_or_else(|| "other".into());
         // R12: retirement is historical identity, never a liveness query. Recovery may have no handle.
-        let pid = if pid > 1 { pid } else {
-            crate::kids_path(&self.cfg.install, &self.cfg.root).ok()
-                .and_then(|path| std::fs::read_to_string(path).ok())
-                .and_then(|text| crate::data::kids(&text).ok())
-                .and_then(|(_, kids)| kids.into_iter().find(|k| k.task == task && k.attempt == attempt && k.execution == execution))
-                .map_or(0, |k| k.process.pid)
-        };
+        let pid = if pid > 1 { pid } else { saved_pid(&self.cfg, task, attempt, execution) };
         let role = self.begun.get(&attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
         crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &rt, role, "slot-release", task, attempt, pid, if pid > 1 { "ok" } else { "unknown" }, if pid > 1 { "execution-released" } else { "execution-released-pid-unknown" });
         if native {
             if let Err(e)=crate::retire_kid(&self.cfg,task,attempt,execution) { self.log.push(format!("native recovery cleanup: {e}")); }
         }
         self.pending_releases.remove(&(task,attempt,execution));
+        self.unknown_pids.remove(&execution);
         self.observations.remove(&(task,execution));
         self.ownership_waits.remove(&(task,execution));
         self.cache.remove(&task);
@@ -1283,7 +1318,7 @@ impl<'a> Service<'a> {
         for ((task,_),x) in &self.observations {
             let reservation=(*task,x.attempt,x.runtime.clone());
             if !self.kids.iter().any(|k|k.task==*task && k.execution==x.id) && !self.reserved.contains(&reservation) {
-                crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &x.runtime, "work", "slot-hold", *task, x.attempt, 0, "ok", "unresolved-ownership");
+                record_unresolved_hold(&self.cfg, *task, x.attempt, x.id, &x.runtime);
                 self.reserved.push(reservation);
             }
         }
@@ -1483,14 +1518,13 @@ impl<'a> Service<'a> {
         let role = if crate::runtime::attempt_log(&self.cfg.root, "reviewer", kid.task, kid.attempt).exists() { "reviewer" } else { "worker" };
         self.begun.insert(kid.attempt, (role.into(), kid.rt.clone(), None));
         self.observations.insert((kid.task,kid.execution),x.clone());
-        let pid = kid.proc.id();
-        let rt = kid.rt.clone();
-        let task_n = kid.task;
-        let att = kid.attempt;
         let role_code = if role == "reviewer" { "review" } else { "work" };
+        if kid.proc.id() > 1 {
+            record_hold(&self.cfg, &kid.rt, role_code, kid.task, kid.attempt, kid.proc.id(), "adopted");
+        } else {
+            self.unknown_pids.insert(kid.execution, "adopted");
+        }
         self.kids.push(kid);
-        crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &rt, role_code, "slot-hold", task_n, att, pid, "ok", "adopted");
-        crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &rt, role_code, "spawn", task_n, att, pid, "ok", "adopted");
         Ok(())
     }
 
@@ -1734,6 +1768,13 @@ impl<'a> Service<'a> {
         Some(format!("selected {selected} waits {}",if !waits.is_empty() {waits.join(", ")} else {host.unwrap_or_else(||"restart pending".into())}))
     }
 
+    pub fn binary_evidence(&self)->Value {
+        if let Some((_,value))=self.binary.borrow().as_ref().filter(|(at,_)|at.elapsed().as_secs()<60) {return value.clone();}
+        let generation=self.host.as_ref().and_then(|h|h.lock().ok().map(|h|h.instance.clone()));
+        let value=crate::service_versions::binary(&self.cfg.install,&self.instance,generation.as_deref());
+        *self.binary.borrow_mut()=Some((std::time::Instant::now(),value.clone()));value
+    }
+
     pub fn service_diagnostics(&self)->Value {
         if let Some((at,value))=self.diagnostics.borrow().as_ref().filter(|(at,_)|at.elapsed().as_secs()<60) {let _=at;return value.clone();}
         let selected=crate::platform::tool(&self.cfg.install).current();
@@ -1802,6 +1843,7 @@ impl<'a> Service<'a> {
         if !self.instance.is_empty() {
             lines.push(format!("service {}", self.instance));
             lines.push(format!("diagnostics {}", self.service_diagnostics()));
+            lines.push(format!("binary-evidence {}", self.binary_evidence()));
         }
         lines.extend(self.selected_line());
         if !self.machine.is_empty() {
@@ -2120,6 +2162,7 @@ impl<'a> Service<'a> {
             if handed { k.proc.accept(); }
             let status = crate::runtime::observe_until(observation_until,||k.proc.exited());
             let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
+            record_known_pid(&self.cfg, &mut self.unknown_pids, k, role_code);
             if handed {
                 crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "result", k.task, k.attempt, k.proc.id(), "ok", "handed-in");
                 if !matches!(status, Ok(Some(_))) && (k.proc.id() == 1 || (k.proc.id() > 1 && crate::runtime::alive(k.proc.id()))) {
@@ -2229,6 +2272,8 @@ impl<'a> Service<'a> {
                 let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
                 let pid_before = k.proc.id();
                 let stop=crate::runtime::observe_until(native_until,||crate::runtime::stop(k.proc.as_mut()));
+                record_known_pid(&self.cfg, &mut self.unknown_pids, k, role_code);
+                let pid_before = pid_before.max(k.proc.id());
                 let kill_reason = if handed { "pid-alive-after-result" } else { "attempt-replaced" };
                 crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "kill", k.task, k.attempt, pid_before, if stop.is_ok() { "ok" } else { "failed" }, kill_reason);
                 let child=crate::snapshot::Child {exited:stop.is_ok(),unknown:stop.as_ref().err().map(String::as_str),stopping:true};
@@ -2279,7 +2324,7 @@ impl<'a> Service<'a> {
             let reservation=(*task,x.attempt,x.runtime.clone());
             unresolved_local.insert(reservation.clone());
             if !self.kids.iter().any(|k|k.task==*task && k.execution==x.id) && !self.reserved.contains(&reservation) {
-                crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &x.runtime, "work", "slot-hold", *task, x.attempt, 0, "ok", "unresolved-ownership");
+                record_unresolved_hold(&self.cfg, *task, x.attempt, x.id, &x.runtime);
                 self.reserved.push(reservation);
             }
         }
@@ -2287,7 +2332,8 @@ impl<'a> Service<'a> {
         let held_rts: BTreeSet<String> = held_slots.iter().map(|(_, _, r)| r.clone()).collect();
         for rt in held_rts {
             let running_count = held_slots.iter().filter(|(_, _, r)| r == &rt).count();
-            let alive_count = self.kids.iter().filter(|k| k.rt == rt && (k.proc.id() == 1 || (k.proc.id() > 1 && crate::runtime::alive(k.proc.id())))).count();
+            // R12: a child whose PID is not read yet is unknown, never a slot without a process (#2380)
+            let alive_count = self.kids.iter().filter(|k| k.rt == rt && (k.proc.id() <= 1 || crate::runtime::alive(k.proc.id()))).count();
             if running_count > 0 && alive_count == 0 {
                 for (task, attempt, _) in held_slots.iter().filter(|(_, _, r)| r == &rt) {
                     let dead_pid = self.kids.iter().find(|k| k.task == *task && k.attempt == *attempt).map_or(0, |k| k.proc.id());
@@ -3197,7 +3243,7 @@ impl<'a> Service<'a> {
     }
 
     fn record_heartbeat_events(&self) {
-        for k in &self.kids {
+        for k in self.kids.iter().filter(|k| !self.unknown_pids.contains_key(&k.execution)) {
             let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
             let reason = if k.stopping { "stopping" } else { "running" };
             crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "heartbeat", k.task, k.attempt, k.proc.id(), "ok", reason);
@@ -3310,8 +3356,11 @@ impl<'a> Service<'a> {
                 self.reserved.retain(|r| r.0 != l.task || r.1 != l.attempt);
                 self.sync_host();
                 let pid = self.kids.last().map_or(0, |k| k.proc.id());
-                crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &l.rt, role_code, "slot-hold", l.task, l.attempt, pid, "ok", spawn_reason);
-                crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &l.rt, role_code, "spawn", l.task, l.attempt, pid, "ok", spawn_reason);
+                if pid > 1 {
+                    record_hold(&self.cfg, &l.rt, role_code, l.task, l.attempt, pid, spawn_reason);
+                } else {
+                    self.unknown_pids.insert(execution, spawn_reason);
+                }
                 crate::profile::open(&self.cfg.install, &self.cfg.repo, &self.cfg.me, l.task, l.attempt, &l.rt, l.role == "reviewer");
                 self.begun.insert(l.attempt, (l.role.clone(), l.rt.clone(), Some((std::time::Instant::now(), pos))));
                 self.pending.remove(&(l.task, l.attempt));
@@ -4148,6 +4197,9 @@ Problem: pick one
         let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
         let verdict = "Changed: tested publication\nChecks: Task fit A1 ok; merge-result CI pending\nOpen: none";
         b.comment(n, &core::entry("publish", &[], Some(r), verdict)).unwrap();
+        let frozen=crate::readiness::Publication {repository:"invented/repo".into(),pr:3,base:Some("b".repeat(40)),head:"a".repeat(40),
+            integration:None,merged:None,parent:None,ci_kind:None,ci_sha:None,ci_run_id:None,ci_run_attempt:None};
+        b.state.borrow_mut().evidence=vec![frozen.clone()];
         b.state.borrow_mut().publish = "queue-admitted".into();
         {
             let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no reviewer for pending publication")));
@@ -4161,10 +4213,15 @@ Problem: pick one
         assert_eq!(task(&b, n).publication.as_deref(), Some(verdict));
         assert_eq!(task(&b, n).retries, 0);
         assert!(b.issue(n).unwrap().open);
+        b.state.borrow_mut().evidence=vec![crate::readiness::Publication {integration:Some("c".repeat(40)),merged:Some("c".repeat(40)),
+            parent:Some("b".repeat(40)),ci_kind:Some("merge_group".into()),ci_sha:Some("c".repeat(40)),..frozen}];
         b.state.borrow_mut().publish = String::new();
         s.pass().unwrap();
         assert_eq!(task(&b, n).state, State::Closed);
         assert!(!b.issue(n).unwrap().open);
+        let log=entries(&b,n).unwrap();let reads=b.state.borrow().comment_reads;
+        assert_eq!(crate::readiness::source(n,&b.url(n),&log)["state"],"source_ready","publication retains the original result binding and frozen inputs");
+        assert_eq!(b.state.borrow().comment_reads,reads,"source projection makes no board or CI reads");
         let comments = b.comments(n).unwrap();
         let close = comments.iter().find(|e| e.body.starts_with("taskq: close")).unwrap();
         // § 2 Summary: the close names the publish it repeats; readers resolve it to the verdict
@@ -6156,7 +6213,7 @@ Open: none")).unwrap();
     // splits one machine into several Hosts rows or breaks the one-service-per-host check.
     #[test]
     fn heartbeat_body_lists_version_service_machine_focus() {
-        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ") && !l.starts_with("balancing ") && !l.starts_with("queue ") && !l.starts_with("account-policy ") && crate::runtime::usage::Row::parse(l).is_none()).collect::<Vec<_>>().join("\n");
+        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ") && !l.starts_with("binary-evidence ") && !l.starts_with("balancing ") && !l.starts_with("queue ") && !l.starts_with("account-policy ") && crate::runtime::usage::Row::parse(l).is_none()).collect::<Vec<_>>().join("\n");
         let b = Fake::default();
         let c = cfg("win");
         let mut s = service(&b, &c, Default::default());
@@ -6385,6 +6442,9 @@ Open: none")).unwrap();
     // Chain: § 4 step 3 (#2352). Risk: the host-wide cut hides a change another host or the owner must see at once.
     #[test]
     fn stable_lists_what_forces_a_heartbeat_write() {
+        let binary=r#"binary-evidence {"observed":100,"native_observed":99,"revision":"a","state":"binary_ready"}"#;
+        assert_eq!(stable(binary),stable(&binary.replace(":100",":200").replace(":99",":199")),"advisory sample clocks retain the heartbeat budget");
+        assert_ne!(stable(binary),stable(&binary.replace("binary_ready","unknown")),"lost proof is a meaningful change");
         let bal = |code: &str, full: bool, last: u64| format!(r#"balancing {{"schema":2,"last_spawn":{last},"mode":"any","has":["gui"],"focus":["all"],"runtimes":{{"codex":{{"code":"{code}","reason":"r{code}","full":{full},"disabled":false,"quota":[],"load":{{"free":1}}}}}}}}"#);
         let base = format!("version 1\n{}\nqueue {{\"restart\":null,\"projects\":[{{\"ready\":1}}]}}\ndoctor 100 ok\nservice ab", bal("admitted", false, 5));
         for (from, to) in [
@@ -9888,6 +9948,132 @@ Open: none";
         drop(s);
         drop(_guard);
         drop(_capture);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // #2380 Chain: a Claude launch returns only a job ID -> a later agents readback reports the PID -> slot-hold, spawn and
+    // heartbeat telemetry. Defect: Mac #2374 attempt 6637484100 recorded them with pid 0, which scripts/telemetry.sh trace rejects.
+    // Risk: an event carries pid 0 again, or the held events are lost when the first PID readback is also the exit.
+    #[test]
+    fn worker_lifecycle_telemetry_waits_for_a_delayed_pid_readback() {
+        struct LatePid {
+            readbacks: u32,
+            exit_with_pid: bool,
+            pid: u32,
+            state: Option<i32>,
+        }
+        impl Proc for LatePid {
+            fn accepted(&mut self) -> Result<bool, String> { Ok(true) }
+            fn exited(&mut self) -> Result<Option<i32>, String> {
+                self.readbacks = self.readbacks.saturating_sub(1);
+                if self.readbacks == 0 && self.exit_with_pid { self.state = Some(0); }
+                Ok(self.state)
+            }
+            fn kill(&mut self) -> Result<(), String> { self.state = Some(-9); Ok(()) }
+            fn id(&self) -> u32 { if self.readbacks == 0 { self.pid } else { 0 } }
+        }
+        let live_pid = std::process::id();
+        let fixture = |name: &str, readbacks: u32, exit_with_pid: bool| {
+            let dir = std::env::temp_dir().join(format!("taskq-2380-{name}-{}", crate::runtime::uuid()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut c = cfg("mac");
+            c.root = dir.join("project");
+            c.install = dir.clone();
+            std::fs::create_dir_all(c.root.join(".taskq")).unwrap();
+            let start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError>> =
+                Box::new(move |_| Ok(Box::new(LatePid { readbacks, exit_with_pid, pid: live_pid, state: None })));
+            (dir, c, start)
+        };
+        let of = |dir: &std::path::Path, n: u64, event: &str| -> Vec<crate::telemetry::WorkerEvent> {
+            crate::telemetry::worker_events(dir).into_iter().filter(|e| e.task == n && e.event == event).collect()
+        };
+        let all_real = |dir: &std::path::Path, n: u64| {
+            let events = crate::telemetry::worker_events(dir);
+            assert!(events.iter().filter(|e| e.task == n).all(|e| e.pid == live_pid), "every event carries the real PID: {events:?}");
+        };
+
+        // 1. The PID arrives at the second readback; the worker then hands in and is stopped.
+        let (dir, c, start) = fixture("late", 2, false);
+        let (capture, guard) = crate::profile::tests::collecting(&dir);
+        let b = Fake::default();
+        let mut s = Service::new(&b, &c, "test", start);
+        s.focus = vec!["all".into()];
+        let n = b.create("Late PID", "## Goal\ng", &[TASK_LABEL.into()]).unwrap();
+        s.pass().unwrap();
+        let attempt = task(&b, n).attempt.unwrap();
+        assert_eq!(s.kids.len(), 1, "the worker runs while its PID is unknown");
+        assert_eq!(s.kids[0].proc.id(), 0);
+        assert!(crate::telemetry::worker_events(&dir).iter().all(|e| e.task != n), "launch records nothing without a PID");
+        s.pass().unwrap();
+        s.record_heartbeat_events();
+        assert_eq!(s.kids[0].proc.id(), 0, "first readback still has no PID");
+        let events = crate::telemetry::worker_events(&dir);
+        assert!(events.iter().all(|e| e.task != n), "a renewal records nothing without a PID, and unknown is not running-no-process: {events:?}");
+        s.pass().unwrap();
+        assert_eq!(s.kids[0].proc.id(), live_pid);
+        for event in ["slot-hold", "spawn"] {
+            assert_eq!(of(&dir, n, event).len(), 1, "{event} is recorded once");
+        }
+        assert!(!of(&dir, n, "heartbeat").is_empty(), "the held heartbeat is recorded with the PID");
+        all_real(&dir, n);
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        b.comment(n, &core::entry("result", &[sha], Some(attempt), "Summary: ok")).unwrap();
+        s.reread(n);
+        s.pass().unwrap();
+        for event in ["slot-hold", "spawn", "heartbeat", "result", "exit", "slot-release"] {
+            assert!(!of(&dir, n, event).is_empty(), "the trace needs {event}");
+        }
+        assert_eq!(of(&dir, n, "spawn").len(), 1);
+        all_real(&dir, n);
+        drop(s);
+        drop(guard);
+        drop(capture);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // 2. The first readback that reports the PID also reports the exit: the kid leaves, the held events do not.
+        let (dir, c, start) = fixture("exit", 1, true);
+        let (capture, guard) = crate::profile::tests::collecting(&dir);
+        let b = Fake::default();
+        let mut s = Service::new(&b, &c, "test", start);
+        s.focus = vec!["all".into()];
+        let n = b.create("Exit with PID", "## Goal\ng", &[TASK_LABEL.into()]).unwrap();
+        s.pass().unwrap();
+        let attempt = task(&b, n).attempt.unwrap();
+        s.pass().unwrap();
+        for event in ["slot-hold", "spawn", "heartbeat", "exit", "slot-release"] {
+            assert!(of(&dir, n, event).iter().any(|e| e.attempt == attempt), "{event} survives the exit");
+        }
+        all_real(&dir, n);
+        drop(s);
+        drop(guard);
+        drop(capture);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // 3. Unresolved ownership has no handle: only a saved process identity may name its slot.
+        let (dir, c, start) = fixture("unresolved", 1, false);
+        let (capture, guard) = crate::profile::tests::collecting(&dir);
+        let b = Fake::default();
+        let mut s = Service::new(&b, &c, "test", start);
+        s.focus = vec!["all".into()];
+        let n = b.create("Unresolved", "## Goal\ng", &[TASK_LABEL.into()]).unwrap();
+        s.pass().unwrap();
+        let attempt = task(&b, n).attempt.unwrap();
+        let execution = s.kids.pop().unwrap().execution;
+        s.pass().unwrap();
+        assert!(s.reserved.iter().any(|r| r.0 == n && r.1 == attempt), "the slot stays held");
+        assert!(of(&dir, n, "slot-hold").is_empty(), "no slot-hold without a saved PID");
+        s.reserved.clear();
+        let path = crate::kids_path(&c.install, &c.root).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // Invented historical process identity: no live OS process is required for the record.
+        std::fs::write(&path, format!("pid 12340 invented-owner executor-v1\n{n} {attempt} claude 12345 invented-start {execution} 0\n")).unwrap();
+        s.pass().unwrap();
+        let held = of(&dir, n, "slot-hold");
+        assert_eq!(held.len(), 1);
+        assert_eq!((held[0].pid, held[0].reason.as_str()), (12345, "unresolved-ownership"));
+        drop(s);
+        drop(guard);
+        drop(capture);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

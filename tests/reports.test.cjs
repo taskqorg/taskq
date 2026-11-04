@@ -25,8 +25,8 @@ for(const action of ['later','make','drop']){
 r.act('make');op=sent.at(-1);
 r.receive({id:op.id,root:'fixture',reason:'Draft readback unknown',receipts:[20],receipt:{task:21,outcome:'unknown'}});
 const partial=JSON.stringify(r.section(projects));
-assert(partial.includes('Created held drafts: #20'),'confirmed drafts remain named');
-assert(partial.includes('Unverified draft: #21'),'known issue survives an unknown held-state readback');
+assert(/Created held drafts: [^ #]+#20/.test(partial),'confirmed drafts remain named');
+assert(/Unverified draft: [^ #]+#21/.test(partial),'known issue survives an unknown held-state readback');
 assert.equal(r.rows().length,1,'partial creation keeps the report available');
 r.receive({id:op.id,root:'fixture',report:{...row,read:true}});
 const until=new Date(Date.now()+86400000).toISOString().replace(/\.\d{3}Z$/,'Z');

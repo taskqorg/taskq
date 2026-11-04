@@ -62,7 +62,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    page.on('pageerror',e=>{throw e;});await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));
    await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await page.evaluate(s=>taskq.receive(s),{...s,theme,font});
    const row=page.locator('[data-card="'+key+'"]'),identity=row.locator('.task-target'),cue=identity;
-   assert.equal(await row.locator('button,a,input,[tabindex]').count(),1,'question has one whole-row target');
+   assert.equal(await row.locator('button,a,input,[tabindex]').count(),2,'question keeps a row target and independent Copy');
    assert((await cue.boundingBox()).height>=(coarse?44:32),'existing pointer target size retained');
    assert.equal(await row.locator('ol,[data-qac],.question-cue').count(),0,'question text and choices stay in Conversations');
    for(const [target,edge] of [[identity],[row.locator('.tqp-task-title')],[row,'top'],[row,'bottom'],[row,'left'],[row,'right']])for(const delta of [90,12]){

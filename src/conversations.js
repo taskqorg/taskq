@@ -1,6 +1,6 @@
 'use strict';
 const pm=require('./pm-composer.js'),blocks=require('./project-blocks.js'),time=require('./relative-time.js');
-const views=require('./task-views.js'),news=require('./notification-panel.js');
+const views=require('./task-views.js'),news=require('./notification-panel.js'),copyLabel=require('./copy-label.js');
 const {h}=require('preact'),ui=require('./ui-runtime.js'),icons=require('./ui-icons.js'),{execution}=ui;
 // D6: the event kinds a watch may follow.
 const EVENTS=['close','failed','ask','blocked','gone'];
@@ -24,7 +24,7 @@ module.exports=execution.module('conversations',{
  create:function({window,document,menu,draw,navigate,onSelect,checkpoint=()=>{}}){
   let snapshot={},launchDefaults=null,catalogEpoch=-1,hydrated=false,navigated=false,items=[],selected=null,list='recent',search='',selection={},scrolls={},listOnly=false,focusDraft=false,focusSearch=false,searchOpen=false,undo=null,notices={},failure=null,preview=null,confirmDelete=false;
   let taskPins=[],sidebar={pins:[],collapsed:[],archived:{}},sidebarPending=null,revealed=null,activityRead=null,activityTimer=null,activityTimes={},activityChecks={};
-  let focuses={},readerIdentity=null,layoutFrame=null,correcting=false,scrollIntent=null,scrollIntentTimer=null,dragScroll=false,sidebarEpoch=0,sidebarProjection=null,stableOrder=new Map(),stableGroups=new Map(),modeCounts={},pageSelected=null,listObserver=null,listObservedRoot=null,listAnchor=null,listReveal=null;
+  let focuses={},readerIdentity=null,readerPending=null,layoutFrame=null,correcting=false,scrollIntent=null,scrollIntentTimer=null,dragScroll=false,sidebarEpoch=0,sidebarProjection=null,stableOrder=new Map(),stableGroups=new Map(),modeCounts={},pageSelected=null,listObserver=null,listObservedRoot=null,listAnchor=null,listReveal=null;
   let resultFilter='all',sidebarItems=[],resultPages=new Map(),scopeReturn=null,completed=null,readerResize=null,appliedTarget=null;
   const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),nativeSources=new Map(),imageFailures=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
   let recoveryQueue=[],recoveryDrafts=[];
@@ -54,7 +54,7 @@ module.exports=execution.module('conversations',{
    },
    linked:function(c,p,results=[]){
     if(!c||!p||!c.sent&&!c.request)return [];
-    if(linked?.id!==c.id){linked={id:c.id,rows:[],known:new Set(),checked:new Set(),busy:false,page:1,more:false,reason:'',start:0,current:null};api.linkedRead(c.id);}
+    if(linked?.id!==c.id){linked={id:c.id,name:p.name,rows:[],known:new Set(),checked:new Set(),busy:false,page:1,more:false,reason:'',start:0,current:null};api.linkedRead(c.id);}
     const rows=p.tasks.filter(t=>t.conversation?.id===c.id),current=new Set(rows.map(t=>t.n));
     for(const n of linked.known)if(!current.has(n)&&!linked.checked.has(n)&&!linked.rows.some(t=>t.n===n)&&!Object.values(linkedReads).some(r=>r.conversation===c.id&&r.task===n))api.linkedRead(c.id,n);
     const tasks=[...rows,...linked.rows.filter(t=>!current.has(t.n))],known=new Set(tasks.map(t=>t.n)),all=[...tasks,...results.filter(r=>r.conversation===c.id&&r.root===p.root&&!known.has(r.report)).map(r=>({n:r.report,title:r.title,report:r}))];linked.total=all.length;linked.start=Math.min(linked.start,Math.max(0,all.length-1));const page=all.slice(linked.start,linked.start+PAGE);
@@ -85,7 +85,7 @@ module.exports=execution.module('conversations',{
    ids:function(){return items.map(c=>c.id);},
    opened:function(){return opened;},
    sidebarState:function(){return sidebar;},
-   setTaskPins:function(pins){const refs=(pins||[]).map(pin=>pin.ref);if(JSON.stringify(refs)===JSON.stringify(taskPins))return;const row=sidebarItems.find(r=>r.id===selected),ref=row?.task&&views.identity(row.p||{})+'#'+row.task;if(ref&&taskPins.includes(ref)&&!refs.includes(ref)&&(!api.matches(row)||search&&![row.title,row.meta,row.root,row.id,row.p?.name,row.project].join(' ').toLowerCase().includes(search.toLowerCase()))){selected=null;selection[list]=null;scopeReturn=null;onSelect?.(null);api.nav();}taskPins=refs;sidebarProjection=null;stableOrder.clear();stableGroups.clear();resultPages.clear();sidebarEpoch++;},
+   setTaskPins:function(pins){const refs=(pins||[]).map(pin=>pin.ref);if(JSON.stringify(refs)===JSON.stringify(taskPins))return;const row=sidebarItems.find(r=>r.id===selected),ref=row?.task&&views.identity(row.p||{})+'#'+row.task;if(ref&&taskPins.includes(ref)&&!refs.includes(ref)&&(!api.matches(row)||search&&![row.title,row.task&&copyLabel.task(row.p?.name||row.project||'',row.task),row.meta,row.root,row.id,row.p?.name,row.project].join(' ').toLowerCase().includes(search.toLowerCase()))){selected=null;selection[list]=null;scopeReturn=null;onSelect?.(null);api.nav();}taskPins=refs;sidebarProjection=null;stableOrder.clear();stableGroups.clear();resultPages.clear();sidebarEpoch++;},
    remember:function(id,root,keepSearch=false){const prior=opened.find(r=>r.id===id);if(prior)prior.root=root||prior.root;else opened.push({id,root:root||null});if(!keepSearch){search='';searchOpen=false;}api.nav();},
    // C2/C7: one selected identity for owner, task and event rows; only view identities persist.
    sync:function(rows,legacy){
@@ -515,7 +515,7 @@ module.exports=execution.module('conversations',{
       const op=linkedReads[r.id];if(!op||r.conversation!==op.conversation)return true;delete linkedReads[r.id];if(linked?.id!==op.conversation)return true;
       if(!op.task)linked.busy=false;
       if(r.state==='accepted'){const rows=(r.value?.tasks||[]).filter(t=>t.conversation?.id===op.conversation);
-       linked.rows=op.task?[...linked.rows.filter(t=>t.n!==op.task),...rows].slice(-ROWS):rows.slice(0,ROWS);linked.reason=op.task&&!rows.length?'Task #'+op.task+' has no matching originating-chat receipt; open the board or refresh.':'';if(!op.task){linked.page=op.page;linked.more=!!r.value.more;}
+       linked.rows=op.task?[...linked.rows.filter(t=>t.n!==op.task),...rows].slice(-ROWS):rows.slice(0,ROWS);linked.reason=op.task&&!rows.length?copyLabel.task(linked.name,op.task)+' has no matching originating-chat receipt; open the board or refresh.':'';if(!op.task){linked.page=op.page;linked.more=!!r.value.more;}
       }else linked.reason=r.reason||'Board read unavailable';return true;
      }
      if(r.id===activityRead?.id){sidebarProjection=null;const id=activityRead.conversation;activityRead=null;activityTimes[id]=r.state==='accepted'?r.value:{updated:null,reason:r.reason||'Activity unknown'};activityTimer=ui.defer(()=>{activityTimer=null;api.pollActivity();},100);return true;}
@@ -627,7 +627,7 @@ module.exports=execution.module('conversations',{
      if(sidebarProjection?.selected===selected&&sidebarProjection.rows!==extra.rows)api.listMark();
      const byRoot=new Map(projects.map(p=>[p.root,p])),pinOrder=new Map(taskPins.map((ref,i)=>[ref,i])),pinRef=r=>r.pinRef||(r.task&&views.identity(byRoot.get(r.root)||{})+'#'+r.task),taskPin=r=>pinOrder.has(pinRef(r)),owners=new Map(items.map(c=>[c.id,c]));
      const source=[...(extra.rows||[]).map(r=>({...r,thread:true})),...items.filter(c=>!c.deleted).map(c=>({id:c.id,root:c.sent?.root||c.request?.root||c.root,title:api.title(c),archived:c.archived,updated:c.updated,activityThread:api.state(c)==='working',...extra.outcomes?.[c.id],meta:api.rowStatus(c)+((owner.detached||[]).includes(c.id)?' · Detached':''),unread:!!(extra.marks?.[c.id]||extra.outcomes?.[c.id]?.unread),marker:extra.outcomes?.[c.id]?.needsReply?'Needs reply':extra.outcomes?.[c.id]?.needsDecision?'Needs decision':extra.marks?.[c.id]}))];
-     const query=r=>!search||[r.title,r.meta,r.root,r.id,byRoot.get(r.root)?.name,r.project].join(' ').toLowerCase().includes(search.toLowerCase());
+     const query=r=>!search||[r.title,r.task&&copyLabel.task(byRoot.get(r.root)?.name||r.project||'',r.task),r.meta,r.root,r.id,byRoot.get(r.root)?.name,r.project].join(' ').toLowerCase().includes(search.toLowerCase());
      for(const [mode]of MODES)modeCounts[mode]=source.filter(r=>!r.linkedAlias&&!!r.archived===(list==='archive')&&api.matches(r,mode)&&query(r)).length;
      const candidate=source.find(r=>r.id===selected),outside=candidate&&!(list==='recent'&&!candidate.archived&&taskPin(candidate))&&(candidate.linkedAlias||!api.matches(candidate)||!!candidate.archived!==(list==='archive')||!query(candidate));if(outside&&!scopeReturn)scopeReturn={...api.context(),selected:null};
      const buckets=new Map(),add=(id,name,r)=>{if(!buckets.has(id))buckets.set(id,{id,name,total:0,at:-1,rows:[]});const g=buckets.get(id);g.total++;g.at=Math.max(g.at,r.activityMs??-1);if(r.globalPin||query(r)||r.id===selected)g.rows.push(r);};
@@ -653,7 +653,7 @@ module.exports=execution.module('conversations',{
      const render=r=>{
        if(r.unavailable)return h('div',{key:r.id,class:'conversation-item task-row','data-unavailable-pin':r.pinRef},h('button',{class:'conversation-row task-target','data-a':'unavailable-pin','data-id':r.id,'aria-current':r.id===selected?'page':null},h('strong',null,r.title),h('p',{class:'meta',role:'status'},'Registered board unavailable ? '+r.pinRef)));
        if(r.task){
-        const p=r.p||{root:r.root,name:r.project||'Project unavailable',issues:r.board},row=r.taskRow||{n:r.task,title:r.title.replace(/^#\d+\s*/,''),state:r.state||'unknown',state_name:r.kind?news.label(r.kind)+' event':'Status unavailable',revision:r.revision};
+        const p=r.p||{root:r.root,name:r.project||'Project unavailable',issues:r.board},row=r.taskRow||{n:r.task,title:r.title,state:r.state||'unknown',state_name:r.kind?news.label(r.kind)+' event':'Status unavailable',revision:r.revision};
         return h('div',{key:r.id,class:'conversation-item task-row'},h('span',{dangerouslySetInnerHTML:{__html:blocks.task({root:p.root,name:p.name,board:{url:r.board||p.issues,kind:p.board_kind}},{...row,selected:r.id===selected},true,true)}}));
        }
        const own=items.find(c=>c.id===r.id),sessionFacts=own&&view?.id===own.id?[...view.items].reverse().find(i=>i.model):null,sessionMeta=own?(sessionFacts?.model||'Model unavailable')+' · '+(sessionFacts?.effort||'Effort unavailable'):'',context=!r.p?(r.root||r.board||r.project?(r.project?r.project+' · ':'')+'Project unavailable':'No project'):(g.id==='pinned'||list==='archive'?r.p.name:''),meta=r.report&&r.needsDecision?'':r.thread?(r.status??r.meta??''):r.meta;
@@ -815,7 +815,7 @@ module.exports=execution.module('conversations',{
      // Native layout/clamping scrolls are not user navigation; only input or an explicit instrument updates the anchor.
      if(e.isTrusted&&(correcting||!scrollIntent&&!dragScroll))return;
      if(scrollIntent==='wheel'||scrollIntent==='focus')scrollIntent=null;
-     if(!e.target.querySelector('.dialogue-transcript')){const a=api.mark(e.target);api.place(e.target.parentElement.dataset.threadId||selected,a?.board?api.boardPosition(a):Math.round(e.target.scrollTop));api.nav();return;}
+     if(!e.target.querySelector('.dialogue-transcript')){readerPending=null;const a=api.mark(e.target);api.place(e.target.parentElement.dataset.threadId||selected,a?.board?api.boardPosition(a):Math.round(e.target.scrollTop));api.nav();return;}
      if(live?.thread===selected){const was=live.stick;if(e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight>=24)live.stick=false;live.anchor=api.mark(e.target);const a=live.anchor&&live.items.find(i=>api.key(i)===live.anchor.key);api.place(selected,live.stick?undefined:live.anchor?.board?{key:live.anchor.key,y:Math.round(live.anchor.y)}:!a?undefined:{attempt:live.attempt,at:a.at,i:a.i,y:Math.round(live.anchor.y),...(live.source?{g:live.source}:{}),...(live.anchor.part!==undefined?{part:live.anchor.part}:{})});api.nav();api.edge(e.target,live);if(was!==live.stick)draw();return;}
      if(view?.id!==selected||view.end===null||!view.items.length)return;
      // Q-A3/A4: a reader at the end of a window that holds the file end follows; anywhere else keeps its record anchor
@@ -848,7 +848,10 @@ module.exports=execution.module('conversations',{
     const row=menu.querySelector('.conversation-row[aria-current=page]');if(row&&!row.checkVisibility()){const group=row.closest('details[data-notification-group]');if(group)group.open=true;}
     const body=api.current();api.bodyRead(body);api.grow();
     const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current(),identity=detail?.parentElement.dataset.threadId,changed=identity!==readerIdentity;readerIdentity=identity;
-    if(changed&&detail&&!log){const p=positions[identity];if(typeof p==='number'&&detail.scrollTop!==p)detail.scrollTop=p;else if(!p&&detail.scrollTop!==0)detail.scrollTop=0;}
+    // #2365 A4: a lazy draft has no height until its body arrives; its saved position waits for that instead of staying clamped at the top.
+    if(changed)readerPending=null;
+    if(changed&&detail&&!log){const p=positions[identity];if(typeof p==='number'&&detail.scrollTop!==p){detail.scrollTop=p;if(Math.abs(detail.scrollTop-p)>=1)readerPending=p;}else if(!p&&detail.scrollTop!==0)detail.scrollTop=0;}
+    else if(readerPending!==null&&detail&&!log){detail.scrollTop=readerPending;if(Math.abs(detail.scrollTop-readerPending)<1)readerPending=null;}
     if(log&&open)api.open(open);
     api.observe(detail);api.layout(true);
     const target=positions[selected]?.target,token=selected+JSON.stringify(target);if(detail&&target&&token!==appliedTarget){const node=target.kind==='question'?[...detail.querySelectorAll('[data-question]')].find(n=>Number(n.dataset.question)===target.revision):target.kind==='event'?[...detail.querySelectorAll('[data-event]')].find(n=>n.dataset.event===target.id):live?.attempt===target.attempt&&live.source===target.generation?detail.querySelector('[data-key="'+api.key(target)+'"]'):null;if(node){if(live){live.stick=false;live.anchor={key:node.dataset.key||node.dataset.readingKey,board:!node.dataset.key,y:0};}detail.scrollTop+=node.getBoundingClientRect().top-detail.getBoundingClientRect().top;appliedTarget=token;}}

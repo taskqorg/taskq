@@ -531,10 +531,9 @@ fn review_result(cfg: &Config, n: u64, attempt: u64, rt: &str, env: &ChildEnv) {
 
 /// `seen`: the attempt and runtime once read, and an outcome override (a pending publication is retried).
 fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check: &dyn Fn(&board::Issue, &Task) -> Res<()>, seen: &mut (u64, String, Option<(&'static str, &'static str)>)) -> Receipt {
-    let (issue, t, _) = match current(b, n) {
-        Ok(x) => x,
-        Err(e) => return Receipt::rejected(n, op, e),
-    };
+    let read=||->Res<_> {let issue=b.issue(n)?;let log=entries(b,n)?;Ok((issue,log))};
+    let (issue,log)=match read() {Ok(x)=>x,Err(e)=>return Receipt::rejected(n,op,e)};
+    let t=fold(n,&log,deps_open(b,n,&issue.body,&log));
     *seen = (t.attempt.unwrap_or(0), t.session.as_deref().and_then(|s| s.split(':').next()).unwrap_or("other").to_string(), None);
     if let Err(e) = check(&issue, &t) {
         return Receipt::rejected(n, op, e);
@@ -575,13 +574,15 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                     if let Publish::Enqueued(id) = b.publish(n, &sha, &cfg.publish, &issue.title, &format!("Task: {}", b.url(n))) {
                         // Intent is durable before admission; the service recovers even if this receipt write is lost.
                         let next = Op { revision: r.revision, ..Default::default() };
-                        let _ = act_as(b, &cfg.root, n, "enqueued", &[&id], "", &next, None, None);
+                        let evidence=crate::readiness::receipt(n,&b.url(n),&log,b.take_publication_evidence());
+                        let _ = act_as(b, &cfg.root, n, "enqueued", &[&id], &evidence, &next, None, None);
                     }
                 }
                 return r;
             }
             let began = std::time::Instant::now();
             let published = b.publish(n, &sha, &cfg.publish, &issue.title, &format!("Task: {}", b.url(n)));
+            let evidence=crate::readiness::receipt(n,&b.url(n),&log,b.take_publication_evidence());
             let (outcome, err) = match &published {
                 Publish::Done(_) => ("ok", "none"),
                 Publish::Pending(_) | Publish::Waiting(_) | Publish::Enqueued(_) | Publish::Rebased(_) => ("retried", "none"),
@@ -594,7 +595,7 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                 Publish::Done(m) => {
                     // § 7 publication receipt: the policy it ran under and what the board read back
                     let m = format!("delivery {} r{}: {m}", cfg.delivery, cfg.delivery_revision);
-                    let mut r = act(b, &cfg.root, n, "close", &[], &join(&[verdict, &m]), op);
+                    let mut r = act(b, &cfg.root, n, "close", &[], &join(&[verdict, &m, &evidence]), op);
                     r.extra = m;
                     r
                 }
@@ -642,9 +643,11 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
     let rev = core::revision(n, log);
     let op = Op { revision: Some(rev), ..Default::default() };
     let write = |kind, args: &[&str], text: &str| act_as(b, &cfg.root, n, kind, args, text, &op, None, None);
-    match b.resume_publication(n, t.result.as_deref().unwrap_or_default(), &cfg.publish, &issue.title, &format!("Task: {}", b.url(n)), &cfg.root, t.enqueued.is_some()) {
-        Publish::Done(m) => write("close", &[], &join(&[&repeats(n, log, verdict), &format!("delivery {} r{}: {m}", cfg.delivery, cfg.delivery_revision)])),
-        Publish::Enqueued(id) if t.enqueued.is_none() => write("enqueued", &[&id], ""),
+    let published=b.resume_publication(n, t.result.as_deref().unwrap_or_default(), &cfg.publish, &issue.title, &format!("Task: {}", b.url(n)), &cfg.root, t.enqueued.is_some());
+    let evidence=crate::readiness::receipt(n,&b.url(n),log,b.take_publication_evidence());
+    match published {
+        Publish::Done(m) => write("close", &[], &join(&[&repeats(n, log, verdict), &format!("delivery {} r{}: {m}", cfg.delivery, cfg.delivery_revision), &evidence])),
+        Publish::Enqueued(id) if t.enqueued.is_none() => write("enqueued", &[&id], &evidence),
         Publish::Enqueued(_) => Receipt::accepted(n, &op, t.state, rev),
         Publish::Rebased(sha) => write("rebased", &[&sha], ""),
         Publish::MainMoved(m) => write("requeue", &["main-moved"], &m),

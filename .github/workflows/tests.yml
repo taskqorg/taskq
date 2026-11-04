@@ -1,4 +1,4 @@
-# § 7, docs/testing.md: PRs run Linux checks; merge_group runs the affected-OS matrix and gates publication; main pushes run none (cache.yml warms caches).
+# § 7, docs/testing.md: PRs run Linux checks; merge_group runs the affected-OS matrix and gates publication; cache.yml warms main on demand.
 name: tests
 on:
   workflow_dispatch:
@@ -52,7 +52,7 @@ jobs:
       - if: matrix.os == 'macos-latest'
         shell: bash
         run: command -v cargo >/dev/null || sh scripts/install-rustup.sh
-      # Restore only; cache.yml saves it on main pushes, so PR and queue runs never churn it.
+      # Restore only; cache.yml saves main's cache on demand, so PR and queue runs never churn it.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: rust

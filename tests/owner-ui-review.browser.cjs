@@ -16,18 +16,18 @@ const state={platform:'windows',font:16,theme:'dark',host:'fixture-host',now:100
  assert.equal(await home.locator('.conversations-entry').count(),1);assert.equal(await home.locator('.head [aria-label="Close menu"]').count(),0);
  assert.equal(await home.locator('.top-task-counters .communication-count').count(),2,'F03: independent New/Needs me counters');
  assert.equal(await home.locator('.host-runtime-totals .host-runtime[data-runtime=Antigravity] svg').count(),1);assert(!await home.locator('.host-runtime-totals').innerText().then(t=>/Antigravity|Partial/.test(t)));
- assert.equal(await home.locator('.viewbar>.ui-icon').getAttribute('aria-hidden'),'true');
+ assert.equal(await home.locator('.viewbar>[data-a=view-group]').count(),1,'A3: leading grouping replaces the filter glyph');
  assert.equal(await home.locator('[title^="Previous section:"]').count(),0,'F11: no invented previous section');
  const choose=async name=>{await home.locator('.view-dropdown>summary').click();await home.locator('.view-options').getByRole('button',{name,exact:true}).click();};
  await choose('All tasks');assert.equal(await home.locator('[title="Previous section: Running"]').count(),1);
  await choose('All tasks');assert.equal(await home.locator('[title="Previous section: Running"]').count(),1,'choosing current preserves previous');
  await home.locator('[title="Previous section: Running"]').click();await home.locator('[title="Previous section: All tasks"]').click();
  assert.match(await home.locator('.view-dropdown>summary').innerText(),/All tasks/,'repeated previous swaps the pair');
- const group=home.locator('.viewbar [data-a=view-group]'),before=await home.locator('.view-dropdown>summary').getAttribute('aria-label');await group.click();assert.equal(await group.getAttribute('aria-pressed'),'false');assert.equal(await home.locator('.view-dropdown>summary').getAttribute('aria-label'),before);
+ const group=home.locator('.viewbar [data-a=view-group]'),before=await home.locator('.view-dropdown>summary').getAttribute('aria-label');await group.click();assert.equal(await group.getAttribute('aria-pressed'),'true');assert.equal(await home.locator('.view-dropdown>summary').getAttribute('aria-label'),before);
  const total=home.locator('.filter-header .tqp-counts>button').first();assert.match(await total.innerText(),/^Σ 32$/);assert.match(await total.getAttribute('aria-label'),/All tasks: 32 open/);
  const strip=home.locator('.dashboard-status>summary'),top=await strip.boundingBox();await home.locator('.content').evaluate(e=>e.scrollTop=3);const moved=await strip.boundingBox();assert(Math.abs(top.y-moved.y)<.5,'F08: first scroll does not move the strip');
  await home.locator('.content').evaluate(e=>e.scrollTop=0);
- const mainRow=home.locator('.task-target[data-task="7"]');assert.equal(await mainRow.locator('button,a,[tabindex]').count(),0,'F13: no competing targets');
+ const mainRow=home.locator('.task-target[data-task="7"]');assert.equal(await mainRow.locator('button,a,[tabindex]').count(),1,'A7: only the independent Copy action accompanies row navigation');
  const original=await mainRow.evaluate(e=>e.outerHTML);await mainRow.click();assert(await home.evaluate(({board,root})=>sent.some(m=>m.a==='workspace'&&m.open.board===board&&m.open.root===root&&m.open.task===7&&m.open.target.revision===76),{board,root}));
  await workspace.setContent(fs.readFileSync('build/web/workspace.html','utf8').replace('<head>','<head><script>window.taskqNativeFrame=true;</script>'));
  await workspace.evaluate(({state,board,root})=>{

@@ -1,4 +1,5 @@
 'use strict';
+const copyLabel=require('./copy-label.js');
 const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 const shell=require('./app-shell.js');
@@ -41,7 +42,7 @@ operationAction:function(d){
     return true;
   }
   if(d.a==='agentq-runtime'){view.agentqRuntime=d.runtime;present();return true;}
-  if(d.a==='agentq-dismiss'||d.a==='agentq-check'){send({a:d.a});return true;}
+  if(d.a==='agentq-dismiss'||d.a==='agentq-check'||d.a==='ui-check'){send({a:d.a});return true;}
   if(d.a==='agentq-setup'){
     const A=view.S.agentq,rows=A?.runtimes||[],runtime=view.agentqRuntime||rows.find(r=>r.eligible)?.runtime;
     if(!rows.some(r=>r.runtime===runtime&&r.eligible))return true;
@@ -108,7 +109,7 @@ lifecycleWaits:function(){
   if(!Array.isArray(view.S?.projects))return h('div',{class:'body meta'},'Project registry unknown');
   return f(view.S.projects.map(p=>{
     const current=view.S.service?.state==='running'&&typeof p.service_pid==='number'&&typeof p.host_instance==='string'&&p.alive===true&&p.service_pid===view.S.service?.pid&&p.host_instance===view.S.service?.instance;
-    const text=!current?'waiting for current project observation':p.error?p.error:Array.isArray(p.restart_waits)?p.restart_waits.length?'waits for '+p.restart_waits.join(', '):'prepared':'waiting for recovery observation';
+    const text=!current?'waiting for current project observation':p.error?p.error:Array.isArray(p.restart_waits)?p.restart_waits.length?'waits for '+p.restart_waits.map(w=>/^#\d+$/.test(w)?copyLabel.task(p.name,w.slice(1)):w).join(', '):'prepared':'waiting for recovery observation';
     return h('div',{class:'body meta'},p.name+': '+text);
   }));
 },
@@ -127,7 +128,7 @@ stopPanel:function(){if(!ports.workspace)return api.operationLauncher('stop',nul
   const pending=!!held&&!held.selected_count||view.hostCommand&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S.lifecycle?.state);
   const names=projects.length+' registered projects';
   const host=projects[0]?.host||'unknown host',command=view.hostCommand||view.S.lifecycle;
-  const rows=projects.map(p=>h('div',{class:'body'},h('strong',null,p.name),h('div',{class:'meta'},view.S.service?.state!=='running'||p.alive!==true||p.service_pid!==view.S.service?.pid||p.host_instance!==view.S.service?.instance?'Process state unknown: service observation stale or from another generation.':Array.isArray(p.stop_progress)&&p.stop_progress.length?lines(p.stop_progress.map(k=>'#'+k.task+' '+k.rt+': '+k.state+(k.reason?' · '+k.reason:''))):'No stop acknowledgement; running or unknown work may remain.')));
+  const rows=projects.map(p=>h('div',{class:'body'},h('strong',null,p.name),h('div',{class:'meta'},view.S.service?.state!=='running'||p.alive!==true||p.service_pid!==view.S.service?.pid||p.host_instance!==view.S.service?.instance?'Process state unknown: service observation stale or from another generation.':Array.isArray(p.stop_progress)&&p.stop_progress.length?lines(p.stop_progress.map(k=>copyLabel.task(p.name,k.task)+' '+k.rt+': '+k.state+(k.reason?' · '+k.reason:''))):'No stop acknowledgement; running or unknown work may remain.')));
   return f(h('div',{class:'body'},'Stop on '+host+' · '+names),h('div',{class:'body meta'},'Only TaskQ-owned local work is targeted. Remote hosts and unrelated agents are unaffected. Dirty files and session references are retained; unsaved buffers and interrupted external effects may be lost. Automatic rollback to older releases is disabled.'),
     h('div',{class:'body'},h('strong',null,'Drain'),h('div',{class:'meta'},'Hold new admission and let current work finish. Retain autostart and the hold after service exit.')),h('button',{class:'project','data-a':'stop','data-root':root||'',disabled:!!(pending||!root||!view.S.stop_review?.instance)},'Confirm Drain'),
     h('div',{class:'body'},h('strong',null,'Full stop'),h('div',{class:'meta'},'Request cancellation now, including offline. Unknown termination stays fenced. Board reconciliation may keep the service alive.')),h('button',{class:'project','data-a':'stop-full','data-root':root||'',disabled:!!(pending||!root||!view.S.full_stop_review?.instance)},'Confirm Full stop'),
@@ -144,9 +145,9 @@ recoveryPanel:function(){if(!ports.workspace)return api.operationLauncher('recov
       h('div',{class:'body meta'},'Limits: '+(review.limits?.unknown||Object.entries(review.limits?.limits||{}).map(([k,v])=>k+' '+v).join(', ')||'unknown'),h('br'),'Access: '+((review.access||[]).map(a=>a.runtime+': '+(a.refused||a.effective||'unknown')).join('; ')||'unknown'))),
       review.rows.map(r=>{
         const draft=item.drafts?.[r.task]||{},blocked=!r.eligible||r.selected||item.pending||(review.pending||[]).some(q=>q.rows.some(s=>s.task===r.task));
-        return h('div',{class:'body',key:r.task},h('label',null,h('input',{type:'checkbox','data-recovery-task':r.task,'data-root':p.root,checked:!!draft.selected,disabled:!!blocked}),' #'+r.task+' '+(r.title||'Task')),h('div',{class:'meta'},(r.runtime||'unknown runtime')+' · '+(r.host||'unknown host')+' · '+(r.native_exit||'unknown'),h('br'),r.workspace?.state||'work unknown',r.blocker&&[h('br'),r.blocker],r.selected&&[h('br'),'Selected admission confirmed; running state is separate.']),h('details',{'data-view-key':'recovery-execution:'+p.root+':'+r.task},h('summary',null,'Execution details'),h('div',{class:'body meta'},'Execution '+(r.execution??'unknown')+' · revision '+(r.revision??'unknown')),h('a',{href:r.url||'#','data-url':r.url||''},'Inspect task and receipts ↗')),h('label',{class:'meta recovery-evidence'},'Reconciled effect outcomes',h('input',{type:'text',maxlength:'160','data-recovery-evidence':r.task,'data-root':p.root,'aria-label':'Effect evidence for task '+r.task,value:draft.evidence||'',disabled:!!blocked})));
+        return h('div',{class:'body',key:r.task},h('label',null,h('input',{type:'checkbox','data-recovery-task':r.task,'data-root':p.root,checked:!!draft.selected,disabled:!!blocked}),' '+copyLabel.task(p.name,r.task)+' '+(r.title||'Task')),h('div',{class:'meta'},(r.runtime||'unknown runtime')+' · '+(r.host||'unknown host')+' · '+(r.native_exit||'unknown'),h('br'),r.workspace?.state||'work unknown',r.blocker&&[h('br'),r.blocker],r.selected&&[h('br'),'Selected admission confirmed; running state is separate.']),h('details',{'data-view-key':'recovery-execution:'+p.root+':'+r.task},h('summary',null,'Execution details'),h('div',{class:'body meta'},'Execution '+(r.execution??'unknown')+' · revision '+(r.revision??'unknown')),h('a',{href:r.url||'#','data-url':r.url||''},'Inspect task and receipts ↗')),h('label',{class:'meta recovery-evidence'},'Reconciled effect outcomes',h('input',{type:'text',maxlength:'160','data-recovery-evidence':r.task,'data-root':p.root,'aria-label':'Effect evidence for '+copyLabel.task(p.name,r.task),value:draft.evidence||'',disabled:!!blocked})));
       }),
-      (review.pending||[]).map((q,i)=>h('button',{'data-a':'recovery-pending','data-root':p.root,'data-index':i,disabled:!!item.pending},'Reconcile saved selection #'+q.rows[0].task)),
+      (review.pending||[]).map((q,i)=>h('button',{'data-a':'recovery-pending','data-root':p.root,'data-index':i,disabled:!!item.pending},'Reconcile saved selection '+copyLabel.task(p.name,q.rows[0].task))),
       h('div',{class:'body meta'},'Confirm only when the evidence establishes the effects; native release remains mandatory. Current grants, limits and focus still apply. If the original host exit is verified, confirmation starts host supervision once.'),h('button',{'data-a':'recovery-apply','data-root':p.root,disabled:!!item.pending},'Confirm selected recovery')],
       item?.request&&!item.pending&&h('button',{'data-a':'recovery-reconcile','data-root':p.root},'Reconcile same selection'));
   }));
@@ -170,7 +171,7 @@ recoveryReceipt:function(r){
   item.pending=false;
   if(r.state==='review'&&Array.isArray(r.rows)){item.review=r;item.drafts={};item.readAt=view.S.now;item.notice='Review current evidence; nothing is selected.';}
   else if(r.state==='mixed'&&Array.isArray(r.receipts)){
-    item.notice=r.receipts.map(x=>'#'+x.task+': '+x.outcome+(x.reason?' · '+x.reason:'')).join('; ')+' · Mixed; unselected work stays held.'+(r.service?' Service: '+r.service.state+(r.service.reason?' · '+r.service.reason:''):'');
+    item.notice=r.receipts.map(x=>copyLabel.task(view.S.projects?.find(p=>p.root===r.root)?.name||'Board',x.task)+': '+x.outcome+(x.reason?' · '+x.reason:'')).join('; ')+' · Mixed; unselected work stays held.'+(r.service?' Service: '+r.service.state+(r.service.reason?' · '+r.service.reason:''):'');
     for(const receipt of r.receipts)if(receipt.outcome==='accepted'){const row=item.review?.rows.find(r=>r.task===receipt.task);if(row)row.selected=true;}
   }else item.notice=r.reason||'Recovery outcome unknown; reconcile the same selection.';
   present();return true;
@@ -219,7 +220,7 @@ back:function(){
   viewState.focus(prior.focus);
 },
 routeButton:function(route,label=routes[route]){return h('button',{class:'project','data-route':route},label);},
-answerSlot:function(t,compact){const label=t.state==='ask'?'Open question':'View agent';return h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision,...(compact&&{class:'compact-action',title:label+' #'+t.n,'aria-label':label+' #'+t.n})},compact?icon('messages-square'):[icon(t.state==='ask'?'messages-square':'terminal'),label]);},
+answerSlot:function(t,compact){const label=t.state==='ask'?'Open question':'View agent';return h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision,...(compact&&{class:'compact-action',title:label+' '+copyLabel.task(t.project||view.S.projects.find(p=>p.root===t.root)?.name||'Board',t.n),'aria-label':label+' '+copyLabel.task(t.project||view.S.projects.find(p=>p.root===t.root)?.name||'Board',t.n)})},compact?icon('messages-square'):[icon(t.state==='ask'?'messages-square':'terminal'),label]);},
 answerNotices:function(board){return startOperations.answerNotices(board);},
 answerToast:function(){return startOperations.answerToast();},
 tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,boardIdentity:require('./task-views.js').identity(p),key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
@@ -239,7 +240,7 @@ taskOrder:function(a,b){return require('./task-views.js').compare(a,b);},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
   if(!held.length)return '';
-  const label=held.length===1&&rows.length===1?'Start #'+held[0].n:'Start '+held.length+' held';
+  const label=held.length===1&&rows.length===1?'Start '+copyLabel.task(held[0].project,held[0].n):'Start '+held.length+' held';
   return h('button',{'data-a':'start','data-targets':JSON.stringify(held.map(({key,revision})=>({key,revision}))),disabled:held.some(api.startPending),title:label,'aria-label':label},icon('play'),h('span',null,label));
 },
 startPending:function(t){return startOperations.startPending(t.key.slice(0,t.key.lastIndexOf('/')),t);},
@@ -400,7 +401,7 @@ about:function(){
   const S=view.S,up=S.projects.find(p=>p.update&&p.update!==p.version),versions=new Map();
   for(const p of S.projects)versions.set(p.version||'version unknown',[...(versions.get(p.version||'version unknown')||[]),p]);
   // R31: equal versions form one group; installed, running and available versions stay apart
-  return f(api.heading('Versions and updates','info'),h('div',{class:'body'},'Tray installed '+(S.version||'version unknown')+' · '+S.host),[...versions].map(([v,ps])=>h('details',{class:'group','data-view-key':'version:'+v},api.disclosure('info',['Service '+v,h('span',{class:'meta'},' · '+ps.length+' project'+(ps.length===1?'':'s'))]),ps.map(p=>h('div',{class:'body meta'},p.name+' · '+(p.age==null?'status unknown':p.age_text+' old'))))),
+  return f(api.heading('Versions and updates','info'),h('div',{class:'body'},'Tray installed '+(S.version||'version unknown')+' · '+S.host),S.ui&&h('div',{class:'body meta'},'Interface '+S.ui.bundle+' · '+(S.ui.source==='adopted'?'adopted':'built in')+(S.ui.check_error?' · Last check failed: '+S.ui.check_error:'')),S.ui&&h('button',{class:'project','data-a':'ui-check'},'Check for interface update'),[...versions].map(([v,ps])=>h('details',{class:'group','data-view-key':'version:'+v},api.disclosure('info',['Service '+v,h('span',{class:'meta'},' · '+ps.length+' project'+(ps.length===1?'':'s'))]),ps.map(p=>h('div',{class:'body meta'},p.name+' · '+(p.age==null?'status unknown':p.age_text+' old'))))),
     h('div',{class:'body meta',role:'status'},up?'Update available: '+up.update:S.projects.some(p=>p.alive===true)?'No newer version reported':'Update check unknown'),update());
 },
 setup:function(){
@@ -738,7 +739,7 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const title=view.working?'Balancing':view.taskFilter?'Tasks':p?p.name:routes[view.page];
   // P-W4: the View window is one scroll of compact sections; Display, Save, Reset and Done stay in its footer.
-  const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'+(settingsPages.includes(view.page)||view.page==='projects'?' settings-content':'')},view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
+  const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'+(settingsPages.includes(view.page)||view.page==='projects'?' settings-content':'')},view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',copyLabel.node(view.S.version?'v'+view.S.version:'version unknown')),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
   // #1430: Preact keeps unchanged nodes, so a refresh leaves the textarea being typed in attached.
   renderer.render(tree,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
   view.drawn=true;
@@ -783,6 +784,8 @@ batch:function(updates){
   finally {if(!--batching&&staged){const args=staged;staged=null;if(complete){if(view.pressedAt!==null&&performance.now()-view.pressedAt<5000)view.stale=true;else present(...args);}}}
 },
 receive:function(s){
+  // #2365: a menu, Settings or View page with an open edit keeps its page until the next offer.
+  if(s.bundleAdopt){const active=document.activeElement,edit=active?.isContentEditable||active?.matches?.('textarea,input')||[...document.querySelectorAll('textarea,input:not([type=checkbox]):not([type=radio]):not([type=range])')].some(field=>field.value);if(!edit&&!view.confirming)send({a:'bundle-reload'});return;}
   if(Array.isArray(s.updates)){api.batch(s.updates);return;}
   if(s.notificationReceipt){notificationPanel.receive(s.notificationReceipt);return;}
   if(s.reportReceipt){reports.receive(s.reportReceipt);return;}
@@ -838,9 +841,12 @@ ui.listen(menu,'scroll',e=>{const c=e.target;if(c.classList?.contains('content')
 ui.listen(menu,'pointerdown',()=>{view.pressedAt=performance.now();});
 for(const event of ['pointerup','pointercancel'])ui.listen(window,event,release,true);
 ui.listen(window,'blur',release);
-ui.listen(window,'resize',()=>present());
+// Content height does not change on a native height acknowledgement; only width can reflow it.
+let fittedWidth=window.innerWidth;
+ui.listen(window,'resize',()=>{const width=window.innerWidth;if(width!==fittedWidth){fittedWidth=width;present();}else{api.stickyFilters();dashboard.place();}});
 // Press end.
 
+copyLabel.mount(menu);
 ui.listen(menu,'click',e=>{
   if(dashboard.click(e))return;
   const crumb=e.target.closest('a[data-route]');if(crumb){e.preventDefault();if(crumb.dataset.route!==view.page||view.working||view.taskFilter)navigate(crumb.dataset.route);return;}
@@ -848,7 +854,7 @@ ui.listen(menu,'click',e=>{
   if(e.target.closest('.qac,.rsc'))return;
   if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{const c=dashboard.criteria();if(view.page!=='home'){c.projects=id?[require('./task-views.js').identity(view.S.projects.find(p=>p.root===id))]:[];c.states=[state];navigate('home');}else dashboard.set({states:c.states.includes(state)?c.states.filter(s=>s!==state):[...c.states,state]});}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
-  const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
+  const b=e.target.closest('button,.task-target[role=button]');if(!b||b.disabled||b.getAttribute('aria-disabled')==='true')return;const d=b.dataset;
   if(notificationPanel.click(b))return;
   if(reports.click(b,view.S.projects))return;
   if(d.historyBin!==undefined){view.historyBin=d.historyBin;present();return;}

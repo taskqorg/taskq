@@ -40,6 +40,9 @@ for (const c of fx.cases) {
   assert(img > 0 && img < html.indexOf('<details'), html);
   assert(html.includes('href="https://g/-/project/1/uploads/s/f.png#upload=2"') && html.includes('side ↗</a>') && html.includes('bad ↗</a>') && !html.includes('javascript:'), html);
   assert(html.indexOf('>#1</a>') > html.indexOf('<details class="qac-context"'), 'links stay behind Details');
+  // #2363 A6: a card without a known project never shows a bare identifier.
+  assert(html.includes('>Board#7</a>'), html);
+  assert(card.render('b', row, card.fresh(row), {answer: true, project: 'alpha'}).includes('>alpha#7</a>'));
   console.log('PASS ask images');
 }
 // #1787: a labelled fixture option (the Russian card included) stays within § 2 limits, counted in characters, and

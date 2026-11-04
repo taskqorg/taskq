@@ -1,0 +1,12 @@
+release: 4.6.78
+contains 762d9db3: yes
+CLI telemetry: collecting · scope this-process · pid 37616 · at 2026-11-04 21:38 UTC
+CLI telemetry counts: lost 0 · failed batches 0 · timeouts unknown (not counted) · append none
+Service telemetry: collecting · scope this-process · pid 41960 · at 2026-11-04 21:38 UTC
+Service telemetry counts: lost 0 · failed batches 0 · timeouts unknown (not counted) · append avg 19685 us · max 1081907 us
+Telemetry store: database 307.1 MiB of 384.0 MiB · WAL file 0.4 MiB (live 0.3 MiB) of 64.0 MiB · budget within
+export --since 30m: ok, 16830 rows; legacy source read, 0 samples, recorded recovery gaps 1
+watch: Board: unknown (legacy import coverage unknown: 1 recorded recovery gap(s))
+taskq.log: 2552324 bytes; watching 150s
+window (42 new bytes): stall errors 0, legacy_offset errors 0, re-baselines 0
+verdict: PASS (no stalled legacy import, no repeated legacy_offset error)

@@ -26,6 +26,8 @@ const collapsed=views.normalize({...m,collapsed:[views.identity(a)]});assert.dee
 console.log('PASS O2/O3 canonical comparator, OR/project/search scope, migration, independent working views, Save/Reset/restart');
 
 // #1829 A3: navigation retains only the pin reference and verified-closure preference, never task truth.
+// #2363 A6: the displayed identifier is searchable. Risk: pasting a copied project#NNN finds nothing.
+assert(views.matches({title:'x',n:7,project:'shop'},'shop#7'),'displayed identifier matches search');
 const closedPin={ref:views.identity(a)+'#7',title:'Closed task',url:a.issues+'/7',closedSeen:123};
 assert.deepEqual(views.normalize({pins:[closedPin]}).pins,[closedPin]);
 assert.equal(views.normalize({pins:[{...closedPin,closedSeen:-1}]}).pins[0].closedSeen,undefined);

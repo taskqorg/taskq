@@ -37,7 +37,7 @@ block2 = "0.6"
 # tray notifications (§ 4, M14): already in the tree via objc2-app-kit
 objc2 = "0.6"
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "bitflags", "UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSApplication", "NSResponder", "NSWindow", "NSView", "NSControl", "NSButton", "NSFont", "NSFontDescriptor", "NSScreen", "NSMenu", "NSMenuItem", "NSEvent"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSApplication", "NSResponder", "NSWindow", "NSView", "NSControl", "NSButton", "NSFont", "NSFontDescriptor", "NSScreen", "NSMenu", "NSMenuItem", "NSEvent", "NSVisualEffectView"] }
 # shared icon renderer (§ 4): system-font digits through Core Text, already in the tree via tray-icon/wry
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 objc2-core-graphics = { version = "0.3", default-features = false, features = ["std", "CGPath"] }
