@@ -159,6 +159,9 @@ Mid-work quota waits for verified exit and same-session/account continuation, ne
 Owner weights, quota headroom and host spread: [contract detail](docs/design/capacity.md#owner-weights-and-quota-headroom); configuration and cutover: [§9](#9-config-and-cutover).
 ### Profiling
 Coreq always records actions; owned methods: bounded opt-in detail. UI/board/agent work; local store, optional sync. Follow [shared profiling](https://github.com/taskqorg/specq/blob/main/engineering/profiling.md); [detail][pf] owns coverage and qualification, recovery proof, selftest capture and limits.
+### Board request records
+A running service records its unrecorded board request counts to telemetry every 4 minutes and at each clean end, so `taskq profile` keeps the hour across a restart. A clean stop, restart or update handover loses no count; any other end (kill, crash, OS signal, power loss) loses at most the last 5 minutes.
+Each count is recorded once and recording sends no board request; the `requests 1h:` log and heartbeat counts stay hourly ([budget](docs/budget-1032.md#counting-format)).
 ### Host link
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
