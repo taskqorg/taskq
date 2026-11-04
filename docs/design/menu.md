@@ -187,9 +187,10 @@ tick; a window opened later receives it with its first snapshot.
   rereads that task.
 - No outbox and no replay: a failed answer keeps its draft with one Send button;
   nothing resends after a reconnect or restart. The store is memory only.
-- While any window is open the tray touches `<install>/menu-open` every tick; the
-  service then sleeps at most 15 s (§ 4 step 8). Board reads reuse ETags, so an
-  unchanged board costs no rate-limit requests.
+- While any window is visible and focused the tray touches `<install>/menu-open`
+  every tick; the service then sleeps at most 15 s (§ 4 step 8). A window in the
+  background keeps the normal pass, so it can show the stale line below. Board reads
+  reuse ETags, so an unchanged board costs no rate-limit requests.
 - Stale data: when a project snapshot is older than two poll intervals or missing,
   every window shows one line `Data from HH:MM` (the oldest observation time).
 - Telemetry: CoreQ operation `tray.sync` records each write's latency from request to

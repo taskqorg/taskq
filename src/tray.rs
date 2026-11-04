@@ -1692,9 +1692,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 }
                 let st = state(&install, &settings, dark, None, &adding, &mut sync);
                 seen_projects=st["projects"].clone();
-                // #1819: while any window is open the service polls the board every 15 s
-                let visible=|o:&Option<(Window,WebView)>|o.as_ref().is_some_and(|(w,_)|w.is_visible());
-                if visible(&ui) || visible(&workspace) || visible(&settings_window) || visible(&views_window) || detached.values().any(|(w,_,_)|w.is_visible()) {
+                // #1819, #2352: while any window is visible and focused the service polls the board every 15 s (M8)
+                let front=|w:&Window|w.is_visible() && w.is_focused();
+                let visible=|o:&Option<(Window,WebView)>|o.as_ref().is_some_and(|(w,_)|front(w));
+                if visible(&ui) || visible(&workspace) || visible(&settings_window) || visible(&views_window) || detached.values().any(|(w,_,_)|front(w)) {
                     crate::touch(&install.join("menu-open"));
                 }
                 if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));}

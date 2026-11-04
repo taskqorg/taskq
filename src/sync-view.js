@@ -11,7 +11,7 @@ clock:function(ms){const d=new Date(ms);return String(d.getHours()).padStart(2,'
 line:function(o){return o?(PHASES[o.phase]||o.phase)+(o.reason?': '+o.reason:''):'';},
 // 'Data from HH:MM' while a board read is older than two polls or missing; null while every read is fresh.
 // The read ages by status.json `age` plus its `tasks_age_seconds`; an idle service waits 3 polls, at most 15 s while a
-// window is open (taskq.md § 4 step 8).
+// window is visible and focused (taskq.md § 4 step 8).
 stale:function(S){
   let oldest=null,missing=false;
   for(const p of S?.projects||[]){
