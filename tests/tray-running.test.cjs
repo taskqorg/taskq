@@ -50,6 +50,14 @@ render([{...project,tasks:[...project.tasks,{n:12,executions:[execution(22,'mac'
 assert.equal(host('mac'),'3');assert.deepEqual(totals(),{Codex:'2',Claude:'1',Antigravity:'1'});
 assert(c.runningAgents().includes('antigravity: 0 workers · 1 reviewer'));
 module.exports={project};
+// R12: an unrelated error cannot turn a heartbeat already stale at collection time into historical idle.
+c.S.now=project.observed;
+render([{...project,error:'Invented unrelated failure',hosts:[{name:'never-observed',live:false,updated:690,age:310,age_text:'5m'}],tasks:[]}]);
+assert.equal(host('never-observed'),'?');assert.deepEqual(totals(),{Codex:'?',Claude:'?',Antigravity:'?'});
+for(const [ttl,age,expected] of [[300,300,'0'],[300,301,'?'],[60,60,'0'],[60,61,'?']]){
+ render([{...project,ttl,error:'Invented unrelated failure',hosts:[{name:'historical-boundary',live:false,updated:project.observed-age,age,age_text:'fixture'}],tasks:[]}]);
+ assert.equal(host('historical-boundary'),expected,'historical heartbeat uses the source TTL inclusive boundary');
+}
 // #2351 A4/M14: one recovered idle project cannot erase a dated multi-project total.
 const outage=require('./fixtures/errors.js')({});
 c.S.host=outage.fresh.host;

@@ -455,7 +455,7 @@ runningAgents:function(compact=false){
       const age=Number.isFinite(h.age)?h.age:null,host=add(h.name,stale);
       host.beat=true;host.beatLive ||= h.live===true;host.live ||= h.live===true&&!stale;
       if(age!==null&&(host.age===null||age<host.age))Object.assign(host,{age,age_text:h.age_text});
-      if(p.error&&read&&elapsed!==null&&Number.isFinite(p.observed)&&Number.isFinite(h.updated)&&h.updated<=p.observed&&!historical.has(h.name))historical.set(h.name,{counts:new Map(),at:h.updated});
+      if(p.error&&read&&elapsed!==null&&Number.isFinite(p.observed)&&Number.isFinite(h.updated)&&h.updated<=p.observed&&p.observed-h.updated<=(p.ttl||300)&&!historical.has(h.name))historical.set(h.name,{counts:new Map(),at:h.updated});
     }
     for(const t of Array.isArray(p.tasks)?p.tasks:[]){
       if(t.executions!=null&&!Array.isArray(t.executions))partial=true;

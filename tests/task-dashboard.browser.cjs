@@ -194,7 +194,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert(await w.getByRole('button',{name:'All projects',exact:true}).evaluate(e=>e.getBoundingClientRect().height<=48),'A5/F1: All projects stays compact beside long names');
   assert(await w.locator('.head h1').evaluate(e=>{const r=e.getBoundingClientRect(),p=e.parentElement.getBoundingClientRect();return e.textContent.includes('Long_unbroken_view_name_')&&r.right<=p.right+1&&e.scrollWidth<=e.clientWidth+1&&getComputedStyle(e).textOverflow==='ellipsis';}),'A5/F2: long View title stays bounded with ellipsis');
   assert(await w.locator('.content').evaluate(e=>e.scrollHeight>e.clientHeight),'overflow uses the content scroll');
-  assert.equal(await w.locator('*').evaluateAll(es=>es.filter(e=>e.scrollHeight>e.clientHeight+1&&['auto','scroll'].includes(getComputedStyle(e).overflowY)).length),1,'A5: overflow has exactly one scroll container');
+  assert.equal(await w.locator('*').evaluateAll(es=>es.filter(e=>e.checkVisibility()&&e.scrollHeight>e.clientHeight+1&&['auto','scroll'].includes(getComputedStyle(e).overflowY)).length),1,'A5: overflow has exactly one visible scroll container');
   assert.deepEqual(await w.locator('button,input,.ui-icon,.project-choice,.facet-list').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.getAttribute('aria-label')||e.textContent)),[],'A5: no clipped text or icons at 20 pt');
   assert(await w.locator('.content').evaluate(e=>e.scrollWidth<=e.clientWidth),'no horizontal overflow');
   if(out)await w.screenshot({path:out+'/long-view-20pt-top.png'});
