@@ -50,3 +50,11 @@ For an API key, the owner pipes the key on the host: `printenv OPENAI_API_KEY | 
 Run `taskq agents` and `taskq service status` on the host. The runtime shows `logged in`, the account, the kind and, for Codex, a fresh `refreshed` time. Within 5 minutes the next probe clears `login <rt> off` from the heartbeat and the runtime admits tasks again. For Codex on Linux, check again after a day that `refreshed` moved and the runtime still reads `logged in`.
 
 Evidence for a PR or task names the host, runtime, kind and the time of the readback. It never carries the account e-mail, a token, a code or a key.
+
+## Add an account to a host
+
+The PM gives each account one login per host, ahead of need, so a later switch needs no login.
+
+1. On the host, as the service user, in a visible session (section 2): `taskq accounts add <runtime> <label>`.
+2. The owner signs in through the printed link or device code. The PM copies the code nowhere else.
+3. On the host, read back `taskq accounts`: the row shows the new label and an `id`. An `id` already listed on this host for that runtime means the owner signed in to the wrong or a duplicate account; disable the new label and report it.

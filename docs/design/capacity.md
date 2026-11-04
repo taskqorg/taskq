@@ -265,7 +265,7 @@ Detail of [taskq.md § 3 Runtime accounts](../../taskq.md#runtime-accounts); it 
 - A home starts empty. TaskQ never copies `auth.json`, credentials, config or settings between hosts or homes. A Codex account home has no `config.toml` of the owner, so Codex runs with its defaults plus the TaskQ arguments; a Claude account home holds its own workspace trust (unverified, R12). The macOS worker profile denies writes to `*.toml` in a Codex account home as in `~/.codex`.
 - `<install>/accounts-state.json` is the service's own record per runtime and label: `{"limited": <board epoch>, "until": <reported reset epoch or null>}`. The limit ends at `until`, else 30 minutes after `limited` (the usage-limit probe). The record is host-wide: every project service of the host reads and writes it.
 
-**Choice.** The active account of a runtime is the first enabled account whose limit has ended. A new worker or reviewer start (not a resume) of `claude` or `codex` takes the active account, and writes `{"type": "taskq.account", "account": "<label>"}` to its attempt log right after the `taskq.rules` line. The child gets `CODEX_HOME` or `CLAUDE_CONFIG_DIR` of that home; `default` keeps the service's own value, including an absent variable. Login probes use the same environment as launch/resume; they never synthesize `CLAUDE_CONFIG_DIR=~/.claude` for an implicit default. A resume, a recovery, a Claude background-session observation or stop, and a transcript read use the account the attempt log names; a log without that line uses `default`. So a policy change or a failover never moves a running worker. A runtime whose accounts are all disabled admits nothing on this host: capacity and admission reason `capability` (`<rt>: every account disabled on this host`), from the fixed #1616 vocabulary.
+**Choice.** The active account of a runtime is the [best-ranked](#account-usage-and-fleet-policy) enabled account whose limit has ended; without fresh usage or fleet policy that is the first in list order. A new worker or reviewer start (not a resume) of `claude` or `codex` takes the active account, and writes `{"type": "taskq.account", "account": "<label>"}` to its attempt log right after the `taskq.rules` line. The child gets `CODEX_HOME` or `CLAUDE_CONFIG_DIR` of that home; `default` keeps the service's own value, including an absent variable. Login probes use the same environment as launch/resume; they never synthesize `CLAUDE_CONFIG_DIR=~/.claude` for an implicit default. A resume, a recovery, a Claude background-session observation or stop, and a transcript read use the account the attempt log names; a log without that line uses `default`. So a policy change or a failover never moves a running worker. A runtime whose accounts are all disabled admits nothing on this host: capacity and admission reason `capability` (`<rt>: every account disabled on this host`), from the fixed #1616 vocabulary.
 
 **Quota windows (R9/R12/R13).** The record retains `limited`/`until` as the most restrictive aggregate for older readers, plus a `windows` array with observed `window`, `limited` and `until`. Independent five-hour/weekly windows remain independent; unknown type/reset stays `unknown`/null. Claude structured rate-limit metadata and Codex structured window facts are read at the existing runtime boundary; AgentQ still classifies native errors, including Antigravity. No text inference invents a reset. Antigravity observes only its native default account; named login commands stay Claude/Codex-only.
 
@@ -287,6 +287,40 @@ Heartbeat `quota <runtime> account <label> window <name> until|probe <UTC>` rows
 - The writes act on this host only and are refused under a worker or reviewer (`TASKQ_ROLE`). They never read or print a token value.
 
 The service login probe and `taskq agents` keep reading the `default` home ([runtime login](#runtime-login)).
+
+### Account usage and fleet policy
+
+Detail of [taskq.md § 3 Runtime accounts](../../taskq.md#runtime-accounts) (R1, R11, R12).
+
+**Identity.** The account fingerprint `id` is the first 8 hex digits of SHA-256 over the provider's lowercased account email or account id, read by the home's native probe. The label stays local to its host: `tight` on two hosts or `default` on two hosts prove nothing. Hosts share an account when their `id` matches. A probe that names no identity leaves the id unknown; the row is not merged with any other host.
+
+**Poll.** Every 120 s the host polls each enabled account of `claude` and `codex` once, independent of project count, under the host account lock. Codex uses `codex app-server` `account/rateLimits/read` with that home's `CODEX_HOME`. Claude reads the home's OAuth access token read-only and calls `https://api.anthropic.com/api/oauth/usage`; on macOS a read that would prompt counts as a failure. Polls never refresh a token, write a login file, or send, log or print a token. An expired token, a refused call or a changed response shape is `unknown` with its reason; the runtime's own use refreshes the login. Antigravity stays unpolled.
+
+Each window result is an observation in `quota-headroom.json`, the existing store and 300 s expiry, so `Balancing` needs no new input. A poll never clears a quota record or hold: only a reported reset or the existing probe does.
+
+**Heartbeat.** One row per polled window, or one `unknown` row per failing account:
+
+```text
+limit <rt> <label> id <id|-> window <name> used <0-100> reset <UTC|-> at <UTC>
+limit <rt> <label> id <id|-> unknown <reason>
+```
+
+Percent is a whole number. A changed `limit` row never forces a heartbeat write; rows travel with the periodic write. Older readers ignore the prefix. An observed account is the freshest row per runtime and `id` across this host and trusted fresh heartbeats of the same board, so a limit used on one host ranks that account down on the others.
+
+**Ranking.** Among enabled accounts whose limit has ended and that policy does not `avoid`, take the first group with a member:
+
+1. The `use` account of the runtime.
+2. Fresh remaining at or above the floor, greatest first. Remaining is the smallest window's remaining percent.
+3. Unknown remaining, in list order.
+4. Fresh remaining below the floor, greatest first.
+
+Ties keep list order. Host.json `account_floor` is an integer 0..100, default 15; owner-only like `weights`. The floor leaves room for attempts that keep running on the account; it never refuses admission. Only the existing quota hold stops a runtime when every account is limited. The switch record reports a ranking change with reason `usage`, or `fleet` for policy.
+
+**Fleet policy.** `taskq accounts fleet use|avoid|clear <runtime> <id>` writes `taskq: account <use|avoid|clear> <runtime> <id>` to the board's one issue labelled `taskq-accounts`; the command creates that issue when absent. Entries fold in comment-id order per runtime and id. `use` replaces the runtime's earlier `use`; `clear` removes either. It is refused under `TASKQ_ROLE`, like every accounts write.
+
+A host reads policy only from the board its DashQ connection approved ([speaking project](host-link.md#contract-detail)), because one account list serves all its boards. No connection or an unreadable issue keeps the host's local ranking and says so. A `use` for an id the host has no home for is `policy unmet`, visible in status and as heartbeat line `account-policy unmet <rt> <id>`; `avoid` of the host's every account admits nothing, like every account disabled. `taskq accounts` shows `id`, usage, reset and the policy state per row.
+
+**Logins.** A switch never logs in. Each account gets one native login per host in advance through `taskq accounts add` and [re-login](../relogin.md#add-an-account-to-a-host): every login holds its own token chain. Copying, brokering or relaying a login stays refused, since Codex refresh tokens are single-use and reuse kills the chain.
 
 ### Antigravity availability
 
