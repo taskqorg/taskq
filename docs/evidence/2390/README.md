@@ -4,6 +4,8 @@ Task #2390 finishes #2365 live A2. R8 and R12 keep source, native and temporal p
 
 **Status: A1, A2, A3 and A5 have evidence. A4 is partial on WebView2. The composer attachment was not exercised, and the visible reading row moved.** All times are UTC on 2026-11-04.
 
+A4 retest in progress under PM decision `pm-2390-retest-a4-not-waive`. The sections below describe the first run. The retest baseline is in `retest-baseline.json`, and the picker findings are in `retest-picker.md`.
+
 ## A1 Baseline
 
 `baseline.json` holds the observation from 19:59:19.
