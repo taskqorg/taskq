@@ -30,5 +30,5 @@ const loaded=structuredClone(fx.projects[0]),broken={...structuredClone(loaded),
 c.S={...c.S,projects:[loaded,broken],display:{...fx.display,all:{...fx.display.all,partial:['Broken']}}};c.page='home';
 const mixed=c.filteredTasks(null);
 assert(mixed.includes('All tasks '+loaded.tasks.filter(t=>t.state!=='closed').length),'loaded task total stays visible');
-assert(mixed.includes('Broken: no access to the repository'),'failed source names its cause');
+assert(c.errors().includes('no access to the repository')&&c.errors().includes('Broken'),'failed source names its cause in the shared header');
 assert(!mixed.includes('Partial: refresh the affected project or open its Board.'));

@@ -4,9 +4,10 @@ module.exports=execution.module('errors',{
  retain:function(S,previous){
   if(!previous)return S;
   return {...S,projects:S.projects.map(p=>{
-   const prior=previous.projects?.find(q=>q.root===p.root&&q.issues===p.issues);
+   const prior=previous.projects?.find(q=>q.root===p.root&&(!p.issues||q.issues===p.issues));
    if(!prior||p.complete===true&&p.alive!==false)return p;
    const retained={...p};
+   if(!p.issues){retained.issues=prior.issues;retained.board_kind=prior.board_kind;}
    for(const field of ['tasks','hosts']){const incoming=Array.isArray(p[field])?p[field]:[],identity=r=>field==='tasks'?r.n:r.name,seen=new Set(incoming.map(identity));retained[field]=[...incoming,...(prior[field]||[]).filter(r=>!seen.has(identity(r)))];}
    if(!Number.isFinite(p.observed)&&Number.isFinite(prior.observed)){retained.observed=prior.observed;if(!Number.isFinite(p.tasks_age_seconds))retained.tasks_age_seconds=(prior.tasks_age_seconds||0)+Math.max(0,S.now-previous.now);}
    return retained;
