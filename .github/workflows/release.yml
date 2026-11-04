@@ -1,4 +1,6 @@
-# § 8 Release: a live push (a fast-forward to a tested main commit) tags the next unused vX.Y.Z on that commit
+# § 8 Release: merged main, live or tag pushes require exact-source CI before tagging or builds.
+# Automatic main sources already included in the latest published release are skipped.
+# A live push (a fast-forward to a tested main commit) tags the next unused vX.Y.Z on that commit
 # (.github/release-tag.sh; a GITHUB_TOKEN tag starts no run), opens a draft release and stamps the version into the
 # build; no version commit. Each OS publishes alone as soon as its build is attested and the exact-source tests pass
 # (.github/release-publish.sh): its binary, then SHA256SUMS and latest.json merged with the other OSes'; the first
@@ -10,14 +12,16 @@ name: release
 on:
   push:
     tags: ['v*']
-    branches: [live]
+    branches: [main, live]
 permissions:
   contents: read
 concurrency:
   group: release
+  queue: max
   cancel-in-progress: false
 jobs:
   tag:
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -43,8 +47,6 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$TAG" --generate-notes
   checks:
-    needs: tag
-    if: needs.tag.outputs.tag
     runs-on: ubuntu-latest
     timeout-minutes: 16
     permissions:
