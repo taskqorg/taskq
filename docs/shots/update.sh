@@ -43,6 +43,7 @@ version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$src/Cargo.toml" | head -n1)
 
 exe=$tmp/taskq
 if [ -n "$bin" ]; then
+  case "$ref" in v[0-9]*) version=${ref#v} ;; esac
   [ -f "$bin" ] || fail binary "$bin does not exist"
   cp "$bin" "$exe" && chmod +x "$exe"
   binsha=$(sha "$exe")
@@ -62,7 +63,7 @@ else
   cp "$built" "$exe" && quiet "$exe" sign-local "$exe" || fail build "signing the build copy failed"
   origin=build
 fi
-[ "$("$exe" --version 2>>"$log")" = "$version" ] || fail binary "binary version is not $version, the Cargo.toml version at $commit"
+[ "$("$exe" --version 2>>"$log")" = "$version" ] || fail binary "binary version is not $version, the expected version for $ref at $commit"
 
 scale=$(osascript -l JavaScript -e 'ObjC.import("AppKit"); $.NSScreen.mainScreen.backingScaleFactor' 2>/dev/null || echo unknown)
 case $scale in [0-9]*) ;; *) scale=unknown ;; esac
@@ -107,7 +108,7 @@ m, d = json.load(open(sys.argv[1])), pathlib.Path(sys.argv[2])
 m['images'] = [{'file': p.name, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(d.glob('*.png'))]
 json.dump(m, sys.stdout, indent=2); print()
 PY
-# The current check.sh verifies the stage against REF: README links, image hashes and PNGs, sources, version.
+# The current check.sh verifies the stage against REF: README links, image hashes and PNGs, sources and capture inputs.
 cp docs/shots/check.sh "$src/docs/shots/check.sh"
 rc=0; (cd "$src" && quiet docs/shots/check.sh "$stage") || rc=$?
 quiet git -C "$src" checkout -q -- docs/shots/check.sh

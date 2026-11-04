@@ -34,7 +34,7 @@ stub gh <<'EOF'
 #!/bin/sh
 echo "gh $*" >> "$STUB_DIR/calls"
 case "$1 $2" in
-  'release download') while [ "$1" != --dir ]; do shift; done; printf '%s\n' "$STUB_SUMS" > "$2/SHA256SUMS" ;;
+  'release download') [ "$3" = "${STUB_RELEASE_TAG:-v1.2.3}" ] || exit 1; while [ "$1" != --dir ]; do shift; done; printf '%s\n' "$STUB_SUMS" > "$2/SHA256SUMS" ;;
   'attestation verify') exit "${STUB_ATTEST:-0}" ;;
 esac
 EOF
@@ -121,4 +121,12 @@ failed 'attestation failure' attestation STUB_SUMS="$sum  taskq-1.2.3-macos-aarc
 rc=0; STUB_SUMS="$sum  taskq-1.2.3-macos-aarch64" docs/shots/update.sh v1.2.3 --bin "$t/release-taskq" --publish > "$t/out" 2> "$t/err" || rc=$?
 if [ "$rc" = 0 ] && grep -q '"binaryOrigin": "release v1.2.3"' $m && grep -q "\"binarySha256\": \"$sum\"" $m && docs/shots/check.sh 2>/dev/null
 then ok 'verified release binary publishes'; else no "release binary: exit $rc $(cat "$t/err")"; fi
+# Release tags advance without changing Cargo.toml; checksums and --version must follow the requested tag.
+git tag v1.2.4
+: > "$t/calls"
+rc=0; STUB_RELEASE_TAG=v1.2.4 STUB_VERSION=1.2.4 STUB_SUMS="$sum  taskq-1.2.4-macos-aarch64" \
+  docs/shots/update.sh v1.2.4 --bin "$t/release-taskq" --publish > "$t/out" 2> "$t/err" || rc=$?
+if [ "$rc" = 0 ] && grep -q 'gh release download v1.2.4 ' "$t/calls" &&
+   grep -q '"version": "1.2.4"' $m && grep -q '"binaryOrigin": "release v1.2.4"' $m && docs/shots/check.sh 2>/dev/null
+then ok 'release tag overrides Cargo.toml for verification and manifest'; else no "release tag: exit $rc $(cat "$t/err")"; fi
 exit $fails

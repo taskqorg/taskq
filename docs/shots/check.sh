@@ -2,8 +2,8 @@
 # Check of the README screenshots (docs/design/readme-plan.md, Images and acceptance; taskq.md R12): `check.sh [DIR]`,
 # DIR defaults to docs/shots. Exit 1, broken (CI fails): the manifest is missing or malformed JSON, a UI source is not in
 # HEAD, an image it lists is missing, is not a PNG or does not match its sha256, or README.md references an image it
-# lacks. Exit 2, stale (CI warns; the README shots workflow refreshes): a UI source blob, a capture input or the
-# Cargo.toml version differs from the manifest. Sources, inputs and version are read from HEAD, not the working tree,
+# lacks. Exit 2, stale (CI warns; the README shots workflow refreshes): a UI source blob or capture input differs
+# from the manifest. Sources and inputs are read from HEAD, not the working tree,
 # so a squash merge dropping sourceCommit and line-ending conversion change nothing. docs/shots/update.sh runs it on
 # its staged set and requires exit 0.
 set -eu
@@ -43,10 +43,6 @@ for f in INPUTS:
     data = git('cat-file', 'blob', f'HEAD:{f}')
     if data is None or man.get('captureInputs', {}).get(f) != hashlib.sha256(data).hexdigest():
         stale.append(f'capture input {f} differs from the manifest')
-version = re.search(r'^version = "(.*)"', (git('show', 'HEAD:Cargo.toml') or b'').decode(), re.M)
-version = version and version.group(1)
-if man.get('version') != version:
-    stale.append(f'manifest version {man.get("version")} is not the Cargo.toml version {version}')
 images = {i.get('file'): i.get('sha256') for i in man.get('images', [])}
 for name, want in images.items():
     p = d / str(name)
