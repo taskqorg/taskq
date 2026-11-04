@@ -886,6 +886,12 @@ impl Board for GitHub {
             if pr["head"]["sha"].as_str().ok_or_else(|| format!("{name} cancellation head unknown"))? != sha { return Ok(()); }
             return self.dequeue(pr["node_id"].as_str().ok_or_else(|| format!("{name} cancellation PR id unknown"))?).map_err(|e| format!("{name}: {e}"));
         }
+        // #2347: a result with no task PR, open or merged, has nothing in publication; only a merged one needs a look first
+        if prs.is_empty() {
+            let closed = self.api.call("GET", &format!("/pulls?head={owner}:taskq-{n}&state=closed"), None)?.json()?;
+            let closed = closed.as_array().ok_or("cancellation PR list unknown")?;
+            if closed.iter().all(|p| p["merged_at"].is_null()) { return Ok(()); }
+        }
         if prs.len() != 1 { return Err("publication PR absent or ambiguous; verify merge before cancelling".into()); }
         if prs[0]["head"]["sha"].as_str().ok_or("cancellation head unknown")? != sha { return Ok(()); }
         self.dequeue(prs[0]["node_id"].as_str().ok_or("cancellation PR id unknown")?)

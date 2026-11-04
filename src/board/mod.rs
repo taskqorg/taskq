@@ -2554,6 +2554,20 @@ exit 0
         }
     }
 
+    // #2347 defect: a proof task's result had no PR at all, so `later` was refused and the blocked task could never leave.
+    // Retained: a merged task PR still refuses, a failed read still refuses.
+    #[test]
+    fn cancelling_a_publication_with_no_task_pr_has_nothing_to_dequeue() {
+        for (closed, ok) in [(json!([]), true), (json!([{"merged_at": null}]), true), (json!([{"merged_at": "2026-11-04T00:00:00Z"}]), false), (json!({"message": "boom"}), false)] {
+            let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+                let value = if url.contains("state=closed") { closed.clone() } else if url.contains("/pulls?") || url.contains("/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
+                Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+            }));
+            let result = h.cancel_publication(1, &"a".repeat(40));
+            assert_eq!(result.is_ok(), ok, "{result:?}");
+        }
+    }
+
     // Chain: section 7 close without merge -> dequeue, one comment, unmerged close; merged/unknown PRs stay untouched.
     #[test]
     fn github_task_close_closes_its_open_pr_once_and_keeps_the_branch() {
