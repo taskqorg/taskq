@@ -18,14 +18,14 @@ for(const [name,updates] of [
  ['stale line',[snapshot([{...project('Alpha',[task]),tasks_age_seconds:121}]),snapshot([project('Alpha',[task])])]],
  ['pending readback',[snapshot([project('Alpha',[{...task,sync:{phase:'sending'}}])]),snapshot([project('Alpha',[{...task,state:'review',revision:2}])]),{viewStateError:null}]],
 ]){
- let now=-5000;const frames=[],timers=[],context={performance:{now:()=>now},setTimeout:f=>(timers.push(f),timers.length),clearTimeout(){},send(){},render(){frames.push({at:now,body:html(app.home()),rows:rows(app.home())});}};
+ let now=-5000;const frames=[],timers=[],context={performance:{now:()=>now},setTimeout:f=>(timers.push(f),timers.length),clearTimeout(){},send(){},render(){frames.push({at:now,body:html([app.head(),app.home()]),rows:rows(app.home())});}};
  const app=install(context);app.receive(snapshot([project('Alpha',[task])]));const initial=frames.pop();
  // The compatibility replay is the pre-fix native path: separate receive calls publish each intermediate fit.
  now=100;const deliver=app.batch?values=>app.receive({updates:values}):function(values){values.forEach((value,i)=>{now=100+i*1000;app.receive(value);});};deliver(updates);
  const active=new Map(initial.rows.map(row=>[row,initial.at]));
  for(const frame of frames){const next=new Set(frame.rows);for(const [row,born] of active)if(!next.has(row)){assert(frame.at-born>=2000,name+': row vanished without input after '+(frame.at-born)+' ms: '+row.slice(0,100));active.delete(row);}for(const row of next)if(!active.has(row))active.set(row,frame.at);}
  assert.equal(frames.length,1,name+': a refresh must publish only its complete view');
- assert.equal(frames[0].body,html(app.home()),name+': publication must contain the settled view');
+ assert.equal(frames[0].body,html([app.head(),app.home()]),name+': publication must contain the settled view');
  assert.doesNotMatch(frames[0].body,/Invented incomplete read|Data from |Sending/);
  // R12: a settled unknown result stays visible; batching never turns failure into healthy data.
  const bad=snapshot([{...project('Alpha',[task]),complete:false,error:'Invented persistent failure',tasks_age_seconds:121}]);

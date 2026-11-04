@@ -242,6 +242,7 @@ Balancing requires every board host to adopt compatible readers before routing f
 ## Product
 Looks/sound: one line each (R13).
 - Home: current work, unresolved questions. Communication: [Notifications](docs/design/menu.md#m14-notifications). Read/clear changes no task state.
+- Errors and service notices use one steady header icon and deduplicated list in tray and Conversations; failed reads retain aged last-known data ([attention](docs/design/menu.md#errors-and-service-notices)). R6/R12 freshness and action gates still bind.
 - One [Conversations](docs/design/reports.md) entrance shows independent canonical-thread New and Needs me counts; current content leads grouped history, scoped paging is bounded, and ordinary completions need no Accept.
 - [Promo A](docs/video-experiments/planning-802/approval.md).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 first, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
