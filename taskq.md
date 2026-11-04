@@ -219,6 +219,10 @@ Brief names an existing contract; forbids searching `/` or `~`; tray folder acce
 N-1 reads op-id/revision as text, ignores `gate`/`approve`; `needs-gate` blocks its spawns, not owner close. N-1 parses only local `Depends on #N`: cross-repo dependencies stay held (`add`) until every board host supports them, then start (CHANGELOG Board). Otherwise hosts update independently.
 ### Project attachment
 `service install` preflights wake/lock eligibility and board access without implicit login, token copy or grants; `--cancel ID` reconciles an exact unused attachment; unknown execution refuses removal: [project attachment](docs/design/host-service.md#project-attachment).
+### UI bundle
+Tray and Conversations pages ship as a versioned bundle a running tray adopts without binary update, service restart or worker interruption; native windows, icon, notifications, IPC bridge and service stay in the binary. Published from `ui-live`, never a hosted site; trust is CoreQ R11, checksums only.
+The bundle's bridge integer must equal the binary's, or the tray keeps its copy. A wrong checksum, wrong bridge or failed start falls back to the previous good or embedded copy with a visible reason; a fresh offline install opens the embedded copy. Adoption reuses the safe Conversations Reload: nothing in flight replays.
+Windows load only the adopted bundle's pages: other navigation is refused and never reaches the bridge. New display logic belongs in the bundle: [UI bundle](docs/design/ui-bundle.md#contract-detail).
 ### Install and signing
 Target, not in force until its installer tasks ship (R8, R12): one-click install per OS and one signing step that every install and update verifies, signs and checks: [install and signing](docs/design/setup-and-project-locations.md#install-and-signing).
 ## 9. Config and cutover

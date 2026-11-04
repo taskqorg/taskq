@@ -24,7 +24,7 @@ module.exports=execution.module('conversations',{
  create:function({window,document,menu,draw,navigate,onSelect,checkpoint=()=>{}}){
   let snapshot={},launchDefaults=null,catalogEpoch=-1,hydrated=false,navigated=false,items=[],selected=null,list='recent',search='',selection={},scrolls={},listOnly=false,focusDraft=false,focusSearch=false,searchOpen=false,undo=null,notices={},failure=null,preview=null,confirmDelete=false;
   let taskPins=[],sidebar={pins:[],collapsed:[],archived:{}},sidebarPending=null,revealed=null,activityRead=null,activityTimer=null,activityTimes={},activityChecks={};
-  let focuses={},readerIdentity=null,layoutFrame=null,correcting=false,scrollIntent=null,scrollIntentTimer=null,dragScroll=false,sidebarEpoch=0,sidebarProjection=null,stableOrder=new Map(),stableGroups=new Map(),modeCounts={},pageSelected=null,listObserver=null,listObservedRoot=null,listAnchor=null,listReveal=null;
+  let focuses={},readerIdentity=null,readerPending=null,layoutFrame=null,correcting=false,scrollIntent=null,scrollIntentTimer=null,dragScroll=false,sidebarEpoch=0,sidebarProjection=null,stableOrder=new Map(),stableGroups=new Map(),modeCounts={},pageSelected=null,listObserver=null,listObservedRoot=null,listAnchor=null,listReveal=null;
   let resultFilter='all',sidebarItems=[],resultPages=new Map(),scopeReturn=null,completed=null,readerResize=null,appliedTarget=null;
   const closedViews=new Map(),historyViews=new Map(),textPages=new Map(),nativeSources=new Map(),imageFailures=new Map(),recordBytes=new WeakMap(),taskBodies=new Map(),taskReads=new Map();let taskSelected=null;
   let recoveryQueue=[],recoveryDrafts=[];
@@ -815,7 +815,7 @@ module.exports=execution.module('conversations',{
      // Native layout/clamping scrolls are not user navigation; only input or an explicit instrument updates the anchor.
      if(e.isTrusted&&(correcting||!scrollIntent&&!dragScroll))return;
      if(scrollIntent==='wheel'||scrollIntent==='focus')scrollIntent=null;
-     if(!e.target.querySelector('.dialogue-transcript')){const a=api.mark(e.target);api.place(e.target.parentElement.dataset.threadId||selected,a?.board?api.boardPosition(a):Math.round(e.target.scrollTop));api.nav();return;}
+     if(!e.target.querySelector('.dialogue-transcript')){readerPending=null;const a=api.mark(e.target);api.place(e.target.parentElement.dataset.threadId||selected,a?.board?api.boardPosition(a):Math.round(e.target.scrollTop));api.nav();return;}
      if(live?.thread===selected){const was=live.stick;if(e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight>=24)live.stick=false;live.anchor=api.mark(e.target);const a=live.anchor&&live.items.find(i=>api.key(i)===live.anchor.key);api.place(selected,live.stick?undefined:live.anchor?.board?{key:live.anchor.key,y:Math.round(live.anchor.y)}:!a?undefined:{attempt:live.attempt,at:a.at,i:a.i,y:Math.round(live.anchor.y),...(live.source?{g:live.source}:{}),...(live.anchor.part!==undefined?{part:live.anchor.part}:{})});api.nav();api.edge(e.target,live);if(was!==live.stick)draw();return;}
      if(view?.id!==selected||view.end===null||!view.items.length)return;
      // Q-A3/A4: a reader at the end of a window that holds the file end follows; anywhere else keeps its record anchor
@@ -848,7 +848,10 @@ module.exports=execution.module('conversations',{
     const row=menu.querySelector('.conversation-row[aria-current=page]');if(row&&!row.checkVisibility()){const group=row.closest('details[data-notification-group]');if(group)group.open=true;}
     const body=api.current();api.bodyRead(body);api.grow();
     const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current(),identity=detail?.parentElement.dataset.threadId,changed=identity!==readerIdentity;readerIdentity=identity;
-    if(changed&&detail&&!log){const p=positions[identity];if(typeof p==='number'&&detail.scrollTop!==p)detail.scrollTop=p;else if(!p&&detail.scrollTop!==0)detail.scrollTop=0;}
+    // #2365 A4: a lazy draft has no height until its body arrives; its saved position waits for that instead of staying clamped at the top.
+    if(changed)readerPending=null;
+    if(changed&&detail&&!log){const p=positions[identity];if(typeof p==='number'&&detail.scrollTop!==p){detail.scrollTop=p;if(Math.abs(detail.scrollTop-p)>=1)readerPending=p;}else if(!p&&detail.scrollTop!==0)detail.scrollTop=0;}
+    else if(readerPending!==null&&detail&&!log){detail.scrollTop=readerPending;if(Math.abs(detail.scrollTop-readerPending)<1)readerPending=null;}
     if(log&&open)api.open(open);
     api.observe(detail);api.layout(true);
     const target=positions[selected]?.target,token=selected+JSON.stringify(target);if(detail&&target&&token!==appliedTarget){const node=target.kind==='question'?[...detail.querySelectorAll('[data-question]')].find(n=>Number(n.dataset.question)===target.revision):target.kind==='event'?[...detail.querySelectorAll('[data-event]')].find(n=>n.dataset.event===target.id):live?.attempt===target.attempt&&live.source===target.generation?detail.querySelector('[data-key="'+api.key(target)+'"]'):null;if(node){if(live){live.stick=false;live.anchor={key:node.dataset.key||node.dataset.readingKey,board:!node.dataset.key,y:0};}detail.scrollTop+=node.getBoundingClientRect().top-detail.getBoundingClientRect().top;appliedTarget=token;}}

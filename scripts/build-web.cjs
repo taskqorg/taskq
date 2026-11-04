@@ -23,3 +23,12 @@ for(const name of ['tray','workspace']){
  if(/\{\{[A-Z_]+\}\}/.test(page))throw Error('Unresolved web asset');
  fs.writeFileSync(path.join(out,name+'.html'),page);
 }
+// Bundle identity for the embedded copy and a bundle-only publication (docs/design/ui-bundle.md#contract-detail).
+let bundle=process.env.TASKQ_UI_VERSION;
+if(!bundle){const commit=require('node:child_process').spawnSync('git',['log','-1','--format=%ct-%H'],{cwd:root,encoding:'utf8'}).stdout?.trim().match(/^(\d+)-([0-9a-f]{12})/);bundle=commit?commit[1]+'-'+commit[2]:'0-unknown';}
+if(!/^\d+-[0-9a-z]{1,40}$/.test(bundle))throw Error('Invalid UI bundle version '+bundle);
+const bridge=Number(fs.readFileSync(path.join(root,'src/ui-bridge.txt'),'utf8').trim());
+if(!Number.isSafeInteger(bridge)||bridge<1)throw Error('Invalid UI bridge version');
+const files={};
+for(const file of ['tray.html','workspace.html','operations.json']){const bytes=fs.readFileSync(path.join(out,file));files[file]={sha256:require('node:crypto').createHash('sha256').update(bytes).digest('hex'),size:bytes.length};}
+fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({schema:1,bundle,bridge,files},null,1)+'\n');

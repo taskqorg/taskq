@@ -37,7 +37,7 @@ module.exports=execution.module('errors',{
    const source=S.projects?.find(p=>reason===p.name+': messages source stale, incomplete or unavailable');
    if(!source?.error)add(reason,source);
   }
-  for(const text of [S?.settings_error,S?.opacity_error,S?.ai?.error,S?.service?.state==='unknown'&&S.service.reason,S?.agentq?.kind==='unknown'&&S.agentq.reason,S?.conversations?.complete===false&&!S.conversations.loading&&(S.conversations.reason||'Conversation catalog coverage unknown'),...extra])add(text);
+  for(const text of [S?.ui?.reason,S?.settings_error,S?.opacity_error,S?.ai?.error,S?.service?.state==='unknown'&&S.service.reason,S?.agentq?.kind==='unknown'&&S.agentq.reason,S?.conversations?.complete===false&&!S.conversations.loading&&(S.conversations.reason||'Conversation catalog coverage unknown'),...extra])add(text);
   return [...rows.values()];
  },
  entry:function(S,extra=[]){

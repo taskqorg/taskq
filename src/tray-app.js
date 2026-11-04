@@ -41,7 +41,7 @@ operationAction:function(d){
     return true;
   }
   if(d.a==='agentq-runtime'){view.agentqRuntime=d.runtime;present();return true;}
-  if(d.a==='agentq-dismiss'||d.a==='agentq-check'){send({a:d.a});return true;}
+  if(d.a==='agentq-dismiss'||d.a==='agentq-check'||d.a==='ui-check'){send({a:d.a});return true;}
   if(d.a==='agentq-setup'){
     const A=view.S.agentq,rows=A?.runtimes||[],runtime=view.agentqRuntime||rows.find(r=>r.eligible)?.runtime;
     if(!rows.some(r=>r.runtime===runtime&&r.eligible))return true;
@@ -400,7 +400,7 @@ about:function(){
   const S=view.S,up=S.projects.find(p=>p.update&&p.update!==p.version),versions=new Map();
   for(const p of S.projects)versions.set(p.version||'version unknown',[...(versions.get(p.version||'version unknown')||[]),p]);
   // R31: equal versions form one group; installed, running and available versions stay apart
-  return f(api.heading('Versions and updates','info'),h('div',{class:'body'},'Tray installed '+(S.version||'version unknown')+' · '+S.host),[...versions].map(([v,ps])=>h('details',{class:'group','data-view-key':'version:'+v},api.disclosure('info',['Service '+v,h('span',{class:'meta'},' · '+ps.length+' project'+(ps.length===1?'':'s'))]),ps.map(p=>h('div',{class:'body meta'},p.name+' · '+(p.age==null?'status unknown':p.age_text+' old'))))),
+  return f(api.heading('Versions and updates','info'),h('div',{class:'body'},'Tray installed '+(S.version||'version unknown')+' · '+S.host),S.ui&&h('div',{class:'body meta'},'Interface '+S.ui.bundle+' · '+(S.ui.source==='adopted'?'adopted':'built in')+(S.ui.check_error?' · Last check failed: '+S.ui.check_error:'')),S.ui&&h('button',{class:'project','data-a':'ui-check'},'Check for interface update'),[...versions].map(([v,ps])=>h('details',{class:'group','data-view-key':'version:'+v},api.disclosure('info',['Service '+v,h('span',{class:'meta'},' · '+ps.length+' project'+(ps.length===1?'':'s'))]),ps.map(p=>h('div',{class:'body meta'},p.name+' · '+(p.age==null?'status unknown':p.age_text+' old'))))),
     h('div',{class:'body meta',role:'status'},up?'Update available: '+up.update:S.projects.some(p=>p.alive===true)?'No newer version reported':'Update check unknown'),update());
 },
 setup:function(){
@@ -783,6 +783,8 @@ batch:function(updates){
   finally {if(!--batching&&staged){const args=staged;staged=null;if(complete){if(view.pressedAt!==null&&performance.now()-view.pressedAt<5000)view.stale=true;else present(...args);}}}
 },
 receive:function(s){
+  // #2365: a menu, Settings or View page with an open edit keeps its page until the next offer.
+  if(s.bundleAdopt){const active=document.activeElement,edit=active?.isContentEditable||active?.matches?.('textarea,input')||[...document.querySelectorAll('textarea,input:not([type=checkbox]):not([type=radio]):not([type=range])')].some(field=>field.value);if(!edit&&!view.confirming)send({a:'bundle-reload'});return;}
   if(Array.isArray(s.updates)){api.batch(s.updates);return;}
   if(s.notificationReceipt){notificationPanel.receive(s.notificationReceipt);return;}
   if(s.reportReceipt){reports.receive(s.reportReceipt);return;}

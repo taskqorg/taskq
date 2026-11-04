@@ -63,6 +63,8 @@ mod icon;
 mod notify;
 #[cfg(any(target_os = "macos", windows))]
 mod tray;
+#[cfg(any(target_os = "macos", windows))]
+mod ui_bundle;
 #[cfg(any(target_os = "macos", windows, test))]
 mod pending;
 
