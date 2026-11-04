@@ -1,0 +1,39 @@
+{
+  "source": "https://api.anthropic.com/api/oauth/usage",
+  "observed_at": "2026-11-04T17:48:28Z",
+  "host": "mac",
+  "http_status": 200,
+  "redaction": "Only quota window fields and public model scope retained. Credentials and unrelated fields omitted; login unchanged.",
+  "response": {
+    "five_hour": null,
+    "seven_day": {
+      "utilization": 38.0,
+      "resets_at": "2026-11-09T05:00:00.962461+00:00"
+    },
+    "seven_day_oauth_apps": null,
+    "seven_day_opus": null,
+    "seven_day_sonnet": null,
+    "seven_day_cowork": null,
+    "seven_day_omelette": null,
+    "limits": [
+      {
+        "group": "weekly",
+        "percent": 38,
+        "resets_at": "2026-11-09T05:00:00.962461+00:00",
+        "scope": null
+      },
+      {
+        "group": "weekly",
+        "percent": 4,
+        "resets_at": "2026-11-09T05:00:00.962624+00:00",
+        "scope": {
+          "model": {
+            "id": null,
+            "display_name": "Fable"
+          }
+        }
+      }
+    ],
+    "seven_day_breakdown": {}
+  }
+}
