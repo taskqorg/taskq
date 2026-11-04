@@ -11,6 +11,9 @@ const strip=()=>markup(c.runningAgents(true).strip);
 const host=n=>strip().match(new RegExp('data-host="'+n+'"[^]*?<span class="host-number">([^<]*)'))?.[1];
 const totals=()=>Object.fromEntries([...strip().split('class="host-runtime-totals"')[1].matchAll(/data-runtime="([^"]*)"[^]*?<span class="host-number">([^<]*)/g)].map(m=>m.slice(1)));
 let page=render();
+// F06/Q01: supported runtime identities reuse their shared asset, without compact text labels.
+assert(strip().includes(require('../src/ui-icons.js').asset('antigravity'))&&require('../src/ui-icons.js').asset('antigravity'),'shared Antigravity mark');
+assert(!/data-runtime="Antigravity"[^]*?<span>Antigravity<\/span>/.test(strip()),'no redundant compact Antigravity label');
 assert.equal(host('mac'),'2');assert.equal(host('idle'),'0');assert.deepEqual(totals(),{Codex:'2',Claude:'1',Antigravity:'0'});
 for(const text of ['claude: 1 worker · 0 reviewers','codex: 0 workers · 1 reviewer','codex: 1 worker · 0 reviewers','Reservations: claude 1','Occupied slots: claude 2 · codex 1','CPU and memory: not collected for remote hosts','CPU and memory: no sample; sampled only while the load gate is on','Heartbeat · 5s old','Count definitions','Running processes, occupied slots, reservations and board tasks are counted apart.'])assert(page.includes(text),text);
 assert(page.includes('host-grid-head')&&page.includes('aria-label="Host, Codex, Claude, Antigravity, Total running agents"'));
@@ -47,4 +50,23 @@ render([{...project,tasks:[...project.tasks,{n:12,executions:[execution(22,'mac'
 assert.equal(host('mac'),'3');assert.deepEqual(totals(),{Codex:'2',Claude:'1',Antigravity:'1'});
 assert(c.runningAgents().includes('antigravity: 0 workers · 1 reviewer'));
 module.exports={project};
+// R12: an unrelated error cannot turn a heartbeat already stale at collection time into historical idle.
+c.S.now=project.observed;
+render([{...project,error:'Invented unrelated failure',hosts:[{name:'never-observed',live:false,updated:690,age:310,age_text:'5m'}],tasks:[]}]);
+assert.equal(host('never-observed'),'?');assert.deepEqual(totals(),{Codex:'?',Claude:'?',Antigravity:'?'});
+for(const [ttl,age,expected] of [[300,300,'0'],[300,301,'?'],[60,60,'0'],[60,61,'?']]){
+ render([{...project,ttl,error:'Invented unrelated failure',hosts:[{name:'historical-boundary',live:false,updated:project.observed-age,age,age_text:'fixture'}],tasks:[]}]);
+ assert.equal(host('historical-boundary'),expected,'historical heartbeat uses the source TTL inclusive boundary');
+}
+// #2351 A4/M14: one recovered idle project cannot erase a dated multi-project total.
+const outage=require('./fixtures/errors.js')({});
+c.S.host=outage.fresh.host;
+c.S.now=outage.fresh.now;render(outage.fresh.projects);assert.equal(host('fixture'),'9');
+c.S.now=outage.failed.now;render(outage.failed.projects);assert.equal(host('fixture'),'9');
+const recovered={...outage.fresh.projects[0],observed:outage.failed.now,tasks:outage.fresh.projects[0].tasks.filter(t=>t.state==='ask')};
+render([recovered,...outage.failed.projects.slice(1)]);
+assert.equal(host('fixture'),'9','partial recovery retains the last complete host total');
+assert.match(strip(),/Last known.*15m/);assert.equal(totals().Codex,'9');
+render(outage.fresh.projects.map(p=>({...p,observed:outage.failed.now,tasks:[]})));
+assert.equal(host('fixture'),'0','full recovery replaces the dated total');assert.doesNotMatch(strip(),/Last known/);
 console.log('PASS UX30-06 / A1–A5: host/family totals, idle/partial/stale/conflict/duplicate/ended/runtime cases; roles, resources, source and sign-in preserved');

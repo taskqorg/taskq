@@ -476,7 +476,7 @@ fn legacy_rows(install: &Path,cursor:Option<&str>,lock:Option<&crate::profile::L
     let db=if wal.try_exists().map_err(|e|e.to_string())? {
         Connection::open_with_flags(&path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
     } else {
-        let p=path.to_string_lossy().replace('\\',"/").replace('%',"%25").replace('?',"%3f").replace('#',"%23");
+        let p=crate::platform::plain_path(&path).to_string_lossy().replace('\\',"/").replace('%',"%25").replace('?',"%3f").replace('#',"%23");
         Connection::open_with_flags(format!("file:{}{p}?immutable=1",if p.starts_with('/') {""} else {"/"}),rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY|rusqlite::OpenFlags::SQLITE_OPEN_URI)
     }.map_err(|e|e.to_string())?;
     db.busy_timeout(std::time::Duration::from_secs(1)).map_err(|e|e.to_string())?;
@@ -1099,6 +1099,54 @@ mod tests {
         std::fs::write(d.join("taskq.log"),old).unwrap();
         assert!(export(&d,None).unwrap_err().contains("awaits service import"));
         assert_eq!(std::fs::read(&archive).unwrap(),before);assert_eq!(std::fs::read_to_string(d.join("taskq.log")).unwrap(),old);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+    // R12/#2354: settled exports must accept native Windows paths without changing archive bytes or creating sidecars.
+    #[cfg(windows)]
+    #[test]
+    fn export_reads_settled_archive_through_plain_and_verbatim_paths() {
+        let root=dir();let d=root.join("archive %23 # Unicode é");std::fs::create_dir(&d).unwrap();
+        drop(crate::profile::log_lock(&d.join("taskq.log")).unwrap());
+        let line=r#"taskq-profile {"op":"spawn","us":7,"error":"none","at_ms":1}"#;
+        append(&d,line,1).unwrap();
+        let store=coreq::telemetry::Store::open(&d.join("telemetry.log/universal.sqlite3")).unwrap();
+        let archive=d.join("telemetry.log/telemetry.sqlite3");let before=std::fs::read(&archive).unwrap();
+        let verbatim=d.canonicalize().unwrap();assert!(verbatim.to_str().unwrap().starts_with(r"\\?\"));
+        let plain=crate::platform::plain_path(&verbatim);
+        let original=std::fs::metadata(&archive).unwrap().permissions();let mut readonly=original.clone();readonly.set_readonly(true);
+        std::fs::set_permissions(&archive,readonly).unwrap();
+        let output=[export(&plain,None),export(&verbatim,None)];
+        let report=report_input(&verbatim);
+        std::fs::set_permissions(&archive,original).unwrap();
+        let output=output.map(Result::unwrap);assert_eq!(output[0],output[1]);
+        let rows:Vec<serde_json::Value>=output[0].lines().map(|s|serde_json::from_str(s).unwrap()).collect();
+        assert_eq!(rows.len(),2);assert_eq!(rows[0]["sources"]["legacy"]["samples"],1);
+        assert_eq!(rows[1]["observation"]["operation"],"spawn");assert_eq!(report.unwrap(),format!("{line}\n"));
+        assert_eq!(std::fs::read(&archive).unwrap(),before);
+        for suffix in ["-wal","-shm"] {assert!(!std::path::PathBuf::from(format!("{}{suffix}",archive.display())).exists());}
+        drop(store);std::fs::remove_dir_all(root).unwrap();
+    }
+    // R12/#2354: immutable reads must never hide committed WAL frames; bad or missing imported archives stay unknown.
+    #[test]
+    fn export_preserves_wal_frames_and_refuses_missing_or_corrupt_archive() {
+        let d=dir();drop(crate::profile::log_lock(&d.join("taskq.log")).unwrap());
+        let line=r#"taskq-profile {"op":"spawn","us":7,"error":"none","at_ms":1}"#;
+        append(&d,line,1).unwrap();
+        let store=coreq::telemetry::Store::open(&d.join("telemetry.log/universal.sqlite3")).unwrap();
+        let archive=d.join("telemetry.log/telemetry.sqlite3");let db=open(&d).unwrap();
+        insert(&db,line,2).unwrap();
+        let wal=d.join("telemetry.log/telemetry.sqlite3-wal");
+        let before=std::fs::read(&archive).unwrap();let frames=std::fs::read(&wal).unwrap();assert!(frames.len()>32);
+        let output=export(&d,None).unwrap();let rows:Vec<serde_json::Value>=output.lines().map(|s|serde_json::from_str(s).unwrap()).collect();
+        assert_eq!(rows.len(),3);assert_eq!(rows[0]["sources"]["legacy"]["samples"],2);
+        assert_eq!(rows[2]["received_ms"],2);assert_eq!(std::fs::read(&archive).unwrap(),before);assert_eq!(std::fs::read(&wal).unwrap(),frames);
+        drop(db);drop(store);
+        assert_eq!(migrate(&d).unwrap(),2);
+        let saved=std::fs::read(&archive).unwrap();std::fs::remove_file(&archive).unwrap();
+        assert!(export(&d,None).unwrap_err().contains("imported archive missing; coverage unknown"));assert!(!archive.exists());
+        std::fs::write(&archive,b"corrupt archive").unwrap();
+        assert!(export(&d,None).is_err());assert_eq!(std::fs::read(&archive).unwrap(),b"corrupt archive");
+        std::fs::write(&archive,saved).unwrap();assert!(export(&d,None).is_ok());
         std::fs::remove_dir_all(d).unwrap();
     }
     // Chain: #2306 profile export in a worker sandbox. Risk: a reader that cannot write <install> fails on a WAL

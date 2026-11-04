@@ -10,9 +10,9 @@ options.debounceRendering=callback=>ui.defer(callback);
 const api=execution.module('shell',{
  // R07/P-W3: one action row per window (Home, actions, window controls) whose icons never move; Back, breadcrumbs and
  // a title that does not fit take the row below.
- bar:function({title,back,home,crumbs,actions,windows}){
+ bar:function({title,back,home,crumbs,actions,windows,errors}){
   const icons=require('./ui-icons.js');
-  return h('header',{class:'head'+(back||crumbs?' title-below':'')},home&&h('button',{class:'nav-home','data-a':'home',title:home,'aria-label':home},icons.icon('house')),h('div',{class:'nav-title'},back&&h('button',{class:'nav-back','data-a':'back',title:'Back','aria-label':'Back'},icons.icon('arrow-left')),crumbs&&h('nav',{class:'breadcrumbs','aria-label':'Breadcrumb'},crumbs),h('h1',{tabindex:'-1',title},title)),h('div',{class:'nav-actions'},actions),h('div',{class:'window-controls','aria-label':'Window controls'},windows));
+  return h('header',{class:'head'+(back||crumbs?' title-below':'')},home&&h('button',{class:'nav-home','data-a':'home',title:home,'aria-label':home},icons.icon('house')),h('div',{class:'nav-title'},back&&h('button',{class:'nav-back','data-a':'back',title:'Back','aria-label':'Back'},icons.icon('arrow-left')),crumbs&&h('nav',{class:'breadcrumbs','aria-label':'Breadcrumb'},crumbs),title&&h('h1',{tabindex:'-1',title},title)),h('div',{class:'nav-actions'},errors,actions),h('div',{class:'window-controls','aria-label':'Window controls'},windows));
  },
  // A short title shares the action row; one that would be cut moves below, whole words only.
  fitTitle:function(container){

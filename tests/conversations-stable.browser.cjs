@@ -13,7 +13,7 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
  async function tool(action){const d=page.locator('.conversation-info');if(!await d.evaluate(e=>e.open))await d.locator('summary').click();await page.locator('[data-c='+action+']').click();}
  const open=async n=>page.evaluate(({board,n})=>taskq.receive({open:{page:'conversations',board,task:n}}),{board,n});
  async function check(name,run){try{await run();console.log('PASS '+name);}catch(e){failures.push(name+': '+e.message);console.error('FAIL '+name+': '+e.message);}finally{await page.evaluate(()=>{if(window.nativeFocus){HTMLElement.prototype.focus=nativeFocus;delete window.nativeFocus;}});}}
- await check('Q-A2 fixed heading/Send with growing draft at 350/620/940',async()=>{
+ await check('F15/F16 fixed heading and reachable historical answer at 350/620/940',async()=>{
   await open(question.n);
   for(const width of [940,620,350]){
    await page.setViewportSize({width,height:740});
@@ -22,11 +22,13 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
    const heading=await page.locator('.thread-head').boundingBox();
    for(const fraction of [0,.5,1]){
     await reader.evaluate((e,f)=>{e.scrollTop=(e.scrollHeight-e.clientHeight)*f;e.dispatchEvent(new Event('scroll'));},fraction);
-    const send=await page.locator('[data-a=answer-send]').boundingBox(),head=await page.locator('.thread-head').boundingBox();
-    assert(send.y>=0&&send.y+send.height<=740,'Send visible without scrollIntoView at '+width+' / '+fraction);
+    const head=await page.locator('.thread-head').boundingBox();
     assert.equal(head.y,heading.y,'thread heading stays stable');
-    if(width===940){const field=await page.locator('[data-c-field=answer]').boundingBox();assert(field.y>=head.y+head.height&&field.y+field.height<=send.y,'short input stays at the bottom while reading');}
+    assert.equal(await page.locator('[data-c-field=answer]').count(),1,'one answer stays at its historical question');
    }
+   await page.locator('[data-a=answer-send]').scrollIntoViewIfNeeded();
+   const send=await page.locator('[data-a=answer-send]').boundingBox(),head=await page.locator('.thread-head').boundingBox();
+   assert(send.y>=head.y+head.height&&send.y+send.height<=740,'historical Send stays reachable below the sticky header at '+width);
    await page.locator('[data-c-field=answer]').fill('Long draft line.\n'.repeat(100));
    const geometry=await page.locator('[data-c-field=answer]').evaluate(e=>({client:e.clientHeight,scroll:e.scrollHeight,resize:getComputedStyle(e).resize}));
    assert(geometry.client>=geometry.scroll-1,'natural growth has no inner scroll');assert.equal(geometry.resize,'none');
@@ -111,10 +113,10 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
    await page.evaluate(()=>taskq.receive({...fixture,ai:{...fixture.ai,error:'Invented workspace failure'}}));
    await page.evaluate(()=>taskq.receive({workspaceLocalError:'Invented draft save failure'}));
    assert.deepEqual(await geometry(),idle,'workspace and local errors cannot resize the reader');
-   assert.match(await page.locator('.feedback-message[role=alert]').innerText(),/Invented workspace failure/);
-   assert.match(await page.locator('.feedback-message[role=alert]').innerText(),/Invented draft save failure/,'a second failure remains visible and announced');
+   assert.match(await page.locator('.errors-entry [role=status]').innerText(),/Invented workspace failure/);
+   assert.match(await page.locator('.errors-entry [role=status]').innerText(),/Invented draft save failure/,'a second failure remains visible and announced');
    await page.evaluate(()=>taskq.receive({workspaceLocalError:{reason:'Invented object-shaped failure'}}));
-   assert.match(await page.locator('.feedback-message[role=alert]').innerText(),/Invented object-shaped failure/,'structured failures retain their readable reason');
+   assert.match(await page.locator('.errors-entry [role=status]').innerText(),/Invented object-shaped failure/,'structured failures retain their readable reason');
    assert.doesNotMatch(await page.locator('.feedback-message').innerText(),/\[object Object\]/,'status diagnostics never expose object coercion');
    await bootOwners();
   }
@@ -127,19 +129,21 @@ const initialState={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Al
   await open(question.n+1);await page.locator('[data-qac=choose]').first().click();const foreign=await page.evaluate(()=>sent.find(m=>m.a==='answer').op);
   if(kind!=='text')await open(question.n);else await page.locator('[data-c=select][data-id=owner-a]').click();
   const input=page.locator('[data-c-field='+kind+']');await input.fill('Keep original caret');await input.evaluate(e=>{e.setSelectionRange(5,13);window.retainedEditor=e;window.editorFocusCalls=0;window.editorBlur=0;window.compositionEnds=0;window.nativeFocus=HTMLElement.prototype.focus;HTMLElement.prototype.focus=function(...args){editorFocusCalls++;return nativeFocus.apply(this,args);};e.addEventListener('blur',()=>editorBlur++);e.addEventListener('compositionend',()=>compositionEnds++);e.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true,data:'仮'}));});
-  const reader=page.locator('.conversation-reader');await reader.evaluate(e=>{e.scrollTop=Math.min(120,e.scrollHeight-e.clientHeight);e.dispatchEvent(new Event('scroll'));});const anchor=await reader.evaluate(e=>e.scrollTop);
+  const reader=page.locator('.conversation-reader');await reader.evaluate(e=>{e.scrollTop=Math.min(120,e.scrollHeight-e.clientHeight);e.dispatchEvent(new Event('scroll'));});let anchor=await reader.evaluate(e=>e.scrollTop);
   const notices=[{workspaceLocalError:'Invented transient draft save failure'},{workspaceLocalError:'Invented updated draft save failure'},{workspaceLocalError:null},{answerReceipt:{root,id:foreign.id,state:'unknown',reason:'Invented pending receipt; check the original operation'}},{answerReceipt:{root,id:foreign.id,state:'accepted',reason:'Invented accepted foreign receipt'}},{...state,projects:[{...state.projects[0],tasks}],ai:{...state.ai,error:'Invented background workspace failure'}},{...state,projects:[{...state.projects[0],tasks}]}];
   let expected='Keep original caret',start=5,end=13;
   for(let i=0;i<notices.length;i++){
    await page.evaluate(s=>taskq.receive(s),notices[i]);
-   const reason=notices[i].workspaceLocalError||notices[i].ai?.error;if(reason)assert.match(await page.locator('.feedback-message[role=alert]').innerText(),new RegExp(reason),'genuine notice stays visible and announced');
+   const reason=notices[i].workspaceLocalError||notices[i].ai?.error;if(reason)assert.match(await page.locator('.errors-entry [role=status]').innerText(),new RegExp(reason),'genuine notice stays visible and announced');
    assert(await input.evaluate(e=>e===retainedEditor&&e===document.activeElement),kind+' retains its actual editor node and focus');
    assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[start,end],kind+' retains caret/selection through notice '+i);
    assert.equal(await page.evaluate(()=>editorFocusCalls),0,kind+' background update must not issue a native focus request');
    assert.equal(await page.evaluate(()=>editorBlur+compositionEnds),0,kind+' composition is not interrupted');
-   assert(Math.abs(await reader.evaluate(e=>e.scrollTop)-anchor)<=2,kind+' reading anchor stays put');
+   assert(Math.abs(await reader.evaluate(e=>e.scrollTop)-anchor)<=2,kind+' reading anchor stays put through notice '+i+' (expected '+anchor+', actual '+await reader.evaluate(e=>e.scrollTop)+')');
    const text=String(i);await page.keyboard.type(text);expected=expected.slice(0,start)+text+expected.slice(end);start+=text.length;end=start;
    assert.equal(await input.inputValue(),expected,kind+' next characters stay at the original caret without another click');
+   // F16: typing in a historical answer may reveal its caret; background notices must preserve that new position.
+   await page.evaluate(()=>new Promise(requestAnimationFrame));anchor=await reader.evaluate(e=>e.scrollTop);
   }
   await input.evaluate(e=>{HTMLElement.prototype.focus=nativeFocus;e.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:'仮'}));});
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='answer'||m.a==='conversation-action'&&['send','reply'].includes(m.action)).length),1,'notice typing never sends or replays beyond the explicitly initiated foreign operation');

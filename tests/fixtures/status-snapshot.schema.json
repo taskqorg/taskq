@@ -80,6 +80,15 @@
             "type": "object", "required": ["attempt", "session", "role"],
             "properties": {"attempt": {"type": "integer"}, "session": {"type": "string"}, "role": {"const": "worker"}}
           },
+          "workers": {
+            "description": "Accepted worker sources in board order; read-only, never current execution authority.",
+            "type": "array", "items": {
+              "type": "object", "required": ["attempt", "session", "role"],
+              "properties": {"attempt": {"type": "integer"}, "session": {"type": ["string", "null"]}, "role": {"const": "worker"}, "started": {"type": ["integer", "null"]}}
+            }
+          },
+          "brief": {"type": "string", "description": "Recorded issue body for the object metadata."},
+          "history": {"type": "array", "items": {"type": "object"}, "description": "Answered questions, owner notes and accepted board events with immutable answered.source identity."},
           "controls": {"type": "array", "items": {"type": "string"}},
           "verdict": {
             "description": "Fields of the accepted result text behind the current result (taskq.md § 7); null without a result.",

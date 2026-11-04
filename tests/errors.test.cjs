@@ -1,0 +1,22 @@
+// Chain: R6/R12, M14. Risk: outage dedup hides independent causes, or retained data becomes write authority.
+const assert=require('node:assert/strict'),errors=require('../src/errors.js'),fixture=require('./fixtures/errors.js');
+const f=fixture({}),rows=errors.rows(f.failed);
+assert.equal(rows.length,1);assert.equal(rows[0].projects.size,9);
+assert.equal(errors.rows({...f.failed,projects:[...f.failed.projects,{...f.failed.projects[0],root:'other',issues:'https://other.example.org/invented/issues'}]}).length,2);
+assert.equal(errors.rows(f.fresh).length,0,'questions never become diagnostic rows');
+assert.equal(errors.age({age:-1,tasks_age_seconds:2}),'age unknown');
+assert.equal(errors.age({age:0,tasks_age_seconds:900}),'15m old');
+const missing=structuredClone(f.failed);missing.projects[0].tasks=[];missing.projects[0].hosts=[];
+const kept=errors.retain(missing,f.fresh);assert.equal(kept.projects[0].tasks.length,2);assert.equal(kept.projects[0].hosts.length,1);
+assert.equal(kept.projects[0].complete,false);assert.equal(kept.projects[0].tasks_live,false,'retention grants no freshness');
+const recovered=structuredClone(f.fresh);recovered.projects[0].tasks=[];
+assert.equal(errors.retain(recovered,kept).projects[0].tasks.length,0,'successful empty read clears historical rows');
+const other=structuredClone(missing);other.projects[0].issues='https://example.org/changed/issues';
+assert.equal(errors.retain(other,f.fresh).projects[0].tasks.length,0,'never reuse another board');
+const unreadable=structuredClone(missing);unreadable.projects[0].issues='';
+assert.equal(errors.retain(unreadable,f.fresh).projects[0].tasks.length,2,'missing current identity preserves the dated source for the same root');
+assert.equal(errors.retain(unreadable,f.fresh).projects[0].complete,false,'an unreadable identity cannot authorize actions');
+const notice=structuredClone(f.fresh);notice.projects[0].requests={paused_until:'1970-01-03T08:00:00Z'};
+assert.equal(errors.rows(notice).length,1,'pause notice works before a failed read');
+assert.equal(errors.rows(f.fresh,[{reason:'Invented structured failure'}])[0].text,'Invented structured failure');
+console.log('PASS distinct causes, notices, recovery, unknown age and retained rows without freshness authority');
