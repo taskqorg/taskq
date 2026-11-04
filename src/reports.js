@@ -164,7 +164,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
    const p=projects.find(p=>p.root===r.root),ops=[...pending.values(),...Object.values(saved).filter(v=>['sending','unknown','partial'].includes(v.receipt?.state)).map(v=>v.request).filter(Boolean)];
    const blocked=ops.some(op=>op.root===r.root&&op.n===r.n&&op.sha===r.sha&&op.action!=='read'&&op.id!==saved[namespace(r,kind)]?.op?.id);
    const reason=r.lazy&&!bodies.has(receiptKey(r.root,r.n,r.sha))?'Reading the exact result source':!p?'Registered project unavailable':p.alive===false?'Project observation stale':p.complete===false?'Project observation incomplete':pages.get(r.root)?.unknown?pages.get(r.root).reason:r.reason?'Result unavailable: '+r.reason:blocked?'Another result operation needs readback':kind==='decision'&&settled(r)?'Report already decided':kind==='make'&&!r.tasks?.length?'No follow-up tasks proposed':kind==='make'&&settled(r)?'Report already decided':r.pending_decision==='make'&&kind!=='make'?'Make tasks needs readback':'';
-   return {answer:!reason,composer:true,reason};
+   return {answer:!reason,composer:true,reason,project:p?.name};
   },
   mount(menu){
    if(!selected)return;
@@ -217,8 +217,8 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
     !ordinary&&r.body&&h('details',{'data-view-key':namespace(r,'full'),open:textPage(r,'full').open,onToggle:e=>{const page=textPage(r,'full');if(page.open!==e.currentTarget.open){page.open=e.currentTarget.open;draw();}}},h('summary',{'data-reading-key':'report:full',onClick:e=>{e.preventDefault();const page=textPage(r,'full');page.open=!page.open;e.currentTarget.parentElement.open=page.open;draw();}},'Full report'),textPage(r,'full').open&&textBody(r,r.body,'full')),
     notice&&h('p',{role:'status'},notice),
     !!(notice||successor||r.tasks_made?.length)&&![...pending.values()].some(op=>active(op)&&op.action!=='read')&&h('div',{class:'conversation-tools result-next'},
-     successor&&h('a',{href:successor.url,'data-url':successor.url},'1. Read held draft #'+successor.n+' ★'),
-     !!r.tasks_made?.length&&h('details',{'data-view-key':namespace(r,'drafts')},h('summary',null,'1. Read held drafts ★'),r.tasks_made.map(n=>h('a',{href:r.url?.replace(/\d+$/,String(n)),'data-url':r.url?.replace(/\d+$/,String(n)),key:n},'Read held draft #'+n))),
+     successor&&h('a',{href:successor.url,'data-url':successor.url},'1. Read held draft '+display(r.root,successor.n)+' ★'),
+     !!r.tasks_made?.length&&h('details',{'data-view-key':namespace(r,'drafts')},h('summary',null,'1. Read held drafts ★'),r.tasks_made.map(n=>h('a',{href:r.url?.replace(/\d+$/,String(n)),'data-url':r.url?.replace(/\d+$/,String(n)),key:n},'Read held draft '+display(r.root,n)))),
      h('button',{'data-report':'unresolved'},(successor||r.tasks_made?.length?'2. Next unresolved item':'1. Next unresolved item ★')),
      h('button',{'data-report':'stay'},(successor||r.tasks_made?.length?'3':'2')+'. Stay here')));
   }

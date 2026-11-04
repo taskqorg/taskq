@@ -3,7 +3,9 @@ const {h}=require('preact'),ui=require('./ui-runtime.js'),assets=require('./ui-i
 const {execution}=ui;
 const api=execution.module('copyLabel',{
  escape:function(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));},
- task:function(project,n){return project+'#'+n;},
+ task:function(project,n){return (project||'Board')+'#'+n;},
+ // A local dependency arrives as a bare #N; another repository's already names its project.
+ ref:function(project,ref){return String(ref).startsWith('#')?(project||'Board')+ref:ref;},
  html:function(text){const value=api.escape(text);return '<span class="copy-label"><span class="copy-value">'+value+'</span><button type="button" class="copy-label-button" data-copy-label="'+value+'" aria-label="Copy '+value+'" title="Copy '+value+'">'+assets.copy+'</button><span class="sr-only" role="status" aria-live="polite"></span></span>';},
  node:function(text){return h('span',{dangerouslySetInnerHTML:{__html:api.html(text)}});},
  mount:function(menu){

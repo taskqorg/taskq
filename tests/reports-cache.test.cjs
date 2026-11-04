@@ -47,15 +47,15 @@ assert.equal(v.count(),1);v.move(1);v.move(-1);assert.deepEqual(steps,[1,-1],'RC
 assert(!out.some(m=>['list','open'].includes(m.action)),'next/previous are local');
 v.act('reopen','Preserve the receipt');const reopen=out.at(-1);assert.equal(reopen.text,'Preserve the receipt');
 v.receive({id:reopen.id,root:'fixture',report:{...ordinary,read:true,decision:'accepted',comments_through:30},successor:25});
-assert(JSON.stringify(v.section(all)).includes('Read held draft #25'));
+assert(JSON.stringify(v.section(all)).includes('Read held draft Alpha#25'));
 console.log('PASS Results: local mixed navigation, all checks, seen versus accept, held-successor readback');
 const late=[],w=create({send:m=>late.push(m),draw(){},defer(){},id:()=>String(late.length+1)});
 const pair=[{...projects[0],reports:{complete:true,reports:[ordinary,{...ordinary,n:14}]}}];
 w.sync(pair);w.open('fixture',13);w.act('reopen','A reason');const aOp=late.at(-1);
 w.open('fixture',14);
 w.receive({id:aOp.id,root:'fixture',report:{...ordinary,read:true},successor:26});
-assert.equal(w.current().n,14);const bView=JSON.stringify(w.section(pair));assert(bView.includes('Other actions'));assert(!bView.includes('Read held draft #26'));
-w.open('fixture',13);assert(JSON.stringify(w.section(pair)).includes('Read held draft #26'),'a late receipt stays with its source for readback');
+assert.equal(w.current().n,14);const bView=JSON.stringify(w.section(pair));assert(bView.includes('Other actions'));assert(!bView.includes('Read held draft Alpha#26'));
+w.open('fixture',13);assert(JSON.stringify(w.section(pair)).includes('Read held draft Alpha#26'),'a late receipt stays with its source for readback');
 console.log('PASS late successor receipt preserves another result and its draft');
 
 // RC1/MP14: replacing the legacy menu reload reader retains the same missing/partial-source protection.

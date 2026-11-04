@@ -60,5 +60,7 @@ The owner asked for `project#NNN` in all UI. These paths keep other text:
 - Host-authored receipt reasons (`src/dispatch.rs`) and outcome text inside notification bodies, such as `replaced by #104`, are free text carrying a bare `#N`. Changing them needs a host change, which this task excluded.
 - CLI and log lines (`src/health.rs`, `src/profile.rs`) are not UI and are unchanged.
 - A pin on an unavailable board shows its stored reference.
+- `Task details for`, the single-task `Start` label and the dependency link in `src/task-dashboard.js` use the shared identifier, but no current row renders the `task-detail` trigger, so no browser test reaches them. The Held filter, Held admission review and Conversations Held thread are the reachable paths, and `native-ui-followup.browser.cjs` covers them with a scan of visible text, titles and accessible names.
+- `tests/tray-state-filter.browser.cjs` and `tests/tray-answer.browser.cjs` fail at this task's base as well as on this branch, with the same assertions, and this task does not change them. `tests/reports.browser.cjs` failed the same way until this task moved its result opening to the current task row and host `open` message.
 - Tooltips, accessible names, receipts, the answer-card link and the native Quit label use the format without a copy button. `Board` stands in when no project name is known. Long project names in the Quit label collapse to a `+N` count.
 - Task titles are the owner's own text and are never rewritten.
