@@ -1,0 +1,120 @@
+{
+ "label": "installed-src",
+ "case": "bottom",
+ "exit": 0,
+ "phases": [
+  {
+   "phase": "rest",
+   "seconds": 15.1,
+   "resized": 1,
+   "moved": 0,
+   "size_requests": 0,
+   "page_resizes": 0,
+   "bottoms_native": [
+    1626
+   ],
+   "bounds_changes": 1,
+   "bottoms_sampled": [
+    813
+   ],
+   "main_pct": 0.53,
+   "web_pct": 0.07
+  },
+  {
+   "phase": "content",
+   "seconds": 12.3,
+   "resized": 9,
+   "moved": 0,
+   "size_requests": 9,
+   "page_resizes": 5,
+   "bottoms_native": [
+    1218,
+    1626
+   ],
+   "bounds_changes": 3,
+   "bottoms_sampled": [
+    609,
+    813
+   ],
+   "main_pct": 1.68,
+   "web_pct": 0.76
+  },
+  {
+   "phase": "wrapping",
+   "seconds": 12.5,
+   "resized": 10,
+   "moved": 0,
+   "size_requests": 10,
+   "page_resizes": 6,
+   "bottoms_native": [
+    1218,
+    1626
+   ],
+   "bounds_changes": 4,
+   "bottoms_sampled": [
+    609,
+    813
+   ],
+   "main_pct": 2.02,
+   "web_pct": 1.07
+  },
+  {
+   "phase": "straddle",
+   "seconds": 12.4,
+   "resized": 31,
+   "moved": 0,
+   "size_requests": 35,
+   "page_resizes": 27,
+   "bottoms_native": [
+    1218,
+    1626
+   ],
+   "bounds_changes": 17,
+   "bottoms_sampled": [
+    609,
+    813
+   ],
+   "main_pct": 5.07,
+   "web_pct": 2.43
+  },
+  {
+   "phase": "titlebar",
+   "seconds": 11.0,
+   "resized": 10,
+   "moved": 0,
+   "size_requests": 10,
+   "page_resizes": 8,
+   "bottoms_native": [
+    1218,
+    1626
+   ],
+   "bounds_changes": 9,
+   "bottoms_sampled": [
+    609,
+    805,
+    806,
+    809,
+    813
+   ],
+   "main_pct": 2.45,
+   "web_pct": 1.72
+  },
+  {
+   "phase": "rest-after",
+   "seconds": 14.9,
+   "resized": 1,
+   "moved": 0,
+   "size_requests": 1,
+   "page_resizes": 0,
+   "bottoms_native": [
+    1218
+   ],
+   "bounds_changes": 1,
+   "bottoms_sampled": [
+    609
+   ],
+   "main_pct": 0.38,
+   "web_pct": 0.14
+  }
+ ]
+}

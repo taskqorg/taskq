@@ -1,0 +1,82 @@
+{
+ "label": "fix",
+ "case": "fixed",
+ "actions": {
+  "drag": {
+   "titlebar_alpha": 255,
+   "performed": false,
+   "idle_over_30s": false,
+   "target_frontmost": true,
+   "before": [
+    40,
+    40,
+    350,
+    616
+   ],
+   "after": [
+    40,
+    40,
+    350,
+    616
+   ]
+  },
+  "grip": {
+   "found": true,
+   "before": [
+    40,
+    40,
+    350,
+    616
+   ],
+   "after": [
+    40,
+    40,
+    400,
+    676
+   ]
+  },
+  "anchor": {
+   "window": [
+    40,
+    40,
+    400,
+    676
+   ],
+   "client": [
+    400,
+    644
+   ],
+   "size_anchor": "fixed",
+   "saved_size": [
+    400.0,
+    644.0
+   ]
+  },
+  "copy": {
+   "expected": "storefront#100",
+   "change_after": 270,
+   "change_before": 269,
+   "copied": "storefront#100",
+   "items_restored": 1,
+   "restored": true
+  },
+  "close": {
+   "close_requested": true
+  }
+ },
+ "events": {
+  "resized": 21,
+  "moved": 2,
+  "close_requested": 1,
+  "focused": 0,
+  "unfocused": 0,
+  "size_request": 26
+ },
+ "hits": [
+  {
+   "hit_close": "_NSThemeCloseWidget",
+   "hit_bar": "NSVisualEffectView",
+   "bar_can_move_window": true
+  }
+ ]
+}

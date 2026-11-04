@@ -1,0 +1,10 @@
+{"file": "fix-dark-background-100.png", "size": [700, 1232], "titlebar_rgba": [20, 20, 20, 255], "body_rgba": [38, 43, 49, 255]}
+{"file": "fix-dark-background-35.png", "size": [700, 1232], "titlebar_rgba": [20, 20, 20, 255], "body_rgba": [38, 43, 49, 147]}
+{"file": "fix-dark-whole-80.png", "size": [700, 1232], "titlebar_rgba": [20, 20, 20, 204], "body_rgba": [38, 43, 49, 204]}
+{"file": "fix-light-background-35.png", "size": [700, 1232], "titlebar_rgba": [236, 236, 236, 255], "body_rgba": [252, 252, 252, 147]}
+{"file": "fix-light-whole-80.png", "size": [700, 1232], "titlebar_rgba": [236, 236, 236, 204], "body_rgba": [250, 251, 253, 204]}
+{"file": "parent-dark-background-100.png", "size": [700, 1232], "titlebar_rgba": [0, 0, 0, 0], "body_rgba": [38, 43, 49, 255]}
+{"file": "parent-dark-background-35.png", "size": [700, 1232], "titlebar_rgba": [0, 0, 0, 0], "body_rgba": [38, 43, 49, 147]}
+{"file": "parent-dark-whole-80.png", "size": [700, 1232], "titlebar_rgba": [0, 0, 0, 0], "body_rgba": [38, 43, 49, 204]}
+{"file": "parent-light-background-35.png", "size": [700, 1232], "titlebar_rgba": [0, 0, 0, 0], "body_rgba": [252, 252, 252, 147]}
+{"file": "parent-light-whole-80.png", "size": [700, 1232], "titlebar_rgba": [0, 0, 0, 0], "body_rgba": [250, 251, 253, 204]}
