@@ -1,0 +1,29 @@
+{
+  "observed_at": "2026-11-04T21:48:12.879888+00:00",
+  "process": "68556 Thu Nov  5 03:13:33 2026     01:34:39 /tmp/taskq-2365-live-proof/macos/TaskQ UI Proof.app/Contents/MacOS/taskq",
+  "binary_sha256": "0911360cb2afea8c8ecb782bb2ddbb835d1eb255e17c5e7c482159877ebf9754",
+  "text_sha256": "804576d9a5bf42b0b5ae86f32c167483a4207b665fa357adcd8acf25f291dc10",
+  "text_unchanged": true,
+  "files": [
+    {
+      "id": "6cc523cf55d2311921808b119173a3e8",
+      "name": "proof-notes.md",
+      "mime": "text/markdown",
+      "hash": "99edc93c37473561e120d155f3c44f57b9ba61e7dd761b99a3cfa2aa392956c9",
+      "bytes": 69
+    }
+  ],
+  "state": {
+    "current": "1793827248-b9cbba8f400e",
+    "previous": null,
+    "bad": {}
+  },
+  "visual_observation": {
+    "Conversations": "new Copy v4.6.78 AX button; selected controlled thread; visible top marker082 unchanged; attached proof-notes.md69B",
+    "Menu": "new Copy v4.6.78 AX button",
+    "About": "Interface1793827248-b9cbba8f400e adopted; Tray installed4.6.78",
+    "manual_check_clicked": false,
+    "selection_or_caret_preserved": "not asserted; focus moved before publication"
+  },
+  "scope": "private official binary fixture; no service or workers registered; no restart/security change"
+}
