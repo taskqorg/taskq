@@ -94,6 +94,8 @@ Reviewer note 6631007056 returned concrete acceptance gaps against the previous 
 
 The canonical gate is rerun because this correction changes shared source code. It uses the same immutable base `8e8706fdc93ee2285d69c8b314a43dae4de0d8a2`; no second rebase is performed. Its exact candidate and outcome are recorded on #2343. F01 native Windows/macOS header, drag, Close and frame sizing, OS clipboard delivery and owner visual acceptance remain unverified; source/browser checks do not close those gaps (R12). No live installation or host policy changes are part of these fixes.
 
+The first correction gate stopped at compilation (`cannot find function now in the crate root`, 58.187 s). The persistence path now calls the tray's existing local clock. The same focused `cargo +stable test --locked --bin taskq task_pin_ -- --nocapture` passes all three cases, including exact unavailable Unpin, first-observation persistence/reset, source-backed Finished pinning and storage failure preservation. The next full gate includes the same checks; no failed run is reported as passing.
+
 ## Checks and artifacts
 
 Host: Windows; Node 24.5.0, Python 3.12.10, Cargo 1.99.0; Playwright 1.64.1. Chromium/WebKit instruments are isolated in the OS temporary browser cache. These are production web bundles with invented source data, not installed/native acceptance.

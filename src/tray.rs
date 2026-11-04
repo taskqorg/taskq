@@ -259,7 +259,7 @@ fn task_pin(settings:&mut Settings,install:&Path,st:&Value,m:&Value)->Result<Val
     if pinned&&observed {
         let pin=pins.iter_mut().find(|p|p["ref"]==reference).ok_or("Task pin unavailable; no observation saved")?;
         if m["closedSeen"]==0 {if let Some(pin)=pin.as_object_mut(){pin.remove("closedSeen");}}
-        else if !pin["closedSeen"].as_i64().is_some_and(|at|at>0){pin["closedSeen"]=json!(crate::now());}
+        else if !pin["closedSeen"].as_i64().is_some_and(|at|at>0){pin["closedSeen"]=json!(now());}
     }else{
         if pinned&&row.is_none(){return Err("Task unavailable; no pin added".into());}
         if pinned&&pins.len()>=256&&!pins.iter().any(|pin|pin["ref"]==reference){return Err("Task pin limit reached; prior pins kept".into());}
