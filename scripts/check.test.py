@@ -248,6 +248,22 @@ for invalid in [parked[:2] + parked[3:],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', author_association='NONE')],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', updated_at='edited')]]:
     assert approval(invalid) == '', 'stage parks retain admission, unsupported-transition, revision and trust fences'
+# #2352: a worker `gone` (§2 row 10) made the gate unknown, so the replacement attempt's picked §4 and M8 ask never approved.
+gone_ask = 'taskq: ask attempt 4\nDone: cuts\nProblem: Change §4 and M8.\n1. Change §4 - + less; - late\n2. Keep R9 - + none; - fails\nTo answer: `taskq answer 2352.K`.'
+gone_steps = [comment(1, 'taskq: spawn worker claude:invented win'), comment(2, 'taskq: gone attempt 1'), comment(4, 'taskq: spawn worker claude:invented win')]
+gone_text = lambda *rest: check['approval_text'](gone_steps + list(rest), 2352)
+replaced = gone_text(comment(5, gone_ask), comment(6, 'taskq: released 4 exit attempt 4'), comment(7, 'taskq: answer 1\nChange §4 - + less; - late'))
+assert '§4' in replaced and 'M8' in replaced and 'R9' not in replaced, replaced
+assert '§4' not in gone_text(comment(5, gone_ask)), 'an unanswered ask grants nothing after gone'
+assert '§4' not in gone_text(comment(5, gone_ask), comment(7, 'taskq: answer 1 attempt 4')), 'an attempt-bound answer grants nothing after gone'
+assert 'M8' not in gone_text(comment(5, gone_ask), comment(7, 'taskq: answer 1\nop-id: stale\nrevision: 9')), 'a mismatched revision grants nothing after gone'
+assert 'M8' not in gone_text(comment(5, gone_ask.replace('attempt 4', 'attempt 1')), comment(7, 'taskq: answer 1')), "the dead attempt's late ask grants nothing"
+second_gone = [comment(5, 'taskq: gone attempt 4'), comment(6, 'taskq: spawn worker claude:invented win'), comment(7, gone_ask.replace('attempt 4', 'attempt 6')), comment(8, 'taskq: answer 1')]
+assert gone_text(*second_gone) == '', 'the 2nd gone asks with the limit card: unmodelled, so the gate stays closed'
+reviewer_gone = [comment(1, 'taskq: spawn worker claude:invented win'), comment(2, 'taskq: result ' + 'e'*40 + ' attempt 1'), comment(3, 'taskq: spawn reviewer claude:invented win'),
+                 comment(4, 'taskq: gone attempt 3'), comment(5, 'taskq: spawn reviewer claude:invented win'), comment(6, gone_ask.replace('attempt 4', 'attempt 5')), comment(7, 'taskq: answer 1')]
+assert check['approval_text'](reviewer_gone, 2352) == '', 'only a worker gone is modelled'
+print('PASS rule gate: a picked ask after a worker gone approves; other grants stay closed')
 # #2232: a worker `later <ref> attempt` park (§2 row 23) made the gate unknown, so #2210's later §8 pick never approved.
 history_2210 = [comment(1, 'taskq: hold'), comment(2, 'taskq: start'), comment(3, 'taskq: spawn worker claude:invented win'),
                 comment(4, 'taskq: accepted 3 attempt 3'), comment(5, 'taskq: later coreq#116 attempt 3\nReason: coreq orders pre-releases lexically'),
@@ -312,3 +328,86 @@ assert warn(report) == ['Warning: COMPACT: taskq.md: 60024 bytes > target 55910 
 assert warn(report, True)[0].startswith('::warning::COMPACT: taskq.md: 60024 bytes')
 assert warn('taskq.md: 55898 bytes\nPASS\n') == []
 print('PASS contract lint COMPACT markers surface as warnings')
+
+# R8/R12: unavailable contract lint must refuse before any test/build command.
+from unittest.mock import patch
+import hashlib
+import io
+gate = check['main'].__globals__
+with tempfile.TemporaryDirectory(prefix='taskq-lint-unavailable-') as directory:
+    lint = check['contract_lint']
+    with patch.dict(gate, changes=lambda _: ['README.md'], rule_gate=lambda _: None,
+                    contract_lint=lambda: lint(Path(directory))), \
+         patch.object(sys, 'argv', ['check.py']), \
+         patch.dict(os.environ, {}, clear=True), \
+         patch('urllib.request.urlopen', side_effect=OSError('offline')) as download, \
+         patch.object(subprocess, 'run', side_effect=AssertionError('checks started before contract lint')):
+        try:
+            check['main']()
+        except SystemExit as error:
+            assert 'contract lint unknown (R12)' in str(error), error
+        else:
+            raise AssertionError('unavailable lint passed')
+        assert download.call_count == 1, 'no preparation retries'
+print('PASS unavailable contract lint refuses before checks')
+
+# R8: fetch only the pinned standalone script, verify before publishing/executing,
+# reuse valid caches offline and refuse invalid checkout/cache/download bytes.
+body = b'print("fixture lint")\n'
+with tempfile.TemporaryDirectory(prefix='taskq-lint-cache-') as directory, \
+     patch.dict(gate, CONTRACT_LINT_SHA256=hashlib.sha256(body).hexdigest()):
+    root = Path(directory)
+    cached = root / '.taskq' / 'specq' / check['SPECQ'] / check['CONTRACT_LINT']
+    with patch('urllib.request.urlopen', return_value=io.BytesIO(body)) as download:
+        command = lint(root)
+        assert command == [sys.executable, str(cached), 'taskq.md']
+        download.assert_called_once_with(
+            f'https://raw.githubusercontent.com/taskqorg/specq/{check["SPECQ"]}/engineering/scripts/contract_lint.py', timeout=10)
+    assert cached.read_bytes() == body
+    with patch('urllib.request.urlopen', side_effect=AssertionError('offline cache fetched')):
+        assert lint(root) == command
+    checkout = root / '.specq' / check['CONTRACT_LINT']
+    checkout.parent.mkdir(parents=True)
+    checkout.write_bytes(body)
+    with patch('urllib.request.urlopen', side_effect=AssertionError('CI checkout fetched')):
+        assert lint(root)[1] == str(checkout)
+    for invalid in (checkout, cached):
+        invalid.write_bytes(b'changed')
+        with patch('urllib.request.urlopen', side_effect=AssertionError('invalid local copy fetched')):
+            try:
+                lint(root)
+            except SystemExit as error:
+                assert 'unknown (R12)' in str(error) and 'SHA-256 mismatch' in str(error), error
+            else:
+                raise AssertionError('invalid local linter accepted')
+        invalid.unlink()
+    for invalid in (b'changed', b'x' * (128 * 1024 + 2)):
+        with patch('urllib.request.urlopen', return_value=io.BytesIO(invalid)):
+            try:
+                lint(root)
+            except SystemExit as error:
+                assert 'SHA-256 mismatch' in str(error), error
+            else:
+                raise AssertionError('invalid downloaded linter accepted')
+        assert not cached.exists(), 'unverified bytes never published'
+print('PASS pinned lint preparation, offline reuse and integrity refusal')
+
+# R8/R12: lint runs once before every other check; findings stop the gate.
+with tempfile.TemporaryDirectory(prefix='taskq-lint-gate-') as directory:
+    command = [sys.executable, 'fixture-linter.py', 'taskq.md']
+    for status in (0, 1):
+        with patch.dict(gate, ROOT=Path(directory), changes=lambda _: ['README.md'], rule_gate=lambda _: None,
+                        contract_lint=lambda: command), \
+             patch.object(sys, 'argv', ['check.py']), \
+             patch.dict(os.environ, {}, clear=True), \
+             patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess(command, status, 'fixture lint\n', '')) as run:
+            try:
+                check['main']()
+            except subprocess.CalledProcessError as error:
+                assert status == error.returncode == 1
+            else:
+                assert status == 0
+            assert run.call_args_list[0].args[0] == command
+            assert sum(call.args[0] == command for call in run.call_args_list) == 1
+            assert run.call_count == (5 if status == 0 else 1), run.call_args_list
+print('PASS lint runs first and once; findings stop before tests/builds')

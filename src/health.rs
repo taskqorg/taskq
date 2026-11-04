@@ -14,7 +14,7 @@ use crate::core::State;
 use crate::snapshot::Host;
 
 /// Seconds between two health checks of a project service.
-pub const EVERY: u64 = 600;
+pub const EVERY: u64 = 3600;
 /// A published result older than this reads unknown: the service stopped checking.
 const STALE: i64 = 3 * EVERY as i64;
 /// Board permission name, check id and the fine-grained grant the owner gives.
@@ -692,7 +692,7 @@ mod tests {
         let unread = host_row(&host("pds", now - 10, "4.6.62", Some("9900 token-issues:unknown")), "g/p", true, now, 120, None);
         assert_eq!(unread["fix"], "run `taskq doctor` on pds: it names why the token read failed", "an unread token asks for no grant");
         assert_eq!(host_row(&host("ok", now - 10, "4.6.60", Some("9900 ok")), "o/r", false, now, 120, None)["state"], "ok");
-        let lapsed = host_row(&host("ok", now - 10, "4.6.60", Some("100 ok")), "o/r", false, now, 120, None);
+        let lapsed = host_row(&host("ok", now - 10, "4.6.60", Some(&format!("{} ok", now - STALE - 1))), "o/r", false, now, 120, None);
         assert_eq!(lapsed["state"], "unknown", "a result the service stopped refreshing is unknown");
         assert_eq!(parse("9900 rm-rf:gap"), None, "only known ids");
         assert_eq!(parse("9900 version:fine"), None, "only known statuses");

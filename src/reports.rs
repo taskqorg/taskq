@@ -19,7 +19,7 @@ pub struct Cache {
 }
 
 /// #2083: the longest between report reads of every issue.
-const FULL_SCAN: i64 = 300;
+const FULL_SCAN: i64 = 1800;
 /// #2087: github.com serves issue lists up to 5 min old (§ 4), so a read of every issue starts this far before the
 /// previous one: an update the lagging reply left out falls inside the next window instead of before it.
 const LIST_LAG: i64 = 300;
@@ -136,7 +136,9 @@ impl Collector {
         self.received();
         let closes=std::fs::read_to_string(crate::dot(root).join("events")).unwrap_or_default().lines().filter(|l|l.contains(" close ")).collect::<Vec<_>>().join("\n");
         if closes!=self.closes {self.closes=closes;self.invalidated=true;}
-        if enabled && self.pending.is_none() && (self.invalidated || self.started.is_none_or(|t|t.elapsed().as_secs()>=poll.max(1))) {
+        // #2352: one collection every three polls, under `ttl` (freshness below); a close asks at once.
+        let every=(poll.max(1)*3).min(u64::try_from(ttl/2).unwrap_or(0).max(1));
+        if enabled && self.pending.is_none() && (self.invalidated || self.started.is_none_or(|t|t.elapsed().as_secs()>=every)) {
             self.invalidated=false;self.started=Some(std::time::Instant::now());
             let (tx,rx)=std::sync::mpsc::channel();let job=(self.cache.take().unwrap_or_else(||Cache::retaining(self.value.clone())),tx);
             // A stopped reader hands the job back; one fresh reader replaces it.
@@ -728,17 +730,18 @@ mod tests {
     // #2087 A1: a decision whose issue update a lagging list left out must still leave Decide, before and after a restart,
     // and a cache stored before the list-lag overlap must heal once. Risk: a dropped report stays in Decide for good.
     #[test] fn lagging_list_never_hides_a_decision_for_good() {
-        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(LIST_LAG+1);cache.collect(&b);
+        // #2352: the full read a second after the decision lags it; the gap between full reads is longer than the lag.
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(FULL_SCAN-1);cache.collect(&b);
         let list=b.state.borrow().issues.clone();b.raw(n,&format!("taskq: report-drop {sha}"),true,false);b.state.borrow_mut().stale_list=Some(list);
-        b.advance(FULL_SCAN);cache.collect(&b);
+        b.advance(1);cache.collect(&b);
         assert_eq!(cache.value["reports"][0]["n"],n,"the lagging reply still shows the report");
         b.advance(FULL_SCAN);cache.collect(&b);
         assert!(cache.value["reports"].as_array().unwrap().is_empty(),"the next full read overlaps the lag");
         assert_eq!(cache.value["history"][0]["decision"],"drop");
         // The same miss just before a restart heals in the retained cache's first pass.
-        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(LIST_LAG+1);cache.collect(&b);
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(FULL_SCAN-1);cache.collect(&b);
         let list=b.state.borrow().issues.clone();b.raw(n,&format!("taskq: report-drop {sha}"),true,false);b.state.borrow_mut().stale_list=Some(list);
-        b.advance(FULL_SCAN);cache.collect(&b);assert_eq!(cache.value["reports"][0]["n"],n);
+        b.advance(1);cache.collect(&b);assert_eq!(cache.value["reports"][0]["n"],n);
         let mut restarted=Cache::retaining(cache.value.clone());b.advance(60);restarted.collect(&b);
         assert!(restarted.value["reports"].as_array().unwrap().is_empty());assert_eq!(restarted.value["history"][0]["decision"],"drop");
         // A cache stored before the overlap (no `overlap` key) relists once in full and drops the stale row.

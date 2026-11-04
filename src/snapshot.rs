@@ -356,11 +356,14 @@ impl Admission {
 
 pub const ROUTING_WAIT: &str = "runtime reroute pending; service rechecks writer ownership before completion";
 
+pub const START_LABELS: &str = "start eligibility labels incomplete";
+
 /// The board-only admission of a row: `waiting` is the fold's dependency decision, `ready` waits for a host decision
 /// unless its `host-<name>` label names no heartbeat (#1721): no host ever claims it.
 fn board_admission(t: &Task, labels: &[String], deps: &[service::Blocker], hosts: &[board::Issue], observed: i64) -> Option<Admission> {
     let orphan = labels.iter().filter_map(|l| l.strip_prefix("host-")).find(|h| !hosts.iter().any(|i| service::host_name(i) == Some(*h)));
     let (code, reason) = match t.state {
+        State::Ready | State::Waiting if !labels.iter().any(|l| l == service::TASK_LABEL) => ("labels", START_LABELS.into()),
         State::Waiting => ("dependency", deps.iter().map(|b| format!("{} {}", b.dep.name(), b.reason)).collect::<Vec<_>>().join(", ")),
         State::Ready => match orphan { Some(h) => ("host", format!("no host {h}")), None => ("unknown", ADMISSION_UNKNOWN[0].to_string()) },
         _ => return None,
@@ -458,7 +461,7 @@ pub struct Host {
 
 /// R6 anomaly kinds whose source defect has an open held fix task (#2256 answer 1): the row names it.
 // ponytail: drop each entry once its task lands; the anomaly row then shows without a fix link.
-pub const ANOMALY_FIXES: [(&str, u64); 3] = [("remote-control", 2261), ("progress", 2262), ("running", 2264)];
+pub const ANOMALY_FIXES: [(&str, u64); 4] = [("remote-control", 2261), ("progress", 2262), ("running", 2264), ("start-labels", 2362)];
 
 /// R10 A1: hosts serving projects no board of this view carries: each host's largest `queue` row count against the
 /// boards that carry its heartbeat. Rows of other projects stay anonymous (private names), so only counts compare.
@@ -1060,6 +1063,9 @@ impl Snapshot {
         if let Some(d) = decide_unknown { anomalies.push(format!("- {} · Next: rerun `taskq status` after the next service pass", d.trim_end())); }
         let stamp=|v:&Value|v.as_i64().filter(|at|*at>0).map(crate::board::stamp).unwrap_or("unknown".into());
         for r in &self.tasks {
+            if r.admission.as_ref().is_some_and(|a| a.code == "labels" && a.reason == START_LABELS) {
+                anomalies.push(format!("- {} · log {}; {START_LABELS} · Next: `taskq start {}`{}", link(r), r.task.state.name(), r.n, fix("start-labels")));
+            }
             if let Some(warning) = r.health_warning() {
                 let field=|v:&Value| {
                     let full=v.as_str().unwrap_or("unknown");let text=cell(&compact(full,160));

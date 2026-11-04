@@ -1382,6 +1382,8 @@ mod tests {
     use super::*;
     use std::process::Command;
 
+    const HTTP_FIXTURE_SECONDS: u64 = if cfg!(windows) { 60 } else { 15 };
+
     // Chain: real curl/config stdin -> local HTTP refusal -> request accounting and secret-free execution trace.
     #[test]
     fn native_http_preserves_refusal_without_exporting_request_data() {
@@ -1389,8 +1391,10 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         let out = coreq::process::output("test.http", Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "board::tests::native_http_child", "--ignored", "--nocapture"])
-            .env("TASKQ_NATIVE_HTTP_TEST_ROOT", &dir), std::time::Duration::from_secs(15));
-        assert!(out.is_ok(), "native HTTP chain failed: {out:?}; phases: {}",std::fs::read_to_string(dir.join("phases.log")).unwrap_or_else(|_|"child entry not observed".into()));
+            .env("TASKQ_NATIVE_HTTP_TEST_ROOT", &dir), std::time::Duration::from_secs(HTTP_FIXTURE_SECONDS));
+        let phases = std::fs::read_to_string(dir.join("phases.log")).unwrap_or_else(|_|"child entry not observed".into());
+        assert!(out.is_ok(), "native HTTP chain failed: {out:?}; phases: {phases}");
+        println!("native HTTP phases: {phases}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1413,7 +1417,8 @@ mod tests {
         let body = json!({"text": "private-body".repeat(4000)});
         let expected = body.clone();
         let server = std::thread::spawn(move || {
-            let until = Instant::now() + Duration::from_secs(5);
+            // Collector/process startup may precede curl; the parent bounds the whole fixture.
+            let until = Instant::now() + Duration::from_secs(if cfg!(windows) { HTTP_FIXTURE_SECONDS } else { 5 });
             let mut socket = loop {
                 match listener.accept() {
                     Ok((socket, _)) => break socket,
@@ -1866,7 +1871,7 @@ mod tests {
                 if url.contains("/commits?per_page=1") && scenario != "ok" {
                     return Err(format!("GET /commits?per_page=1: HTTP {scenario} Resource not accessible by personal access token"));
                 }
-                assert!(url.contains("/issues?per_page=1") || url.contains("/pulls?per_page=1") || url.contains("/commits?per_page=1"), "unexpected {url}");
+                assert!(url.contains("/issues?labels=taskq&per_page=1") || url.contains("/pulls?per_page=1") || url.contains("/commits?per_page=1"), "unexpected {url}");
                 Ok(Reply { status: 200, headers: vec![], body: "[]".into(), operation: operation(method) })
             }));
             let access = h.access();

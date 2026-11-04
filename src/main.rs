@@ -63,6 +63,8 @@ mod icon;
 mod notify;
 #[cfg(any(target_os = "macos", windows))]
 mod tray;
+#[cfg(any(target_os = "macos", windows))]
+mod ui_bundle;
 #[cfg(any(target_os = "macos", windows, test))]
 mod pending;
 
@@ -1265,7 +1267,7 @@ fn sleep_until_poke(paths: &[PathBuf; 2], start: [Option<SystemTime>; 2], until:
 /// § 4 step 8 (#1819): the board is read at most this many seconds apart while a tray window is open.
 const MENU_POLL: u64 = 15;
 
-/// A tray window touches `<install>/menu-open` every tick while open.
+/// A tray window touches `<install>/menu-open` every tick while visible and focused.
 fn menu_open(install: &Path) -> bool {
     file_age(&install.join("menu-open")).is_some_and(|a| a < 30)
 }
@@ -1288,9 +1290,9 @@ fn take_reread(dot: &Path) -> Vec<u64> {
     tasks
 }
 
-/// § 4 step 8 (#1431): an idle pass waits 3×`poll`; board-only changes may show up to 2×`poll` later.
-fn poll_wait(poll: u64, complete: bool, children: bool, poked: bool, snapshot: Option<&snapshot::Snapshot>) -> u64 {
-    let active = snapshot.is_none_or(|s| s.reason.is_some() || s.tasks.iter().any(|r| matches!(r.task.state, State::Ready | State::Doing | State::Review)));
+/// § 4 step 8 (#1431, #2352): an idle pass waits 3×`poll`; board-only changes may show up to 2×`poll` later.
+fn poll_wait(poll: u64, complete: bool, children: bool, poked: bool, focus_off: bool, snapshot: Option<&snapshot::Snapshot>) -> u64 {
+    let active = snapshot.is_none_or(|s| s.reason.is_some() || !focus_off && s.tasks.iter().any(|r| matches!(r.task.state, State::Ready | State::Doing | State::Review)));
     if !complete || children || poked || active { poll } else { poll * 3 }
 }
 
@@ -1585,7 +1587,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         if host.is_none() && hour.0.elapsed().as_secs() >= 3600 {
             let h = requests::diff(&budget.ops, &hour.1);
             log!("requests 1h: {}", requests::summary(&h, ""));
-            requests::record("service", &h);
+            requests::flush(requests::SERVICE);
             last_hour = Some(h);
             hour = (Instant::now(), budget.ops.clone());
         }
@@ -1736,7 +1738,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             }
         }
         // #1357: a failed handover retries at `poll`; its reduced pass may list the board for unknown ownership.
-        let wait = if reduced {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
+        let wait = if reduced {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.focus_off(), s.snapshot.as_ref())};
         // every 30 s, also between board polls: a gate sample (when enabled) and a fresh capacity in status.json (§ 4)
         let mut tick = || {
             let results_ready=reports.received();
@@ -3357,9 +3359,12 @@ fn start_tasks(b: &dyn Board, root: &Path, nums: &[String], op: &Op) -> Res<Vec<
     if ns.len() > 1 && op.revision.is_some() { return Err("--revision names one task; start several without it".into()) }
     for &n in &ns {
         let issue = b.issue(n)?;
-        let held = service::is_held(&issue) || fold(n, &entries(b, n)?, false).state == State::Held;
+        let log = entries(b, n)?;
+        let projection = core::project(n, &log, false);
+        let held = service::is_held(&issue) || projection.task.state == State::Held;
+        let repair = !service::is_task(&issue) && projection.task.state == State::Ready && service::start_logged(n, &log, &projection);
         // a retried op id may find its task already started; `act` returns the first receipt
-        if !issue.trusted || !issue.open || !(held || op.id.is_some()) {
+        if !issue.trusted || !issue.open || !(held || repair || op.id.is_some()) {
             return Err(format!("#{n} is not a held task; nothing started"));
         }
         // § 1 Task text: only the Goal and Acceptance sections; Scope and links may name paths and issues
@@ -3740,12 +3745,16 @@ fn submit_finding(b: &dyn Board, raw: &Value, root: &Path, board: &str, web_host
 /// Section 1 start log -> eligibility label -> authoritative readback, shared by start and finding.
 fn start_one(b: &dyn Board, root: &Path, n: u64, op: &Op) -> Receipt {
     let mut start_op = op.clone();
+    let mut repair = false;
     // A finding's q-held projection prevents admission even before its hold log is initialized.
-    let initialize = || -> Res<Option<Receipt>> {
+    let mut initialize = || -> Res<Option<Receipt>> {
         let issue = b.issue(n)?;
         let log = entries(b, n)?;
-        let revision = core::project(n, &log, false).revision;
+        let projection = core::project(n, &log, false);
+        let revision = projection.revision;
         if op.revision.is_some_and(|r| r != revision) { return Ok(None) }
+        repair = issue.trusted && issue.open && projection.task.state == State::Ready && service::start_logged(n, &log, &projection)
+            && (!service::is_task(&issue) || issue.labels.iter().any(|l| l == "q-held"));
         if issue.open && service::is_held(&issue) && revision == 0 {
             let hold = Op { id: op.id.as_ref().map(|id| format!("{id}.hold")), revision: Some(revision) };
             let r = act(b, root, n, "hold", &[], "", &hold);
@@ -3759,23 +3768,26 @@ fn start_one(b: &dyn Board, root: &Path, n: u64, op: &Op) -> Receipt {
         Err(e) => return Receipt { outcome: "unknown", ..Receipt::rejected(n, op, e) },
         Ok(None) => {}
     }
-    let r = act(b, root, n, "start", &[], "", &start_op);
-    if !r.ok() { return r }
+    if !repair {
+        let r = act(b, root, n, "start", &[], "", &start_op);
+        if !r.ok() { return r }
+    }
     let readback = || -> Res<Receipt> {
         let (issue, t, _) = current(b, n)?;
         let log = entries(b, n)?;
-        let started = log.iter().any(|e| !e.edited && e.body.starts_with("taskq: start"));
+        let started = service::start_logged(n, &log, &core::project(n, &log, false));
         if started && issue.open { service::project(b, &issue, &t)?; }
         if started && issue.open && !service::is_task(&issue) {
             b.labels(n, &[service::TASK_LABEL.into()], &[])?;
         }
         let (issue, t, _) = current(b, n)?;
-        if issue.open && (!service::is_task(&issue) || service::is_held(&issue)) {
+        let want = b.state_label(t.state.name())?;
+        if issue.open && (!service::is_task(&issue) || !issue.labels.contains(&want) || issue.labels.iter().any(|l| l.starts_with("q-") && l != &want)) {
             return Err("start eligibility labels not read back".into());
         }
         Ok(Receipt::accepted(n, op, if issue.open { t.state } else { State::Closed }, core::revision(n, &entries(b, n)?)))
     };
-    readback().unwrap_or_else(|e| Receipt { outcome: "unknown", next: format!("Read taskq inbox {n}; retry the same start operation."), ..Receipt::rejected(n, op, e) })
+    readback().map(|r| if repair { r.wake(root) } else { r }).unwrap_or_else(|e| Receipt { outcome: "unknown", next: format!("Read taskq inbox {n}; retry the same start operation."), ..Receipt::rejected(n, op, e) })
 }
 
 /// §5: explicit owner request; labels change only on ready tasks without unreleased execution.
@@ -4391,9 +4403,7 @@ fn application() {
     // #1351: the command already took effect; hand queued receipts to the writer before the exit flush, which has the same bound.
     telemetry::settle(Duration::from_secs(10));
     // § 4 budget: this process's board requests by source, for `taskq profile`
-    if let Some(source) = requests::source(&args, std::env::var("TASKQ_ROLE").ok().as_deref()) {
-        requests::flush(&source);
-    }
+    requests::flush(&requests::source(&args, std::env::var("TASKQ_ROLE").ok().as_deref()));
     if let Err(e) = r {
         if e.is_empty() {
             crate::platform::exit(1);
@@ -5436,6 +5446,49 @@ mod tests {
             assert_eq!(r.outcome, if mode == "claim" { "unknown" } else { "accepted" });
             assert_eq!(b.b.issues(None).unwrap().len(), count);
             assert_eq!(b.comments(1).unwrap().len(), if mode == "race" { 2 } else { 1 });
+        }
+    }
+
+    // #2362: a logged start with failed labels must stay visible and repair without another admission entry.
+    #[test]
+    fn logged_start_repairs_eligibility_and_reports_mismatch() {
+        for (dependency, eligibility_write) in [(false, false), (true, false), (false, true), (true, true)] {
+            let b = Fake::default();
+            let cfg = cfg();
+            let dep = b.create("Dependency", "", &[]).unwrap();
+            let n = b.create("Logged start", if dependency { "Depends on #1" } else { "" }, &["q-held".into()]).unwrap();
+            b.comment(n, "taskq: hold").unwrap();
+            if eligibility_write {
+                b.state.borrow_mut().before_labels = Some(Box::new(|b, _| {
+                    b.state.borrow_mut().before_labels = Some(Box::new(|b, _| b.state.borrow_mut().fail_labels = true));
+                }));
+            } else { b.state.borrow_mut().fail_labels = true; }
+            let first = start_task(&b, &cfg.root, n, &Op::default()).unwrap();
+            assert!(!first.ok());
+            let failed_labels = if eligibility_write { if dependency { "q-blocked" } else { "q-ready" } } else { "q-held" };
+            assert_eq!(b.issue(n).unwrap().labels, [failed_labels]);
+            assert!(!service::is_task(&b.issue(n).unwrap()), "failed start is not eligible for admission");
+            let count = entries(&b, n).unwrap().len();
+            assert_eq!(count, 2, "hold and accepted start survive label failure");
+            let state = if dependency { State::Waiting } else { State::Ready };
+            let snap = snapshot::read(&b, &cfg, &json!({}), &[]);
+            let row = snap.tasks.iter().find(|r| r.n == n).unwrap();
+            let stale = Op { revision: Some(0), ..Op::default() };
+            assert!(!start_task(&b, &cfg.root, n, &stale).unwrap().ok());
+            assert_eq!(b.issue(n).unwrap().labels, [failed_labels]);
+            let retry = start_tasks(&b, &cfg.root, &[n.to_string()], &Op::default()).unwrap();
+            assert!(retry[0].ok(), "retry must repair: {}; status before retry: {:?}", retry[0].text(), row.task.state);
+            assert_eq!(row.task.state, state, "status must not conceal the logged start as held");
+            assert_eq!(row.json()["admission"]["code"], "labels");
+            let text = snap.text(&cfg, &json!({})).unwrap();
+            assert!(text.contains("start eligibility labels incomplete") && text.contains(&format!("taskq start {n}")), "{text}");
+            let issue = b.issue(n).unwrap();
+            assert!(service::is_task(&issue) && !issue.labels.contains(&"q-held".into()));
+            assert!(issue.labels.contains(&format!("q-{}", if dependency { "blocked" } else { "ready" })));
+            assert_eq!(entries(&b, n).unwrap().len(), count, "repair must not duplicate the start log");
+            assert_eq!(snapshot::read(&b, &cfg, &json!({}), &[]).tasks.iter().find(|r| r.n == n).unwrap().task.state, state);
+            assert!(start_tasks(&b, &cfg.root, &[n.to_string()], &Op::default()).is_err(), "eligible work still refuses a fresh start");
+            b.close(dep).unwrap();
         }
     }
 

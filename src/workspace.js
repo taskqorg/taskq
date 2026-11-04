@@ -11,6 +11,8 @@ const {create}=execution.module('workspace',{
   // A2: the recorded Wouter history is the Back stack; each entry keeps its scroll, disclosures and focus.
   const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail:renderer.entries(),root:'conversations',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
   if(window.taskqNativeFrame)menu.classList.add('native-frame');
+  // #2365: adoption waits for 10 s without input; a reader who is typing or pointing keeps this page.
+  let lastInput=-Infinity;
   let recoveryText='',composing=false,answerField=null,redraw=null,threadProjection=null,projectionSidebar=null;
   const pinReads=require('./task-pins.js').create({snapshot:()=>snapshot.value,live:ref=>(snapshot.value?.projects||[]).some(p=>(p.tasks||[]).some(t=>t.state!=='closed'&&require('./task-views.js').identity(p)+'#'+t.n===ref)),send:ui.send,remove:ref=>ui.send({a:'task-pin',ref,pinned:false}),draw:()=>{threadProjection=null;api.draw();}});
   const notifications=notification.create({view,send:ui.send,draw:()=>api.draw(),messages:(action,rows)=>api.messageAction(action,rows.map(r=>r.key),'list'),reports:{rows:()=>reports.rows(),count:()=>reports.count(),markRead:rows=>reports.markRead(rows),feedback:()=>reports.feedback(),readFailure:()=>reports.readFailure()}});
@@ -236,6 +238,8 @@ const {create}=execution.module('workspace',{
    },
    back:function(){if(view.routeFault){view.routeFault=null;view.safe=true;view.answer=null;view.message=null;view.result=null;view.page='conversations';renderer.clear();api.draw();return;}if(view.page==='operations'&&view.operationOrigin){const origin=view.operationOrigin;view.operationOrigin=null;ui.send({a:'workspace-origin',origin});const prior=renderer.pop();if(prior){state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);}api.draw();return;}const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);if(prior.conversation)conversations.restoreContext(prior.conversation);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
    receive:function(s){
+    // #2365 A4: the safe Reload path; a draft saves first, and pending work declines until the next offer, so nothing replays.
+    if(s.bundleAdopt){if(composing||performance.now()-lastInput<10000)return;conversations.flush();state.flush();if(conversations.recoverable()){api.checkpoint();ui.send({a:'workspace-reload',adopt:true});}return;}
     threadProjection=null;
     if(Array.isArray(s.projects)){s=errors.retain(s,snapshot.value);s.index_spare=Math.max(0,16*1024*1024-new TextEncoder().encode(JSON.stringify(s)).length);}
     if(s.dashboard||s.navigation?.dashboard){view.taskDashboard=require('./task-views.js').normalize(s.dashboard||s.navigation.dashboard);conversations.setTaskPins(view.taskDashboard.pins);}
@@ -331,6 +335,7 @@ const {create}=execution.module('workspace',{
     });
     ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);if(e.target.dataset.cField==='result-reason')reports.reasonInput(e.target.value,[e.target.selectionStart,e.target.selectionEnd]);if(e.target.dataset.cField==='result-date')reports.dateInput(e.target.value);});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField==='result-reason')reports.reasonInput(null,[e.target.selectionStart,e.target.selectionEnd]);const c=api.answerContext();if(e.target.dataset.cField==='steer'&&c)answers.steerCaret(c.board,c.task,[e.target.selectionStart,e.target.selectionEnd]);if(e.target.dataset.cField==='answer'&&c)answers.answerInput(c.board,c.task,null,[e.target.selectionStart,e.target.selectionEnd]);});
+    for(const event of ['keydown','pointerdown','wheel'])ui.listen(document,event,()=>{lastInput=performance.now();},true);
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
     ui.listen(menu,'scroll',()=>state.schedule(),true);ui.listen(menu,'toggle',()=>state.schedule(),true);
     ui.listen(document,'keydown',e=>{

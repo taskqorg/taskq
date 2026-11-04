@@ -139,9 +139,27 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
 
 /// Only issues labelled `taskq` are tasks (§ 1): a user issue never starts by itself.
 /// Heartbeat lines a write compares: the `at` stamp and diagnostics observation times change every pass (#1358).
+/// A value that is the same for the whole host travels with the next write, or one change writes every project's
+/// board (§ 4 step 3, #2352).
 fn stable(body: &str) -> Vec<String> {
     // A changed usage row never forces a write; rows travel with the periodic write (capacity.md).
-    body.lines().filter(|l| !l.starts_with("at ") && crate::runtime::usage::Row::parse(l).is_none()).map(|l| {
+    body.lines().filter(|l| !l.starts_with("at ") && crate::runtime::usage::Row::parse(l).is_none()
+        && !l.starts_with("headroom ") && !l.starts_with("requests ") && *l != "has gui").map(|l| {
+        if let Some(mut balancing)=l.strip_prefix("balancing ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
+            if let Some(b)=balancing.as_object_mut() {b.remove("has");}
+            if let Some(runtimes)=balancing.get_mut("runtimes").and_then(Value::as_object_mut) {
+                for r in runtimes.values_mut().filter_map(Value::as_object_mut) {
+                    for key in ["code","reason","load"] {r.remove(key);}
+                }
+            }
+            return format!("balancing {balancing}");
+        }
+        if let Some(queue)=l.strip_prefix("queue ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
+            return format!("queue {}",queue["restart"]);
+        }
+        if let Some((_,status))=l.strip_prefix("doctor ").and_then(|s|s.split_once(' ')) {
+            return format!("doctor {status}");
+        }
         if let Some(mut execution)=l.strip_prefix("execution ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
             if let Some(progress)=execution.get_mut("progress").and_then(Value::as_object_mut) {progress.remove("observed");}
             return format!("execution {execution}");
@@ -154,6 +172,11 @@ fn stable(body: &str) -> Vec<String> {
         }
         _ => l.to_string(),
     }}).collect()
+}
+
+/// § 4 step 3: a lease needs the wider margin only while this heartbeat holds an attempt (#2352).
+fn renewal(body: &str, ttl: i64) -> i64 {
+    if body.lines().any(|l| l.starts_with('#')) {ttl / 3} else {ttl / 2}
 }
 
 /// #1616: a host admission refusal (`admission.rs` code, or `host.rs` reason under code `host`) as an admission code.
@@ -286,9 +309,14 @@ pub fn is_task(i: &Issue) -> bool {
     i.trusted && i.labels.iter().any(|l| l == TASK_LABEL)
 }
 
-/// A held task (§ 1): labelled `q-held` without `taskq`, so no version admits it; listed as `held` whatever its log.
+/// The held label projection (§ 1), including a start whose eligibility-label write failed.
 pub fn is_held(i: &Issue) -> bool {
     i.trusted && !is_task(i) && i.labels.iter().any(|l| l == "q-held")
+}
+
+/// Only an accepted start authorizes repairing eligibility (§ 1).
+pub fn start_logged(n: u64, log: &[core::Entry], p: &core::Projection) -> bool {
+    log.iter().any(|e| p.accepts(e.id) && core::kind(n, &e.body) == "start")
 }
 
 pub fn is_host(i: &Issue) -> bool {
@@ -529,7 +557,7 @@ pub fn views_asked(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCa
     let request = crate::health::request_of(&issues);
     let (hosts, tasks): (Vec<Issue>, Vec<Issue>) = issues.into_iter().filter(|i| i.trusted).partition(is_host);
     let mut out = vec![];
-    for issue in tasks.into_iter().filter(|i| is_task(i) || is_held(i)) {
+    for issue in tasks.into_iter().filter(|i| is_task(i) || is_held(i) || i.labels.iter().any(|l| matches!(l.as_str(), "q-ready" | "q-blocked"))) {
         let (read, comments) = match cache.get(&issue.number) {
             Some((u, at, c)) if *u == issue.updated && *at >= issue.updated + SETTLE => (*at, c.clone()),
             _ => { let c = board.comments(issue.number)?; (board.now().unwrap_or(issue.updated), c) },
@@ -538,10 +566,13 @@ pub fn views_asked(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCa
         let log = crate::board::reply::log(issue.number, &comments)?;
         // only a task that would be ready reads its dependencies (§ 4 budget)
         let mut projection = core::project(issue.number, &log, false);
-        let ready = !is_held(&issue) && projection.task.state == State::Ready;
+        let started = start_logged(issue.number, &log, &projection);
+        if !is_task(&issue) && !is_held(&issue) && !started { continue; }
+        let held = is_held(&issue) && !started;
+        let ready = !held && projection.task.state == State::Ready;
         let blockers = if ready { blockers(board, &core::dep_body(&issue.body, &projection.task), Some(&open), deps) } else { vec![] };
         if !blockers.is_empty() { projection.task.state = State::Waiting; }
-        if is_held(&issue) {
+        if held {
             projection.task.state = State::Held;
         }
         out.push(View { projection, issue, comments, log, blockers });
@@ -1032,7 +1063,7 @@ impl<'a> Service<'a> {
     }
 
     /// The heartbeat of a reduced or observe pass: read at most every `ttl / 5`, at once when its children changed;
-    /// written like a full pass (§ 8 step 3): every `ttl / 3` or on a change outside `at`/diagnostics times.
+    /// written like a full pass (§ 4 step 3): at each `renewal` or on a change `stable` compares.
     fn beat_reduced(&mut self, changed: bool) -> Result<(), String> {
         if changed || self.reduced_at.is_none_or(|t| self.mono.saturating_sub(t) >= (self.cfg.ttl / 5).max(1) as u64) {
             self.reduced_at = Some(self.mono);
@@ -1040,7 +1071,7 @@ impl<'a> Service<'a> {
                 let hb = self.board.issue(n)?;
                 let now = self.board.now()?;
                 let body = self.heartbeat_body();
-                if now - hb.updated >= self.cfg.ttl / 3 || stable(&hb.body) != stable(&body) {
+                if now - hb.updated >= renewal(&body, self.cfg.ttl) || stable(&hb.body) != stable(&body) {
                     self.board.edit(n, &format!("{body}\nat {now}"))?;
                 }
             }
@@ -1320,6 +1351,9 @@ impl<'a> Service<'a> {
     }
 
     pub fn idle(&self) -> bool {self.kids.is_empty() && self.handoff_waits(false,false).is_empty()}
+
+    /// § 4 Focus: this host admits nothing; an unreadable focus file stays unknown.
+    pub fn focus_off(&self) -> bool {self.focus.is_empty() && self.focus_error.is_none()}
 
     /// Admission of one launch (§ 3): the load gate, then under Auto a reservation from the host authority, which
     /// refuses with a reason; the request stays `requested`. Fixed admits as before.
@@ -2303,9 +2337,9 @@ impl<'a> Service<'a> {
         let body = self.heartbeat_body();
         self.host_issue = hosts.iter().find(|h| h.title == title).map(|h| h.number);
         match hosts.iter().find(|h| h.title == title) {
-            // execution rows refresh every 60 s, read within ttl (snapshot.rs); without them ttl / 3 keeps every lease fresh (#1358)
+            // execution rows refresh every 60 s, read within ttl (snapshot.rs); without them `renewal` keeps every lease fresh (#1358)
             Some(h) if stable(&h.body) == stable(&body)
-                && now - h.updated < if body.lines().any(|l| l.starts_with("execution ")) { 60.min(ttl / 3) } else { ttl / 3 } => {}
+                && now - h.updated < if body.lines().any(|l| l.starts_with("execution ")) { 60.min(ttl / 3) } else { renewal(&body, ttl) } => {}
             // a same-body edit leaves `updated_at` as is (GitHub), so the stamp keeps the heartbeat fresh
             Some(h) => {
                 self.board.edit(h.number, &format!("{body}\nat {now}"))?;
@@ -2357,6 +2391,8 @@ impl<'a> Service<'a> {
                 touched.insert(n);
                 continue;
             }
+            // Keep the failed start discoverable until its explicit retry repairs eligibility.
+            if !is_task(&v.issue) && start_logged(n, &v.log, &v.projection) { continue; }
             let want = self.board.state_label(v.projection.task.state.name())?;
             let mut stale: Vec<_> = v.issue.labels.iter().filter(|l| l.starts_with("q-") && **l != want).cloned().collect();
             stale.sort();
@@ -2584,7 +2620,8 @@ impl<'a> Service<'a> {
             // `needs-gate`: every host of this version has gates; N-1 lacks them and leaves the task alone (§ 8)
             let lacks = || v.issue.labels.iter().filter_map(|l| l.strip_prefix("needs-"))
                 .find(|x| !(*x == "gate" || if *x == "gui" { self.gui().is_ok() } else { self.cfg.has.iter().any(|h| h == x) }));
-            let refusal = if self.execution_waits.contains_key(&n) { Some(("unknown", crate::snapshot::ADMISSION_UNKNOWN[3].to_string())) }
+            let refusal = if !is_task(&v.issue) { Some(("labels", crate::snapshot::START_LABELS.into())) }
+                else if self.execution_waits.contains_key(&n) { Some(("unknown", crate::snapshot::ADMISSION_UNKNOWN[3].to_string())) }
                 else if let Some(r) = self.launch_refusal(n) { Some(r) }
                 else if let Err(e) = crate::labels::validate(&v.issue.labels) { log!("#{n}: {e}; not admitted"); Some(("labels", e.to_string())) }
                 else if let Some(reason)=self.host_claim(v,&hosts,now).err() {Some(("host",reason))}
@@ -4713,6 +4750,41 @@ Open: none")).unwrap();
         root
     }
 
+    // #2362: status exposes a logged start, but only read-back eligibility admits it; retries cannot replace active work.
+    #[test]
+    fn logged_start_waits_for_eligibility_before_admission() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        for (body, edited) in [("taskq: requeue", false), ("taskq: start-invalid", false), ("taskq: start", true)] {
+            let held = b.create("Still held", "", &["q-held".into()]).unwrap();
+            b.comment(held, "taskq: hold").unwrap();
+            let id = b.comment(held, body).unwrap();
+            if edited { b.edit_comment(held, id, &format!("{body}\nedited")).unwrap(); }
+            let snap = crate::snapshot::read(&b, &c, &json!({}), &[]);
+            assert_eq!(snap.tasks.iter().find(|r| r.n == held).unwrap().task.state, State::Held, "only an accepted start overrides held labels");
+            assert!(!crate::start_one(&b, &c.root, held, &crate::Op { revision: Some(0), ..Default::default() }).ok());
+        }
+        let n = b.create("Logged start", "", &["q-held".into()]).unwrap();
+        b.comment(n, "taskq: hold").unwrap();
+        b.comment(n, "taskq: start").unwrap();
+        let mut s = service(&b, &c, Default::default());
+        s.pass().unwrap();
+        assert!(s.kids.is_empty(), "a logged start without taskq is never admitted");
+        assert_eq!(b.issue(n).unwrap().labels, ["q-held"], "the service preserves discoverability for repair");
+        let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap();
+        assert_eq!(row.task.state, State::Ready);
+        assert_eq!(row.json()["admission"]["code"], "labels");
+        assert_eq!(entries(&b, n).unwrap().len(), 2);
+        assert!(crate::start_tasks(&b, &c.root, &[n.to_string()], &crate::Op::default()).unwrap()[0].ok());
+        s.pass().unwrap();
+        assert_eq!(s.kids.len(), 1, "the repaired task is admitted");
+        let attempt = task(&b, n).attempt;
+        b.labels(n, &["q-held".into()], &["q-doing".into(), "taskq".into()]).unwrap();
+        assert!(!crate::start_tasks(&b, &c.root, &[n.to_string()], &crate::Op::default()).unwrap()[0].ok());
+        assert_eq!(task(&b, n).attempt, attempt, "a retry never replaces active work");
+        assert_eq!(s.kids.len(), 1);
+    }
+
     // Chain: § 1 held, a person adds `taskq` on the board. Risk: the label path leaves a held log under a `taskq` label,
     // so the task never starts, or a plain labelled issue gets a stray `start`.
     #[test]
@@ -5083,20 +5155,26 @@ Open: none")).unwrap();
         let c = cfg("mac");
         let b = Fake::default();
         let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
-        assert_eq!(crate::poll_wait(60, true, false, false, None), 60, "no board read yet is not idle");
+        assert_eq!(crate::poll_wait(60, true, false, false, false, None), 60, "no board read yet is not idle");
+        assert_eq!(crate::poll_wait(60, true, false, false, true, None), 60, "no board read yet is not idle, focus off too");
         s.pass().unwrap();
         let idle = s.snapshot.as_ref();
-        assert_eq!(crate::poll_wait(60, true, false, false, idle), 180);
-        assert_eq!(crate::poll_wait(60, false, false, false, idle), 60, "a failed pass keeps the normal interval");
-        assert_eq!(crate::poll_wait(60, true, true, false, idle), 60, "a running child keeps the normal interval");
-        assert_eq!(crate::poll_wait(60, true, false, true, idle), 60, "a poke restores the normal interval");
+        assert_eq!(crate::poll_wait(60, true, false, false, false, idle), 180);
+        assert_eq!(crate::poll_wait(60, false, false, false, false, idle), 60, "a failed pass keeps the normal interval");
+        assert_eq!(crate::poll_wait(60, true, true, false, false, idle), 60, "a running child keeps the normal interval");
+        assert_eq!(crate::poll_wait(60, true, false, true, false, idle), 60, "a poke restores the normal interval");
         let n = b.create("Pending", "", &[TASK_LABEL.into()]).unwrap();
         s.pass().unwrap();
         let snap = s.snapshot.as_mut().unwrap();
         assert!(snap.tasks.iter().any(|r| r.n == n));
         for state in [State::Ready, State::Doing, State::Review, State::Ask] {
             snap.tasks.iter_mut().for_each(|r| r.task.state = state);
-            assert_eq!(crate::poll_wait(60, true, false, false, Some(&*snap)), if state == State::Ask {180} else {60}, "{state:?} task");
+            assert_eq!(crate::poll_wait(60, true, false, false, false, Some(&*snap)), if state == State::Ask {180} else {60}, "{state:?} task");
+            // #2352: focus off admits nothing, so a board task elsewhere keeps no 60 s pass here
+            assert_eq!(crate::poll_wait(60, true, false, false, true, Some(&*snap)), 180, "{state:?} task, focus off");
+            assert_eq!(crate::poll_wait(60, false, false, false, true, Some(&*snap)), 60, "{state:?} task, focus off, failed pass");
+            assert_eq!(crate::poll_wait(60, true, true, false, true, Some(&*snap)), 60, "{state:?} task, focus off, running child");
+            assert_eq!(crate::poll_wait(60, true, false, true, true, Some(&*snap)), 60, "{state:?} task, focus off, poke");
         }
     }
 
@@ -6167,11 +6245,13 @@ Open: none")).unwrap();
     // Chain: slow native children -> bounded observation round -> honest heartbeat -> fair next round.
     #[test]
     fn slow_observations_defer_without_releasing_and_rotate_fairly() {
+        // Windows file reads and scheduling can consume 10ms before the first fixture poll.
+        const POLL_MS:u64=if cfg!(windows) {100} else {10};
         struct Slow {task:u64,calls:Rc<RefCell<Vec<u64>>>}
         impl Proc for Slow {
             fn accepted(&mut self)->Result<bool,String> {Ok(true)}
             fn exited(&mut self)->Result<Option<i32>,String> {
-                self.calls.borrow_mut().push(self.task);std::thread::sleep(std::time::Duration::from_millis(25));Ok(None)
+                self.calls.borrow_mut().push(self.task);std::thread::sleep(std::time::Duration::from_millis(POLL_MS*5/2));Ok(None)
             }
             fn kill(&mut self)->Result<(),String> {Err("fixture must stay owned".into())}
             fn id(&self)->u32 {0}
@@ -6183,7 +6263,7 @@ Open: none")).unwrap();
         let calls=Rc::new(RefCell::new(vec![]));
         for kid in &mut s.kids {kid.proc=Box::new(Slow {task:kid.task,calls:calls.clone()});}
         for round in 1..=3 {
-            s.pass_inner(std::time::Duration::from_millis(10)).unwrap();
+            s.pass_inner(std::time::Duration::from_millis(POLL_MS)).unwrap();
             assert_eq!(calls.borrow().len(),round,"a slow poll must not delay status behind all children");
             assert_eq!(s.kids.len(),3);
             assert_eq!(s.kids.iter().filter(|k|k.unknown.is_some()).count(),2,"deferred observations must be unknown, not freshly healthy");
@@ -6193,7 +6273,7 @@ Open: none")).unwrap();
         assert_eq!(calls.borrow().iter().collect::<std::collections::HashSet<_>>().len(),3,"slow first child starved another execution");
         calls.borrow_mut().clear();
         for round in 1..=3 {
-            s.reap_owned_within(std::time::Duration::from_millis(10));
+            s.reap_owned_within(std::time::Duration::from_millis(POLL_MS));
             assert_eq!(calls.borrow().len(),round);assert_eq!(s.kids.len(),3);assert_eq!(s.kids.iter().filter(|k|k.unknown.is_some()).count(),2);
         }
         assert_eq!(calls.borrow().iter().collect::<std::collections::HashSet<_>>().len(),3,"reduced pass starved an execution");
@@ -6201,10 +6281,10 @@ Open: none")).unwrap();
         s.kids.clear();calls.borrow_mut().clear();
         let recovery_calls=calls.clone();
         s.recover=Some(Box::new(move |task,_| {
-            recovery_calls.borrow_mut().push(task);std::thread::sleep(std::time::Duration::from_millis(25));Err("fixture: native recovery unknown".into())
+            recovery_calls.borrow_mut().push(task);std::thread::sleep(std::time::Duration::from_millis(POLL_MS*5/2));Err("fixture: native recovery unknown".into())
         }));
         for round in 1..=3 {
-            s.pass_inner(std::time::Duration::from_millis(10)).unwrap();assert_eq!(calls.borrow().len(),round);
+            s.pass_inner(std::time::Duration::from_millis(POLL_MS)).unwrap();assert_eq!(calls.borrow().len(),round);
             assert_eq!(s.execution_waits.len(),3);assert!(s.kids.is_empty(),"unknown recovery cannot replay work");
         }
         assert_eq!(calls.borrow().iter().collect::<std::collections::HashSet<_>>().len(),3,"cold recovery starved an execution");
@@ -6214,7 +6294,7 @@ Open: none")).unwrap();
     // Chain: § 4 board budget, heartbeat. Risk: a PATCH every pass burns the shared budget (#1358: the diagnostics
     // observation time changed the body every pass), or a sparse heartbeat lets another host expire a live lease.
     #[test]
-    fn idle_heartbeat_is_batched_at_a_third_of_ttl_and_stays_fresh() {
+    fn idle_heartbeat_is_batched_at_half_ttl_and_stays_fresh() {
         let b = Fake::default();
         let c = cfg("mac");
         let mut s = service(&b, &c, Default::default());
@@ -6233,7 +6313,9 @@ Open: none")).unwrap();
             s.pass().unwrap();
             if beat(&b) != last { writes += 1; last = beat(&b); }
         }
-        assert_eq!(writes, 3600 / (c.ttl / 3), "one periodic write per ttl/3, not one per fast pass");
+        assert_eq!(writes, 3600 / (c.ttl / 2), "one periodic write per ttl/2 without an attempt, not one per fast pass");
+        assert_eq!(renewal("version 1\n#7 9", c.ttl), c.ttl / 3, "a heartbeat holding a lease keeps the wider margin");
+        assert_eq!(renewal("version 1", c.ttl), c.ttl / 2);
         let body = b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host mac").unwrap().body;
         let at = body.lines().find_map(|l| l.strip_prefix("at ")).unwrap();
         assert!(body.contains(&format!("\"observed\":{at},")), "a write carries the current diagnostics");
@@ -6271,6 +6353,66 @@ Open: none")).unwrap();
             if beat(&b) != last { writes += 1; last = beat(&b); }
         }
         assert!(writes <= 3600 / (c.ttl / 3), "{writes} reduced writes in an hour, want at most one per ttl / 3");
+    }
+
+    // Chain: § 4 step 3, board budget (#2352). Risk: a value that is the same for the whole host changed and every
+    // project wrote its board at once, so 13 projects spent 13 writes on one change; focus off stopped none of them.
+    #[test]
+    fn host_wide_values_wait_for_the_renewal() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        let mut s = service(&b, &c, Default::default());
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Err("fixture holds admission".into()))));
+        s.host = Some(host.clone());
+        let beat = |b: &Fake| b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host mac").map(|i| i.updated).unwrap();
+        s.pass().unwrap();
+        let (mut writes, mut last) = (0, beat(&b));
+        for t in 1..=60u64 {
+            b.advance(60);
+            s.health = Some((std::time::Instant::now(), format!("doctor {t} ok")));
+            {
+                let mut h = host.lock().unwrap();
+                h.last_hour = Some(BTreeMap::from([("GET issues".to_string(), t)]));
+                h.queues.insert("other".into(), crate::host::Queue { ready: t, ..Default::default() });
+            }
+            s.pass().unwrap();
+            if beat(&b) != last { writes += 1; last = beat(&b); }
+            assert!(b.now().unwrap() - last < c.ttl, "lease stays fresh");
+        }
+        assert_eq!(writes, 20, "one renewal per ttl / 2 at 60 s passes, not one write per changed value");
+    }
+
+    // Chain: § 4 step 3 (#2352). Risk: the host-wide cut hides a change another host or the owner must see at once.
+    #[test]
+    fn stable_lists_what_forces_a_heartbeat_write() {
+        let bal = |code: &str, full: bool, last: u64| format!(r#"balancing {{"schema":2,"last_spawn":{last},"mode":"any","has":["gui"],"focus":["all"],"runtimes":{{"codex":{{"code":"{code}","reason":"r{code}","full":{full},"disabled":false,"quota":[],"load":{{"free":1}}}}}}}}"#);
+        let base = format!("version 1\n{}\nqueue {{\"restart\":null,\"projects\":[{{\"ready\":1}}]}}\ndoctor 100 ok\nservice ab", bal("admitted", false, 5));
+        for (from, to) in [
+            (bal("admitted", false, 5), bal("spacing", false, 5)),
+            ("\"ready\":1".to_string(), "\"ready\":2".to_string()),
+            ("doctor 100 ok".to_string(), "doctor 200 ok".to_string()),
+            ("service ab".to_string(), "service ab\nhas gui\nheadroom codex none\nrequests 9/h".to_string()),
+        ] {
+            assert_eq!(stable(&base), stable(&base.replace(&from, &to)), "host-wide: {to}");
+        }
+        for (from, to) in [
+            ("version 1".to_string(), "version 2".to_string()),
+            ("service ab".to_string(), "service cd".to_string()),
+            (bal("admitted", false, 5), bal("admitted", true, 5)),
+            (bal("admitted", false, 5), bal("admitted", false, 6)),
+            ("doctor 100 ok".to_string(), "doctor 100 token:gap".to_string()),
+            ("\"restart\":null".to_string(), "\"restart\":7".to_string()),
+            ("service ab".to_string(), "service ab\n#7 9".to_string()),
+            ("service ab".to_string(), "service ab\nsession #7 9 u".to_string()),
+            ("service ab".to_string(), "service ab\nexecution {}".to_string()),
+            ("service ab".to_string(), "service ab\nfocus off".to_string()),
+            ("service ab".to_string(), "service ab\nlimit codex probe x".to_string()),
+            ("service ab".to_string(), "service ab\nlogin codex off".to_string()),
+            ("service ab".to_string(), "service ab\nmachine m".to_string()),
+            ("service ab".to_string(), "service ab\ndoctor-answer 4".to_string()),
+        ] {
+            assert_ne!(stable(&base), stable(&base.replace(&from, &to)), "written at once: {to}");
+        }
     }
 
     // Chain: § 4 heartbeat, status.json hosts (#1729 A3). Risk: after a sleep the pass reads this host's heartbeat
