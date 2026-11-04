@@ -593,21 +593,30 @@ fn code_assist(rt: &str) -> Poll {
         Ok(token) => token,
         Err(reason) => return Poll::failed(&reason),
     };
-    let load = match https_json(&code_assist_call("loadCodeAssist", &token, r#"{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}"#)) {
+    code_assist_with(&token, https_json)
+}
+
+fn code_assist_with(token: &str, mut read: impl FnMut(&str) -> Result<Value, String>) -> Poll {
+    let load = match read(&code_assist_call("cloudcode-pa.googleapis.com", "loadCodeAssist", token, r#"{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}"#)) {
         Ok(v) => v,
         Err(reason) => return Poll::failed(&reason),
     };
     let project = code_assist_project(&load);
     let body = project.map_or(r#"{}"#.to_string(), |p| format!(r#"{{\"project\":\"{p}\"}}"#));
     let id = project.map(fingerprint);
-    match https_json(&code_assist_call("retrieveUserQuotaSummary", &token, &body)).and_then(|v| quota_windows(&v).map_err(String::from)) {
+    let host = match load.pointer("/currentTier/usesGcpTos") {
+        Some(Value::Bool(true)) => "cloudcode-pa.googleapis.com",
+        None | Some(Value::Bool(false)) => "daily-cloudcode-pa.googleapis.com",
+        _ => return Poll { id, ..Poll::failed("usage shape changed") },
+    };
+    match read(&code_assist_call(host, "retrieveUserQuotaSummary", token, &body)).and_then(|v| quota_windows(&v).map_err(String::from)) {
         Ok(windows) => Poll { id, windows, unknown: None },
         Err(reason) => Poll { id, ..Poll::failed(&reason) },
     }
 }
 
-fn code_assist_call(method: &str, token: &str, body: &str) -> String {
-    format!("url = \"https://cloudcode-pa.googleapis.com/v1internal:{method}\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"Content-Type: application/json\"\nheader = \"User-Agent: antigravity\"\ndata = \"{body}\"\nmax-time = {HTTP_DEADLINE}\n")
+fn code_assist_call(host: &str, method: &str, token: &str, body: &str) -> String {
+    format!("url = \"https://{host}/v1internal:{method}\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"Content-Type: application/json\"\nheader = \"User-Agent: antigravity\"\ndata = \"{body}\"\nmax-time = {HTTP_DEADLINE}\n")
 }
 
 /// The account's Code Assist project; only characters safe inside a curl config line pass. The reply names no email,
@@ -621,10 +630,13 @@ fn code_assist_project(load: &Value) -> Option<&str> {
 fn quota_windows(v: &Value) -> Result<Vec<Window>, &'static str> {
     let shape = "usage shape changed";
     let mut out = vec![];
-    for bucket in v["groups"].as_array().ok_or(shape)?.iter().flat_map(|g| g["buckets"].as_array().into_iter().flatten()) {
-        let name = bucket["bucketId"].as_str().filter(|n| valid_window(n)).ok_or(shape)?;
-        let left = bucket["remainingFraction"].as_f64().filter(|f| (0.0..=1.0).contains(f)).ok_or(shape)?;
-        out.push(Window { name: name.to_string(), used: percent((1.0 - left) * 100.0), reset: bucket["resetTime"].as_str().and_then(utc) });
+    for group in v["groups"].as_array().ok_or(shape)? {
+        let buckets = group["buckets"].as_array().filter(|b| !b.is_empty()).ok_or(shape)?;
+        for bucket in buckets {
+            let name = bucket["bucketId"].as_str().filter(|n| valid_window(n)).ok_or(shape)?;
+            let left = bucket["remainingFraction"].as_f64().filter(|f| (0.0..=1.0).contains(f)).ok_or(shape)?;
+            out.push(Window { name: name.to_string(), used: percent((1.0 - left) * 100.0), reset: bucket["resetTime"].as_str().and_then(utc) });
+        }
     }
     if out.is_empty() { Err(shape) } else { Ok(out) }
 }
@@ -660,13 +672,37 @@ fn agy_credentials(rt: &str) -> Result<String, String> {
     agy_login_files().iter().find_map(|f| std::fs::read_to_string(f).ok()).ok_or_else(|| "no login".to_string())
 }
 
-/// Plan windows only: `five_hour` and the `seven_day` family; credits are no window.
+/// Plan and model windows, including scoped `limits[]`; credits are no window.
 fn oauth_windows(v: &Value) -> Result<Vec<Window>, &'static str> {
-    let out: Vec<Window> = v.as_object().ok_or("usage shape changed")?.iter()
-        .filter(|(name, _)| (name.starts_with("five_hour") || name.starts_with("seven_day")) && valid_window(name))
-        .filter_map(|(name, w)| Some(Window { name: name.clone(), used: percent(w["utilization"].as_f64().filter(|n| n.is_finite())?), reset: w["resets_at"].as_str().and_then(utc) }))
-        .collect();
-    if out.is_empty() { Err("usage shape changed") } else { Ok(out) }
+    let shape = "usage shape changed";
+    let mut out = vec![];
+    for (name, w) in v.as_object().ok_or(shape)? {
+        if !(name.starts_with("five_hour") || name.starts_with("seven_day")) || w.is_null() { continue; }
+        if !valid_window(name) { return Err(shape); }
+        let used = w["utilization"].as_f64().filter(|n| n.is_finite()).ok_or(shape)?;
+        out.push(Window { name: name.clone(), used: percent(used), reset: w["resets_at"].as_str().and_then(utc) });
+    }
+    if let Some(limits) = v.get("limits").filter(|l| !l.is_null()) {
+        for l in limits.as_array().ok_or(shape)? {
+            let mut name = match l["group"].as_str() {
+                Some("session") => "five_hour".to_string(),
+                Some("weekly") => "seven_day".to_string(),
+                _ => return Err(shape),
+            };
+            let scope = l.get("scope").filter(|s| !s.is_null()).map(|s| s.as_object().ok_or(shape)).transpose()?;
+            if scope.is_some_and(|s| s.keys().any(|k| k != "model")) { return Err(shape); }
+            if let Some(model) = scope.and_then(|s| s.get("model")).filter(|m| !m.is_null()) {
+                let model = model["display_name"].as_str().or_else(|| model["id"].as_str()).filter(|m| !m.is_empty()).ok_or(shape)?;
+                name.push('_');
+                name.push_str(&model.to_ascii_lowercase().replace(' ', "_"));
+            }
+            if !valid_window(&name) { return Err(shape); }
+            let used = l["percent"].as_f64().filter(|n| n.is_finite()).ok_or(shape)?;
+            let w = Window { name, used: percent(used), reset: l["resets_at"].as_str().and_then(utc) };
+            if let Some(old) = out.iter_mut().find(|old| old.name == w.name) { *old = w; } else { out.push(w); }
+        }
+    }
+    if out.is_empty() { Err(shape) } else { Ok(out) }
 }
 
 /// `2026-11-04T10:00:00.123+00:00` or `...Z` as board seconds; `None` for anything else.
@@ -798,7 +834,7 @@ mod tests {
         for bad in [serde_json::json!({}), serde_json::json!({"cloudaicompanionProject": ""}), serde_json::json!({"cloudaicompanionProject": "a\"\nurl = \"x"})] {
             assert_eq!(code_assist_project(&bad), None, "{bad}");
         }
-        let call = code_assist_call("loadCodeAssist", "tok", "{}");
+        let call = code_assist_call("cloudcode-pa.googleapis.com", "loadCodeAssist", "tok", "{}");
         assert!(call.contains("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist") && call.contains("Bearer tok"), "{call}");
 
         use base64::Engine;
@@ -814,6 +850,95 @@ mod tests {
         assert_eq!(agy_token("not json", now), Err("no login"));
         assert_eq!(agy_token(r#"{"access_token":"a\"b"}"#, now), Err("usage shape changed"));
         assert_eq!(agy_token("go-keyring-base64:!!", now), Err("usage shape changed"));
+    }
+
+    // Chain: R12, #2359 A1/A2: structured Claude caps and consumer Gemini quotas reach every public heartbeat row.
+    // Risk: a partial native reply looks healthy while silently dropping a model's more restrictive window.
+    #[test]
+    fn model_windows_survive_poll_to_heartbeat() {
+        let d = dir("model-windows");
+        let reset = crate::board::stamp(NOW + 3600);
+        let claude = serde_json::json!({"seven_day": {"utilization": 34, "resets_at": reset}, "seven_day_fable": null,
+            "limits": [{"group": "weekly", "percent": 2, "resets_at": reset, "scope": {"model": {"display_name": "Fable"}}}]});
+        let summary = serde_json::json!({"groups": [
+            {"buckets": [{"bucketId": "gemini-5h", "remainingFraction": 1, "resetTime": reset},
+                {"bucketId": "gemini-weekly", "remainingFraction": 0.26, "resetTime": reset}]},
+            {"buckets": [{"bucketId": "3p-5h", "remainingFraction": 1}, {"bucketId": "3p-weekly", "remainingFraction": 1}]}]});
+        let p = code_assist_with("invented-token", |call| {
+            if call.contains(":loadCodeAssist") { return Ok(serde_json::json!({"cloudaicompanionProject": "invented-project"})); }
+            assert!(call.contains("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"), "consumer quotas need the daily endpoint");
+            Ok(summary.clone())
+        });
+        assert_eq!(p.unknown, None);
+        poll_with(&d, NOW, |rt, _| match rt {
+            "claude" => Poll { windows: oauth_windows(&claude).unwrap(), ..Default::default() },
+            "antigravity" => p.clone(),
+            _ => Poll::failed("no login"),
+        }).unwrap();
+        let rows: Vec<_> = Host::read(&d).usage_lines(NOW).iter().filter_map(|l| Row::parse(l)).filter_map(|r| match r.usage {
+            Usage::Window { window, at } => Some((r.rt, window.name, window.used, window.reset, at)),
+            _ => None,
+        }).collect();
+        assert_eq!(rows, [
+            ("claude".into(), "seven_day".into(), 34, Some(NOW + 3600), NOW),
+            ("claude".into(), "seven_day_fable".into(), 2, Some(NOW + 3600), NOW),
+            ("antigravity".into(), "gemini-5h".into(), 0, Some(NOW + 3600), NOW),
+            ("antigravity".into(), "gemini-weekly".into(), 74, Some(NOW + 3600), NOW),
+            ("antigravity".into(), "3p-5h".into(), 0, None, NOW),
+            ("antigravity".into(), "3p-weekly".into(), 0, None, NOW),
+        ]);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    // Chain: R12: new structured limits retain legacy names and cannot turn an unreadable model cap into headroom.
+    #[test]
+    fn model_windows_claude_scoped_limits() {
+        let v = serde_json::json!({"seven_day": {"utilization": 34}, "seven_day_fable": {"utilization": 1},
+            "limits": [{"group": "weekly", "percent": 2, "scope": {"model": {"display_name": "Fable"}}},
+                {"group": "session", "percent": 10, "scope": {"model": {"id": "new-model"}}},
+                {"group": "session", "percent": 4}]});
+        assert_eq!(oauth_windows(&v).unwrap().iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(),
+            [("seven_day", 34), ("seven_day_fable", 2), ("five_hour_new-model", 10), ("five_hour", 4)]);
+        for limit in [
+            serde_json::json!({"group": "monthly", "percent": 2}),
+            serde_json::json!({"group": "weekly", "scope": {"model": {"display_name": "Fable"}}}),
+            serde_json::json!({"group": "weekly", "percent": 2, "scope": "changed"}),
+            serde_json::json!({"group": "weekly", "percent": 2, "scope": {"unsupported": true}}),
+            serde_json::json!({"group": "weekly", "percent": 2, "scope": {"model": {"display_name": "private@example.invalid"}}}),
+        ] {
+            assert_eq!(oauth_windows(&serde_json::json!({"seven_day": {"utilization": 34}, "limits": [limit]})), Err("usage shape changed"));
+        }
+    }
+
+    // Chain: R12: GCP keeps production quotas; a failed call or unreadable model family never becomes a partial poll.
+    #[test]
+    fn model_windows_code_assist_routes_and_unknown() {
+        let valid = serde_json::json!({"buckets": [{"bucketId": "3p-weekly", "remainingFraction": 1}]});
+        for gcp in [false, true] {
+            let p = code_assist_with("invented-token", |call| {
+                if call.contains(":loadCodeAssist") { return Ok(serde_json::json!({"currentTier": {"usesGcpTos": gcp}})); }
+                let host = if gcp { "cloudcode-pa.googleapis.com" } else { "daily-cloudcode-pa.googleapis.com" };
+                assert!(call.contains(&format!("https://{host}/v1internal:retrieveUserQuotaSummary")));
+                Ok(serde_json::json!({"groups": [valid]}))
+            });
+            assert_eq!(p.unknown, None);
+            assert_eq!(p.windows.len(), 1);
+        }
+        for bad in [serde_json::json!({}), serde_json::json!({"buckets": "changed"}), serde_json::json!({"buckets": []}),
+            serde_json::json!({"buckets": [{"bucketId": "gemini-weekly"}]})] {
+            let p = code_assist_with("invented-token", |call| {
+                if call.contains(":loadCodeAssist") { return Ok(serde_json::json!({})); }
+                Ok(serde_json::json!({"groups": [valid, bad]}))
+            });
+            assert_eq!((p.windows.len(), p.unknown.as_deref()), (0, Some("usage shape changed")));
+        }
+        let p = code_assist_with("invented-token", |call| {
+            if call.contains(":loadCodeAssist") { return Ok(serde_json::json!({})); }
+            Err("call refused 403".into())
+        });
+        assert_eq!((p.windows.len(), p.unknown.as_deref()), (0, Some("call refused 403")));
+        let p = code_assist_with("invented-token", |_| Ok(serde_json::json!({"currentTier": {"usesGcpTos": "changed"}})));
+        assert_eq!((p.windows.len(), p.unknown.as_deref()), (0, Some("usage shape changed")));
     }
 
     // Chain: capacity.md: Antigravity keeps one default account per host until a per-account `agy` home is qualified. Risk:
