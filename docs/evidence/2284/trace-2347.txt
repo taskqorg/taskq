@@ -1,0 +1,45 @@
+release: 4.6.73 on pds18.ufobe.com
+contains 1e5ff561: yes
+contains 762d9db3: yes (release tag ancestry checked separately)
+window: since 6h; universal 828018 rows, legacy 0 rows, legacy recorded gaps 0
+UTC | project | kind | role | event | attempt | host | runtime | pid | outcome | reason
+2026-11-04 08:46:04 | taskqorg/taskq | stage | - | claim | 6626599210 | pds18.ufobe.com | codex | - | ok | none
+2026-11-04 08:46:07 | taskqorg/taskq | stage | - | start | 6626599210 | pds18.ufobe.com | codex | - | ok | none
+2026-11-04 08:46:07 | taskqorg/taskq | worker | work | slot-hold | 6626599210 | pds18.ufobe.com | codex | 1351368 | ok | claimed
+2026-11-04 08:46:07 | taskqorg/taskq | worker | work | spawn | 6626599210 | pds18.ufobe.com | codex | 1351368 | ok | claimed
+2026-11-04 08:46:07 | taskqorg/taskq | stage | - | build | 6626599210 | pds18.ufobe.com | codex | - | unknown | none
+2026-11-04 08:46:08 | taskqorg/taskq | worker | work | heartbeat | 6626599210 | pds18.ufobe.com | codex | 1351368 | ok | running
+2026-11-04 08:47:01 | taskqorg/taskq | transition | - | ready->doing | None | pds18.ufobe.com | codex | - | unknown | unknown
+2026-11-04 08:47:04 | taskqorg/taskq | worker | work | heartbeat | 6626599210 | pds18.ufobe.com | codex | 1351368 | ok | running (x5 heartbeats to 2026-11-04 08:51:02)
+2026-11-04 08:51:14 | taskqorg/taskq | worker | work | result | 6626599210 | pds18.ufobe.com | codex | 2 | ok | 9491df29cc53f02e62bdd69ba48902a308172b7e
+2026-11-04 08:51:20 | taskqorg/taskq | transition | - | doing->review | None | pds18.ufobe.com | codex | - | unknown | unknown
+2026-11-04 08:51:20 | taskqorg/taskq | worker | work | result | 6626599210 | pds18.ufobe.com | codex | 1351368 | ok | handed-in
+2026-11-04 08:51:20 | taskqorg/taskq | worker | work | alive-after-result | 6626599210 | pds18.ufobe.com | codex | 1351368 | failed | pid-alive-after-result
+2026-11-04 08:51:20 | taskqorg/taskq | worker | work | kill | 6626599210 | pds18.ufobe.com | codex | 1351368 | failed | pid-alive-after-result
+2026-11-04 08:51:21 | taskqorg/taskq | worker | work | heartbeat | 6626599210 | pds18.ufobe.com | codex | 1351368 | ok | stopping
+2026-11-04 08:52:22 | taskqorg/taskq | worker | work | result | 6626599210 | pds18.ufobe.com | codex | 1351368 | ok | handed-in
+2026-11-04 08:52:23 | taskqorg/taskq | worker | work | exit | 6626599210 | pds18.ufobe.com | codex | 1351368 | failed | exit--1
+2026-11-04 08:52:23 | taskqorg/taskq | worker | work | slot-release | 6626599210 | pds18.ufobe.com | codex | 1351368 | ok | execution-released
+2026-11-04 08:52:23 | taskqorg/taskq | stage | - | build | 6626599210 | pds18.ufobe.com | codex | - | ok | none
+2026-11-04 08:52:30 | taskqorg/taskq | stage | - | claim | 6626715183 | pds18.ufobe.com | codex | - | ok | none
+2026-11-04 08:52:31 | taskqorg/taskq | stage | - | start | 6626715183 | pds18.ufobe.com | codex | - | ok | none
+2026-11-04 08:52:31 | taskqorg/taskq | worker | review | slot-hold | 6626715183 | pds18.ufobe.com | codex | 1393673 | ok | claimed
+2026-11-04 08:52:31 | taskqorg/taskq | worker | review | spawn | 6626715183 | pds18.ufobe.com | codex | 1393673 | ok | claimed
+2026-11-04 08:52:31 | taskqorg/taskq | stage | - | review | 6626715183 | pds18.ufobe.com | codex | - | unknown | none
+2026-11-04 08:52:32 | taskqorg/taskq | worker | review | heartbeat | 6626715183 | pds18.ufobe.com | codex | 1393673 | ok | running (x2 heartbeats to 2026-11-04 08:53:25)
+2026-11-04 08:53:26 | taskqorg/taskq | stage | - | close | 6626715183 | pds18.ufobe.com | codex | - | ok | none
+2026-11-04 08:53:26 | taskqorg/taskq | worker | review | result | 6626715183 | pds18.ufobe.com | codex | 2 | ok | close
+2026-11-04 08:53:30 | taskqorg/taskq | transition | - | review->merge-queue | None | pds18.ufobe.com | codex | - | unknown | unknown
+2026-11-04 08:53:30 | taskqorg/taskq | worker | review | result | 6626715183 | pds18.ufobe.com | codex | 1393673 | ok | handed-in
+2026-11-04 08:53:32 | taskqorg/taskq | worker | review | exit | 6626715183 | pds18.ufobe.com | codex | 1393673 | ok | exit-0
+2026-11-04 08:53:32 | taskqorg/taskq | worker | review | slot-release | 6626715183 | pds18.ufobe.com | codex | 1393673 | ok | execution-released
+2026-11-04 08:53:32 | taskqorg/taskq | stage | - | review | 6626715183 | pds18.ufobe.com | codex | - | ok | none
+2026-11-04 08:54:41 | taskqorg/taskq | stage | - | checks | 6626715183 | pds18.ufobe.com | codex | - | retried | other
+2026-11-04 08:54:42 | taskqorg/taskq | transition | - | merge-queue->ask | None | None | None | - | unknown | unknown
+2026-11-04 10:57:38 | taskqorg/taskq | transition | - | ask->later | None | None | None | - | unknown | unknown
+2026-11-04 10:57:45 | taskqorg/taskq | stage | - | close | 0 | pds18.ufobe.com | other | - | ok | none
+2026-11-04 10:57:49 | taskqorg/taskq | transition | - | later->closed | None | None | None | - | unknown | unknown
+attempt 6626599210 (taskqorg/taskq, work): all lifecycle events present
+attempt 6626715183 (taskqorg/taskq, review): all lifecycle events present
+close: later->closed at 2026-11-04 10:57:49
+verdict: PASS (spawn to close traced for every attempt)
