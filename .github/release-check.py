@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Publication requires successful tests.yml for the exact source commit on main (SOURCE_BRANCH).
 
-Releases push live to a main commit, so its runs count up to 30 days old: a release may promote an older commit.
+A release requests a main commit explicitly, so its runs count up to 30 days old: a release may promote an older commit.
 The merge queue tests the commit that main fast-forwards to, so its merge_group run on the same SHA is the gate;
 a workflow_dispatch run on main also counts. Push runs carry no tests (docs/testing.md) and never count.
 A newer completed failure still refuses."""

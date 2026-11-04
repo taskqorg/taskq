@@ -1,4 +1,6 @@
-# § 8 Release: a live push (a fast-forward to a tested main commit) tags the next unused vX.Y.Z on that commit
+# § 8 Release: an explicit main dispatch, live or tag push requires exact-source CI before tagging or builds.
+# Main demands already included in the latest published release are skipped; main pushes do not release.
+# A live push (a fast-forward to a tested main commit) tags the next unused vX.Y.Z on that commit
 # (.github/release-tag.sh; a GITHUB_TOKEN tag starts no run), opens a draft release and stamps the version into the
 # build; no version commit. Each OS publishes alone as soon as its build is attested and the exact-source tests pass
 # (.github/release-publish.sh): its binary, then SHA256SUMS and latest.json merged with the other OSes'; the first
@@ -8,8 +10,10 @@
 # and README shots are dispatched for the tag. A failing selftest publishes nothing for its OS.
 # A ui-live push (a fast-forward to a tested main commit) publishes the tray and Conversations pages only, as its own
 # release that never becomes latest, and moves the channel pointer: no tag, no binary (docs/design/ui-bundle.md).
+# A dispatch never publishes the interface; on any ref but main it refuses in checks, before any publication.
 name: release
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
     branches: [live, ui-live]
@@ -17,10 +21,11 @@ permissions:
   contents: read
 concurrency:
   group: release
+  queue: max
   cancel-in-progress: false
 jobs:
   publish-ui:
-    if: github.ref_name == 'ui-live'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ui-live'
     runs-on: ubuntu-latest
     timeout-minutes: 16
     permissions:
@@ -58,6 +63,7 @@ jobs:
           gh release upload ui-channel --repo "$GITHUB_REPOSITORY" --clobber "dist/$POINTER"
   tag:
     if: github.ref_name != 'ui-live'
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,14 +89,19 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --verify-tag --title "$TAG" --generate-notes
   checks:
-    needs: tag
-    if: needs.tag.outputs.tag
+    if: github.event_name != 'push' || github.ref != 'refs/heads/ui-live'
     runs-on: ubuntu-latest
     timeout-minutes: 16
     permissions:
       contents: read
       actions: read
     steps:
+      - name: Require main for an explicit release demand
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUEST_REF: ${{ github.ref }}
+        run: |
+          [ "$REQUEST_REF" = refs/heads/main ] || { echo '::error::Release demand requires main'; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Require selected tests on the exact source
         env:
