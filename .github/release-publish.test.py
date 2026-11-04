@@ -33,6 +33,9 @@ elif op == 'download':
     for n in ['SHA256SUMS', 'latest.json']:
         if (r/'store'/n).exists(): shutil.copy(r/'store'/n, d/n)
 elif op == 'upload':
+    if os.environ.get('FLAKY') and not (r/'flaked').exists():
+        (r/'flaked').touch()
+        sys.exit(1)
     for f in a[3:]:
         if f.startswith('--') or f == 'o/r': continue
         p = Path(f)
@@ -46,7 +49,7 @@ else: sys.exit(2)
     stub.chmod(0o755)
     (root/'bin/shasum').write_text('#!/usr/bin/env python3\nimport hashlib,sys\nfor n in sys.argv[3:]: print(hashlib.sha256(open(n,"rb").read()).hexdigest()+"  "+n)\n')
     (root/'bin/shasum').chmod(0o755)
-    env = dict(os.environ, SETTLE='0', STORE=str(root), GITHUB_REPOSITORY='o/r', GITHUB_SHA='a'*40,
+    env = dict(os.environ, SETTLE='0', RETRY_WAIT='0', STORE=str(root), GITHUB_REPOSITORY='o/r', GITHUB_SHA='a'*40,
                LOCK_WAIT='0.05', PATH=str(root/'bin')+os.pathsep+os.environ['PATH'])
     def start(name, **extra):
         d = root/name
@@ -88,3 +91,10 @@ else: sys.exit(2)
     assert (root/'lock').exists()
     assert (root/'store/latest.json').read_bytes() == before
     print('PASS unavailable lock refuses writes without stealing')
+    (root/'lock').rmdir()
+    assert start('macos-aarch64', FLAKY='1').wait(timeout=10) == 0
+    assert (root/'flaked').exists()
+    assert (root/'store/taskq-1.2.3-macos-aarch64').exists()
+    assert 'macos-aarch64' in json.loads((root/'store/latest.json').read_text())['files']
+    assert not (root/'lock').exists()
+    print('PASS transient upload failure retries and publishes')

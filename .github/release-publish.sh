@@ -12,6 +12,15 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
+# GitHub's asset API returns transient 404/500/502; every call below is idempotent, so a retry is safe.
+retry() {
+  n=0
+  until "$@"; do
+    n=$((n + 1))
+    [ "$n" -lt 6 ] || return 1
+    sleep $((n * ${RETRY_WAIT:-5}))
+  done
+}
 # Atomic create is exclusive. Unknown/failed acquisition never permits an index write.
 # A killed runner leaves the lock held; never infer release from age or steal it.
 tries=0
@@ -21,19 +30,19 @@ until gh api --method POST "repos/$r/git/refs" -f "ref=refs/$lock" -f "sha=$GITH
   sleep "${LOCK_WAIT:-2}"
 done
 owned=1
-gh release upload "$tag" "$d"/taskq-"$ver"-* --repo "$r" --clobber
+retry gh release upload "$tag" "$d"/taskq-"$ver"-* --repo "$r" --clobber
 # Read errors must not masquerade as an empty index. The first publisher has no sums.
-assets=$(gh release view "$tag" --repo "$r" --json assets --jq '.assets[].name')
+assets=$(retry gh release view "$tag" --repo "$r" --json assets --jq '.assets[].name')
 if printf '%s\n' "$assets" | grep -qx SHA256SUMS; then
-  gh release download "$tag" --repo "$r" --pattern SHA256SUMS --dir "$idx"
+  retry gh release download "$tag" --repo "$r" --pattern SHA256SUMS --dir "$idx" --clobber
 else
   : > "$idx/SHA256SUMS"
 fi
 cp "$d"/taskq-"$ver"-* "$idx/"
 python3 "$here/release-index.py" "$ver" "$idx"
-gh release upload "$tag" "$idx/SHA256SUMS" --repo "$r" --clobber
-gh release upload "$tag" "$idx/latest.json" --repo "$r" --clobber
-gh release edit "$tag" --repo "$r" --draft=false
+retry gh release upload "$tag" "$idx/SHA256SUMS" --repo "$r" --clobber
+retry gh release upload "$tag" "$idx/latest.json" --repo "$r" --clobber
+retry gh release edit "$tag" --repo "$r" --draft=false
 # Release only after every publication write has completed successfully.
 gh api --method DELETE "repos/$r/git/refs/$lock" > /dev/null
 owned=0
