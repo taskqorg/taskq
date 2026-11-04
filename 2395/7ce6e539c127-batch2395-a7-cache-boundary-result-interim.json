@@ -1,0 +1,22 @@
+{
+  "probe": "synthetic default canonical-runner path, no full suite",
+  "same_cache_key": "7959bfab3ce13722313cc26d78250440598d789cc61c6a7e9e7b24e73b9221d6",
+  "first": "passed",
+  "after_external_input_changed_cached": "passed",
+  "same_inputs_fresh_receipt_store": "failed",
+  "same_gate_head": true,
+  "same_original_gate_identity": true,
+  "same_environment_hash": true,
+  "gate_commands_identical": true,
+  "original_full_members_retained": [
+    1,
+    2,
+    3
+  ],
+  "outside_path_scope": "owned temporary diagnostic fixture only",
+  "product_edits": false,
+  "schema": 1,
+  "candidate": "0441ad233818f1ba33bacdb07c25414ab2bb5ec5",
+  "artifact_kind": "sanitized initial reproduction result",
+  "limits": "Original fixture was removed after the first probe. Exact retained manifest/log digests follow in a separate artifact; this does not assert they are present here."
+}
