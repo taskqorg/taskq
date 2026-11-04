@@ -392,6 +392,69 @@ with tempfile.TemporaryDirectory(prefix='taskq-lint-cache-') as directory, \
         assert not cached.exists(), 'unverified bytes never published'
 print('PASS pinned lint preparation, offline reuse and integrity refusal')
 
+# R8/R12: a linked worktree reuses the main checkout's verified linter read-only; an invalid copy refuses, and only its absence downloads.
+git = lambda cwd, *args: subprocess.run(['git', '-C', str(cwd), '-c', 'user.name=t', '-c', 'user.email=t@invalid', '-c', 'commit.gpgsign=false', *args], check=True, capture_output=True,
+                                        env={k: v for k, v in os.environ.items() if not k.startswith('GIT_')})
+def refusal(root):
+    try:
+        lint(root)
+    except SystemExit as error:
+        return str(error)
+    raise AssertionError('invalid or unavailable linter accepted')
+with tempfile.TemporaryDirectory(prefix='taskq-lint-worktree-') as directory, \
+     patch.dict(gate, CONTRACT_LINT_SHA256=hashlib.sha256(body).hexdigest()):
+    main = Path(directory).resolve() / 'main'
+    main.mkdir()
+    git(main, 'init', '-q')
+    git(main, 'commit', '-q', '--no-verify', '--allow-empty', '-m', 'fixture')
+    linked = main / '.worktrees' / 'taskq-1'
+    git(main, 'worktree', 'add', '-q', '--detach', str(linked))
+    assert check['main_checkout'](linked) == main and check['main_checkout'](main) is None
+    shared = main / '.taskq' / 'specq' / check['SPECQ'] / check['CONTRACT_LINT']
+    own = linked / '.taskq' / 'specq' / check['SPECQ'] / check['CONTRACT_LINT']
+    shared.parent.mkdir(parents=True)
+    shared.write_bytes(body)
+    with patch('urllib.request.urlopen', side_effect=AssertionError('valid main checkout copy downloaded')):
+        assert lint(linked)[1] == str(shared)
+    assert shared.read_bytes() == body and not (linked / '.taskq').exists(), 'reuse writes nothing'
+    shared.write_bytes(b'changed')
+    with patch('urllib.request.urlopen', side_effect=AssertionError('invalid main checkout copy downloaded')):
+        assert 'SHA-256 mismatch' in refusal(linked)
+    assert shared.read_bytes() == b'changed' and not (linked / '.taskq').exists(), 'refusal repairs nothing'
+    shared.unlink()
+    with patch('urllib.request.urlopen', return_value=io.BytesIO(body)):
+        assert lint(linked)[1] == str(own)
+    assert own.read_bytes() == body and not shared.exists(), 'a download stays in the worktree'
+print('PASS linked worktree reuses main checkout linter read-only; invalid copy refuses')
+
+# R8/R12: only a certificate failure reaches curl, with validation intact; its bytes pass the same hash and its failure refuses.
+import ssl
+import urllib.error
+untrusted = urllib.error.URLError(ssl.SSLCertVerificationError('unable to get local issuer certificate'))
+done = lambda code=0, out=b'', err=b'': subprocess.CompletedProcess([], code, out, err)
+with tempfile.TemporaryDirectory(prefix='taskq-lint-curl-') as directory, \
+     patch.dict(gate, CONTRACT_LINT_SHA256=hashlib.sha256(body).hexdigest()):
+    root = Path(directory)
+    cached = root / '.taskq' / 'specq' / check['SPECQ'] / check['CONTRACT_LINT']
+    with patch('urllib.request.urlopen', side_effect=urllib.error.URLError('offline')), \
+         patch.object(subprocess, 'run', side_effect=AssertionError('offline reached curl')) as run:
+        assert 'offline' in refusal(root) and run.call_count == 0
+    with patch('urllib.request.urlopen', side_effect=untrusted):
+        for result, expected in [(done(60, err=b'SSL certificate problem'), 'curl exit 60: SSL certificate problem'),
+                                 (done(out=b'changed'), 'SHA-256 mismatch'),
+                                 (FileNotFoundError('curl'), 'curl'),
+                                 (subprocess.TimeoutExpired('curl', 15), 'timed out')]:
+            with patch.object(subprocess, 'run', side_effect=[result]):
+                assert expected in refusal(root), result
+            assert not cached.exists(), 'unverified bytes never published'
+        with patch.object(subprocess, 'run', return_value=done(out=body)) as run:
+            assert lint(root)[1] == str(cached)
+        command = run.call_args.args[0]
+        assert command[:2] == ['curl', '-q'] and command[-1].startswith('https://raw.githubusercontent.com/taskqorg/specq/')
+        assert not {'-k', '--insecure', '--cacert', '--capath'} & set(command) and run.call_args.kwargs['timeout'] == 15
+    assert cached.read_bytes() == body
+print('PASS certificate failure falls back to validating curl; invalid bytes and failures refuse')
+
 # R8/R12: lint runs once before every other check; findings stop the gate.
 with tempfile.TemporaryDirectory(prefix='taskq-lint-gate-') as directory:
     command = [sys.executable, 'fixture-linter.py', 'taskq.md']
