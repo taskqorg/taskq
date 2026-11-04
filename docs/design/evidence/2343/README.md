@@ -1,6 +1,6 @@
 # Owner UI review
 
-Source: [all owner findings and start authorization](https://github.com/taskqorg/taskq/issues/2343). The retained notes supply the original observations, expected results and five screenshots. The named amendment answer approves the named UI rules; the separate R6/R12 test-scope gate remains below. It grants no new behavior policy, host configuration or live deployment.
+Source: [all owner findings and start authorization](https://github.com/taskqorg/taskq/issues/2343). The retained notes supply the original observations, expected results and five screenshots. The named amendment and R6/R12 test-scope answers approve the UI rules and adapted assertions. They grant no new behavior policy, host configuration or live deployment.
 
 ## Specification checkpoint
 
@@ -74,10 +74,11 @@ Original observations and full expected results remain authoritative in the reta
 - Canonical approval readback initially missed all named UI approvals: accepted held-intake notes had advanced the board revision, but the gate retained the original Hold revision and ignored the later Start. The new fixture fails before and passes after updating note revision tracking without granting Held notes rule scope. The actual gate now recognizes the approved UI amendment ask.
 - Notification entry handoff discarded the native event line, and the reader ignored legacy event context. The new older-event regression timed out before the fix. After: Menu preserves the line, the exact board/root/task maps it to its event block, and unavailable events retain their original target without substituting another question. The owner-review and Conversations-centre instruments pass.
 - Shared pin readback now unions legacy task pins without mutating preferences on read. The focused native regression verifies deduplication, exact unpin, unknown-identity preservation and partial storage failure; browser checks verify placement beneath filters and persistence across query/filter/reopen.
+- The first canonical Rust run passed 993 tests but failed two old fixtures: closed history assumed one row rather than one question, and the status golden omitted the accepted-history/worker/brief additions. After: the former still requires exactly one original question, source text, evidence URL and immutable conversation identity, selected explicitly from the expanded history. The golden adds only the new fields; a recursive comparison verifies every prior value unchanged. The held-question regression and all three focused status JSON/schema checks pass. The snapshot contract and published schema describe the added read-only fields.
 
-## Canonical gate blocker
+## Canonical verification
 
-The post-rebase canonical gate stopped before its Rust/build/browser phases. After the approval-reader fix, `python scripts/check.py --rules --base 8e8706fdc93ee2285d69c8b314a43dae4de0d8a2` recognizes the named UI approval but reports `R6 (tests), R12 (tests)` outside that scope. These are adapted existing assertions: technical metadata now flows in Conversations under F15, and the unknown total now uses Sigma under F09. Their health/unknown protections remain covered. The project rule gate requires those test IDs named; it has not been bypassed. A narrow TaskQ owner decision is required before canonical verification can continue. This candidate is not accepted or ready for publication.
+Owner answer 6629638004 approves the R6/R12 test scope, and the canonical rule gate accepts it without bypass. Technical metadata flows in Conversations under F15, and the unknown total uses Sigma under F09; health/unknown protections remain covered. The first full Rust run exposed the fixture failures described above. The canonical rerun uses the same immutable base, without another rebase; its exact candidate SHA and outcome are recorded on #2343. Native acceptance and merge-group CI remain separate (R12).
 
 ## Checks and artifacts
 

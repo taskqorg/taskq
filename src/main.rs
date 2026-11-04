@@ -5073,9 +5073,10 @@ mod tests {
         c.board.comment(2,&format!("taskq: result {} attempt {attempt}\nChanged: Done\nOpen: none","a".repeat(40))).unwrap();
         c.board.comment(2,"taskq: close\nChanged: Done\nOpen: none").unwrap();
         let mut issue=c.board.issue(2).unwrap();issue.open=false;issue.reason=Some("completed".into());
-        let closed=closed_row(&*c.board,&issue,None,false);assert_eq!(closed["history"].as_array().unwrap().len(),1);
-        assert_eq!(closed["history"][0]["question"]["done"],"Original work");
-        assert_eq!(closed["history"][0]["question"]["evidence"][0]["url"],"https://example.org/evidence");
+        let closed=closed_row(&*c.board,&issue,None,false);
+        let questions:Vec<_>=closed["history"].as_array().unwrap().iter().filter(|r|!r["question"].is_null()).collect();assert_eq!(questions.len(),1);
+        assert_eq!(questions[0]["question"]["done"],"Original work");
+        assert_eq!(questions[0]["question"]["evidence"][0]["url"],"https://example.org/evidence");
         assert_eq!(closed["conversation"]["id"],"owner-1929");
     }
 
