@@ -60,12 +60,13 @@ const fixture=require('./fixtures/errors.js'),base=require('./fixtures/task-work
    assert.equal(await cold.locator('.errors-list>li').count(),10,'independent causes stay separate');await cold.close();
    const narrow=await browser.newPage({viewport:{width:320,height:600}});await narrow.setContent(fs.readFileSync('build/web/tray.html','utf8'));
    await narrow.evaluate(s=>{window.ipc={postMessage(){}};taskq.receive({...s,page:s.projects[0].root,stop_modes:true});document.querySelector('.menu').style.fontSize='40px';},f.failed);
-   for(const selector of ['[data-a=back]','[data-a=hide]','.errors-entry']){const r=await narrow.locator(selector).boundingBox();assert(r.x>=0&&r.x+r.width<=321&&r.y>=0&&r.y+r.height<=601,'header controls remain reachable at 200% text');}
+   for(const selector of ['[data-a=back]','[data-a=pin]','[data-a=top]','.errors-entry']){const r=await narrow.locator(selector).boundingBox();assert(r.x>=0&&r.x+r.width<=321&&r.y>=0&&r.y+r.height<=601,'header controls remain reachable at 200% text');}
    await narrow.close();
    for(const [saved,destination] of [['removed','Tasks'],['settings/removed','Settings']]){
     const fallback=await browser.newPage();await fallback.setContent(fs.readFileSync('build/web/tray.html','utf8'));
     await fallback.evaluate(({fresh,saved})=>{window.ipc={postMessage(){}};const {page,...s}=fresh;taskq.receive({...s,navigation:{schema:1,current:{page:saved}}});},{fresh:f.fresh,saved});
-    assert.equal(await fallback.locator('h1').innerText(),destination);
+    if(destination==='Tasks'){assert.equal(await fallback.locator('.head h1').count(),0);assert.equal(await fallback.locator('.viewbar').count(),1);}
+    else assert.equal(await fallback.locator('h1').innerText(),destination);
     assert.equal(await fallback.locator('.errors-entry .badge').innerText(),'1','removed route fallback remains in the header');
     await fallback.locator('.errors-entry').click();assert.match(await fallback.locator('.errors-list').innerText(),/Requested destination is no longer available/);
     await fallback.evaluate(s=>{const {page,...snapshot}=s;taskq.receive(snapshot);},f.fresh);

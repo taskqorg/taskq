@@ -61,7 +61,7 @@ const api=execution.module('notificationPanel',{
    label(a=model.attention()){return 'Conversations · '+a.fresh.size+(a.reasons.length?' loaded New':' New')+' · '+a.needs.size+(a.reasons.length?' loaded Needs me':' Needs me')+(a.reasons.length?' · Partial: '+a.reasons.join('; '):'');},
    counts(){const a=model.attention(),badge=(kind,n,mark)=>{const label=kind+': '+(a.reasons.length?'total unknown; '+n+' confirmed. '+a.reasons.join('; '):n);return h('span',{class:'communication-count '+kind,title:label,'aria-label':label,tabIndex:0},icon(mark),h('span',{'aria-hidden':'true'},a.reasons.length?(n?'≥'+(n>99?'99':n):'?'):n>99?'99+':String(n)));};return [badge('New',a.fresh.size,'inbox'),badge('Needs me',a.needs.size,'message-circle-question')];},
    entry(){const a=model.attention(),label=model.label(a);
-    return h('button',{class:'conversations-entry',type:'button','data-a':'workspace','data-page':'conversations','data-thread':'centre',title:label,'aria-label':label},icon('messages-square'),a.reasons.length>0&&h('span',{class:'notification-warning'},icon('circle-alert')));},
+    return h('button',{class:'conversations-entry',type:'button','data-a':'workspace','data-page':'conversations','data-thread':'centre',title:label,'aria-label':label},icon('messages-square'));},
    bell(){return model.entry();},
    save(action,rows){if(rows.length)send({a:'notification-state',action,ids:rows.map(r=>r.id)});},
    read(rows,entries=[]){if(entries.length)messages?.('read',entries.filter(r=>!r.read));model.save('read',rows.filter(r=>r.source!=='result'&&!r.read));reports.markRead(rows.filter(r=>r.source==='result'&&!r.read));},
