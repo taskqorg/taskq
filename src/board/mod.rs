@@ -90,6 +90,8 @@ pub trait Board {
     fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> Publish;
     /// § 7: durable intent ends the reviewer; only the service performs asynchronous publication.
     fn defer_publication(&self, _mode: &str) -> bool { false }
+    /// Advisory facts retained by the publication readback, never a separate status poll.
+    fn take_publication_evidence(&self) -> Vec<crate::readiness::Publication> { vec![] }
     fn cancel_publication(&self, _n: u64, _sha: &str) -> Result<()> { Ok(()) }
     /// § 7: a task that closed without merging closes its open `taskq-<n>` PRs unmerged, branch kept; returns them.
     fn close_task_prs(&self, _n: u64, _reason: &str) -> Result<Vec<u64>> { Ok(vec![]) }
@@ -1089,6 +1091,7 @@ pub struct FakeState {
     pub next_id: u64,
     /// `pending` or `failed` makes `publish` refuse; anything else merges.
     pub publish: String,
+    pub evidence: Vec<crate::readiness::Publication>,
     pub hide_latest_comment: bool,
     /// Writers keep the § 2 summary comment on this board.
     pub summaries: bool,
@@ -1337,6 +1340,10 @@ impl Board for Fake {
     }
     fn me(&self) -> Result<String> {
         Ok("owner".into())
+    }
+    fn take_publication_evidence(&self) -> Vec<crate::readiness::Publication> {
+        let mut state=self.state.borrow_mut();
+        if let Some(publisher)=&state.publisher {publisher.take_publication_evidence()}else{std::mem::take(&mut state.evidence)}
     }
     fn defer_publication(&self, mode: &str) -> bool { mode == "pr" && self.state.borrow().publish.starts_with("queue-") }
     fn cancel_publication(&self, n: u64, sha: &str) -> Result<()> {
@@ -2130,6 +2137,7 @@ mod tests {
             }));
             let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql" | "enqueue-conflict" | "enqueue-race" | "head-moved" | "conflicting" | "enqueue-checks-running" | "enqueue-checks-failed");
             let got = h.resume_publication(1, &sent, "pr", "title", "Task: invented", std::path::Path::new("missing-worktree"), prior);
+            if scenario=="waiting" {assert!(h.take_publication_evidence().is_empty(),"a recovered queue cannot reconstruct pre-admission inputs");}
             match scenario {
                 "new" | "draft" | "waiting" | "conflict-cleared" => assert!(matches!(got, Publish::Enqueued(_)), "{scenario}: {got:?}"),
                 "conflict" | "enqueue-conflict" | "conflicting" => assert_eq!(got, Publish::MainMoved("PR #1590 conflicts with main; conflict files: src/service.rs".into()), "{scenario}"),
@@ -2163,10 +2171,12 @@ mod tests {
         let state = std::rc::Rc::new(RefCell::new(recorded("queue-open")));
         let head = state.borrow()["data"]["node"]["headRefOid"].as_str().unwrap().to_string();
         state.borrow_mut()["data"]["node"]["mergeable"] = "MERGEABLE".into();
-        let runs = recorded("runs-green");
+        let mut runs = recorded("runs-green");
+        runs["workflow_runs"][0]["id"]=123.into();runs["workflow_runs"][0]["run_attempt"]=2.into();
         let merge = runs["workflow_runs"][0]["head_sha"].as_str().unwrap().to_string();
         let mut pulls = recorded("pulls-open");
         pulls[0]["head"]["sha"] = head.clone().into();
+        pulls[0]["base"]["sha"] = "b".repeat(40).into();
         let writes = std::rc::Rc::new(RefCell::new(vec![]));
         let (captured, read, sent, merged) = (writes.clone(), state.clone(), head.clone(), merge.clone());
         let h = http(&github::KIND, None, Box::new(move |method, url, body| {
@@ -2184,6 +2194,7 @@ mod tests {
                     else if !query.contains("timelineItems") { recorded("readback-enqueued") }
                     else { read.borrow().clone() }
                 }
+                else if url.ends_with(&format!("/commits/{merged}")) { json!({"sha":merged,"parents":[{"sha":"b".repeat(40)}]}) }
                 else if url.contains("/actions/runs?") { assert!(url.contains(&merged), "CI read on the merge result: {url}"); runs.clone() }
                 else if url.contains("/check-runs") { assert!(url.contains(&merged), "CI read on the merge result: {url}"); recorded("checks-green") }
                 else if url.ends_with("/status") { recorded("status-none") }
@@ -2193,6 +2204,9 @@ mod tests {
         // A rebase would need the task worktree; this host has none, so any rebase attempt fails the pass.
         let root = std::path::Path::new("missing-worktree");
         assert!(matches!(h.resume_publication(1, &head, "pr", "title", "Task: invented", root, false), Publish::Enqueued(_)));
+        let frozen=h.take_publication_evidence();
+        assert_eq!(frozen.len(),1);assert_eq!(frozen[0].base.as_deref(),Some("b".repeat(40).as_str()));
+        assert!(frozen[0].merged.is_none());
         assert!(writes.borrow().iter().all(|w| w.contains("enqueuePullRequest")), "only the enqueue writes: {:?}", writes.borrow());
         // Overlay: the merge queue merged the PR at the result head; the merge result is the commit the CI recording ran on.
         let mut done = recorded("queue-merged");
@@ -2201,6 +2215,11 @@ mod tests {
         *state.borrow_mut() = done;
         let got = h.resume_publication(1, &head, "pr", "title", "Task: invented", root, true);
         assert!(matches!(&got, Publish::Done(m) if m.contains(&format!("as {merge}; merge-result CI green"))), "{got:?}");
+        let landed=h.take_publication_evidence();
+        assert_eq!(landed.len(),1);assert_eq!(landed[0].parent,frozen[0].base);
+        assert_eq!(landed[0].ci_sha.as_deref(),Some(merge.as_str()));
+        assert_eq!(landed[0].ci_run_id,Some(123));assert_eq!(landed[0].ci_run_attempt,Some(2));
+        assert!(h.take_publication_evidence().is_empty(),"publication observations are consumed once");
         assert_eq!(writes.borrow().len(), 1, "one enqueue, no rebase or push: {:?}", writes.borrow());
     }
 
@@ -2263,12 +2282,15 @@ mod tests {
         let root = std::path::Path::new("missing-worktree");
         let got = h.resume_publication(1, &head, "pr", "title", "Task: invented", root, false);
         assert!(matches!(got, Publish::Enqueued(_)), "A1/A2: enqueued in o/x, so status shows the merge queue stage: {got:?}");
+        let frozen=h.take_publication_evidence();
+        assert_eq!(frozen[0].repository,"o/x","advisory follows the actual publication repository");
         let mut done = recorded("queue-merged");
         done["data"]["node"]["headRefOid"] = head.clone().into();
         done["data"]["node"]["mergeCommit"]["oid"] = merge.clone().into();
         *state.borrow_mut() = done;
         let got = h.resume_publication(1, &head, "pr", "title", "Task: invented", root, true);
         assert!(matches!(&got, Publish::Done(m) if m.starts_with(&format!("merged #1590 in o/x as {merge}; merge-result CI green"))), "A1: {got:?}");
+        assert_eq!(h.take_publication_evidence()[0].repository,"o/x");
         assert!(matches!(h.resume_publication(1, &head, "direct", "title", "Task: invented", root, false), Publish::Blocked(e) if e.starts_with("o/x#1590: ")));
 
         // A3: an unreadable PR is a named blocker at once, not a pending retry.
