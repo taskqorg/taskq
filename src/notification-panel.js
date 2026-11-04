@@ -28,6 +28,16 @@ const api=execution.module('notificationPanel',{
   }
   return groups;
  },
+ // #2193: unread events of one task and kind (Question, Attempt ended, Blocked) are one row with a count, wherever they
+ // fall in the list; read events keep merging only with an adjacent event of the same attempt.
+ collapse:function(rows=[]){
+  const groups=[],fresh=new Map();
+  for(const r of rows){
+   if(r.source==='event'&&!r.read){const key=JSON.stringify([r.root,r.n,r.kind]),g=fresh.get(key);if(g)g.rows.push(r);else{const group={rows:[r]};fresh.set(key,group);groups.push(group);}continue;}
+   const last=groups.at(-1),same=last&&last.rows[0].read&&last.rows[0].kind===r.kind&&last.rows[0].n===r.n&&last.rows[0].root===r.root&&last.rows[0].event?.attempt===r.event?.attempt;if(same)last.rows.push(r);else groups.push({rows:[r]});
+  }
+  return groups;
+ },
  // M14: intersecting sets of canonical source identities, independent of event/page counts.
  attention:function(projects=[],results=[],messages={},marks={},owners=[],sidebar={}){
   const fresh=new Set(),needs=new Set(),owned=new Set(owners.map(c=>c.id)),links=new Map();for(const p of projects)for(const t of p.tasks||[])if(owned.has(t.conversation?.id))links.set((p.issues||p.root)+'/'+t.n,t.conversation.id);for(const r of results){const p=projects.find(p=>p.root===r.root);if(owned.has(r.conversation))links.set((p?.issues||r.root)+'/'+r.n,r.conversation);}
@@ -60,11 +70,11 @@ const api=execution.module('notificationPanel',{
    history(rows=[],extra,key=rows[0]?.root+'#'+rows[0]?.n,entries=[]){
     if(!rows.length&&!extra&&!entries.some(r=>!r.read))return null;
     const state=historyViews.get(key)||{open:false,start:0};historyViews.delete(key);historyViews.set(key,state);while(historyViews.size>24)historyViews.delete(historyViews.keys().next().value);
-    const groups=[];for(const r of rows.slice(state.start,state.start+64)){const last=groups.at(-1),same=last&&last.rows[0].kind===r.kind&&last.rows[0].n===r.n&&last.rows[0].root===r.root&&last.rows[0].event?.attempt===r.event?.attempt;if(same)last.rows.push(r);else groups.push({rows:[r]});}
+    const all=api.collapse(rows),groups=all.slice(state.start,state.start+64);
     return h('details',{class:'thread-events','data-view-key':'history:'+key,open:state.open,onToggle:e=>{if(state.open!==e.currentTarget.open){state.open=e.currentTarget.open;draw();}}},h('summary',{onClick:e=>{e.preventDefault();state.open=!state.open;e.currentTarget.parentElement.open=state.open;draw();}},'Earlier history'+(rows.length?' · '+rows.length+' events':'')),state.open&&[
      (rows.some(r=>!r.read)||entries.some(r=>!r.read))&&h('button',{'data-notification':'thread-read',disabled:!!view.messageBusy,onClick:()=>model.read(rows,entries)},'Mark thread read'),
-     groups.map(g=>{const r=g.rows[0],text=(r.read?'Read':'New')+' · '+(r.source==='result'&&r.resultKind!=='task'?'Report ready':kinds[r.kind])+' · '+r.project+' · #'+r.n;return h('div',{key:r.id,'data-event':r.id,class:'meta'},h('p',null,text,g.rows.length>1?' ×'+g.rows.length:'',time.stamp(time.seconds(r.at),'Event recorded')),g.rows.length>1?h('details',null,h('summary',null,'Source events'),g.rows.map(r=>h('p',{key:r.id,'data-event':r.id},r.event||r.kind,time.stamp(time.seconds(r.at),'Event recorded')))):null);}),
-     h('div',{class:'event-tools'},state.start>0&&h('button',{onClick:()=>{state.start=Math.max(0,state.start-64);draw();}},'Newer events'),state.start+64<rows.length&&h('button',{onClick:()=>{state.start+=64;draw();}},'Older events')),
+     groups.map(g=>{const r=g.rows[0],text=(r.read?'Read':'New')+' · '+(r.source==='result'&&r.resultKind!=='task'?'Report ready':kinds[r.kind])+' · '+r.project+' · #'+r.n;return h('div',{key:r.id,'data-event':r.id,class:'meta'},h('p',null,text,g.rows.length>1?' ×'+g.rows.length:'',time.stamp(time.seconds(r.at),'Event recorded'),!r.read&&h('button',{'data-notification':'group-read',disabled:!!view.messageBusy,onClick:()=>model.read(g.rows)},'Mark read')),g.rows.length>1?h('details',null,h('summary',null,'Source events'),g.rows.map(r=>h('p',{key:r.id,'data-event':r.id},r.event||r.kind,time.stamp(time.seconds(r.at),'Event recorded')))):null);}),
+     h('div',{class:'event-tools'},state.start>0&&h('button',{onClick:()=>{state.start=Math.max(0,state.start-64);draw();}},'Newer events'),state.start+64<all.length&&h('button',{onClick:()=>{state.start+=64;draw();}},'Older events')),
      typeof extra==='function'?extra():extra]);}
 
 

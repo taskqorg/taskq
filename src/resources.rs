@@ -1060,6 +1060,8 @@ mod tests {
         let request=json!({"id":"local-op","issued_at":now,"expires_at":now+300,"ops":[{"target":{"installation_id":null,"generation":1,"project_id":null,"runtime_id":"codex"},
             "policy_schema":"taskq.host-capacity/1","expected_revision":p.revision().unwrap(),"changes":{"runtime_limit":3}}]});
         assert_eq!(crate::host::local_capacity(&t.install,&p.me,&request).unwrap()["state"],"saved");
+        // Only the local save needs a collector; settle its receipts before testing exchange isolation.
+        drop(guard);capture.flush().unwrap();drop(capture);
         let before=read(&t.install).unwrap().ops["local-op"].clone();let policy=fs::read(t.install.join("host.json")).unwrap();
         let mut cancel=fix()["cancel"].clone();cancel["op_id"]=json!("local-op");
         let (sent,log)=go(&t,&[submit("local-op",json!({"runtime_limit":0}))],&[cancel],100);
@@ -1077,7 +1079,7 @@ mod tests {
             let (sent,log)=go(&t,&[submit(id,json!({"runtime_limit":0}))],&[cancel],100);
             assert!(sent.is_empty());assert_eq!(log.len(),2);assert_eq!(read(&t.install).unwrap().ops[id],original);
         }
-        capture.flush().unwrap();drop(guard);drop(capture);fs::remove_dir_all(t.base).unwrap();
+        fs::remove_dir_all(t.base).unwrap();
     }
 
     fn conn_file(install: &Path) -> PathBuf {

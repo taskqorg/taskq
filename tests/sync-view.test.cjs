@@ -51,6 +51,6 @@ assert.match(html(view.staleRow(at(40))),new RegExp('role="status">Data from '+h
 const fs=require('node:fs'),workspace=fs.readFileSync('src/workspace.js','utf8'),app=fs.readFileSync('src/tray-app.js','utf8');
 assert.doesNotMatch(workspace+app,/overlay|view\.raw|view\.sync/,'no window keeps its own pending state');
 assert.match(workspace,/syncView\.row\(t\?\.sync\)/,'the task thread shows its pending operation');
-assert.match(workspace,/footer:\[api\.staleText\(\)/,'the Conversations footer shows Data from');
+assert.match(workspace,/footerText:\[[^\n]*api\.staleText\(\)/,'the Conversations feedback row shows Data from');
 assert.match(workspace,/b\.dataset\.a==='sync-retry'\)ui\.send\(\{a:'sync-retry',root:b\.dataset\.root,id:b\.dataset\.id\}\)/,'Retry resends from Conversations');
 console.log('PASS one channel: no overlay, Sending until readback, failed Retry, conflict reason, stale line, Conversations row');

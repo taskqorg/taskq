@@ -46,7 +46,12 @@ assert names('src/x.rs', '#[cfg(test)]\nmod t {\n    fn f() { "claude"; }\n}\nle
 assert names('src/x.rs', '#[cfg(test)]\npub(crate) mod tests {\n"codex";\n}') == []
 # Name-prefixed literals count.
 assert names('src/x.rs', 's.starts_with("claude:")') == ['src/x.rs:1: s.starts_with("claude:")']
-assert names('src/runtime.rs', 'rt == "codex-app"') == names('src/runtime/owner.rs', '".claude.json"') == []
+assert names('src/runtime/owner.rs', '".claude.json"') == []
+# #2271: the adapter keeps names as table data, never as a branch; capability lookups pass.
+for path in ['src/runtime.rs', 'src/runtime/owner.rs', 'src/linux_sandbox.rs']:
+    for planted in ['if rt == "codex-app" {}', 'if "claude" == rt {}', '"antigravity" => x,', 'matches!(rt, "claude" | "codex")', 'binding["runtime"]!="codex"']:
+        assert names(path, planted) == [f'{path}:1: {planted}'], (path, planted)
+    assert names(path, 'Adapter { name: RUNTIMES[1], bin: "codex" }\nif of(rt).has("thread-link") {}\nwhich("claude")') == [], path
 assert names('src/windows_sandbox.rs', '"codex"') == names('src/windows_sandbox/acl.rs', '"claude"') == names('src/linux_sandbox.rs', 'CODEX_HOME') == []
 # #1593: a planted bypass in main.rs or a former exception fails, native names included
 for planted in ['if k.runtime=="claude" {}', 'if k.runtime=="antigravity" {}', 'tasklist claude.exe', 'home.join(".claude.json")', 'env("CODEX_HOME", h)', 'env_remove("CODEX_THREAD_ID")']:
@@ -113,6 +118,19 @@ assert unnamed({'changed': ['§8', '§80', '§8 Access'], 'removed': [], 'tests'
 assert unnamed(plural, 'sections4/90') == ['§9 (changed)', '§3 (changed)', '§4.1 (changed)', '§4 Profiling (changed)']
 print('PASS replays of bf4a2be9 and ecb1e57d fail unnamed and pass named')
 
+# Chain: §1 Task text, #2241 declared rule scope -> gate. Risk: an in-scope edit still asks, or the scope approves
+# an ID outside it (a sibling section, a longer number) or a removal without its destination.
+scoped = {'changed': ['§2', '§2.20', '§2 Ask card', '§20', 'R7'], 'removed': ['§2.3'], 'tests': ['§2.9']}
+removal = '§2.3 (removed; name `§2.3 -> <ID, file or none>`)'
+assert unnamed(scoped, '', 'Goal: x\nRules: §2') == ['§20 (changed)', 'R7 (changed)', removal]
+assert unnamed(scoped, '', 'Rules: section 2, R7') == ['§20 (changed)', removal]
+assert unnamed(scoped, '§2.3 -> none', 'Rules: all') == []
+assert unnamed(scoped, '', 'Rules: R70') == [f'{k} (changed)' for k in scoped['changed']] + ['§2.9 (tests)', removal]
+# a `Rules:` line quoted in ask context or an answer is task text, not a declared scope
+assert unnamed(scoped, 'Rules: all\n§2.3 -> none', '') == [f'{k} (changed)' for k in scoped['changed']] + ['§2.9 (tests)']
+assert unnamed(scoped, '§2.3 -> none', ' Rules: all\nRules: contract') == [f'{k} (changed)' for k in scoped['changed']] + ['§2.9 (tests)']
+print('PASS declared rule scope passes inside, asks outside')
+
 
 # #1818 / #1805: the owner picked the design, but Product appeared only in the ask's context.
 # Keep the real task_text -> approval gate boundary; the subprocesses return invented board data.
@@ -132,7 +150,7 @@ try:
             out = 'Design A is approved by the owner.'
         return SimpleNamespace(returncode=0, stdout=out.encode(), stderr=b'')
     subprocess.run = board_read
-    approved, error = check['task_text']('invented-base')
+    approved, _, error = check['task_text']('invented-base')
     assert error is None, error
     assert unnamed({'changed': ['Product', 'M2'], 'removed': [], 'tests': []}, approved) == [], approved
     assert 'R9' not in approved, 'the unchosen option is not approval'
@@ -144,10 +162,24 @@ print('PASS selected design approval reads its ask without asking the owner agai
 approval = lambda comments: check['approval_text'](comments, 99)
 comment = lambda i, body, **fields: {**ask, 'id': i, 'body': body, **fields}
 spawn = comment(1, 'taskq: spawn worker codex:invented win')
+steer = comment(2, 'taskq: steer\nOwner approves R6 status block\nop-id: owner-steer\nrevision: 1')
+assert 'R6' in approval([spawn, steer]), 'accepted owner steering is binding task text, without another answer'
+for history in [[steer], [spawn, {**steer, 'updated_at': 'edited'}], [spawn, {**steer, 'author_association': 'NONE'}],
+                [spawn, comment(2, 'taskq: steer attempt 1\nR6')],
+                [spawn, comment(2, 'taskq: steer\nR6\nop-id: stale\nrevision: 0')],
+                [spawn, ask, comment(12, 'taskq: steer\nR6')],
+                [spawn, comment(2, 'taskq: result ' + 'a'*40 + ' attempt 1'), comment(3, 'taskq: steer\nR6')],
+                [spawn, comment(2, 'taskq: gone attempt 1'), comment(3, 'taskq: steer\nR6')]]:
+    assert 'R6' not in approval(history), 'steering keeps state, trust, revision and attempt fences'
+assert 'R9' not in approval([spawn, steer, comment(3, 'taskq: steer\nR9\nop-id: owner-steer\nrevision: 1')]), 'a duplicate operation cannot add approval'
 for answer_body in ['taskq: answer 1', '1', '1. A; native at release - + compact; - later qualification',
-                    'taskq: answer\nPick 1. Proceed.', 'taskq answer 1', 'taskq answer 99.1', 'taskq answer #99.1']:
+                    'taskq: answer\nPick 1. Proceed.', 'taskq answer 1', 'taskq answer 99.1', 'taskq answer #99.1',
+                    'taskq: answer\n99.1', 'taskq: answer\n#99.1']:
     text = approval([spawn, ask, comment(11, answer_body)])
     assert 'Product' in text and 'M2' in text and 'R9' not in text, (answer_body, text)
+# #2194: an `N.K` answer text of another task picks nothing
+for answer_body in ['taskq: answer\n98.1', 'taskq: answer\n#98.1']:
+    assert 'Product' not in approval([spawn, ask, comment(11, answer_body)]), answer_body
 for rejected in [comment(11, 'taskq: answer 1\nR12\nop-id: stale\nrevision: 9'),
                  comment(11, 'taskq: answer 1 attempt 1'),
                  comment(11, '1', updated_at='edited'),
@@ -206,9 +238,71 @@ parked = [spawn, comment(2, 'taskq: later attempt 1'), comment(3, 'taskq: requeu
           comment(6, 'taskq: answer\nProduct retained reading approved\nop-id: resumed\nrevision: 5')]
 assert 'Product retained reading approved' in approval(parked), 'stage Later must not discard a later owner decision'
 for invalid in [parked[:2] + parked[3:],
-                [spawn, comment(2, 'taskq: later #99 attempt 1')] + parked[2:],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct\nop-id: stale-stage\nrevision: 2')],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', author_association='NONE')],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', updated_at='edited')]]:
     assert approval(invalid) == '', 'stage parks retain admission, unsupported-transition, revision and trust fences'
+# #2232: a worker `later <ref> attempt` park (§2 row 23) made the gate unknown, so #2210's later §8 pick never approved.
+history_2210 = [comment(1, 'taskq: hold'), comment(2, 'taskq: start'), comment(3, 'taskq: spawn worker claude:invented win'),
+                comment(4, 'taskq: accepted 3 attempt 3'), comment(5, 'taskq: later coreq#116 attempt 3\nReason: coreq orders pre-releases lexically'),
+                comment(6, 'taskq: released 3 exit attempt 3'), comment(7, 'taskq: spawn worker claude:invented mac'),
+                comment(8, 'taskq: spawn worker claude:ignored win'),
+                comment(9, 'taskq: ask attempt 7\nDone: branch\nProblem: Tag coreq v0.19.1\nTo answer: `taskq answer 2210 --text <done>`.'),
+                comment(10, 'taskq: requeue\nPM tagged coreq v0.19.1.'), comment(11, 'taskq: spawn worker claude:invented mac'),
+                comment(12, 'taskq: result ' + 'd'*40 + ' attempt 11'), comment(13, 'taskq: spawn reviewer claude:invented win'),
+                comment(14, 'taskq: ask attempt 13\nDone: reviewed PR\nProblem: §8 changed: dev builds X.Y.Z-yymmdd-N.\n'
+                            '1. Approve §8 dev version format - + PR can merge; - none ★\n2. Keep §8 unchanged - + no change; - task unmet\n'
+                            'To answer: `taskq answer 2210.K` or comment `K` or the option text.'),
+                comment(15, 'taskq: answer 1\nApprove §8 dev version format - + PR can merge; - none'),
+                comment(16, 'taskq: executing 15 attempt 13')]
+replay = lambda history: check['approval_text'](history, 2210)
+text = replay(history_2210)
+assert '§8 changed' in text and 'Approve §8' in text and 'Keep §8' not in text, text
+unbound = lambda body, **fields: replay(history_2210[:14] + [comment(15, body, **fields)])
+for rejected in [unbound('taskq: answer 1 attempt 13'), unbound('taskq: answer 1\nop-id: stale\nrevision: 9'),
+                 unbound('1', author_association='NONE'), unbound('1', updated_at='edited')]:
+    assert '§8' not in rejected, rejected
+assert '§8' not in replay(history_2210[:14]), 'an unanswered ask grants nothing after a park'
+assert '§8' not in unbound('taskq: answer\nOwner approves'), 'an answer without a pick grants nothing'
+assert 'Keep §8' not in replay(history_2210[:14] + [comment(15, '1')]) and 'Keep §8' in replay(history_2210[:14] + [comment(15, '2')])
+assert '§8' not in replay(history_2210[:5] + [comment(7, 'taskq: ask attempt 3\nProblem: §8\n1. yes\n2. no'), comment(8, '1')]), \
+    'the parked attempt cannot ask after the park'
+# #2202: `taskq answer 2194 --text "2194.1 note"` resumed #2194, but the gate read no pick and stayed red.
+section6 = comment(2, 'taskq: ask attempt 1\nProblem: A4 changes rule Shared project bootstrap.\n1. approve the edit\n2. drop the edit')
+noted = lambda body: check['approval_text']([spawn, section6, comment(3, body)], 2194)
+assert 'Shared project bootstrap' in noted('taskq: answer\n2194.1 Owner approves the section 6 edit'), 'a leading N.K pick with a note approves'
+assert 'Shared project bootstrap' in noted('taskq: answer\n#2194.1'), 'a bare N.K pick approves'
+for unpicked in ['taskq: answer\nOwner approves the section 6 edit', 'taskq: answer\n2193.1 Owner approves', 'taskq: answer\n2194.1x']:
+    assert 'Shared project bootstrap' not in noted(unpicked), unpicked
 print('PASS approval association preserves revision, attempt, trust and selected-option fences')
+
+# #2210: dev builds are <next patch>-yymmdd-N; N counts the UTC date's builds on the host and restarts each day.
+import datetime
+dev = runpy.run_path(str(Path(__file__).with_name('dev-version.py')))['version']
+cargo, utc = 'version = "4.6.59"\n', datetime.timezone.utc
+day1, day2 = datetime.datetime(2026, 11, 2, 23, 59, tzinfo=utc), datetime.datetime(2026, 11, 3, 0, 0, tzinfo=utc)
+assert dev(cargo, ['4.6.60-dev.1793639858'], day1) == '4.6.60-261102-0'
+assert dev(cargo, ['4.6.60-dev.1793639858', '4.6.60-261102-0'], day1) == '4.6.60-261102-1'
+assert dev(cargo, [f'4.6.60-261102-{n}' for n in range(11)], day1) == '4.6.60-261102-11'
+assert dev(cargo, ['4.6.60-261102-0', '4.6.60-261102-1'], day2) == '4.6.60-261103-0'
+assert dev(cargo, ['4.6.59-261102-4'], day1.astimezone(datetime.timezone(datetime.timedelta(hours=3)))) == '4.6.60-261102-5'
+# #2234: releases take their version from the tag, so a dev build follows the highest release tag above Cargo.toml.
+assert dev(cargo, [], day1, ['v4.6.59', 'v4.6.70', 'v4.6.9', 'v5.0.0-rc1', 'vx']) == '4.6.71-261102-0'
+assert dev('version = "4.7.0"\n', [], day1, ['v4.6.70']) == '4.7.1-261102-0'
+print('PASS dev version counts per UTC day and follows the release tags')
+release_index = runpy.run_path(str(Path(__file__).parents[1] / '.github' / 'release-index.py'))['index']
+fast, latest = release_index('4.7.1', '', {'taskq-4.7.1-linux-x86_64': 'aa', 'taskq-4.7.1-windows-x86_64.exe': 'bb', 'other': 'cc'})
+assert fast == 'aa  taskq-4.7.1-linux-x86_64\nbb  taskq-4.7.1-windows-x86_64.exe\n'
+assert latest == {'version': '4.7.1', 'files': {'linux-x86_64': 'taskq-4.7.1-linux-x86_64', 'windows-x86_64': 'taskq-4.7.1-windows-x86_64.exe'}}
+full, latest = release_index('4.7.1', fast, {'taskq-4.7.1-macos-aarch64': 'dd', 'taskq-4.7.1-linux-x86_64': 'aa'})
+assert full == 'aa  taskq-4.7.1-linux-x86_64\ndd  taskq-4.7.1-macos-aarch64\nbb  taskq-4.7.1-windows-x86_64.exe\n', 'macos joins the published sums'
+assert sorted(latest['files']) == ['linux-x86_64', 'macos-aarch64', 'windows-x86_64']
+print('PASS release index publishes OS files as they arrive')
+
+# #2236: the contract lint's above-target markers stay visible locally and as CI annotations.
+warn = check['compact_warnings']
+report = 'taskq.md: 60024 bytes\nCOMPACT: taskq.md: 60024 bytes > target 55910 (cap 79872)\nPASS\n'
+assert warn(report) == ['Warning: COMPACT: taskq.md: 60024 bytes > target 55910 (cap 79872); file one compaction task (specq engineering/contracts.md#size-budgets)']
+assert warn(report, True)[0].startswith('::warning::COMPACT: taskq.md: 60024 bytes')
+assert warn('taskq.md: 55898 bytes\nPASS\n') == []
+print('PASS contract lint COMPACT markers surface as warnings')

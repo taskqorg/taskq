@@ -211,32 +211,44 @@ pub(crate) fn task_header(row:&Value)->Value {
 
 struct Catalog {
     root:PathBuf, value:Value, at:Option<std::time::Instant>, epoch:u64,
-    pending:Option<(std::time::Instant,u64,std::sync::mpsc::Receiver<Value>)>,
+    pending:Option<(std::time::Instant,u64,std::sync::mpsc::Receiver<(std::time::Instant,Value)>)>,
+}
+impl Catalog {
+    fn accept(&mut self,epoch:u64,finished:std::time::Instant,mut value:Value) {
+        if epoch!=self.epoch||self.at.is_some_and(|at|finished<at){return;}
+        value["absence_complete"]=json!(value["complete"]==true);value["catalog_epoch"]=json!(epoch);self.value=value;self.at=Some(finished);
+    }
 }
 static CATALOG:std::sync::OnceLock<std::sync::Mutex<Catalog>>=std::sync::OnceLock::new();
-fn catalog_unknown(reason:&str)->Value {json!({"items":[],"complete":false,"loading":true,"absence_complete":false,"reason":reason})}
+fn catalog_unknown(reason:&str)->Value {json!({"items":[],"complete":false,"absence_complete":false,"reason":reason})}
 fn catalog()->&'static std::sync::Mutex<Catalog> {
     CATALOG.get_or_init(||std::sync::Mutex::new(Catalog{root:PathBuf::new(),value:catalog_unknown("Reading conversation catalog"),at:None,epoch:0,pending:None}))
 }
 fn invalidate_catalog(install:&Path) {
-    if let Ok(mut cache)=catalog().lock() {if cache.root==install {cache.epoch=cache.epoch.wrapping_add(1);cache.at=None;cache.value["absence_complete"]=json!(false);}}
+    // Mutation invalidates coverage, never the completed read's age.
+    if let Ok(mut cache)=catalog().lock() {if cache.root==install {cache.epoch=cache.epoch.wrapping_add(1);cache.value["absence_complete"]=json!(false);}}
 }
 /// R12: one bounded catalog read off the event loop; a pre-mutation scan never proves absence after its receipt.
 pub(crate) fn observed(install:&Path)->Value {
-    use std::{sync::mpsc,time::{Duration,Instant}};
     let Ok(mut cache)=catalog().lock() else{return catalog_unknown("Conversation catalog lock unavailable")};
-    if cache.root!=install {cache.root=install.into();cache.value=catalog_unknown("Reading conversation catalog");cache.at=None;cache.pending=None;cache.epoch=cache.epoch.wrapping_add(1);}
-    if let Some((started,epoch,rx))=&cache.pending {match rx.try_recv(){
-        Ok(mut value)=>{let (started,epoch)=(*started,*epoch);cache.pending=None;if epoch==cache.epoch {value["absence_complete"]=json!(true);value["catalog_epoch"]=json!(epoch);cache.value=value;cache.at=Some(started);}},
-        Err(mpsc::TryRecvError::Disconnected)=>{cache.value=catalog_unknown("Conversation catalog read stopped; retrying");cache.pending=None;},
+    poll_catalog(&mut cache,install)
+}
+fn poll_catalog(cache:&mut Catalog,install:&Path)->Value {
+    use std::{sync::mpsc,time::{Duration,Instant}};
+    if cache.root!=install {cache.root=install.into();cache.value=catalog_unknown("Reading conversation catalog");cache.value["loading"]=json!(true);cache.at=None;cache.pending=None;cache.epoch=cache.epoch.wrapping_add(1);}
+    if let Some((_,epoch,rx))=&cache.pending {match rx.try_recv(){
+        Ok((finished,value))=>{let epoch=*epoch;cache.pending=None;cache.accept(epoch,finished,value);},
+        Err(mpsc::TryRecvError::Disconnected)=>{if *epoch==cache.epoch {cache.value["complete"]=json!(false);cache.value["absence_complete"]=json!(false);cache.value["loading"]=json!(false);cache.value["reason"]=json!("Conversation catalog read stopped; retrying");}cache.pending=None;},
         Err(mpsc::TryRecvError::Empty)=>{}
     }}
-    if cache.pending.is_none()&&cache.at.is_none_or(|at|at.elapsed()>=Duration::from_secs(2)) {
+    if cache.pending.is_none()&&(cache.value["catalog_epoch"].as_u64()!=Some(cache.epoch)||cache.at.is_none_or(|at|at.elapsed()>=Duration::from_secs(2))) {
         let (tx,rx)=mpsc::sync_channel(1);let root=install.to_path_buf();cache.pending=Some((Instant::now(),cache.epoch,rx));
-        std::thread::spawn(move||{let value=coreq::telemetry::capture::operation("conversations.catalog.read",||Ok::<_,String>(summary(&root)),|_|"source-read").unwrap_or_else(|reason|catalog_unknown(&reason));let _=tx.send(value);});
+        std::thread::spawn(move||{let mut value=coreq::telemetry::capture::operation("conversations.catalog.read",||Ok::<_,String>(summary(&root)),|_|"source-read").unwrap_or_else(|reason|catalog_unknown(&reason));let finished=Instant::now();value["observed_at"]=json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d|d.as_millis() as u64));let _=tx.send((finished,value));});
     }
-    let mut value=cache.value.clone();
-    if cache.at.is_some_and(|at|at.elapsed()>=Duration::from_secs(4)){value["complete"]=json!(false);value["absence_complete"]=json!(false);value["reason"]=json!("Conversation catalog observation is stale; refresh pending");}
+    let mut value=cache.value.clone();value["refreshing"]=json!(cache.pending.is_some());value["observation_age_seconds"]=json!(cache.at.map(|at|at.elapsed().as_secs()));
+    if value["catalog_epoch"].as_u64()!=Some(cache.epoch){value["complete"]=json!(false);value["absence_complete"]=json!(false);if cache.value["complete"]==true {value["loading"]=json!(true);}}
+    if value["loading"]==true&&cache.pending.as_ref().is_some_and(|(started,_,_)|started.elapsed()>=Duration::from_secs(4)){value["loading"]=json!(false);value["reason"]=json!("Conversation catalog read has not completed; refresh pending");}
+    if cache.at.is_some_and(|at|at.elapsed()>=Duration::from_secs(4)){value["loading"]=json!(false);value["complete"]=json!(false);value["absence_complete"]=json!(false);if cache.value["complete"]==true {value["reason"]=json!("Conversation catalog observation is stale; refresh pending");}}
     value
 }
 
@@ -429,6 +441,8 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
 fn receipt_snapshot(install:&Path,id:&str)->Value {
     let epoch=catalog().lock().ok().filter(|c|c.root==install).map_or(0,|c|c.epoch);
     let mut value=summary(install);value["catalog_epoch"]=json!(epoch);
+    let finished=std::time::Instant::now();value["observed_at"]=json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|d|d.as_millis() as u64));
+    if let Ok(mut cache)=catalog().lock() {if cache.root==install {cache.accept(epoch,finished,value.clone());}}
     // The acting draft alone carries full files/text; unrelated histories remain metadata.
     if let Ok(p)=preferences(install) {if let Ok(drafts)=rows(&p) {if let Some(d)=drafts.get(id) {if let Some(row)=value["items"].as_array_mut().and_then(|a|a.iter_mut().find(|r|r["id"]==id)) {if let Ok(full)=serde_json::to_value(d) {for (k,v) in full.as_object().unwrap(){row[k]=v.clone();}row["lazy"]=json!(false);}}}}}
     value
@@ -549,10 +563,39 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
     let row=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n));
     let host=row.map(|r|r.get("worker").unwrap_or(r)).filter(|w|w["attempt"]==read.attempt).and_then(|w|w["session"].as_str()).and_then(|s|s.split_whitespace().nth(1)).filter(|h|*h!=local);
     let Some(host)=host else {return serve(install,&read)};
-    let allow=crate::link::allowed(&raw)?;
-    let peer=crate::link::peers(&status,cfg.ttl,allow.as_deref()).into_iter().find(|p|p.host==host).ok_or_else(||format!("Host {host} publishes no live host link"))?;
+    remote_read(install,&cfg,&raw,&status,host,&read)
+}
+
+fn remote_read(install:&Path,cfg:&crate::Config,raw:&Value,status:&Value,host:&str,read:&crate::link::Read)->Res<Value> {
+    let allow=crate::link::allowed(raw)?;
+    let peer=crate::link::peers(status,cfg.ttl,allow.as_deref()).into_iter().find(|p|p.host==host).ok_or_else(||format!("Host {host} publishes no live host link"))?;
     let (mut relay,_)=crate::link::Dash::new(install)?;
-    crate::link::ask(install,&crate::link::key(install)?,&peer,&read,&mut relay)
+    crate::link::ask(install,&crate::link::key(install)?,&peer,read,&mut relay)
+}
+
+/// One page of a closed task's worker on another host of this project's board.
+pub(crate) fn closed_remote(install:&Path,root:&Path,host:&str,task:u64,attempt:u64,before:Option<u64>)->Res<Value> {
+    let (cfg,raw,status)=live_status(root)?;
+    let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("Worker board unknown")?;
+    remote_read(install,&cfg,&raw,&status,host,&crate::link::Read{board:board.into(),task,attempt,before,after:None})
+}
+
+fn board_root(install:&Path,board:&str)->Option<(PathBuf,crate::Config,Value,Value)> {
+    crate::host::project_paths(install).ok()?.into_iter().find_map(|root|{
+        let (cfg,raw,status)=live_status(&root).ok()?;
+        (status["issues"]==board).then_some((root,cfg,raw,status))
+    })
+}
+
+/// Principle 2: the live peers of the registered project serving `board`; none when this host does not serve it.
+pub(crate) fn board_peers(install:&Path,board:&str)->Vec<crate::link::Peer> {
+    board_root(install,board).map_or(vec![],|(_,cfg,raw,status)|crate::link::peers(&status,cfg.ttl,crate::link::allowed(&raw).unwrap_or(Some(vec![])).as_deref()))
+}
+
+/// A peer read of `read.board`; the sender was checked against that board's peers.
+pub(crate) fn serve_board(install:&Path,read:&crate::link::Read)->Res<Value> {
+    let (root,..)=board_root(install,&read.board).ok_or("Worker project is not served on this host")?;
+    serve_peer(install,&root,read)
 }
 
 /// Principles 3 and 7 of the [host link](../docs/design/host-link.md): one bounded page of the named attempt's live
@@ -569,17 +612,36 @@ pub(crate) fn serve(install:&Path,read:&crate::link::Read)->Res<Value> {
     Err(stale.unwrap_or_else(||"Worker project is not served on this host".into()))
 }
 
-/// Principle 2: a peer is a live host of the listening project's board, so its read serves only that board, never
-/// another registered project of this host.
+/// Principle 2: a peer is a live host of `root`'s board, so its read serves only that board, never another
+/// registered project of this host.
 pub(crate) fn serve_peer(install:&Path,root:&Path,read:&crate::link::Read)->Res<Value> {
+    let log=crate::runtime::attempt_log(root,"worker",read.task,read.attempt);
+    serve_peer_with(install,root,read,|local|crate::closed_peer_session(root,local,read.task,read.attempt),|session,before,after|crate::dialogue::worker_transcript(session,&log,before,after))
+}
+
+fn serve_peer_with(install:&Path,root:&Path,read:&crate::link::Read,closed:impl FnOnce(&str)->Res<String>,page:impl FnOnce(&str,Option<u64>,Option<u64>)->Res<Value>)->Res<Value> {
     let (_,_,status)=live_status(root)?;
     if status["issues"]!=read.board.as_str() {return Err("Worker board is not the board of this host link".into())}
-    serve_root(install,root,&status,read)
+    let local=crate::host::Policy::read(install)?.me;
+    // No open row and this host's own attempt log: a closed task's retained history. An unknown attempt reads as ended, no board call.
+    let open=status["tasks"].as_array().is_some_and(|rows|rows.iter().any(|r|r["n"]==read.task));
+    let mut value=if !open&&crate::runtime::attempt_log(root,"worker",read.task,read.attempt).exists() {
+        let mut v=page(&closed(&local)?,read.before,read.after)?;
+        v["following"]=json!(false);v["activity"]=json!("ended");v
+    } else {worker_page(root,&local,&status,read,page)?};
+    // R12, section 7 rule 6: arbitrary tool output has no safe pattern-based redaction. Only view metadata and
+    // the worker adapter's validated tool name may cross the host boundary; local reads retain the body.
+    for item in value["items"].as_array_mut().into_iter().flatten().filter(|i|i["role"]=="tool") {
+        let output=item.get("result").is_some() || item.get("image").is_some();
+        item.as_object_mut().unwrap().retain(|k,_|matches!(k.as_str(),"role"|"text"|"at"|"i"|"updated"));
+        if output {item["text"]=json!("Tool output available only on its host");}
+    }
+    Ok(crate::link::fit(value,read.after.is_some()))
 }
 
 fn serve_root(install:&Path,root:&Path,status:&Value,read:&crate::link::Read)->Res<Value> {
     let local=crate::host::Policy::read(install)?.me;
-    let page=worker_page(root,&local,status,read,|session,before,after|crate::dialogue::worker_transcript(session,before,after))?;
+    let page=worker_page(root,&local,status,read,|session,before,after|crate::dialogue::worker_transcript(session,&crate::runtime::attempt_log(root,"worker",read.task,read.attempt),before,after))?;
     Ok(crate::link::fit(page,read.after.is_some()))
 }
 
@@ -678,6 +740,57 @@ mod tests {
         fn attach(&self,id:&str,name:&str,mime:&str,data:&[u8])->Value {self.act(id,"attach",json!({"file":{"id":"invented-file","name":name,"mime":mime,"hash":"0".repeat(64),"bytes":data.len()},"data":STANDARD.encode(data)}))}
     }
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
+
+    #[test]
+    fn catalog_polling_ages_the_completed_read_and_preserves_failures() {
+        use std::{sync::mpsc,time::{Duration,Instant}};
+        let f=Fixture::new();let finished=Instant::now();let (tx,rx)=mpsc::sync_channel(1);
+        let mut c=Catalog{root:f.0.clone(),value:json!({"items":[],"complete":true}),at:Some(finished-Duration::from_secs(10)),epoch:7,pending:Some((finished-Duration::from_secs(8),7,rx))};
+        tx.send((finished,json!({"items":[],"complete":true,"observed_at":1000}))).unwrap();
+        let fresh=poll_catalog(&mut c,&f.0);
+        assert_eq!(fresh["complete"],true,"a completed read must not inherit eight seconds of launch/poll delay: {fresh}");
+        assert_eq!(fresh["refreshing"],false,"ordinary reads wait two seconds after actual completion");
+        assert_eq!(fresh["observed_at"],1000);
+        let (tx,rx)=mpsc::sync_channel(1);
+        {c.at=Some(finished-Duration::from_secs(5));c.pending=Some((finished,7,rx));}
+        let stale=poll_catalog(&mut c,&f.0);assert_eq!(stale["complete"],false);assert_eq!(stale["absence_complete"],false);assert_eq!(stale["refreshing"],true);assert!(stale["observation_age_seconds"].as_u64().unwrap()>=5);
+        tx.send((finished,json!({"items":[],"complete":false,"reason":"Invented permanent read failure"}))).unwrap();
+        let failure=poll_catalog(&mut c,&f.0);assert_eq!(failure["reason"],"Invented permanent read failure");assert_eq!(failure["absence_complete"],false);
+        let (hold,rx)=mpsc::sync_channel(1);
+        {c.at=Some(finished-Duration::from_secs(5));c.pending=Some((finished,7,rx));}
+        let old_failure=poll_catalog(&mut c,&f.0);assert_eq!(old_failure["reason"],"Invented permanent read failure","age cannot replace a genuine failure with a refresh notice");
+        drop(hold);
+        // A result completed long ago remains stale even when delivered to this poll only now.
+        let (tx,rx)=mpsc::sync_channel(1);
+        {c.pending=Some((finished,7,rx));}
+        tx.send((finished-Duration::from_secs(5),json!({"items":[],"complete":true}))).unwrap();
+        assert_eq!(poll_catalog(&mut c,&f.0)["complete"],false,"poll receipt cannot renew a source observation");
+        let (_,_,read)=c.pending.take().unwrap();read.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (hold,rx)=mpsc::sync_channel(1);
+        {c.at=None;c.value=catalog_unknown("Reading conversation catalog");c.value["loading"]=json!(true);c.pending=Some((finished-Duration::from_secs(5),7,rx));}
+        let stalled=poll_catalog(&mut c,&f.0);assert_eq!(stalled["loading"],false);assert_eq!(stalled["complete"],false);assert!(stalled["reason"].as_str().unwrap().contains("has not completed"),"a stalled first read cannot stay silently loading forever");
+        drop(hold);
+        let disconnected=poll_catalog(&mut c,&f.0);assert!(disconnected["reason"].as_str().unwrap().contains("read stopped"));
+        let (_,_,read)=c.pending.take().unwrap();read.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (tx,rx)=mpsc::sync_channel(1);
+        {c.epoch=8;c.at=None;c.value["absence_complete"]=json!(false);c.pending=Some((finished,7,rx));}
+        tx.send((finished,json!({"items":[],"complete":true}))).unwrap();
+        assert_eq!(poll_catalog(&mut c,&f.0)["absence_complete"],false,"pre-mutation scans never prove absence at a new epoch");
+        let (_,_,read)=c.pending.take().unwrap();read.recv_timeout(Duration::from_secs(5)).unwrap();
+        c.value=json!({"items":[],"complete":true,"catalog_epoch":7,"observed_at":1000});c.at=Some(Instant::now());c.epoch=8;
+        let updating=poll_catalog(&mut c,&f.0);
+        assert_eq!(updating["refreshing"],true,"a newer mutation starts a read without waiting for the ordinary refresh interval");
+        assert_eq!(updating["complete"],false);assert_eq!(updating["absence_complete"],false);assert_eq!(updating["loading"],true,"a fresh superseded observation is quiet while its replacement reads");
+        assert_eq!(updating["observed_at"],1000,"invalidation never renews the completed source time");
+        let (_,_,read)=c.pending.take().unwrap();read.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (hold,rx)=mpsc::sync_channel(1);c.pending=Some((Instant::now(),8,rx));c.at=Some(Instant::now()-Duration::from_secs(5));
+        let aged=poll_catalog(&mut c,&f.0);assert_eq!(aged["loading"],false);assert_eq!(aged["complete"],false);assert!(aged["reason"].as_str().unwrap().contains("stale"),"an aged superseded source cannot stay quietly loading");drop(hold);
+        let now=Instant::now();c.value=json!({"items":[],"complete":true,"catalog_epoch":8,"observed_at":2000});c.at=Some(now);
+        let (tx,rx)=mpsc::sync_channel(1);c.pending=Some((now,8,rx));tx.send((now-Duration::from_secs(1),json!({"items":[],"complete":true,"observed_at":1000}))).unwrap();
+        assert_eq!(poll_catalog(&mut c,&f.0)["observed_at"],2000,"an older async completion cannot replace a newer completed receipt read");
+        let (tx,rx)=mpsc::sync_channel(1);c.pending=Some((now,7,rx));drop(tx);
+        assert_eq!(poll_catalog(&mut c,&f.0)["complete"],true,"a disconnected superseded epoch cannot invalidate the newer completed source");
+    }
 
     // A2/A4/C4: real durable path; stale authority cannot freeze input or replace the original launch/files.
     #[test]
@@ -948,6 +1061,54 @@ mod tests {
         assert_eq!(serve_peer(&f.0,&roots[0],&read("board-a")).unwrap()["ended"],true);
         assert!(serve_peer(&f.0,&roots[0],&read("board-b")).unwrap_err().contains("not the board of this host link"));
         assert_eq!(serve(&f.0,&read("board-b")).unwrap()["ended"],true,"the local panel path is unchanged");
+    }
+
+    // Closed task on another host. Before: "Transcript is on host win; open it there" or an empty ended view.
+    // After: this host's retained attempt pages with tool output stripped, and only for the named board's peers.
+    #[test]
+    fn peers_read_closed_history_of_any_board_they_serve() {
+        let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/closed-history"}"#).unwrap();
+        fs::write(f.0.join("projects"),format!("{}\n",root.display())).unwrap();
+        fs::write(f.0.join("host.json"),"{}").unwrap();
+        let board="https://github.com/invented/closed-history/issues";
+        let status=json!({"pid":std::process::id(),"issues":board,"tasks_age_seconds":0,"complete":true,"observed":1000,"tasks":[],
+            "hosts":[{"name":"win","updated":1000,"link":format!("{} {}","ab".repeat(32),"cd".repeat(32))}]});
+        fs::write(root.join(".taskq/status.json"),status.to_string()).unwrap();
+        assert_eq!(board_peers(&f.0,board).len(),1,"a board other than the speaking one has peers");
+        assert!(board_peers(&f.0,"https://github.com/invented/other/issues").is_empty(),"a board this host does not serve has none");
+        let read=crate::link::Read{board:board.into(),task:7,attempt:71,before:None,after:None};
+        let unread=serve_peer_with(&f.0,&root,&read,|_|panic!("no log, no board read"),|_,_,_|panic!("no log, no page")).unwrap();
+        assert_eq!(unread["ended"],true);
+        fs::write(crate::runtime::attempt_log(&root,"worker",7,71),"").unwrap();
+        let value=serve_peer_with(&f.0,&root,&read,|_|Ok("codex:native".into()),|session,_,_|{assert_eq!(session,"codex:native");
+            Ok(json!({"start":0,"end":1,"size":1,"items":[{"role":"tool","text":"result","result":"invented-secret","at":0,"i":0}]}))}).unwrap();
+        assert!(!value.to_string().contains("invented-secret"));
+        assert_eq!((value["activity"].as_str(),value["following"].as_bool()),(Some("ended"),Some(false)));
+        assert!(serve_peer_with(&f.0,&root,&read,|_|Err("Worker transcript is available only on its host".into()),|_,_,_|panic!("refused")).is_err());
+    }
+
+    // #2225 A2: cross-host reads cannot export arbitrary result text, structured output or tool images.
+    #[test]
+    fn peer_reads_omit_tool_result_bodies() {
+        let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/worker-panel"}"#).unwrap();
+        fs::write(f.0.join("host.json"),"{}").unwrap();
+        let local=crate::host::Policy::read(&f.0).unwrap().me;
+        let status=json!({"pid":std::process::id(),"issues":"https://github.com/invented/worker-panel/issues","tasks_age_seconds":0,"complete":true,
+            "tasks":[{"n":7,"state":"doing","role":"worker","attempt":71,"session":format!("codex:native {local}")}]});
+        fs::write(root.join(".taskq/status.json"),status.to_string()).unwrap();
+        for after in [None,Some(0)] {
+            let read=crate::link::Read{board:status["issues"].as_str().unwrap().into(),task:7,attempt:71,before:None,after};
+            let value=serve_peer_with(&f.0,&root,&read,|_|unreachable!(),|_,_,_|Ok(json!({"start":0,"end":12,"size":12,"items":[
+                {"role":"tool","text":"result","result":"invented-unrecognized-secret","future_output":{"value":"invented-structured-secret"},"at":0,"i":0},
+                {"role":"tool","text":"image","image":{"src":"invented-private-image"},"at":0,"i":1},
+                {"role":"assistant","text":"done","at":0,"i":2}]}))).unwrap();
+            assert!(!value.to_string().contains("invented-"),"tool output must stay on its host");
+            assert_eq!(value["items"][2]["text"],"done");
+            assert_eq!(value["items"][1]["i"],1);
+            assert_eq!(value["end"],12);
+        }
     }
 
     // #1665 D4/D5: view reads of a launched conversation whose native transcript is missing stay unknown, never empty,

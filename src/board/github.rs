@@ -71,6 +71,7 @@ pub(crate) fn parse_comment(v: &Value) -> Comment {
         trusted: trusted(v),
         edited: s(v, "updated_at") != s(v, "created_at"),
         author: s(&v["user"], "login"),
+        read: v["reactions"]["eyes"].as_u64().map(|n| n > 0),
     }
 }
 
@@ -398,11 +399,12 @@ impl GitHub {
 
     fn try_publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
         // #2061 (#2010 pilotq#200, #2015 dashq#241): a task PR of another repository publishes there, before any board
-        // repository read; a named PR that is not this task's (head `taskq-<N>` or the result) is only a mention
+        // repository read; a named PR that is not this task's (head `taskq-<N>`, the result, or #2308 the result as its
+        // merge commit) is only a mention
         let mut unread = None;
         for (repo, p) in self.foreign_prs(n)? {
             match self.api.call("GET", &format!("{}/repos/{repo}/pulls/{p}", self.api.root), None).and_then(|r| r.json()) {
-                Ok(pr) if pr["head"]["ref"] == format!("taskq-{n}") || pr["head"]["sha"] == sha => {
+                Ok(pr) if pr["head"]["ref"] == format!("taskq-{n}") || pr["head"]["sha"] == sha || landed(&pr, sha) => {
                     return self.publish_foreign(&repo, pr, (n, sha, mode, title, task_line), root, enqueued);
                 }
                 Ok(_) => {},
@@ -477,14 +479,17 @@ impl GitHub {
     /// repository whose API the caller scoped (#2047), else the board repository's `taskq-<N>` PRs publish.
     fn publish_in(&self, status: &str, foreign: Option<&Value>, (n, sha, mode, title, task_line): (u64, &str, &str, &str, &str), root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
         let branch = format!("taskq-{n}");
+        // #2308 (#2302 agentq#206): the result is the merge commit of the named PR of another repository; that merge is
+        // the publication, qualified by its CI below whatever the route, never read as an unqualified `already on main`
+        let at_merge = foreign.is_some_and(|pr| landed(pr, sha));
         // No commit, or the SHA is already on main: verify ancestry, close.
-        if matches!(status, "identical" | "behind") {
+        if matches!(status, "identical" | "behind") && !at_merge {
             return Ok(Publish::Done(format!("{sha} already on main")));
         }
-        if mode == "direct" && foreign.is_some() {
+        if mode == "direct" && foreign.is_some() && !at_merge {
             return Ok(Publish::Blocked("publication PR is in another repository; `direct` moves only the board repository's main".into()));
         }
-        if mode == "direct" {
+        if mode == "direct" && !at_merge {
             if let Some(fail) = self.ci(sha)? { return Ok(Publish::Failed(fail)); }
             let head = self.api.call("GET", &format!("/git/ref/heads/{branch}"), None)?.json()?;
             if head["object"]["sha"] != sha {
@@ -512,7 +517,7 @@ impl GitHub {
             let merged_prs: Vec<&Value> = closed.as_array().into_iter().flatten().filter(|p| !p["merged_at"].is_null()).collect();
             if foreign.is_some() && merged_prs.is_empty() { return Ok(Publish::Blocked(format!("publication PR closed unmerged at result {sha}"))); }
             // #1820 (pilotq #106): a PR merged at a rebased head is the publication when it carries the result's patch
-            let found = merged_prs.iter().find(|p| p["head"]["sha"] == sha).map(|p| (*p, String::new()))
+            let found = merged_prs.iter().find(|p| p["head"]["sha"] == sha || landed(p, sha)).map(|p| (*p, String::new()))
                 .or_else(|| merged_prs.iter().find_map(|p| self.same_patch(p, sha).ok().flatten()
                     .map(|by| (*p, format!(" (head {:.7}, the result's {by})", s(&p["head"], "sha"))))));
             if let Some((pr, note)) = found {
@@ -674,6 +679,12 @@ fn head_moved(number: &Value, head: &str, sha: &str) -> Publish {
     Publish::MainMoved(format!("PR #{number} head {head:.7} is not the result {sha:.7}; deliver the PR head as a new result"))
 }
 
+/// #2308: PR `pr` is merged and its merge commit is the result `sha`: a worker that merged the PR itself reports the
+/// merge commit, not the PR head.
+fn landed(pr: &Value, sha: &str) -> bool {
+    !pr["merged_at"].is_null() && pr["merge_commit_sha"] == sha
+}
+
 impl Board for GitHub {
     fn forget(&self) { *self.open.borrow_mut() = None; }
     fn kept(&self) -> Option<i64> { self.open.borrow().as_ref().filter(|o| o.reused).map(|o| o.listed) }
@@ -701,6 +712,25 @@ impl Board for GitHub {
             Ok(None) => Probe::Unknown("repository visibility unknown".into()),
             Err(e) => Probe::Unknown(e),
         }
+    }
+    /// #2194: one `per_page=1` read of issues, commits (Contents: Read) and pulls, then for issues and pulls one write
+    /// probe: a POST with an empty body that GitHub refuses with 422 when the token may write and creates nothing.
+    /// 401, 403 or 404 names the status and the access it failed.
+    fn access(&self) -> Vec<(&'static str, crate::check::Probe)> {
+        use crate::check::Probe;
+        let probe = |method: &str, path: &str, body: Option<Value>, ok: u16| match self.api.refresh().and_then(|_| self.api.call(method, path, body)) {
+            Ok(_) => Probe::Ok,
+            Err(e) => match crate::health::http_status(&e) {
+                Some(s) if s == ok => Probe::Ok,
+                Some(s @ (401 | 403 | 404)) => Probe::Gap(format!("{} HTTP {s}", if method == "GET" { "read" } else { "write" })),
+                _ => Probe::Unknown(e),
+            },
+        };
+        // an empty repository answers 409 to a reader that may read it
+        [("Issues", "/issues", true), ("Contents", "/commits", false), ("Pull requests", "/pulls", true)].into_iter().map(|(name, path, write)| {
+            let read = probe("GET", &format!("{path}?per_page=1"), None, if name == "Contents" { 409 } else { 0 });
+            (name, if write && read == Probe::Ok { probe("POST", path, Some(json!({})), 422) } else { read })
+        }).collect()
     }
     fn canonical_labels(&self) -> Result<bool> {
         self.api.canonical_labels()
@@ -780,6 +810,10 @@ impl Board for GitHub {
 
     fn edit_comment(&self, _n: u64, id: u64, body: &str) -> Result<()> {
         self.api.call("PATCH", &format!("/issues/comments/{id}"), Some(json!({ "body": body }))).map(|_| ())
+    }
+
+    fn react_read(&self, _n: u64, id: u64) -> Result<()> {
+        self.api.call("POST", &format!("/issues/comments/{id}/reactions"), Some(json!({ "content": "eyes" }))).map(|_| ())
     }
 
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> {

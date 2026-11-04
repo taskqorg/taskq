@@ -1,0 +1,30 @@
+taskq · [board](https://github.com/taskqorg/taskq/issues)
+In work 2 · Waiting for answer 1 · Ready 0
+
+| Task | State | Runtime | Session |
+|---|---|---|---|
+| [#2176 Render Conversations through the shared worker contract](https://github.com/taskqorg/taskq/issues/2176) | doing · Run state unknown; see service log · current executor unknown; inspect execution health | claude | mac: Remote Control unknown |
+| [#2180 Reopen #2173](https://github.com/taskqorg/taskq/issues/2180) | doing | codex | mac: `codex://threads/01a19c85-6333-7d81-9f27-0cd096327441` |
+| [#2188 Show owner messages and worker read receipts in Conversatio…](https://github.com/taskqorg/taskq/issues/2188) | blocked ([#2176](https://github.com/taskqorg/taskq/issues/2176) open) |  |  |
+
+Questions (answer N.M):
+| Question | Brief reason | Options |
+|---|---|---|
+| [#2184 Qualify #2151 native protected authority on Mac (A6)](https://github.com/taskqorg/taskq/issues/2184) | [Owner/PM must run preparation, descendant completion and recovery once on merged main under existing Mac Workspace authority, without grant changes, unmerged i…](https://github.com/taskqorg/taskq/issues/2184) | waiting for owner: Owner/PM must run preparation, descendant completion and recovery once on merged main under existing Mac Workspace auth… |
+
+Decide:
+| Report | Verdict | Age | Recommendation |
+|---|---|---|---|
+| [#2151 Prepare protected authority and reconcile native descendant…](https://github.com/taskqorg/taskq/issues/2151) | inconclusive | 14h | Review the immutable source candidate, require green affected merge-result CI, then have PM qualify only the added prep… |
+| [#2183 Qualify the registered CSGO Windows and WSL execution route](https://github.com/taskqorg/taskq/issues/2183) | confirmed | 1h | Use the registered-root WSL route with configured Windows Node and explicit child UTF-8 mode for this preflight. Retain… |
+
+Stale heartbeats:
+- [taskq #2176 Render Conversations through the shared worker contract](https://github.com/taskqorg/taskq/issues/2176) · runtime claude · host mac · attempt 6578911541 · execution 6578911541
+  Heartbeat: fresh · board host heartbeat · 2026-11-02T13:53:54Z · age <1m · matching host/attempt ownership lease observed; progress is separate
+  Executor: unknown · owning-host execution observation · 2026-11-02T13:53:54Z · age <1m
+  Progress: unknown · native execution events · unknown · age unknown · last event unknown · matching execution progress missing
+  Reason: current executor unknown; inspect execution health
+  Action: Inspect the owning session and native progress source; preserve execution.
+
+Hosts: pds18.ufobe.com v4.6.58 <1m 679 req/h (github.com 477), win v4.6.58 <1m 1582 req/h (github.com 1323), mac v4.6.59-dev.1793627339 <1m
+Board quota: 386/5000 core used, 4614 left until 2026-11-02T14:16:46Z

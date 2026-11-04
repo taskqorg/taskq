@@ -480,7 +480,7 @@ fn answer(install: &Path, m: &Value) -> Value {
     let prepare = || -> Result<_, String> {
         let args = answer_args(install, m)?;
         let root = Path::new(m["root"].as_str().unwrap());
-        let out = answer_cli(root, &["status".into(), "--json".into()], Duration::from_secs(30))?;
+        let out = answer_cli(root, &["status".into(), "--json".into()])?;
         let snapshot = serde_json::from_slice(&out).map_err(|_| "Invalid status JSON; refresh the project")?;
         answer_snapshot(&snapshot, m)?;
         Ok((root, args))
@@ -490,7 +490,7 @@ fn answer(install: &Path, m: &Value) -> Value {
         Err(e) => return response("rejected", &e, "Refresh the question or open it on the board."),
     };
     let r = answer_dispatch(m, &args, |args| {
-        match answer_cli(root, args, Duration::from_secs(60)) {
+        match answer_cli(root, args) {
             Ok(out) => serde_json::from_slice(&out).unwrap_or_else(|_| json!({"task": m["op"]["task"], "op_id": args[args.len()-3], "outcome": "unknown", "reason": "Invalid CLI receipt JSON", "next": "Check the board; retry the same operation id."})),
             Err(e) => json!({"task": m["op"]["task"], "op_id": args[args.len()-3], "outcome": "unknown", "reason": e, "next": "Check the board; retry the same operation id."}),
         }
@@ -504,8 +504,8 @@ fn answer(install: &Path, m: &Value) -> Value {
     out
 }
 
-/// § 5: keep text and JSON outside bounded process pipes; only the child lifetime/output diagnostics use CoreQ limits.
-fn answer_cli(root: &Path, args: &[String], budget: Duration) -> Result<Vec<u8>, String> {
+/// § 5: keep text and JSON outside process pipes; the own CLI bounds its board and lock waits, so wait for its exit (#2239).
+fn answer_cli(root: &Path, args: &[String]) -> Result<Vec<u8>, String> {
     let dir = std::env::temp_dir().join(format!("taskq-reply-{}", crate::runtime::uuid()));
     let mut options = fs::DirBuilder::new();
     #[cfg(unix)] { use std::os::unix::fs::DirBuilderExt; options.mode(0o700); }
@@ -519,7 +519,7 @@ fn answer_cli(root: &Path, args: &[String], budget: Duration) -> Result<Vec<u8>,
         while let Some(i)=argv.iter().position(|s|s=="--file") {argv.remove(i);files.push(argv.remove(i));}
         if !files.is_empty(){let path=dir.join("files.json");fs::write(&path,serde_json::to_vec(&files).map_err(|e|e.to_string())?).map_err(|e|format!("Cannot write attachment list: {e}"))?;argv.extend(["--files-from".into(),path.to_string_lossy().into_owned()]);}
         argv.extend(["--json-file".into(), output_path.to_string_lossy().into_owned()]);
-        let out = crate::platform::output("tray.answer-command", owner_command(root)?.args(&argv), budget)?;
+        let out = crate::platform::complete("tray.answer-command", owner_command(root)?.args(&argv))?;
         fs::read(&output_path).map_err(|e| if out.stderr.is_empty() { format!("JSON receipt unavailable: {e}") } else { String::from_utf8_lossy(&out.stderr).into_owned() })
     })();
     for path in [&input_path, &output_path, &output_path.with_extension("tmp"),&dir.join("files.json")] { let _ = fs::remove_file(path); }
@@ -675,6 +675,7 @@ fn project(install: &Path, root: &str) -> Value {
         "incident_repo": crate::platform::RELEASE_REPO});
     out["routing"] = routing;
     out["events_error"] = json!(events_error);
+    out["report"] = s["report"].clone(); // R6: the manager view text for tray Attention
     out["incoming"] = s["incoming"].clone();
     // #1819: the stale line compares the board read age with the service poll
     out["poll"] = s["poll"].clone();
@@ -780,8 +781,8 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
         row["progress_url"] = json!(page.map(|p| format!("{p}{}", row["n"].as_u64().unwrap_or(0))));
     }
     let a = crate::runtime::of(rt);
-    if !a.remote && !own {
-        if a.codex {
+    if !a.has("remote-control") && !own {
+        if a.has("thread-link") {
             match page {
                 Some(p) => row["session_url"] = json!(format!("{p}{}", row["n"].as_u64().unwrap_or(0))),
                 None => row["session_reason"] = json!(format!("Codex session opens only on {host}")),
@@ -996,7 +997,7 @@ fn queued_resources(_install:&Path,_root:&Path,_message:&Value)->crate::Res<Valu
 fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     if m["transcript"]!=true {return crate::reports::cached_history(root,m);}
     let mut c=owner_command(root)?;c.args(history_args(m));
-    let out=crate::platform::output("tray.history-read",&mut c,Duration::from_secs(60))?;
+    let out=crate::platform::complete("tray.history-read",&mut c)?;
     serde_json::from_slice(&out.stdout).map_err(|_|String::from_utf8_lossy(&out.stderr).lines().find(|l|!l.trim().is_empty()).unwrap_or("board history read failed").to_string())
 }
 
@@ -1017,7 +1018,7 @@ fn queued_reports(install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     if let Some(reason)=m["text"].as_str() {command.args(["--text",reason]);}
     if let Some(until)=m["until"].as_str().filter(|u|action=="later"&&crate::core::utc(u)) {command.args(["--until",until]);}
     command.arg("--json");
-    let out=crate::platform::output("tray.reports-command",&mut command,Duration::from_secs(180))?;
+    let out=crate::platform::complete("tray.reports-command",&mut command)?;
     if !out.status.success() {return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());}
     serde_json::from_slice(&out.stdout).map_err(|_|"report receipt invalid; refresh before retrying".into())
 }
@@ -2883,7 +2884,7 @@ fn pick_result(o:std::process::Output)->Result<Option<PathBuf>,String> {
 /// prints it with its fix ([host tools](docs/design/host-service.md#host-tools)).
 fn selftest(dir: &Path) -> Result<(), String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
-    let o = crate::platform::output("tray.selftest",crate::platform::command(me).arg("selftest").current_dir(dir).env("TASKQ_ROOT", dir).env("TASKQ_SELFTEST_TOOLS","off"),Duration::from_secs(30))?;
+    let o = crate::platform::complete("tray.selftest",crate::platform::command(me).arg("selftest").current_dir(dir).env("TASKQ_ROOT", dir).env("TASKQ_SELFTEST_TOOLS","off"))?;
     let text = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
     if o.status.success() { Ok(()) } else { Err(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("selftest failed").chars().take(160).collect()) }
 }
@@ -2911,7 +2912,8 @@ fn install_service(install: &Path, mut a: Value) -> Value {
         // a separate process group: launchctl must not take the tray with it
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut c, 0);
-        let o = crate::platform::output("tray.install", &mut c, Duration::from_secs(60))?;
+        // #2239: `service install` waits up to its own handover deadlines; a tray deadline would cut it short
+        let o = crate::platform::complete("tray.install", &mut c)?;
         let text = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
         if !o.status.success() {
             return Err(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("service install failed").to_string());
@@ -2940,7 +2942,7 @@ fn capacity(install:&Path,root: &Path,m: &Value) -> crate::Res<Value> {
             let request:crate::recovery::Request=serde_json::from_value(m["request"].clone()).map_err(|_|"invalid recovery request")?;
             command.arg("--request").arg(serde_json::to_string(&request).map_err(|e|e.to_string())?);
         }
-        let out=crate::platform::output("tray.recovery",&mut command,Duration::from_secs(60))?;
+        let out=crate::platform::complete("tray.recovery",&mut command)?;
         if !out.status.success() {return Err("Recovery read or write unconfirmed; inspect the board and reconcile the same selection".into());}
         return serde_json::from_slice(&out.stdout).map_err(|_|"Recovery receipt unreadable; reconcile the same selection".into());
     }
@@ -3137,6 +3139,10 @@ fn own_page(u: String) -> bool { !u.starts_with("http") }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Queue handoffs wait on a worker thread; a loaded instrumented Windows runner took over 3 s (merge_group run 41538580169).
+    // Only the failure path waits this long.
+    const WAIT: Duration = Duration::from_secs(30);
 
     // M13 / #1966 A2: a new window must not consume the first control click just to activate the app.
     // P-W3/C2/R12: recreation failure cannot destroy the singleton or retire its active generation.
@@ -3448,7 +3454,7 @@ mod tests {
             let (release_tx,release_rx)=std::sync::mpsc::channel();
             let queue=ActionQueue::start(install.clone(),&["pause","resume","focus"],true,queued_focus,move |root,id,result| {
                 result_tx.send((root,id,result)).unwrap();
-                release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                release_rx.recv_timeout(WAIT).unwrap();
             }).unwrap();
             let message=|action:&str,id:&str|json!({"a":action,"root":root,"id":id});
             let _click=tracing::info_span!("fixture.click").entered();
@@ -3457,7 +3463,7 @@ mod tests {
                 assert_eq!(crate::data::focus(&root).unwrap(),["area-maps"]);
             }
             queue.submit(&message("pause","tray.1")).unwrap();
-            let (reported,id,result)=result_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let (reported,id,result)=result_rx.recv_timeout(WAIT).unwrap();
             assert_eq!(reported,root);assert_eq!(id,"tray.1");let applied=result.unwrap()["applied_receipt"].as_str().unwrap().to_string();
             assert!(queue.submit(&message("pause","tray.1")).is_ok(),"the same pending operation coalesces");
             assert!(queue.submit(&message("resume","tray.1")).unwrap_err().contains("different request"),"an id cannot be repurposed while pending");
@@ -3473,7 +3479,7 @@ mod tests {
             fs::write(install.join("projects"),"").unwrap();
             for n in 0..16 {
                 release_tx.send(()).unwrap();
-                let (reported,id,result)=result_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+                let (reported,id,result)=result_rx.recv_timeout(WAIT).unwrap();
                 assert_eq!(reported,root);assert_eq!(id,format!("queued-{n}"));assert!(result.unwrap_err().contains("no longer registered"));
             }
             release_tx.send(()).unwrap();
@@ -3519,13 +3525,13 @@ mod tests {
                 let mut reply=result.unwrap();reply["root"]=json!(root);reply["id"]=json!(id);tx.send(reply).unwrap();
             }).unwrap();
             queue.submit(&forwarded).unwrap();
-            let saved=rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let saved=rx.recv_timeout(WAIT).unwrap();
             assert_eq!(saved["state"],"saved","{saved}");assert_eq!(saved["id"],"ws-apply","{saved}");
             let fresh=crate::host::Policy::read(&install).unwrap();
             assert_eq!(fresh.raw["limits"]["codex"],3,"fresh readback");assert_eq!(saved["saved_revision"],json!(fresh.revision().unwrap()));
             // Lost receipt: the same reviewed operation reconciles without a second write.
             queue.submit(&forwarded).unwrap();
-            let again=rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let again=rx.recv_timeout(WAIT).unwrap();
             assert_eq!(again["id"],"ws-apply","{again}");assert_ne!(again["state"],"rejected","{again}");
             assert_eq!(crate::host::Policy::read(&install).unwrap().revision().unwrap(),fresh.revision().unwrap(),"no duplicate write");
             let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
@@ -3567,10 +3573,10 @@ mod tests {
             let (pause_tx,pause_rx)=std::sync::mpsc::channel();
             let focus=ActionQueue::start(install.clone(),&["pause","resume","focus"],true,queued_focus,move |_,_,result|pause_tx.send(result).unwrap()).unwrap();
             focus.submit(&json!({"a":"pause","root":root,"id":"pause"})).unwrap();
-            assert!(pause_rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["applied_receipt"].is_string());
+            assert!(pause_rx.recv_timeout(WAIT).unwrap().unwrap()["applied_receipt"].is_string());
             assert!(crate::data::focus(&root).unwrap().is_empty());assert!(capacity_rx.try_recv().is_err());
             drop(lock);
-            assert_eq!(capacity_rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["state"],"saved");
+            assert_eq!(capacity_rx.recv_timeout(WAIT).unwrap().unwrap()["state"],"saved");
             for queue in [blocked,focus] {let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();}
         });
     }
@@ -3583,11 +3589,11 @@ mod tests {
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
             fs::write(crate::dot(&root).join("focus"),"all").unwrap();
             let (entered_tx,entered_rx)=std::sync::mpsc::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
-            let answer=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(3)).unwrap();Ok(json!({"answerReceipt":{"state":"accepted"}}))},|_,_,_|{}).unwrap();
-            answer.submit(&json!({"a":"answer","root":root,"id":"tray.1","op":{"id":"tray.1"}})).unwrap();entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let answer=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(WAIT).unwrap();Ok(json!({"answerReceipt":{"state":"accepted"}}))},|_,_,_|{}).unwrap();
+            answer.submit(&json!({"a":"answer","root":root,"id":"tray.1","op":{"id":"tray.1"}})).unwrap();entered_rx.recv_timeout(WAIT).unwrap();
             let (pause_tx,pause_rx)=std::sync::mpsc::channel();let focus=ActionQueue::start(install.clone(),&["pause","resume","focus"],true,queued_focus,move |_,_,result|pause_tx.send(result).unwrap()).unwrap();
             focus.submit(&json!({"a":"pause","root":root,"id":"pause"})).unwrap();
-            assert!(pause_rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["applied_receipt"].is_string());assert!(crate::data::focus(&root).unwrap().is_empty());
+            assert!(pause_rx.recv_timeout(WAIT).unwrap().unwrap()["applied_receipt"].is_string());assert!(crate::data::focus(&root).unwrap().is_empty());
             release_tx.send(()).unwrap();
             for queue in [answer,focus] {let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();}
         });
@@ -3606,9 +3612,9 @@ mod tests {
             fs::write(install.join("projects"),format!("{}
 ",root.display())).unwrap();
             let (entered_tx,entered_rx)=std::sync::mpsc::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
-            let queue=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(3)).unwrap();Ok(json!({}))},|_,_,_|{}).unwrap();
+            let queue=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(WAIT).unwrap();Ok(json!({}))},|_,_,_|{}).unwrap();
             let first=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op,"local":{"draft":"","receipt":{"state":"sending"}}});
-            queue.submit(&answer_request(&first)).unwrap();entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            queue.submit(&answer_request(&first)).unwrap();entered_rx.recv_timeout(WAIT).unwrap();
             let readback=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op});
             let check=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op,"local":{"draft":"","receipt":{"state":"unknown"}}});
             // the cause: the prior bridge queued the message as sent, draft included
@@ -3622,7 +3628,7 @@ mod tests {
             let mut oversized=readback.clone();oversized["extra"]=json!("x".repeat(21<<10));
             assert!(queue.submit(&answer_request(&oversized)).unwrap_err().contains("payload too large"),"non-reply envelope fields retain their bound");
             release_tx.send(()).unwrap();
-            entered_rx.recv_timeout(Duration::from_secs(3)).unwrap(); // the deliberately unnormalized ws.0 job
+            entered_rx.recv_timeout(WAIT).unwrap(); // the deliberately unnormalized ws.0 job
             release_tx.send(()).unwrap();
             let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
           }
@@ -4023,9 +4029,9 @@ mod tests {
             capacity(install,root,message)
         },move |_,_,result|tx.send(result).unwrap()).unwrap();
         queue.submit(&json!({"a":"capacity","root":root,"id":"rejected-op","ops":[]})).unwrap();
-        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["state"],"rejected");
+        assert_eq!(rx.recv_timeout(WAIT).unwrap().unwrap()["state"],"rejected");
         queue.submit(&json!({"a":"capacity","root":root,"id":"unknown-op","ops":[]})).unwrap();
-        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap()["state"],"unknown");
+        assert_eq!(rx.recv_timeout(WAIT).unwrap().unwrap()["state"],"unknown");
         let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
         capture.flush().unwrap();
         let actions=crate::telemetry::diagnostic::actions(&install,None).unwrap();

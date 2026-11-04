@@ -414,8 +414,15 @@ setup:function(){
 },
 attention:function(){
   const all=unique(view.S.projects.flatMap(tasks));
-  const parts=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)]),globalGroup('ask',all),globalGroup('failed',all),answerNotices()].filter(Boolean);
+  const parts=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p),api.managerView(p)]),globalGroup('ask',all),globalGroup('failed',all),answerNotices()].filter(Boolean);
   return parts.length?f(parts):'';
+},
+// R6/M3.7: the service's manager view (status.json `report`, same text as `taskq status`); anomaly rows lead, the full view folds
+managerView:function(p){
+  const r=typeof p.report==='string'?p.report:'';if(!r)return '';
+  const plain=l=>l.replace(/\[([^\]]+)\]\([^)]*\)/g,'$1'),rows=((r.split('Anomalies:\n')[1]||'').split('\n\n')[0]).split('\n').filter(l=>l.startsWith('- '));
+  return h('details',{class:'manager-view','data-view-key':'manager-view:'+p.root},h('summary',null,p.name+': manager view'+(rows.length?' · '+rows.length+(rows.length===1?' anomaly':' anomalies'):'')),
+    rows.map(l=>h('div',{class:'body incident-attention'},plain(l.slice(2)))),h('pre',{class:'manager-report',style:'white-space:pre-wrap;overflow-wrap:anywhere;margin:0;font:inherit'},plain(r)));
 },
 projects:function(){
   return f(api.heading('Registered projects','folder'),view.S.projects.length?view.S.projects.map(p=>h('section',{class:'settings-project'},

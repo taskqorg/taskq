@@ -385,10 +385,10 @@ pub fn ask(install: &Path, key: &Key, peer: &Peer, read: &Read, relay: &mut dyn 
     result
 }
 
-/// One relay message on the listening host. A `read` from a live peer of the board (`from` and key both match its
-/// heartbeat) gets one sealed page from `serve`; a `page` goes to the spool only while its viewer waits. Everything
-/// else is dropped.
-pub fn handle(install: &Path, key: &Key, msg: &Value, peers: &[Peer], relay: &mut dyn Relay, serve: impl FnOnce(&Read) -> Res<Value>) -> Res<()> {
+/// One relay message on the listening host. A `read` from a live peer of the board it names (`from` and key both match
+/// a heartbeat there) gets one sealed page from `serve`; a `page` goes to the spool only while its viewer waits.
+/// Everything else is dropped.
+pub fn handle(install: &Path, key: &Key, msg: &Value, peers: impl FnOnce(&str) -> Vec<Peer>, relay: &mut dyn Relay, serve: impl FnOnce(&Read) -> Res<Value>) -> Res<()> {
     let (from, id, body) = (msg["from"].as_str().unwrap_or(""), msg["id"].as_str().unwrap_or(""), msg["body"].as_str().unwrap_or(""));
     if !id_ok(id) { return Err("host link message id invalid".into()) }
     let (sender, plain) = open(key, body)?;
@@ -396,11 +396,11 @@ pub fn handle(install: &Path, key: &Key, msg: &Value, peers: &[Peer], relay: &mu
     if v["id"] != id { return Err("host link message id mismatch".into()) }
     match v["kind"].as_str() {
         Some("read") => {
-            let peer = peers.iter().find(|p| p.key == sender && p.installation == from).ok_or("host link request from no live host of this board")?;
             let o = v.as_object_mut().unwrap();
             o.remove("kind");
             o.remove("id");
             let read: Read = serde_json::from_value(v).map_err(|_| "host link request unreadable")?;
+            let peer = peers(&read.board).into_iter().find(|p| p.key == sender && p.installation == from).ok_or("host link request from no live host of this board")?;
             let mut reply = match serve(&read) {
                 Ok(page) => json!({"kind": "page", "id": id, "state": "accepted", "value": page}),
                 Err(reason) => json!({"kind": "page", "id": id, "state": "unknown", "reason": reason}),
@@ -437,21 +437,19 @@ fn sweep(install: &Path) {
 pub struct Server { job: Option<(std::thread::JoinHandle<()>, Arc<AtomicBool>)>, line: String }
 
 impl Server {
-    /// One step per service pass: (re)starts the listener and returns the heartbeat `link` line, empty when this
-    /// project does not speak for the connection (its listener then stops after the current long poll).
-    pub fn tick(&mut self, install: &Path, root: &Path, snap: Option<&crate::snapshot::Snapshot>) -> &str {
-        let speaks = crate::enrollment::state(install).ok().flatten().filter(|s| crate::enrollment::speaks(&s["active"], snap));
-        let Some(s) = speaks else {
+    /// One step per service pass: returns the heartbeat `link` line of every project on an enrolled host, and
+    /// (re)starts the host's one listener on the project that speaks for the connection (elsewhere it stops after the
+    /// current long poll).
+    pub fn tick(&mut self, install: &Path, snap: Option<&crate::snapshot::Snapshot>) -> &str {
+        let state = crate::enrollment::state(install).ok().flatten().filter(|s| crate::enrollment::approved(&s["active"]).is_some());
+        if !state.as_ref().is_some_and(|s| crate::enrollment::speaks(&s["active"], snap)) {
             if let Some((_, stop)) = self.job.take() { stop.store(true, Ordering::Relaxed) }
-            self.line.clear();
-            return &self.line;
-        };
-        if self.job.as_ref().is_none_or(|j| j.0.is_finished()) {
-            let (install, root, stop) = (install.to_path_buf(), root.to_path_buf(), Arc::new(AtomicBool::new(false)));
+        } else if self.job.as_ref().is_none_or(|j| j.0.is_finished()) {
+            let (install, stop) = (install.to_path_buf(), Arc::new(AtomicBool::new(false)));
             let flag = stop.clone();
-            self.job = Some((std::thread::spawn(move || listen(&install, &root, &flag)), stop));
+            self.job = Some((std::thread::spawn(move || listen(&install, &flag)), stop));
         }
-        self.line = match (s["installation"].as_str(), key(install)) {
+        self.line = match (state.as_ref().and_then(|s| s["installation"].as_str()), key(install)) {
             (Some(i), Ok(k)) => line(i, &k),
             _ => String::new(),
         };
@@ -459,7 +457,7 @@ impl Server {
     }
 }
 
-fn listen(install: &Path, root: &Path, stop: &AtomicBool) {
+fn listen(install: &Path, stop: &AtomicBool) {
     let mut backoff = 0;
     let mut said = String::new();
     let mut say = |text: String| if text != said { crate::platform::log(&format!("host link: {text}")); said = text; };
@@ -471,13 +469,8 @@ fn listen(install: &Path, root: &Path, stop: &AtomicBool) {
             Ok(msgs) => {
                 backoff = 0;
                 say("listening".into());
-                let (status, ttl, allow) = match (crate::data::json(&crate::dot(root).join("status.json")), crate::load(root)) {
-                    (Ok(Some(s)), Ok((cfg, raw))) => (s, cfg.ttl, allowed(&raw).unwrap_or(Some(vec![]))),
-                    _ => (Value::Null, 0, Some(vec![])),
-                };
-                let peers = peers(&status, ttl, allow.as_deref());
                 for m in msgs {
-                    if let Err(e) = handle(install, &key, &m, &peers, &mut relay, |r| crate::conversations::serve_peer(install, root, r)) { say(format!("message dropped: {e}")); }
+                    if let Err(e) = handle(install, &key, &m, |board| crate::conversations::board_peers(install, board), &mut relay, |r| crate::conversations::serve_board(install, r)) { say(format!("message dropped: {e}")); }
                 }
             }
             Err(e) => {
@@ -627,10 +620,10 @@ mod tests {
                 while Instant::now() < until {
                     for m in w.recv().unwrap() {
                         if answer {
-                            let _ = handle(&wi, &wkey, &m, &peers, &mut w.clone(), |r| { served.lock().unwrap().push(r.clone()); Ok(json!({"items": [{"at": 20, "i": 0, "role": "assistant", "text": "remote line", "updated": "2026-10-30T22:21:54.044Z"}], "start": 20, "end": 40, "size": 40})) });
+                            let _ = handle(&wi, &wkey, &m, |_| peers.clone(), &mut w.clone(), |r| { served.lock().unwrap().push(r.clone()); Ok(json!({"items": [{"at": 20, "i": 0, "role": "assistant", "text": "remote line", "updated": "2026-10-30T22:21:54.044Z"}], "start": 20, "end": 40, "size": 40})) });
                         }
                     }
-                    for m in v.recv().unwrap() { let _ = handle(&vi, &vkey, &m, &[], &mut v.clone(), |_| Err("viewer serves nothing".into())); }
+                    for m in v.recv().unwrap() { let _ = handle(&vi, &vkey, &m, |_| vec![], &mut v.clone(), |_| Err("viewer serves nothing".into())); }
                     std::thread::sleep(Duration::from_millis(10));
                 }
             })
@@ -658,9 +651,9 @@ mod tests {
         // a forged `from` with a peer's key and a reply the viewer did not ask for are dropped
         let mut w = relay.on(&wid);
         let forged = json!({"from": "cc".repeat(32), "id": "11".repeat(16), "body": seal(&vk, &wk.public, json!({"kind": "read", "id": "11".repeat(16), "board": "b", "task": 1, "attempt": 1, "before": null, "after": null}).to_string().as_bytes()).unwrap()});
-        assert!(handle(&worker_install, &wk, &forged, &[viewer_peer.clone()], &mut w, |_| panic!("served a forged sender")).is_err());
+        assert!(handle(&worker_install, &wk, &forged, |_| vec![viewer_peer.clone()], &mut w, |_| panic!("served a forged sender")).is_err());
         let stray = json!({"from": wid, "id": "22".repeat(16), "body": seal(&wk, &vk.public, json!({"kind": "page", "id": "22".repeat(16)}).to_string().as_bytes()).unwrap()});
-        handle(&viewer_install, &vk, &stray, &[], &mut relay.on(&vid), |_| unreachable!()).unwrap();
+        handle(&viewer_install, &vk, &stray, |_| vec![], &mut relay.on(&vid), |_| unreachable!()).unwrap();
         assert!(!viewer_install.join("link").join(format!("{}.reply", "22".repeat(16))).exists(), "no viewer waits: not kept");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -696,7 +689,7 @@ mod tests {
                 let (mut relay, key) = (Dash::new(&live).unwrap().0, Key::from(k));
                 while !stop.load(Ordering::Relaxed) {
                     for m in relay.recv().unwrap() {
-                        let served = handle(&dir, &key, &m, std::slice::from_ref(&peer), &mut Dash::new(&live).unwrap().0,
+                        let served = handle(&dir, &key, &m, |_| vec![peer.clone()], &mut Dash::new(&live).unwrap().0,
                             |r| Ok(json!({"items": [{"at": 0, "i": 0, "role": "assistant", "text": format!("live probe #{}", r.task)}], "start": 0, "end": 1, "size": 1})));
                         if let Err(e) = served { println!("dropped: {e}") }
                     }

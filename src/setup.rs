@@ -298,7 +298,7 @@ const LINK_WINDOW_MS: u128 = 10 * 60 * 1000;
 /// Remote Control publishes the link after `--bg` returns (#1409): later passes fill a missing session or link
 /// within the window, then stop; the session itself is never tracked.
 pub fn link(install: &Path, now: u128, observe: Linker) -> Res<()> {
-    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && crate::runtime::of(&r.runtime).remote && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
+    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && crate::runtime::of(&r.runtime).has("remote-control") && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
         let Some(job) = r.job.clone() else { continue };
         let own = r.root.as_deref().map_or_else(|| dir(install).join(&r.id), PathBuf::from);
         let (session, url) = observe(&own, &job);
@@ -361,7 +361,7 @@ pub fn last(install: &Path, project: bool) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::owner::{claude_key, codex_thread, trust, trust_gap, trust_step, trusted};
+    use crate::runtime::owner::{claude_key, codex_thread, trust, trust_gap, trust_step};
 
     fn ok(_: &Path, _: &Request) -> Launched { Launched::Job { job: "abcd1234".into(), session: None, url: None } }
     fn unknown(_: &Path, _: &Request) -> Launched { Launched::Unknown("timeout".into()) }
@@ -379,6 +379,18 @@ mod tests {
             assert!(open_id(&install,&install,"literal PM request","owner-2159","claude",false).is_err());
             step(&install,ok).unwrap();step(&install,never).unwrap();assert_eq!(all(&install).unwrap().0.len(),1);
         } else {assert!(request.is_err());assert!(all(&install).unwrap().0.is_empty());}
+        fs::remove_dir_all(install).unwrap();
+    }
+
+    // #2240 A2: owner weights never touch a visible session that names its runtime, weight 0 included.
+    #[test]
+    fn owner_session_keeps_zero_weight_runtime() {
+        let install=tmp();
+        fs::write(install.join("host.json"),r#"{"weights":{"claude":0}}"#).unwrap();
+        let r=open_id(&install,&install,"zero weight","owner-2240","claude",false).unwrap();
+        assert_eq!(r.runtime,"claude");
+        step(&install,ok).unwrap();
+        assert_eq!(open_id(&install,&install,"zero weight","owner-2240","claude",true).unwrap().state,"launched");
         fs::remove_dir_all(install).unwrap();
     }
 
@@ -503,6 +515,40 @@ mod tests {
         // idempotent: nothing to change reads no processes and writes nothing
         // A2 (#1555): a working host prints no trust line
         assert!(trust(&install, &home, || panic!("process list read with nothing to change")).unwrap().is_empty());
+    }
+
+    // A1 / R9: a fresh registered root must be trusted without manual onboarding, preserving config data.
+    #[test]
+    fn registered_root_trust_repairs_both_windows_spellings() {
+        let (install, home, root) = (tmp(), tmp(), tmp());
+        fs::write(install.join("projects"), format!("{}\n", root.canonicalize().unwrap().display())).unwrap();
+        let path = home.join(".claude.json");
+        let old = r#"{"numStartups":3,"projects":{}}"#;
+        fs::write(&path, old).unwrap();
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec!["42".into()])).unwrap_err().contains("service retries"));
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Err("inventory unavailable".into())).unwrap_err().contains("unknown"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), old, "live or unknown Claude never loses config data");
+        let key = claude_key(&root.canonicalize().unwrap());
+        let mut keys = vec![key.clone()];
+        if cfg!(windows) { keys.push(key.replace('/', "\\")); }
+        let result = crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec![]));
+        assert!(result.is_ok(), "{result:?}");
+        let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        for key in keys { assert_eq!(value["projects"][key]["hasTrustDialogAccepted"], true); }
+        assert_eq!(value["numStartups"], 3);
+        let backup = fs::read_dir(&home).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with(".claude.json.bak-onboard-")).unwrap();
+        assert_eq!(fs::read_to_string(backup.path()).unwrap(), old);
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec![])).unwrap().is_empty());
+        let unregistered = tmp();
+        let before = fs::read(&path).unwrap();
+        assert!(crate::runtime::owner::registered_trust_with(&install, &unregistered, Some(&home), || Ok(vec![])).is_err());
+        assert_eq!(fs::read(&path).unwrap(), before);
+        fs::write(&path, "{").unwrap();
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec![])).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{", "invalid config is preserved");
+        fs::remove_file(&path).unwrap();
+        assert!(crate::runtime::owner::registered_trust_with(&install, &root, Some(&home), || Ok(vec![])).is_ok(), "fresh config is created");
+        for p in [install, home, root, unregistered] { fs::remove_dir_all(p).unwrap(); }
     }
 
     // Risk (#1555, pilotq#3): `service install` registered a root Claude did not trust and said nothing.
@@ -632,11 +678,23 @@ mod tests {
         let queued = |t: &str| { assert_eq!(t, "019a-b2"); Ok(()) };
         let refused = |_: &str| -> Res<()> { Err("codex queue failed for thread 019a-b2".into()) };
         let never = |_: &str| -> Res<()> { panic!("no thread to submit") };
-        let Launched::Job { job, session, url } = codex_thread(started, "", Some(0), queued) else { panic!("thread not launched") };
+        let Launched::Job { job, session, url } = codex_thread("codex-app", started, "", Some(0), queued) else { panic!("thread not launched") };
         assert_eq!((job.as_str(), session.as_deref(), url.as_deref()), ("019a-b2", Some("019a-b2"), Some("codex://threads/019a-b2")));
-        assert!(matches!(codex_thread("", "Error: 401 Unauthorized", Some(1), never), Launched::NoStart(r) if r.starts_with(LOGIN)));
-        assert!(matches!(codex_thread("", "model overloaded", Some(1), never), Launched::NoStart(r) if !r.starts_with(LOGIN)));
-        assert!(matches!(codex_thread(started, "", Some(0), refused), Launched::Unknown(r) if r.contains("019a-b2")));
-        assert!(matches!(codex_thread(r#"{"type":"thread.started","thread_id":"x&calc"}"#, "", Some(0), never), Launched::Unknown(_)));
+        assert!(matches!(codex_thread("codex-app", "", "Error: 401 Unauthorized", Some(1), never), Launched::NoStart(r) if r.starts_with(LOGIN)));
+        assert!(matches!(codex_thread("codex-app", "", "model overloaded", Some(1), never), Launched::NoStart(r) if !r.starts_with(LOGIN)));
+        assert!(matches!(codex_thread("codex-app", started, "", Some(0), refused), Launched::Unknown(r) if r.contains("019a-b2")));
+        assert!(matches!(codex_thread("codex-app", r#"{"type":"thread.started","thread_id":"x&calc"}"#, "", Some(0), never), Launched::Unknown(_)));
+    }
+
+    // #2324: the login cause comes from the AgentQ adapter for both runtimes. Risk: taskq matches runtime text itself,
+    // so a login prompt reads as a generic failure or an untrusted workspace as a sign-in.
+    #[test]
+    fn launch_cause_comes_from_the_adapter() {
+        use crate::runtime::launch_cause as refusal;
+        assert_eq!(refusal("claude", "Not logged in · Please run /login"), Some("login-required"));
+        assert_eq!(refusal("claude", "Error: Workspace not trusted"), Some("workspace-untrusted"));
+        assert_eq!(refusal("codex", "Error: 401 Unauthorized"), Some("login-required"));
+        assert_eq!(refusal("codex-app", "please log in again"), Some("login-required"));
+        assert_eq!(refusal("codex", "model overloaded"), None);
     }
 }

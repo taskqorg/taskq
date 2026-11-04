@@ -18,6 +18,7 @@ mod core;
 mod control;
 mod data;
 mod doctor;
+mod health;
 mod deploy;
 mod dispatch;
 mod display;
@@ -25,6 +26,7 @@ mod enrollment;
 mod incident;
 mod incoming;
 mod labels;
+mod balance;
 mod link;
 mod recipe;
 mod requests;
@@ -82,7 +84,7 @@ const USAGE: &str = "taskq agents
  taskq reroute --from <runtime> --to <runtime> [--json]
  taskq accounts [--json] | taskq accounts enable|disable|move <runtime> <label> [<position>] | taskq accounts add <runtime> <label>
  taskq labels
- taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--conversation ID --op-id ID]
+ taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all] [--gate] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N [M..]
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
@@ -92,9 +94,9 @@ const USAGE: &str = "taskq agents
  taskq result N --sha SHA --checks C.. --text T [--option O.. --recommend K --link URL..]
  taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M|--until UTC] [--stage A<k>..]
  taskq steer N --text T | taskq failed N --text T
- taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
+ taskq close N [M..] [--text VERDICT] | taskq gate N | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
- taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
+ taskq status [--project P..] [--only L,..] [--json] [--timing] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
  taskq deployed --version V --env E --range A..B [--host H] [--json]
@@ -102,15 +104,17 @@ const USAGE: &str = "taskq agents
  taskq reports ... (alias of results)
  taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
- taskq cleanup [--force] [--dry-run] [--all] | taskq doctor [--dry-run] | taskq update [--check]
+ taskq cleanup [--force] [--dry-run] [--all] | taskq doctor [--dry-run] [--hosts] [--json] | taskq update [--check]
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
  taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]
  taskq service onboard
+ taskq service dev-build (macOS channel dev)
  taskq service app-server --action prepare|launch|observe|cancel|reconcile --request JSON
  taskq service slots --identity PID | --action reserve|observe|release --request JSON [--json]
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
+ taskq balance [claude=N codex=N antigravity=N | --clear]
  taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim primary|any|spillover|pinned-only|labelled|manager-only|none] [--default-runtime claude|codex|antigravity]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
@@ -158,20 +162,20 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all" | "clear" | "timing" | "gate") || k=="hosts"&&a.pos==["doctor"] || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
             }
         }
         let used = match a.pos.first().map(String::as_str) {
-            Some("close" | "start") => a.pos.len(),
+            Some("close" | "start" | "balance") => a.pos.len(),
             Some("answer") if a.pos.get(1).is_some_and(|p| p.contains('.')) => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
             Some("accounts") => 5,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -233,6 +237,8 @@ struct Ctx {
     board: Box<dyn Board>,
 }
 
+// R10 A1: each status block's live hosts and their served-project counts, for the installation's anomaly rows
+thread_local!(static SERVED: std::cell::RefCell<Vec<Vec<(String, usize)>>> = const { std::cell::RefCell::new(vec![]) });
 thread_local!(static PROJECT_ROOT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) });
 
 fn find_root() -> Res<PathBuf> {
@@ -343,6 +349,7 @@ fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
         has,
         claim: host::ClaimMode::Any,
         spillover_grace: 300,
+        weights: BTreeMap::new(),
         allowed_runtimes: None,
         auto_reroute: false,
         default_runtime: crate::runtime::OWNER.into(),
@@ -592,8 +599,8 @@ fn labelled_acceptance(items: &[String]) -> Res<()> {
 }
 
 /// The `later` arguments (§ 7 rule 3): a worker park names one blocker issue or, when only time is left, a UTC time;
-/// only the owner or PM parks without either.
-fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, staged: bool, task: Option<String>, attempt: Option<String>) -> Res<Vec<&'a str>> {
+/// only the owner or PM parks without either. `staged` is the current UTC time of a `--stage` park.
+fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, staged: Option<&'a str>, task: Option<String>, attempt: Option<String>) -> Res<Vec<&'a str>> {
     let worker = attempt.is_some() && task.is_some_and(|t| t.parse() == Ok(n));
     match (blocker, until) {
         (Some(_), Some(_)) => return Err("--blocker and --until exclude each other: a park waits for one of them".into()),
@@ -601,14 +608,21 @@ fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, staged: bo
         (None, Some(u)) => return Ok(vec!["until", u]),
         _ => {}
     }
-    // § 2 Stages: a stage park may wait for the owner or PM without a blocker or time
+    // § 2 Stages: a worker stage park alone wakes at once, so the next stage starts without a human step (#2289)
     match blocker {
-        None if worker && !staged => Err("a worker park needs --blocker #M (file the blocker as a held task first) or, when only time is left, --until <UTC> (§ 7)".into()),
+        None if worker && let Some(now) = staged => Ok(vec!["until", now]),
+        None if worker => Err("a worker park needs --blocker #M (file the blocker as a held task first) or, when only time is left, --until <UTC> (§ 7)".into()),
         None => Ok(vec![]),
         Some(_) if !worker => Err("--blocker is for a worker park; the owner or PM adds `Depends on #M` or parks with later".into()),
         Some(r) if !core::blocker_ref(r) || r == format!("#{n}") => Err(format!("bad --blocker {r}: one #M or <repo>#M, not this task")),
         Some(r) => Ok(vec![r]),
     }
+}
+
+/// § 7 rule 3 (#2288): the local `#M` of a worker park when it is an open held task, which the park starts.
+fn held_blocker(b: &dyn Board, r: &str) -> Option<u64> {
+    let m = r.strip_prefix('#')?.parse().ok()?;
+    b.issue(m).is_ok_and(|i| i.open && service::is_held(&i)).then_some(m)
 }
 
 /// § 2 Stages: `text` with the `Stages:` line of `later --stage`; each stage is an Acceptance item of `body`.
@@ -1032,7 +1046,8 @@ fn report(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Res<Stri
 
 fn inbox(b: &dyn Board, root: &Path, n: u64) -> Res<String> {
     let issue = b.issue(n)?;
-    let log = entries(b, n)?;
+    let comments = b.comments(n)?;
+    let log = board::reply::log(n, &comments)?;
     let projection = core::project(n, &log, deps_open(b, n, &issue.body, &log));
     let t = &projection.task;
     let mut out = vec![format!("#{n} {}\n{}", issue.title, b.url(n)), core::task_context(n, issue.body.trim(), &log), format!("Folded: {}", serde_json::to_string(&t).unwrap_or_default())];
@@ -1045,10 +1060,16 @@ fn inbox(b: &dyn Board, root: &Path, n: u64) -> Res<String> {
     out.push("Log:".into());
     let files=reply_files::prepare(b,root,n,&log)?;
     if !files.is_empty(){out.push(files);}
-    for e in log {
+    for e in &log {
         out.push(format!("[{}{}] {}", e.id, if e.edited { " edited, ignored" } else { "" }, e.body.trim()));
     }
+    read_receipts(b, n, &log, &comments);
     Ok(out.join("\n\n"))
+}
+
+/// § 2 read receipt: the live attempt's inbox read reacts `eyes` to each owner note it has now read.
+fn read_receipts(b: &dyn Board, n: u64, log: &[Entry], comments: &[board::Comment]) {
+    if let Some(a) = std::env::var("TASKQ_ATTEMPT").ok().and_then(|s| s.parse().ok()) { dispatch::mark_read(b, n, log, comments, a); }
 }
 
 /// § 5 `inbox N --json`: the folded task, its current attempt's progress and each accepted answer with its writer, board
@@ -1061,7 +1082,8 @@ fn inbox_json(b: &dyn Board, root: &Path, me: &str, n: u64) -> Res<Value> {
     let t = &p.task;
     let at = |id: u64| comments.iter().find(|c| c.id == id);
     let answers: Vec<Value> = p.answers.iter().map(|a| json!({"id": a.id, "by": at(a.id).map(|c| c.author.as_str()), "at": at(a.id).map(|c| c.created),
-        "revision": a.revision, "option": a.option, "text": core::delivery(n, &log, a.id), "late": a.late})).collect();
+        "revision": a.revision, "option": a.option, "text": core::delivery(n, &log, a.id), "late": a.late, "read": at(a.id).and_then(|c| c.read)})).collect();
+    read_receipts(b, n, &log, &comments);
     let attempt = t.attempt.map(|a| {
         let session = t.session.as_deref().unwrap_or_default();
         let (native, host) = session.rsplit_once(' ').unwrap_or((session, ""));
@@ -1116,18 +1138,42 @@ fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {
 }
 
 /// Read only: use the last accepted worker's native identity, only on its recorded host.
-fn closed_transcript(b: &dyn Board, n: u64, host: &str, before: Option<u64>) -> Res<Value> {
+/// The last recorded worker of a closed task: runtime, board session id, owning host, attempt.
+fn closed_worker(b: &dyn Board, n: u64) -> Res<(String, String, String, u64)> {
     let i = b.issue(n)?;
     if i.number != n || i.open || !service::is_task(&i) { return Err("Transcript requires a closed trusted task; refresh the project".into()); }
     let log = entries(b,n)?;
     let projection = core::project(n,&log,false);
     let t = projection.changes.iter().rev().map(|(_,_,t)|t).find(|t| t.role.as_deref()==Some("worker") && t.session.is_some()).ok_or("No recorded worker transcript")?;
     let (native,owner) = t.session.as_deref().unwrap_or_default().rsplit_once(' ').ok_or("Worker identity unavailable")?;
-    if owner != host { return Err(format!("Transcript is on host {owner}; open it there")); }
     let (runtime,session) = native.split_once(':').ok_or("Worker session unavailable")?;
-    let path = runtime::owner::transcript(runtime,session)?;
-    let page = transcript::before(runtime::of(runtime).codex,&path,before)?;
-    Ok(json!({"generation":page.generation,"items":page.items,"start":page.start,"end":page.end,"size":page.size}))
+    Ok((runtime.into(),session.into(),owner.into(),t.attempt.ok_or("Worker attempt unavailable")?))
+}
+
+/// The native session of `n`'s closed worker on this host: the board holds a job id for a remote-control launch, the
+/// attempt log the session, as a live read resolves it.
+fn closed_session(root: &Path, runtime: &str, id: &str, n: u64, attempt: u64) -> Res<String> {
+    let session = runtime::session_id(root,runtime,id,n,attempt,"worker");
+    if session=="-" || !runtime::plain_thread(&session) { return Err("Worker native session unknown".into()); }
+    Ok(session)
+}
+
+/// A closed worker's page: from its transcript on this host, else through `remote` (the host link) on its host.
+fn closed_transcript(b: &dyn Board, root: &Path, n: u64, host: &str, before: Option<u64>, remote: impl FnOnce(&str,u64)->Res<Value>) -> Res<Value> {
+    let (runtime,id,owner,attempt) = closed_worker(b,n)?;
+    if owner != host { return remote(&owner,attempt); }
+    let session = closed_session(root,&runtime,&id,n,attempt)?;
+    let path = runtime::owner::transcript(&runtime,&session)?;
+    Ok(transcript::before(transcript::format(&runtime),&session,&path,before)?.json())
+}
+
+/// Host link principle 3: the peer finds a closed worker's session on the board and its own attempt log, never in the request.
+pub(crate) fn closed_peer_session(root: &Path, local: &str, n: u64, attempt: u64) -> Res<String> {
+    let (cfg, raw) = load(root)?;
+    let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
+    let (runtime,id,owner,last) = closed_worker(&*board,n)?;
+    if owner != local || last != attempt { return Err("Worker transcript is available only on its host".into()); }
+    Ok(format!("{runtime}:{}",closed_session(root,&runtime,&id,n,attempt)?))
 }
 
 /// #1679: the PR/MR merge `close` read back (§ 7 `delivery <preset> r<R>: merged #P ..`, GitLab `merged !P`); none stays unknown.
@@ -1248,7 +1294,7 @@ fn poll_wait(poll: u64, complete: bool, children: bool, poked: bool, snapshot: O
 }
 
 /// Read-only recovery evidence; failed identity reads and a still-live foreign owner prevent takeover.
-fn kids_path(install:&Path,root:&Path)->Res<PathBuf> {
+pub(crate) fn kids_path(install:&Path,root:&Path)->Res<PathBuf> {
     let root=root.canonicalize().map_err(|e|format!("native recovery root unavailable: {e}"))?;
     let root=root.to_str().ok_or("native recovery root is not UTF-8")?;
     let hash:String=ring::digest::digest(&ring::digest::SHA256,root.as_bytes()).as_ref().iter().map(|b|format!("{b:02x}")).collect();
@@ -1312,28 +1358,36 @@ fn adopt(s: &mut Service, install:&Path, root: &Path) -> Res<()> {
     if retired>0 { platform::log(&format!("{}: retired {retired} kid(s) started before this boot", root.display())); }
     let kids = kids_file(install,root)?;
     for k in kids {
-        if let Some(owned)=s.kids.iter().find(|owned|owned.task==k.task||owned.execution==k.execution) {
-            if owned.task==k.task&&owned.attempt==k.attempt&&owned.execution==k.execution&&owned.rt==k.runtime
-                &&owned.proc.native_identity()?==k.process {continue;}
-            return Err("native recovery differs from the retained handle; file kept".into());
+        // #2266: one row that cannot be adopted keeps its record and board reservation; the project loop runs on.
+        if let Err(e)=adopt_kid(s,install,root,k.clone()) {
+            platform::log(&format!("#{} execution {}: {e}; native recovery record kept, execution stays reserved",k.task,k.execution));
         }
-        let history=board::entries(s.board,k.task)?;
-        let execution=core::executions(k.task,&history).into_iter().find(|x|x.id==k.execution && x.attempt==k.attempt && x.host==s.cfg.me && x.runtime==k.runtime)
-            .ok_or("native recovery identity does not match board ownership; file kept")?;
-        match execution.release {
-            Some(core::Release::Exit)=>{
-                if runtime::released_execution_live(&k).map_err(|e|format!("released native scope unknown: {e}"))? {
-                    return Err("board exit contradicts a live native identity; file kept for reconciliation".into());
-                }
-                retire_kid(&s.cfg,k.task,k.attempt,k.execution)?;
-                continue;
-            },
-            Some(core::Release::NoStart)=>return Err("board no-start contradicts a recorded native process; file kept".into()),
-            None=>{},
-        }
-        let proc=runtime::adopt(root,install,&k,&execution)?;
-        s.adopt(Kid { unknown:None, stopping:false, session_url:None, execution:k.execution,task:k.task,attempt:k.attempt,rt:k.runtime,proc })?;
     }
+    Ok(())
+}
+
+fn adopt_kid(s: &mut Service, install:&Path, root: &Path, k:data::KidLine) -> Res<()> {
+    if let Some(owned)=s.kids.iter().find(|owned|owned.task==k.task||owned.execution==k.execution) {
+        if owned.task==k.task&&owned.attempt==k.attempt&&owned.execution==k.execution&&owned.rt==k.runtime
+            &&owned.proc.native_identity()?==k.process {return Ok(());}
+        return Err("native recovery differs from the retained handle; file kept".into());
+    }
+    let history=board::entries(s.board,k.task)?;
+    let execution=core::executions(k.task,&history).into_iter().find(|x|x.id==k.execution && x.attempt==k.attempt && x.host==s.cfg.me && x.runtime==k.runtime)
+        .ok_or("native recovery identity does not match board ownership; file kept")?;
+    match execution.release {
+        Some(core::Release::Exit)=>{
+            if runtime::released_execution_live(&k).map_err(|e|format!("released native scope unknown: {e}"))? {
+                return Err("board exit contradicts a live native identity; file kept for reconciliation".into());
+            }
+            retire_kid(&s.cfg,k.task,k.attempt,k.execution)?;
+            return Ok(());
+        },
+        Some(core::Release::NoStart)=>return Err("board no-start contradicts a recorded native process; file kept".into()),
+        None=>{},
+    }
+    let proc=runtime::adopt(root,install,&k,&execution)?;
+    s.adopt(Kid { unknown:None, stopping:false, session_url:None, execution:k.execution,task:k.task,attempt:k.attempt,rt:k.runtime,proc })?;
     Ok(())
 }
 
@@ -1552,12 +1606,14 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         if !quiet { for l in policy_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         if !quiet { for l in pm_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // docs/design/host-link.md: the same speaker listens on the host link and publishes its key
-        if !quiet { s.link = link.tick(&cfg.install, &cfg.root, s.snapshot.as_ref()).to_string(); }
-        // § 8 item 1: only the Mac thread of the taskq checkout on channel dev; merge_group CI read at most every 5 minutes per SHA
+        if !quiet { s.link = link.tick(&cfg.install, s.snapshot.as_ref()).to_string(); }
+        // § 8 item 1: only the Mac thread of the taskq checkout on channel dev, on request (#2311); merge_group CI read at most every 5 minutes per SHA
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
         if !quiet && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
-            dev = platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
+            // #2321: a ready task whose dependency closed after the installed commit requests the build itself
+            platform::dev_dep_request(&cfg.install, &cfg.root, s.dep_closed);
+            dev =platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
                 if dev_ci.as_ref().is_some_and(|(s, t)| s == sha && t.elapsed().as_secs() < 300) { return Err("checked".into()); }
                 dev_ci = Some((sha.into(), Instant::now()));
                 c.board.merge_ci_green(sha)
@@ -1584,7 +1640,11 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let mut status = coreq::status::common(&tool, &cfg.me, &project, at, r.err(), update.as_deref());
         // § 4 snapshot keys; before the first successful pass tasks are unknown, not an empty list
         match &s.snapshot {
-            Some(snap) => for (k, v) in snap.status_keys(error.as_deref()) { status[k] = v; },
+            Some(snap) => {
+                for (k, v) in snap.status_keys(error.as_deref()) { status[k] = v; }
+                // R6: the tray and PilotQ show the manager view's own rows
+                if let Ok(t) = snap.text(&s.cfg, &Value::Null) { status["report"] = json!(t); }
+            }
             None => { status["complete"] = json!(false); status["reason"] = json!(error.as_deref().unwrap_or("no board read yet")); status["tasks"] = json!([]); }
         }
         for (k, v) in [("focus", if focus_error.is_some() { Value::Null } else { json!(s.focus) }), ("focus_error", json!(focus_error)), ("focus_command",command), ("kids", json!(kids)), ("issues", json!(issues)), ("log", json!(log)),
@@ -1592,7 +1652,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err(), "stale_grant": s.gui_stale, "grants": grants, "binary": cfg.install.join("taskq")})), ("waits", json!(s.waits.iter().map(|(n, reason)| json!({"task": n, "reason": reason})).collect::<Vec<_>>())),
             ("execution_waits", json!(s.execution_waits)), ("capacity", s.capacity_json()), ("hold", json!(s.hold)), ("access", json!(access.iter().map(|e| e.json()).collect::<Vec<_>>())), ("agents", json!(agents.as_ref().map(|a| &a.1))),
             ("stop_progress",json!(s.stop_progress)), ("poll", json!(cfg.poll)),
-            ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
+            ("restart_overdue", json!(host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart_overdue)))),
+            ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| restart_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
             ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("dev", dev), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health()),
             ("tidy", fs::read_to_string(d.join("tidy.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)), ("setup", setup)]
@@ -1769,7 +1830,7 @@ fn write_kids(install:&Path,root:&Path,kids:&[data::KidLine])->Res<()> {
     let owner=coreq::process::identity(std::process::id()).map_err(|e|e.to_string())?.ok_or("service native identity missing")?;
     let mut text=format!("pid {} {} executor-v1\n",owner.pid,owner.started);
     for k in kids {
-        text+=&format!("{} {} {} {} {} {} {}{}\n",k.task,k.attempt,k.runtime,k.process.pid,k.process.started,k.execution,k.offset,k.job.as_ref().map(|key|format!(" job-global:{key}")).unwrap_or_default());
+        text+=&format!("{} {} {} {} {} {} {}{}\n",k.task,k.attempt,k.runtime,k.process.pid,k.process.started,k.execution,k.offset,k.job.as_ref().map(|scope|format!(" {scope}")).unwrap_or_default());
     }
     data::kids(&text)?;
     let path=kids_path(install,root)?;
@@ -1812,23 +1873,18 @@ fn save_kids(s: &Service, root: &Path) -> Res<()> {
     };
     let mut kids=vec![];
     for k in &s.kids {
-        let line=data::KidLine {task:k.task,attempt:k.attempt,runtime:k.rt.clone(),process:k.proc.native_identity()?,execution:k.execution,offset:k.proc.input_offset()?,job:k.proc.job()};
-        match recorded(&line) {
-            ("running",_)=>{},
-            // #1561: a recorded process that exited resolves from its board exit; until then one error names the wait.
-            ("ended",_) if exited(k.task,k.attempt,k.execution,&k.rt)? => continue,
-            (_,why)=>return Err(format!("#{} execution {}: {why}; handover waits for its board release",k.task,k.execution)),
-        }
+        // #2297: a child without native identity leaves no record; the next image rebuilds it from the board (§ 3 unknown)
+        let Ok(process)=k.proc.native_identity() else {continue};
+        let line=data::KidLine {task:k.task,attempt:k.attempt,runtime:k.rt.clone(),process,execution:k.execution,offset:k.proc.input_offset()?,job:k.proc.job()};
+        // #1561: a recorded process that exited resolves from its board exit; any other record passes to the next image (#2297)
+        if recorded(&line).0=="ended" && exited(k.task,k.attempt,k.execution,&k.rt)? {continue}
         kids.push(line);
     }
     let mut kept=vec![];
     for old in kids_file(&s.cfg.install,root)? {
         if kids.contains(&old) { continue; }
-        if !exited(old.task,old.attempt,old.execution,&old.runtime)? {
-            // #1435: a Windows exit keeps the record for the next image instead of holding the update on it
-            if !cfg!(windows) { return Err("unresolved native recovery record cannot be discarded during handover".into()); }
-            kept.push(old);
-        }
+        // #1435, #2297: an unresolved record passes to the next image instead of holding the update on it
+        if !exited(old.task,old.attempt,old.execution,&old.runtime)? { kept.push(old); }
     }
     kids.extend(kept);
     write_kids(&s.cfg.install,root,&kids)
@@ -1885,6 +1941,7 @@ struct CapEdit {
     claim: Option<host::ClaimMode>,
     /// host.json `default_runtime`, § 9
     default_runtime: Option<String>,
+    weights: Option<balance::Weights>,
 }
 
 impl CapEdit {
@@ -1919,7 +1976,7 @@ impl CapEdit {
 
     fn is_empty(&self) -> bool {
         self.mode.is_none() && self.max.is_none() && self.limits.is_empty() && self.unset.is_empty() && self.gate.is_none() && self.cpu_max.is_none() && self.memory_min.is_none() && self.claim.is_none()
-            && self.default_runtime.is_none()
+            && self.default_runtime.is_none() && self.weights.is_none()
     }
 }
 
@@ -2124,6 +2181,34 @@ fn pm_cmd(root:&Path,a:&Args)->Res<()> {
     Ok(())
 }
 
+/// Local owner runtime weights (§4 Balancing).
+fn balance_cli(a:&Args) -> Res<()> {
+    if !a.flags.keys().all(|k|k=="clear") {return Err("balance accepts runtime=N or --clear".into());}
+    let clear=a.flags.contains_key("clear");
+    let args=&a.pos[1..];
+    if clear && !args.is_empty() {return Err("balance --clear cannot include weights".into());}
+    let install=platform::default_install();
+    let policy=host::Policy::read(&install)?;
+    if clear || !args.is_empty() {
+        if dispatch::agent() {return Err("only the owner can change runtime weights".into());}
+        let mut value=json!({"weights":{}});
+        for arg in args {
+            let (rt,n)=arg.split_once('=').ok_or("balance needs runtime=N")?;
+            if value["weights"].get(rt).is_some() {return Err(format!("duplicate weight {rt}"));}
+            value["weights"][rt]=json!(n.parse::<u32>().map_err(|_|"weight must be an integer 0..1000000")?);
+        }
+        let weights=balance::weights(&value)?;
+        host::write_capacity(&install,&policy.me,&CapEdit {weights:Some(weights.clone()),..Default::default()},None)?;
+        let saved=host::Policy::read(&install)?;
+        if saved.weights!=weights {return Err("runtime weights save uncertain: readback differs".into());}
+        println!("Saved runtime weights on {}: {}; new launches use them after the service reloads",saved.me,serde_json::to_string(&saved.weights).unwrap());
+    } else {
+        println!("Runtime weights on {}: {}",policy.me,serde_json::to_string(&policy.weights).unwrap());
+        if policy.weights.is_empty() {println!("No weights: preference/default routing");}
+    }
+    Ok(())
+}
+
 /// `taskq service capacity` (§ 5).
 fn capacity_cmd(a: &Args) -> Res<()> {
     let install=platform::default_install();
@@ -2208,7 +2293,20 @@ fn dev_line(dev: &Value) -> String {
     let mut line = format!("Dev: installed {}", sha("installed").unwrap_or("unknown".into()));
     if let Some(p) = sha("pending") { line += &format!(" · pending {p}{}", if dev["building"] == true { " (building)" } else { "" }); }
     if let Some(f) = sha("failed") { line += &format!(" · failed {f}"); }
+    if dev["requested"] == true { line += " · requested"; }
     line
+}
+
+/// § 8 item 1 (#2311): request one dev build; the service starts the newest green main SHA on its next pass.
+fn dev_build_cmd(a: &Args, install: &Path) -> Res<()> {
+    if a.pos.len() != 2 || !a.flags.is_empty() { return Err("usage: taskq service dev-build".into()); }
+    let channel = platform::channel(install)?;
+    if channel != "dev" { return Err(format!("channel {channel}: dev builds run only on channel dev (taskq service channel dev)")); }
+    let request = platform::dev_request(install);
+    fs::create_dir_all(request.parent().unwrap_or(install)).map_err(|e| e.to_string())?;
+    coreq::write_durable(&request, "requested")?;
+    println!("Dev build requested; the host service starts the newest green main SHA on its next pass");
+    Ok(())
 }
 
 fn channel_cmd(a: &Args) -> Res<()> {
@@ -2454,10 +2552,24 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     fs::write(dot(&cfg.root).join("restart"), "").map_err(|e| e.to_string())
 }
 
-/// § 8 step 3: what a pending re-exec waits for. Windows waits for every live child; elsewhere CLI children and
-/// Claude background turns with a saved native identity pass over (#1407); codex-app turns wait.
+/// The status line of a pending re-exec; #2254: past its 600 s bound it reads as a host incident.
+fn restart_line(status: &Value) -> Option<String> {
+    let w = status["restart_waits"].as_array().filter(|w| !w.is_empty())?;
+    let overdue = if status["restart_overdue"] == true { "host incident: pending over 600 s; " } else { "" };
+    Some(format!("Restart: {overdue}waits for {}", w.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")))
+}
+
+/// #2254: status names an unreadable child exit's reason, so a stuck re-exec reads as an incident, not "running unknown".
+fn restart_waits(s: &Service, stopping:bool) -> Vec<String> {
+    lifecycle_waits(s, stopping).into_iter().map(|w| {
+        let reason = w.strip_prefix('#').and_then(|n| n.parse::<u64>().ok()).and_then(|n| s.kids.iter().find(|k| k.task == n)?.unknown.as_ref());
+        match reason { Some(e) => format!("{w} ({e})"), None => w }
+    }).collect()
+}
+
+/// § 8 step 3: what a pending re-exec waits for: codex-app turns only; every other child runs on (#2297).
 fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
-    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || runtime::handover_waits(&k.rt,k.proc.as_ref())).map(|k| format!("#{}", k.task)).collect();
+    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || runtime::handover_waits(&k.rt)).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
     // a refused resume (#1601) or Stop (#1769) leaves a childless attempt to the next start
     w.extend(s.handoff_waits(true, cfg!(windows) && !stopping));
@@ -2494,9 +2606,7 @@ fn service_project_fields(root:&Path,status:Res<Option<Value>>)->String {
         out.push(format!("Status: unknown ({e})"));
     }
     let status = status.ok().flatten();
-    if let Some(w) = status.as_ref().and_then(|s| s["restart_waits"].as_array()).filter(|w| !w.is_empty()) {
-        out.push(format!("Restart: waits for {}", w.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")));
-    }
+    out.extend(status.as_ref().and_then(restart_line));
     // § 4 board budget: only a live status speaks for the running service
     let ttl = snapshot::ttl(root);
     let requests = match status.as_ref().filter(|_| snapshot::status_live(&d.join("status.json"), ttl)) {
@@ -2583,7 +2693,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"app-server"|"channel"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"app-server"|"channel"|"dev-build"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -2612,6 +2722,7 @@ fn service(args: &Args) -> Res<()> {
         return onboard_cmd(&platform::default_install());
     }
     if sub == "channel" {return channel_cmd(args);}
+    if sub == "dev-build" {return dev_build_cmd(args, &platform::default_install());}
     if sub=="complete-stop" {
         platform::service_log();
         if args.pos.len()!=2||args.all("request").len()!=1||args.flags.keys().any(|key|!["request","json"].contains(&key.as_str())) {return Err("usage: taskq service complete-stop --request ID [--json]".into());}
@@ -2730,9 +2841,9 @@ fn service(args: &Args) -> Res<()> {
             println!("{}",host::install_project(&cfg.install,&root)?);
             if let Some(l)=host_setup(&cfg) {println!("{l}");}
             for l in tools::gaps(&cfg.install,Some(&root)) {println!("{l}");}
-            // #1555: a root Claude does not trust starts no Claude worker; say so and how, without writing
-            if let Some(home)=std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-                for l in runtime::owner::trust_gap(Path::new(&home),&root.canonicalize().map_err(|e|e.to_string())?) {println!("{l}");}
+            match runtime::owner::registered_host_trust(&cfg.install, &root) {
+                Ok(lines) => for line in lines { println!("{line}"); },
+                Err(e) => println!("Trust setup pending: {e}; service retries automatically"),
             }
             // § 6: the tray's Add project runs this install, so a new project ends with its setup check
             setup_check_cmd(&root, false)
@@ -2745,6 +2856,108 @@ fn service(args: &Args) -> Res<()> {
     }
 }
 
+/// `taskq doctor [--dry-run] [--hosts] [--json]` ([host doctor](docs/design/host-service.md#host-doctor)): without
+/// `--hosts`, one cleanup pass now (#2060), the host-setup gap (#2078) and the health checks of every registered board
+/// (#2194); with `--hosts`, per board one table of every host's published health and one of the running workers, read
+/// from the board alone. `--json` prints the same rows.
+fn doctor_cmd(a: &Args) -> Res<()> {
+    if a.pos.len() != 1 || a.flags.keys().any(|k| !["dry-run", "hosts", "json"].contains(&k.as_str())) {
+        return Err("usage: taskq doctor [--dry-run] [--hosts] [--json]".into());
+    }
+    let (hosts, json_out) = (a.flags.contains_key("hosts"), a.flags.contains_key("json"));
+    let install = platform::default_install();
+    let (mut out, mut cleanup) = (vec![], Value::Null);
+    if !hosts {
+        let lines = doctor::cli(&install, a.flags.contains_key("dry-run"));
+        cleanup = json!(lines);
+        out.extend(lines);
+        // #2078: a project's missing one-time host setup is a host gap the doctor names too
+        if let Some(cfg) = find_root().ok().and_then(|r| load(&r).ok()).map(|(c, _)| c) {
+            if let Some(cmd) = cfg.host_setup.as_deref().filter(|c| !check::host_setup_done(&cfg.root, c)) {
+                out.extend(check::lines(&[check::host_setup_item(&cfg.root, cmd, false)]));
+            }
+        }
+    }
+    // every registered project of this host, else this project; one row set per board
+    let roots = host::projects(&install).ok().filter(|r| !r.is_empty()).or_else(|| find_root().ok().map(|r| vec![r])).unwrap_or_default();
+    let latest = if hosts { Err("not read".into()) } else { platform::latest_release(&install) };
+    let (mut seen, mut boards) = (std::collections::BTreeSet::new(), vec![]);
+    // #2246: `--hosts` reads every board first, asks all hosts at once and waits once for the whole run
+    let mut opened: Vec<(Config, Box<dyn board::Board>, snapshot::Snapshot)> = vec![];
+    let (mut host_rows, mut worker_rows) = (vec![], vec![]);
+    let unread = |repo: &str, e: &str| json!({"board": repo, "host": "-", "version": "-", "state": "unknown", "gaps": [], "reason": format!("board unread: {e}"),
+        "fix": "check the board token and network on this host, then `taskq doctor --hosts` again"});
+    for root in roots {
+        let (cfg, raw) = match load(&root) {
+            Ok(v) => v,
+            Err(e) => {
+                if hosts { host_rows.push(unread(&project_name(&root), &e)); } else { out.push(format!("project {}: unknown: {e}", project_name(&root))); }
+                boards.push(json!({"project": project_name(&root), "error": e}));
+                continue;
+            }
+        };
+        if !seen.insert(cfg.repo.clone()) { continue; }
+        let gitlab = cfg.board.name == "gitlab";
+        let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install));
+        if !hosts {
+            let items = match &board {
+                Ok(b) => health::board_items(b.as_ref(), &cfg.repo, gitlab, &cfg.root, &cfg.install, &latest),
+                Err(e) => health::unopened(&cfg.repo, gitlab, e),
+            };
+            out.extend(health::lines(&cfg.repo, &items));
+            boards.push(json!({"board": cfg.repo, "items": items.iter().map(check::Item::json).collect::<Vec<_>>()}));
+            continue;
+        }
+        let b = match board {
+            Ok(b) => b,
+            Err(e) => {
+                host_rows.push(unread(&cfg.repo, &e));
+                boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
+                continue;
+            }
+        };
+        let s = snapshot::read(b.as_ref(), &cfg, &raw, &[]);
+        if let Some(e) = &s.reason {
+            host_rows.push(unread(&cfg.repo, e));
+            boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
+            continue;
+        }
+        opened.push((cfg, b, s));
+    }
+    if hosts {
+        let ttl = opened.iter().map(|(c, ..)| c.ttl).max().unwrap_or(TTL);
+        let lists: Vec<Vec<snapshot::Host>> = opened.iter_mut().map(|(_, _, s)| std::mem::take(&mut s.hosts)).collect();
+        let mut asks: Vec<health::Ask> = opened.iter().zip(lists).map(|((cfg, b, s), mut list)| {
+            let asked = health::request(b.as_ref(), &mut list, s.observed, cfg.ttl);
+            health::Ask::new(b.as_ref(), list, asked, b.now().unwrap_or(s.observed), cfg.ttl)
+        }).collect();
+        if !json_out { eprintln!("doctor: asked every host of {} board(s) to run its health checks (up to {}s in all)", asks.len(), health::ASK_WAIT); }
+        health::collect(&mut asks, ttl, health::ASK_WAIT, health::ASK_POLL, &|t| std::thread::sleep(std::time::Duration::from_secs(t)));
+        let answered: Vec<(Vec<snapshot::Host>, health::Asked)> = asks.into_iter().map(|a| (a.hosts, a.asked)).collect();
+        for ((cfg, b, s), (list, asked)) in opened.iter_mut().zip(answered) {
+            s.hosts = list;
+            let now = b.now().unwrap_or(s.observed + asked.waited as i64);
+            let tag = |mut v: Value| { v["board"] = json!(cfg.repo); v };
+            let rows: Vec<Value> = s.hosts.iter().map(|h| tag(health::host_row(h, &cfg.repo, cfg.board.name == "gitlab", now, cfg.ttl, Some(&asked)))).collect();
+            let workers: Vec<Value> = health::worker_rows(s, cfg.ttl).into_iter().map(tag).collect();
+            if rows.is_empty() { host_rows.push(json!({"board": cfg.repo, "host": "-", "version": "-", "state": "unknown", "gaps": [], "reason": "no host heartbeat", "fix": "install a host service for this board: `taskq service install` in its project"})); }
+            host_rows.extend(rows.iter().cloned());
+            worker_rows.extend(workers.iter().cloned());
+            boards.push(json!({"board": cfg.repo, "hosts": rows, "workers": workers}));
+        }
+        out.extend(health::hosts_lines(&host_rows, &worker_rows));
+    }
+    if json_out {
+        let mut v = json!({"boards": boards});
+        if !hosts { v["cleanup"] = cleanup; }
+        println!("{v}");
+    } else {
+        if boards.is_empty() { out.push("doctor: no project registered on this host".into()); }
+        for l in out { println!("{l}"); }
+    }
+    Ok(())
+}
+
 /// § 6 Shared project bootstrap (#2078): run the project's `host_setup` once per host, outside any worker sandbox, and
 /// stamp it so the `host-setup` gap clears; a failure keeps the gap and says why. `None`: undeclared or already done.
 fn host_setup(cfg: &Config) -> Option<String> {
@@ -2753,7 +2966,9 @@ fn host_setup(cfg: &Config) -> Option<String> {
     if !Path::new(cmd).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
         return Some(format!("host setup: `{cmd}` refused: not a path inside the project root"));
     }
-    let ran = tools::run("host.setup", platform::command(cfg.root.join(cmd)).current_dir(&cfg.root), std::time::Duration::from_secs(300))
+    // #2239: the owner runs `service install` and can interrupt it; the script takes as long as the project needs
+    let ran = platform::complete("host.setup", platform::command(cfg.root.join(cmd)).current_dir(&cfg.root))
+        .and_then(|o| if o.status.success() {Ok(())} else {Err(format!("{}: {}", o.status, String::from_utf8_lossy(&o.stderr).lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no error output")))})
         .and_then(|_| fs::create_dir_all(cfg.root.join(".taskq")).and_then(|_| fs::write(check::host_setup_stamp(&cfg.root), format!("{cmd}\n"))).map_err(|e| e.to_string()));
     Some(match ran { Ok(()) => format!("host setup: `{cmd}` done"), Err(e) => format!("host setup: `{cmd}` failed: {e}") })
 }
@@ -2834,14 +3049,14 @@ fn onboard_cmd(install: &Path) -> Res<()> {
         match r["login"].as_str() {
             Some("logged in") => {}
             // a codex-only host is valid: a missing runtime is skipped, not a failure
-            Some("not installed") => { claude &= !runtime::of(rt).remote; gaps.push(setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
+            Some("not installed") => { claude &= !runtime::of(rt).has("remote-control"); gaps.push(setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
             _ => gaps.extend([format!("Login: {}", runtime::agent_text(r)), format!("Next: {}", runtime::relogin(rt))]),
         }
     }
     let p = host::Policy::read_for_hostname(install, hostname);
     let (mode, codex, has) = p.map_or(("dontAsk".to_string(), vec![], vec![]), |p| (p.permission_mode, p.codex, p.has));
     // codex-app is opt-in (§ 9): its refusal is a gap only where `has` lists it
-    let opted = |es: Vec<policy::Effective>| es.into_iter().filter(|e| !runtime::of(&e.runtime).app || has.contains(&e.runtime)).collect::<Vec<_>>();
+    let opted = |es: Vec<policy::Effective>| es.into_iter().filter(|e| !runtime::of(&e.runtime).has("app-turn") || has.contains(&e.runtime)).collect::<Vec<_>>();
     // Access is per folder: the setup folder for owner sessions, each registered root for its workers
     gaps.extend(setup::onboard_access("setup", &opted(policy::report(install, &setup::dir(install), &mode, &[]))));
     let roots = match host::projects(install) {
@@ -2951,6 +3166,67 @@ pub struct NewTask {
     pub host: Option<String>,
     /// Extra labels, e.g. `needs-gate`.
     pub labels: Vec<String>,
+    /// § 1 Task text: the rule IDs this task changes, or `all`; the rule gate passes edits inside them.
+    pub rules: Option<String>,
+}
+
+/// § 1 Task text: rule IDs (`R<n>`, `§<n>`, `§2.<k>`) and `taskq <command>` spans in goal or acceptance text that
+/// neither taskq.md nor the command catalog defines; `new R14` names a rule the task adds.
+fn unknown_terms(text: &str) -> Vec<String> {
+    // ponytail: checks the command word only; subcommand words when a vague subcommand causes an ask
+    let mut rules: Vec<String> = vec![];
+    let mut in_log = false;
+    for l in runtime::CONTRACT.lines() {
+        if let Some(h) = l.strip_prefix("### R") { rules.push(format!("R{}", h.split('.').next().unwrap_or(""))); }
+        if let Some(h) = l.strip_prefix("## ") {
+            let n = h.split('.').next().unwrap_or("");
+            in_log = n == "2";
+            if h.contains('.') && n.parse::<u32>().is_ok() { rules.push(format!("§{n}")); }
+        }
+        if in_log && l.starts_with("| ") {
+            if let Some(id) = l.trim_end_matches(['|', ' ']).rsplit('|').next().map(str::trim).filter(|id| id.parse::<u32>().is_ok()) { rules.push(format!("§2.{id}")); }
+        }
+    }
+    let catalog = format!("{USAGE}\n{PM_COMMANDS}\n{}", runtime::CONTRACT);
+    let commands: Vec<&str> = catalog.split("taskq ").skip(1).filter_map(|s| s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')).next()).collect();
+    let mut out: Vec<String> = vec![];
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let prev = if i > 0 { chars[i - 1] } else { ' ' };
+        let rule = (c == 'R' && !(prev.is_alphanumeric() || ".#/-_".contains(prev))) || c == '§';
+        if rule {
+            let mut j = i + 1;
+            if c == '§' && chars.get(j) == Some(&' ') { j += 1; }
+            let start = j;
+            while j < chars.len() && (chars[j].is_ascii_digit() || (chars[j] == '.' && chars.get(j + 1).is_some_and(char::is_ascii_digit) && c == '§')) { j += 1; }
+            let next = chars.get(j).copied().unwrap_or(' ');
+            if j > start && !next.is_alphanumeric() {
+                let id = format!("{}{}", if c == 'R' { "R" } else { "§" }, chars[start..j].iter().collect::<String>());
+                let fresh = chars[..i].iter().collect::<String>().to_lowercase().ends_with("new ");
+                if !fresh && !rules.contains(&id) && !out.contains(&id) { out.push(id); }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    for (k, span) in text.split('`').enumerate() {
+        if k % 2 == 1 {
+            if let Some(cmd) = span.strip_prefix("taskq ").and_then(|s| s.split_whitespace().next()) {
+                let term = format!("taskq {cmd}");
+                if !cmd.starts_with('-') && !commands.contains(&cmd) && !out.contains(&term) { out.push(term); }
+            }
+        }
+    }
+    out
+}
+
+/// § 1 Task text: add and start refuse goal or acceptance terms no contract or catalog defines, naming each.
+fn lint_terms(text: &str) -> Res<()> {
+    let bad = unknown_terms(text);
+    if bad.is_empty() { Ok(()) } else { Err(format!("unknown term: {}; fix the task text (taskq.md, `taskq help`) or write `new <ID>`", bad.join(", "))) }
 }
 
 /// Task body and create claim shared by direct adds and recipes; limits checked before any write.
@@ -2968,10 +3244,18 @@ fn task_body(b: &dyn Board, t: &NewTask, op: &Op) -> Res<(String, Vec<String>)> 
         one_line("--scope", &t.scope),
         limit("Acceptance", &acc, 1, 8, 240).map_err(|e| if acc.len() > 8 { format!("{e} (split the task, R2)") } else { e }),
         limit("Scope", &scope, 0, 4, 240),
+        lint_terms(&format!("{}\n{}", t.goal, t.acceptance.join("\n"))),
     ])?;
     let mut body = format!("## Goal\n{}\n\n## Acceptance\n{}\n", goal.join("\n"), acc.join("\n"));
     if !scope.is_empty() {
         body += &format!("\n## Scope\n{}\n", scope.join("\n"));
+    }
+    if let Some(r) = &t.rules {
+        let ids: Vec<&str> = r.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+        if ids != ["all"] && (ids.is_empty() || ids.iter().any(|id| !id.starts_with(['R', '§']) || !unknown_terms(id).is_empty())) {
+            return Err(format!("--rules {r}: takes contract rule IDs (R<n>, §<n>, §2.<k>, §<n> <Title>) comma-separated, or all"));
+        }
+        body += &format!("\nRules: {}\n", ids.join(", "));
     }
     if !t.deps.is_empty() {
         body += "\n";
@@ -3033,6 +3317,14 @@ fn add_task(b: &dyn Board, root: &Path, raw: &Value, t: &NewTask, op: &Op) -> Re
     Ok(Receipt { op_id: op.id.clone(), ..r }.wake(root))
 }
 
+/// § 7 owner gate on a held or ready task: label `needs-gate`, then the `gate` entry (op id `<op>.gate`).
+fn gate_task(b: &dyn Board, root: &Path, n: u64, op: &Op) -> Receipt {
+    if let Err(e) = b.labels(n, &["needs-gate".into()], &[]) {
+        return Receipt::rejected(n, op, e);
+    }
+    act(b, root, n, "gate", &[], "", &Op { id: op.id.as_ref().map(|i| format!("{i}.gate")), revision: None })
+}
+
 /// § 7 recipe run: every task is added held with op id `recipe.<name>.<version>.<run>.<k>` and read back; only then,
 /// with `start`, do they start. A rerun returns the first receipts.
 fn run_recipe(b: &dyn Board, root: &Path, raw: &Value, name: &str, run: &str, goal: Option<&str>, start: bool) -> Res<Vec<Receipt>> {
@@ -3069,6 +3361,9 @@ fn start_tasks(b: &dyn Board, root: &Path, nums: &[String], op: &Op) -> Res<Vec<
         if !issue.trusted || !issue.open || !(held || op.id.is_some()) {
             return Err(format!("#{n} is not a held task; nothing started"));
         }
+        // § 1 Task text: only the Goal and Acceptance sections; Scope and links may name paths and issues
+        let text: String = issue.body.split("\n## ").map(|s| s.trim_start_matches("## ")).filter(|s| s.starts_with("Goal") || s.starts_with("Acceptance")).collect::<Vec<_>>().join("\n");
+        lint_terms(&text).map_err(|e| format!("#{n}: {e}; nothing started"))?;
     }
     ns.iter().map(|&n| {
         let op = if ns.len() > 1 { Op { id: op.id.as_ref().map(|id| format!("{id}.{n}")), revision: None } } else { op.clone() };
@@ -3236,6 +3531,7 @@ fn run(argv: &[String]) -> Res<()> {
         }
         // § 3 Runtime accounts: list reads every host; enable, disable, move and add write this host only
         "accounts" => accounts_cli(&a),
+        "balance" => balance_cli(&a),
         "service" => service(&a),
         // #2060 (docs/design/worktrees.md#commands): the tidy of each registered project of this host
         "cleanup" if a.flags.contains_key("all") => {
@@ -3255,16 +3551,7 @@ fn run(argv: &[String]) -> Res<()> {
             Ok(())
         }
         // #2060 (docs/design/host-service.md#host-doctor): one host doctor pass now; no board
-        "doctor" => {
-            for l in doctor::cli(&platform::default_install(), a.flags.contains_key("dry-run")) { println!("{l}"); }
-            // #2078: a project's missing one-time host setup is a host gap the doctor names too
-            if let Some(cfg) = find_root().ok().and_then(|r| load(&r).ok()).map(|(c, _)| c) {
-                if let Some(cmd) = cfg.host_setup.as_deref().filter(|c| !check::host_setup_done(&cfg.root, c)) {
-                    for l in check::lines(&[check::host_setup_item(&cfg.root, cmd, false)]) { println!("{l}"); }
-                }
-            }
-            Ok(())
-        }
+        "doctor" => doctor_cmd(&a),
         // § 5: an owner session (§ 4) in this project; no board
         "retro" => {
             let (cfg, _) = load(&find_root()?)?;
@@ -3274,6 +3561,7 @@ fn run(argv: &[String]) -> Res<()> {
         }
         "tray" => tray(platform::default_install(), a.one("snapshot"), a.one("open").is_some(), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
         "" => Err("command missing; use `taskq help`".into()),
+        "status" if !a.flags.contains_key("closed") => status_all(&a),
         "reports"|"results" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
         _ => command(&ctx()?, cmd, &a),
     }
@@ -3550,6 +3838,157 @@ fn cleanup_lines(b: &dyn Board, cfg: &Config, a: &Args) -> Vec<String> {
     if lines.is_empty() { vec!["nothing to clean".into()] } else { lines }
 }
 
+/// R6 snapshot of one project: the board read, with ready rows the board alone leaves undecided taking this host's
+/// live admission from `status.json` (A3), and #1979 Decide from the collected reports (no board call).
+/// #2291: one comment read per open task dominates `status`; 8 board clients read them in parallel. Any failure
+/// leaves the task out of the cache, so the snapshot read fetches it as before.
+fn prefetch_comments(c: &Ctx) -> service::CommentCache {
+    let Ok(issues) = c.board.issues(None) else { return Default::default() };
+    let now = c.board.now().unwrap_or(0);
+    let todo: Vec<(u64, i64)> = issues.iter().filter(|i| i.trusted && !service::is_host(i) && (service::is_task(i) || service::is_held(i))).map(|i| (i.number, i.updated)).collect();
+    if todo.is_empty() { return Default::default(); }
+    let (cfg, schema) = (&c.cfg, c.raw["label_schema"].as_str());
+    std::thread::scope(|s| {
+        let handles: Vec<_> = todo.chunks(todo.len().div_ceil(8)).map(|part| s.spawn(move || {
+            let Ok(b) = cfg.board.open(&cfg.web_host, &cfg.repo, schema, &platform::tool(&cfg.install)) else { return vec![] };
+            part.iter().filter_map(|&(n, updated)| b.comments(n).ok().map(|cs| (n, (updated, now, cs)))).collect::<Vec<_>>()
+        })).collect();
+        handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+    })
+}
+
+fn status_snapshot(c: &Ctx, a: &Args) -> (snapshot::Snapshot, Value) {
+    let only = a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>();
+    let mut snap = snapshot::read_cached(&*c.board, &c.cfg, &c.raw, &only, prefetch_comments(c));
+    let local = dot(&c.cfg.root).join("status.json");
+    if let Some(s) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, c.cfg.ttl)) { snap.overlay_admission(&s); }
+    (snap, reports::decide(&reports::cached(&c.cfg.root), reports::now()))
+}
+
+/// One project's text report and the hosts it saw; `t` gets each section's wall time (#2291 `--timing`).
+fn status_text(c: &Ctx, a: &Args, read: Option<(snapshot::Snapshot, Value)>, t: &mut Vec<(&'static str, f64)>) -> Res<(String, Vec<(String, usize)>)> {
+    let (b, cfg) = (c.board.as_ref(), &c.cfg);
+    let mut clock = std::time::Instant::now();
+    let mut lap = |t: &mut Vec<(&'static str, f64)>, name| { t.push((name, clock.elapsed().as_secs_f64())); clock = std::time::Instant::now(); };
+    let local = dot(&cfg.root).join("status.json");
+    let mut out = vec![];
+    // R6: a board rate-limit pause the local service reports comes first, also when this read fails
+    if read.is_none() {
+        if let Some(w) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).as_ref().and_then(requests::warning) { out.push(w); }
+    }
+    let (snap, decide) = match read { Some(r) => r, None => {
+        let snap = status_snapshot(c, a).0; lap(t, "board read");
+        let decide = reports::decide(&reports::cached(&cfg.root), reports::now()); lap(t, "decide (cached)");
+        (snap, decide)
+    } };
+    // R6 A3: an unreadable deploy wait or board quota is an anomaly row, never an `unknown` line
+    let mut extra = vec![];
+    // § 2 Deploy: closed tasks still waiting for their first deploy, a live board read
+    let deploys = deploy::status(b, deploy::config(&cfg.root).as_ref()).unwrap_or_else(|e| {
+        extra.push(format!("- deploy wait unreadable: {} · Next: rerun `taskq status`; check the board token", compact(&e, 160)));
+        vec![]
+    });
+    lap(t, "deploy wait");
+    let quota = requests::quota(&b.quota());
+    lap(t, "quota");
+    if quota.starts_with("Board quota: unknown") {
+        extra.push("- board quota unread: no core budget headers on this read · Next: rerun `taskq status`; a lasting gap is a board client defect".into());
+    }
+    out.push(snap.text_extra(cfg, &c.raw, Some(&decide), extra)?);
+    lap(t, "render");
+    out.extend(deploys);
+    if !quota.starts_with("Board quota: unknown") { out.push(quota); }
+    // § 6: the live service's open setup gaps follow the report
+    out.extend(data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default());
+    lap(t, "setup gaps");
+    Ok((out.join("\n"), snap.served()))
+}
+
+/// R10: `taskq status` covers every project of `<install>/projects` plus the current one; `--project P..` narrows to
+/// folder names or `owner/repo`. One project keeps the single-project command; several print one block each.
+fn json_here_only(json: bool, wanted: &[String], here: bool) -> bool { json && wanted.is_empty() && here }
+
+fn status_all(a: &Args) -> Res<()> {
+    let here = find_root().ok();
+    let mut roots = host::projects(&platform::default_install()).unwrap_or_default();
+    let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    if let Some(h) = &here { roots.retain(|r| canon(r) != canon(h)); roots.insert(0, h.clone()); }
+    let wanted: Vec<String> = a.all("project").iter().flat_map(|x| x.split([',', ' '])).filter(|x| !x.is_empty()).map(String::from).collect();
+    // A JSON consumer inside a project (tray, PilotQ) reads that project's schema 1 snapshot, not a slow all-project read.
+    if json_here_only(a.flags.contains_key("json"),&wanted,here.is_some()) { roots.truncate(1); }
+    if !wanted.is_empty() {
+        roots.retain(|r| wanted.iter().any(|w| *w == project_name(r) || load(r).is_ok_and(|(cfg, _)| cfg.repo == *w)));
+        if roots.is_empty() { return Err(format!("--project {}: no listed project matches", wanted.join(" "))); }
+    }
+    let at = |root: &PathBuf| -> Res<Ctx> {
+        let (cfg, raw) = load(root)?;
+        let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
+        Ok(Ctx { cfg, raw, board })
+    };
+    // R10 A1: hosts serving projects outside this view close the report as anomaly rows
+    let unseen = || {
+        let rows = snapshot::unseen(&SERVED.take());
+        if !rows.is_empty() { println!("\nAnomalies:\n{}", rows.join("\n")); }
+    };
+    if roots.len() <= 1 {
+        let c = match roots.first() { Some(r) => at(r)?, None => ctx()? };
+        command(&c, "status", a)?;
+        if !a.flags.contains_key("json") { unseen(); }
+        return Ok(());
+    }
+    if a.flags.contains_key("json") {
+        let mut served = vec![];
+        let projects: Vec<Value> = roots.iter().map(|r| match at(r) {
+            Ok(c) => {
+                let (snap, decide) = status_snapshot(&c, a);
+                served.push(snap.served());
+                let mut v = snap.json();
+                if let Ok(t) = snap.text_with(&c.cfg, &c.raw, Some(&decide)) { v["report"] = json!(t); }
+                v["project"] = json!(project_name(r)); v["decide"] = decide; v
+            }
+            Err(e) => json!({"project": project_name(r), "complete": false, "reason": e}),
+        }).collect();
+        return json_output(&serde_json::to_string_pretty(&json!({"projects": projects, "unseen": snapshot::unseen(&served)})).map_err(|e| e.to_string())?, a.one("json-file"));
+    }
+    // #2291: projects read in parallel; each block prints in list order
+    let timing = a.flags.contains_key("timing");
+    let started = std::time::Instant::now();
+    let blocks: Vec<(String, Vec<(&'static str, f64)>)> = std::thread::scope(|s| {
+        let handles: Vec<_> = roots.iter().map(|r| s.spawn(move || {
+            PROJECT_ROOT.with_borrow_mut(|p| *p = Some(r.clone()));
+            let clock = std::time::Instant::now();
+            let mut t = vec![];
+            let c = at(r);
+            t.push(("open", clock.elapsed().as_secs_f64()));
+            // a project that cannot be read is an anomaly line of its own block, never a silent gap
+            let text = match c.and_then(|c| status_text(&c, a, None, &mut t)) {
+                Ok((text, served)) => { SERVED.with_borrow_mut(|v| v.push(served)); (text, SERVED.take()) }
+                Err(e) => (format!("{} · source unavailable: {e} · Next: `taskq status --project {}` after fixing its config or board token", project_name(r), project_name(r)), vec![]),
+            };
+            (text, t)
+        })).collect();
+        handles.into_iter().map(|h| {
+            let ((text, served), t) = h.join().unwrap_or_else(|_| (("status thread panicked".into(), vec![]), vec![]));
+            SERVED.with_borrow_mut(|v| v.extend(served));
+            (text, t)
+        }).collect()
+    });
+    for (i, (text, _)) in blocks.iter().enumerate() {
+        if i > 0 { println!(); }
+        println!("{text}");
+    }
+    if timing {
+        eprintln!("| Project | {} | total |", blocks.iter().flat_map(|b| b.1.iter().map(|x| x.0)).fold(Vec::<&str>::new(), |mut v, n| { if !v.contains(&n) { v.push(n); } v }).join(" | "));
+        for (r, (_, t)) in roots.iter().zip(&blocks) {
+            eprintln!("| {} | {} | {:.2} |", project_name(r), t.iter().map(|(_, s)| format!("{s:.2}")).collect::<Vec<_>>().join(" | "), t.iter().map(|x| x.1).sum::<f64>());
+        }
+        eprintln!("wall {:.2} s", started.elapsed().as_secs_f64());
+    }
+    PROJECT_ROOT.with_borrow_mut(|p| *p = None);
+    unseen();
+    Ok(())
+}
+
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
@@ -3625,7 +4064,8 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 runtime: a.one("runtime").map(String::from),
                 priority: a.one("priority").map(String::from),
                 host: add_host(a.one("host"), cfg),
-                labels: vec![],
+                labels: if a.flags.contains_key("gate") { vec!["needs-gate".into()] } else { vec![] },
+                rules: a.one("rules").map(String::from),
             };
             if finding {
                 task_body(b, &new, &Op::default()).map_err(|e| serve_hint(e, cfg))?;
@@ -3658,8 +4098,11 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             } else if ["start", "source", "board", "evidence"].iter().any(|f| a.flags.contains_key(*f)) {
                 return Err("--start/--source/--board/--evidence require finding".into());
             }
-            emit(&[add_task(b, root, &c.raw, &new, &op).map_err(|e| serve_hint(e, cfg))?], json)
+            let r = add_task(b, root, &c.raw, &new, &op).map_err(|e| serve_hint(e, cfg))?;
+            let r = if r.ok() && a.flags.contains_key("gate") { gate_task(b, root, r.task, &op) } else { r };
+            emit(&[r], json)
         }
+        "gate" => emit(&[gate_task(b, root, a.num(1)?, &op)], json),
         "start" => emit(&start_tasks(b, root, &a.pos[1..], &op)?, json),
         "approve" => emit(&[dispatch::approve(b, root, a.num(1)?, a.one("sha"), &op, dispatch::agent())], json),
         "recipe" => {
@@ -3703,9 +4146,15 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "later" => {
             let n = a.num(1)?;
             let staged = a.all("stage");
-            let args = park(n, a.one("blocker"), a.one("until"), !staged.is_empty(), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?;
+            let now = board::stamp(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64));
+            let args = park(n, a.one("blocker"), a.one("until"), (!staged.is_empty()).then_some(now.as_str()), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?;
             let text = if staged.is_empty() { text.to_string() } else { stage_text(text, &staged, &b.issue(n)?.body)? };
-            emit(&[act(b, root, n, cmd, &args, &text, &op)], json)
+            let mut out = vec![act(b, root, n, cmd, &args, &text, &op)];
+            // § 7 rule 3 (#2288): the worker's held local blocker starts with its park, so neither waits for the PM
+            if let Some(m) = a.one("blocker").filter(|_| out[0].ok()).and_then(|r| held_blocker(b, r)) {
+                out.extend(start_tasks(b, root, &[m.to_string()], &Op::default())?);
+            }
+            emit(&out, json)
         }
         "steer" | "failed" => {
             let n = a.num(1)?;
@@ -3789,29 +4238,22 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                     let n = n.parse::<u64>().ok().filter(|n|*n>0).ok_or("bad --task")?;
                     if a.flags.contains_key("transcript") {
                         let before = a.one("before").map(|v|v.parse::<u64>().map_err(|_|"bad --before")).transpose()?;
-                        json!({"transcript":closed_transcript(b,n,&cfg.me,before).map_or_else(|reason|json!({"reason":reason}),|v|v)})
+                        json!({"transcript":closed_transcript(b,&cfg.root,n,&cfg.me,before,|host,attempt|conversations::closed_remote(&cfg.install,&cfg.root,host,n,attempt,before)).map_or_else(|reason|json!({"reason":reason}),|v|v)})
                     } else { closed_pin(b,n,!cfg.board.closed_reason)? }
                 } else { closed_history(b,page,since,!cfg.board.closed_reason)? };
                 println!("{value}");
                 return Ok(());
             }
-            let snap = snapshot::read(b, cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
-            // #1979 Decide: undecided reports from the collected projection, no board call
-            let decide = reports::decide(&reports::cached(&cfg.root), reports::now());
+            let (snap, decide) = status_snapshot(c, a);
             if a.flags.contains_key("json") {
                 let mut v = snap.json();
+                if let Ok(t) = snap.text_with(cfg, &c.raw, Some(&decide)) { v["report"] = json!(t); }
                 v["decide"] = decide;
                 json_output(&serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, a.one("json-file"))?;
             } else {
-                println!("{}", snap.text_with(cfg, &c.raw, Some(&decide))?);
-                // § 2 Deploy: closed tasks still waiting for their first deploy, a live board read
-                match deploy::status(b, deploy::config(&cfg.root).as_ref()) {
-                    Ok(lines) => for l in lines { println!("{l}"); },
-                    Err(e) => println!("Waiting for deploy: unknown ({e})"),
-                }
-                println!("{}", requests::quota(&b.quota()));
-                // § 6: the live service's open setup gaps follow the report
-                for l in data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default() { println!("{l}"); }
+                let (text, served) = status_text(c, a, Some((snap, decide)), &mut vec![])?;
+                SERVED.with_borrow_mut(|v| v.push(served));
+                println!("{text}");
             }
             Ok(())
         }
@@ -3993,19 +4435,19 @@ mod tests {
     fn worker_park_needs_one_blocker_or_time() {
         let w = || (Some("7".to_string()), Some("42".to_string()));
         let (t, a) = w();
-        assert!(super::park(7, None, None, false, t, a).unwrap_err().contains("--blocker"));
-        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), None, false, t, a).is_err(), "{bad}"); }
+        assert!(super::park(7, None, None, None, t, a).unwrap_err().contains("--blocker"));
+        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), None, None, t, a).is_err(), "{bad}"); }
         let (t, a) = w();
-        assert_eq!(super::park(7, Some("dashq#36"), None, false, t, a).unwrap(), ["dashq#36"]);
-        assert!(super::park(7, None, None, false, None, None).unwrap().is_empty());
-        assert!(super::park(7, None, None, false, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
-        assert!(super::park(7, Some("#12"), None, false, None, None).is_err());
+        assert_eq!(super::park(7, Some("dashq#36"), None, None, t, a).unwrap(), ["dashq#36"]);
+        assert!(super::park(7, None, None, None, None, None).unwrap().is_empty());
+        assert!(super::park(7, None, None, None, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
+        assert!(super::park(7, Some("#12"), None, None, None, None).is_err());
         let (t, a) = w();
-        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), false, t, a).unwrap(), ["until", "2026-11-05T09:00:00Z"], "a worker waiting only for time parks with it");
-        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), false, None, None).unwrap(), ["until", "2026-11-05T09:00:00Z"]);
-        assert!(super::park(7, None, Some("2026-11-05"), false, None, None).unwrap_err().contains("bad --until"));
+        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), None, t, a).unwrap(), ["until", "2026-11-05T09:00:00Z"], "a worker waiting only for time parks with it");
+        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), None, None, None).unwrap(), ["until", "2026-11-05T09:00:00Z"]);
+        assert!(super::park(7, None, Some("2026-11-05"), None, None, None).unwrap_err().contains("bad --until"));
         let (t, a) = w();
-        assert!(super::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), false, t, a).unwrap_err().contains("exclude"));
+        assert!(super::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), None, t, a).unwrap_err().contains("exclude"));
     }
 
     // #2137 A3: reroute reads back ready pins, refuses active/unreleased work, and never rewrites other labels.
@@ -4070,7 +4512,10 @@ mod tests {
     #[test]
     fn stage_park_records_acceptance_items() {
         let (t, a) = (Some("7".to_string()), Some("42".to_string()));
-        assert!(super::park(7, None, None, true, t, a).unwrap().is_empty(), "a stage park may wait for the owner");
+        assert_eq!(super::park(7, None, None, Some("2026-11-03T10:00:00Z"), t, a).unwrap(), ["until", "2026-11-03T10:00:00Z"], "a worker stage park wakes at once (#2289)");
+        assert!(super::park(7, None, None, Some("2026-11-03T10:00:00Z"), None, None).unwrap().is_empty(), "an owner or PM stage park still holds");
+        let (t, a) = (Some("7".to_string()), Some("42".to_string()));
+        assert_eq!(super::park(7, Some("#9"), None, Some("2026-11-03T10:00:00Z"), t, a).unwrap(), ["#9"], "a blocker still parks on it");
         let body = "## Goal\ng\n\n## Acceptance\nA1. a\nA2. b\n- A3. c\n";
         assert_eq!(super::stage_text("Reason: soak\nNext: A3", &["A2".into(), "A1".into()], body).unwrap(), "Reason: soak\nNext: A3\nStages: A1 A2");
         assert_eq!(super::stage_text("", &["A3".into()], body).unwrap(), "Stages: A3");
@@ -4457,7 +4902,7 @@ mod tests {
         Config {
             // Independent command fixtures must not contend for the same project wake lock.
             root: std::env::temp_dir().join(format!("taskq-main-test-{}",crate::runtime::uuid())),
-            install: PathBuf::from("/nonexistent"),
+            install: std::env::temp_dir().join(format!("taskq-main-test-install-{}",crate::runtime::uuid())),
             board: &board::github::KIND,
             web_host: String::new(),
             repo: "o/r".into(),
@@ -4469,6 +4914,7 @@ mod tests {
             has: vec![],
             claim: host::ClaimMode::Any,
             spillover_grace: 300,
+            weights: BTreeMap::new(),
             allowed_runtimes: None,
             auto_reroute: false,
             default_runtime: "claude".into(),
@@ -4569,6 +5015,18 @@ mod tests {
         assert_eq!(parse(&["add", "T", "--goal", "G", "--acceptance", "A", "--acceptance", "B"]).unwrap().all("acceptance"), vec!["A", "B"]);
         assert_eq!(parse(&["service", "channel", "dev", "extra"]).err().unwrap(), "unused positional arguments: extra");
         assert_eq!(channel_cmd(&parse(&["service", "channel", "beta"]).unwrap()).err().unwrap(), "channel must be dev or live");
+        // #2311: `service dev-build` writes the dev request only on channel dev
+        let install = std::env::temp_dir().join(format!("taskq-dev-build-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&install);
+        fs::create_dir_all(&install).unwrap();
+        let build = parse(&["service", "dev-build"]).unwrap();
+        assert!(dev_build_cmd(&build, &install).unwrap_err().starts_with("channel live:"), "live host: refused");
+        assert!(!platform::dev_request(&install).exists());
+        fs::write(install.join("host.json"), r#"{"channel":"dev"}"#).unwrap();
+        dev_build_cmd(&build, &install).unwrap();
+        assert!(platform::dev_request(&install).exists(), "dev host: request written");
+        assert_eq!(parse(&["service", "dev-build", "x"]).err().unwrap(), "unused positional arguments: x");
+        fs::remove_dir_all(&install).unwrap();
         for v in [vec!["close", "1", "2"], vec!["answer", "1.1", "2.1"], vec!["service", "focus", "code", "docs"], vec!["service", "channel"], vec!["service", "channel", "dev"], vec!["service", "channel", "live"]] {
             assert!(parse(&v).is_ok());
         }
@@ -4667,6 +5125,30 @@ mod tests {
         assert_eq!(c.board.issues(None).unwrap().len(), 1, "a refused add files nothing");
         add("mac").unwrap();
         assert!(c.board.issues(None).unwrap().pop().unwrap().labels.contains(&"host-mac".into()));
+    }
+
+    // Chain: § 1 Task text, #2241 unknown term -> add/start refusal; declared rules -> body `Rules:` line for the gate.
+    // Risk: vague task text reaches a worker and comes back as a technical ask, or a known term is refused.
+    #[test]
+    fn add_and_start_refuse_unknown_terms_and_record_declared_rules() {
+        let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };
+        let run = |v: &[&str]| command(&c, "add", &Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap());
+        let e = run(&["add", "T", "--goal", "Fix R99 and §2.999", "--acceptance", "`taskq frobnicate 1` prints x"]).unwrap_err();
+        assert!(e.contains("unknown term: R99, §2.999, taskq frobnicate"), "{e}");
+        assert!(c.board.issues(None).unwrap().is_empty(), "a refused add files nothing");
+        run(&["add", "T", "--goal", "Amend R7, §2.3 and § 4; add new R14", "--acceptance", "`taskq status --json` and `taskq answer 1.2` work; see #12 and PR42", "--rules", "R7, §4 Profiling"]).unwrap();
+        let i = c.board.issues(None).unwrap().pop().unwrap();
+        assert!(i.body.contains("\nRules: R7, §4 Profiling\n"), "{}", i.body);
+        run(&["add", "T2", "--goal", "G", "--acceptance", "a", "--rules", "all"]).unwrap();
+        for bad in ["R99", "x", ""] {
+            assert!(run(&["add", "T3", "--goal", "G", "--acceptance", "a", "--rules", bad]).unwrap_err().contains("--rules"), "{bad}");
+        }
+        // a body edited after add is linted again at start, before any write
+        let n = c.board.create("U", "## Goal\nUse `taskq nope`\n\n## Acceptance\nA1. R0 holds\n\n## Scope\n- R99 path\n", &["q-held".into()]).unwrap();
+        let before = entries(&*c.board, n).unwrap().len();
+        let e = start_tasks(&*c.board, &c.cfg.root, &[n.to_string()], &Op::default()).unwrap_err();
+        assert_eq!(e, format!("#{n}: unknown term: R0, taskq nope; fix the task text (taskq.md, `taskq help`) or write `new <ID>`; nothing started"));
+        assert_eq!(entries(&*c.board, n).unwrap().len(), before);
     }
 
     // Chain: F1/F2 local finding -> held issue -> replay. Risk: duplicate or wrong-board writes.
@@ -4990,13 +5472,49 @@ mod tests {
         let before = entries(b, u).unwrap().len();
         assert!(run(&["start", &u.to_string(), &n.to_string()]).is_err_and(|e| e.contains(&format!("#{n}"))));
         assert_eq!(entries(b, u).unwrap().len(), before, "a bad number in the list writes nothing");
-        run(&["add", "V", "--goal", "G", "--acceptance", "a"]).unwrap();
+        // #2288: a held body naming an open task without `Depends on` gets the deps hint; one with `--deps` does not
+        run(&["add", "V", "--goal", &format!("Runs after #{u}"), "--acceptance", "a"]).unwrap();
         let v = b.issues(None).unwrap().into_iter().filter(service::is_held).map(|i| i.number).max().unwrap();
-        let text = snapshot::read(b, &c.cfg, &c.raw, &[]).text(&c.cfg, &c.raw).unwrap();
-        assert!(text.contains(&format!("Held: [#{u} U]")) && text.contains(&format!("[#{v} V]")), "{text}");
-        let receipts = start_tasks(b, Path::new("/nonexistent"), &[u.to_string(), format!("#{v}")], &Op::default()).unwrap();
+        run(&["add", "W", "--goal", &format!("Runs after #{u}"), "--acceptance", "a", "--deps", &u.to_string()]).unwrap();
+        let w = b.issues(None).unwrap().into_iter().filter(service::is_held).map(|i| i.number).max().unwrap();
+        let snap = snapshot::read(b, &c.cfg, &c.raw, &[]);
+        let text = snap.text(&c.cfg, &c.raw).unwrap();
+        assert!(text.contains(&format!("| [#{u} U](")) && text.contains(&format!("| PM | `taskq start {u}` |")) && text.contains(&format!("[#{v} V]")), "{text}");
+        assert!(text.contains(&format!("| PM: names open #{u} without Depends on | add `Depends on #{u}`, then `taskq start {v}` |")), "{text}");
+        assert!(text.contains(&format!("| PM | `taskq start {w}` |")), "{text}");
+        assert_eq!(snap.tasks.iter().find(|r| r.n == v).unwrap().json()["unlinked"], json!([u]));
+        // #2288: a worker park on a held local blocker starts it; a started task or another repo's issue is not one
+        assert_eq!(held_blocker(b, &format!("#{v}")), Some(v));
+        assert_eq!((held_blocker(b, &format!("#{n}")), held_blocker(b, "dashq#5"), held_blocker(b, "#999")), (None, None, None));
+        b.close(w).unwrap();
+        let receipts = start_tasks(b, &c.cfg.root, &[u.to_string(), format!("#{v}")], &Op::default()).unwrap();
         assert_eq!(receipts.iter().map(|r| r.task).collect::<Vec<_>>(), vec![u, v]);
         assert!([u, v].iter().all(|&m| fold(m, &entries(b, m).unwrap(), false).state == State::Ready));
+    }
+
+    // Chain: #2310 § 7 gate outside recipes. Risk: a task whose Acceptance forbids publishing closes (publishes)
+    // without owner approval, or a started task is gated after work began.
+    #[test]
+    fn add_gate_and_gate_n_require_owner_approval_before_close() {
+        let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };
+        let b = c.board.as_ref();
+        let run = |v: &[&str]| command(&c, v[0], &Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap());
+        run(&["add", "Spec only", "--goal", "Decide", "--acceptance", "no main before owner check", "--gate"]).unwrap();
+        run(&["add", "Later gated", "--goal", "Decide", "--acceptance", "a"]).unwrap();
+        let n: Vec<_> = b.issues(None).unwrap().iter().map(|i| i.number).collect();
+        for &m in &n[..1] {
+            assert!(b.issue(m).unwrap().labels.contains(&"needs-gate".to_string()));
+            assert_eq!(fold(m, &entries(b, m).unwrap(), false).gate, Some(core::Gate::Required));
+        }
+        assert_eq!(fold(n[1], &entries(b, n[1]).unwrap(), false).gate, None);
+        run(&["gate", &n[1].to_string()]).unwrap();
+        assert_eq!(fold(n[1], &entries(b, n[1]).unwrap(), false).gate, Some(core::Gate::Required));
+        assert!(b.issue(n[1]).unwrap().labels.contains(&"needs-gate".to_string()));
+        start_tasks(b, &c.cfg.root, &[n[0].to_string()], &Op::default()).unwrap();
+        b.comment(n[0], &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        let a = fold(n[0], &entries(b, n[0]).unwrap(), false).attempt.unwrap();
+        b.comment(n[0], &entry("result", &["0123456789abcdef0123456789abcdef01234567"], Some(a), "")).unwrap();
+        assert!(!close_one(b, &c.cfg, n[0], "ok", &Op::default()).ok() && b.issue(n[0]).unwrap().open);
     }
 
     // Chain: § 7 recipe run, held tasks, owner gate, close publication, dependants. Risk: a rerun duplicates tasks,
@@ -5623,7 +6141,7 @@ mod tests {
             } else { command.spawn().unwrap() };
             let native=coreq::process::identity(child.id()).unwrap();
             s.kids.push(Kid { unknown:None, stopping:false, session_url:None,execution,task:n,attempt:a,rt:"codex".into(),proc:Box::new(runtime::CliTurn {
-                proc:Box::new(child),log,pos:old.len() as u64,start:old.len() as u64,stopping:false,accepted:false,read_error:None,session:None,native,recovery:None
+                proc:Box::new(child),log,pos:old.len() as u64,start:old.len() as u64,stopping:false,accepted:false,read_error:None,session:None,native,recovery:None, rt: "codex".into()
             })});
             let launch=runtime::Launch {files: String::new(), execution:None,task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"codex".into(),session:"session".into(),url:String::new(),resume:Some("continue".into())};
             s.kids[0].proc.checkpoint(&c,&launch,execution).unwrap();
@@ -5826,6 +6344,33 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    // #2266 A2: one recovery row that cannot be adopted no longer ends the project loop.
+    // Risk: adopt(...)? stopped the project thread, so a dead execution beside it was never released and other hosts waited forever.
+    #[cfg(unix)]
+    #[test]
+    fn unadoptable_row_keeps_reservation_and_releases_dead_sibling() {
+        let root = std::env::temp_dir().join(format!("taskq-adopt-row-{}", runtime::uuid()));
+        fs::create_dir_all(dot(&root)).unwrap();
+        let b=Fake::default(); let (n,m)=(b.create("T","",&[service::TASK_LABEL.into()]).unwrap(),b.create("U","",&[service::TASK_LABEL.into()]).unwrap());
+        let (kept,dead)=(b.comment(n,"taskq: spawn worker codex:a win").unwrap(),b.comment(m,"taskq: spawn worker codex:b mac").unwrap());
+        let c=Config {root:root.clone(),install:root.clone(),..cfg()};
+        let ended=||{let mut child=std::process::Command::new("sleep").arg("30").spawn().unwrap(); let id=coreq::process::identity(child.id()).unwrap().unwrap(); child.kill().unwrap(); child.wait().unwrap(); id};
+        let (win,mac)=(ended(),ended());
+        let owner=coreq::process::identity(std::process::id()).unwrap().unwrap();
+        let path=kids_path(&root,&root).unwrap(); fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!("pid {} {} executor-v1\n{n} {kept} codex {} {} {kept} 0 job-kill:{}\n{m} {dead} codex {} {} {dead} 0\n",owner.pid,owner.started,win.pid,win.started,runtime::uuid(),mac.pid,mac.started)).unwrap();
+        for (t,a) in [(n,kept),(m,dead)] {fs::write(runtime::attempt_log(&root,"worker",t,a),"").unwrap();}
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|unreachable!()));
+        adopt(&mut s,&root,&root).unwrap();
+        assert_eq!(s.kids.len(),1); assert_eq!(s.kids[0].execution,dead);
+        let until=Instant::now()+Duration::from_secs(10);
+        while !s.kids.is_empty() {s.reap_owned(); assert!(Instant::now()<until,"dead sibling not reaped"); std::thread::sleep(Duration::from_millis(10));}
+        assert_eq!(core::executions(m,&board::entries(&b,m).unwrap())[0].release,Some(core::Release::Exit));
+        assert_eq!(core::executions(n,&board::entries(&b,n).unwrap())[0].release,None,"unadoptable row stays reserved");
+        assert_eq!(kids_file(&root,&root).unwrap().iter().map(|k|k.execution).collect::<Vec<_>>(),vec![kept],"its native recovery record is kept");
+        let _ = fs::remove_dir_all(&root);
+    }
+
     // #1594 A3: the recorded-process verdict reaches pre-boot retirement and the handover checkpoint unchanged.
     // Risk: save_kids or pre_boot re-derive exit from identity and drift from snapshot::verdict (#1561, #1445).
     #[cfg(unix)]
@@ -5841,7 +6386,7 @@ mod tests {
             let native=coreq::process::identity(child.id()).unwrap();
             if exit {child.kill().unwrap();child.wait().unwrap();}
             Kid {unknown:None,stopping:false,session_url:None,execution:attempt,task,attempt,rt:"codex".into(),proc:Box::new(runtime::CliTurn {
-                proc:Box::new(child),log:root.join("log"),pos:0,start:0,stopping:false,accepted:false,read_error:None,session:None,native,recovery:None})}
+                proc:Box::new(child),log:root.join("log"),pos:0,start:0,stopping:false,accepted:false,read_error:None,session:None,native,recovery:None, rt: "codex".into()})}
         };
         let mut s=Service::new(&b,&c,"test",Box::new(|_|unreachable!()));
         fs::write(root.join("log"),"").unwrap();
@@ -5851,8 +6396,8 @@ mod tests {
         assert_eq!(recorded(&a).0,"running");
         assert_eq!(recorded(&e),("ended","recorded native process exited".into()));
         assert!(!pre_boot(&a) && !pre_boot(&e),"a process of this boot is never retired as pre-boot");
-        let held=save_kids(&s,&root).unwrap_err();
-        assert!(held.contains("recorded native process exited; handover waits"),"{held}");
+        save_kids(&s,&root).unwrap();
+        assert_eq!(kids_file(&root,&root).unwrap(),vec![a.clone(),e],"#2297: the ended record passes to the next image until its board exit");
         b.comment(m,&format!("taskq: released {ended} exit attempt {ended}")).unwrap();
         save_kids(&s,&root).unwrap();
         assert_eq!(kids_file(&root,&root).unwrap(),vec![a],"the ended record resolves from its board exit; the live one is kept");
@@ -6090,7 +6635,7 @@ mod tests {
         b.create("taskq host mac", "version 4.0.0", &[service::HOST_LABEL.into()]).unwrap();
         let r = report(&b, &c, &Value::Null, &[]).unwrap();
         assert!(r.contains("In work 0 · Waiting for answer 1 · Ready 1"), "{r}");
-        assert!(r.contains(&format!("| [#{n} Ship \\| it](https://board/{n}) | ready |")), "{r}");
+        assert!(r.contains(&format!("| [#{n} Ship \\| it](https://board/{n}) | no host decision |")), "{r}");
         assert!(r.contains(&format!("{q}.1 left · {q}.2 right ★ |")), "only the star without a pick: {r}");
         assert!(r.contains("Hosts: mac v4.0.0"), "{r}");
         assert!(!inbox(&b, &c.root, q).unwrap().contains("Recommendation:"));
@@ -6221,7 +6766,7 @@ mod tests {
         schema_errors(&schema, &bad, "$", &mut errors);
         assert_eq!(errors, ["$.tasks[0].verdict: missing checks", "$.tasks[0].verdict: missing open"]);
         // A3: each release publishes both files, covered by SHA256SUMS
-        let release = include_str!("../.github/workflows/release.yml");
+        let release = include_str!("../.github/workflows/release-build.yml");
         for (file, asset) in [("status-snapshot.json", "status-snapshot-fixtures.json"), ("status-snapshot.schema.json", "status-snapshot-schema.json")] {
             assert!(release.contains(&format!("cp tests/fixtures/{file} \"dist/taskq-$VER-{asset}\"")), "release misses {file}");
         }
@@ -6463,6 +7008,8 @@ mod tests {
         let catalog: Value = serde_json::from_str(PM_COMMANDS).unwrap();
         let text = help(false).unwrap();
         assert!(text.starts_with(USAGE));
+        // #2288: help tells the PM to start dependents with `--deps` and hold only for read-back
+        assert!(text.contains("gets `--deps N` and is started at once") && text.contains("hold is only for the read-back"), "{text}");
         for c in catalog["commands"].as_array().unwrap() {
             let (name, usage) = (c["name"].as_str().unwrap(), c["use"].as_str().unwrap());
             let mut words = name.split(' ');
@@ -6484,7 +7031,7 @@ mod tests {
         let blocked = c.board.create("blocked", &format!("Depends on #{dep}"), &["taskq".into(), "selected".into()]).unwrap();
         let report = report(c.board.as_ref(), &c.cfg, &c.raw, &["selected".into()]).unwrap();
         assert!(report.contains(&format!("#{blocked} blocked")));
-        assert!(report.contains(&format!("blocked ([#{dep}](https://board/{dep}) open)")), "non-task dependency remains visible outside filter");
+        assert!(report.contains(&format!("dependency ([#{dep}](https://board/{dep}) open)")), "non-task dependency remains visible outside filter");
     }
 
     // Chain: § 5 piped owner reply -> CLI parsing -> shared dispatcher. Risk: OS arguments cap or alter the text.
@@ -6723,6 +7270,15 @@ mod tests {
         assert_eq!(closed_history(&b, 1, Some(110), false).unwrap()["tasks"].as_array().unwrap().len(), 3, "period keeps closes at or after since");
     }
 
+    // Before: the tray's `status --json` got the all-project shape after 48 s and every control failed. After: one project.
+    #[test]
+    fn status_json_inside_a_project_reads_only_that_project() {
+        assert!(json_here_only(true,&[],true));
+        assert!(!json_here_only(false,&[],true),"text status still reports every listed project (R10)");
+        assert!(!json_here_only(true,&["other".into()],true),"--project narrows by name");
+        assert!(!json_here_only(true,&[],false),"outside a project JSON stays all-project");
+    }
+
     // #1829 A1/A2: a pin outside page one reads its exact board outcome; native reads cannot resume work or cross hosts.
     #[test]
     fn closed_pin_reads_exact_issue_and_fences_transcript() {
@@ -6738,11 +7294,23 @@ mod tests {
         assert_eq!(closed_pin(&b,1,true).unwrap()["tasks"][0]["outcome"],"success","§ 1 GitLab has no closure reason");
         b.state.borrow_mut().issues[0].open=true;
         assert_eq!(closed_pin(&b,1,true).unwrap()["tasks"][0]["state"],"open");
-        assert!(closed_transcript(&b,1,"mac",None).unwrap_err().contains("closed trusted task"));
+        let local = std::env::temp_dir().join(format!("taskq-closed-transcript-{}",runtime::uuid()));
+        let unreached = |_: &str, _: u64| -> Res<Value> { panic!("a local or refused read crossed the host link") };
+        assert!(closed_transcript(&b,&local,1,"mac",None,unreached).unwrap_err().contains("closed trusted task"));
         let spawn=b.comment(1,"taskq: spawn worker codex:invented1829 remote").unwrap();
         b.comment(1,&format!("taskq: result {} attempt {spawn}","a".repeat(40))).unwrap();
         b.close(1).unwrap();
-        assert!(closed_transcript(&b,1,"mac",None).unwrap_err().contains("on host remote"));
+        // Before: "Transcript is on host remote; open it there". After: the read goes to the worker's host.
+        let page = closed_transcript(&b,&local,1,"mac",Some(9),|host,attempt| Ok(json!({"host":host,"attempt":attempt}))).unwrap();
+        assert_eq!(page,json!({"host":"remote","attempt":spawn}));
+        // Before: a remote-control worker's board job id named no transcript. After: the attempt log names the session.
+        let job = b.comment(2,"taskq: spawn worker claude:88b43179-06e0-4c61-bf19-5cd156f22dd3 mac").unwrap();
+        b.comment(2,&format!("taskq: result {} attempt {job}","b".repeat(40))).unwrap();
+        fs::create_dir_all(dot(&local)).unwrap();
+        fs::write(runtime::attempt_log(&local,"worker",2,job),"{\"type\":\"thread.started\",\"session_id\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\",\"runtime\":\"claude-bg\"}\n{\"type\":\"system\",\"sessionId\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\"}\n").unwrap();
+        let (rt,id,owner,attempt) = closed_worker(&b,2).unwrap();
+        assert_eq!((owner.as_str(),attempt),("mac",job));
+        assert_eq!(closed_session(&local,&rt,&id,2,attempt).unwrap(),"3aae983f-ee51-4fa1-af25-7252766bec4b");
         b.state.borrow_mut().issues[0].trusted=false;
         assert!(closed_pin(&b,1,true).unwrap_err().contains("trusted task"));
         assert!(closed_pin(&b,999,false).is_err());

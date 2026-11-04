@@ -1,7 +1,8 @@
 #!/bin/sh
-# Chain check for the release.yml tag job (taskq.md § 8 item 1, R12): a main push tags and releases only when the
-# Cargo.toml version changed and the tag is absent; an unreadable or invalid prior version fails without a tag;
-# an existing tag is never written; a manual tag push releases that tag. gh is a stub; nothing leaves the runner.
+# Chain check for the release.yml tag job (taskq.md § 8 item 1, R12): a live push tags the next unused vX.Y.Z
+# (Cargo.toml version or highest tag plus one patch, whichever is greater) on the pushed commit; a commit that
+# already has a tag reuses it only while its release is absent or a draft; unreadable tags or an invalid version fail
+# without a tag; a manual tag push releases that tag. gh is a stub; nothing leaves the runner.
 set -eu
 src=$(cd "$(dirname "$0")" && pwd)/release-tag.sh
 t=$(mktemp -d)
@@ -10,33 +11,35 @@ cd "$t"
 mkdir bin
 cat > bin/gh <<'SH'
 #!/bin/sh
-# Stub: OLD = prior Cargo.toml body or "503"; TAGGED = 1 when the tag exists. Writes are logged.
+# Stub: TAGS = "<ref> <sha>" lines or "503"; RELEASED = 1 (published) or draft when `release view` finds the release. Writes are logged.
 case "$*" in
-  *contents/Cargo.toml*) [ "$OLD" = 503 ] && { echo 'HTTP 503' >&2; exit 1; }; printf '%s\n' "$OLD";;
-  *git/refs*) echo "$*" >> writes; [ "$TAGGED" = 1 ] && exit 1; exit 0;;
-  *git/ref/tags/*) [ "$TAGGED" = 1 ];;
+  *matching-refs*) [ "$TAGS" = 503 ] && { echo 'HTTP 503' >&2; exit 1; }; [ -z "$TAGS" ] || printf '%s\n' "$TAGS";;
+  *git/refs*) echo "$*" >> writes;;
+  'release view'*) case $RELEASED in 1) echo false;; draft) echo true;; *) exit 1;; esac;;
   *) exit 2;;
 esac
 SH
 chmod +x bin/gh
-export PATH="$t/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=abc GITHUB_REF_NAME=main GITHUB_REF_TYPE=branch
+export PATH="$t/bin:$PATH" GITHUB_REPOSITORY=o/r GITHUB_SHA=abc GITHUB_REF_NAME=live GITHUB_REF_TYPE=branch
 fails=0
-# $1 name, $2 new version line, $3 prior body, $4 tagged, $5 expected exit, $6 expected output, $7 expected writes
+# $1 name, $2 version line, $3 tags, $4 released, $5 expected exit, $6 expected output, $7 expected tag write
 case_() {
   printf '%s\n' "$2" > Cargo.toml; rm -f writes; touch writes
-  rc=0; out=$(OLD=$3 TAGGED=$4 BEFORE=${BEFORE:-def} sh "$src" 2>/dev/null) || rc=$?
-  w=$(wc -l < writes | tr -d ' ')
+  rc=0; out=$(TAGS=$3 RELEASED=$4 sh "$src" 2>/dev/null) || rc=$?
+  w=$(sed -n 's|.*ref=refs/tags/\([^ ]*\) -f sha=abc$|\1|p' writes)
   if [ "$rc" = "$5" ] && [ "$out" = "$6" ] && [ "$w" = "$7" ]; then echo "ok   $1"
-  else echo "FAIL $1: exit $rc out '$out' writes $w; want $5 '$6' $7"; fails=1; fi
+  else echo "FAIL $1: exit $rc out '$out' write '$w'; want $5 '$6' '$7'"; fails=1; fi
 }
-case_ 'changed, absent: tags' 'version = "1.1.0"' 'version = "1.0.0"' 0 0 tag=v1.1.0 1
-case_ 'changed, existing: no release' 'version = "1.1.0"' 'version = "1.0.0"' 1 0 '' 1
-case_ 'unchanged, absent: nothing' 'version = "1.1.0"' 'version = "1.1.0"' 0 0 '' 0
-case_ 'unchanged, existing: nothing' 'version = "1.1.0"' 'version = "1.1.0"' 1 0 '' 0
-case_ 'prior read 503: fails' 'version = "1.1.0"' 503 0 1 '' 0
-case_ 'prior empty: fails' 'version = "1.1.0"' '' 0 1 '' 0
-case_ 'prior invalid: fails' 'version = "1.1.0"' 'version = ""' 0 1 '' 0
-case_ 'new invalid: fails' 'version = "x"' 'version = "1.0.0"' 0 1 '' 0
-BEFORE=0000000000000000000000000000000000000000 case_ 'no prior commit: fails' 'version = "1.1.0"' 'version = "1.0.0"' 0 1 '' 0
-GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v9.9.9 case_ 'manual tag push: releases it' 'version = "1.1.0"' 503 1 0 tag=v9.9.9 0
+nl='
+'
+case_ 'no tags: Cargo version' 'version = "1.1.0"' '' 0 0 tag=v1.1.0 v1.1.0
+case_ 'tag above Cargo: next patch' 'version = "1.1.0"' "refs/tags/v1.1.0 d0${nl}refs/tags/v1.1.9 d9${nl}refs/tags/v1.1.10 d10" 0 0 tag=v1.1.11 v1.1.11
+case_ 'Cargo above tags: Cargo version' 'version = "1.2.0"' 'refs/tags/v1.1.10 d10' 0 0 tag=v1.2.0 v1.2.0
+case_ 'other tag names ignored' 'version = "1.1.0"' "refs/tags/v1.1.3 d3${nl}refs/tags/v9.9.9-rc1 dx${nl}refs/tags/vx d4" 0 0 tag=v1.1.4 v1.1.4
+case_ 'commit tagged, unreleased: reuses tag' 'version = "1.1.0"' 'refs/tags/v1.1.3 abc' 0 0 tag=v1.1.3 ''
+case_ 'commit tagged, draft release: reuses tag' 'version = "1.1.0"' 'refs/tags/v1.1.3 abc' draft 0 tag=v1.1.3 ''
+case_ 'commit tagged, released: nothing' 'version = "1.1.0"' 'refs/tags/v1.1.3 abc' 1 0 '' ''
+case_ 'tag list 503: fails' 'version = "1.1.0"' 503 0 1 '' ''
+case_ 'invalid version: fails' 'version = "x"' '' 0 1 '' ''
+GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v9.9.9 case_ 'manual tag push: releases it' 'version = "1.1.0"' 503 0 0 tag=v9.9.9 ''
 exit $fails

@@ -402,6 +402,12 @@ pub fn card_before(n: u64, entries: &[Entry], id: u64) -> Option<String> {
     fold(n, &before, false).card
 }
 
+/// § 2 owner notes: accepted `answer`s and `steer`s written without `attempt` (attempt-bound steers are the
+/// worker's or the service's), in board order.
+pub fn owner_notes(n: u64, entries: &[Entry], p: &Projection) -> Vec<u64> {
+    p.notes.iter().copied().filter(|id| entries.iter().find(|e| e.id == *id).and_then(|e| parse(n, &e.body)).is_some_and(|l| l.attempt.is_none())).collect()
+}
+
 /// What a resumed child receives for inbox entry `id` (§ 2): its text, else option K of the card it answers, else its
 /// first line; never empty.
 pub fn delivery(n: u64, entries: &[Entry], id: u64) -> String {
@@ -1077,7 +1083,7 @@ mod tests {
     }
 
     /// R8 made mechanical: every (state, entry) pair of the § 2 table is accepted by some golden trace.
-    // Chain: R8 § 2 table to golden traces; spec size. Risk: a § 2 row without a trace, taskq.md over 300 lines or 60 KiB, or dated.
+    // Chain: R8 § 2 table to golden traces; spec size. Risk: a § 2 row without a trace, taskq.md over its declared contract-budget, or dated.
     #[test]
     fn every_table_row_has_a_golden_trace() {
         let spec = include_str!("../taskq.md");
@@ -1113,8 +1119,13 @@ mod tests {
             }
         }
         assert!(missing.is_empty(), "§ 2 rows without a golden trace: {missing:?}");
-        assert!(spec.lines().count() <= 300, "taskq.md over 300 lines");
-        assert!(spec.replace("\r\n", "\n").len() <= 60 * 1024, "taskq.md over 60 KiB");
+        // specq contracts.md#size-budgets: the cap is the declared `contract-budget` comment.
+        let cap = |key: &str| -> usize {
+            let budget = spec.lines().find_map(|line| line.trim().strip_prefix("<!-- contract-budget:")).expect("taskq.md declares contract-budget");
+            budget.split_whitespace().find_map(|pair| pair.strip_prefix(key)?.strip_prefix('=')?.parse().ok()).expect("contract-budget bytes and lines")
+        };
+        assert!(spec.lines().count() <= cap("lines"), "taskq.md over its contract-budget lines");
+        assert!(spec.replace("\r\n", "\n").len() <= cap("bytes"), "taskq.md over its contract-budget bytes");
         let dated = |w: &[u8]| w.len() == 10 && w[4] == b'-' && w[7] == b'-' && w.iter().filter(|b| b.is_ascii_digit()).count() == 8;
         assert!(!spec.as_bytes().windows(10).any(dated), "taskq.md holds a date: history goes to git and issues");
     }

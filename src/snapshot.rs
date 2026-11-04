@@ -222,6 +222,8 @@ pub struct Row {
     pub updated: Option<i64>,
     /// An unresolved external execution blocks the next submission even after a task state change.
     pub execution_wait: Option<String>,
+    /// #2257: host step that releases the worker execution blocking a missing reviewer (R6 stuck row).
+    pub missing_reviewer: Option<String>,
     pub executions: Vec<Value>,
     /// The runtime accepted input of the current attempt (`accepted` entry): a codex id `-` then reads running, not starting.
     pub accepted: bool,
@@ -231,7 +233,7 @@ pub struct Row {
     pub failed: Option<String>,
     /// Text of the last trusted `later` entry while `later` (R6 timed park reason).
     pub later: Option<String>,
-    /// Claude Remote Control URL of the current attempt from its host's heartbeat `session` line (§ 4).
+    /// Claude Remote Control URL of the current attempt from its host's heartbeat `session` line (§ 4), else that line's `unknown: <cause>` (#2261).
     pub session_url: Option<String>,
     /// Board time of the entry behind the last logged state change (§ 4 Tray age); `None`: no logged change.
     pub since: Option<i64>,
@@ -257,6 +259,8 @@ pub struct Row {
     pub churn: Option<Churn>,
     /// § 7 text of the accepted `result` entry behind the current result; `None` without a result.
     pub verdict: Option<String>,
+    /// #2288: open tasks a held body names without any `Depends on` line; start it with `Depends on` instead of holding.
+    pub unlinked: Vec<u64>,
 }
 
 /// § 4 Churn counts of one task's board notes: all notes, `spawn` and `accepted` entries.
@@ -375,6 +379,11 @@ pub fn wait_text(raw: &str) -> &'static str {
         else if has(&["unknown", "stale", "missing", "unavailable", "deferred"]) { 5 } else { 4 }]
 }
 
+/// A `review` result with no reviewer attempt and no pending publication: no reviewer spawned yet (§ 2 row 13).
+fn handover(t: &Task) -> bool {
+    t.state == State::Review && t.result.is_some() && t.attempt.is_none() && t.publication.is_none()
+}
+
 /// R6: no movement for this long marks a task stuck.
 pub const STUCK_AFTER: i64 = 2 * 3600;
 
@@ -403,6 +412,7 @@ pub(crate) fn stuck(n: u64, t: &Task, deps: &[service::Blocker], last: i64, host
 
 #[derive(Default)]
 pub struct Host {
+    pub balancing: Value,
     pub diagnostics: Value,
     pub name: String,
     /// Heartbeat `service <id>` line (§ 4 step 3): the service that claims this host name.
@@ -421,6 +431,70 @@ pub struct Host {
     pub github: Option<u64>,
     /// Heartbeat `link <installation-id> <public key>` line ([host link](../docs/design/host-link.md), #1832).
     pub link: Option<String>,
+    /// Heartbeat `doctor <time> ...` text after `doctor ` ([health checks](../docs/design/host-service.md#health-checks-2194), #2194).
+    pub doctor: Option<String>,
+    /// Runtimes of the heartbeat's `login <rt> off` lines.
+    pub logins: Vec<String>,
+    /// The heartbeat issue number.
+    pub issue: u64,
+    /// Heartbeat `doctor-answer <id>`: the last `taskq doctor --hosts` request this host answered (#2194).
+    pub answer: Option<String>,
+    /// Heartbeat `doctor-reports <cause> #<N>..`: why the last `reports` check was not ok (#2246).
+    pub reports: Option<String>,
+    /// The text after `account ` of the heartbeat's account lines ([`crate::runtime::accounts::heartbeat_rows`]).
+    pub accounts: Vec<String>,
+    /// Heartbeat `selected <version> waits <reason>` (#2247): CoreQ selected another version than the host runs.
+    pub selected: Option<String>,
+    /// Heartbeat `queue {json}` (#2255): every project of the host service; none from older hosts.
+    pub queue: Option<crate::host::Queues>,
+    /// The project ttl this row was read with: the heartbeat's liveness.
+    pub ttl: i64,
+}
+
+/// R6 anomaly kinds whose source defect has an open held fix task (#2256 answer 1): the row names it.
+// ponytail: drop each entry once its task lands; the anomaly row then shows without a fix link.
+pub const ANOMALY_FIXES: [(&str, u64); 3] = [("remote-control", 2261), ("progress", 2262), ("running", 2264)];
+
+/// R10 A1: hosts serving projects no board of this view carries: each host's largest `queue` row count against the
+/// boards that carry its heartbeat. Rows of other projects stay anonymous (private names), so only counts compare.
+pub fn unseen(boards: &[Vec<(String, usize)>]) -> Vec<String> {
+    let mut hosts: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
+    for (name, n) in boards.iter().flatten() { let e = hosts.entry(name).or_default(); e.0 = e.0.max(*n); e.1 += 1; }
+    hosts.into_iter().filter(|(_, (n, seen))| n > seen).map(|(h, (n, seen))| {
+        let k = n - seen;
+        format!("- host {h} · serves {k} project{} outside this view · Next: add {} to `<install>/projects` here (R10) or run `taskq status` on {h}", if k == 1 { "" } else { "s" }, if k == 1 { "it" } else { "them" })
+    }).collect()
+}
+
+/// #2255: ready work without a spawn this long on a live host with free capacity reads STALLED.
+pub const STALL_AFTER: i64 = 600;
+
+impl Host {
+    /// #2255: one row per project the host service serves; STALLED needs a live heartbeat, ready work waiting
+    /// [`STALL_AFTER`] without a spawn and a runtime neither full nor disabled.
+    pub fn queue_rows(&self, observed: i64) -> Vec<Value> {
+        let Some(q) = &self.queue else { return vec![] };
+        let fresh = live(observed - self.updated, self.ttl);
+        let runtimes = self.balancing["runtimes"].as_object();
+        let free = runtimes.map(|r| r.values().any(|v| v["full"] == false && v["disabled"] == false));
+        q.projects.iter().map(|p| {
+            let waited = p.waiting.filter(|_| p.ready > 0).map(|w| observed - w);
+            let stalled = fresh && free == Some(true) && waited.is_some_and(|w| w >= STALL_AFTER);
+            json!({"project": p.project, "ready": fresh.then_some(p.ready), "spawn": p.spawn, "waiting": waited, "restart": q.restart.map(|r| observed - r),
+                "free": free, "stalled": stalled, "reason": p.reason})
+        }).collect()
+    }
+
+    /// #2247: the running version, and while a handover is pending the selected one with what it waits for. A
+    /// heartbeat without the `selected` line falls back to fresh diagnostics, its wait unknown.
+    pub fn version_text(&self) -> String {
+        if let Some(s) = &self.selected { return format!("{} (selected {s})", self.version); }
+        let d = &self.diagnostics;
+        match d["selected"]["value"].as_str() {
+            Some(v) if d["selected"]["state"] == "ok" && v != self.version => format!("{} (selected {v} waits unknown: older host)", self.version),
+            _ => self.version.clone(),
+        }
+    }
 }
 
 pub struct Snapshot {
@@ -443,12 +517,25 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
     let mut open: Vec<&View> = views.iter().filter(|v| v.projection.task.state != State::Closed).collect();
     open.sort_by_key(|v| (service::priority(&v.issue), v.issue.number));
     let urls = session_urls(hosts);
+    let numbers: Vec<u64> = open.iter().map(|v| v.issue.number).collect();
     let tasks = open.into_iter().map(|v| {
         let recovery=input_recovery(v);
         let last=v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created);
+        // #2257: a result whose worker execution stays unreleased past ttl gets no reviewer (§ 3 Recovery); name the host step
+        let missing_reviewer=handover(&v.projection.task).then(|| v.projection.executions.iter().find(|x| x.release.is_none())).flatten()
+            .filter(|_| observed-last >= cfg.ttl).map(|x| service::release_step(&x.host,&cfg.me));
         let executions:Vec<_>=v.projection.executions.iter().filter(|x|x.release.is_none() || recovery.is_some_and(|r|r.id==x.id))
             .map(|x| {
                 let mut value=execution_status(v.issue.number,x,hosts,observed,cfg.ttl);
+                if x.host == cfg.me && Some(x.attempt) == v.projection.task.attempt {
+                    if let Some(pid) = crate::telemetry::live_worker_pid(&cfg.install, Some(&cfg.root), v.issue.number, x.attempt, x.id) {
+                        value["process_id"] = json!(pid);
+                        if value["state"] == "unknown" {
+                            value["state"] = json!("running");
+                            value["reason"] = json!("");
+                        }
+                    }
+                }
                 // #1775 A3: `spawn reviewer` keeps `review`, so `changes` (state moves only) misses it; the current attempt's role is the fold's
                 let task=&v.projection.task;
                 value["role"]=json!(if task.attempt==Some(x.attempt) {task.role.as_deref()}
@@ -477,6 +564,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
             .map(|x|format!("execution {} on {}: {}: {}",x["id"],x["host"].as_str().unwrap_or("?"),
                 x["state"].as_str().unwrap_or("unknown"),x["reason"].as_str().unwrap_or("observation unavailable"))),
         executions,
+        missing_reviewer: missing_reviewer.clone(),
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
         admission: if v.projection.task.state==State::Ready && v.projection.reroute.is_some() {
@@ -490,19 +578,37 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
-        stuck: recovery.map(|_|observed-last).or_else(||stuck(v.issue.number, &v.projection.task, &v.blockers,last,hosts, observed, cfg.ttl)),
+        stuck: recovery.map(|_|observed-last).or(missing_reviewer.as_ref().map(|_|observed-last)).or_else(||stuck(v.issue.number, &v.projection.task, &v.blockers,last,hosts, observed, cfg.ttl)),
         churn: churn(&v.comments, observed),
         verdict: v.projection.task.result.as_ref().and_then(|_| v.projection.changes.iter().rev()
             .find_map(|(id, _, _)| v.log.iter().find(|e| e.id == *id && e.body.starts_with("taskq: result "))))
             .map(|e| core::entry_text(v.issue.number, &e.body).to_string()),
+        unlinked: if v.projection.task.state == State::Held { unlinked(v.issue.number, &v.issue.body, &numbers) } else { vec![] },
         created: Some(v.issue.created).filter(|t| *t > 0),
         steps: stage_history(v),
         since: v.projection.changes.last().and_then(|(id, ..)| v.comments.iter().find(|c| c.id == *id)).map(|c| c.created),
         failed: (v.projection.task.state == State::Failed).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: failed")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
         later: (v.projection.task.state == State::Later).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: later")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
-    let hosts = hosts.iter().map(|h| Host {
-        diagnostics: crate::service_versions::read(&h.body,h.updated,observed,cfg.ttl as i64,false),
+    let hosts = hosts.iter().map(|h| host(h, observed, cfg.ttl as i64)).collect();
+    Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
+}
+
+/// #2288: open task numbers `#N` in a held `body` that has no `Depends on` line (§ 1); a local `#N` only, never `repo#N`.
+// ponytail: names only open tasks of this snapshot; an open non-task issue goes unflagged
+fn unlinked(n: u64, body: &str, open: &[u64]) -> Vec<u64> {
+    if !core::depends(body).is_empty() { return vec![]; }
+    let mut out: Vec<u64> = body.match_indices('#').filter(|(i, _)| !body[..*i].ends_with(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '/'))
+        .filter_map(|(i, _)| body[i + 1..].split(|c: char| !c.is_ascii_digit()).next()?.parse().ok())
+        .filter(|m| *m != n && open.contains(m)).collect();
+    out.sort(); out.dedup(); out
+}
+
+/// One host of a heartbeat issue `h` read at `observed`.
+pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
+    Host {
+        balancing: crate::service::balancing_status(&h.body),
+        diagnostics: crate::service_versions::read(&h.body,h.updated,observed,ttl,false),
         name: h.title.trim_start_matches("taskq host ").to_string(),
         service: h.body.lines().find_map(|l| l.strip_prefix("service ")).map(str::to_string),
         version: h.body.lines().find_map(|l| l.strip_prefix("version ")).unwrap_or("?").to_string(),
@@ -514,8 +620,16 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         github: h.body.lines().find_map(|l| l.strip_prefix("requests api.github.com ")?.strip_suffix("/h")?.parse::<u64>().ok()),
         // only a heartbeat the board trusts may name a key a host serves
         link: h.body.lines().find_map(|l| l.strip_prefix("link ")).filter(|_| h.trusted).map(str::to_string),
-    }).collect();
-    Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
+        doctor: h.body.lines().find_map(|l| l.strip_prefix("doctor ")).map(str::to_string),
+        logins: h.body.lines().filter_map(|l| l.strip_prefix("login ")?.strip_suffix(" off")).map(str::to_string).collect(),
+        issue: h.number,
+        answer: h.body.lines().find_map(|l| l.strip_prefix("doctor-answer ")).map(str::to_string),
+        reports: h.body.lines().find_map(|l| l.strip_prefix("doctor-reports ")).map(str::to_string),
+        accounts: h.body.lines().filter_map(|l| l.strip_prefix("account ")).map(str::to_string).collect(),
+        selected: h.body.lines().find_map(|l| l.strip_prefix("selected ")).map(str::to_string),
+        queue: h.body.lines().find_map(|l| l.strip_prefix("queue ")).filter(|_| h.trusted).and_then(|j| serde_json::from_str(j).ok()),
+        ttl,
+    }
 }
 
 /// O1: ordered board stages, with unknown boundaries retained. The fold still owns transitions.
@@ -534,15 +648,16 @@ fn stage_history(v: &View) -> Vec<Value> {
     steps
 }
 
-/// `session #<N> <attempt> <url>` heartbeat lines (§ 4) by host name and attempt; only a canonical claude.ai URL.
+/// `session #<N> <attempt> <url>|unknown: <cause>` lines of trusted heartbeats (§ 4) by host name and attempt: a canonical claude.ai
+/// URL, or the `unknown: <cause>` text (#2261), which is never a link.
 pub fn session_urls(hosts: &[board::Issue]) -> HashMap<(String, u64), String> {
-    hosts.iter().flat_map(|h| {
+    hosts.iter().filter(|h| h.trusted).flat_map(|h| {
         let name = h.title.trim_start_matches("taskq host ").to_string();
         h.body.lines().filter_map(move |l| {
-            let w: Vec<&str> = l.strip_prefix("session #")?.split(' ').collect();
-            let [_, a, url] = w[..] else { return None };
-            runtime::remote_url(url).then_some(())?;
-            Some(((name.clone(), a.parse().ok()?), url.to_string()))
+            let (_, rest) = l.strip_prefix("session #")?.split_once(' ')?;
+            let (a, value) = rest.split_once(' ')?;
+            (runtime::remote_url(value) || value.starts_with("unknown: ")).then_some(())?;
+            Some(((name.clone(), a.parse().ok()?), value.to_string()))
         })
     }).collect()
 }
@@ -552,9 +667,12 @@ fn identity(b: &dyn Board, cfg: &Config) -> Value {
 }
 
 /// `taskq status`: one board read; a failed read is an incomplete snapshot with its reason, never zero tasks.
-pub fn read(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Snapshot {
-    let attempt = || -> Res<Snapshot> {
-        let (mut views, hosts) = service::views(b, &mut HashMap::new(), &mut HashMap::new(), cfg.ttl)?;
+pub fn read(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Snapshot { read_cached(b, cfg, raw, only, HashMap::new()) }
+
+/// [`read`] with comments already fetched (#2291: `taskq status` reads them in parallel).
+pub fn read_cached(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String], mut comments: service::CommentCache) -> Snapshot {
+    let mut attempt = || -> Res<Snapshot> {
+        let (mut views, hosts) = service::views(b, &mut comments, &mut HashMap::new(), cfg.ttl)?;
         views.retain(|v| in_scope(&v.issue, only));
         if let Some(who) = raw["assignee"].as_str() {
             let who = if who == "me" { b.me()? } else { who.to_string() };
@@ -599,6 +717,9 @@ pub fn status_totals(status: &Value) -> Option<BTreeMap<&'static str, usize>> {
 }
 
 impl Row {
+    fn health_warning(&self)->Option<&str> {
+        matches!(self.task.state,State::Doing|State::Review).then(||self.heartbeat["warning"].as_str()).flatten()
+    }
     /// R6: ` · stage k/n` for a task with recorded stages (§ 2 Stages), else nothing.
     fn stage_text(&self) -> String {
         self.stage.map(|(k, n)| format!(" · stage {k}/{n}")).unwrap_or_default()
@@ -611,7 +732,11 @@ impl Row {
         if let Some(p) = &self.publication {
             return Some(format!("{} {} · {}", PUBLICATION_WAIT, p.age_s.map_or("?".into(), crate::display::age), compact(&p.reason, 200)));
         }
-        if let Some(reason) = &self.execution_wait { return Some(wait_text(reason).into()); }
+        if let Some(reason) = &self.execution_wait {
+            // #2257: the worker-to-reviewer handover has no live agent to accept input
+            let text = wait_text(reason);
+            return Some(if text == WAIT_TEXTS[2] && handover(&self.task) { WAIT_TEXTS[4] } else { text }.into());
+        }
         let a = self.admission.as_ref()?;
         match (a.code, &a.host) {
             ("capacity", _) => Some(format!("{} · {}", WAIT_TEXTS[0], a.reason)),
@@ -649,8 +774,10 @@ impl Row {
         if let Some((k, reason)) = &self.task.pick { row["pick"] = json!({"id": k, "reason": reason}); }
         if !self.executions.is_empty() { row["executions"]=json!(self.executions); }
         if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); }
+        if let Some(step) = &self.missing_reviewer { row["missing_reviewer"] = json!(step); }
         if let Some(w) = self.wait() { row["wait"] = json!(w); }
-        if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
+        if !self.unlinked.is_empty() { row["unlinked"] = json!(self.unlinked); }
+        if let Some(u) = self.session_url.as_ref().filter(|u| runtime::remote_url(u)) { row["session_url"] = json!(u); }
         row["since"] = json!(self.since);
         row["created"] = json!(self.created);
         row["steps"] = json!(self.steps);
@@ -785,6 +912,20 @@ impl Snapshot {
         totals(self.tasks.iter().map(|r| r.task.state.name()))
     }
 
+    /// A3: a ready row the board alone leaves `unknown` takes the live admission of this host's `status.json`.
+    pub fn overlay_admission(&mut self, status: &Value) {
+        for r in self.tasks.iter_mut().filter(|r| r.admission.as_ref().is_some_and(|a| a.code == "unknown")) {
+            let Some(a) = status["tasks"].as_array().into_iter().flatten().find(|t| t["n"] == r.n).map(|t| &t["admission"]) else { continue };
+            let Some(code) = ADMISSION_CODES.iter().map(|c| c.0).find(|c| *c != "unknown" && a["code"] == *c) else { continue };
+            r.admission = Some(Admission { code, reason: a["reason"].as_str().unwrap_or_default().into(), observed: a["observed"].as_i64().unwrap_or(self.observed), host: a["host"].as_str().map(String::from) });
+        }
+    }
+
+    /// R10 A1: each live host's count of served projects (its heartbeat `queue` rows) as read on this board.
+    pub fn served(&self) -> Vec<(String, usize)> {
+        self.hosts.iter().filter(|h| live(self.observed - h.updated, h.ttl)).filter_map(|h| h.queue.as_ref().map(|q| (h.name.clone(), q.projects.len()))).collect()
+    }
+
     /// `status --json` (§ 5).
     pub fn json(&self) -> Value {
         let caps: &[&str] = if self.source == "host" { &HOST_CAPS } else { &BOARD_CAPS };
@@ -792,7 +933,10 @@ impl Snapshot {
             "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "vocabulary": vocabulary(), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
             "hosts": self.hosts.iter().map(|h| {
                 let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
+                if let Some(s) = &h.selected { r["selected"] = json!(s) }
+                if h.balancing["schema"]==2 {r["balancing"]=h.balancing.clone();}
                 if let Some(l) = &h.link { r["link"] = json!(l) }
+                if h.queue.is_some() { r["queue"] = json!(h.queue_rows(self.observed)) }
                 r
             }).collect::<Vec<_>>(),
             "capabilities": caps})
@@ -810,7 +954,10 @@ impl Snapshot {
     pub fn text(&self, cfg: &Config, raw: &Value) -> Res<String> { self.text_with(cfg, raw, None) }
 
     /// R6 text report with the `Decide:` part of [`crate::reports::decide`] after Questions (#1979).
-    pub fn text_with(&self, cfg: &Config, raw: &Value, decide: Option<&Value>) -> Res<String> {
+    pub fn text_with(&self, cfg: &Config, raw: &Value, decide: Option<&Value>) -> Res<String> { self.text_extra(cfg, raw, decide, vec![]) }
+
+    /// [`Self::text_with`] plus anomaly rows the caller read outside the snapshot (deploy, board quota; R6 A3).
+    pub fn text_extra(&self, cfg: &Config, raw: &Value, decide: Option<&Value>, extra: Vec<String>) -> Res<String> {
         if let Some(r) = &self.reason {
             return Err(r.clone());
         }
@@ -818,88 +965,206 @@ impl Snapshot {
         let project = cfg.root.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let mut out = vec![format!("{project} · [board]({base})"), counts_line(&self.totals())];
         let link = |r: &Row| format!("[#{} {}]({})", r.n, cell(&compact(&r.title, 60)), r.url);
-        let rows: Vec<String> = self.tasks.iter()
-            .filter(|r| !matches!(r.task.state, State::Held | State::Ask | State::Later | State::Failed))
-            .map(|r| {
-                let state = if let Some(w) = r.wait() {
-                    format!("{} · {}", r.task.state.name(), cell(&w))
-                } else if r.task.state == State::Waiting {
-                    let deps: Vec<String> = r.deps.iter().map(|b| format!("[{}]({}) {}", b.dep.name(), b.url, cell(&compact(&b.reason, 80)))).collect();
-                    format!("blocked ({})", deps.join(", "))
-                } else {
-                    r.task.state.name().to_string()
-                };
-                let health=if matches!(r.task.state,State::Doing|State::Review) {r.heartbeat["warning"].as_str().map(|w|format!(" · {}",cell(&compact(w,160)))).unwrap_or_default()} else {String::new()};
-                let state = format!("{state}{}{health}", r.stage_text());
-                let (rt, s) = session_link(cfg, raw, r);
-                format!("| {} | {state} | {} | {s} |", link(r), cell(&rt))
-            })
-            .collect();
-        if !rows.is_empty() {
-            out.push(String::new());
-            out.push("| Task | State | Runtime | Session |\n|---|---|---|---|".into());
-            out.extend(rows);
+        fn part(out: &mut Vec<String>, head: &str, rows: Vec<String>) {
+            if !rows.is_empty() { out.push(String::new()); out.push(head.into()); out.extend(rows); }
         }
-        let qs: Vec<String> = self.tasks.iter()
+        // R6 Owner: questions and review cards, each with the answer command
+        let owner: Vec<String> = self.tasks.iter()
             .filter(|r| r.task.state == State::Ask || (r.task.state == State::Review && r.task.card.is_some()))
             .map(|r| {
                 let card = r.task.card.clone().unwrap_or_default();
                 let (n, url) = (r.n, &r.url);
-                let o: Vec<String> = options(&card).iter().map(|(k, t, star)| {
+                let opts = options(&card);
+                let o: Vec<String> = opts.iter().map(|(k, t, star)| {
                     let label = cell(&compact(t, 120));
                     let label = if t.chars().count() > 120 { format!("[{label}]({url})") } else { label };
                     format!("{n}.{k} {label}{}", if *star { " ★" } else { "" })
                 }).collect();
                 // § 2: an `ask` card without options is an owner action
-                let o = if o.is_empty() && r.task.state == State::Ask { cell(&format!("waiting for owner: {}", compact(&brief(&card), 120))) } else { o.join(" · ") };
+                let action = opts.is_empty() && r.task.state == State::Ask;
+                let o = if action { cell(&format!("waiting for owner: {}", compact(&brief(&card), 120))) } else { o.join(" · ") };
                 let o = match &r.task.pick { Some((k, why)) => format!("{o} · PM {n}.{k}: {}", cell(&compact(why, 160))), None => o };
-                format!("| {} | [{}]({}) | {o} |", link(r), cell(&compact(&brief(&card), 160)), url)
+                let next = match (&r.task.pick, opts.iter().find(|x| x.2)) {
+                    (Some((k, _)), _) => format!("`taskq answer {n}.{k}`"),
+                    (None, Some((k, _, _))) => format!("`taskq answer {n}.{k}`"),
+                    _ if action => format!("`taskq answer {n} --text <done>`"),
+                    _ => format!("answer on [the board]({url})"),
+                };
+                format!("| {} | [{}]({}) | {o} | {next} |", link(r), cell(&compact(&brief(&card), 160)), url)
             })
             .collect();
-        if !qs.is_empty() {
-            out.push(String::new());
-            out.push("Questions (answer N.M):\n| Question | Brief reason | Options |\n|---|---|---|".into());
-            out.extend(qs);
+        part(&mut out, "Owner (answer N.M):\n| Task | Question | Options | Next |\n|---|---|---|---|", owner);
+        // R6 PM: Decide, then one Held and stuck list with its reason (A5)
+        let decide = decide.and_then(decide_text);
+        let (decide, decide_unknown) = match decide { Some(d) if d.starts_with("Decide: unknown") => (None, Some(d)), d => (d, None) };
+        let held: Vec<String> = self.tasks.iter().filter_map(|r| {
+            let n = r.n;
+            let (reason, next) = match r.task.state {
+                State::Held if !r.unlinked.is_empty() => {
+                    let m: Vec<String> = r.unlinked.iter().map(|m| format!("#{m}")).collect();
+                    (format!("PM: names open {} without Depends on", m.join(", ")), format!("add `Depends on {}`, then `taskq start {n}`", m[0]))
+                }
+                State::Held => ("PM".to_string(), format!("`taskq start {n}`")),
+                State::Waiting => {
+                    let deps: Vec<String> = r.deps.iter().map(|b| format!("[{}]({}) {}", b.dep.name(), b.url, cell(&compact(&b.reason, 80)))).collect();
+                    (format!("dependency ({})", deps.join(", ")), if r.stuck.is_some() { "re-read the dependencies; every blocker is closed".into() } else { "wait for the dependency".into() })
+                }
+                State::Later => (match r.task.until.as_deref().and_then(crate::board::iso) {
+                    Some(at) => format!("owner until {}: {}", local_time(at), cell(&compact(r.later.as_deref().unwrap_or("").trim_start_matches("Reason: "), 160))),
+                    None => "owner".into(),
+                }, format!("`taskq requeue {n}`")),
+                State::Ask if r.stuck.is_some() => ("owner".into(), "answer the Owner row".into()),
+                _ => return None,
+            };
+            let stuck = r.stuck.map(|a| format!(" · stuck {}", age(a))).unwrap_or_default();
+            Some(format!("| {}{} | {reason}{stuck} | {next} |", link(r), r.stage_text()))
+        }).collect();
+        let mut pm = vec![];
+        if let Some(d) = decide { pm.push(d); }
+        if !held.is_empty() { pm.push(format!("Held and stuck:\n| Task | Reason | Next |\n|---|---|---|\n{}", held.join("\n"))); }
+        if !pm.is_empty() { out.push(String::new()); out.push("PM:".into()); out.push(pm.join("\n\n")); }
+        // R6 Anomalies (A3/A4): every stale, unknown or missing source, with its reason, action and open fix task
+        let fix = |kind: &str| ANOMALY_FIXES.iter().find(|f| f.0 == kind).map(|f| format!(" · fix [taskq#{}](https://github.com/taskqorg/taskq/issues/{})", f.1, f.1)).unwrap_or_default();
+        let doctor = "Next: inspect the host service (`taskq doctor --hosts`)";
+        let mut anomalies = vec![];
+        for h in &self.hosts {
+            let fresh = live(self.observed - h.updated, cfg.ttl);
+            if !fresh { anomalies.push(format!("- host {} · heartbeat stale {} · {doctor}", h.name, age(self.observed - h.updated))); continue; }
+            if h.focus.as_deref() == Some("unknown") { anomalies.push(format!("- host {} · focus unknown: it admits nothing · {doctor}", h.name)); }
+            let rts: Vec<&String> = h.balancing["weights"].as_object().into_iter().flat_map(|w| w.keys()).collect();
+            for (kind, key, what) in [("running", "running", "running count"), ("headroom", "headroom", "quota headroom")] {
+                let missing: Vec<&str> = rts.iter().filter(|rt| { let l = &h.balancing["runtimes"][rt.as_str()]["load"]; l[key].is_null() && (key != "headroom" || l["headroom_reason"].is_null()) }).map(|rt| rt.as_str()).collect();
+                if !missing.is_empty() { anomalies.push(format!("- host {} · {what} not reported for {} · {doctor}{}", h.name, missing.join(", "), fix(kind))); }
+            }
+            for q in h.queue_rows(self.observed) {
+                let name = cell(&compact(q["project"].as_str().unwrap_or("other project"), 80));
+                if q["stalled"] == true {
+                    anomalies.push(format!("- host {} {name} · STALLED {}: ready {} without a spawn: {} · {doctor}", h.name, age(q["waiting"].as_i64().unwrap_or(0)), q["ready"], cell(&compact(q["reason"].as_str().unwrap_or("no reason logged"), 160))));
+                } else if q["restart"].as_i64().is_some_and(|r| r >= STALL_AFTER) {
+                    anomalies.push(format!("- host {} {name} · restart pending {} · {doctor}", h.name, age(q["restart"].as_i64().unwrap_or(0))));
+                }
+            }
         }
-        if let Some(d) = decide.and_then(decide_text) {
-            out.push(String::new());
-            out.push(d);
+        if let Some(d) = decide_unknown { anomalies.push(format!("- {} · Next: rerun `taskq status` after the next service pass", d.trim_end())); }
+        let stamp=|v:&Value|v.as_i64().filter(|at|*at>0).map(crate::board::stamp).unwrap_or("unknown".into());
+        for r in &self.tasks {
+            if let Some(warning) = r.health_warning() {
+                let field=|v:&Value| {
+                    let full=v.as_str().unwrap_or("unknown");let text=cell(&compact(full,160));
+                    if full.chars().count()>160 {format!("[{text}]({})",r.url)} else {text}
+                };
+                let h=&r.heartbeat;let p=&h["progress"];
+                let now=h["as_of"].as_i64().unwrap_or(self.observed);
+                let observed=|v:&Value|v.as_i64().filter(|at|*at>0).map(|at| {
+                    let elapsed=now.saturating_sub(at);
+                    format!("{} · age {}",stamp(v),if elapsed<0 {format!("future by {}",age(elapsed.saturating_neg()))} else {age(elapsed)})
+                }).unwrap_or("unknown · age unknown".into());
+                let rt=r.task.session.as_deref().and_then(|s|s.split_once(':')).map(|p|p.0).unwrap_or("unknown");
+                let current:Vec<_>=r.executions.iter().filter(|x|x["attempt"].as_u64()==r.task.attempt).map(|x|x["id"].as_u64().map(|id|id.to_string()).unwrap_or("unknown".into())).collect();
+                let execution=match current.len() {0=>"unknown".into(),1=>current[0].clone(),_=>format!("{} (ambiguous)",current.join(", "))};
+                let action=if h["freshness"]!="fresh" {"Inspect the owning host heartbeat and service status; preserve execution."}
+                    else if matches!(h["executor"]["state"].as_str(),Some("awaiting execution"|"awaiting acceptance")) {"Inspect input acceptance on the owning host; do not resubmit."}
+                    else if p["status"]=="overdue" {"Inspect the pending tool in the owning session; preserve execution."}
+                    else {"Inspect the owning session and native progress source; preserve execution."};
+                let source_fix = if h["freshness"]=="fresh" && !matches!(p["status"].as_str(),Some("quiet"|"active"|"overdue")) { fix("progress") } else { String::new() };
+                anomalies.push(format!("- [{} #{} {}]({}) · {} · Next: {action}{source_fix}",cell(&project),r.n,cell(&compact(&r.title,60)),r.url,cell(&compact(warning,160))));
+                anomalies.push(format!("  Task: runtime {} · host {} · attempt {} · execution {execution}",cell(rt),field(&h["host"]),r.task.attempt.map(|a|a.to_string()).unwrap_or("unknown".into())));
+                anomalies.push(format!("  Heartbeat: {} · {} · {} · {}",field(&h["freshness"]),field(&h["source"]),observed(&h["observed"]),field(&h["reason"])));
+                anomalies.push(format!("  Executor: {} · {} · {}",field(&h["executor"]["state"]),field(&h["executor"]["source"]),observed(&h["executor"]["observed"])));
+                let source=if p["clock"].is_string() {format!("{} ({})",field(&p["source"]),field(&p["clock"]))} else {field(&p["source"])};
+                anomalies.push(format!("  Progress: {} · {source} · {} · last event {} · {}",field(&p["status"]),observed(&p["observed"]),stamp(&p["last_event"]),field(&p["reason"])));
+            } else if matches!(r.task.state, State::Doing | State::Review) {
+                if let Some(a) = r.stuck_age() {
+                    // #2257: a result no reviewer can take yet names the host step that releases it
+                    anomalies.push(match &r.missing_reviewer {
+                        Some(step) => format!("- {} · review stuck {}; reviewer not started · Next: {step}", link(r), age(a)),
+                        None => format!("- {} · {} stuck {}: no live lease or overdue progress · Next: inspect the owning host; preserve execution", link(r), r.task.state.name(), age(a)),
+                    });
+                }
+            }
+            if matches!(r.task.state, State::Doing | State::Review) {
+                if let Some(host) = session_link(cfg, raw, r).2 {
+                    // #2261: the owning host's heartbeat names why the link is missing; none means that host never read it.
+                    let why = r.session_url.as_deref().and_then(|u| u.strip_prefix("unknown: ")).map_or_else(|| "not in the heartbeat".to_string(), |c| format!("unknown: {}", cell(&compact(c, 160))));
+                    anomalies.push(format!("- {} · {host} Remote Control URL {why} · Next: open the session on {host}{}", link(r), fix("remote-control")));
+                }
+            }
         }
-        let mut parked = vec![];
-        for state in [State::Held, State::Later] {
-            let rows: Vec<String> = self.tasks.iter().filter(|r| r.task.state == state).map(|r| match r.task.until.as_deref().and_then(crate::board::iso) {
-                Some(at) => format!("{}{} until {}: {}", link(r), r.stage_text(), local_time(at), compact(r.later.as_deref().unwrap_or("").trim_start_matches("Reason: "), 160)),
-                None => format!("{}{}", link(r), r.stage_text()),
+        anomalies.extend(extra);
+        part(&mut out, "Anomalies:", anomalies);
+        // R6 Running: who acts on each doing/review row
+        let running: Vec<String> = self.tasks.iter()
+            .filter(|r| r.task.state == State::Doing || (r.task.state == State::Review && r.task.card.is_none()))
+            .map(|r| {
+                let actor = match r.task.state {
+                    State::Review if r.task.enqueued.is_some() || r.publication.is_some() => "merge queue",
+                    _ if r.task.session.is_none() => "none",
+                    State::Review => "reviewer",
+                    _ => "worker",
+                };
+                let sha = r.task.result.as_deref().map(|s| format!(" · result {}", &s[..s.len().min(7)])).unwrap_or_default();
+                let wait = r.wait().map(|w| format!(" · {}", cell(&w))).unwrap_or_default();
+                let health = if r.health_warning().is_some() { " · see Anomalies" } else { "" };
+                let (rt, s, _) = session_link(cfg, raw, r);
+                let next = if r.health_warning().is_some() || actor == "none" { "see Anomalies".into() }
+                    else if r.task.result.is_some() { format!("`taskq results {} --json`", r.n) } else { "wait".into() };
+                format!("| {} | {}{sha}{wait}{}{health} | {actor} | {} | {s} | {next} |", link(r), r.task.state.name(), r.stage_text(), cell(&rt))
             }).collect();
-            if !rows.is_empty() { parked.push(format!("{}: {}", crate::display::name(state.name()), rows.join(", "))); }
-        }
-        if !parked.is_empty() {
-            out.push(String::new());
-            out.extend(parked);
-        }
+        part(&mut out, "Running:\n| Task | State | Actor | Runtime | Session | Next |\n|---|---|---|---|---|---|", running);
+        // R6 Ready: why the service has not started it yet
+        let ready: Vec<String> = self.tasks.iter().filter(|r| r.task.state == State::Ready).map(|r| {
+            let a = r.admission.as_ref();
+            // #2290: each live host's own reason from its heartbeat queue row, so another host's refusal shows too;
+            // a board-level refusal (orphan host label, routing writer) holds on every host and keeps its own text
+            let board = a.is_some_and(|a| a.host.is_none() && (a.code == "host" || a.reason == ROUTING_WAIT));
+            let hosts: Vec<(&str, &String)> = self.hosts.iter().filter(|h| !board && live(self.observed - h.updated, cfg.ttl))
+                .filter_map(|h| Some((h.name.as_str(), h.queue.as_ref()?.projects.iter().find(|p| p.project.as_deref() == Some(&cfg.repo))?.tasks.get(&r.n)?)))
+                .collect();
+            // every host keeps its share of the 160-character reason
+            let hosts: Vec<String> = hosts.iter().map(|(h, why)| format!("{h}: {}", compact(why, (150 / hosts.len()).saturating_sub(h.chars().count() + 2).max(12)))).collect();
+            let why = (!hosts.is_empty()).then(|| hosts.join("; ")).or_else(|| r.wait()).or_else(|| a.map(|a| if a.reason.is_empty() { a.code.to_string() } else if a.code == "unknown" { a.reason.to_string() } else { format!("{}: {}", a.code, a.reason) })).unwrap_or_else(|| "no host decision".into());
+            let next = match a.map(|a| a.code) {
+                Some("admitted") => "starting",
+                Some("capacity" | "load-gate") => "wait for a free slot",
+                Some("host" | "capability" | "labels" | "focus") => "fix the labels or the host focus",
+                Some("login") => "log the runtime in on the host",
+                Some("usage-limit") => "wait for the usage limit reset",
+                Some("access") => "check the runtime access grant",
+                Some("hold") => "wait for the hold to clear",
+                Some("dependency") => "wait for the dependency",
+                _ => "wait for the next host pass",
+            };
+            format!("| {}{} | {} | {next} |", link(r), r.stage_text(), cell(&compact(&why, 160)))
+        }).collect();
+        part(&mut out, "Ready:\n| Task | Why not started | Next |\n|---|---|---|", ready);
         let failed: Vec<String> = self.tasks.iter().filter(|r| r.task.state == State::Failed)
-            .map(|r| format!("| {} | [{}]({}) |", link(r), cell(&compact(r.failed.as_deref().unwrap_or(""), 160)), r.url))
+            .map(|r| format!("| {} | [{}]({}) | `taskq requeue {}` |", link(r), cell(&compact(r.failed.as_deref().unwrap_or(""), 160)), r.url, r.n))
             .collect();
-        if !failed.is_empty() {
-            out.push(String::new());
-            out.push("Failed:\n| Task | Reason |\n|---|---|".into());
-            out.extend(failed);
-        }
-        let stuck: Vec<String> = self.tasks.iter().filter_map(|r| r.stuck_age().map(|a| format!("{} ({}, {})", link(r), r.task.state.name(), age(a)))).collect();
-        if !stuck.is_empty() {
-            out.push(String::new());
-            out.push(format!("Stuck: {}", stuck.join(", ")));
-        }
-        // #1625: a heartbeat older than ttl reads stale, so a stopped service shows within ttl of its last beat
-        let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}{}", h.name, h.version, age(self.observed - h.updated),
-            if live(self.observed - h.updated, cfg.ttl) { "" } else { " stale" }, h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
+        part(&mut out, "Failed:\n| Task | Reason | Next |\n|---|---|---|", failed);
+        // #1625: a heartbeat older than ttl is an anomaly row; unknown load values move there too
+        let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}", h.name, h.version_text(), age(self.observed - h.updated),
+            h.focus.as_ref().filter(|f| *f != "unknown").map(|f| format!(" focus {f}")).unwrap_or_default()
             + &h.limits.iter().map(|l| if l.starts_with("quota ") {format!(" {l}")} else {l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))}).collect::<String>()
+            + &h.balancing["weights"].as_object().map(|weights|weights.iter().map(|(rt,w)| {
+                let load=&h.balancing["runtimes"][rt]["load"];
+                let running=load["running"].as_u64().map(|n|format!(" running {n} /")).unwrap_or_default();
+                format!(" {rt}{running} weight {w}{}",load["headroom"].as_f64().map(|n|format!(" (headroom {:.1}%)",n*100.0))
+                    .or_else(||load["headroom_reason"].as_str().map(|c|format!(" (headroom n/a: {})",cell(c)))).unwrap_or_default())
+            }).collect::<String>()).unwrap_or_default()
             + &h.tray.as_ref().map(|code| format!(" tray {code}")).unwrap_or_default()
             + &h.requests.as_ref().map(|n| format!(" {n} req/h{}", h.github.map(|g| format!(" (github.com {g})")).unwrap_or_default())).unwrap_or_default())).collect();
         if !hs.is_empty() {
             out.push(String::new());
             out.push(format!("Hosts: {}", hs.join(", ")));
         }
+        // quiet rows (no ready work, no pending restart) stay in `--json` only; stale hosts read in Anomalies
+        let queues: Vec<String> = self.hosts.iter().filter(|h| live(self.observed - h.updated, cfg.ttl)).flat_map(|h| h.queue_rows(self.observed).into_iter().filter(|r| r["ready"] != 0 || r["restart"].is_i64()).map(move |r| {
+            let when = |v: &Value| v.as_i64().map_or("none".into(), |s| age(s));
+            format!("- {} {} ready {} · last spawn {} · restart pending {}{}", h.name, r["project"].as_str().unwrap_or("other project"),
+                r["ready"], r["spawn"].as_i64().map_or("none".into(), crate::board::stamp),
+                when(&r["restart"]), if r["stalled"] == true { format!(" · STALLED {}", when(&r["waiting"])) } else { String::new() })
+        })).collect();
+        part(&mut out, "Queues:", queues);
         Ok(out.join("\n"))
     }
 }
@@ -910,7 +1175,7 @@ pub fn decide_text(d: &Value) -> Option<String> {
         return Some(format!("Decide: unknown ({})", compact(d["reason"].as_str().unwrap_or("reports not collected yet"), 160)));
     }
     let rows: Vec<String> = d["rows"].as_array()?.iter().map(|r| format!("| [#{} {}]({}) | {} | {} | {} |",
-        r["n"], cell(&compact(r["title"].as_str().unwrap_or(""), 60)), r["url"].as_str().unwrap_or(""), r["verdict"].as_str().unwrap_or("unknown"),
+        r["n"], cell(&compact(r["title"].as_str().unwrap_or(""), 60)), r["url"].as_str().unwrap_or(""), r["verdict"].as_str().unwrap_or("none"),
         age(r["age_s"].as_i64().unwrap_or(0)), cell(r["recommendation"].as_str().unwrap_or("")))).collect();
     if rows.is_empty() { return None; }
     Some(format!("Decide:\n| Report | Verdict | Age | Recommendation |\n|---|---|---|---|\n{}", rows.join("\n")))
@@ -933,9 +1198,10 @@ pub fn brief(card: &str) -> String {
     card.lines().next().unwrap_or_default().to_string()
 }
 
-fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String) {
+/// Runtime, session cell and, for a remote session without its Remote Control URL, the host (an anomaly row).
+fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String, Option<String>) {
     let (t, n) = (&r.task, r.n);
-    let Some((rt, id)) = t.session.as_deref().and_then(|s| s.split(' ').next()).and_then(|s| s.split_once(':')) else { return (String::new(), String::new()) };
+    let Some((rt, id)) = t.session.as_deref().and_then(|s| s.split(' ').next()).and_then(|s| s.split_once(':')) else { return (String::new(), String::new(), None) };
     let host = t.session.as_deref().and_then(|s| s.rsplit(' ').next()).unwrap_or_default();
     let own = host == cfg.me;
     let (id, url) = runtime::session_link(&cfg.root, own, rt, id, n, t.attempt.unwrap_or(0), t.role.as_deref().unwrap_or_default(), r.session_url.clone());
@@ -943,19 +1209,19 @@ fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String) {
     let link = match rt {
         _ if id == "-" && r.accepted => format!("{host}: running"),
         _ if id == "-" => format!("{host}: starting"),
-        _ if runtime::of(rt).remote => url.map_or_else(|| format!("{host}: Remote Control unknown"), |url| format!("[{host}]({url})")),
+        _ if runtime::of(rt).has("remote-control") => match url { Some(url) => format!("[{host}]({url})"), None => return (rt.to_string(), host.clone(), Some(host)) },
         // R6 3: a Codex thread opens only on its own host; elsewhere the DashQ progress page, else the host alone
         _ if !own => crate::enrollment::progress_page(&cfg.install, &cfg.repo).map_or_else(|| host.clone(), |p| format!("[{host}]({p}{n})")),
         _ => match url {
             None => host.clone(),
-            Some(url) if std::env::var("TASKQ_CLIENT").is_ok_and(|c| runtime::of(&c).codex && runtime::of(&c).child) => format!("[{host}]({url})"),
+            Some(url) if std::env::var("TASKQ_CLIENT").is_ok_and(|c| runtime::of(&c).has("thread-link") && runtime::of(&c).has("cli")) => format!("[{host}]({url})"),
             Some(url) => match raw["pages"].as_str() {
                 Some(p) => format!("[{host}]({}/open.html#{url})", p.trim_end_matches('/')),
                 None => format!("{host}: `{url}`"),
             },
         },
     };
-    (rt.to_string(), link)
+    (rt.to_string(), link, None)
 }
 
 #[cfg(test)]
@@ -978,8 +1244,8 @@ mod tests {
             crate::core::Entry{id:2,body:"taskq: start".into(),edited:false},
             crate::core::Entry{id:3,body:"taskq: spawn worker codex:s mac".into(),edited:false},
             crate::core::Entry{id:4,body:"taskq: result deadbeef attempt 999".into(),edited:false}];
-        let comments=vec![board::Comment{id:1,body:log[0].body.clone(),created:100,trusted:true,edited:false,author:String::new()},
-            board::Comment{id:2,body:log[1].body.clone(),created:150,trusted:true,edited:false,author:String::new()}];
+        let comments=vec![board::Comment{id:1,body:log[0].body.clone(),created:100,trusted:true,edited:false,author:String::new(),read:None},
+            board::Comment{id:2,body:log[1].body.clone(),created:150,trusted:true,edited:false,author:String::new(),read:None}];
         let v=View {issue:board::Issue{number:1,created:100,..Default::default()},projection:crate::core::project(1,&log,false),log,comments,blockers:vec![]};
         let steps=stage_history(&v);
         assert_eq!(steps.iter().map(|s|s["state"].as_str().unwrap()).collect::<Vec<_>>(),["ready","held","ready","doing"]);
@@ -991,8 +1257,8 @@ mod tests {
     #[test]
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
-        let mut r = Row { heartbeat: Value::Null, worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+        let mut r = Row { heartbeat: Value::Null, worker: None, conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
+            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -1005,7 +1271,7 @@ mod tests {
     fn rows_name_the_answer_that_closed_the_question() {
         let mut r = Row { n: 1, ..Default::default() };
         assert!(r.json().get("answered").is_none(), "no answer, no field");
-        r.answered = Some(crate::dispatch::Answered { by: "alex".into(), text: "use x".into() });
+        r.answered = Some(crate::dispatch::Answered { by: "alex".into(), text: "use x".into(), ..Default::default() });
         assert_eq!(r.json()["answered"], json!({"by": "alex", "text": "use x"}));
     }
 
@@ -1015,8 +1281,8 @@ mod tests {
     fn codex_thread_links_only_on_its_host_else_dashq_progress() {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
-        let row = |host: &str| Row { heartbeat: Value::Null, worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+        let row = |host: &str| Row { heartbeat: Value::Null, worker: None, conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
+            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -1063,13 +1329,32 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { heartbeat: Value::Null, worker: None, conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
+            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
-        assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");
+        assert_eq!(text.lines().filter(|l| l.starts_with("| ") && l.contains("stuck")).collect::<Vec<_>>(), ["| [#1 T](u1) | owner · stuck 2h | answer the Owner row |"], "{text}");
         let rows = snap.json()["tasks"].clone();
         assert_eq!((rows[0]["stuck"].clone(), rows[0]["age_s"].clone()), (json!(true), json!(9000)));
         assert_eq!((rows[1]["stuck"].clone(), rows[1].get("age_s")), (json!(false), None));
+    }
+
+    // Chain: #2261 heartbeat cause -> status anomaly. Risk: a heartbeat cause breaks the summary markdown or adds a link,
+    // or an untrusted host issue supplies the cause.
+    #[test]
+    fn session_link_cause_is_escaped_and_read_only_from_trusted_heartbeats() {
+        let cause = "unknown: failed | x\n[open](https://evil.example)";
+        let beat = |trusted| board::Issue { title: "taskq host win".into(), body: format!("session #1 7 {cause}"), trusted, ..Default::default() };
+        assert!(session_urls(&[beat(false)]).is_empty(), "untrusted heartbeat");
+        // a heartbeat line ends at the newline; the anomaly still escapes a cause that holds one
+        assert_eq!(session_urls(&[beat(true)]).get(&("win".to_string(), 7)).map(String::as_str), Some("unknown: failed | x"));
+        let task = Task { state: State::Doing, attempt: Some(7), session: Some("claude:s-1 win".into()), ..Default::default() };
+        let row = Row { n: 1, title: "T".into(), url: "u1".into(), task, accepted: true, session_url: Some(cause.into()), ..Default::default() };
+        let mut cfg = crate::tests::cfg();
+        cfg.me = "mac".into();
+        let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row], hosts: vec![] };
+        let text = snap.text(&cfg, &json!({})).unwrap();
+        let line = text.lines().find(|l| l.contains("Remote Control URL")).unwrap_or_else(|| panic!("{text}"));
+        assert!(line.contains(r"unknown: failed \| x \[open\](https://evil.example)") && !line.contains("[open]"), "{line}");
     }
 
     // Chain: #1625 R6 6 Hosts line. Risk: a host whose service stopped keeps reading as a plain age, never as down.
@@ -1081,7 +1366,105 @@ mod tests {
             hosts: vec![host("mac", 10_000 - ttl), host("win", 10_000 - ttl - 1)] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
-        assert!(line.contains("mac v1.0 ") && !line.split(", ").next().unwrap().contains("stale") && line.split(", ").nth(1).unwrap().ends_with(" stale"), "{line}");
+        assert!(line.contains("mac v1.0 ") && !line.contains("stale"), "{line}");
+        assert_eq!(text.lines().filter(|l| l.contains("stale")).collect::<Vec<_>>(), ["- host win · heartbeat stale 5m · Next: inspect the host service (`taskq doctor --hosts`)"], "R6 A3: a stale host is one anomaly row");
+    }
+
+    // Chain: heartbeat `selected` line -> status Hosts line and JSON (#2247 A1, A2). Risk: during a handover status
+    // showed only the running version, so a rollout read as done or stuck. Protection: equal versions show one value;
+    // a pending handover shows running, selected and the attempts it waits for; an older host without the line falls
+    // back to fresh diagnostics with its wait unknown, never to the running version alone.
+    #[test]
+    fn hosts_line_shows_selected_version_and_its_waits_during_handover() {
+        let beat = |title: &str, body: &str| board::Issue { title: title.into(), body: body.into(), updated: 1000, trusted: true, ..Default::default() };
+        let snap = from_views("board", &crate::board::Fake::default(), &crate::tests::cfg(), 1000, &[], &[
+            beat("taskq host mac", "version 4.6.62"),
+            beat("taskq host win", "version 4.6.61\nselected 4.6.62 waits #12 attempt 41, #15 attempt 52")]);
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
+        assert!(line.contains("mac v4.6.62 ") && !line.split(", win").next().unwrap().contains("selected"), "{line}");
+        assert!(line.contains("win v4.6.61 (selected 4.6.62 waits #12 attempt 41, #15 attempt 52) "), "{line}");
+        let hosts = snap.json()["hosts"].clone();
+        assert_eq!((hosts[0].get("selected"), hosts[1]["selected"].as_str()), (None, Some("4.6.62 waits #12 attempt 41, #15 attempt 52")));
+        let old = Host { version: "4.6.61".into(), diagnostics: json!({"selected": {"value": "4.6.62", "state": "ok"}}), ..Default::default() };
+        assert_eq!(old.version_text(), "4.6.61 (selected 4.6.62 waits unknown: older host)");
+        let same = Host { version: "4.6.62".into(), diagnostics: json!({"selected": {"value": "4.6.62", "state": "ok"}}), ..Default::default() };
+        assert_eq!(same.version_text(), "4.6.62");
+        let stale = Host { version: "4.6.61".into(), diagnostics: json!({"selected": {"value": "4.6.62", "state": "stale"}}), ..Default::default() };
+        assert_eq!(stale.version_text(), "4.6.61", "a stale selection is not reported as pending");
+    }
+
+    // Chain: #2256 A1 heartbeat `queue` counts -> installation anomaly row. Case: win serves desiign, a project
+    // missing from this host's list, and its rows elsewhere are anonymous. Risk: that project drops out of the view.
+    #[test]
+    fn unseen_projects_are_an_anomaly_row() {
+        let w = |n| ("win".to_string(), n);
+        assert_eq!(super::unseen(&[vec![w(3)], vec![w(3), ("mac".into(), 1)]]),
+            ["- host win · serves 1 project outside this view · Next: add it to `<install>/projects` here (R10) or run `taskq status` on win"]);
+        assert!(super::unseen(&[vec![w(2)], vec![w(2)]]).is_empty(), "every served project on a read board: no row");
+    }
+
+    // Chain: #2255 heartbeat `queue` -> status `Queues:` rows. Case 2026-11-03: win hung on re-exec 00:42-01:51Z,
+    // ready work in taskq and another project never spawned, status showed only `running unknown`. Risk: a host with
+    // ready work and free capacity stalls unseen; a short wait, an empty queue or a full host reads as a stall.
+    #[test]
+    fn queue_rows_flag_the_2026_11_03_win_stall_on_every_project() {
+        let at = |t: &str| crate::board::iso(&format!("2026-11-03T{t}:00Z")).unwrap();
+        let body = |full: bool, ready: u64, waiting: &str| format!("version 4.6.61\nbalancing {}\nqueue {}",
+            json!({"schema": 1, "mode": "any", "default_runtime": "claude", "allowed_runtimes": null, "auto_reroute": false, "has": [], "focus": ["all"], "routing": [],
+                "runtimes": crate::runtime::RUNTIMES.iter().map(|rt| (rt.to_string(), json!({"code": "hold", "reason": format!("{rt}: hold; see host diagnostics"),
+                    "full": full, "disabled": false, "quota": []}))).collect::<serde_json::Map<_, _>>()}),
+            json!({"restart": at("00:42"), "projects": [
+                {"project": "taskqorg/taskq", "ready": ready, "spawn": at("00:30"), "waiting": at(waiting), "reason": "host restart pending"},
+                {"project": null, "ready": 1, "spawn": null, "waiting": at(waiting), "reason": "host restart pending"}]}));
+        let snap = |observed: &str, full, ready, waiting: &str| {
+            let beat = board::Issue { title: "taskq host win".into(), body: body(full, ready, waiting), updated: at(observed) - 30, trusted: true, ..Default::default() };
+            from_views("board", &crate::board::Fake::default(), &crate::tests::cfg(), at(observed), &[], &[beat])
+        };
+        let stalled = |s: &Snapshot| s.json()["hosts"][0]["queue"].as_array().unwrap().iter().map(|r| r["stalled"] == true).collect::<Vec<_>>();
+        let hang = snap("00:55", false, 2, "00:42");
+        let text = hang.text(&crate::tests::cfg(), &json!({})).unwrap();
+        assert!(text.contains("Queues:\n- win taskqorg/taskq ready 2 · last spawn 2026-11-03T00:30:00Z · restart pending 13m · STALLED 13m\n- win other project ready 1 · last spawn none · restart pending 13m · STALLED 13m"), "{text}");
+        assert!(text.contains("Anomalies:\n- host win taskqorg/taskq · STALLED 13m: ready 2 without a spawn: host restart pending · Next: inspect the host service (`taskq doctor --hosts`)\n- host win other project · STALLED 13m: ready 1"), "A4: the win hang replay is an anomaly row: {text}");
+        assert_eq!(stalled(&hang), [true, true]);
+        assert_eq!(stalled(&snap("00:51", false, 2, "00:42")), [false, false], "9 min is not yet a stall");
+        assert_eq!(stalled(&snap("00:55", true, 2, "00:42")), [false, false], "a full host is not stalled");
+        assert_eq!(stalled(&snap("00:55", false, 0, "00:42")), [false, true], "no ready work in taskq, the other project still waits");
+    }
+
+    // Chain: #2290 each host's admission pass -> its heartbeat `queue` row `tasks` -> status Ready row per host. Case
+    // 2026-11-03: taskq#2200 and agentq#210 sat ready on two hosts with `no host decision`. Risk: a host's refusal
+    // (weight, quota, claim mode, focus scope, label or load gate) stays invisible, a stale host or another
+    // project's row speaks for this board, or a long reason crowds out the other hosts.
+    #[test]
+    fn ready_rows_name_each_hosts_reason() {
+        let at = crate::board::iso("2026-11-03T12:00:00Z").unwrap();
+        let reasons = [
+            ("weight", "capacity: every candidate runtime has weight 0; pin one with run-<runtime>"),
+            ("quota", "usage-limit: claude: until 2026-11-03T15:00:00Z"),
+            ("claim mode", "host: spillover waits: primary mac has effective claude capacity; grace 60 s"),
+            ("scope", "focus: focus p0"),
+            ("label", "labels: conflicting run-* labels"),
+            ("load gate", "load-gate: host load gate or 30 s launch spacing"),
+        ];
+        let tasks = |shift: usize| json!(reasons.iter().enumerate().map(|(i, r)| ((i + 1).to_string(), json!(reasons[(i + shift) % reasons.len()].1))).collect::<serde_json::Map<_, _>>());
+        let beat = |name: &str, project: &str, age: i64, shift| board::Issue { title: format!("taskq host {name}"), trusted: true, updated: at - age,
+            body: format!("version 4.6.62\nqueue {}", json!({"restart": null, "projects": [{"project": project, "ready": 6, "spawn": null, "waiting": null, "reason": null, "tasks": tasks(shift)}]})), ..Default::default() };
+        let mut snap = from_views("board", &crate::board::Fake::default(), &crate::tests::cfg(), at, &[],
+            &[beat("mac", "o/r", 30, 0), beat("win", "o/r", 30, 1), beat("old", "o/r", 3600, 2), beat("other", "o/other", 30, 2)]);
+        snap.tasks = (1..=7).map(|n| Row { n, title: format!("T{n}"), url: format!("u{n}"), task: Task { state: State::Ready, ..Default::default() }, ..Default::default() }).collect();
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        let ready: Vec<&str> = text.lines().filter(|l| l.starts_with("| [#")).collect();
+        assert_eq!(ready.len(), 7, "A1: one line per unspawned ready task: {text}");
+        for (i, (kind, reason)) in reasons.iter().enumerate() {
+            let code = reason.split(':').next().unwrap();
+            let line = ready[i];
+            assert!(line.starts_with(&format!("| [#{} T{}](u{}) | mac: {code}", i + 1, i + 1, i + 1)), "A2 {kind}: {line}");
+            assert!(line.contains("; win: "), "A2 {kind}: the second host keeps its share: {line}");
+            assert!(!line.contains("old:") && !line.contains("other:"), "a stale host or another project never speaks: {line}");
+        }
+        assert!(ready[0].contains("mac: capacity: every candidate runtime has weight 0"), "{}", ready[0]);
+        assert!(ready[6].contains("| no host decision |"), "a task no host reported keeps the fallback: {}", ready[6]);
     }
 
     // Chain: § 4 Host link heartbeat key. Risk: an untrusted `taskq host` issue publishes a key that hosts then serve.
@@ -1104,7 +1487,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         let snap = Snapshot { source: "board", observed: at, reason: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
             tasks: vec![row(1, Some("2026-11-05T09:00:00Z")), row(2, None)] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
-        assert!(text.contains(&format!("Later: [#1 T1](u1) until {}: 168 qualified hours, [#2 T2](u2)", local_time(at))), "{text}");
+        assert!(text.contains(&format!("| [#1 T1](u1) | owner until {}: 168 qualified hours | `taskq requeue 1` |\n| [#2 T2](u2) | owner | `taskq requeue 2` |", local_time(at))), "{text}");
         let off = crate::platform::utc_offset(at);
         assert!(off.abs() <= 14 * 3600 && off % 900 == 0, "a real zone offset: {off}");
         assert_eq!(local_time(at), format!("{} {}", &crate::board::stamp(at + off)[..10], &crate::board::stamp(at + off)[11..16]));
@@ -1123,7 +1506,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         let snap = Snapshot { source: "board", observed: at, reason: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
             tasks: vec![row(1, State::Later, Some((2, 4))), row(2, State::Ready, Some((3, 4))), row(3, State::Ready, None)] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
-        assert!(text.contains("Later: [#1 T1](u1) · stage 2/4") && text.contains("ready · stage 3/4"), "{text}");
+        assert!(text.contains("| [#1 T1](u1) · stage 2/4 | owner |") && text.contains("| [#2 T2](u2) · stage 3/4 | no host decision |"), "{text}");
         assert_eq!(text.matches("stage ").count(), 2, "{text}");
         let rows = snap.json()["tasks"].clone();
         assert_eq!(rows[0]["stage"], json!({"k": 2, "n": 4, "done": ["A1"]}));
@@ -1151,14 +1534,14 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         assert_eq!(text.lines().nth(1).unwrap(), format!("In work {} · Waiting for answer {} · Ready {}", n("doing") + n("review"), n("ask"), n("ready")));
         let rows = ps[0]["tasks"].as_array().unwrap();
         let ready: Vec<String> = rows.iter().filter(|t| t["state"] == "ready").map(|t| format!("[#{} ", t["n"])).collect();
-        let table: Vec<&str> = text.lines().filter(|l| l.contains("| ready |")).collect();
+        let table: Vec<&str> = text.lines().filter(|l| l.contains("| no host decision |")).collect();
         assert_eq!(table.len(), ready.len(), "{text}");
         assert!(table.iter().zip(&ready).all(|(l, r)| l.starts_with(&format!("| {r}"))), "ready order {ready:?}\n{text}");
-        for t in rows.iter().filter(|t| ["held", "later"].contains(&t["state"].as_str().unwrap())) {
-            assert!(text.contains(&format!("{}: [#{} ", t["state_name"].as_str().unwrap(), t["n"])), "{text}");
+        for (t, reason) in rows.iter().filter_map(|t| match t["state"].as_str() { Some("held") => Some((t, "PM")), Some("later") => Some((t, "owner")), _ => None }) {
+            assert!(text.lines().any(|l| l.starts_with(&format!("| [#{} ", t["n"])) && l.contains(&format!(") | {reason} |"))), "{text}");
         }
         let ask = rows.iter().find(|t| t["state"] == "ask").unwrap();
-        assert!(text.contains(&format!("(ask, {})", ask["age"].as_str().unwrap())), "{text}");
+        assert!(text.contains(&format!("| owner · stuck {} |", ask["age"].as_str().unwrap())), "{text}");
         assert_eq!(ps[0]["mode"], "paused");
         // the first line names the per-test project directory
         let got = json!({"cli": text.lines().skip(1).collect::<Vec<_>>().join("\n"), "now": now, "display": display, "projects": ps});
@@ -1201,6 +1584,12 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         assert!(text.contains("| doing · Run state unknown; see service log |") && !text.contains("termination") && !text.contains("execution 3"), "{text}");
         let j = &snap.json()["tasks"][0];
         assert_eq!((j["wait"].as_str(), j["execution_wait"].as_str()), (Some(WAIT_TEXTS[5]), Some(raw)));
+        // #2257: a result with no reviewer has no live agent, so an input-class diagnostic reads as the handover
+        let handover = Task { state: State::Review, result: Some("abc".into()), ..Default::default() };
+        let row = Row { task: handover.clone(), execution_wait: Some(cases[4].0.into()), ..Default::default() };
+        assert_eq!(row.wait().as_deref(), Some(WAIT_TEXTS[4]));
+        let row = Row { task: Task { attempt: Some(9), ..handover }, execution_wait: Some(cases[4].0.into()), ..Default::default() };
+        assert_eq!(row.wait().as_deref(), Some(WAIT_TEXTS[2]), "a live reviewer keeps the input wait");
     }
 
     // #2159 A4/R1: last accepted worker survives terminal state projection, without becoming current authority.
@@ -1269,6 +1658,55 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         assert!(row["heartbeat"]["reason"].as_str().unwrap().contains("missing"));
         assert!(row["heartbeat"]["warning"].is_string());
         assert_eq!(row["state"],"doing","health never changes board state");
+    }
+
+    // Chain: R6 manager status -> shared heartbeat warnings. Risk: health is hidden, duplicated or re-detected differently.
+    #[test]
+    fn stale_heartbeats_block_reuses_shared_health_and_clears() {
+        let now=10_000;let mut cfg=crate::tests::cfg();cfg.root="invented-project".into();
+        let quiet=json!({"source":"native execution events","clock":"native timestamp or append mtime lower bound","observed":9990,"status":"quiet","last_event":9990,"pending_tools":0,"reason":"no pending tool; quiet work is not failure"});
+        let row=|n,host_age:Option<i64>,progress:Value,pending:bool| {
+            let task=Task{state:State::Doing,attempt:Some(5),session:Some("codex:invented mac".into()),..Default::default()};
+            let executions=if pending {vec![]} else {vec![json!({"id":10,"attempt":5,"host":"mac","observed":now,"state":"running","reason":"native executor observed","progress":progress})]};
+            let hosts=host_age.map(|age|vec![board::Issue{trusted:true,title:"taskq host mac".into(),updated:now-age,body:format!("#{n} 5"),..Default::default()}]).unwrap_or_default();
+            let mut health=heartbeat(&task,n,&hosts,&executions,now,cfg.ttl);
+            health["executor"]=executor(&task,&executions,pending,now,cfg.ttl);refresh_heartbeat(&mut health,now,true);
+            Row{n,title:format!("Invented task {n}"),url:format!("https://github.com/invented/project/issues/{n}"),task,executions,heartbeat:health,..Default::default()}
+        };
+        let mut error=crate::runtime::progress::unknown("native progress record invalid");error["observed"]=json!(9990);
+        let overdue=json!({"source":"native execution events","observed":9990,"status":"overdue","last_event":8800,"tool_since":8000,"pending_tools":1,"overdue_since":8900,"reason":"tool progress overdue; preserve execution and inspect owning session"});
+        let mut stale=quiet.clone();stale["observed"]=json!(now-cfg.ttl-1);stale["last_event"]=stale["observed"].clone();
+        for progress in [&quiet,&stale,&overdue] {assert!(crate::runtime::progress::valid(progress),"fixture retains native future guards");}
+        let mut unknown=row(6,Some(10),error.clone(),false);unknown.executions[0]["state"]=json!("unknown");
+        unknown.executions[0]["reason"]=json!("native identity unavailable");
+        unknown.heartbeat["executor"]=executor(&unknown.task,&unknown.executions,false,now,cfg.ttl);refresh_heartbeat(&mut unknown.heartbeat,now,true);
+        let mut question=Row{n:9,title:"Owner question".into(),url:"q9".into(),task:Task{state:State::Ask,card:Some("Problem: owner choice\n1. keep ★\n2. change".into()),..Default::default()},stuck:Some(9000),..Default::default()};
+        question.heartbeat=Value::Null;
+        let mut snap=Snapshot{source:"board",observed:now,reason:None,board:json!({"url":"https://github.com/invented/project/issues"}),hosts:vec![],
+            tasks:vec![row(1,Some(10),quiet.clone(),false),row(2,Some(cfg.ttl+1),quiet.clone(),false),row(3,None,error.clone(),false),row(4,Some(10),error,false),row(5,Some(10),overdue,false),unknown,row(7,Some(10),Value::Null,true),row(8,Some(10),stale,false),question]};
+        snap.tasks[5].task.state=State::Review;
+        let decide=json!({"complete":true,"rows":[{"n":20,"title":"Completed result","url":"r20","verdict":"confirmed","age_s":600,"recommendation":"Discuss result"}]});
+        let text=snap.text_with(&cfg,&json!({}),Some(&decide)).unwrap();
+        assert!(text.contains("Anomalies:"),"manager status must expose health without opening a native task detail: {text}");
+        assert!(text.find("Owner (").unwrap()<text.find("Decide:").unwrap() && text.find("Decide:").unwrap()<text.find("Anomalies:").unwrap() && text.find("Anomalies:").unwrap()<text.find("Running:").unwrap());
+        assert!(text.contains("Completed result") && text.contains("Discuss result"),"completed results remain discoverable");
+        assert_eq!(text.lines().filter(|l|l.contains("stuck 2h")).collect::<Vec<_>>(),["| [#9 Owner question](q9) | owner · stuck 2h | answer the Owner row |"],"health tasks must not duplicate the stuck row");
+        let block=format!("Anomalies:{}\n",text.split_once("Anomalies:").unwrap().1.split("\n\n").next().unwrap());
+        let path=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/stale-heartbeats.txt");
+        if std::env::var_os("TASKQ_BLESS").as_deref()==Some(std::ffi::OsStr::new("1")) {std::fs::write(&path,&block).unwrap();}
+        assert_eq!(block,std::fs::read_to_string(path).unwrap().replace("\r\n","\n"));
+        assert!(!block.contains("Invented task 1"));
+        let long="x".repeat(200);snap.tasks[5].heartbeat["progress"]["clock"]=json!(long);
+        assert!(snap.text(&cfg,&json!({})).unwrap().contains(&format!("native execution events ([{}]({}))",cell(&compact(&long,160)),snap.tasks[5].url)),"long source metadata links to its full source");
+        snap.tasks[1].heartbeat["observed"]=json!(now+60);refresh_heartbeat(&mut snap.tasks[1].heartbeat,now,true);
+        assert!(snap.text(&cfg,&json!({})).unwrap().contains("future by 1m"),"future observations never display as zero age");
+        let json_before=snap.json();
+        for r in &mut snap.tasks[..8] {
+            r.heartbeat["freshness"]=json!("fresh");r.heartbeat["observed"]=json!(now);r.heartbeat["executor"]=json!({"state":"active","observed":now});r.heartbeat["progress"]=quiet.clone();
+            refresh_heartbeat(&mut r.heartbeat,now,true);
+        }
+        assert!(!snap.text(&cfg,&json!({})).unwrap().contains("Anomalies:"),"recovery omits an empty block");
+        assert_eq!(json_before["tasks"][4]["heartbeat"]["progress"]["status"],"overdue","JSON/PM consumers retain the same typed projection");
     }
 
     #[test]

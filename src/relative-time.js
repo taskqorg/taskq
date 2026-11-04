@@ -34,7 +34,7 @@ const time=execution.module('relative-time',{
   const document=root.ownerDocument,tip=document.createElement('div');tip.className='time-tooltip';tip.setAttribute('role','tooltip');tip.hidden=true;document.body.append(tip);
   let target=null;
   const hide=()=>{tip.hidden=true;target=null;},show=node=>{
-   target=node?.closest('.relative-time')||node?.closest('button,summary')?.querySelector('.relative-time');
+   target=node?.closest('.relative-time,[data-tooltip]')||node?.closest('button,summary')?.querySelector('.relative-time');
    if(!target)return hide();
    if(target.dataset.timeMs){target.title=time.detail(Number(target.dataset.timeMs),target.dataset.timeContext);target.setAttribute('aria-label',target.title);}
    tip.textContent=target.title;tip.hidden=false;

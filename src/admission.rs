@@ -177,6 +177,15 @@ mod tests {
         assert!(coreq::update::newer(MIN_SERVICE, "4.1.11") && !coreq::update::newer(MIN_SERVICE, "4.2.0-dev.1760000000"));
     }
 
+    // #2210, taskq.md § 8 item 1. Risk: a dev build X.Y.Z-yymmdd-N reads as a downgrade, so `current` never moves.
+    #[test]
+    fn dev_builds_order_by_day_then_count() {
+        let order = ["4.6.59", "4.6.60-dev.1793639858", "4.6.60-261102-0", "4.6.60-261102-1", "4.6.60-261102-9", "4.6.60-261102-10", "4.6.60-261103-0", "4.6.60"];
+        for w in order.windows(2) {
+            assert!(coreq::update::newer(w[1], w[0]) && !coreq::update::newer(w[0], w[1]), "{} > {}", w[1], w[0]);
+        }
+    }
+
     // Chain: § 3 unknown host data. Risk: a corrupt or missing sample admits.
     #[test]
     fn refuses_on_unknown_and_rebuilds_the_file() {

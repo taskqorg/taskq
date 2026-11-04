@@ -66,7 +66,7 @@ fn fields(kind: &str) -> Res<&'static [(&'static str,&'static str)]> {
         "operation" => &[("op","operation"),("us","duration_us"),("error","error"),("at_ms","started_ms"),("counts","counts")],
         "stage" => &[("host","host"),("open","open"),("project","project"),("stage","operation"),("task","task"),("attempt","attempt"),("rt","runtime"),("us","duration_us"),("outcome","outcome"),("error","error"),("at_ms","started_ms"),("calls","calls"),("tokens","tokens"),("input_tokens","input_tokens"),("cache_read_tokens","cache_read_tokens"),("cache_write_tokens","cache_write_tokens"),("model","model"),("output_tokens","output_tokens"),("unknown","usage_status")],
         "board" => &[("op","operation"),("us","duration_us"),("outcome","outcome"),("error","error"),("remaining","remaining"),("at_ms","started_ms")],
-        "transition" => &[("project","project"),("task","task"),("entry","entry"),("from","from"),("to","to"),("prev_s","previous_seconds"),("rt","runtime"),("host","host"),("at_ms","started_ms")],
+        "transition" => &[("project","project"),("task","task"),("entry","entry"),("from","from"),("to","to"),("prev_s","previous_seconds"),("rt","runtime"),("host","host"),("at_ms","started_ms"),("counts","counts")],
         "requests" => &[("at_ms","started_ms")],
         _ => return Err("unknown semantic kind".into()),
     })
@@ -321,7 +321,7 @@ mod tests {
             r#"taskq-profile {"op":"spawn","us":9,"error":"none","at_ms":1,"trace":{"run":1,"process":2,"span":3,"parent":4},"counts":{"removed":1}}"#,
             r#"taskq-stage {"host":"win","open":true,"project":"o/r","stage":"build","task":1,"attempt":2,"rt":"claude","us":9,"outcome":"ok","error":"none","at_ms":1,"calls":2,"tokens":30,"input_tokens":10,"cache_read_tokens":15,"cache_write_tokens":5,"model":"claude-opus-5-5","output_tokens":3,"unknown":"app-turn"}"#,
             r#"taskq-board {"op":"close","us":12,"outcome":"ok","error":"none","remaining":4000,"at_ms":2}"#,
-            r#"taskq-transition {"project":"o/r","task":1,"entry":2,"from":"doing","to":"review","prev_s":30,"rt":"claude","host":"win","at_ms":3}"#,
+            r#"taskq-transition {"project":"o/r","task":1,"entry":2,"from":"doing","to":"ask","prev_s":30,"rt":"claude","host":"win","at_ms":3,"counts":{"ask.technical.rule-gate":1}}"#,
             r#"taskq-requests {"at_ms":4,"source":"cli status","ops":{"GET issues/N/comments":2}}"#,
         ];
         let sparse=[
@@ -340,6 +340,10 @@ mod tests {
         for text in sparse {observations.push(observation(text).unwrap());}
         let counts=["accepted","committed","lost","failed_batches","inflight","queued_bytes","queued_events"].into_iter().map(|k|(k.into(),json!(1))).collect();
         observations.push(super::super::diagnostic::health_observation("0.0.0",5,6,true,counts));
+        observations.push(super::super::worker_observation(&super::super::WorkerEvent {
+            at_ms: 7, project: "o/r".into(), host: "win".into(), runtime: "claude".into(), role: "work".into(),
+            event: "spawn".into(), task: 1, attempt: 2, pid: 3208, outcome: "ok".into(), reason: "claimed".into(),
+        }));
         let mut types=std::collections::BTreeMap::<String,std::collections::BTreeSet<&str>>::new();
         for value in &observations {for (key,field) in value.as_object().unwrap() {
             types.entry(key.clone()).or_default().insert(match field {Value::Null=>"null",Value::Bool(_)=>"boolean",Value::Number(_)=>"number",Value::String(_)=>"string",Value::Array(_)=>"array",Value::Object(_)=>"object"});
@@ -359,7 +363,7 @@ mod tests {
         for (row,value) in rows.iter().zip(&observations) {assert_eq!(&row["observation"],value);}
         drop(store);std::fs::remove_dir_all(dir).unwrap();
         // each release publishes the fixture, covered by SHA256SUMS
-        assert!(include_str!("../../.github/workflows/release.yml").contains(r#"cp tests/fixtures/telemetry-fields.json "dist/taskq-$VER-telemetry-fields-fixtures.json""#),"release misses the field fixture");
+        assert!(include_str!("../../.github/workflows/release-build.yml").contains(r#"cp tests/fixtures/telemetry-fields.json "dist/taskq-$VER-telemetry-fields-fixtures.json""#),"release misses the field fixture");
     }
     #[test]
     fn unsupported_or_unsafe_source_metadata_is_refused() {

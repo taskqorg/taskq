@@ -40,11 +40,13 @@ pub(crate) fn trim_tail_locked(p: &Path, max: u64) -> Result<bool,String> {
         Err(e)=>return Err(format!("log retention: {e}")),
         Ok(_)=>{},
     }
-    if profile_log {crate::telemetry::read(p.parent().unwrap(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_millis() as u64))?;}
+    let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_millis() as u64);
+    if profile_log {crate::telemetry::read(p.parent().unwrap(),now)?;}
     let b=fs::read(p).map_err(|e|format!("log retention: {e}"))?;
     let tail=&b[b.len().saturating_sub((max/2) as usize)..];
     let tail=tail.iter().position(|c|*c==b'\n').map_or(tail,|i|&tail[i+1..]);
     fs::write(p,tail).map_err(|e|format!("log retention: {e}"))?;
+    if profile_log {crate::telemetry::read(p.parent().unwrap(),now)?;}
     Ok(true)
 }
 
@@ -112,6 +114,15 @@ pub fn prune(root: &Path, install: &Path, project: &str, live: &[u64]) -> Vec<St
     let n = keep_newest(&d, ATTEMPT_LOGS, |f| attempt_of(f).is_some(), |f| attempt_of(f).is_some_and(|a| live.contains(&a)));
     if n > 0 {
         out.push(format!("pruned {n} attempt logs beyond the newest {ATTEMPT_LOGS}"));
+    }
+    // Quota event markers share the lifetime of their exact retained attempt log.
+    for entry in fs::read_dir(&d).into_iter().flatten().flatten() {
+        let path=entry.path();
+        if path.extension().is_some_and(|e|e=="headroom") {
+            let log=path.with_extension("log");
+            if log.file_name().and_then(|n|n.to_str()).and_then(attempt_of).is_some_and(|a|!live.contains(&a))
+                && matches!(log.try_exists(),Ok(false)) {let _=fs::remove_file(path);}
+        }
     }
     let inputs = d.join("inputs");
     let bound=bound_inputs(root,live);
@@ -190,6 +201,21 @@ pub struct KidLine {
     pub execution:u64, pub offset:u64, pub job:Option<String>,
 }
 
+/// #2266: a `kids` job scope token; `job-kill:` jobs end every member when their last handle closes, `job-global:` (older) ones do not.
+pub fn job_scope(token:&str)->Option<(&str,bool)> {
+    let (key,kill)=match token.strip_prefix("job-kill:") {Some(key)=>(key,true),None=>(token.strip_prefix("job-global:")?,false)};
+    job_key(key).then_some((key,kill))
+}
+
+/// #2266: a vanished job name proves exit only for a kill-on-close scope whose original root is gone.
+pub fn missing_scope_exit(token:&str)->Result<(),String> {
+    match job_scope(token) {
+        Some((_,true))=>Ok(()),
+        Some((_,false))=>Err("native job name unavailable after handle loss; descendants may survive; native reconciliation required".into()),
+        None=>Err("native job identity invalid".into()),
+    }
+}
+
 pub fn job_key(key:&str)->bool {
     key.len()==36 && key.bytes().enumerate().all(|(i,b)|if [8,13,18,23].contains(&i) {b==b'-'} else {b.is_ascii_digit() || (b'a'..=b'f').contains(&b)})
 }
@@ -211,9 +237,8 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
         let (fields,job)=match w.as_slice() {
             [_,_,_,_,_,_,_] =>(w.as_slice(),None),
             [fields @ ..,scope] if fields.len()==7 =>{
-                let key=scope.strip_prefix("job-global:")?;
-                if !job_key(key) {return None;}
-                (fields,Some(key.to_owned()))
+                job_scope(scope)?;
+                (fields,Some((*scope).to_owned()))
             },
             _=>return None,
         };
@@ -221,7 +246,7 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
         let task=task.parse::<u64>().ok().filter(|n|*n>0)?;
         let attempt=attempt.parse::<u64>().ok().filter(|n|*n>0)?;
         let execution=execution.parse::<u64>().ok().filter(|n|*n>=attempt)?;
-        let a=crate::runtime::of(rt); if !a.child || a.remote && (offset!="0" || job.is_some()) { return None; }
+        let a=crate::runtime::of(rt); if !a.has("cli") || a.has("remote-control") && (offset!="0" || job.is_some()) { return None; }
         Some(KidLine {task,attempt,runtime:rt.into(),process:identity(pid,started)?,execution,offset:offset.parse().ok()?,job})
     };
     let v: Vec<KidLine> = lines.enumerate().map(|(i, l)| kid(l).ok_or(format!("kids: line {} malformed; file kept", i + 2))).collect::<Result<_, _>>()?;
@@ -255,6 +280,7 @@ mod tests {
         fs::write(d.join("cli-errors.log"), line.repeat((CLI_ERRORS_MAX / 100 + 10) as usize)).unwrap();
         for a in 0..ATTEMPT_LOGS as u64 + 5 {
             fs::write(d.join(format!("T7-{a}.log")), "").unwrap();
+            fs::write(d.join(format!("T7-{a}.headroom")), "{}").unwrap();
             fs::write(d.join("incidents").join(format!("{a}.json")), "{}").unwrap();
             // mtimes order the files: 0 is the oldest
             let t = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000 + a);
@@ -270,6 +296,7 @@ mod tests {
         assert!(fs::metadata(d.join("cli-errors.log")).unwrap().len() <= CLI_ERRORS_MAX / 2);
         // live attempt 0 stays though oldest; 1..=4 go
         assert!(d.join("T7-0.log").exists() && !d.join("T7-1.log").exists() && !d.join("T7-4.log").exists() && d.join("T7-5.log").exists());
+        assert!(d.join("T7-0.headroom").exists() && !d.join("T7-1.headroom").exists() && d.join("T7-5.headroom").exists());
         assert_eq!(fs::read_dir(d.join("incidents")).unwrap().count(), INCIDENTS);
         assert!(d.join("status.json").exists());
         assert!(prune(&root, &install, "p", &[0]).is_empty(), "a second round finds nothing");
@@ -377,9 +404,15 @@ mod tests {
         assert_eq!(kids("pid 9 service executor-v1\n7 41 codex 123 child 43 40\n"), Ok((owner.clone(),vec![row.clone()])));
         let key="11111111-1111-4111-8111-111111111111";
         let scoped=format!("pid 9 service executor-v1\n7 41 codex 123 child 43 40 job-global:{key}\n");
-        let mut with_job=row.clone();with_job.job=Some(key.into());
-        assert_eq!(kids(&scoped),Ok((owner.clone(),vec![with_job])));
-        for scope in ["job-global:","job-global:../foreign","job-global:11111111-1111-4111-8111-11111111111G","job:11111111-1111-4111-8111-111111111111"] {assert!(kids(&format!("pid 9 service executor-v1\n7 41 codex 123 child 43 40 {scope}\n")).is_err());}
+        let mut with_job=row.clone();with_job.job=Some(format!("job-global:{key}"));
+        assert_eq!(kids(&scoped),Ok((owner.clone(),vec![with_job.clone()])));
+        with_job.job=Some(format!("job-kill:{key}"));
+        assert_eq!(kids(&format!("pid 9 service executor-v1\n7 41 codex 123 child 43 40 job-kill:{key}\n")),Ok((owner.clone(),vec![with_job])));
+        // #2266 A2: only a kill-on-close scope turns a vanished job name into exit; an older scope stays unknown.
+        assert_eq!(missing_scope_exit(&format!("job-kill:{key}")),Ok(()));
+        assert!(missing_scope_exit(&format!("job-global:{key}")).unwrap_err().contains("native reconciliation required"));
+        assert!(missing_scope_exit("job-kill:../foreign").is_err());
+        for scope in ["job-global:","job-kill:","job-global:../foreign","job-global:11111111-1111-4111-8111-11111111111G","job:11111111-1111-4111-8111-111111111111"] {assert!(kids(&format!("pid 9 service executor-v1\n7 41 codex 123 child 43 40 {scope}\n")).is_err());}
         assert!(kids(&(scoped+&format!("8 42 codex 124 other 44 0 job-global:{key}\n"))).is_err(),"one native scope cannot own two tasks");
         assert!(kids(&format!("pid 9 service executor-v1\n7 41 claude 123 child 43 0 job-global:{key}\n")).is_err());
         assert!(kids("pid 9\n7 41 codex 123 40\n").is_err(),"legacy cursors never identify an execution");

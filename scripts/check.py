@@ -29,19 +29,26 @@ ADAPTER_EXCEPTIONS = {'src/runtime.rs', 'src/linux_sandbox.rs', 'src/windows_san
 # Runtime names, bare or name-prefixed, and the native names only the adapter may know (#1593).
 RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app|antigravity)(:[^"]*)?"|claude\.exe|\.claude\.json|CODEX_HOME|CODEX_THREAD_ID')
 TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(pub(\([\w:]+\))?\s+)?mod\s+\w+\s*\{')
+# #2271: inside the adapter a runtime name is table data or its own code path, never a branch: code asks the
+# adapter's capabilities (`of(rt).has(..)`) instead of comparing or matching a name.
+_NAMES = r'"(claude|codex|codex-app|antigravity|agy)"'
+RUNTIME_BRANCH = re.compile(rf'(==|!=)\s*{_NAMES}|{_NAMES}\s*(==|!=|=>|\|)|matches!\([^)]*{_NAMES}')
 
 
 def runtime_names(path, text):
-    """Runtime name literals, bare or name-prefixed, in non-test Rust outside the runtime adapter and the named exceptions."""
-    if path in ADAPTER_EXCEPTIONS or path.startswith(('src/runtime/', 'src/windows_sandbox/')) or path.endswith('_tests.rs'):
+    """Runtime name literals, bare or name-prefixed, in non-test Rust outside the runtime adapter and the named exceptions;
+    inside the adapter, runtime-name branches."""
+    if path.endswith('_tests.rs'):
         return []
+    adapter = path in ADAPTER_EXCEPTIONS or path.startswith(('src/runtime/', 'src/windows_sandbox/'))
+    pattern = RUNTIME_BRANCH if adapter else RUNTIME_NAME
     # Blank only `#[cfg(test)] mod x { .. }` bodies, keeping line numbers; other code stays scanned.
     # ponytail: a module ends at its first column-0 `}`; an early end only adds hits, never hides one
     for m in reversed(list(TEST_MOD.finditer(text))):
         close = text.find('\n}', m.end())
         end = len(text) if close < 0 else close + 2
         text = text[:m.start()] + re.sub(r'[^\n]', ' ', text[m.start():end]) + text[end:]
-    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(text.splitlines(), 1) if RUNTIME_NAME.search(line)]
+    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(text.splitlines(), 1) if pattern.search(line)]
 
 
 # docs/design/rule-ids.md#contract-detail: rule IDs, the rule-change gate and coverage.
@@ -139,10 +146,23 @@ def rule_findings(base_docs, head_docs, test_diff):
     return {'changed': changed, 'removed': removed, 'tests': tests}
 
 
-def unnamed(findings, task_text):
-    """Findings the task text does not name; a removal also needs `<ID> -> <destination>`."""
+def in_scope(rule, bodies):
+    """§1 Task text: an issue body's `Rules: <IDs|all>` line (`add --rules`) declares the changed rule IDs; an ID covers
+    its rows and subsections. Only issue bodies count: ask context and answers can quote a `Rules:` line."""
+    for line in re.findall(r'^Rules: (.+)$', bodies, re.M):
+        if line.strip() == 'all':
+            return True
+        for scope in re.split(r'\s*,\s*', line.strip()):
+            scope = re.sub(r'^(?:§\s*|[Ss]ection\s*)(?=\d)', '§', scope)
+            if scope and (rule == scope or rule.startswith((scope + '.', scope + ' '))):
+                return True
+    return False
+
+
+def unnamed(findings, task_text, bodies=''):
+    """Findings the task text neither names nor `bodies` declare in scope; a removal also needs `<ID> -> <destination>`."""
     named = cited(task_text, set(sum(findings.values(), [])))
-    missing = [f'{k} ({kind})' for kind in ('changed', 'tests') for k in findings[kind] if k not in named]
+    missing = [f'{k} ({kind})' for kind in ('changed', 'tests') for k in findings[kind] if k not in named and not in_scope(k, bodies)]
     for k in findings['removed']:
         if not re.search(id_pattern(k).pattern + r'\s*(?:->|→)\s*\S', task_text):
             missing.append(f'{k} (removed; name `{k} -> <ID, file or none>`)')
@@ -173,7 +193,7 @@ def test_diff(base, head=None):
 
 
 def approval_text(comments, task):
-    """An owner's picked answer approves its ask context and chosen option, never the other options."""
+    """Accepted owner steering and picked answers bind the task; unchosen options never do."""
     parts, pending, seen = [], None, set()
     state, attempt_id, resume, last, retries = 'ready', None, None, 0, 0
     for c in sorted(comments, key=lambda c: int(c['id'])):
@@ -226,6 +246,8 @@ def approval_text(comments, task):
             pending = (int(c['id']), lines[1:], opts)
             resume, state = state, 'ask'
             continue
+        if head == 'taskq: steer' and state == 'doing' and own is None:
+            parts.append('\n'.join(lines))
         if canonical and own is None:
             parts.append('\n'.join(lines))
         if re.fullmatch(r'taskq: result [0-9a-fA-F]{40} attempt [0-9]+', head) and state == 'doing' and own is not None:
@@ -247,9 +269,11 @@ def approval_text(comments, task):
             state, attempt_id, last = ('ready' if retries < 3 else 'unknown'), None, int(c['id'])
         elif kind in {'later', 'failed'} and state in {'ready', 'doing', 'review', 'ask'}:
             pending = None
-            # §2 row 24: plain worker Later ends the attempt; dependency parks remain unmodelled.
+            # §2 row 24: plain Later ends the attempt; row 23: a worker `later <ref> attempt` park readies it.
+            # ponytail: `waiting` folds as `ready`; dependency state is board data this gate never reads.
+            park = kind == 'later' and own is not None and state in {'doing', 'review'} and head != f'taskq: later attempt {attempt_id}'
             terminal = own is None or head == f'taskq: later attempt {attempt_id}'
-            state, attempt_id, last = (kind if terminal else 'unknown'), None, int(c['id'])
+            state, attempt_id, last = ('ready' if park else kind if terminal else 'unknown'), None, int(c['id'])
         elif kind == 'close' and state in {'review', 'later', 'failed'}:
             state, attempt_id, pending = 'closed', None, None
         elif kind in {'gone', 'usage-limit', 'publish', 'publication-blocked', 'publication-failed', 'rebased'} and state in {'doing', 'review'}:
@@ -260,6 +284,10 @@ def approval_text(comments, task):
         payload = '\n'.join(lines[1:] if canonical else lines).strip().rstrip('★').strip()
         opts = pending[2]
         picked = int(canonical[1]) if canonical and canonical[1] else int(alias[2]) if alias else int(payload) if payload.isascii() and payload.isdecimal() else None
+        # `taskq answer N --text "N.K note"` (#2202): a leading N.K pick of this task, parsed as `answer N.K` parses it.
+        lead = re.match(r'#?([0-9]+)\.([0-9]+)(?:\s|$)', payload) if canonical and not canonical[1] else None
+        if picked is None and lead and int(lead[1]) == int(task):
+            picked = int(lead[2])
         if picked is None:
             matches = [k for k, text in opts.items() if payload.casefold() in {text.casefold(), f'{k}. {text}'.casefold()}]
             if len(matches) == 1:
@@ -279,24 +307,26 @@ def approval_text(comments, task):
 
 
 def task_text(base):
-    """Issue bodies plus owner decisions with their selected asks; None when the board evidence is unknown."""
+    """Issue bodies plus owner decisions with their selected asks, and the bodies alone; None when the board evidence is unknown."""
     log = subprocess.check_output(['git', 'log', '--format=%B', f'{base}..HEAD'], cwd=ROOT).decode()
     tasks = sorted(set(re.findall(r'^Task:\s*https://github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)\s*$', log, re.M)))
     if not tasks:
-        return None, f'no `Task: https://github.com/<repo>/issues/<N>` line in commits {base}..HEAD'
-    parts = []
+        return None, '', f'no `Task: https://github.com/<repo>/issues/<N>` line in commits {base}..HEAD'
+    parts, bodies = [], []
     for repo, n in tasks:
         for args in (['--jq', '.body // ""', f'repos/{repo}/issues/{n}'],
                      ['--paginate', '--slurp', f'repos/{repo}/issues/{n}/comments']):
             done = subprocess.run(['gh', 'api', *args], cwd=ROOT, capture_output=True, timeout=60)
             if done.returncode:
-                return None, f'{repo}#{n} unreadable: {done.stderr.decode(errors="replace").strip()[:200]}'
+                return None, '', f'{repo}#{n} unreadable: {done.stderr.decode(errors="replace").strip()[:200]}'
             try:
                 out = done.stdout.decode()
                 parts.append(approval_text([c for page in json.loads(out) for c in page], n) if '--slurp' in args else out)
+                if '--slurp' not in args:
+                    bodies.append(out)
             except (ValueError, TypeError, KeyError) as error:
-                return None, f'{repo}#{n} approval evidence unreadable: {error}'
-    return '\n'.join(parts), None
+                return None, '', f'{repo}#{n} approval evidence unreadable: {error}'
+    return '\n'.join(parts), '\n'.join(bodies), None
 
 
 def rule_gate(base):
@@ -314,15 +344,15 @@ def rule_gate(base):
         print('Rule gate: no rule or rule-citing test changed')
         return None
     print('Rule gate: ' + '; '.join(f'{kind} {", ".join(v)}' for kind, v in findings.items() if v))
-    text, unknown = task_text(base)
+    text, bodies, unknown = task_text(base)
     if text is None:
         return f'rule gate unknown (R12): {unknown}'
-    left = unnamed(findings, text)
+    left = unnamed(findings, text, bodies)
     return f'rule gate: the task does not name {", ".join(left)} (docs/design/rule-ids.md#contract-detail)' if left else None
 
 
 # taskq.md R8: the shared contract lint (specq engineering/contracts.md#lint) at the pinned specq commit.
-SPECQ = '39e6024037fb69e68a84180c04fb7ac53eddb9f9'
+SPECQ = '269a999c4e7c54781260a70305cff5f7cecdf572'
 CONTRACT_LINT = Path('engineering/scripts/contract_lint.py')
 
 
@@ -332,6 +362,23 @@ def contract_lint(root=ROOT):
         if (base / CONTRACT_LINT).is_file():
             return [sys.executable, str(base / CONTRACT_LINT), 'taskq.md']
     return None
+
+
+def compact_warnings(output, ci=False):
+    """taskq.md R8: each specq `COMPACT:` marker (above the 70% target of the declared budget) becomes a visible warning."""
+    prefix = '::warning::' if ci else 'Warning: '
+    return [f'{prefix}{line.strip()}; file one compaction task (specq engineering/contracts.md#size-budgets)'
+            for line in output.splitlines() if line.startswith('COMPACT:')]
+
+
+def run_lint(command, timeout=None):
+    """Runs the contract lint, echoes its report and surfaces COMPACT markers; a lint failure still fails."""
+    done = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, encoding='utf-8', timeout=timeout)
+    print(done.stdout + done.stderr, end='', flush=True)
+    for warning in compact_warnings(done.stdout, bool(os.environ.get('GITHUB_ACTIONS'))):
+        print(warning, flush=True)
+    if done.returncode:
+        raise subprocess.CalledProcessError(done.returncode, command)
 
 
 def changes(base):
@@ -376,7 +423,7 @@ def main():
         command = contract_lint()
         if command is None:
             raise SystemExit(f'contract lint unknown (R12): no specq {SPECQ} checkout at .specq')
-        subprocess.run(command, cwd=ROOT, check=True)
+        run_lint(command)
         return
     if args.rules:
         failed = rule_gate(args.base)
@@ -410,6 +457,7 @@ def main():
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
         run([sys.executable, 'scripts/check.test.py'])
         run([sys.executable, 'scripts/live-probe.test.py'])
+        run([sys.executable, 'scripts/telemetry.test.py'])
         # CI runs the rule gate once, in the plan job; local runs include it.
         failed = None if os.environ.get('GITHUB_ACTIONS') else rule_gate(args.base)
         if failed:
@@ -418,12 +466,13 @@ def main():
         if not os.environ.get('GITHUB_ACTIONS'):
             lint = contract_lint()
             if lint:
-                run(lint)
+                print('+', ' '.join(lint), flush=True)
+                run_lint(lint, BUDGET - (time.monotonic() - started))
             else:
                 print(f'Contract lint: unknown (R12), no specq {SPECQ[:12]} checkout at .specq; CI runs it', flush=True)
         found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))]
         if found:
-            raise SystemExit('runtime name outside the runtime adapter (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
+            raise SystemExit('runtime name outside the runtime adapter or runtime-name branch (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])
@@ -443,6 +492,7 @@ def main():
                 run(['sh', 'docs/shots/check.test.sh'])
                 run(['sh', 'docs/shots/update.test.sh'])
                 run(['sh', '.github/release-tag.test.sh'])
+                run(['sh', '.github/release-publish.test.sh'])
                 run([sys.executable, '.github/release-check.test.py'])
         for path in paths:
             if path.startswith('tests/') and path.endswith('.browser.cjs') and os.environ.get('RUNNER_OS') is None:

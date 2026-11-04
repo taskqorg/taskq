@@ -217,10 +217,13 @@
       "task": 1,
       "entry": 2,
       "from": "doing",
-      "to": "review",
+      "to": "ask",
       "previous_seconds": 30,
       "runtime": "claude",
-      "host": "win"
+      "host": "win",
+      "counts": {
+        "ask.technical.rule-gate": 1
+      }
     },
     {
       "product": "taskq",
@@ -371,6 +374,31 @@
         "inflight": 1,
         "queued_bytes": 1,
         "queued_events": 1
+      }
+    },
+    {
+      "product": "taskq",
+      "version": null,
+      "kind": "worker",
+      "operation": "spawn",
+      "trace": null,
+      "span": null,
+      "started_ms": 7,
+      "project": "o/r",
+      "host": "win",
+      "runtime": "claude",
+      "task": 1,
+      "attempt": 2,
+      "process_id": 3208,
+      "source": "work",
+      "from": "spawn",
+      "to": "claimed",
+      "outcome": "ok",
+      "error": "none",
+      "unknown": {
+        "version": "not-recorded",
+        "trace": "not-recorded",
+        "span": "not-recorded"
       }
     }
   ]

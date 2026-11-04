@@ -22,11 +22,7 @@ fn save(install:&Path,p:&Preferences)->Res<()> {
 fn locked<T>(install:&Path,f:impl FnOnce()->Res<T>)->Res<T> {
     let _lock=coreq::file_lock::try_lock(&install.join("tray-agentq.lock")).map_err(|e|format!("agentq preference busy: {e}"))?; f()
 }
-pub fn root()->Res<PathBuf> {
-    let key=if cfg!(windows){"LOCALAPPDATA"}else{"HOME"};
-    let base=std::env::var_os(key).map(PathBuf::from).filter(|p|p.is_absolute()).ok_or_else(||format!("{key} unavailable"))?;
-    Ok(if cfg!(windows){base.join("agentq")}else{base.join(".local/share/agentq")})
-}
+pub use crate::platform::agentq_root as root;
 fn targets(runtime:&str)->Res<Vec<String>> {
     let home=std::env::var_os(if cfg!(windows){"USERPROFILE"}else{"HOME"}).map(PathBuf::from).filter(|p|p.is_absolute()).ok_or("native client home unavailable")?;
     Ok(vec![root()?.display().to_string(),home.join(crate::runtime::of(runtime).home).display().to_string()])

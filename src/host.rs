@@ -41,6 +41,7 @@ pub struct Policy {
     /// Task-claim mode (§4/§9); aliases preserve any/labelled policies.
     pub claim: ClaimMode,
     pub spillover_grace: u64,
+    pub weights: crate::balance::Weights,
     /// `default_runtime`: reviewers and workers without `run-*` run on it (§ 4, § 9).
     pub default_runtime: String,
     pub codex: Vec<String>,
@@ -51,6 +52,7 @@ pub struct Policy {
 
 impl Policy {
     pub fn apply(&self, cfg: &mut service::Config) {
+        cfg.weights = self.weights.clone();
         cfg.me = self.me.clone(); cfg.has = self.has.clone(); cfg.claim = self.claim; cfg.spillover_grace = self.spillover_grace; cfg.codex = self.codex.clone();
         let overlay = self.overlay(&cfg.root).map(|(_,p)|p);
         cfg.default_runtime = overlay.and_then(|p|p["default_runtime"].as_str()).unwrap_or(&self.default_runtime).into();
@@ -124,7 +126,8 @@ impl Policy {
                 if cap.limits.get(rt).is_some_and(|host| n > *host) { return Err(format!("host.json: projects.{root}.limits.{rt} raises host ceiling")); }
             }
         }
-        let policy=Self { raw: v, cap, me, has, claim, spillover_grace, default_runtime, codex, permission_mode, update_every, rollback_after };
+        let weights=crate::balance::weights(&v)?;
+        let policy=Self { raw: v, cap, me, has, claim, spillover_grace, weights, default_runtime, codex, permission_mode, update_every, rollback_after };
         policy.command()?;
         Ok(policy)
     }
@@ -264,6 +267,7 @@ fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:
         }
         if let Some(mode)=edit.claim {next["claim"]=json!(mode.name());}
         if let Some(rt)=&edit.default_runtime {next["default_runtime"]=json!(rt);}
+        if let Some(weights)=&edit.weights {next["weights"]=json!(weights);}
         let candidate=Policy::parse(next,&hostname)?;
         let command=CommandReceipt::current()?;
         crate::telemetry::receipt(&command,"received")?;
@@ -478,6 +482,27 @@ fn slot(project: &Path, task: u64, attempt: u64) -> Slot {
 }
 pub enum Maintenance {Update(Option<String>),Installation(String)}
 
+/// #2255: one project's queue as its last pass saw it, in board time. `project` is named only on the project's own
+/// board; other projects of the service stay anonymous there (a public board never names a private one).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Queue {
+    pub project: Option<String>,
+    /// Ready tasks this host may serve: admitted or held by this host, not refused by labels, routing or focus.
+    pub ready: u64,
+    pub spawn: Option<i64>,
+    /// Since when ready work waits without a spawn; reset by each spawn.
+    pub waiting: Option<i64>,
+    /// The first refusal of a waiting task; only its admission code for another project's row.
+    pub reason: Option<String>,
+    /// #2290: `<code>: <reason>` per ready task this pass did not admit; only on the project's own board row.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tasks: BTreeMap<u64, String>,
+}
+
+/// #2255: heartbeat `queue {json}`: the restart pending since, and the queue of every project the service serves.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Queues { pub restart: Option<i64>, pub projects: Vec<Queue> }
+
 pub struct Host {
     pub instance: String,
     pub policy: Res<Policy>,
@@ -494,6 +519,8 @@ pub struct Host {
     pub restart: bool,
     /// Projects were woken for this handover; later passes keep `poll` (#1357).
     restart_woken: bool,
+    /// #2254: the handover stayed pending past its 600 s bound; status shows a host incident.
+    pub restart_overdue: bool,
     pub stopping: bool,
     pub stop_controller:Option<crate::host_control::Control>,
     /// Each thread reports active turns/children before the host considers an image switch.
@@ -513,15 +540,17 @@ pub struct Host {
     pub rebuilding: bool,
     rebuilt: BTreeSet<PathBuf>,
     published: BTreeMap<PathBuf, Instant>,
+    /// #2255: each project's last queue row.
+    pub queues: BTreeMap<PathBuf, Queue>,
 }
 
 impl Host {
     pub fn new(policy: Res<Policy>) -> Self {
         Self { instance:crate::runtime::uuid(),policy, capacity_command:None, slots: BTreeMap::new(), gate: Gate::default(), began: Instant::now(), last: None,
-            ready: BTreeSet::new(), external_ready:BTreeMap::new(), turn: None, held: None, restart: false, restart_woken:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), passing: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
+            ready: BTreeSet::new(), external_ready:BTreeMap::new(), turn: None, held: None, restart: false, restart_woken:false, restart_overdue:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), passing: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
             request_since: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()), hour_start: crate::requests::totals(), last_hour: None,
             hosts_start: crate::requests::host_totals(), hosts_last_hour: None,
-            rebuilding: false, rebuilt: BTreeSet::new(), published: BTreeMap::new() }
+            rebuilding: false, rebuilt: BTreeSet::new(), published: BTreeMap::new(), queues: BTreeMap::new() }
     }
 
     pub fn reload(&mut self, policy: Res<Policy>) {
@@ -885,6 +914,13 @@ pub fn run(install: &Path) -> Res<()> {
         Ok(pids) => crate::platform::log(&format!("host start: {} inherited children reaped on exit", pids.len())),
         Err(e) => crate::platform::log(&format!("host start: {e}; inherited children stay unreaped")),
     }
+    // #2214: correct the host's low scheduling before starting probe, curl and git children.
+    #[cfg(windows)]
+    match crate::runtime::windows_process::normal_scheduling() {
+        Ok(Some(was))=>crate::platform::log(&format!("host start: scheduling raised to normal (was {was})")),
+        Ok(None)=>{},
+        Err(e)=>crate::platform::log(&format!("host start: {e}; probes may time out under worker load")),
+    }
     let mut reported=String::new();
     let mut linked=std::time::Instant::now();
     let _owner=loop {
@@ -943,6 +979,15 @@ pub fn run(install: &Path) -> Res<()> {
         registry.refresh(install, began.elapsed().as_secs());
         restart.refresh(install);
         roots.clone_from(&registry.roots);
+        for root in &roots {
+            match crate::runtime::owner::registered_host_trust(install, root) {
+                Ok(lines) => for line in lines { crate::platform::log(&line); },
+                Err(e) => {
+                    let message = format!("Trust setup pending: {e}; service retries automatically");
+                    if reported != message { crate::platform::log(&message); reported = message; }
+                }
+            }
+        }
         let old = legacy(install,&roots);
         if hostname.is_empty() {hostname=crate::hostname();}
         let configured = match &old { Ok(()) => migrate_for_hostname(install, &roots,&hostname).and_then(|_| Policy::read_for_hostname(install,||hostname.clone())), Err(_) => Policy::read_for_hostname(install,||hostname.clone()) };
@@ -1122,13 +1167,17 @@ pub fn run(install: &Path) -> Res<()> {
         }}
         let handover=h.restart&&!h.stopping;
         if !handover {stuck=None;}
+        h.restart_overdue=stuck==Some(u64::MAX);
+        if !h.restart {waits_reported.clear();}
         if h.restart {
             let wait=h.handoff_wait();
             drop(h);
             // #1601: the receipt and the log name what the re-exec really waits for; a stuck one is reported, never killed
             let waits=restart_waits(&roots);
             if let Err(e)=crate::lifecycle::handoff_wait(install,&instance,wait,&waits) {if reported!=e {crate::platform::log(&e);reported=e;}}
-            if waits!=waits_reported&&installation::upgrade_waits(install,crate::platform::VERSION,&waits) {waits_reported=waits.clone();}
+            // #2209: every tick, so a superseding intent's receipt names the waits too; the log names each change.
+            installation::upgrade_waits(install,crate::platform::VERSION,&waits);
+            if waits!=waits_reported {log_all(install,&roots,&format!("host re-exec waits for {waits}"));waits_reported=waits.clone();}
             if crate::restart_watch(&mut stuck,handover,began.elapsed().as_secs(),300) {log_all(install,&roots,&format!("restart pending over 600 s; waits for {waits}"));}
             h=shared.lock().unwrap_or_else(|e|e.into_inner());
             if h.handoff_ready() {

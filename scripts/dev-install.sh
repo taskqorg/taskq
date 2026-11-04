@@ -1,11 +1,11 @@
 #!/bin/sh
 # taskq.md § 8 item 1: install a local development build of origin/main (or the ref given) on this Mac.
-# Version <next patch>-dev.<unix seconds> sorts above the release on main and below the next one, so `current`
+# Version <next patch of Cargo.toml or the highest release tag>-yymmdd-N (UTC date, N = that date's builds on this host from 0; scripts/dev-version.py) sorts above the release on main and below the next one, so `current`
 # moves forward (coreq `newer`). The host channel is set to `dev` first, so no release replaces the build until
 # `taskq service channel live` (#1325). Builds in a detached worktree beside the
 # primary checkout, so local edits there are never touched. Under a running host service, install makes the build
 # current and waits until the service re-execs into it, handing running children over (#894, #1306).
-# On channel dev the host service runs this for each new main SHA with green CI (docs/design/host-service.md#dev-install):
+# On channel dev the host service runs this on request (`taskq service dev-build`) for the newest main SHA with green CI (docs/design/host-service.md#dev-install):
 # `dev/lock` keeps one install at a time, `dev/result` reports the outcome to the service.
 set -eu
 d=$HOME/.local/share/taskq
@@ -29,12 +29,13 @@ finish() {
 trap finish EXIT
 trap 'exit 1' INT TERM HUP
 # A given ref (the service's SHA) needs no origin/main update, so a concurrent fetch holding its lock cannot fail it (#1633).
-if [ $# -gt 0 ]; then git -C "$repo" fetch -q --refmap= --no-write-fetch-head origin main; else git -C "$repo" fetch -q origin main; fi
+if [ $# -gt 0 ]; then git -C "$repo" fetch -q --tags --refmap= --no-write-fetch-head origin main; else git -C "$repo" fetch -q --tags origin main; fi
 [ -d "$w" ] || git -C "$repo" worktree add -q --detach "$w" "$ref"
 cd "$w"
 git checkout -q -f --detach "$ref"
 sha=$(git rev-parse HEAD)
-v=$(python3 -c 'import re,time; m=re.search(r"^version = \"(\d+)\.(\d+)\.(\d+)\"$", open("Cargo.toml").read(), re.M); print(f"{m[1]}.{m[2]}.{int(m[3])+1}-dev.{int(time.time())}")')
+# shellcheck disable=SC2046 # one argument per release tag
+v=$(python3 scripts/dev-version.py Cargo.toml "$d/releases" $(git tag -l 'v[0-9]*'))
 prev=$(cat "$d/current")
 sed -i '' "s/^version = .*/version = \"$v\"/" Cargo.toml
 npm ci --silent

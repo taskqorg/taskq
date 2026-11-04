@@ -3,6 +3,22 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.61
+
+Windows update restart no longer waits for a handed-in attempt with no observed process, so a host left on an older image exits and admits ready work (#2228, PR #2229). Conversation exports and peer transcript replies omit commands, tool result bodies and images (#2225, PR #2227). Full inventory and publication gates: [release handoff](docs/release-2230.md).
+
+## v4.6.60
+
+Requeued tasks can start after a resumed attempt handed in without a transcript match (#2221); Windows host processes restore normal scheduling (#2214, PR #2217). Claude background-job continuation and macOS handover recovery are more robust (#2198, #2209). Doctor checks token permissions, versions and collection health across hosts (#2194). Conversations uses AgentQ normalized history (#2176). Spillover ignores untrusted heartbeats (#2201), rule approval reads noted answer picks (#2202), failed dev-install logs survive per SHA (#2208), and test fixtures gain isolation and history-format corrections (#2196, #2215). Native A6 qualification is recorded (#2184). Full inventory and publication gates: [release handoff](docs/release-2223.md).
+
+**Board**: host heartbeats add doctor health and request/answer observations (#2194); older hosts do not provide those checks and read unknown. No task-log format, state transition or open-issue migration changes. Existing 4.6.59 balancing cutover remains binding; this patch changes no weights, grants or live policy.
+
+## v4.6.59
+
+Owner-weighted runtime and primary-host balancing uses fresh observed quota headroom for new task attempts. `taskq balance` saves local host weights; status shows occupancy, weights and quota headroom (#2189). Balancing unifies soft `prefer-*` routing, strict pins, owner `taskq reroute` and quota recovery (#2137), with primary-first host spillover (#2138) and Codex fallback when Claude is unavailable (#2118). Antigravity runs subscription workers and reviewers (#2136, #2145, #2150). TaskQ sessions start through the published AgentQ runtime and CoreQ agent (#2094, #2111). Protected app-server launches reuse existing host slots and certify native descendants (#2131, #2135, #2151, #2161, #2175, #2179). Task execution health shows separately from host ownership (#2173), and manager status lists actionable stale heartbeats (#2180). Conversations, tray capacity, Settings and the menu icon gain fixes (#2099, #2110, #2133, #2140, #2155, #2159, #2160, #2165, #2167, #2168). Account isolation, Codex resume and project attachment are more robust (#2121, #2125, #2143, #2153, #2157, #2166). PilotQ turns share TaskQ host slots (#2100). README onboarding has three parts (#2107); Windows execution reports are added (#2120, #2183). Full inventory: [release handoff](docs/release-2192.md).
+
+**Board**: weighted hosts publish `balancing` schema 2 with runtime load and the last accepted local unlabelled spawn ID. Upgrade every board host to compatible readers before enabling weights; preserve active attempts, quota holds and strict pins. Unweighted hosts keep schema 1. Owner `taskq reroute` writes fenced `reroute`, `routing-write` and `rerouted` entries, and the service writes reviewer `steer quota attempt` after a mid-review quota exit; older readers ignore the routing entries and do not deliver a `steer` in `review` to the reviewer. Do not run `taskq reroute` until every board host runs 4.6.59. No task-log migration or live policy change is implied. See [cutover](docs/design/configuration.md#balancing-cutover).
+
 ## v4.6.58
 
 Board-only project roots support PM commands with `taskq.json` and the host's board token, while `service install` and `cleanup` refuse without a checkout (#2093). Report rows settle only after a comment read beyond the board list lag, so accepted reports leave Decide (#2091). Bell/news, questions, reports, Completed and task activity share Conversations, preserving scope, selection and reading context (#2095).

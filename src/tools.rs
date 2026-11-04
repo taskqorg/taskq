@@ -68,10 +68,20 @@ fn below(found: &str, min: &str) -> bool {
     a < b
 }
 
+/// `<bin> --version` from the tool's own directory. #2329: a timeout ends only the direct child, so a descendant of a
+/// command-script tool outlives it; on Windows that descendant's working directory stays in use and undeletable, so
+/// the probe never inherits the caller's project or install directory.
+fn probe(bin: &Path) -> Command {
+    let mut probe = crate::platform::command(bin);
+    probe.arg("--version");
+    if let Some(dir) = bin.parent().filter(|dir| dir.is_absolute()) { probe.current_dir(dir); }
+    probe
+}
+
 /// `<tool> --version` through `bin`: the found version, or the failed command with its error (never empty).
 fn version(tool: &str, bin: &Path) -> Result<String, String> {
     let cmd = format!("`{tool} --version`");
-    let out = crate::platform::output("tool.version", crate::platform::command(bin).arg("--version"), Duration::from_secs(10)).map_err(|e| format!("{cmd} failed: {e}"))?;
+    let out = crate::platform::output("tool.version", &mut probe(bin), Duration::from_secs(10)).map_err(|e| format!("{cmd} failed: {e}"))?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no output");
     if !out.status.success() {
@@ -146,6 +156,21 @@ mod tests {
     fn version_compare_reads_numeric_prefix() {
         assert!(below("2.16.9", "2.17.0") && below("2.5.0", "2.5.1") && below("7.9", "7.55.0"));
         assert!(!below("2.46.0.windows.1", "2.17.0") && !below("2.17", "2.17.0") && !below("0.162.1", "0.159.3"));
+    }
+
+    // Chain: #2329 os error 32 on fixture cleanup. Risk: a timed-out tool's surviving descendant keeps the caller's
+    // directory in use; the probe process itself runs in the tool's directory.
+    #[test]
+    fn version_probe_never_runs_in_the_callers_directory() {
+        let dir = std::env::temp_dir().join(format!("taskq-tools-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tool = script(&dir, "tool", if cfg!(windows) { "cd > probe-cwd
+echo git version 2.46.0" } else { "pwd > probe-cwd
+echo git version 2.46.0" });
+        assert_eq!(version("git", &tool), Ok("2.46.0".into()));
+        let cwd = std::fs::read_to_string(dir.join("probe-cwd")).unwrap();
+        assert_eq!(Path::new(cwd.trim()).canonicalize().unwrap(), dir.canonicalize().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     // Chain: #1856 host requirements (specq#98, pilotq#127). Risk: an old or missing tool passes selftest or reads as

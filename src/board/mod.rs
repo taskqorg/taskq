@@ -36,6 +36,8 @@ pub struct Comment {
     pub edited: bool,
     /// The writer's board login; empty when the board does not say (§ 5 `answered`).
     pub author: String,
+    /// § 2 owner-note read receipt: whether the comment carries the `eyes` reaction; None when the board does not say.
+    pub read: Option<bool>,
 }
 
 pub trait Board {
@@ -68,6 +70,9 @@ pub trait Board {
     fn comment(&self, n: u64, body: &str) -> Result<u64>;
     /// Edits comment `id` of issue `n`: an edited entry is ignored by `fold` (§ 2).
     fn edit_comment(&self, n: u64, id: u64, body: &str) -> Result<()>;
+    /// § 2 read receipt: adds the `eyes` reaction to comment `id` of issue `n`, which leaves the comment unedited.
+    /// `ponytail:` GitLab awards are not qualified to leave `updated_at` alone, so it stays unsupported there.
+    fn react_read(&self, _n: u64, _id: u64) -> Result<()> { Err("read receipts unsupported on this board".into()) }
     /// The web URL of comment `id` of issue `n`.
     fn comment_url(&self, n: u64, id: u64) -> String { format!("{}#issuecomment-{id}", self.url(n)) }
     /// Whether writers keep the § 2 summary comment; in-memory test boards opt in.
@@ -125,6 +130,9 @@ pub trait Board {
     fn video_inline(&self) -> bool { false }
     /// § 6 setup check `pr-route`: whether `main` can merge a PR result (§ 7); unknown where unsupported.
     fn pr_route(&self) -> crate::check::Probe { crate::check::Probe::Unknown("PR route check unsupported on this board".into()) }
+    /// #2194 doctor `token-*`: one read per permission taskq needs (`Issues`, `Contents`, `Pull requests`); a gap
+    /// carries the HTTP status only. Empty where unsupported.
+    fn access(&self) -> Vec<(&'static str, crate::check::Probe)> { vec![] }
 }
 
 /// #1935: a PR wait only a person can end (no queue or protection on the repository's plan); one board comment names it.
@@ -332,6 +340,7 @@ impl Board for Profiled {
         self.op(if body.starts_with("taskq: spawn ") { "claim" } else { "comment" }, |b| b.comment(n, body))
     }
     fn edit_comment(&self, n: u64, id: u64, body: &str) -> Result<()> { self.op("comment", |b| b.edit_comment(n, id, body)) }
+    fn react_read(&self, n: u64, id: u64) -> Result<()> { self.op("comment", |b| b.react_read(n, id)) }
     fn comment_url(&self, n: u64, id: u64) -> String { self.0.comment_url(n, id) }
     fn summaries(&self) -> bool { self.0.summaries() }
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> { self.op("label", |b| b.labels(n, add, remove)) }
@@ -372,6 +381,7 @@ impl Board for Profiled {
     fn video_inline(&self) -> bool { self.0.video_inline() }
     fn html_downloads(&self) -> bool { self.0.html_downloads() }
     fn pr_route(&self) -> crate::check::Probe { self.op("read", |b| Ok(b.pr_route())).unwrap_or_else(crate::check::Probe::Unknown) }
+    fn access(&self) -> Vec<(&'static str, crate::check::Probe)> { self.op("read", |b| Ok(b.access())).unwrap_or_default() }
 }
 
 // ---------- time ----------
@@ -1118,6 +1128,8 @@ pub struct FakeState {
     pub video_inline: bool,
     /// Immutable repository text for the Reports source adapter (path, SHA, body).
     pub report_sources: Vec<(String,String,String)>,
+    /// Every report source read fails with this board error (#2193).
+    pub source_error: Option<String>,
     pub report_closed: std::collections::BTreeMap<u64,i64>,
     /// A real adapter that answers `publish` calls instead of the `publish` string above (#1939).
     pub publisher: Option<Box<dyn Board>>,
@@ -1149,7 +1161,7 @@ impl Fake {
         if let Ok(i) = st.get(n) {
             i.updated = t;
         }
-        st.comments.push((n, Comment { id, created: t, body: body.into(), trusted, edited, author: String::new() }));
+        st.comments.push((n, Comment { id, created: t, body: body.into(), trusted, edited, author: String::new(), read: Some(false) }));
         id
     }
 }
@@ -1168,6 +1180,7 @@ impl Board for Fake {
             .map(|i|(i.clone(),st.report_closed.get(&i.number).copied().unwrap_or(i.updated))).collect())
     }
     fn source(&self,path:&str,sha:&str)->Result<String> {
+        if let Some(e)=&self.state.borrow().source_error {return Err(e.clone());}
         self.state.borrow().report_sources.iter().find(|(p,s,_)|p==path&&s==sha).map(|(_,_,b)|b.clone()).ok_or("report source unavailable: HTTP 404".into())
     }
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> {
@@ -1255,6 +1268,11 @@ impl Board for Fake {
             c.1.body = body.into();
             c.1.edited = true;
         }
+        Ok(())
+    }
+    fn react_read(&self, n: u64, id: u64) -> Result<()> {
+        let mut st = self.state.borrow_mut();
+        st.comments.iter_mut().find(|(i, c)| *i == n && c.id == id).ok_or(format!("no comment {id}"))?.1.read = Some(true);
         Ok(())
     }
     fn summaries(&self) -> bool { self.state.borrow().summaries }
@@ -1712,9 +1730,9 @@ mod tests {
             assert!(human.starts_with("#7 Pick\n") && human.contains("\nLog:\n"), "human inbox unchanged: {human}");
             let at = |id: u64| iso(&format!("2026-10-30T00:00:0{id}Z")).unwrap();
             assert_eq!(v["answers"], json!([
-                {"id": 3, "by": "owner", "at": at(3), "revision": 2, "option": 2, "text": "right", "late": false},
-                {"id": 4, "by": "owner", "at": at(4), "revision": 2, "option": null, "text": "left after all", "late": true},
-                {"id": 6, "by": "pm", "at": at(6), "revision": 5, "option": 2, "text": "down", "late": false}]), "{}: {v}", kind.name);
+                {"id": 3, "by": "owner", "at": at(3), "revision": 2, "option": 2, "text": "right", "late": false, "read": null},
+                {"id": 4, "by": "owner", "at": at(4), "revision": 2, "option": null, "text": "left after all", "late": true, "read": null},
+                {"id": 6, "by": "pm", "at": at(6), "revision": 5, "option": 2, "text": "down", "late": false, "read": null}]), "{}: {v}", kind.name);
             let attempt = &v["attempt"];
             assert_eq!((v["open"].clone(), v["state"].clone(), attempt["id"].clone(), attempt["host"].clone(), attempt["runtime"].clone(), attempt["started"].clone()),
                 (json!(true), json!("doing"), json!(1), json!("mac"), json!("claude"), json!(at(1))), "{}: {v}", kind.name);
@@ -1826,6 +1844,48 @@ mod tests {
             let got = match h.pr_route() { Probe::Ok => "ok", Probe::Gap(_) => "gap", Probe::Unknown(_) => "unknown" };
             assert_eq!(got, want, "{scenario}");
         }
+    }
+
+    // Chain: § 6 `taskq doctor` token checks (#2194 A1, A4). Risk: a token without Contents: Read on a private board
+    // read issues fine, so doctor called it healthy while commits, reports and publication failed with raw 403s; a
+    // read-only Issues or Pull requests grant passed the reads and failed every comment or PR. Protection: each
+    // permission is probed on its own; 401/403/404 is a gap naming read or write and the status, an empty repository's
+    // 409 still proves Contents: Read, the write probe's 422 proves write without creating anything, and any other
+    // failure stays unknown.
+    #[test]
+    fn token_access_probes_each_permission_and_names_a_403_contents_gap() {
+        use crate::check::Probe;
+        let show = |p: &Probe| match p { Probe::Ok => "ok".to_string(), Probe::Gap(g) => format!("gap {g}"), Probe::Unknown(_) => "unknown".into() };
+        for (scenario, want) in [("403", "gap read HTTP 403"), ("409", "ok"), ("502", "unknown"), ("ok", "ok")] {
+            let h = http(&github::KIND, None, Box::new(move |method, url, body| {
+                if method == "POST" {
+                    assert_eq!(body, Some(json!({})), "a write probe sends nothing it could create");
+                    return Err(format!("POST {url}: HTTP 422 Validation Failed"));
+                }
+                if url.contains("/commits?per_page=1") && scenario != "ok" {
+                    return Err(format!("GET /commits?per_page=1: HTTP {scenario} Resource not accessible by personal access token"));
+                }
+                assert!(url.contains("/issues?per_page=1") || url.contains("/pulls?per_page=1") || url.contains("/commits?per_page=1"), "unexpected {url}");
+                Ok(Reply { status: 200, headers: vec![], body: "[]".into(), operation: operation(method) })
+            }));
+            let access = h.access();
+            assert_eq!(access.iter().map(|(n, _)| *n).collect::<Vec<_>>(), ["Issues", "Contents", "Pull requests"]);
+            assert_eq!(show(&access[1].1), want, "{scenario}");
+            assert!(matches!((&access[0].1, &access[2].1), (Probe::Ok, Probe::Ok)), "{scenario}");
+        }
+        // a read-only Issues and Pull requests grant: both reads pass, both writes are refused
+        let posts = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+        let seen = posts.clone();
+        let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+            if method == "POST" {
+                seen.borrow_mut().push(url.rsplit('/').next().unwrap_or_default().to_string());
+                return Err(format!("POST {url}: HTTP 403 Resource not accessible by personal access token"));
+            }
+            Ok(Reply { status: 200, headers: vec![], body: "[]".into(), operation: operation(method) })
+        }));
+        let access = h.access();
+        assert_eq!(access.iter().map(|(_, p)| show(p)).collect::<Vec<_>>(), ["gap write HTTP 403", "ok", "gap write HTTP 403"]);
+        assert_eq!(*posts.borrow(), ["issues", "pulls"], "only Issues and Pull requests are write-probed");
     }
 
     // Chain: § 7 publication on both boards. Risk: publication uses the wrong SHA or writes twice.
@@ -2333,6 +2393,53 @@ mod tests {
         }));
         let want = Publish::Pending(format!("result {sha} not found in o/r (compare HTTP 404); the result names no task PR of another repository"));
         for pass in 0..2 { assert_eq!(h.publish(1, &sha, "pr", "title", "Task: invented"), want, "pass {pass}"); }
+    }
+
+    // #2308 defect (#2302 agentq#206): a worker merged the PR of another repository itself and handed in the merge
+    // commit; that PR was read as a mention (head neither `taskq-<N>` nor the result), the board repository's compare
+    // was HTTP 404 and the publication waited every pass with no path to close. Chain: publication -> the named PR
+    // merged as the result -> its merge-result CI -> close naming that repository. Retained: a merged PR at another
+    // merge commit stays a mention; a failed merge-result CI blocks, never closes unqualified.
+    #[test]
+    fn a_result_merged_as_another_repositorys_merge_commit_closes_there() {
+        use crate::core::entry;
+        let (sha, head) = ("a".repeat(40), "d".repeat(40));
+        for case in ["queue", "queue-red", "no-queue", "direct", "other-merge"] {
+            let log = [entry("result", &[&sha], Some(1), "Changed: o/x PR o/x#206 merged.\nChecks: A1 ok\nOpen: none")];
+            let (sha2, head2) = (sha.clone(), head.clone());
+            let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+                assert_eq!(method, "GET", "no publication write: {url}");
+                let reply = |status: u16, v: Value| Ok(Reply { status, headers: vec![], body: v.to_string(), operation: operation(method) });
+                if let Some(rest) = url.strip_prefix("https://api.github.com/repos/o/r") {
+                    return if rest.starts_with("/compare/") && case == "other-merge" { reply(404, json!({"message": "Not Found"})) }
+                        else if rest.starts_with("/issues/1/comments") {
+                            reply(200, json!(log.iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "created_at": "2026-10-30T00:00:00Z",
+                                "updated_at": "2026-10-30T00:00:00Z", "author_association": "OWNER", "user": {"login": "owner"}})).collect::<Vec<_>>()))
+                        } else { panic!("board repository read {url}") };
+                }
+                let rest = url.strip_prefix("https://api.github.com/repos/o/x").unwrap_or_else(|| panic!("read outside o/x: {url}"));
+                let merge = if case == "other-merge" { "b".repeat(40) } else { sha2.clone() };
+                let suite = |ok: &str| json!({"workflow_runs": [{"head_sha": sha2, "event": "merge_group", "status": "completed", "conclusion": ok, "name": "Test", "check_suite_id": 5}]});
+                let checks = json!({"check_runs": [{"app": {"slug": "github-actions"}, "check_suite": {"id": 5}, "status": "completed", "conclusion": "success", "name": "Test"}]});
+                reply(200, if rest == "/pulls/206" {
+                    json!({"number": 206, "state": "closed", "merged_at": "x", "merge_commit_sha": merge, "head": {"ref": "coreq-pin", "sha": head2}, "base": {"ref": "main"}})
+                } else if rest == format!("/compare/main...{sha2}") { json!({"status": "identical"}) }
+                else if rest == "/rules/branches/main" { if case == "no-queue" { json!([]) } else { recorded("rules-merge-queue") } }
+                else if rest.starts_with("/actions/runs?") { assert!(rest.contains(&sha2)); suite(if case == "queue-red" { "failure" } else { "success" }) }
+                else if rest.contains("/check-runs") { assert!(rest.contains(if case == "no-queue" { &head2 } else { &sha2 }), "{case}: {rest}"); checks }
+                else if rest.ends_with("/status") { json!({"total_count": 0}) }
+                else { panic!("{case}: unexpected {method} {url}") })
+            }));
+            let mode = if case == "direct" { "direct" } else { "pr" };
+            let got = h.resume_publication(1, &sha, mode, "title", "Task: invented", std::path::Path::new("missing-worktree"), false);
+            match case {
+                // A1: the merge in o/x is the publication; it closes with its merge-result CI, no taskq PR
+                "queue" | "direct" => assert_eq!(got, Publish::Done(format!("merged #206 in o/x as {sha}; merge-result CI green")), "{case}"),
+                "no-queue" => assert_eq!(got, Publish::Done(format!("merged #206 in o/x as {sha}; exact-SHA CI green on {head}")), "{case}"),
+                "queue-red" => assert!(matches!(&got, Publish::Blocked(e) if e.starts_with("o/x#206: PR #206 merged as ") && e.contains("failure")), "{case}: {got:?}"),
+                _ => assert!(matches!(&got, Publish::Pending(e) if e.contains("names no task PR of another repository")), "{case}: {got:?}"),
+            }
+        }
     }
 
     // Chain: section 7 private fallback real Git fetch/rebase/leased push, or conflict/dirty preservation.

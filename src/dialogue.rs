@@ -93,7 +93,7 @@ pub fn accepted(install:&Path,id:&str,op:&str,input:&str)->Res<bool> {
     let saved=turn(install,id)?;
     let Some(t)=saved.filter(|t|t.op_id.as_deref()==Some(op)&&t.input==input)else{return Ok(false)};
     if crate::runtime::owner_stream::handles(&r.runtime){return crate::runtime::owner_stream::accepted(&own(install,id)?,&r,&t);}
-    Ok(!crate::runtime::of(&r.runtime).codex||t.app_accepted)
+    Ok(!crate::runtime::of(&r.runtime).has("thread-link")||t.app_accepted)
 }
 
 pub fn send_op(install:&Path,id:&str,input:&str,op:Option<&str>,native:&Native)->Result<(),SendError> {
@@ -102,14 +102,14 @@ pub fn send_op(install:&Path,id:&str,input:&str,op:Option<&str>,native:&Native)-
     let own = own(install, id)?;
     if busy(&turn(install, id)?) { return Err("working".to_string().into()); }
     if (native.holder)(&own, &r).map_err(|e| format!("native holder unknown ({e}); not sent"))? { return Err(crate::runtime::owner::open_in(&r.runtime).into()); }
-    if crate::runtime::of(&r.runtime).codex {if let Some(app)=native.app {(app.baseline)(&own,&r)?;}}
+    if crate::runtime::of(&r.runtime).has("thread-link") {if let Some(app)=native.app {(app.baseline)(&own,&r)?;}}
     // Lock acquisition is a refusal; only an attempted store can leave an uncertain receipt.
     crate::setup::locked(install, || Ok(queue(install,id,input,false,op)))?
 }
 
 pub fn retry_refused(install:&Path,id:&str,op:&str,native:&Native)->Res<()> {
     let r=launched(install,id)?;let own=own(install,id)?;
-    if !crate::runtime::of(&r.runtime).codex||native.app.is_none() {return Err("No App-owned refused input".into());}
+    if !crate::runtime::of(&r.runtime).has("thread-link")||native.app.is_none() {return Err("No App-owned refused input".into());}
     if (native.holder)(&own,&r)? {return Err("Native App is working; original refused input kept".into());}
     (native.app.unwrap().baseline)(&own,&r)?;
     crate::setup::locked(install,||{
@@ -228,7 +228,7 @@ fn ended(own: &Path, r: &Request, t: &Turn) -> Option<String> {
         let mut file=fs::File::open(crate::runtime::owner_stream::log(own)).ok()?;
         if file.metadata().ok()?.len()<offset{return None;}
         file.seek(SeekFrom::Start(offset)).ok()?;let mut text=String::new();file.take(16*1024*1024).read_to_string(&mut text).ok()?;
-        if crate::runtime::owner_stream::session(&text).ok().flatten().as_deref()!=r.session.as_deref(){return Some("unknown: native reply session identity changed".into());}
+        if crate::runtime::owner_stream::session(&r.runtime,&text).ok().flatten().as_deref()!=r.session.as_deref(){return Some("unknown: native reply session identity changed".into());}
         return Some(crate::runtime::owner::outcome(&r.runtime,&text,""));
     }
     let read = |n: &str| fs::read_to_string(own.join(n)).unwrap_or_default();
@@ -252,7 +252,7 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
         Err(e) => return finish(install, own, t, format!("not sent: native holder unknown ({e})")),
         Ok(false) => {}
     }
-    if crate::runtime::of(&r.runtime).codex {if let Some(app)=native.app {
+    if crate::runtime::of(&r.runtime).has("thread-link") {if let Some(app)=native.app {
         let baseline=match (app.baseline)(own,r) {Ok(n)=>n,Err(e)=>return finish(install,own,t,format!("not sent: {e}"))};
         t.app_baseline=Some(baseline.0);t.app_after=Some(baseline.1);t.state="dispatching".into();t.pid=None;t.started=None;
         store(&own.join("turn.json"),t)?;
@@ -275,7 +275,7 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
     t.started = coreq::process::identity(child.id()).ok().flatten().map(|i| i.started);
     if stream {
         store(&own.join("turn.json"),t)?;
-        if let Err(reason)=crate::runtime::owner_stream::ready(own,r.session.as_deref().unwrap_or_default(),t.stream_offset.unwrap_or(0),&mut child){
+        if let Err(reason)=crate::runtime::owner_stream::ready(own,&r.runtime,r.session.as_deref().unwrap_or_default(),t.stream_offset.unwrap_or(0),&mut child){
             drop(child.stdin.take());std::thread::spawn(move||child.wait());t.state="running".into();t.outcome=Some(format!("unknown: {reason}"));return store(&own.join("turn.json"),t);
         }
     }
@@ -290,7 +290,7 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
 
 /// CS2: called on the existing background read channel, never during the tray snapshot/UI pass.
 pub fn activity(install:&Path,r:&Request)->Value {
-    let updated=crate::runtime::owner::transcript_for(install,r).and_then(|p|crate::transcript::last_update(crate::runtime::of(&r.runtime).codex,&p));
+    let updated=crate::runtime::owner::transcript_for(install,r).and_then(|p|crate::transcript::last_update(crate::transcript::format(&r.runtime),session(r),&p));
     match updated {Ok(updated)=>json!({"updated":updated}),Err(reason)=>json!({"updated":null,"reason":reason})}
 }
 
@@ -307,12 +307,12 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
         _ => "idle".into(),
     };
     let mut v = json!({
-        "turn": t.as_ref().ok().and_then(|t| t.as_ref()).map(|t| json!({"state": t.state, "at": t.at, "watch": t.watch, "outcome": t.outcome,"op_id":t.op_id,"prior_outcome":t.prior_outcome,"retry_refused":crate::runtime::of(&r.runtime).codex&&t.state=="done"&&t.outcome.as_deref()==Some(open.as_str())&&t.app_baseline.is_none()})),
+        "turn": t.as_ref().ok().and_then(|t| t.as_ref()).map(|t| json!({"state": t.state, "at": t.at, "watch": t.watch, "outcome": t.outcome,"op_id":t.op_id,"prior_outcome":t.prior_outcome,"retry_refused":crate::runtime::of(&r.runtime).has("thread-link")&&t.state=="done"&&t.outcome.as_deref()==Some(open.as_str())&&t.app_baseline.is_none()})),
         "watch": match &w { Ok(Some(w)) => json!(w), Ok(None) => json!("no watch"), Err(e) => json!({"unknown": e}) },
     });
     if live {
         if let Ok(Some(turn))=&t {v["turn"]["input"]=json!(turn.input);}
-        if crate::runtime::of(&r.runtime).codex {if let Some(app)=native.app {
+        if crate::runtime::of(&r.runtime).has("thread-link") {if let Some(app)=native.app {
             let initial=Turn {input:crate::runtime::owner::read_brief(&crate::setup::dir(install).join(&r.id).join("brief.txt")),app_baseline:Some(0),app_after:Some(0),..Turn::default()};
             let observed=t.as_ref().ok().and_then(|t|t.as_ref()).filter(|t|t.app_baseline.is_some()).unwrap_or(&initial);
             match own(install,&r.id).and_then(|own|(app.observe)(&own,r,observed)) {
@@ -326,11 +326,11 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
         }}
         let activity=activity(install,r);v["updated"]=activity["updated"].clone();v["updated_reason"]=activity["reason"].clone();
         let path = crate::runtime::owner::transcript_for(install,r);
-        match path.and_then(|p| crate::transcript::last_line(crate::runtime::of(&r.runtime).codex, &p)) {
+        match path.and_then(|p| crate::transcript::last_line(crate::transcript::format(&r.runtime), session(r), &p)) {
             Ok(line) => v["last_line"] = json!(line),
             Err(e) => { state = "unknown".into(); v["reason"] = json!(e); }
         }
-        if !crate::runtime::of(&r.runtime).codex && (state == "idle" || state == open) {
+        if !crate::runtime::of(&r.runtime).has("thread-link") && (state == "idle" || state == open) {
             match own(install, &r.id).and_then(|o| (native.holder)(&o, r)) {
                 Ok(true) => state = if crate::runtime::owner_stream::handles(&r.runtime){"working".into()}else{open},
                 Ok(false) => state = "idle".into(),
@@ -346,22 +346,26 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
 /// it holds the file end.
 pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u64>) -> Res<Value> {
     let r = launched(install, id)?;
-    let codex = crate::runtime::of(&r.runtime).codex;
+    let format = crate::transcript::format(&r.runtime);
     let path = crate::runtime::owner::transcript_for(install,&r)?;
-    let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
+    let mut page = match after { Some(a) => crate::transcript::after(format, session(&r), &path, a)?, None => crate::transcript::before(format, session(&r), &path, before)? };
     mark_brief(&mut page.items, &r.brief, &crate::setup::dir(install).join(id));
-    Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+    Ok(page.json())
 }
+
+/// The native session a request's transcript must carry; AgentQ refuses a record bound to another (#2176).
+fn session(r: &Request) -> &str { r.session.as_deref().unwrap_or("-") }
 
 /// #1831: the live view of a resolved task worker's session `<rt>:<id>` on this host, read like an owner
 /// transcript (D1, D4). Every user input of a worker session is TaskQ's, carrying the owner's board entries it delivers
 /// (an answer or a steer, § 4 step 6), so each user item names which one it is.
-pub fn worker_transcript(session: &str, before: Option<u64>, after: Option<u64>) -> Res<Value> {
+/// `log` is the attempt log, the Antigravity worker's only native stream (A3).
+pub fn worker_transcript(session: &str, log: &Path, before: Option<u64>, after: Option<u64>) -> Res<Value> {
     let (rt, id) = session.split_once(':').ok_or("worker session unknown")?;
-    let (codex, path) = crate::runtime::worker_transcript(rt, id)?;
-    let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
+    let (format, path) = crate::runtime::worker_transcript(rt, id, log)?;
+    let mut page = match after { Some(a) => crate::transcript::after(format, id, &path, a)?, None => crate::transcript::before(format, id, &path, before)? };
     worker_roles(&mut page.items);
-    Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+    Ok(page.json())
 }
 
 /// #1834: a user item whose text, or the turn input file its pointer names, ends with the service's marker is TaskQ's,
@@ -422,7 +426,7 @@ fn mark_brief(items: &mut [Value], brief: &str, own:&Path) {
         if item["role"]=="user"&&(text.trim_start().starts_with(head)||text==pointer){item["role"]=json!("brief");handshake=false;}
         else if item["role"]=="user"&&text.trim()==crate::runtime::HANDSHAKE.trim(){item["role"]=json!("transport");handshake=true;}
         else if handshake&&item["role"]=="assistant"&&text.trim()=="OK"{item["role"]=json!("transport");handshake=false;}
-        else if item["role"]!="tool"{handshake=false;}
+        else if item["role"]!="tool"&&item["role"]!="event"{handshake=false;}
     }
 }
 
@@ -606,25 +610,29 @@ mod tests {
     }
 
     // #1831 A4: tool arguments can contain arbitrary secrets, even without recognizable token prefixes.
+    // #2176 owner answer 1: the result body opens read-only on request; arguments stay omitted. Since the page-independence
+    // fix the body is its own item after the call, so a page split cannot hide it.
     #[test]
-    fn worker_tool_lines_never_export_arguments_or_output() {
+    fn worker_tool_lines_never_export_arguments_and_attach_results() {
         use std::io::Write;
         let dir=std::env::temp_dir().join(format!("taskq-worker-tools-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
         let path=dir.join("native.jsonl");
         for codex in [false,true] {
             let mut file=fs::File::create(&path).unwrap();
             let rows=if codex {vec![
-                json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"curl -H 'Authorization: Bearer invented-private-value'\"}"}}),
-                json!({"type":"response_item","payload":{"type":"function_call_output","output":"invented-output-private-value"}}),
+                json!({"type":"response_item","payload":{"type":"function_call","call_id":"c1","name":"exec_command","arguments":"{\"cmd\":\"curl -H 'Authorization: Bearer invented-private-value'\"}"}}),
+                json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"invented-output-private-value\nAuthorization: Bearer invented-result-token"}}),
             ]} else {vec![
-                json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"curl -u user:invented-private-value"}}]}}),
-                json!({"type":"user","message":{"content":[{"type":"tool_result","content":"invented-output-private-value"}]}}),
+                json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"curl -u user:invented-private-value"}}]}}),
+                json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"invented-output-private-value\nAuthorization: Bearer invented-result-token"}]}}),
             ]};
             for row in rows {writeln!(file,"{row}").unwrap();}drop(file);
-            let mut page=crate::transcript::before(codex,&path,None).unwrap();worker_roles(&mut page.items);
-            assert_eq!(page.items.len(),1);assert_eq!(page.items[0]["role"],"tool");
-            assert!(page.items[0]["text"].as_str().unwrap().contains(if codex {"exec_command"} else {"Bash"}));
-            assert!(!json!(page.items).to_string().contains("private-value"));
+            let format=if codex {"codex-rollout"} else {"claude-native"};
+            let mut page=crate::transcript::before(format,"-",&path,None).unwrap();worker_roles(&mut page.items);
+            assert_eq!(page.items.len(),2);assert_eq!(page.items[0]["role"],"tool");assert_eq!(page.items[1]["role"],"tool");
+            assert_eq!(page.items[0]["text"],if codex {"exec_command"} else {"Bash"});assert!(page.items[0]["result"].is_null());
+            let body=page.items[1]["result"].as_str().unwrap();assert!(body.starts_with("invented-output-private-value\n"),"result body follows its call");assert!(!body.contains("invented-result-token"),"a credential in the output is masked like arguments");
+            assert!(!json!(page.items).to_string().contains("user:invented")&&!json!(page.items).to_string().contains("Bearer invented"),"arguments never leave the adapter");
         }
         fs::remove_dir_all(dir).unwrap();
     }
@@ -637,7 +645,7 @@ mod tests {
         let session = std::env::var("TASKQ_PROBE_SESSION").expect("TASKQ_PROBE_SESSION");
         let (mut end, until) = (None, std::time::Instant::now() + std::time::Duration::from_secs(60));
         while std::time::Instant::now() < until {
-            match worker_transcript(&session, None, end) {
+            match worker_transcript(&session, Path::new(&std::env::var("TASKQ_PROBE_LOG").unwrap_or_default()), None, end) {
                 Ok(v) => {
                     for i in v["items"].as_array().unwrap() { println!("{} {} {}", now(), i["role"], i["text"].as_str().unwrap_or_default().chars().take(40).collect::<String>().replace('\n', " ")); }
                     end = v["end"].as_u64();

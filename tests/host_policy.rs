@@ -75,13 +75,14 @@ fn capacity_command_changes_host_policy_not_project_settings() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(install.join("host.json"),fs::Permissions::from_mode(0o600)).unwrap();
     }
-    let at=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()+10;
+    let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
+    // Keep this observation future for the entire bounded CLI startup, including a loaded Windows host.
+    let at=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()+budget.as_secs()+1;
     let host=json!({"limits":{"codex":3},"load_gate":{"enabled":true,"cpu_max":90,"memory_min":10},"admission":{"mode":"auto","max":null}});
     // Include the explicit host policy alongside the project-effective snapshot; no running service or board.
     let mut capacity=host.clone();capacity["host_policy"]=host;capacity["limits"]["codex"]=json!(1);
     fs::write(root.join(".taskq/status.json"),json!({"host":"fixture-host","at":at,"capacity":capacity}).to_string()).unwrap();
     fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-    let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
     let run_in=|cwd:&std::path::Path,args:&[&str]|{let began=std::time::Instant::now();match coreq::process::output("test.host-policy",Command::new(env!("CARGO_BIN_EXE_taskq"))
         .args(args)
         .env("TASKQ_INSTALL",&install).env_remove("TASKQ_ROOT").env("TASKQ_HOST","fixture-host")
@@ -248,4 +249,49 @@ fn external_slot_cli_reconciles_without_a_task_or_scheduler() {
     let out=call("release",&request,false);assert!(out.status.success());let value:Value=serde_json::from_slice(&out.stdout).unwrap();assert_eq!(value["stored_state"],"cancelling");
     assert!(!dir.join("host.json").exists());assert!(!dir.join("projects").exists());assert!(!dir.join(".taskq").exists());
     fs::remove_dir_all(dir).unwrap();
+}
+
+// #2189 A2/A4/A7, §4 Balancing: actual owner CLI writes weights only; invalid/worker requests have no effects.
+#[test]
+fn weighted_balance_cli_preserves_host_policy() {
+    let root=std::env::temp_dir().join(format!("taskq-weighted-cli-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("host.json"),json!({"limits":{"claude":4,"codex":2},"owner_field":"preserve","permission_mode":"dontAsk"}).to_string()).unwrap();
+    let run=|args:&[&str],worker:bool| {
+        let mut cmd=Command::new(env!("CARGO_BIN_EXE_taskq"));
+        cmd.args(args).current_dir(&root).env("TASKQ_INSTALL",&root).env("TASKQ_HOST","fixture")
+            .env_remove("TASKQ_ROOT").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK")
+            .env_remove("COREQ_TRACE_CONTEXT").env_remove("CODEX_THREAD_ID").env_remove("CODEX_SESSION_ID").env_remove("CLAUDE_CODE_SESSION_ID");
+        if worker {cmd.env("TASKQ_ATTEMPT","123").env("TASKQ_TASK","2189");}
+        match coreq::process::output("test.weighted-balance",&mut cmd,Duration::from_secs(if cfg!(windows){60}else{10})) {
+            Ok(out)|Err(coreq::process::Failure::Exit(out))=>out,
+            Err(e)=>panic!("balance CLI: {e}"),
+        }
+    };
+    let output=run(&["balance","claude=2","codex=1"],false);
+    assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Saved runtime weights on fixture"));
+    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"],json!({"claude":2,"codex":1}));
+    assert_eq!(saved["limits"],json!({"claude":4,"codex":2}));
+    assert_eq!(saved["owner_field"],"preserve");assert_eq!(saved["permission_mode"],"dontAsk");
+    let text=run(&["balance"],false);assert!(text.status.success());
+    assert!(String::from_utf8_lossy(&text.stdout).contains("\"claude\":2"));
+    let original=fs::read(root.join("host.json")).unwrap();
+    for args in [vec!["balance","claude=1000001"],vec!["balance","codex=-1"],vec!["balance","unknown=1"],vec!["balance","codex=1.5"],vec!["balance","codex=1","codex=2"],vec!["balance","--clear","codex=1"]] {
+        assert!(!run(&args,false).status.success(),"{args:?}");
+        assert_eq!(fs::read(root.join("host.json")).unwrap(),original);
+    }
+    assert!(!run(&["balance","claude=3"],true).status.success());
+    assert_eq!(fs::read(root.join("host.json")).unwrap(),original);
+    assert!(run(&["balance","codex=3"],false).status.success());
+    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"],json!({"codex":3}),"replace, not merge");
+    assert!(run(&["balance","claude=0"],false).status.success(),"weight 0 saves");
+    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"],json!({"claude":0}));
+    assert!(run(&["balance","--clear"],false).status.success());
+    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"],json!({}));assert_eq!(saved["limits"],json!({"claude":4,"codex":2}));
+    fs::remove_dir_all(root).unwrap();
 }
