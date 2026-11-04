@@ -63,7 +63,7 @@ jobs:
     uses: ./.github/workflows/release-build.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}
-      os: ubuntu-latest
+      os: '["self-hosted", "Linux", "X64", "taskq-wsl"]'
       target: linux-x86_64
   build-windows:
     needs: tag
@@ -71,7 +71,7 @@ jobs:
     uses: ./.github/workflows/release-build.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}
-      os: windows-latest
+      os: '["self-hosted", "Windows", "X64", "taskq-win"]'
       target: windows-x86_64
       ext: .exe
   build-macos:
@@ -80,7 +80,7 @@ jobs:
     uses: ./.github/workflows/release-build.yml
     with:
       tag: ${{ needs.tag.outputs.tag }}
-      os: macos-latest
+      os: '["self-hosted", "macOS", "ARM64", "taskq-mac"]'
       target: macos-aarch64
   publish-linux:
     needs: [tag, checks, build-linux]

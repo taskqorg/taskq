@@ -6,6 +6,7 @@ on:
   workflow_call:
     inputs:
       tag: {type: string, required: true}
+      # JSON: a hosted image name or a self-hosted label list
       os: {type: string, required: true}
       target: {type: string, required: true}
       ext: {type: string, default: ''}
@@ -13,12 +14,18 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: ${{ inputs.os }}
+    runs-on: ${{ fromJSON(inputs.os) }}
+    # The Windows host keeps its default PowerShell execution policy, which refuses the runner's script files.
+    defaults:
+      run:
+        shell: bash
     env:
       TASKQ_SELFTEST_OFFLINE: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - run: rustup default stable
+      - run: |
+          rustup update stable --no-self-update
+          rustup default stable
       - name: Static WebView2 loader for the single-file Windows release
         if: runner.os == 'Windows'
         run: rustup default stable-x86_64-pc-windows-msvc
@@ -33,7 +40,12 @@ jobs:
           grep -q "^version = \"$ver\"" Cargo.toml
           grep -A1 '^name = "taskq"' Cargo.lock | grep -q "^version = \"$ver\""
           echo "VER=$ver" >> "$GITHUB_ENV"
+      # docs/testing.md: the Mac runner's .env also serves tests.yml, which expects target/ in the workspace.
+      - if: runner.environment == 'self-hosted' && runner.os == 'macOS'
+        run: echo "CARGO_TARGET_DIR=$HOME/release-target" >> "$GITHUB_ENV"
+      # docs/testing.md: a self-hosted runner keeps CARGO_HOME and CARGO_TARGET_DIR between runs.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: runner.environment == 'github-hosted'
         with:
           path: |
             ~/.cargo/registry
@@ -52,7 +64,7 @@ jobs:
           TASKQ_INCIDENT_REPORTS: 'off'
           TASKQ_INSTALL: ${{ runner.temp }}/taskq-release-selftest
         run: |
-          bin="target/release/taskq${{ inputs.ext }}"
+          bin="${CARGO_TARGET_DIR:-target}/release/taskq${{ inputs.ext }}"
           mkdir dist
           cp "$bin" "dist/taskq-$VER-${{ inputs.target }}${{ inputs.ext }}"
           # Start the shipped file from its isolated directory, not Cargo's build tree.
