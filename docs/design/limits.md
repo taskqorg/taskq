@@ -81,7 +81,7 @@ A lock holder may be another live process. A bounded wait returns "busy, retry" 
 No change notification exists for the watched state, so it is read again at a fixed spacing.
 
 - Host loop: 1 s sleeps between local ownership, stop and poke checks; the configured `poll` clamped to 5–60 s; link reads 10 s apart; `link` backoff 5–300 s.
-- `health` `EVERY` 10 min and `STALE` 3× that; `tidy` `EVERY` 1 h and `UNOWNED_AFTER` 7 days; `incoming` and `reports` `FULL_SCAN` 300 s and `reports` `LIST_LAG` 300 s (board list lag); `incoming` `EVENT_READS` 5.
+- `health` `EVERY` 1 h and `STALE` 3× that (#2352); `tidy` `EVERY` 1 h and `UNOWNED_AFTER` 7 days; `incoming` and `reports` `FULL_SCAN` 1800 s (#2352) and `reports` `LIST_LAG` 300 s (board list lag); `incoming` `READ_EVERY` 180 s and `reports` collection every 3×`poll`, under `ttl` (#2352); `incoming` `EVENT_READS` 5.
 - `resources` `SPACING` 5 s, `IDLE` 30 s, `FRESH` 60 s, `AHEAD` 30 s, `RECONCILE` 300 s; `telemetry_sync` `RUN` 30 s, `IDLE` 60 s, `STOP` 300 s.
 - `agentq` runtime list refresh 300 s (a probe takes about 1 s, #1591) and readback 2 s; tray tick 2 s; `owner_stream` 25–100 ms and 1 s; `diagnostic` control check 1 s; lock retry sleeps 10–100 ms.
 

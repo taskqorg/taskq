@@ -43,7 +43,7 @@ pub struct GitHub {
     heartbeat: std::cell::RefCell<Option<(u64, Issue)>>,
 }
 
-struct Open {
+pub(super) struct Open {
     at: std::time::Instant,
     /// The board clock when the list was read (#2083): a kept heartbeat is never newer than the board at this time.
     listed: i64,
@@ -58,7 +58,7 @@ struct Open {
 fn task(i: &Issue) -> bool { i.labels.iter().any(|l| l == crate::service::TASK_LABEL) }
 
 /// The longest an open-issue list is reused over unchanged probes; a deleted issue does not bump `updated_at`.
-const OPEN_REUSE: std::time::Duration = std::time::Duration::from_secs(300);
+pub(super) const OPEN_REUSE: std::time::Duration = std::time::Duration::from_secs(300);
 
 fn trusted(v: &Value) -> bool {
     matches!(v["author_association"].as_str(), Some("OWNER" | "MEMBER" | "COLLABORATOR"))
@@ -100,37 +100,54 @@ const OPEN_ISSUES: &str = "query($owner: String!, $name: String!, $after: String
     issues(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: DESC}) { pageInfo { hasNextPage endCursor } \
     nodes { number title body updatedAt createdAt authorAssociation labels(first: 50) { nodes { name } } } } } }";
 
+impl Open {
+    /// The kept list when the probe from the newest known task update finds nothing new; else the tasks it saw, none when
+    /// it failed. The probe answers the tasks and whether the reply is whole.
+    pub(super) fn probe(open: &std::cell::RefCell<Option<Self>>, ask: impl FnOnce(i64) -> Result<(Vec<Issue>, bool)>) -> std::result::Result<Vec<Issue>, Vec<Issue>> {
+        let Some(mut o) = open.borrow_mut().take().filter(|o| o.at.elapsed() < OPEN_REUSE) else { return Err(vec![]) };
+        let (issues, whole) = ask(o.known.values().max().copied().unwrap_or(0)).map_err(|_| vec![])?;
+        if !whole || issues.iter().any(|i| o.known.get(&i.number) != Some(&i.updated)) { return Err(issues); }
+        o.reused = true;
+        let list = o.list.clone();
+        *open.borrow_mut() = Some(o);
+        Ok(list)
+    }
+
+    pub(super) fn keep(open: &std::cell::RefCell<Option<Self>>, seen: &[Issue], list: &[Issue], listed: i64) {
+        let known = seen.iter().chain(list).filter(|i| task(i)).map(|i| (i.number, i.updated)).collect();
+        *open.borrow_mut() = Some(Self { at: std::time::Instant::now(), listed, reused: false, list: list.to_vec(), known });
+    }
+
+    /// The reply of a write to an open non-task issue patches the kept list: the probe sees only tasks.
+    pub(super) fn patch(open: &std::cell::RefCell<Option<Self>>, issue: Issue) {
+        if let Some(o) = open.borrow_mut().as_mut() {
+            if let Some(at) = o.list.iter().position(|i| i.number == issue.number) { o.list[at] = issue; }
+        }
+    }
+
+    pub(super) fn reused_at(open: &std::cell::RefCell<Option<Self>>) -> Option<i64> {
+        open.borrow().as_ref().filter(|o| o.reused).map(|o| o.listed)
+    }
+}
+
 impl GitHub {
     /// Every task change bumps some `taskq` issue's `updated_at`; one `since` query of the newest known task update
     /// finds them, a 304 when nothing changed (#1819). The probe asks for `taskq` issues only (#2083): heartbeat writes
     /// of three hosts changed every reply and billed each pass. Heartbeats, held drafts and other open issues come from
     /// the full list, read at least every [`OPEN_REUSE`]; `views` relists a kept heartbeat that turns stale (§ 3).
     fn open_unchanged(&self) -> Result<Vec<Issue>> {
-        let cached = self.open.borrow_mut().take().filter(|o| o.at.elapsed() < OPEN_REUSE);
-        let mut seen = vec![];
-        if let Some(mut o) = cached {
-            let since = o.known.values().max().copied().unwrap_or(0);
+        let seen = match Open::probe(&self.open, |since| {
             let url = format!("/issues?state=all&labels={}&sort=updated&direction=desc&per_page=100&since={}", crate::service::TASK_LABEL, stamp(since));
-            if let Ok(Value::Array(rows)) = self.api.call("GET", &url, None).and_then(|r| r.json()) {
-                let issues: Vec<Issue> = rows.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect();
-                if rows.len() < 100 && issues.iter().all(|i| o.known.get(&i.number) == Some(&i.updated)) {
-                    o.reused = true;
-                    let list = o.list.clone();
-                    *self.open.borrow_mut() = Some(o);
-                    return Ok(list);
-                }
-                seen = issues;
-            }
-        }
+            let Value::Array(rows) = self.api.call("GET", &url, None)?.json()? else { return Err("invalid board list: expected array".into()) };
+            Ok((rows.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect(), rows.len() < 100))
+        }) { Ok(list) => return Ok(list), Err(seen) => seen };
         // a failed list keeps nothing: the next pass reads in full
         let mut list = self.open_issues()?;
         if let Some((_, written)) = self.heartbeat.borrow().as_ref().filter(|(g, _)| *g == self.api.generation.get()) {
             if let Some(row) = list.iter_mut().find(|i| i.number == written.number && i.trusted && crate::service::is_host(i)
                 && i.updated > 0 && i.updated < written.updated) { *row = written.clone(); }
         }
-        let known = seen.iter().chain(&list).filter(|i| task(i)).map(|i| (i.number, i.updated)).collect();
-        let listed = *self.api.clock.borrow();
-        *self.open.borrow_mut() = Some(Open { at: std::time::Instant::now(), listed, reused: false, list: list.clone(), known });
+        Open::keep(&self.open, &seen, &list, *self.api.clock.borrow());
         Ok(list)
     }
 
@@ -693,7 +710,7 @@ fn landed(pr: &Value, sha: &str) -> bool {
 
 impl Board for GitHub {
     fn forget(&self) { *self.open.borrow_mut() = None; }
-    fn kept(&self) -> Option<i64> { self.open.borrow().as_ref().filter(|o| o.reused).map(|o| o.listed) }
+    fn kept(&self) -> Option<i64> { Open::reused_at(&self.open) }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.merge_ci(sha)?.map(|_| ()) }
     fn delivery_gap(&self, mode: &str) -> Result<Option<String>> {
         if mode != "pr" { return Ok(None); }
@@ -733,8 +750,10 @@ impl Board for GitHub {
             },
         };
         // an empty repository answers 409 to a reader that may read it
+        // #2352: the Issues read asks for `taskq` issues only: heartbeat writes never change it, so it answers 304
         [("Issues", "/issues", true), ("Contents", "/commits", false), ("Pull requests", "/pulls", true)].into_iter().map(|(name, path, write)| {
-            let read = probe("GET", &format!("{path}?per_page=1"), None, if name == "Contents" { 409 } else { 0 });
+            let query = if name == "Issues" { format!("?labels={}&per_page=1", crate::service::TASK_LABEL) } else { "?per_page=1".into() };
+            let read = probe("GET", &format!("{path}{query}"), None, if name == "Contents" { 409 } else { 0 });
             (name, if write && read == Probe::Ok { probe("POST", path, Some(json!({})), 422) } else { read })
         }).collect()
     }
@@ -856,9 +875,7 @@ impl Board for GitHub {
         if let Some(issue) = issue.as_ref().filter(|i| i.trusted && crate::service::is_host(i)) {
             *self.heartbeat.borrow_mut() = Some((self.api.generation.get(), issue.clone()));
         }
-        if let (Some(issue), Some(o)) = (issue, self.open.borrow_mut().as_mut()) {
-            if let Some(at) = o.list.iter().position(|i| i.number == n) { o.list[at] = issue; }
-        }
+        if let Some(issue) = issue { Open::patch(&self.open, issue); }
         Ok(())
     }
 

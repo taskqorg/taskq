@@ -1265,7 +1265,7 @@ fn sleep_until_poke(paths: &[PathBuf; 2], start: [Option<SystemTime>; 2], until:
 /// § 4 step 8 (#1819): the board is read at most this many seconds apart while a tray window is open.
 const MENU_POLL: u64 = 15;
 
-/// A tray window touches `<install>/menu-open` every tick while open.
+/// A tray window touches `<install>/menu-open` every tick while visible and focused.
 fn menu_open(install: &Path) -> bool {
     file_age(&install.join("menu-open")).is_some_and(|a| a < 30)
 }
@@ -1288,9 +1288,9 @@ fn take_reread(dot: &Path) -> Vec<u64> {
     tasks
 }
 
-/// § 4 step 8 (#1431): an idle pass waits 3×`poll`; board-only changes may show up to 2×`poll` later.
-fn poll_wait(poll: u64, complete: bool, children: bool, poked: bool, snapshot: Option<&snapshot::Snapshot>) -> u64 {
-    let active = snapshot.is_none_or(|s| s.reason.is_some() || s.tasks.iter().any(|r| matches!(r.task.state, State::Ready | State::Doing | State::Review)));
+/// § 4 step 8 (#1431, #2352): an idle pass waits 3×`poll`; board-only changes may show up to 2×`poll` later.
+fn poll_wait(poll: u64, complete: bool, children: bool, poked: bool, focus_off: bool, snapshot: Option<&snapshot::Snapshot>) -> u64 {
+    let active = snapshot.is_none_or(|s| s.reason.is_some() || !focus_off && s.tasks.iter().any(|r| matches!(r.task.state, State::Ready | State::Doing | State::Review)));
     if !complete || children || poked || active { poll } else { poll * 3 }
 }
 
@@ -1736,7 +1736,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             }
         }
         // #1357: a failed handover retries at `poll`; its reduced pass may list the board for unknown ownership.
-        let wait = if reduced {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
+        let wait = if reduced {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.focus_off(), s.snapshot.as_ref())};
         // every 30 s, also between board polls: a gate sample (when enabled) and a fresh capacity in status.json (§ 4)
         let mut tick = || {
             let results_ready=reports.received();

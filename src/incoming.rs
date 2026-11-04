@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 const MONTH: i64 = 30 * 86400;
 const EVENT_READS: usize = 5;
 /// #2083: the longest between admission scans of every issue (§ 4 budget).
-const FULL_SCAN: i64 = 300;
+const FULL_SCAN: i64 = 1800;
+/// #2352: seconds between two scans while none is unresolved; each pass of each project billed every task change once more.
+const READ_EVERY: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Observation stays off the service's heartbeat/admission path, including a slow or unavailable board.
 pub struct Reader {
@@ -14,6 +16,8 @@ pub struct Reader {
     response: std::sync::mpsc::Receiver<Value>,
     busy: bool,
     value: Value,
+    every: std::time::Duration,
+    asked: Option<std::time::Instant>,
 }
 impl Reader {
     pub fn new(cfg: crate::service::Config, schema: Option<String>, identity: &str) -> Self {
@@ -37,7 +41,7 @@ impl Reader {
                 if responses.send(value).is_err() {break;}
             }
         });
-        Self {request,response,busy:false,value}
+        Self {request,response,busy:false,value,every:READ_EVERY,asked:None}
     }
 
     pub fn tick(&mut self) -> Value {
@@ -47,7 +51,9 @@ impl Reader {
                 else {self.value=json!({"reason":"admission reader exited"});}},
             Err(std::sync::mpsc::TryRecvError::Empty)=>{},
         }
-        if !self.busy && self.request.try_send(()).is_ok() {self.busy=true;}
+        // An unresolved source keeps reading each pass: the event reads of a pass are bounded.
+        let due=self.asked.is_none_or(|t|t.elapsed()>=self.every)||self.value["missing"].as_array().is_some_and(|m|!m.is_empty());
+        if !self.busy && due && self.request.try_send(()).is_ok() {self.busy=true;self.asked=Some(std::time::Instant::now());}
         self.value.clone()
     }
 }
@@ -266,9 +272,9 @@ mod tests {
         board.state.borrow_mut().admissions.insert(flaky,Ok(Some((72,100))));
         board.state.borrow_mut().clock=449;
         board.comment(bad,"edit").unwrap();
-        h.refresh(&board,500);
+        h.refresh(&board,200+FULL_SCAN);
         assert!(h.failed.is_empty()&&h.pending.is_empty()&&h.missing.is_empty(),"{:?}",h.missing);
-        assert_eq!(h.through,Some(500));
+        assert_eq!(h.through,Some(200+FULL_SCAN));
         assert_eq!(h.json(&board.url(0))["events"].as_array().unwrap().len(),2);
     }
 
@@ -277,7 +283,7 @@ mod tests {
     fn history_reader_tick_never_waits_for_collection() {
         let (request,requests)=std::sync::mpsc::sync_channel(1);
         let (responses,response)=std::sync::mpsc::channel();
-        let mut reader=Reader {request,response,busy:false,value:Value::Null};
+        let mut reader=Reader {request,response,busy:false,value:Value::Null,every:std::time::Duration::ZERO,asked:None};
         let began=std::time::Instant::now();
         for _ in 0..1000 {assert_eq!(reader.tick(),Value::Null);}
         assert!(began.elapsed()<std::time::Duration::from_secs(1));
@@ -288,6 +294,27 @@ mod tests {
         drop(responses);
         assert_eq!(reader.tick()["missing"],json!(["admission reader exited"]));
         assert_eq!(reader.value["end"],100,"a dead collector retains bounded historical evidence");
+    }
+
+    // #2352: each pass of each project asked for another scan, so one task change billed this reader at every host.
+    // Risk kept: the first scan runs at once, and an unresolved source still reads each pass.
+    #[test]
+    fn reader_scans_on_its_own_cadence_unless_a_source_is_unresolved() {
+        let (request,requests)=std::sync::mpsc::sync_channel(1);
+        let (responses,response)=std::sync::mpsc::channel();
+        let mut reader=Reader {request,response,busy:false,value:Value::Null,every:READ_EVERY,asked:None};
+        let mut scans=|reader:&mut Reader,reply:Value|{
+            let mut n=0;
+            for _ in 0..60 {
+                reader.tick();
+                if requests.try_recv().is_ok() {n+=1;responses.send(reply.clone()).unwrap();}
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            n
+        };
+        assert_eq!(scans(&mut reader,json!({"schema":1,"missing":[]})),1,"one scan in a burst of passes: before this fix, 60");
+        reader.asked=None;
+        assert!(scans(&mut reader,json!({"schema":1,"missing":["#1: pending"]}))>1,"an unresolved source reads each pass");
     }
 
     #[test]
@@ -328,22 +355,23 @@ mod tests {
         assert_eq!(restarted.through,Some(200));
         assert!(restarted.missing[0].contains("clock"));
         // Recent updates wait for settled event history, including after a cache round trip.
-        board.state.borrow_mut().clock=489;
+        let scan=200+FULL_SCAN;
+        board.state.borrow_mut().clock=scan-11;
         let held=board.create("held","",&["q-held".into()]).unwrap();
-        restarted.refresh(&board,500);
+        restarted.refresh(&board,scan);
         assert_eq!(restarted.through,Some(200));
         restarted=History::seed(&restarted.json(&board.url(0)),&board.url(0));
-        restarted.refresh(&board,600);
+        restarted.refresh(&board,scan+100);
         // #2083: this pass scans `taskq` issues only, so coverage ends at the scan of every issue that saw the draft
-        assert_eq!(restarted.through,Some(500));assert!(restarted.missing.is_empty());
-        board.state.borrow_mut().clock=649;
+        assert_eq!(restarted.through,Some(scan));assert!(restarted.missing.is_empty());
+        board.state.borrow_mut().clock=scan+149;
         board.labels(held,&["taskq".into()],&["q-held".into()]).unwrap();
-        restarted.refresh(&board,700);
-        assert_eq!(restarted.through,Some(500));
+        restarted.refresh(&board,scan+200);
+        assert_eq!(restarted.through,Some(scan));
         assert!(restarted.missing.iter().any(|s|s.contains("history unavailable")));
-        restarted.refresh(&board,MONTH+700);
+        restarted.refresh(&board,MONTH+scan+200);
         assert!(restarted.pending.is_empty());assert!(restarted.seen.is_empty(),"the scan cache is month-bounded");
-        assert_eq!(restarted.through,Some(MONTH+700));
+        assert_eq!(restarted.through,Some(MONTH+scan+200));
     }
 
     // Chain: M6. UX30-21: first label admission survives restarts, requeues, removal and closure; absent history is unknown.

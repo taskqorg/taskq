@@ -1,5 +1,6 @@
 //! GitLab issues (taskq.md § 1, § 2, § 7): REST v4 on gitlab.com or a self-managed host, `glab` login.
 
+use super::github::Open;
 use super::{Api, Board, image_name, Comment, Issue, Kind, Publish, Result, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -13,7 +14,7 @@ pub const KIND: Kind = Kind {
     token,
     token_env: &["GITLAB_TOKEN"],
     api,
-    board: |api| Box::new(GitLab { api, members: RefCell::new(vec![]) }),
+    board: |api| Box::new(GitLab { api, members: RefCell::new(vec![]), open: RefCell::new(None) }),
 };
 
 /// coreq's lookup (§ 9): env, `<install>/gitlab-token`, then `glab`. Reaching `glab` means no env token and no file.
@@ -37,6 +38,8 @@ fn api(host: &str, repo: &str, token: &str) -> Api {
 pub struct GitLab {
     pub(super) api: Api,
     members: RefCell<Vec<(u64, bool)>>,
+    /// #2352: the last open-issue list, reused while the `taskq` probe finds nothing new, as on GitHub (#1819).
+    open: RefCell<Option<Open>>,
 }
 
 fn csv(v: &[String]) -> String {
@@ -310,12 +313,29 @@ impl Board for GitLab {
     }
 
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> {
-        let url = match since {
-            Some(t) => format!("/issues?state=all&per_page=100&updated_after={}", stamp(t)),
-            None => "/issues?state=opened&per_page=100".into(),
-        };
+        if let Some(t) = since {
+            return Ok(self.api.all(&format!("/issues?state=all&per_page=100&updated_after={}", stamp(t)))?.iter().map(|v| self.parse_issue(v)).collect());
+        }
+        // #2352: heartbeat writes of three hosts changed this reply, so each pass billed it; heartbeats may read
+        // `OPEN_REUSE` late as on GitHub, and `views` relists one that turns stale (§ 3).
+        let seen = match Open::probe(&self.open, |since| {
+            let url = format!("/issues?state=all&labels={}&order_by=updated_at&sort=desc&per_page=100&updated_after={}", crate::service::TASK_LABEL, stamp(since));
+            let Value::Array(rows) = self.api.call("GET", &url, None)?.json()? else { return Err("invalid board list: expected array".into()) };
+            Ok((rows.iter().map(|v| self.parse_issue(v)).collect(), rows.len() < 100))
+        }) { Ok(list) => return Ok(list), Err(seen) => seen };
+        let list: Vec<Issue> = self.api.all("/issues?state=opened&per_page=100")?.iter().map(|v| self.parse_issue(v)).collect();
+        Open::keep(&self.open, &seen, &list, *self.api.clock.borrow());
+        Ok(list)
+    }
+
+    /// #2352: heartbeat writes never change this reply, so an unchanged board answers 304.
+    fn tasks(&self, since: i64) -> Result<Vec<Issue>> {
+        let url = format!("/issues?state=all&labels={}&per_page=100&updated_after={}", crate::service::TASK_LABEL, stamp(since));
         Ok(self.api.all(&url)?.iter().map(|v| self.parse_issue(v)).collect())
     }
+
+    fn forget(&self) { *self.open.borrow_mut() = None; }
+    fn kept(&self) -> Option<i64> { Open::reused_at(&self.open) }
 
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> {
         let since = since.map_or(String::new(), |t| format!("&updated_after={}", stamp(t)));
@@ -375,26 +395,34 @@ impl Board for GitLab {
 
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> {
         if !add.is_empty() && self.canonical_labels()? { self.ensure_labels(add)?; }
+        self.forget();
         self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "add_labels": csv(add), "remove_labels": csv(remove) })))?;
         verify_assignment(self, n, add, remove)
     }
 
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u64> {
         if let Some(names) = self.api.creation_labels(labels)? { self.ensure_labels(&names)?; }
+        self.forget();
         let n = self.api.call("POST", "/issues", Some(json!({ "title": title, "description": body, "labels": csv(labels) })))?.json()?["iid"].as_u64().ok_or("no issue number")?;
         verify_assignment(self, n, labels, &[])?;
         Ok(n)
     }
 
     fn edit(&self, n: u64, body: &str) -> Result<()> {
-        self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "description": body }))).map(|_| ())
+        let reply = self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "description": body })))?;
+        // The probe does not see this host's heartbeat write; its reply patches the kept list, so the next pass does not write again.
+        let task = |i: &Issue| i.labels.iter().any(|l| l == crate::service::TASK_LABEL);
+        if let Some(issue) = reply.json().map(|v| self.parse_issue(&v)).ok().filter(|i| i.number == n && i.open && !task(i)) { Open::patch(&self.open, issue); }
+        Ok(())
     }
 
     fn close(&self, n: u64) -> Result<()> {
+        self.forget();
         self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "state_event": "close" }))).map(|_| ())
     }
 
     fn reopen(&self, n: u64) -> Result<()> {
+        self.forget();
         self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "state_event": "reopen" }))).map(|_| ())
     }
 
@@ -607,7 +635,8 @@ mod create_claim_tests {
                 _ if path == "/user" => json!({"username": "owner"}),
                 _ if path.starts_with("/projects/o%2Fr/members/all/") => json!({"access_level": 30}),
                 ("GET", _, _) if full == file.0 => json!({"encoding": "base64", "content": file.1}),
-                ("GET", Some(""), _) => json!(list.borrow().iter().filter(|i| !full.contains("state=opened") || i["state"] == "opened").collect::<Vec<_>>()),
+                ("GET", Some(""), _) => json!(list.borrow().iter().filter(|i| !full.contains("state=opened") || i["state"] == "opened")
+                    .filter(|i| !full.contains("labels=taskq") || i["labels"].to_string().contains("\"taskq\"")).collect::<Vec<_>>()),
                 ("POST", Some(""), _) => {
                     let body = body.unwrap();
                     let labels: Vec<_> = body["labels"].as_str().unwrap().split(',').filter(|l| !l.is_empty()).collect();
@@ -641,6 +670,61 @@ mod create_claim_tests {
             Ok(Reply { status: 200, headers: vec![], body: v.to_string(), operation: "read" })
         }));
         ((KIND.board)(api), issues)
+    }
+
+    // #2352/R12: any heartbeat changed the open list and `tasks`, so each pass of each project billed both. Before this fix
+    // the ten passes below read the full list ten times and `tasks` asked for every issue. Keep: a task change and a task
+    // write still read the list, and an own write shows at once. The fixture substitutes HTTP, not native traffic.
+    #[test]
+    fn heartbeats_do_not_bill_the_open_list_each_pass() {
+        let row = |n: u64, label: &str, at: &str| json!({"iid": n, "title": format!("issue {n}"), "description": "old", "labels": [label],
+            "state": "opened", "author": {"id": 1}, "created_at": "2026-11-04T00:00:00Z", "updated_at": at});
+        let rows = Rc::new(RefCell::new(vec![row(1, "taskq-host", "2026-11-04T01:00:00Z"), row(2, "taskq", "2026-11-04T01:00:00Z")]));
+        let urls: Rc<RefCell<Vec<String>>> = Rc::default();
+        let (list, log) = (rows.clone(), urls.clone());
+        let mut api = api("gitlab.example", "o/r", "test");
+        api.transport = Some(Box::new(move |method, url, body| {
+            let full = url.trim_start_matches("https://gitlab.example/api/v4/projects/o%2Fr").to_string();
+            let v = if full.starts_with("/members/all/") {
+                json!({"access_level": 30})
+            } else if method == "GET" {
+                log.borrow_mut().push(full.clone());
+                json!(list.borrow().iter().filter(|i| !full.contains("state=opened") || i["state"] == "opened")
+                    .filter(|i| !full.contains("labels=taskq") || i["labels"][0] == "taskq").collect::<Vec<_>>())
+            } else {
+                let (body, n) = (body.unwrap(), full.rsplit('/').next().unwrap().to_string());
+                let mut all = list.borrow_mut();
+                let at = all.iter().position(|i| i["iid"].to_string() == n).unwrap();
+                if let Some(text) = body["description"].as_str() { all[at]["description"] = json!(text); }
+                if body["state_event"] == "close" { all[at]["state"] = json!("closed"); }
+                all[at]["updated_at"] = json!("2026-11-04T02:00:00Z");
+                all[at].clone()
+            };
+            Ok(Reply { status: 200, headers: vec![], body: v.to_string(), operation: "read" })
+        }));
+        let b = (KIND.board)(api);
+        let full = |urls: &Rc<RefCell<Vec<String>>>| urls.borrow().iter().filter(|u| u.contains("state=opened")).count();
+        assert_eq!(b.issues(None).unwrap().len(), 2);
+        assert_eq!(b.kept(), None);
+        for k in 0..10 {
+            rows.borrow_mut()[0]["updated_at"] = json!(format!("2026-11-04T01:{:02}:00Z", 10 + k));
+            assert_eq!(b.issues(None).unwrap().len(), 2);
+            assert_eq!(b.tasks(0).unwrap().iter().map(|i| i.number).collect::<Vec<_>>(), [2], "`tasks` reads tasks only");
+        }
+        assert_eq!(full(&urls), 1, "one full list in ten passes: before this fix, eleven");
+        assert!(b.kept().is_some(), "`views` learns the list is kept, so it relists a stale heartbeat");
+        assert!(urls.borrow().iter().filter(|u| !u.contains("state=opened")).all(|u| u.contains("labels=taskq")), "{:?}", urls.borrow());
+        b.edit(1, "mine").unwrap();
+        assert_eq!(b.issues(None).unwrap()[0].body, "mine", "an own write patches the kept list");
+        assert_eq!(full(&urls), 1);
+        rows.borrow_mut()[1]["updated_at"] = json!("2026-11-04T03:00:00Z");
+        b.issues(None).unwrap();
+        assert_eq!(full(&urls), 2, "a task change reads the list");
+        assert_eq!(b.kept(), None);
+        b.issues(None).unwrap();
+        b.close(2).unwrap();
+        assert_eq!(b.issues(None).unwrap().iter().map(|i| i.number).collect::<Vec<_>>(), [1], "a task write forgets the kept list");
+        assert_eq!(full(&urls), 3);
     }
 
     // Chain: § 7 Reports Make on GitLab -> claim issue setup -> § 1 create claims -> held drafts (#1945). Defect:

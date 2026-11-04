@@ -248,6 +248,22 @@ for invalid in [parked[:2] + parked[3:],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', author_association='NONE')],
                 parked[:5] + [comment(6, 'taskq: answer\nProduct', updated_at='edited')]]:
     assert approval(invalid) == '', 'stage parks retain admission, unsupported-transition, revision and trust fences'
+# #2352: a worker `gone` (§2 row 10) made the gate unknown, so the replacement attempt's picked §4 and M8 ask never approved.
+gone_ask = 'taskq: ask attempt 4\nDone: cuts\nProblem: Change §4 and M8.\n1. Change §4 - + less; - late\n2. Keep R9 - + none; - fails\nTo answer: `taskq answer 2352.K`.'
+gone_steps = [comment(1, 'taskq: spawn worker claude:invented win'), comment(2, 'taskq: gone attempt 1'), comment(4, 'taskq: spawn worker claude:invented win')]
+gone_text = lambda *rest: check['approval_text'](gone_steps + list(rest), 2352)
+replaced = gone_text(comment(5, gone_ask), comment(6, 'taskq: released 4 exit attempt 4'), comment(7, 'taskq: answer 1\nChange §4 - + less; - late'))
+assert '§4' in replaced and 'M8' in replaced and 'R9' not in replaced, replaced
+assert '§4' not in gone_text(comment(5, gone_ask)), 'an unanswered ask grants nothing after gone'
+assert '§4' not in gone_text(comment(5, gone_ask), comment(7, 'taskq: answer 1 attempt 4')), 'an attempt-bound answer grants nothing after gone'
+assert 'M8' not in gone_text(comment(5, gone_ask), comment(7, 'taskq: answer 1\nop-id: stale\nrevision: 9')), 'a mismatched revision grants nothing after gone'
+assert 'M8' not in gone_text(comment(5, gone_ask.replace('attempt 4', 'attempt 1')), comment(7, 'taskq: answer 1')), "the dead attempt's late ask grants nothing"
+second_gone = [comment(5, 'taskq: gone attempt 4'), comment(6, 'taskq: spawn worker claude:invented win'), comment(7, gone_ask.replace('attempt 4', 'attempt 6')), comment(8, 'taskq: answer 1')]
+assert gone_text(*second_gone) == '', 'the 2nd gone asks with the limit card: unmodelled, so the gate stays closed'
+reviewer_gone = [comment(1, 'taskq: spawn worker claude:invented win'), comment(2, 'taskq: result ' + 'e'*40 + ' attempt 1'), comment(3, 'taskq: spawn reviewer claude:invented win'),
+                 comment(4, 'taskq: gone attempt 3'), comment(5, 'taskq: spawn reviewer claude:invented win'), comment(6, gone_ask.replace('attempt 4', 'attempt 5')), comment(7, 'taskq: answer 1')]
+assert check['approval_text'](reviewer_gone, 2352) == '', 'only a worker gone is modelled'
+print('PASS rule gate: a picked ask after a worker gone approves; other grants stay closed')
 # #2232: a worker `later <ref> attempt` park (§2 row 23) made the gate unknown, so #2210's later §8 pick never approved.
 history_2210 = [comment(1, 'taskq: hold'), comment(2, 'taskq: start'), comment(3, 'taskq: spawn worker claude:invented win'),
                 comment(4, 'taskq: accepted 3 attempt 3'), comment(5, 'taskq: later coreq#116 attempt 3\nReason: coreq orders pre-releases lexically'),

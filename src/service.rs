@@ -139,9 +139,27 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
 
 /// Only issues labelled `taskq` are tasks (§ 1): a user issue never starts by itself.
 /// Heartbeat lines a write compares: the `at` stamp and diagnostics observation times change every pass (#1358).
+/// A value that is the same for the whole host travels with the next write, or one change writes every project's
+/// board (§ 4 step 3, #2352).
 fn stable(body: &str) -> Vec<String> {
     // A changed usage row never forces a write; rows travel with the periodic write (capacity.md).
-    body.lines().filter(|l| !l.starts_with("at ") && crate::runtime::usage::Row::parse(l).is_none()).map(|l| {
+    body.lines().filter(|l| !l.starts_with("at ") && crate::runtime::usage::Row::parse(l).is_none()
+        && !l.starts_with("headroom ") && !l.starts_with("requests ") && *l != "has gui").map(|l| {
+        if let Some(mut balancing)=l.strip_prefix("balancing ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
+            if let Some(b)=balancing.as_object_mut() {b.remove("has");}
+            if let Some(runtimes)=balancing.get_mut("runtimes").and_then(Value::as_object_mut) {
+                for r in runtimes.values_mut().filter_map(Value::as_object_mut) {
+                    for key in ["code","reason","load"] {r.remove(key);}
+                }
+            }
+            return format!("balancing {balancing}");
+        }
+        if let Some(queue)=l.strip_prefix("queue ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
+            return format!("queue {}",queue["restart"]);
+        }
+        if let Some((_,status))=l.strip_prefix("doctor ").and_then(|s|s.split_once(' ')) {
+            return format!("doctor {status}");
+        }
         if let Some(mut execution)=l.strip_prefix("execution ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
             if let Some(progress)=execution.get_mut("progress").and_then(Value::as_object_mut) {progress.remove("observed");}
             return format!("execution {execution}");
@@ -154,6 +172,11 @@ fn stable(body: &str) -> Vec<String> {
         }
         _ => l.to_string(),
     }}).collect()
+}
+
+/// § 4 step 3: a lease needs the wider margin only while this heartbeat holds an attempt (#2352).
+fn renewal(body: &str, ttl: i64) -> i64 {
+    if body.lines().any(|l| l.starts_with('#')) {ttl / 3} else {ttl / 2}
 }
 
 /// #1616: a host admission refusal (`admission.rs` code, or `host.rs` reason under code `host`) as an admission code.
@@ -1040,7 +1063,7 @@ impl<'a> Service<'a> {
     }
 
     /// The heartbeat of a reduced or observe pass: read at most every `ttl / 5`, at once when its children changed;
-    /// written like a full pass (§ 8 step 3): every `ttl / 3` or on a change outside `at`/diagnostics times.
+    /// written like a full pass (§ 4 step 3): at each `renewal` or on a change `stable` compares.
     fn beat_reduced(&mut self, changed: bool) -> Result<(), String> {
         if changed || self.reduced_at.is_none_or(|t| self.mono.saturating_sub(t) >= (self.cfg.ttl / 5).max(1) as u64) {
             self.reduced_at = Some(self.mono);
@@ -1048,7 +1071,7 @@ impl<'a> Service<'a> {
                 let hb = self.board.issue(n)?;
                 let now = self.board.now()?;
                 let body = self.heartbeat_body();
-                if now - hb.updated >= self.cfg.ttl / 3 || stable(&hb.body) != stable(&body) {
+                if now - hb.updated >= renewal(&body, self.cfg.ttl) || stable(&hb.body) != stable(&body) {
                     self.board.edit(n, &format!("{body}\nat {now}"))?;
                 }
             }
@@ -1328,6 +1351,9 @@ impl<'a> Service<'a> {
     }
 
     pub fn idle(&self) -> bool {self.kids.is_empty() && self.handoff_waits(false,false).is_empty()}
+
+    /// § 4 Focus: this host admits nothing; an unreadable focus file stays unknown.
+    pub fn focus_off(&self) -> bool {self.focus.is_empty() && self.focus_error.is_none()}
 
     /// Admission of one launch (§ 3): the load gate, then under Auto a reservation from the host authority, which
     /// refuses with a reason; the request stays `requested`. Fixed admits as before.
@@ -2311,9 +2337,9 @@ impl<'a> Service<'a> {
         let body = self.heartbeat_body();
         self.host_issue = hosts.iter().find(|h| h.title == title).map(|h| h.number);
         match hosts.iter().find(|h| h.title == title) {
-            // execution rows refresh every 60 s, read within ttl (snapshot.rs); without them ttl / 3 keeps every lease fresh (#1358)
+            // execution rows refresh every 60 s, read within ttl (snapshot.rs); without them `renewal` keeps every lease fresh (#1358)
             Some(h) if stable(&h.body) == stable(&body)
-                && now - h.updated < if body.lines().any(|l| l.starts_with("execution ")) { 60.min(ttl / 3) } else { ttl / 3 } => {}
+                && now - h.updated < if body.lines().any(|l| l.starts_with("execution ")) { 60.min(ttl / 3) } else { renewal(&body, ttl) } => {}
             // a same-body edit leaves `updated_at` as is (GitHub), so the stamp keeps the heartbeat fresh
             Some(h) => {
                 self.board.edit(h.number, &format!("{body}\nat {now}"))?;
@@ -5129,20 +5155,26 @@ Open: none")).unwrap();
         let c = cfg("mac");
         let b = Fake::default();
         let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
-        assert_eq!(crate::poll_wait(60, true, false, false, None), 60, "no board read yet is not idle");
+        assert_eq!(crate::poll_wait(60, true, false, false, false, None), 60, "no board read yet is not idle");
+        assert_eq!(crate::poll_wait(60, true, false, false, true, None), 60, "no board read yet is not idle, focus off too");
         s.pass().unwrap();
         let idle = s.snapshot.as_ref();
-        assert_eq!(crate::poll_wait(60, true, false, false, idle), 180);
-        assert_eq!(crate::poll_wait(60, false, false, false, idle), 60, "a failed pass keeps the normal interval");
-        assert_eq!(crate::poll_wait(60, true, true, false, idle), 60, "a running child keeps the normal interval");
-        assert_eq!(crate::poll_wait(60, true, false, true, idle), 60, "a poke restores the normal interval");
+        assert_eq!(crate::poll_wait(60, true, false, false, false, idle), 180);
+        assert_eq!(crate::poll_wait(60, false, false, false, false, idle), 60, "a failed pass keeps the normal interval");
+        assert_eq!(crate::poll_wait(60, true, true, false, false, idle), 60, "a running child keeps the normal interval");
+        assert_eq!(crate::poll_wait(60, true, false, true, false, idle), 60, "a poke restores the normal interval");
         let n = b.create("Pending", "", &[TASK_LABEL.into()]).unwrap();
         s.pass().unwrap();
         let snap = s.snapshot.as_mut().unwrap();
         assert!(snap.tasks.iter().any(|r| r.n == n));
         for state in [State::Ready, State::Doing, State::Review, State::Ask] {
             snap.tasks.iter_mut().for_each(|r| r.task.state = state);
-            assert_eq!(crate::poll_wait(60, true, false, false, Some(&*snap)), if state == State::Ask {180} else {60}, "{state:?} task");
+            assert_eq!(crate::poll_wait(60, true, false, false, false, Some(&*snap)), if state == State::Ask {180} else {60}, "{state:?} task");
+            // #2352: focus off admits nothing, so a board task elsewhere keeps no 60 s pass here
+            assert_eq!(crate::poll_wait(60, true, false, false, true, Some(&*snap)), 180, "{state:?} task, focus off");
+            assert_eq!(crate::poll_wait(60, false, false, false, true, Some(&*snap)), 60, "{state:?} task, focus off, failed pass");
+            assert_eq!(crate::poll_wait(60, true, true, false, true, Some(&*snap)), 60, "{state:?} task, focus off, running child");
+            assert_eq!(crate::poll_wait(60, true, false, true, true, Some(&*snap)), 60, "{state:?} task, focus off, poke");
         }
     }
 
@@ -6262,7 +6294,7 @@ Open: none")).unwrap();
     // Chain: § 4 board budget, heartbeat. Risk: a PATCH every pass burns the shared budget (#1358: the diagnostics
     // observation time changed the body every pass), or a sparse heartbeat lets another host expire a live lease.
     #[test]
-    fn idle_heartbeat_is_batched_at_a_third_of_ttl_and_stays_fresh() {
+    fn idle_heartbeat_is_batched_at_half_ttl_and_stays_fresh() {
         let b = Fake::default();
         let c = cfg("mac");
         let mut s = service(&b, &c, Default::default());
@@ -6281,7 +6313,9 @@ Open: none")).unwrap();
             s.pass().unwrap();
             if beat(&b) != last { writes += 1; last = beat(&b); }
         }
-        assert_eq!(writes, 3600 / (c.ttl / 3), "one periodic write per ttl/3, not one per fast pass");
+        assert_eq!(writes, 3600 / (c.ttl / 2), "one periodic write per ttl/2 without an attempt, not one per fast pass");
+        assert_eq!(renewal("version 1\n#7 9", c.ttl), c.ttl / 3, "a heartbeat holding a lease keeps the wider margin");
+        assert_eq!(renewal("version 1", c.ttl), c.ttl / 2);
         let body = b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host mac").unwrap().body;
         let at = body.lines().find_map(|l| l.strip_prefix("at ")).unwrap();
         assert!(body.contains(&format!("\"observed\":{at},")), "a write carries the current diagnostics");
@@ -6319,6 +6353,66 @@ Open: none")).unwrap();
             if beat(&b) != last { writes += 1; last = beat(&b); }
         }
         assert!(writes <= 3600 / (c.ttl / 3), "{writes} reduced writes in an hour, want at most one per ttl / 3");
+    }
+
+    // Chain: § 4 step 3, board budget (#2352). Risk: a value that is the same for the whole host changed and every
+    // project wrote its board at once, so 13 projects spent 13 writes on one change; focus off stopped none of them.
+    #[test]
+    fn host_wide_values_wait_for_the_renewal() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        let mut s = service(&b, &c, Default::default());
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Err("fixture holds admission".into()))));
+        s.host = Some(host.clone());
+        let beat = |b: &Fake| b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host mac").map(|i| i.updated).unwrap();
+        s.pass().unwrap();
+        let (mut writes, mut last) = (0, beat(&b));
+        for t in 1..=60u64 {
+            b.advance(60);
+            s.health = Some((std::time::Instant::now(), format!("doctor {t} ok")));
+            {
+                let mut h = host.lock().unwrap();
+                h.last_hour = Some(BTreeMap::from([("GET issues".to_string(), t)]));
+                h.queues.insert("other".into(), crate::host::Queue { ready: t, ..Default::default() });
+            }
+            s.pass().unwrap();
+            if beat(&b) != last { writes += 1; last = beat(&b); }
+            assert!(b.now().unwrap() - last < c.ttl, "lease stays fresh");
+        }
+        assert_eq!(writes, 20, "one renewal per ttl / 2 at 60 s passes, not one write per changed value");
+    }
+
+    // Chain: § 4 step 3 (#2352). Risk: the host-wide cut hides a change another host or the owner must see at once.
+    #[test]
+    fn stable_lists_what_forces_a_heartbeat_write() {
+        let bal = |code: &str, full: bool, last: u64| format!(r#"balancing {{"schema":2,"last_spawn":{last},"mode":"any","has":["gui"],"focus":["all"],"runtimes":{{"codex":{{"code":"{code}","reason":"r{code}","full":{full},"disabled":false,"quota":[],"load":{{"free":1}}}}}}}}"#);
+        let base = format!("version 1\n{}\nqueue {{\"restart\":null,\"projects\":[{{\"ready\":1}}]}}\ndoctor 100 ok\nservice ab", bal("admitted", false, 5));
+        for (from, to) in [
+            (bal("admitted", false, 5), bal("spacing", false, 5)),
+            ("\"ready\":1".to_string(), "\"ready\":2".to_string()),
+            ("doctor 100 ok".to_string(), "doctor 200 ok".to_string()),
+            ("service ab".to_string(), "service ab\nhas gui\nheadroom codex none\nrequests 9/h".to_string()),
+        ] {
+            assert_eq!(stable(&base), stable(&base.replace(&from, &to)), "host-wide: {to}");
+        }
+        for (from, to) in [
+            ("version 1".to_string(), "version 2".to_string()),
+            ("service ab".to_string(), "service cd".to_string()),
+            (bal("admitted", false, 5), bal("admitted", true, 5)),
+            (bal("admitted", false, 5), bal("admitted", false, 6)),
+            ("doctor 100 ok".to_string(), "doctor 100 token:gap".to_string()),
+            ("\"restart\":null".to_string(), "\"restart\":7".to_string()),
+            ("service ab".to_string(), "service ab\n#7 9".to_string()),
+            ("service ab".to_string(), "service ab\nsession #7 9 u".to_string()),
+            ("service ab".to_string(), "service ab\nexecution {}".to_string()),
+            ("service ab".to_string(), "service ab\nfocus off".to_string()),
+            ("service ab".to_string(), "service ab\nlimit codex probe x".to_string()),
+            ("service ab".to_string(), "service ab\nlogin codex off".to_string()),
+            ("service ab".to_string(), "service ab\nmachine m".to_string()),
+            ("service ab".to_string(), "service ab\ndoctor-answer 4".to_string()),
+        ] {
+            assert_ne!(stable(&base), stable(&base.replace(&from, &to)), "written at once: {to}");
+        }
     }
 
     // Chain: § 4 heartbeat, status.json hosts (#1729 A3). Risk: after a sleep the pass reads this host's heartbeat

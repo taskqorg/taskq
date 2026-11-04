@@ -279,6 +279,11 @@ def approval_text(comments, task):
             state, attempt_id, last = ('ready' if park else kind if terminal else 'unknown'), None, int(c['id'])
         elif kind == 'close' and state in {'review', 'later', 'failed'}:
             state, attempt_id, pending = 'closed', None, None
+        elif kind == 'gone' and own is not None and state == 'doing':
+            # §2 row 10: a dead worker readies the task; its 2nd gone asks with the unmodelled limit card.
+            retries += 1
+            pending = None
+            state, attempt_id, last = ('ready' if retries < 2 else 'unknown'), None, int(c['id'])
         elif kind in {'gone', 'usage-limit', 'publish', 'publication-blocked', 'publication-failed', 'rebased'} and state in {'doing', 'review'}:
             pending = None
             state, attempt_id = 'unknown', None
