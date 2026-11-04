@@ -11,6 +11,9 @@ const strip=()=>markup(c.runningAgents(true).strip);
 const host=n=>strip().match(new RegExp('data-host="'+n+'"[^]*?<span class="host-number">([^<]*)'))?.[1];
 const totals=()=>Object.fromEntries([...strip().split('class="host-runtime-totals"')[1].matchAll(/data-runtime="([^"]*)"[^]*?<span class="host-number">([^<]*)/g)].map(m=>m.slice(1)));
 let page=render();
+// F06/Q01: supported runtime identities reuse their shared asset, without compact text labels.
+assert(strip().includes(require('../src/ui-icons.js').asset('antigravity'))&&require('../src/ui-icons.js').asset('antigravity'),'shared Antigravity mark');
+assert(!/data-runtime="Antigravity"[^]*?<span>Antigravity<\/span>/.test(strip()),'no redundant compact Antigravity label');
 assert.equal(host('mac'),'2');assert.equal(host('idle'),'0');assert.deepEqual(totals(),{Codex:'2',Claude:'1',Antigravity:'0'});
 for(const text of ['claude: 1 worker · 0 reviewers','codex: 0 workers · 1 reviewer','codex: 1 worker · 0 reviewers','Reservations: claude 1','Occupied slots: claude 2 · codex 1','CPU and memory: not collected for remote hosts','CPU and memory: no sample; sampled only while the load gate is on','Heartbeat · 5s old','Count definitions','Running processes, occupied slots, reservations and board tasks are counted apart.'])assert(page.includes(text),text);
 assert(page.includes('host-grid-head')&&page.includes('aria-label="Host, Codex, Claude, Antigravity, Total running agents"'));

@@ -350,6 +350,7 @@ pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u
     let path = crate::runtime::owner::transcript_for(install,&r)?;
     let mut page = match after { Some(a) => crate::transcript::after(format, session(&r), &path, a)?, None => crate::transcript::before(format, session(&r), &path, before)? };
     mark_brief(&mut page.items, &r.brief, &crate::setup::dir(install).join(id));
+    for item in &mut page.items{item["session"]=json!(session(&r));}
     Ok(page.json())
 }
 
@@ -365,6 +366,7 @@ pub fn worker_transcript(session: &str, log: &Path, before: Option<u64>, after: 
     let (format, path) = crate::runtime::worker_transcript(rt, id, log)?;
     let mut page = match after { Some(a) => crate::transcript::after(format, id, &path, a)?, None => crate::transcript::before(format, id, &path, before)? };
     worker_roles(&mut page.items);
+    for item in &mut page.items{item["session"]=json!(session);}
     Ok(page.json())
 }
 

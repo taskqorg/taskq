@@ -3,9 +3,13 @@
 const fs=require('node:fs'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const q=require('../src/project-blocks.js'),fx=require('./fixtures/project-blocks.json');
 const p=fx.project,row=fx.row;
+// F13/F14: the shared compact row is one exact Conversations target, never a nested issue/detail action.
+const unified=q.task(p,row,true,true);
+assert.equal((unified.match(/<button\b/g)||[]).length,1,'one whole task-row button');
+assert(!/<a\b|data-a="task-detail"/.test(unified),'no competing row navigation');
 // #2136 A2: Antigravity keeps task-agent navigation with a bundled neutral icon; no invented native URL.
 const agy=q.task(p,{...row,runtime:'antigravity',session_url:null},false,true);
-assert(agy.includes('aria-label="View antigravity agent #'+row.n+'"')&&agy.includes('data-icon="terminal"'));
+assert(agy.includes('in Conversations:')&&agy.includes('data-icon="antigravity"'));
 assert(!agy.includes('codex://'),'no invented Antigravity native destination');
 // #1592: counts, dedup, conflict and partial come from the Rust display model (display.rs tests); blocks only render it.
 const {display}=require('./fixtures/display-model.json'),names=Object.fromEntries(display.states.map(s=>[s.id,s.name]));
@@ -17,11 +21,11 @@ assert.deepEqual(Object.keys(q.marks),Object.keys(names),'one mark per model sta
 assert.deepEqual([q.marks.held[0],q.marks.later[0]],['circle-dashed','circle-pause'],'Held and Later icons');
 // The released fixture is display model output: its project carries model counts/partial and its row the model name/age.
 assert.deepEqual([p.counts,p.partial,p.open,row.state_name],[counts(),[],0,names[row.state]],'fixture follows the display model');
-assert.match(q.aggregate(all({},null,['project']),[]),/All tasks \?<\/button>/);
+assert.match(q.aggregate(all({},null,['project']),[]),/Σ \?<\/button>/);
 assert(!q.summary({...p,counts:counts()},[],'"><script>').includes('<script>'),'All tasks only interpolates a valid count');
 assert.match(q.aggregate(all({doing:1},1),[]),/data-a="all-tasks" aria-pressed="true"/,'All tasks is selected without a state filter');
 assert.match(q.aggregate(all({doing:1},1),['doing']),/data-a="all-tasks" aria-pressed="false"/,'All tasks clears its selection under a state filter');
-assert.match(q.aggregate(all({doing:1},1),[]),/All tasks 1<\/button>/);
+assert.match(q.aggregate(all({doing:1},1),[]),/Σ 1<\/button>/);
 assert.match(q.aggregate(all({},null,['project']),[]),/aria-label="All projects · Held: unknown"/,'partial snapshots show Held as unknown');
 assert.match(q.summary({...p,counts:counts({held:1})}),/data-state="held"[^>]*aria-label="[^"]* · Held: 1"/);
 assert(!q.summary({...p,counts:counts()}).includes('tqp-counts'),'known zero shows identity only');
@@ -60,7 +64,7 @@ assert(!q.task(p,row).includes('data-icon="network"'),'local rows carry no remot
 // Chain: #1928 A3/A4 / M3 / UX30-09..10: runtime mark opens the exact TaskQ thread;
 // native/progress links keep adapter identity, protocol and remote restrictions separately.
 const compact=q.task(p,row,false,true);
-assert.match(compact,/class="tqp-mark" data-a="workspace" data-page="answer"/);
+assert.match(compact,/data-a="workspace" data-page="conversations"/);
 assert(compact.includes('data-task="'+row.n+'"')&&compact.includes('data-revision="'+row.revision+'"'));
 for(const protocol of ['http:','https:']){
  const relay=protocol+'//relay.example/open.html#codex://threads/invented';
@@ -92,7 +96,7 @@ assert.deepEqual(actions,[['tasks',p.id,'review'],['project',p.id],['open',row.u
 const manifest=require('../docs/design/project-blocks.sources.json');
 // #1841: the build derives the released hashes from the committed file and icon lists.
 const built=JSON.parse(fs.readFileSync('build/web/project-blocks.sources.json','utf8'));
-assert.equal(manifest.icons.length,17);
+for(const family of ['openai','claude','antigravity'])assert(manifest.icons.includes(family),'shared runtime asset pinned: '+family);
 assert.deepEqual(Object.keys(built.files),manifest.files);assert.deepEqual(Object.keys(built.icons),manifest.icons);
 for(const [file,hash] of Object.entries(built.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
 for(const [name,hash] of Object.entries(built.icons))assert.equal(crypto.createHash('sha256').update(q.assets[name]).digest('hex'),hash,name);
@@ -109,7 +113,8 @@ for(const compact of [true,false])for(const state of ['doing','review']){
  const unknown=q.task(p,{...row,state},false,compact);
  const overdue=q.task(p,{...row,state,heartbeat:{warning:'tool overdue <inspect>'}},false,compact);
  assert.match(healthy,/class="task-health-warning" aria-hidden="true"/);
- assert.match(unknown,/class="task-health-warning" role="status" tabindex="0"/);
+ assert.match(unknown,/class="task-health-warning" role="status"/);
+ if(!compact)assert.match(unknown,/tabindex="0"/);else assert(!unknown.includes('tabindex="0"'),'the whole row owns keyboard focus and exposes its warning');
  assert.match(overdue,/aria-label="tool overdue &lt;inspect&gt;"/);
  assert(!overdue.includes('tool overdue <inspect>'));
  assert.match(overdue,/data-icon="triangle-alert"/,'warning needs a visible bundled glyph, not only accessible text');

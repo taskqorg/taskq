@@ -1,4 +1,4 @@
-// #1523 A3/A2/A6/A5: Tasks list rows follow chip order then priority then number; actions live in identity details;
+// #1523 A3/A2/A6/A5: Tasks list rows follow chip order then priority then number; actions live in Conversations;
 // chips center their icon or icon+count group; content fit keeps the last row and footer visible. Invented data.
 const assert=require('node:assert/strict'),fs=require('node:fs'),{chromium}=require('playwright');
 const out=process.env.TASK_LIST_EVIDENCE;
@@ -23,17 +23,13 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    assert.deepEqual(await page.locator('[data-card]').evaluateAll(es=>es.map(e=>+e.querySelector('[data-n],[data-task]')?.dataset.n||+(e.textContent.match(/#(\d+)/)||[])[1])),want,'rows follow chip order, priority, number');
    // Chain: M3.9 / #1881 A2-A3. Risk: compact rows put state back beside runtime/time instead of first.
    assert(await page.locator('.tqp-task-head').evaluateAll(es=>es.length>0&&es.every(e=>e.firstElementChild.matches('.task-stage')&&e.firstElementChild.getBoundingClientRect().left<=e.querySelector('.task-identity').getBoundingClientRect().left)),'state icon is the first row-head element at the left edge');
-   // A2: no repeated action buttons; the row menu holds them and returns focus on Escape.
-   assert.equal(await page.locator('[data-card] [data-a="control"],[data-card] [data-a="start"]').count(),0,'rows carry no lifecycle buttons');
-   const menu=page.locator('[data-a="task-detail"][aria-label="Details for Alpha #5"]').first();
-   assert.equal(await menu.getAttribute('aria-expanded'),'false');
+   // F13: one whole-row target; lifecycle parity is checked in Conversations by task-navigation.browser.cjs.
+   assert.equal(await page.locator('[data-card] [data-a="control"],[data-card] [data-a="start"],[data-card] a').count(),0,'rows carry no nested action targets');
+   const menu=page.locator('.task-target[data-task="5"]');
    await menu.focus();await page.keyboard.press('Enter');
-   assert.equal(await menu.getAttribute('aria-expanded'),'true');
-   const actions=page.locator('.task-inline-details');
-   assert.deepEqual(await actions.locator('button').evaluateAll(b=>b.map(x=>x.textContent.trim())).then(x=>x.length>0),true,'failed row menu offers its controls');
-   if(out&&font===16&&anchor==='top'&&(platform==='macos'||theme==='light'))await page.screenshot({path:out+'/'+(platform==='macos'?'mac':'windows')+'-'+theme+'-row-menu.png'});
-   await page.keyboard.press('Escape');
-   assert.equal(await actions.count(),0);assert.equal(await menu.evaluate(e=>e===document.activeElement),true,'Escape returns focus to the menu button');
+   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open.task),5);
+   assert.equal(await page.locator('.task-inline-details').count(),0,'task inspection is in Conversations');
+   if(out&&font===16&&anchor==='top'&&(platform==='macos'||theme==='light'))await page.screenshot({path:out+'/'+(platform==='macos'?'mac':'windows')+'-'+theme+'-task-row.png'});
    // A6: chip icon alone (Blocked 0) and icon+count group (Later 13) and icon+count group are centered by bounding box.
    for(const chip of await page.locator('.filter-header .tqp-counts [data-state]').all()){
     const g=await chip.evaluate(b=>{const r=b.getBoundingClientRect(),kids=[...b.children].map(c=>c.getBoundingClientRect()),l=Math.min(...kids.map(k=>k.left)),rr=Math.max(...kids.map(k=>k.right));return {left:l-r.left,right:r.right-rr,top:kids[0].top-r.top,bottom:r.bottom-kids[0].bottom,text:b.textContent};});
@@ -55,7 +51,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    }
    await page.close();
   }
-  console.log('PASS #1523 A2/A3/A5/A6: chip-order rows, identity details with Escape focus return, centered chips, layout fit with an added panel; macOS/Windows snapshots, light/dark 16/20 px, top/bottom anchors');
+  console.log('PASS #1523 A2/A3/A5/A6: chip-order rows, whole-row exact task navigation, centered chips, layout fit with an added panel; macOS/Windows snapshots, light/dark 16/20 px, top/bottom anchors');
   // #1740 A1-A5 / M15: a long question must never own scrolling or obscure browsing. Real wheel input,
   // including small trackpad-like deltas, protects the boundary that scrollTop assignments cannot exercise.
   const board=project.issues,key=board+'/4',question={...t(4,'ask'),title:'Task question '+ 'unbroken_identifier_'.repeat(12),controls:['stop','later'],question:{parsed:true,problem:'Choose the compatible release window. '.repeat(160),choices:[{id:'7',text:'Keep compatibility. '.repeat(80),recommended:true}]}};
@@ -65,19 +61,11 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    const coarse=font===20&&width===320,page=await browser.newPage({viewport:{width,height:560},colorScheme:theme,hasTouch:coarse});
    page.on('pageerror',e=>{throw e;});await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));
    await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await page.evaluate(s=>taskq.receive(s),{...s,theme,font});
-   const row=page.locator('[data-card="'+key+'"]'),identity=row.locator('[data-a=task-detail]');
-   await identity.click();
-   const summary=page.locator('.task-card-text').first();await summary.scrollIntoViewIfNeeded();
-   const box=await summary.boundingBox();await page.mouse.move(box.x+box.width/2,Math.max(150,Math.min(420,box.y+box.height/2)));
-   const before=await page.locator('.content').evaluate(e=>e.scrollTop);await page.mouse.wheel(0,90);
-   await page.waitForFunction(y=>document.querySelector('.content').scrollTop>y+1,before,{timeout:1500});
-   assert.equal(await page.locator('#taskq-popover').count(),0,'question details join the menu flow');
-   await page.keyboard.press('Escape');assert.equal(await identity.getAttribute('aria-expanded'),'false');assert(await identity.evaluate(e=>e===document.activeElement));
-   // #1781: the amber question glyph is the one direct question action (input-scroll 04); the closed row holds no question text.
-   const cue=row.locator('.question-shortcut');assert.equal(await row.locator('.question-shortcut[data-a=workspace]').count(),1,'one direct question action');assert.equal(await cue.count(),1,'the action is the question glyph');
+   const row=page.locator('[data-card="'+key+'"]'),identity=row.locator('.task-target'),cue=identity;
+   assert.equal(await row.locator('button,a,input,[tabindex]').count(),1,'question has one whole-row target');
    assert((await cue.boundingBox()).height>=(coarse?44:32),'existing pointer target size retained');
    assert.equal(await row.locator('ol,[data-qac],.question-cue').count(),0,'question text and choices stay in Conversations');
-   for(const [target,edge] of [[identity],[row.locator('.tqp-task-title')],[cue],[row,'top'],[row,'bottom'],[row,'left'],[row,'right']])for(const delta of [90,12]){
+   for(const [target,edge] of [[identity],[row.locator('.tqp-task-title')],[row,'top'],[row,'bottom'],[row,'left'],[row,'right']])for(const delta of [90,12]){
     // Center by actual scrolling, then test both directions at text, action and outer preview boundaries.
     await target.scrollIntoViewIfNeeded();
     // A tall coarse-pointer row can exceed the viewport; put its bottom edge above the footer before wheeling.
@@ -95,18 +83,14 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    // The native workspace is a separate window. Closing/returning and a status refresh leave menu context intact.
    await page.evaluate(s=>taskq.receive(s),{...s,page:undefined,theme,font});await frames(page);
    assert.equal(await page.locator('[data-task-query]').inputValue(),'Task');assert(Math.abs(await page.locator('.content').evaluate(e=>e.scrollTop)-position)<=2,'return preserves scroll');
-   assert.equal(await page.locator('[data-a=view-list]').first().innerText(),'All tasks *','return preserves working view');
+   assert.equal(await page.locator('.view-dropdown summary').innerText(),'All tasks *','return preserves working view');
    assert.equal(await page.evaluate(()=>messages.filter(m=>['answer','control','start','message-action','ai-send'].includes(m.a)).length),0,'navigation has no side effect');
    const overflow=await page.locator('.content,.content-body,[data-card],.question-shortcut').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.className));assert.deepEqual(overflow,[],'narrow/large text reflows without root clipping');
-   await identity.click();const detail=row.locator('.question-task-details');
-   // #1781 G5: the details card is the neutral raised surface (amber edge only) and its Open question icon is amber (input-scroll 05)
-   const look=await detail.evaluate(e=>{const c=getComputedStyle(e),q=e.querySelector('.popover-heading>[data-a=workspace]');return {bg:c.backgroundColor,edge:c.borderLeftColor,icon:q&&getComputedStyle(q).color,ask:getComputedStyle(q).color};});
-   assert.equal(look.bg,theme==='dark'?'rgb(48, 58, 67)':'rgb(239, 242, 245)','neutral card');assert.equal(look.icon,look.ask,'amber Open question icon');assert.equal(look.edge,look.ask,'amber edge kept');
-   assert.equal(await detail.locator('[data-a=control]').count(),2,'question lifecycle controls retained');await detail.getByRole('button',{name:'Pin task',exact:true}).click();assert.match(await page.locator('.task-pins').innerText(),/#4/);await page.locator('.task-pins [data-a=task-detail]').click();await page.locator('.task-pins').getByRole('button',{name:'Unpin task',exact:true}).click();assert.equal(await page.locator('.task-pins').count(),0,'question pin and unpin retained');
+   assert.equal(await page.locator('.task-inline-details,.question-task-details').count(),0,'question remains in the shared reader');
    if(out&&width===320&&font===20){await page.evaluate(s=>taskq.receive(s),{...s,page:undefined,theme,font,projects:[{...s.projects[0],tasks:s.projects[0].tasks.map(t=>t.n===4?{...t,title:'Task question: choose a compatible release window'}:t)}]});await row.scrollIntoViewIfNeeded();await page.screenshot({path:out+'/compact-question-'+theme+'.png'});}
    await page.setViewportSize({width,height:430});assert(await cue.isVisible(),'short menu keeps the question glyph');
    await page.close();
   }
-  console.log('PASS #1740 A1-A5: real wheel/small-delta gestures, inline question controls, exact thread target and preserved menu context; 320/360px, 14/16/18/20px, both themes. Native macOS/Windows: Not tested.');
+  console.log('PASS #1740 A1-A5: real wheel/small-delta gestures, whole-row question navigation, exact thread target and preserved menu context; 320/360px, 14/16/18/20px, both themes. Native macOS/Windows: Not tested.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

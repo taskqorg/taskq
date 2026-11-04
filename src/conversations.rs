@@ -201,7 +201,7 @@ pub(crate) fn summary(install:&Path)->Value { snapshot_inner(install,false) }
 pub(crate) fn task_header(row:&Value)->Value {
     let mut header=serde_json::Map::new();
     for (key,value) in row.as_object().into_iter().flatten() {
-        if !["card","question","verdict","conversation","history","answered"].contains(&key.as_str()) {header.insert(key.clone(),value.clone());}
+        if !["card","question","verdict","conversation","history","answered","brief"].contains(&key.as_str()) {header.insert(key.clone(),value.clone());}
     }
     if row["conversation"].is_object(){header.insert("conversation".into(),json!({"id":row["conversation"]["id"]}));}
     header.insert("body_lazy".into(),json!(true));header.insert("body_source_revision".into(),row["history_source_revision"].as_u64().map_or_else(||row["revision"].clone(),|r|json!(r)));
@@ -527,7 +527,9 @@ fn history_page(install:&Path,m:&Value)->Res<Value> {
     };
     if !m["revision"].is_number()||task["revision"]!=m["revision"] {return Err("Recorded questions changed; refresh before paging".into());}
     let rows=task["history"].as_array().ok_or("Recorded questions unavailable")?;
-    let cursor=m["before"].as_u64().or_else(||m["start"].as_u64()).and_then(|n|usize::try_from(n).ok()).filter(|n|*n<=rows.len()).ok_or("History cursor is outside its source")?;
+    let cursor=if let Some(event)=m["event"].as_u64(){rows.iter().position(|r|r["answered"]["source"]["id"]==event).ok_or("Requested event is unavailable in this exact history source")?}
+        else if let Some(question)=m["question"].as_u64(){rows.iter().position(|r|r["answered"]["source"]["question"]==question).ok_or("Requested question is unavailable in this exact history source")?}
+        else{m["before"].as_u64().or_else(||m["start"].as_u64()).and_then(|n|usize::try_from(n).ok()).filter(|n|*n<=rows.len()).ok_or("History cursor is outside its source")?};
     let backwards=m["before"].is_number();let candidates:Vec<_>=if backwards {rows[..cursor].iter().rev().take(64).collect()}else{rows.iter().skip(cursor).take(64).collect()};
     let mut page=Vec::new();let mut bytes=0;
     for row in candidates {let size=serde_json::to_vec(row).map_err(|_|"History encoding failed")?.len();if size>16*1024*1024{return Err("Recorded question exceeds the 16 MiB source ceiling; open its board".into())}if !page.is_empty()&&bytes+size>256*1024{break}bytes+=size;page.push(row);}
@@ -561,7 +563,17 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
     let read=crate::link::Read{board:board.into(),task:n,attempt:m["attempt"].as_u64().filter(|a|*a>0).ok_or("Worker attempt missing")?,before:m["before"].as_u64(),after:m["after"].as_u64()};
     let local=crate::host::Policy::read(install)?.me;
     let row=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n));
-    let host=row.map(|r|r.get("worker").unwrap_or(r)).filter(|w|w["attempt"]==read.attempt).and_then(|w|w["session"].as_str()).and_then(|s|s.split_whitespace().nth(1)).filter(|h|*h!=local);
+    let worker=row.and_then(|r|r["workers"].as_array().and_then(|a|a.iter().find(|w|w["attempt"]==read.attempt)).or_else(||Some(r.get("worker").unwrap_or(r)).filter(|w|w["attempt"]==read.attempt)));
+    if row.is_none()&&m["closed"]==true{
+        let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
+        let (rt,id,host,attempt)=crate::closed_worker(&*b,n,Some(read.attempt))?;
+        if host!=local{return remote_read(install,&cfg,&raw,&status,&host,&read);}
+        let session=crate::closed_session(root,&rt,&id,n,attempt)?;
+        let mut value=crate::dialogue::worker_transcript(&format!("{rt}:{session}"),&crate::runtime::attempt_log(root,"worker",n,attempt),read.before,read.after)?;
+        for item in value["items"].as_array_mut().into_iter().flatten(){item["attempt"]=json!(attempt);}
+        value["following"]=json!(false);value["activity"]=json!("ended");return Ok(crate::link::fit(value,read.after.is_some()));
+    }
+    let host=worker.and_then(|w|w["session"].as_str()).and_then(|s|s.split_whitespace().nth(1)).filter(|h|*h!=local);
     let Some(host)=host else {return serve(install,&read)};
     remote_read(install,&cfg,&raw,&status,host,&read)
 }
@@ -627,13 +639,14 @@ fn serve_peer_with(install:&Path,root:&Path,read:&crate::link::Read,closed:impl 
     let open=status["tasks"].as_array().is_some_and(|rows|rows.iter().any(|r|r["n"]==read.task));
     let mut value=if !open&&crate::runtime::attempt_log(root,"worker",read.task,read.attempt).exists() {
         let mut v=page(&closed(&local)?,read.before,read.after)?;
+        for item in v["items"].as_array_mut().into_iter().flatten(){item["attempt"]=json!(read.attempt);}
         v["following"]=json!(false);v["activity"]=json!("ended");v
     } else {worker_page(root,&local,&status,read,page)?};
     // R12, section 7 rule 6: arbitrary tool output has no safe pattern-based redaction. Only view metadata and
     // the worker adapter's validated tool name may cross the host boundary; local reads retain the body.
     for item in value["items"].as_array_mut().into_iter().flatten().filter(|i|i["role"]=="tool") {
         let output=item.get("result").is_some() || item.get("image").is_some();
-        item.as_object_mut().unwrap().retain(|k,_|matches!(k.as_str(),"role"|"text"|"at"|"i"|"updated"));
+        item.as_object_mut().unwrap().retain(|k,_|matches!(k.as_str(),"role"|"text"|"at"|"i"|"updated"|"attempt"|"session"|"model"|"effort"));
         if output {item["text"]=json!("Tool output available only on its host");}
     }
     Ok(crate::link::fit(value,read.after.is_some()))
@@ -649,7 +662,7 @@ fn worker_page(root:&Path,local:&str,status:&Value,read:&crate::link::Read,page:
     let (n,attempt)=(read.task,read.attempt);
     let ended=||Ok(json!({"ended":true,"items":[]}));
     let Some(row)=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n)) else {return ended()};
-    let worker=row.get("worker").unwrap_or(row);
+    let worker=row["workers"].as_array().and_then(|a|a.iter().find(|w|w["attempt"]==attempt)).unwrap_or_else(||row.get("worker").unwrap_or(row));
     if worker["attempt"]!=attempt || worker["role"]!="worker" {return ended()}
     let session=worker["session"].as_str().ok_or("Worker session unknown")?;
     let words:Vec<_>=session.split_whitespace().collect();
@@ -662,6 +675,7 @@ fn worker_page(root:&Path,local:&str,status:&Value,read:&crate::link::Read,page:
     let id=crate::runtime::session_id(root,rt,id,n,attempt,"worker");
     if id=="-" || !crate::runtime::plain_thread(&id) {return Err("Worker native session unknown".into())}
     let mut value=page(&format!("{rt}:{id}"),read.before,read.after)?;
+    for item in value["items"].as_array_mut().into_iter().flatten(){item["attempt"]=json!(attempt);item["session"]=json!(format!("{rt}:{id}"));}
     value["following"]=json!(following);value["activity"]=json!(activity);Ok(value)
 }
 
@@ -856,13 +870,16 @@ mod tests {
     fn recorded_questions_page_exact_revision_and_registered_source() {
         let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();
         fs::write(f.0.join("projects"),format!("{}\n",root.display())).unwrap();
-        let mut history:Vec<_>=(0..100_000).map(|n|json!({"question":{"text":format!("Invented question {n}")},"answered":{"revision":n}})).collect();
+        let mut history:Vec<_>=(0..100_000).map(|n|json!({"question":{"text":format!("Invented question {n}")},"answered":{"source":{"question":n+1000,"id":n+2000}}})).collect();
         history[64]["question"]["text"]=json!("Invented Unicode 🐈".repeat(20_000));
         let path=root.join(".taskq/status.json");let source=json!({"complete":true,"issues":"https://example.org/issues","tasks":[{"n":7,"revision":71,"history":history}]}).to_string();fs::write(&path,&source).unwrap();
         let mut m=json!({"conversation":"task:https://example.org/issues/7","root":root,"revision":71,"action":"history","start":0});
         let first=history_page(&f.0,&m).unwrap();assert_eq!(first["rows"].as_array().unwrap().len(),64);assert_eq!(first["total"],100_000);
         m["start"]=first["next"].clone();let large=history_page(&f.0,&m).unwrap();assert_eq!(large["rows"].as_array().unwrap().len(),1,"one whole Unicode record, never truncation");assert_eq!(large["rows"][0],history[64]);
         m["before"]=large["next"].clone();let back=history_page(&f.0,&m).unwrap();assert_eq!(back["start"],64);assert_eq!(back["rows"][0],history[64]);
+        m.as_object_mut().unwrap().remove("before");m["question"]=json!(91000);
+        let exact=history_page(&f.0,&m).unwrap();assert_eq!(exact["start"],90000);assert_eq!(exact["rows"][0],history[90000],"F17: jump finds the immutable question beyond the first page");
+        m["question"]=json!(999999);assert!(history_page(&f.0,&m).unwrap_err().contains("unavailable"));m.as_object_mut().unwrap().remove("question");
         m["revision"]=json!(70);assert!(history_page(&f.0,&m).unwrap_err().contains("changed"));m["revision"]=json!(71);m["conversation"]=json!("task:https://other.example/issues/7");assert!(history_page(&f.0,&m).is_err());
         m["root"]=json!(f.0.join("unregistered"));assert!(history_page(&f.0,&m).unwrap_err().contains("not registered"));assert_eq!(fs::read_to_string(path).unwrap(),source,"read-only paging keeps its exact source");
     }
@@ -989,6 +1006,9 @@ mod tests {
         status["tasks"][0]["worker"]["session"]=json!("codex:- remote");assert!(read(&status,&m).unwrap_err().contains("only on its host"));
         status["tasks"][0]["worker"]["session"]=json!("codex:- local");m.attempt=72;assert_eq!(read(&status,&m).unwrap()["ended"],true,"a mismatched attempt never selects native content");
         m.attempt=71;status["tasks"][0]["worker"]["attempt"]=json!(72);assert_eq!(read(&status,&m).unwrap()["ended"],true,"a replaced worker cannot reinterpret the previous source");
+        status["tasks"][0]["workers"]=json!([{"attempt":71,"role":"worker","session":"codex:- local"},{"attempt":72,"role":"worker","session":"codex:another local"}]);
+        assert_eq!(read(&status,&m).unwrap()["read"],true,"an explicitly accepted earlier source stays readable without becoming current");
+        m.attempt=73;assert_eq!(read(&status,&m).unwrap()["ended"],true,"an unaccepted source cannot use another worker's content");
     }
 
     // A2/A3/R12: actual IPC read boundary validates registration, board, service freshness and current attempt.

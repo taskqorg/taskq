@@ -10,8 +10,10 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
   const open=async(s=state,viewport={width:360,height:760})=>{const p=await browser.newPage({viewport});p.on('pageerror',e=>{throw e;});await p.setContent(html);await p.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await p.evaluate(s=>taskq.receive(s),s);return p;};
-  let p=await open();const list=()=>p.locator('[data-card]'),editor=()=>p.locator('#taskq-popover,.task-inline-details,.task-transcript-page');
-  // A2/A3/A5: one health source reaches inline details; recovery keeps the row geometry stable.
+  let p=await open();const list=()=>p.locator('[data-card]'),editor=()=>p.locator('#taskq-popover');
+  const select=async id=>{await p.locator('.view-dropdown summary').click();await p.locator('.view-dropdown [data-id="'+id+'"]').click();};
+  const saved=async()=>{await p.locator('[data-a=view-editor]').click();await editor().locator('[data-a=view-list]').click();};
+  // A2/A3/A5: one health source reaches Conversations metadata; recovery keeps the row geometry stable.
   const health={host:'fixture',attempt:55,source:'board host heartbeat',observed:1000,age_s:0,freshness:'fresh',executor:{state:'active',reason:'native executor observed'},reason:'matching attempt observed',warning:null,
    progress:{source:'native execution events',clock:'append mtime lower bound',observed:1000,last_event:999,status:'quiet',reason:'no pending tool',pending_tools:0}};
   const healthState=warning=>({...state,projects:[{...alpha,tasks:[task(55,'doing',{attempt:55,heartbeat:{...health,warning,progress:{...health.progress,status:warning?'overdue':'quiet',reason:warning||'no pending tool'}}})]}]});
@@ -21,17 +23,8 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert.equal(await row55.locator('.task-health-warning').getAttribute('aria-label'),'tool progress overdue');
   const glyph=await row55.locator('.task-health-warning svg').boundingBox();assert(glyph&&glyph.width>0&&glyph.height>0,'warning glyph is visibly rendered');
   const warned=await row55.boundingBox();assert.equal(warned.height,geometry.height);assert.equal(warned.width,geometry.width);
-  await row55.locator('.task-health-warning').focus();assert(await row55.locator('.task-health-tip').isVisible(),'keyboard focus exposes the textual diagnostic');
-  await p.locator('[data-a=task-detail]').click();
-  const details=p.getByRole('region',{name:'Execution health'});
-  assert.equal(await details.count(),1);assert.match(await details.innerText(),/Heartbeat source[\s\S]*board host heartbeat[\s\S]*Last observation \/ age[\s\S]*Freshness[\s\S]*fresh[\s\S]*Execution progress[\s\S]*overdue/);
-  assert(await details.locator('time').first().getAttribute('aria-label'));
-  await p.evaluate(s=>taskq.receive(s),healthState(null));
-  assert.equal(await row55.locator('.task-health-warning').getAttribute('aria-hidden'),'true');
-  assert.match(await details.innerText(),/quiet/,'recovery clears the warning in the open detail');
-  const awaiting=healthState('input recorded; awaiting execution');awaiting.projects[0].tasks[0].heartbeat.executor={state:'awaiting execution',reason:'input recorded; awaiting execution, no current native work confirmed'};
-  await p.evaluate(s=>taskq.receive(s),awaiting);assert.match(await details.innerText(),/awaiting execution/);
-  assert.equal(await row55.locator('.task-health-warning').getAttribute('aria-label'),'input recorded; awaiting execution');
+  await row55.locator('.task-target').focus();assert(await row55.locator('.task-health-tip').isVisible(),'whole row focus exposes the diagnostic');
+  await row55.locator('.task-target').click();assert.equal(await p.locator('.task-inline-details').count(),0,'health inspection opens Conversations');
   await p.close();p=await browser.newPage({viewport:{width:1100,height:850}});
   await p.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
   await p.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
@@ -44,16 +37,22 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert(await threadWarning.locator('svg').isVisible());
   await thread55.focus();assert(await threadWarning.locator('.task-health-tip').isVisible(),'row focus exposes the diagnostic without nesting controls');
   const tip=await threadWarning.locator('.task-health-tip').boundingBox();assert(tip.x>=0&&tip.x+tip.width<=1100,'Conversations diagnostic stays inside the viewport');
+  await thread55.click();const details=p.getByRole('region',{name:'Execution health'});
+  assert.equal(await details.count(),1);assert.match(await details.innerText(),/Heartbeat source[\s\S]*board host heartbeat[\s\S]*Last observation \/ age[\s\S]*Freshness[\s\S]*fresh[\s\S]*Execution progress[\s\S]*overdue/);
+  assert(await details.locator('time').first().getAttribute('aria-label'));
   await p.evaluate(s=>taskq.receive(s),threadState(null));
   assert.equal(await threadWarning.getAttribute('aria-hidden'),'true');
   const threadRecovered=await thread55.boundingBox();assert.equal(threadRecovered.height,threadGeometry.height);assert.equal(threadRecovered.width,threadGeometry.width);
+  assert.match(await details.innerText(),/quiet/,'open detail follows recovery');
+  const awaiting=threadState('input recorded; awaiting execution');awaiting.projects[0].tasks[0].heartbeat.executor={state:'awaiting execution',reason:'input recorded; awaiting execution, no current native work confirmed'};
+  await p.evaluate(s=>taskq.receive(s),awaiting);assert.match(await details.innerText(),/awaiting execution/);
   assert(!(await p.evaluate(()=>messages.some(m=>['answer','steer','requeue','start'].includes(m.a)))),'health display never changes task execution');
   await p.close();p=await open();
   // #1775 M1: task search is an icon until opened or a query is active; a query keeps the field visible.
   const query=async()=>{const q=p.locator('[data-task-query]');if(!await q.count())await p.locator('[data-a=search-open]').click();return q;};
   assert.equal(await p.locator('[data-a=view-editor]').count(),1,'before: approved overlay editor missing; after: reachable');
   assert.equal(await list().count(),6,'canonical duplicate registrations count once');
-  assert.equal(await p.getByRole('button',{name:/^Conversations ·/}).count(),1);assert.equal(await p.getByRole('button',{name:/^Inbox/}).count(),0);
+  assert.equal(await p.getByRole('button',{name:/^Conversations /}).count(),1);assert.equal(await p.getByRole('button',{name:/^Inbox/}).count(),0);
   await p.locator('[data-a=view-editor]').click();assert(await editor().evaluate(e=>e.matches(':popover-open')));
   const before=await list().first().boundingBox();
   await editor().locator('[data-facet=projects][data-value="github://example.org/org/alpha"]').click();
@@ -63,10 +62,10 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   const after=await list().first().boundingBox();assert.equal(after.x,before.x,'overlay never displaces list');
   await editor().locator('[data-a=view-save]').click();await editor().locator('[data-a=popup-close]').first().click();
   await (await query()).fill('complete');assert.equal(await list().count(),2);
-  await p.locator('[data-a=view-list]').click();await editor().locator('[data-a=view-save-as]').click();await editor().locator('[data-view-name]').fill('Attention');await editor().locator('[data-a=view-add]').click();
+  await saved();await editor().locator('[data-a=view-save-as]').click();await editor().locator('[data-view-name]').fill('Attention');await editor().locator('[data-a=view-add]').click();
   await (await query()).fill('5');assert.equal(await list().count(),1);
-  await p.locator('[data-a=view-select][data-id=all]').click();assert.equal(await (await query()).inputValue(),'complete','switch restores unsaved working query');
-  await p.locator('[data-a=view-select]').filter({hasText:'Attention'}).click();assert.equal(await (await query()).inputValue(),'5');
+  await select('all');assert.equal(await (await query()).inputValue(),'complete','switch restores unsaved working query');
+  await p.locator('.view-dropdown summary').click();await p.locator('.view-dropdown [data-a=view-select]').filter({hasText:'Attention'}).click();assert.equal(await (await query()).inputValue(),'5');
   await p.waitForFunction(()=>messages.some(m=>m.a==='set'&&m.navigation?.dashboard?.views?.length===3));
   const navigation=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard?.views?.length===3).at(-1).navigation);
   await p.close();p=await open({...state,navigation});assert.equal(await (await query()).inputValue(),'5','restart retains each view working context');
@@ -75,47 +74,46 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   // All clears only the state filter. Project/search are independent and remain visible.
   await p.locator('[data-a=all-tasks]').click();assert.equal(await list().count(),4);
   await (await query()).fill('');await p.locator('[data-a=view-editor]').click();await editor().locator('[data-facet=projects][data-value=""]').click();await editor().locator('[data-a=view-group][data-value=combined]').click();await editor().locator('[data-a=popup-close]').first().click();
-  const identities=await list().locator('[data-a=task-detail]').evaluateAll(es=>es.map(e=>e.textContent.trim().replace(/^GitHub /,'')));
+  const identities=await list().locator('.task-identity').evaluateAll(es=>es.map(e=>e.textContent.trim().replace(/^GitHub /,'')));
   assert.deepEqual(identities,['Alpha #5','Beta #1','Alpha #2','Alpha #3','Beta #3','Alpha #4'],'O2 one comparator with canonical repository tie');
   assert.equal(await p.locator('[data-a=row-menu],.row-menu').count(),0,'no right ellipsis or action column');
-  const identity=p.locator('[data-a=task-detail]').filter({hasText:'Alpha #5'});
+  const identity=p.locator('.task-target').filter({hasText:'Alpha #5'});
   // #1659 A2: the remote mark (proven remote run) then the Claude mark sit right before the current-stage elapsed time.
   assert.deepEqual(await list().filter({has:identity}).locator('.tqp-task-head').evaluate(e=>[...e.querySelectorAll('[data-icon],.tqp-age')].map(x=>x.dataset.icon||x.textContent)),['play','github','network','claude','4m']);
   assert.equal(await list().filter({hasText:'Beta #1'}).locator('.task-stage.review').count(),1,'Review uses the purple review tone');
-  // #1659 A1: hover and focus never open details; Enter does. IDs, age and steps stay behind a disclosure; no pin latch.
-  await identity.hover();await identity.focus();assert.equal(await editor().count(),0,'hover/focus open nothing');assert.equal(await identity.getAttribute('aria-expanded'),'false');
-  await p.keyboard.press('Enter');assert.equal(await identity.getAttribute('aria-expanded'),'true');assert.equal(await editor().getByRole('button',{name:'Keep task details open'}).count(),0);
-  assert(!/Total age|Attempt/.test(await editor().locator('.task-more').innerText()),'technical info stays folded; execution health is visible (R6)');
-  await editor().locator('summary').click();if(out){fs.mkdirSync(out,{recursive:true});await p.screenshot({path:out+'/dark-details.png'});}assert.match(await editor().innerText(),/Total age\s*\S+[\s\S]*1 completed/);assert.match(await editor().innerText(),/ready[\s\S]*doing[\s\S]*current/);
-  assert.equal(await editor().locator('[data-a=control]').count(),2,'all offered revision-fenced controls retained');
-  await p.keyboard.press('Escape');assert.equal(await editor().count(),0);assert(await identity.evaluate(e=>e===document.activeElement),'Escape restores identity focus');
-  // #1659 A5: a global pin closes details and shows the task once, first, in every view and filter; it survives restart.
-  await identity.click();await editor().getByRole('button',{name:'Pin task',exact:true}).click();assert.equal(await editor().count(),0,'pinning closes details');
-  assert.equal(await list().count(),6,'pinned task appears once');assert.match(await p.locator('.task-pins').innerText(),/Alpha #5/);
+  // F13 replaces inline disclosure: reading and actions are checked in task-navigation.browser.cjs.
+  await identity.hover();await identity.focus();assert.equal(await editor().count(),0,'hover/focus open nothing');
+  await p.keyboard.press('Enter');assert.equal(await p.locator('.task-inline-details').count(),0);
+  assert.equal(await p.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open.task),5);
+  // Global pin snapshots come from the native coordinator; workspace IPC is checked in task-navigation.
+  await p.waitForFunction(()=>messages.some(m=>m.a==='set'&&m.navigation?.dashboard));
+  const pinned=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard).at(-1).navigation);
+  pinned.dashboard.pins=[{ref:'github://example.org/org/alpha#5',title:alpha.tasks[1].title,url:alpha.issues+'/5'}];
+  await p.evaluate(d=>taskq.receive({dashboard:d}),pinned.dashboard);
+  assert.equal(await list().count(),6,'pinned task appears once');assert.match(await p.locator('.task-pins').innerText(),/Alpha #5/);assert(await p.locator('.filter-header').evaluate(e=>!!(e.compareDocumentPosition(document.querySelector('.task-pins'))&Node.DOCUMENT_POSITION_FOLLOWING)),'global pins stay beneath the task filter');
   await p.locator('[data-a=view-editor]').click();await editor().locator('[data-facet=states][data-value=held]').click();await editor().locator('[data-a=popup-close]').first().click();
-  assert.deepEqual(await list().locator('[data-a=task-detail]').evaluateAll(es=>es.map(e=>e.textContent.trim().replace(/^GitHub /,''))),['Alpha #5','Alpha #4'],'pin stays first outside the filter');
+  assert.deepEqual(await list().locator('.task-identity').allTextContents(),['Alpha #5','Alpha #4'],'pin stays first outside the filter');
   await p.waitForFunction(()=>messages.some(m=>m.a==='set'&&m.navigation?.dashboard?.pins?.length===1));
-  const pinned=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard?.pins?.length===1).at(-1).navigation);
-  await p.close();p=await open({...state,navigation:pinned});assert.match(await p.locator('.task-pins').innerText(),/Alpha #5/,'pins survive restart');
-  await p.locator('[data-a=view-select][data-id=completed]').click();assert.match(await p.locator('.task-pins').innerText(),/Alpha #5/,'pins show in Completed');
-  // MP14: the compatibility view preserves its working criteria; common result/history/source/error coverage lives in conversations-centre and reports-cache tests.
+  const pinnedContext=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard?.pins?.length===1).at(-1).navigation);
+  await p.close();p=await open({...state,navigation:pinnedContext});assert.match(await p.locator('.task-pins').innerText(),/Alpha #5/,'pins survive restart');
+  await select('completed');assert.match(await p.locator('.task-pins').innerText(),/Alpha #5/,'pins show in Completed');
   const completed=await p.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open);assert.equal(completed.filter,'finished');assert.equal(completed.criteria.period,'30d');assert.equal(await p.locator('[data-completed],.task-transcript-page').count(),0,'the menu has no competing history reader');
-  await p.locator('[data-a=view-select][data-id=all]').click();await p.locator('.task-pins [data-a=task-detail]').click();await editor().getByRole('button',{name:'Unpin task',exact:true}).click();assert.equal(await p.locator('.task-pins').count(),0);
+  await select('all');pinnedContext.dashboard.pins=[];await p.evaluate(d=>taskq.receive({dashboard:d}),pinnedContext.dashboard);assert.equal(await p.locator('.task-pins').count(),0);
   // #1659 A4 (P-V1): custom views delete by keyboard, built-ins cannot; Undo restores the view and its context.
-  await p.locator('[data-a=view-list]').click();await editor().locator('[data-a=view-select]').filter({hasText:'Attention'}).click();await (await query()).fill('5');
-  await p.locator('[data-a=view-list]').click();assert.equal(await editor().locator('[data-a=view-delete]').count(),1,'only the custom view is deletable');
+  await saved();await editor().locator('[data-a=view-select]').filter({hasText:'Attention'}).click();await (await query()).fill('5');
+  await saved();assert.equal(await editor().locator('[data-a=view-delete]').count(),1,'only the custom view is deletable');
   await editor().getByRole('button',{name:'Delete view Attention'}).focus();await p.keyboard.press('Enter');assert.match(await editor().locator('.view-receipt').innerText(),/Deleted\s*Attention/);assert.equal(await editor().locator('[data-a=view-select]').count(),2);assert.notEqual(await (await query()).inputValue(),'5','active delete falls back to All tasks');
   await editor().getByRole('button',{name:'Undo deleting Attention'}).click();assert.equal(await editor().locator('[data-a=view-select]').count(),3);assert.equal(await (await query()).inputValue(),'5','unchanged fallback lets Undo reselect the view');
   await editor().locator('[data-a=view-select]').filter({hasText:'Attention'}).click();assert.equal(await (await query()).inputValue(),'5','Undo restores working context');
-  await p.locator('[data-a=view-select][data-id=all]').click();
+  await select('all');
   await p.locator('[data-route=settings]').click();await p.locator('[data-route=appearance]').click();
   for(const mode of ['auto','top','bottom','fixed']){await p.locator('[data-a=size-anchor][data-value='+mode+']').click();assert(await p.evaluate(mode=>messages.some(m=>m.a==='size-anchor'&&m.value===mode),mode));}
   await p.locator('[data-resize]').focus();await p.keyboard.press('ArrowRight');assert(await p.evaluate(()=>messages.some(m=>m.a==='resize')));
-  await p.getByRole('button',{name:'Close menu',exact:true}).click();assert(await p.evaluate(()=>messages.some(m=>m.a==='hide')));
+  assert.equal(await p.getByRole('button',{name:'Close menu',exact:true}).count(),0,'F01 native chrome owns Close');
   assert.equal(await p.evaluate(()=>messages.some(m=>['focus','pause','resume','capacity','ai-send'].includes(m.a))),false,'view/window controls have no admission/grant/send effects');
   await p.close();
   p=await open({...state,projects:[alpha,{...alpha,root:'/fixture/conflict',partial:['Alpha'],tasks:alpha.tasks.map(t=>({...t,title:'Changed title',revision:t.revision+1}))}]});
-  await (await query()).fill('complete');assert.equal(await p.locator('[data-a=all-tasks]').innerText(),'All tasks ?','R12: search cannot hide a same-board conflict');await p.close();
+  await (await query()).fill('complete');assert.equal(await p.locator('[data-a=all-tasks]').innerText(),'\u03a3 ?','R12: search cannot hide a same-board conflict');await p.close();
   const observations=[];
   for(const theme of ['dark','light'])for(const font of [16,20])for(const variant of ['long','short']){
    p=await open({...state,font,theme,projects:variant==='long'?[{...alpha,tasks:Array.from({length:16},(_,i)=>task(i+1,i%2?'doing':'failed',{title:('Long unbroken identifier_'+i+'_').repeat(5),since:i%2?null:900}))}]:[{...alpha,complete:false,partial:['Alpha'],tasks:[]}]},{width:320,height:variant==='short'?300:700});
@@ -124,16 +122,15 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    await p.locator('[data-a=view-editor]').click();const popup=await editor().boundingBox();assert(popup.x>=0&&popup.y>=0&&popup.x+popup.width<=320.5&&popup.y+popup.height<=geometry.viewport+.5,'bounded anchored editor');
    if(out&&font===16){fs.mkdirSync(out,{recursive:true});await p.screenshot({path:out+'/'+theme+'-'+variant+'-editor.png'});}
    if(variant==='short'){const done=editor().getByRole('button',{name:'Done',exact:true});await done.scrollIntoViewIfNeeded();const end=await done.boundingBox();assert(end.y>=0&&end.y+end.height<=geometry.viewport+.5,'last overlay control remains reachable in short windows');await done.click();assert.equal(await editor().count(),0);}else await p.keyboard.press('Escape');if(out&&font===16)await p.screenshot({path:out+'/'+theme+'-'+variant+'.png'});
-   if(variant==='long'){const t=p.locator('[data-a=task-detail]').first();await t.click();assert.equal(await p.locator('.tqp-age').first().getAttribute('title'),'Current stage elapsed unknown','unknown elapsed stays on the parent row');await p.keyboard.press('Escape');}
+   if(variant==='long'){assert.equal(await p.locator('.tqp-age').first().innerText(),'?','unknown elapsed stays on the parent row');}
    else {assert.equal((await p.locator('.filter-header').innerText()).includes('?'),true,'partial never zero');}
    observations.push({theme,font,variant,...geometry});await p.close();
   }
   // #1700 A2–A5 (P-W4): with native windows the menu opens the one View window; that window edits the menu's model.
   const eight=Array.from({length:8},(_,i)=>({...alpha,root:'/fixture/p'+i,name:'Project '+i,issues:'https://example.org/org/p'+i+'/issues',tasks:i?[]:[task(1,'review',{rank:0})]})),wide={...state,projects:eight,palette:'--review:#BCA3EB'};
   p=await open(wide);await p.evaluate(()=>taskq.receive({settingsWindow:true,viewsWindow:true}));
-  for(const a of ['view-editor','view-list']){await p.locator('[data-a='+a+']').click();assert.equal(await editor().count(),0,'no overlay with a View window');}
-  assert.equal(await p.evaluate(()=>messages.filter(m=>m.a==='views-open').length),2,'both view controls open the View window');
-  await p.locator('[data-a=task-detail]').first().click();assert.equal(await editor().evaluate(e=>getComputedStyle(e).borderLeftColor),'rgb(188, 163, 235)','A4 / #1928: inline Review edge retains its token without repeating parent state');await p.keyboard.press('Escape');
+  for(const a of ['view-editor']){await p.locator('[data-a='+a+']').click();assert.equal(await editor().count(),0,'no overlay with a View window');}
+  assert.equal(await p.evaluate(()=>messages.filter(m=>m.a==='views-open').length),1,'view editor opens the View window');
   await p.waitForFunction(()=>messages.some(m=>m.a==='set'&&m.navigation?.dashboard));
   const model=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard).at(-1).navigation.dashboard);
   model.views.push({...model.views[0],id:'attention',name:'Attention'});
@@ -152,7 +149,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    assert.equal(boxes.length,9);assert.equal(new Set(boxes.slice(0,3).map(r=>r.y)).size,1,'A2: three columns');assert(boxes.every(r=>r.visible),'A2: all filters visible together');
   }
   const reach=await w.evaluate(()=>[...document.querySelectorAll('[data-a=hide],[data-a=view-group],[data-a=view-save],[data-a=view-save-as],[data-a=view-reset],[data-a=popup-close]')].map(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&!e.closest('.content');}));
-  assert(reach.length===7&&reach.every(Boolean),'Close, Display, Save, Reset and Done reachable without scrolling '+reach);
+  assert(reach.length===6&&reach.every(Boolean),'Display, Save, Reset and Done reachable without scrolling '+reach);
   assert.equal(await w.locator('.content').evaluate(e=>getComputedStyle(e).overflowY),'auto','one designated content scroll, used only for overflow');
   assert.equal(await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').length),0,'opening sends nothing back');
   // #2110: the owned View editor retains Completed's advanced criteria without persisting a dead menu route.
@@ -222,6 +219,6 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert.equal(await p.locator('.growth-miniature[data-growth=fixed] i').evaluate(e=>getComputedStyle(e).animationName),'none');
   await p.emulateMedia({reducedMotion:'reduce'});assert.equal(await p.locator('.growth-miniature i').first().evaluate(e=>getComputedStyle(e).animationName),'none');await p.close();
   if(out)fs.writeFileSync(out+'/browser.json',JSON.stringify({browser:browser.version(),observations},null,2)+'\n');
-  console.log('PASS #1730 compact grids, exclusive names, checkbox scope, naming drafts, large text and keyboard; #1578 O1/O2/O3 views, scoped counts, same comparator, Save/Reset/restart, accessible anchored details/actions, window controls and both themes 16/20 narrow/short/long/partial');
+  console.log('PASS #1730 compact grids, exclusive names, checkbox scope, naming drafts, large text and keyboard; #1578 O1/O2/O3 views, scoped counts, same comparator, Save/Reset/restart, Conversations health and pin snapshots, window controls and both themes 16/20 narrow/short/long/partial');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

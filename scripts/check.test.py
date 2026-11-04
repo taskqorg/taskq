@@ -164,6 +164,12 @@ comment = lambda i, body, **fields: {**ask, 'id': i, 'body': body, **fields}
 spawn = comment(1, 'taskq: spawn worker codex:invented win')
 steer = comment(2, 'taskq: steer\nOwner approves R6 status block\nop-id: owner-steer\nrevision: 1')
 assert 'R6' in approval([spawn, steer]), 'accepted owner steering is binding task text, without another answer'
+held_review=[comment(1,'taskq: hold'),comment(2,'taskq: steer\nR9 intake only\nop-id: intake\nrevision: 1'),
+             comment(3,'taskq: start\nop-id: start\nrevision: 2'),comment(4,'taskq: spawn worker codex:invented win'),
+             comment(5,'taskq: ask attempt 4\nProblem: Amend Product and M3.\n1. Approve\n2. Keep'),comment(6,'taskq: answer 1')]
+held_approval=approval(held_review)
+assert 'Product' in held_approval and 'M3' in held_approval,'#2343: accepted held notes advance the revision before start and the named ask'
+assert 'R9' not in held_approval,'held intake updates revision without granting rule approval'
 for history in [[steer], [spawn, {**steer, 'updated_at': 'edited'}], [spawn, {**steer, 'author_association': 'NONE'}],
                 [spawn, comment(2, 'taskq: steer attempt 1\nR6')],
                 [spawn, comment(2, 'taskq: steer\nR6\nop-id: stale\nrevision: 0')],

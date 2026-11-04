@@ -62,22 +62,22 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    if(process.env.PANEL_EVIDENCE&&width===320&&font===20&&theme==='dark')await page.screenshot({path:process.env.PANEL_EVIDENCE+'/hosts-expanded.png'});
    await summary.click();
    if(width===420||![16,18].includes(font)){console.log('PASS UX30-06 host geometry '+width+'/'+font+'/'+theme);continue;}
-   assert.deepEqual(await page.locator('.view-picks>button').allInnerTexts(),['All tasks','Completed','Running','Waiting for answer']);
-   const picks=await page.locator('.view-picks>button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size);
-   assert.deepEqual(await overflow(page),[],'A2: menu '+width+' px / '+font+' px / '+theme);
-   assert(picks>1,'A1: view picks wrap at '+width+' px / '+font+' px');
+   await page.locator('.view-dropdown>summary').click();
+   assert.deepEqual(await page.locator('.view-options>button').allInnerTexts(),['All tasks','Completed','Running','Waiting for answer']);
+   await page.locator('.view-dropdown>summary').click();
+   assert.deepEqual(await overflow(page),[],'F11: current-section row wraps without clipping');
    assert.equal(await page.locator('.filter-header .tqp-counts button').count(),10,'A1: all eight states and All tasks remain');
    assert(await page.locator('.filter-header .tqp-counts button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size)>1,'A1: counters wrap');
-   assert.deepEqual(await page.locator('.view-picks,.filter-header .tqp-counts').evaluateAll(es=>es.filter(e=>getComputedStyle(e).maskImage!=='none').map(e=>e.className)),[],'A1: no edge mask');
+   assert.deepEqual(await page.locator('.viewbar,.filter-header .tqp-counts').evaluateAll(es=>es.filter(e=>getComputedStyle(e).maskImage!=='none').map(e=>e.className)),[],'A1: no edge mask');
    assert.deepEqual(await page.locator('.viewbar button, .filter-header .tqp-counts button').evaluateAll(bs=>bs.filter(b=>{
     const r=b.getBoundingClientRect();let parent=b.parentElement;while(getComputedStyle(parent).display==='contents')parent=parent.parentElement;const p=parent.getBoundingClientRect();
     return b.scrollWidth>b.clientWidth+1||r.left<p.left||r.right>p.right||r.bottom>p.bottom;
    }).map(b=>b.innerText)),[],'A1: each chip is fully visible');
    assert.equal(await page.locator('.dashboard-status').evaluate(e=>parseFloat(getComputedStyle(e.closest('.menu')).fontSize)),font,'A1: text is not shrunk');
-   await page.locator('[data-a=task-detail]').first().click();
-   assert.deepEqual(await overflow(page),[],'A2: menu task details');
-   await page.keyboard.press('Escape');
-   await page.locator('[data-a=view-select][data-id=completed]').click();
+   await page.locator('.task-target').first().focus();
+   assert.deepEqual(await overflow(page),[],'F13: focused shared row stays within the menu');
+   await page.locator('.view-dropdown>summary').click();
+   await page.locator('.view-options [data-a=view-select][data-id=completed]').click();
    const completed=await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1)?.open);
    assert.equal(completed.page,'conversations','MP14: Completed uses the current Conversations destination');assert.equal(completed.filter,'finished');
    assert.equal(await summary.locator('.host-chip').count(),5,'#1724 A2: Completed keeps every host');
@@ -100,6 +100,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
     }
     await window.close();
    }
+   await page.locator('.view-dropdown>summary').click();await page.locator('.view-options [data-id=all]').click();
    console.log('PASS #1709 menu/View/Settings '+width+' px / '+font+' px / '+theme);
   }
   await page.close();

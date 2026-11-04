@@ -246,8 +246,11 @@ def approval_text(comments, task):
             pending = (int(c['id']), lines[1:], opts)
             resume, state = state, 'ask'
             continue
-        if head == 'taskq: steer' and state == 'doing' and own is None:
-            parts.append('\n'.join(lines))
+        if head == 'taskq: steer' and own is None and '\n'.join(lines[1:]).strip():
+            # Held intake is an accepted note too: it advances the revision, but grants no rule scope.
+            last = int(c['id'])
+            if state == 'doing':
+                parts.append('\n'.join(lines))
         if canonical and own is None:
             parts.append('\n'.join(lines))
         if re.fullmatch(r'taskq: result [0-9a-fA-F]{40} attempt [0-9]+', head) and state == 'doing' and own is not None:

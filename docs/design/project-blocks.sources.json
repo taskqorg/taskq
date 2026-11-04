@@ -17,7 +17,12 @@
     "pin",
     "link",
     "network",
-    "claude"
+    "claude",
+    "antigravity",
+    "git-merge",
+    "circle-check",
+    "circle-question-mark",
+    "circle-slash"
   ],
   "lucide": "1.17.0",
   "mergedDesignRevision": "cf46e637d45f971dc83f1c1ea5f1e9a119a74256",
@@ -29,7 +34,9 @@
     "src/project-blocks.js",
     "docs/design/menu-next-variants.html",
     "src/project-blocks.LICENSE",
-    "src/project-blocks.css"
+    "src/project-blocks.css",
+    "src/ui-icons.json",
+    "docs/design/assets/antigravity.svg"
   ],
   "hashEncoding": "UTF-8, LF; the build derives the hashes (scripts/design-sources.cjs); the tag workflow assigns the release version"
 }
