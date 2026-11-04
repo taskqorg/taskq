@@ -24,14 +24,18 @@ assert select([queue, {**failed, 'id':5}], 'a'*40, 'main', now)['conclusion'] ==
 assert select([{**base, 'created_at':'2026-10-01T00:00:00Z'}], 'a'*40, 'main', now), 'a release may promote a commit tested weeks ago'
 print('PASS exact-source release check, freshness, latest failure/pending isolation and merge-queue exact source')
 
-# Chain: §8. A main push must reach the guard before tag creation or any build.
+# Chain: §8. Only an explicit main demand reaches the guard before tags/builds.
 workflow = Path(__file__).with_name('workflows').joinpath('release.yml').read_text()
 job = lambda name: re.search(r'(?ms)^  '+name+r':\n(.*?)(?=^  [a-z][a-z-]*:|\Z)', workflow)[1]
-assert re.search(r'(?m)^    branches: \[main, live\]$', workflow)
+assert re.search(r'(?m)^  workflow_dispatch:$', workflow)
+assert re.search(r'(?m)^    branches: \[live\]$', workflow), 'main pushes must not request releases'
+assert not re.search(r'(?m)^  schedule:', workflow), 'there is no release timer'
 assert re.search(r'(?m)^    needs: checks$', job('tag')), 'tag creation must wait for exact-source CI'
 assert not re.search(r'(?m)^    (needs|if):', job('checks')), 'the source guard must run before tag output exists'
+assert "if: github.event_name == 'workflow_dispatch'" in job('checks')
+assert '[ "$REQUEST_REF" = refs/heads/main ]' in job('checks'), 'a demand on another ref must refuse before tags/builds'
 assert 'cancel-in-progress: false' in workflow, 'an active publisher must finish'
 assert re.search(r'(?m)^  queue: max$', workflow), 'an old rerun must not replace a newer pending release'
 for name in ['build-linux','build-windows','build-macos']:
     assert re.search(r'(?m)^    needs: tag$', job(name)), name
-print('PASS automatic main trigger keeps checks before tags/builds and serializes publication')
+print('PASS demand-only main trigger keeps checks before tags/builds and serializes publication')

@@ -44,12 +44,12 @@ case_ 'commit tagged, released: nothing' 'version = "1.1.0"' 'refs/tags/v1.1.3 a
 case_ 'tag list 503: fails' 'version = "1.1.0"' 503 0 1 '' ''
 case_ 'invalid version: fails' 'version = "x"' '' 0 1 '' ''
 GITHUB_REF_TYPE=tag GITHUB_REF_NAME=v9.9.9 case_ 'manual tag push: releases it' 'version = "1.1.0"' 503 0 0 tag=v9.9.9 ''
-# Automatic runs can arrive after a newer release; they must never roll it back.
+# Main demands can arrive after a newer release; they must never roll it back.
 GITHUB_REF_TYPE=branch
-GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=behind case_ 'automatic main: new source releases' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 0 tag=v1.1.4 v1.1.4
-GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=identical case_ 'automatic main: same source skips' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 0 '' ''
-GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=ahead case_ 'automatic main: already included source skips' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 0 '' ''
-GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=diverged case_ 'automatic main: divergent source refuses' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 1 '' ''
-GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=503 case_ 'automatic main: unknown ancestry refuses' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 1 '' ''
-GITHUB_REF_NAME=main LATEST=503 COVERAGE=behind case_ 'automatic main: unavailable latest refuses' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 1 '' ''
+GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=behind case_ 'main demand: new source releases' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 0 tag=v1.1.4 v1.1.4
+GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=identical case_ 'main demand: same source skips' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 0 '' ''
+GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=ahead case_ 'main demand: already included source skips' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 0 '' ''
+GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=diverged case_ 'main demand: divergent source refuses' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 1 '' ''
+GITHUB_REF_NAME=main LATEST=v1.1.3 COVERAGE=503 case_ 'main demand: unknown ancestry refuses' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 1 '' ''
+GITHUB_REF_NAME=main LATEST=503 COVERAGE=behind case_ 'main demand: unavailable latest refuses' 'version = "1.1.0"' 'refs/tags/v1.1.3 old' 1 1 '' ''
 exit $fails

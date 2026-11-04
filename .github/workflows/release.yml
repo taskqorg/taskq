@@ -1,5 +1,5 @@
-# § 8 Release: merged main, live or tag pushes require exact-source CI before tagging or builds.
-# Automatic main sources already included in the latest published release are skipped.
+# § 8 Release: an explicit main dispatch, live or tag push requires exact-source CI before tagging or builds.
+# Main demands already included in the latest published release are skipped; main pushes do not release.
 # A live push (a fast-forward to a tested main commit) tags the next unused vX.Y.Z on that commit
 # (.github/release-tag.sh; a GITHUB_TOKEN tag starts no run), opens a draft release and stamps the version into the
 # build; no version commit. Each OS publishes alone as soon as its build is attested and the exact-source tests pass
@@ -10,9 +10,10 @@
 # and README shots are dispatched for the tag. A failing selftest publishes nothing for its OS.
 name: release
 on:
+  workflow_dispatch:
   push:
     tags: ['v*']
-    branches: [main, live]
+    branches: [live]
 permissions:
   contents: read
 concurrency:
@@ -53,6 +54,12 @@ jobs:
       contents: read
       actions: read
     steps:
+      - name: Require main for an explicit release demand
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUEST_REF: ${{ github.ref }}
+        run: |
+          [ "$REQUEST_REF" = refs/heads/main ] || { echo '::error::Release demand requires main'; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Require selected tests on the exact source
         env:
