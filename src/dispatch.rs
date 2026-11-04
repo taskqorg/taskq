@@ -159,6 +159,9 @@ pub struct Answered {
     pub read: Option<bool>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<Value>,
+    /// Immutable board event/question identity for chronology and exact jumps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<Value>,
 }
 
 impl Answered {
@@ -190,8 +193,29 @@ pub fn history(n: u64, log: &[Entry], p: &core::Projection, comments: &[board::C
             _ => text,
         };
         let question = answers.contains(&id).then(|| core::card_before(n, log, id)).flatten();
-        (question, Answered { by: c.map(|c| c.author.clone()).unwrap_or_default(), text: shown, at: c.map(|c| c.created).filter(|t| *t > 0), read: c.and_then(|c| c.read), files })
+        let revision=p.answers.iter().find(|a|a.id==id).map(|a|a.revision);
+        let asked=revision.and_then(|r|comments.iter().find(|c|c.id==r));
+        let worker=revision.and_then(|r|p.changes.iter().find(|(id,_,_)|*id==r).map(|(_,_,t)|t));
+        (question, Answered { by: c.map(|c| c.author.clone()).unwrap_or_default(), text: shown, at: c.map(|c| c.created).filter(|t| *t > 0), read: c.and_then(|c| c.read), files,
+            source:Some(json!({"id":id,"question":revision,"asked_at":asked.map(|c|c.created),"attempt":worker.and_then(|t|t.attempt),"session":worker.and_then(|t|t.session.as_deref()),"role":worker.and_then(|t|t.role.as_deref())})) })
     }).collect()
+}
+
+/// F16: accepted board records share the reader with owner notes; ignored/edited entries never become history truth.
+pub fn timeline(n:u64,log:&[Entry],p:&core::Projection,comments:&[board::Comment])->Vec<(Option<String>,Answered)> {
+    let mut rows=history(n,log,p,comments);
+    let seen:std::collections::BTreeSet<u64>=rows.iter().flat_map(|(_,a)|[a.source.as_ref().and_then(|s|s["id"].as_u64()),a.source.as_ref().and_then(|s|s["question"].as_u64())]).flatten().collect();
+    for e in log.iter().filter(|e|p.accepts(e.id)&&!seen.contains(&e.id)) {
+        let kind=core::kind(n,&e.body);
+        if kind=="ask"&&p.task.state==State::Ask&&p.revision==e.id {continue;}
+        let source=p.changes.iter().chain(&p.queue).find(|(id,_,_)|*id==e.id).map(|(_,before,after)|if kind=="spawn"{after}else{before});
+        let c=comments.iter().find(|c|c.id==e.id);
+        rows.push(((kind=="ask").then(||core::entry_text(n,&e.body).to_string()),Answered {
+            by:c.map(|c|c.author.clone()).unwrap_or_default(),text:if kind=="ask"{String::new()}else{e.body.clone()},at:c.map(|c|c.created).filter(|at|*at>0),
+            source:Some(json!({"id":e.id,"kind":kind,"question":(kind=="ask").then_some(e.id),"asked_at":c.map(|c|c.created),"attempt":source.and_then(|t|t.attempt),"session":source.and_then(|t|t.session.as_deref()),"role":source.and_then(|t|t.role.as_deref())})),..Default::default()
+        }));
+    }
+    rows.sort_by_key(|(_,a)|a.source.as_ref().and_then(|s|s["id"].as_u64()).unwrap_or(0));rows
 }
 
 /// § 2 read receipts: after the live attempt `attempt` has read the task, react `eyes` to each owner note lacking it.
@@ -944,7 +968,19 @@ mod tests {
         let h = history(7, &log, &p, &comments);
         let shown: Vec<_> = h.iter().map(|(c, a)| (c.as_deref().and_then(|c| c.lines().find(|l| l.starts_with("Problem: "))), a.by.as_str(), a.text.as_str())).collect();
         assert_eq!(shown, [(Some("Problem: First?"), "sam", "Ship - + now; - risk"), (Some("Problem: Second?"), "alex", "not yet")]);
+        assert_eq!(h[0].1.source.as_ref().unwrap()["question"],11,"question jumps bind the original board revision, never an array index");
+        assert_eq!(h[1].1.source.as_ref().unwrap()["id"],14,"answers retain their immutable event identity");
+        let all=timeline(7,&log,&p,&comments);
+        assert_eq!(all.iter().filter_map(|(_,a)|a.source.as_ref().and_then(|s|s["id"].as_u64())).collect::<Vec<_>>(),[10,12,14],"F16: accepted spawn joins the questions, current question stays single");
+        assert_eq!(all[0].1.text,log[0].body,"board source text remains exact");
         assert_eq!(answered_in(7, &log, &p, &comments), None, "the open question has no answer yet");
+        let mut review=log[..3].to_vec();
+        review.extend([(13,"taskq: result aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa attempt 10"),(14,"taskq: spawn reviewer codex:r win"),(15,"taskq: ask attempt 14\nDone: reviewed\nProblem: Reviewer choice"),(16,"taskq: answer\nContinue")].into_iter().map(|(id,body)|Entry{id,body:body.into(),edited:false}));
+        let projected=core::project(7,&review,false);
+        let history=history(7,&review,&projected,&[]);
+        let source=history.last().unwrap().1.source.as_ref().unwrap();
+        assert_eq!(source["role"],"reviewer","F16: an answered review question retains its original role");
+        assert_eq!(source["attempt"],14);assert_eq!(source["session"],"codex:r win");
     }
 
     // Chain: § 2 owner note -> live attempt inbox read -> `eyes` reaction -> Conversations history. Risk (#2188 A3): an

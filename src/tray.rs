@@ -213,6 +213,66 @@ fn save_workspace_navigation(settings:&mut Settings,install:&Path,navigation:&Va
     Some("Workspace view state was not saved: storage write/readback failed; current view kept in this window")
 }
 
+// F19: retain legacy task pins in both surfaces without writing preferences during a read.
+fn legacy_task_pins(st:&Value)->Vec<(String,Value)> {
+    st["conversations"]["sidebar"]["pins"].as_array().into_iter().flatten().filter_map(|v| {
+        let key=v.as_str()?.strip_prefix("task:")?;let (board,n)=key.rsplit_once('/')?;let n=n.parse::<u64>().ok().filter(|n|*n>0)?;
+        let project=st["projects"].as_array().into_iter().flatten().find(|p|p["issues"]==board);
+        let reference=project.and_then(|p|p["root"].as_str()).and_then(|root|crate::load(Path::new(root)).ok()).map(|(cfg,_)|format!("{}://{}/{}#{n}",cfg.board.name,cfg.web_host.to_lowercase(),cfg.repo)).unwrap_or_else(||format!("task:{key}"));
+        let title=project.and_then(|p|p["tasks"].as_array()).and_then(|ts|ts.iter().find(|t|t["n"]==n)).and_then(|t|t["title"].as_str()).unwrap_or(key);
+        Some((format!("task:{key}"),json!({"ref":reference,"title":title,"url":key})))
+    }).collect()
+}
+fn project_task_pins(st:&mut Value) {
+    let legacy=legacy_task_pins(st);if legacy.is_empty(){return;}
+    if !st["navigation"].is_object(){st["navigation"]=json!({"schema":1});}
+    if !st["navigation"]["dashboard"].is_object(){st["navigation"]["dashboard"]=json!({"schema":1,"pins":[]});}
+    if st["navigation"]["dashboard"]["pins"].is_null(){st["navigation"]["dashboard"]["pins"]=json!([]);}
+    if let Some(pins)=st["navigation"]["dashboard"]["pins"].as_array_mut(){for (_,pin) in legacy {if !pins.iter().any(|p|p["ref"]==pin["ref"]){pins.push(pin);}}}
+}
+fn clear_legacy_task_pins(install:&Path,st:&Value,dashboard:&Value)->Result<(),String> {
+    let pins=dashboard["pins"].as_array().ok_or("Task pin readback unavailable")?;
+    for (key,pin) in legacy_task_pins(st) {if !pins.iter().any(|p|p["ref"]==pin["ref"]) {
+        let receipt=crate::conversations::sidebar(install,&json!({"sidebar":{"action":"pin","key":key,"value":false}}));
+        if receipt["state"]!="accepted" {return Err(format!("Task pin partially saved; legacy unpin readback unknown: {}",receipt["reason"].as_str().unwrap_or("refresh before retrying")));}
+    }}Ok(())
+}
+
+// Global task pins share the same dashboard metadata across task lists and Conversations.
+fn task_pin(settings:&mut Settings,install:&Path,st:&Value,m:&Value)->Result<Value,String> {
+    let pinned=m["pinned"].as_bool().ok_or("Pin selection missing")?;
+    let observed=m["closedSeen"].as_i64().is_some_and(|at|at>=0);
+    let (reference,row)=if (!pinned||observed)&&m["ref"].is_string() {
+        (m["ref"].as_str().unwrap().to_string(),None)
+    }else{
+        let root=m["root"].as_str().ok_or("Pin project missing")?;
+        let n=m["task"].as_u64().filter(|n|*n>0).ok_or("Pin task missing")?;
+        let p=st["projects"].as_array().and_then(|ps|ps.iter().find(|p|p["root"]==root)).ok_or("Pin project unavailable")?;
+        let (cfg,_)=crate::load(Path::new(root))?;
+        let row=p["tasks"].as_array().into_iter().flatten().chain(p["reports"]["reports"].as_array().into_iter().flatten()).find(|t|t["n"]==n);
+        (format!("{}://{}/{}#{n}",cfg.board.name,cfg.web_host.to_lowercase(),cfg.repo),row)
+    };
+    let mut projected=st.clone();projected["navigation"]=settings.navigation.clone();project_task_pins(&mut projected);
+    let mut nav=if projected["navigation"].is_object(){projected["navigation"].clone()}else{json!({"schema":1})};
+    if nav["dashboard"].is_null(){nav["dashboard"]=json!({"schema":1,"pins":[]});}
+    let pins=nav["dashboard"]["pins"].as_array_mut().ok_or("Task views unavailable; refresh before pinning")?;
+    if pinned&&observed {
+        let pin=pins.iter_mut().find(|p|p["ref"]==reference).ok_or("Task pin unavailable; no observation saved")?;
+        if m["closedSeen"]==0 {if let Some(pin)=pin.as_object_mut(){pin.remove("closedSeen");}}
+        else if !pin["closedSeen"].as_i64().is_some_and(|at|at>0){pin["closedSeen"]=json!(now());}
+    }else{
+        if pinned&&row.is_none(){return Err("Task unavailable; no pin added".into());}
+        if pinned&&pins.len()>=256&&!pins.iter().any(|pin|pin["ref"]==reference){return Err("Task pin limit reached; prior pins kept".into());}
+        pins.retain(|pin|pin["ref"]!=reference);
+        if pinned {let t=row.unwrap();pins.push(json!({"ref":reference,"title":t["title"],"url":t["url"]}));}
+    }
+    if nav.to_string().len()>65536{return Err("Task view exceeds 64 KiB; prior pins kept".into());}
+    let previous=std::mem::replace(&mut settings.navigation,nav);
+    if !settings.save(install)||!crate::data::json(&install.join("tray.json")).ok().flatten().is_some_and(|v|v["navigation"]==settings.navigation){settings.navigation=previous;return Err("Task pin save/readback unknown; refresh before changing it again".into());}
+    clear_legacy_task_pins(install,st,&settings.navigation["dashboard"])?;
+    Ok(settings.navigation["dashboard"].clone())
+}
+
 // M1.1/M1.2: reject malformed appearance IPC before applying any part of the request.
 fn appearance_input(v: &Value) -> Result<(), String> {
     for (key,min,max) in [("opacity",60,100),("background_opacity",0,100)] {
@@ -653,6 +713,8 @@ fn project(install: &Path, root: &str) -> Value {
     let page = crate::load(r).ok().and_then(|(c, _)| crate::enrollment::progress_page(install, &c.repo));
     for task in &mut tasks {
         task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task);
+        let n=task["n"].clone();
+        for worker in task["workers"].as_array_mut().into_iter().flatten(){worker["n"]=n.clone();task_session(r,cap_host.as_str().unwrap_or(""),page.as_deref(),worker);}
         if task["worker"].is_object() {
             let mut worker=task["worker"].take();worker["n"]=task["n"].clone();
             task_session(r,cap_host.as_str().unwrap_or(""),page.as_deref(),&mut worker);task["worker"]=worker;
@@ -1508,7 +1570,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             }
             Event::WindowEvent {window_id,..} if views_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
             Event::NewEvents(StartCause::Init) => {
-                let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
+                let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(true).with_resizable(false).with_always_on_top(settings.pin.top)
                     .with_visible(snapshot.is_some()).with_inner_size(if routes.iter().any(|r|r.starts_with("health-")) {if conversation_shots {LogicalSize::new(1100.0,900.0)} else {LogicalSize::new(420.0,900.0)}} else if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots && routes.iter().any(|r|r!="conversations") {LogicalSize::new(1280.0,760.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // ordinary snapshots render off-screen; opacity evidence must remain visible and unoccluded (R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots||opacity_shots{40.0}else{-20000.0}, if agentq_shots||opacity_shots{40.0}else{-20000.0})).with_always_on_top(opacity_shots).with_focused(false) } else { b };
@@ -1571,8 +1633,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     w.set_visible(true);
                 }
             }
-            Event::WindowEvent { event: WindowEvent::Moved(p), .. } if settings.pin.pinned && snapshot.is_none() => {
+            Event::WindowEvent { window_id,event: WindowEvent::Moved(p), .. } if snapshot.is_none()&&ui.as_ref().is_some_and(|(w,_)|w.id()==window_id&&(settings.pin.pinned||native_header_drag(w))) => {
                 let Some((w, _)) = &ui else { return };
+                if !settings.pin.pinned {settings.pin.pinned=true;#[cfg(windows)] {use tao::platform::windows::WindowExtWindows;w.set_skip_taskbar(false);}settings.save(&install);let _=proxy.send_event(Ev::Sync);}
                 let Some(m) = w.current_monitor() else { return };
                 let s = w.outer_size();
                 let c = if cfg!(target_os = "macos") { clamp((p.x, p.y), (s.width as i32, s.height as i32), work_area(&m)) } else { (p.x, p.y) };
@@ -1724,7 +1787,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 w.set_visible(true);
                 w.set_focus();
                 if id["root"].is_string() {
-                    push(&mut web,&ui, &json!({"open": {"root": id["root"], "n": id["n"], "kind": id["k"], "title": id["t"]}}));
+                    push(&mut web,&ui, &json!({"open": {"root": id["root"], "n": id["n"], "kind": id["k"], "title": id["t"], "event":id["e"]}}));
                 }
             }
             Event::UserEvent(Ev::Evaluated(id,result)) => {
@@ -1822,6 +1885,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let script=messages.iter().map(|v|format!("taskq.receive({v})")).collect::<Vec<_>>().join(";");
                         web_eval(wv,&script,"tray.web.receive",&proxy,calls);
                     }
+                    Some("task-pin")=>{let st=state(&install,&settings,dark,None,&adding,&mut sync);let receipt=match task_pin(&mut settings,&install,&st,&m){Ok(dashboard)=>{push(&mut web,&ui,&json!({"dashboard":dashboard}));json!({"dashboard":dashboard})},Err(reason)=>json!({"taskPinError":reason})};web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
                     Some("hide") => w.set_visible(false),
                     Some("workspace-window")=>{
                         match m["action"].as_str().unwrap_or("") {
@@ -1934,12 +1998,13 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 match m["a"].as_str().unwrap_or("") {
                     "ready" => {
                         calls.finish(0,"ok");
-                        web_eval(vwv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);
-                        if settings.navigation["dashboard"].is_object() {web_eval(vwv,&format!("taskq.receive({})",json!({"dashboard":settings.navigation["dashboard"],"initial":true})),"tray.web.receive",&proxy,calls);}
+                        let st=state(&install,&settings,dark,None,&adding,&mut sync);
+                        web_eval(vwv,&format!("taskq.receive({st})"),"tray.web.receive",&proxy,calls);
+                        if st["navigation"]["dashboard"].is_object() {web_eval(vwv,&format!("taskq.receive({})",json!({"dashboard":st["navigation"]["dashboard"],"initial":true})),"tray.web.receive",&proxy,calls);}
                     }
                     "hide" => vw.set_visible(false),
                     "drag" => {let _=vw.drag_window();}
-                    "workspace" => {let _=proxy.send_event(Ev::Ipc(message));}
+                    "workspace" | "task-pin" => {let _=proxy.send_event(Ev::Ipc(message));}
                     "views-dashboard" if m["dashboard"].is_object() && m["dashboard"].to_string().len()<=65536 => push(&mut web,&ui,&json!({"dashboard":m["dashboard"]})),
                     // ponytail: the View window owns no other action; add arms when it gains one
                     _ => {}
@@ -1995,7 +2060,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         settings_open=if m["page"].is_string() {json!({"page":m["page"]})} else {Value::Null};
                         if settings_window.is_none() {
                             let p=proxy.clone();
-                            let built=WindowBuilder::new().with_title("TaskQ Settings").with_decorations(false).with_always_on_top(requests_file(&install)["settings_top"]==true).with_inner_size(LogicalSize::new(420.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
+                            let built=WindowBuilder::new().with_title("TaskQ Settings").with_decorations(true).with_always_on_top(requests_file(&install)["settings_top"]==true).with_inner_size(LogicalSize::new(420.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
                                 WebViewBuilder::new().with_accept_first_mouse(true).with_html(HTML).with_initialization_script("window.taskqSurface='settings';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Settings(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                             });
                             match built {
@@ -2011,7 +2076,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     "views-open" if snapshot.is_none() => {
                         if views_window.is_none() {
                             let p=proxy.clone();
-                            let built=WindowBuilder::new().with_title("TaskQ View").with_decorations(false).with_inner_size(LogicalSize::new(480.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
+                            let built=WindowBuilder::new().with_title("TaskQ View").with_decorations(true).with_inner_size(LogicalSize::new(480.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
                                 WebViewBuilder::new().with_accept_first_mouse(true).with_html(HTML).with_initialization_script("window.taskqSurface='views';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Views(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                             });
                             match built {
@@ -2047,6 +2112,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                             let area = work_area(&monitor);
                             (f64::from(area.2) / scale, f64::from(area.3) / scale)
                         });
+                        let outer=w.outer_size();let inner=w.inner_size();
+                        let frame=(outer.width.saturating_sub(inner.width),outer.height.saturating_sub(inner.height));
+                        let max_w=(max_w-f64::from(frame.0)/scale).max(240.0);let max_h=(max_h-f64::from(frame.1)/scale).max(120.0);
                         let size = (width.max(240.0).min(max_w), height.max(120.0).min(max_h));
                         let measurement = json!({"w": size.0, "h": if m["a"] == "resize" { size.1 } else { height.max(120.0) }, "d": scale, "g": m["g"]});
                         let (width, height) = popover_size(&measurement, max_h * scale / w.scale_factor(), w.scale_factor());
@@ -2055,7 +2123,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         w.set_inner_size(PhysicalSize::new(width.min((max_w * scale) as u32), height));
                         if m["a"] == "size" && settings.pin.size_anchor != "fixed" {
                             if let (Some(p), Some(monitor)) = (old_position, w.current_monitor()) {
-                                let p = anchored_position((p.x,p.y),old_size.height as i32,(width as i32,height as i32),work_area(&monitor),if settings.pin.size_anchor=="auto" { &settings.pin.auto_anchor } else { &settings.pin.size_anchor });
+                                let p = anchored_position((p.x,p.y),old_size.height as i32,((width+frame.0) as i32,(height+frame.1) as i32),work_area(&monitor),if settings.pin.size_anchor=="auto" { &settings.pin.auto_anchor } else { &settings.pin.size_anchor });
                                 w.set_outer_position(PhysicalPosition::new(p.0,p.1));
                             }
                         }
@@ -2136,6 +2204,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                             notify::post(&notify::sample(&settings.notify, k, now()));
                         }
                     }
+                    "task-pin" => {
+                        let st=state(&install,&settings,dark,None,&adding,&mut sync);
+                        let receipt=match task_pin(&mut settings,&install,&st,&m){Ok(dashboard)=>json!({"dashboard":dashboard}),Err(reason)=>json!({"viewStateError":reason})};
+                        reply!(&receipt);
+                    }
                     "notify-os" => notify::open_settings(),
                     "set" => {
                         if let Err(error)=appearance_input(&m) {
@@ -2158,8 +2231,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let saved = (m.get("navigation").is_none() || settings.navigation == m["navigation"]) && settings.save(&install);
                         if !saved && appearance {settings.opacity_error=Some("Opacity save failed; restart may restore the previous value".into());}
                         if m.get("navigation").is_some() {
-                            if let (Some((_,wv)),Some(calls))=(&views_window,&mut views_web) && !calls.failed && !calls.pending.contains_key(&0) && m["navigation"]["dashboard"].is_object() {web_eval(wv,&format!("taskq.receive({})",json!({"dashboard":m["navigation"]["dashboard"]})),"tray.web.receive",&proxy,calls);}
-                            push(&mut web, &ui, &json!({"viewStateError": if saved { Value::Null } else { json!("tray.json: save failed; view state is not persisted") }}));
+                            let readback=saved&&crate::data::json(&install.join("tray.json")).ok().flatten().is_some_and(|v|v["navigation"]==settings.navigation);
+                            let error=if !readback {Some("tray.json: save/readback failed; view state persistence unknown")}else{None};
+                            if error.is_none() {if let (Some((_,wv)),Some(calls))=(&views_window,&mut views_web) && !calls.failed && !calls.pending.contains_key(&0) && m["navigation"]["dashboard"].is_object() {web_eval(wv,&format!("taskq.receive({})",json!({"dashboard":m["navigation"]["dashboard"]})),"tray.web.receive",&proxy,calls);}}
+                            push(&mut web, &ui, &json!({"viewStateError":error}));
                             return;
                         }
                 let st = state(&install, &settings, dark, None, &adding, &mut sync);
@@ -2478,6 +2553,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
         "now": observed, "palette":icon::css(dark), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": seen, "workspace_local": requests_file(install)["answers"], "conversations":crate::conversations::observed(install), "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "launch_choices":ps.iter().filter_map(|p|p["root"].as_str()).map(|root|(root.to_string(),json!(crate::runtime::setup_runtimes().map(|runtime|(runtime.to_string(),crate::runtime::choices::view(install,Path::new(root),runtime))).collect::<serde_json::Map<String,Value>>()))).collect::<serde_json::Map<String,Value>>(), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "peak":icon::peak(&sum.bins), "svg":icon::svg(&icon::Data {paused:false,..icon_data(&sum)},dark), "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
+    project_task_pins(&mut st);
     st["display"] = display;
     st["opacity"]=json!(s.opacity);
     st["opacity_mode"]=json!(s.opacity_mode);
@@ -2701,6 +2777,22 @@ fn place(w: &Window, r: Rect, pin: &mut Pin) -> &'static str {
     let p=clamp((x,y),(ww,wh),usable);
     w.set_outer_position(PhysicalPosition::new(p.0,p.1));
     edge
+}
+
+#[cfg(windows)]
+fn native_header_drag(window:&Window)->bool {
+    use tao::platform::windows::WindowExtWindows;
+    #[link(name="user32")] unsafe extern "system" {fn GetCapture()->isize;}
+    // Native caption moves capture the top-level window; a WebView control cannot count as a header drag.
+    unsafe {GetCapture()==window.hwnd()}
+}
+#[cfg(target_os="macos")]
+fn native_header_drag(window:&Window)->bool {
+    use tao::platform::macos::WindowExtMacOS;
+    let Some(mtm)=objc2::MainThreadMarker::new() else{return false;};
+    let Some(event)=objc2_app_kit::NSApplication::sharedApplication(mtm).currentEvent() else{return false;};
+    objc2_app_kit::NSEvent::pressedMouseButtons()&1!=0&&event.window(mtm).is_some_and(|w|std::ptr::from_ref(&*w).cast::<std::ffi::c_void>()==window.ns_window().cast_const())
+        &&event.locationInWindow().y>f64::from(window.inner_size().height)/window.scale_factor()
 }
 
 /// A display's name in `tray.json`; unnamed: its origin.
@@ -4768,6 +4860,67 @@ mod tests {
         task_session(Path::new("."), "win", None, &mut starting);
         assert!(starting["session_url"].is_null(), "starting: no link");
         task_session(Path::new("."), "win", None, &mut Value::Null);
+    }
+    #[test]
+    fn task_pin_legacy_union_and_partial_unpin() {
+        let dir=std::env::temp_dir().join(format!("taskq-pin-legacy-{}",crate::runtime::uuid()));
+        let root=dir.join("project");fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/alpha"}"#).unwrap();
+        let key="task:https://github.com/invented/alpha/issues/7";
+        let unknown="task:https://unregistered.invalid/source/issues/9";
+        let prefs=json!({"draft":"","history":[],"conversation_sidebar":{"pins":[key,unknown],"collapsed":[],"archived":{key:root.to_str().unwrap()}}});
+        crate::conversations::persist(&dir,&prefs).unwrap();
+        let mut settings=Settings::load(&dir);
+        let mut st=json!({"navigation":settings.navigation,"projects":[{"root":root,"issues":"https://github.com/invented/alpha/issues","tasks":[{"n":7,"title":"Legacy task"}]}],"conversations":{"sidebar":prefs["conversation_sidebar"]}});
+        project_task_pins(&mut st);project_task_pins(&mut st);
+        assert_eq!(st["navigation"]["dashboard"]["pins"].as_array().unwrap().len(),2,"read-only union deduplicates");
+        assert_eq!(st["navigation"]["dashboard"]["pins"][0]["ref"],"github://github.com/invented/alpha#7");
+        assert_eq!(st["navigation"]["dashboard"]["pins"][1]["ref"],unknown,"unknown identity is retained verbatim");
+        assert!(!dir.join("tray.json").exists(),"projection does not migrate on read");
+        let mut isolated=Settings::load(&dir);
+        let removed=task_pin(&mut isolated,&dir,&st,&json!({"ref":unknown,"pinned":false})).expect("F19: unavailable saved pin can be removed by exact reference");
+        assert!(!removed["pins"].as_array().unwrap().iter().any(|p|p["ref"]==unknown));
+        assert_eq!(crate::conversations::preferences(&dir).unwrap()["conversation_sidebar"]["pins"],json!([key]));
+        crate::conversations::persist(&dir,&prefs).unwrap();
+        let m=json!({"root":root,"task":7,"pinned":false});
+        let dashboard=task_pin(&mut settings,&dir,&st,&m).unwrap();
+        assert_eq!(dashboard["pins"].as_array().unwrap().len(),1);
+        let after=crate::conversations::preferences(&dir).unwrap();
+        assert_eq!(after["conversation_sidebar"]["pins"],json!([unknown]));
+        assert_eq!(after["conversation_sidebar"]["archived"],prefs["conversation_sidebar"]["archived"]);
+        crate::conversations::persist(&dir,&prefs).unwrap();
+        fs::create_dir(dir.join("tray-requests.tmp")).unwrap();
+        assert!(task_pin(&mut settings,&dir,&st,&m).unwrap_err().contains("partially saved"));
+        assert_eq!(crate::conversations::preferences(&dir).unwrap(),prefs,"refused cleanup preserves legacy preferences");
+        assert_eq!(Settings::load(&dir).navigation,settings.navigation,"partial result still reads back the global write");
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn task_pin_keeps_shared_views_and_failed_storage() {
+        let dir=std::env::temp_dir().join(format!("taskq-pin-{}",crate::runtime::uuid()));
+        let root=dir.join("project");fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/alpha"}"#).unwrap();
+        let mut settings=Settings::load(&dir);
+        let st=json!({"projects":[{"root":root,"tasks":[{"n":7,"title":"Keep source","url":"https://example.org/7"}]}]});
+        let mut m=json!({"root":root,"task":7,"pinned":true});
+        assert_eq!(task_pin(&mut settings,&dir,&st,&m).unwrap()["pins"][0]["ref"],"github://github.com/invented/alpha#7");
+        assert_eq!(Settings::load(&dir).navigation,settings.navigation,"pin survives readback without a prior dashboard");
+        let reference="github://github.com/invented/alpha#7";
+        let observed=json!({"ref":reference,"pinned":true,"closedSeen":1});
+        let first=task_pin(&mut settings,&dir,&st,&observed).unwrap()["pins"][0]["closedSeen"].clone();
+        assert!(first.as_i64().unwrap()>1,"first verified observation uses the host clock");
+        assert_eq!(task_pin(&mut settings,&dir,&st,&observed).unwrap()["pins"][0]["closedSeen"],first,"refresh cannot renew the 24h lifetime");
+        assert_eq!(Settings::load(&dir).navigation,settings.navigation,"first observation survives restart");
+        assert!(task_pin(&mut settings,&dir,&st,&json!({"ref":reference,"pinned":true,"closedSeen":0})).unwrap()["pins"][0]["closedSeen"].is_null(),"reopened live task clears its old observation without unpinning");
+        assert!(task_pin(&mut settings,&dir,&st,&json!({"ref":"invented-missing","pinned":true,"closedSeen":1})).is_err(),"observation never creates another pin");
+        let mut finished=st.clone();finished["projects"][0]["reports"]=json!({"reports":[{"n":9,"title":"Finished task","url":"https://example.org/9"}]});
+        assert!(task_pin(&mut settings,&dir,&finished,&json!({"root":root,"task":9,"pinned":true})).unwrap()["pins"].as_array().unwrap().iter().any(|pin|pin["ref"]=="github://github.com/invented/alpha#9"),"Finished header can pin a source-backed closed task");
+        let before=settings.navigation.clone();
+        m["task"]=json!(8);assert!(task_pin(&mut settings,&dir,&st,&m).is_err());assert_eq!(settings.navigation,before);
+        fs::remove_file(dir.join("tray.json")).unwrap();fs::create_dir(dir.join("tray.json")).unwrap();
+        m["task"]=json!(7);m["pinned"]=json!(false);assert!(task_pin(&mut settings,&dir,&st,&m).unwrap_err().contains("save/readback"));
+        assert_eq!(settings.navigation,before,"unknown persistence retains prior pins in memory");
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn conversations_recovery_storage_and_generation() {

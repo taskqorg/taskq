@@ -11,7 +11,7 @@ const projects=['taskq','pilotq','agentq','dashq','coreq','serverq','specq','csg
 const navigation={schema:1,current:{page:'home'},dashboard:{selected:'all',views:[{id:'view-running',name:'Running',pinned:true,working:{states:['doing','review']}},{id:'view-answers',name:'Waiting for answer',pinned:true,working:{states:['ask']}}]}};
 const snapshot={display:require('./fixtures/display-model.json').display,platform:'macos',font:18,theme:'dark',host:'mac',now:1000,version:'fixture',projects,messages:{complete:true,entries:[]},conversations:{complete:true,items:[]},notify:{host:{ask:'on',close:'on',failed:'on',gone:'on'},projects:{}},stop_modes:true,navigation,period:'1d',history:require('./fixtures/icon-history/day-dark.json')};
 const html=fs.readFileSync('build/web/tray.html','utf8');
-const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filter(e=>e.checkVisibility()).flatMap(e=>{
+const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filter(e=>e.checkVisibility()&&!e.classList.contains('sr-only')).flatMap(e=>{
  const style=getComputedStyle(e);
  return e.scrollWidth>e.clientWidth+1||/^(auto|scroll)$/.test(style.overflowX)?[{element:e.tagName+'.'+e.className,width:e.clientWidth,scroll:e.scrollWidth,overflow:style.overflowX}]:[];
 }));
@@ -24,6 +24,8 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
   await page.setContent(html);
   await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>messages.push(JSON.parse(s))};});
   for(const theme of ['dark','light']){
+   await page.goto('about:blank');await page.setContent(html);
+   await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>messages.push(JSON.parse(s))};});
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
    await page.evaluate(()=>document.fonts.ready);
    if(process.env.PANEL_EVIDENCE&&width===320&&font===20&&theme==='dark'){
@@ -46,11 +48,11 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme,projects:projects.map(p=>({...p,hosts:real}))});
    assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.innerText.replace(/\s+/g,' ').trim())),['her 0','mac 1','pil 1','win 1'],'#1729 A2: the owner hosts read her, mac, win, pil');
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
-   const attention=summary.locator('.attention');
-   assert.equal(await attention.getAttribute('aria-label'),'Attention · 1');
-   const a=await attention.boundingBox(),s=await summary.boundingBox();
-   assert(a&&a.width>=20&&a.x+a.width<=s.x+s.width+1,'A2: Attention is visible inside the summary '+JSON.stringify({width,font,theme,a,s}));
-   assert.deepEqual(await summary.locator('.host-chip').evaluateAll((cs,left)=>cs.filter(c=>c.getBoundingClientRect().right>left).map(c=>c.getAttribute('aria-label')),a.x),[],'A2: no host chip runs under Attention');
+   const attention=page.locator('.errors-entry');
+   assert.equal(await attention.getAttribute('aria-label'),'Errors and service notices: 1');
+   const a=await attention.boundingBox(),s=await page.locator('.head').boundingBox();
+   assert(a&&a.width>=20&&a.x>=s.x&&a.x+a.width<=s.x+s.width+1,'A2: shared errors entry stays inside the header '+JSON.stringify({width,font,theme,a,s}));
+   assert.equal(await summary.locator('.attention').count(),0,'M14: no duplicate service-error count in the host strip');
    assert.equal(await page.locator('.dashboard-status .running-agents').isVisible(),false,'A1: resources stay behind disclosure');
    if(process.env.PANEL_EVIDENCE&&width===320&&font===20&&theme==='dark')await page.screenshot({path:process.env.PANEL_EVIDENCE+'/hosts-collapsed.png'});
    await summary.click();
@@ -62,22 +64,22 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    if(process.env.PANEL_EVIDENCE&&width===320&&font===20&&theme==='dark')await page.screenshot({path:process.env.PANEL_EVIDENCE+'/hosts-expanded.png'});
    await summary.click();
    if(width===420||![16,18].includes(font)){console.log('PASS UX30-06 host geometry '+width+'/'+font+'/'+theme);continue;}
-   assert.deepEqual(await page.locator('.view-picks>button').allInnerTexts(),['All tasks','Completed','Running','Waiting for answer']);
-   const picks=await page.locator('.view-picks>button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size);
-   assert.deepEqual(await overflow(page),[],'A2: menu '+width+' px / '+font+' px / '+theme);
-   assert(picks>1,'A1: view picks wrap at '+width+' px / '+font+' px');
+   await page.locator('.view-dropdown>summary').click();
+   assert.deepEqual(await page.locator('.view-options>button').allInnerTexts(),['All tasks','Completed','Running','Waiting for answer']);
+   await page.locator('.view-dropdown>summary').click();
+   assert.deepEqual(await overflow(page),[],'F11: current-section row wraps without clipping');
    assert.equal(await page.locator('.filter-header .tqp-counts button').count(),10,'A1: all eight states and All tasks remain');
    assert(await page.locator('.filter-header .tqp-counts button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size)>1,'A1: counters wrap');
-   assert.deepEqual(await page.locator('.view-picks,.filter-header .tqp-counts').evaluateAll(es=>es.filter(e=>getComputedStyle(e).maskImage!=='none').map(e=>e.className)),[],'A1: no edge mask');
+   assert.deepEqual(await page.locator('.viewbar,.filter-header .tqp-counts').evaluateAll(es=>es.filter(e=>getComputedStyle(e).maskImage!=='none').map(e=>e.className)),[],'A1: no edge mask');
    assert.deepEqual(await page.locator('.viewbar button, .filter-header .tqp-counts button').evaluateAll(bs=>bs.filter(b=>{
     const r=b.getBoundingClientRect();let parent=b.parentElement;while(getComputedStyle(parent).display==='contents')parent=parent.parentElement;const p=parent.getBoundingClientRect();
     return b.scrollWidth>b.clientWidth+1||r.left<p.left||r.right>p.right||r.bottom>p.bottom;
    }).map(b=>b.innerText)),[],'A1: each chip is fully visible');
    assert.equal(await page.locator('.dashboard-status').evaluate(e=>parseFloat(getComputedStyle(e.closest('.menu')).fontSize)),font,'A1: text is not shrunk');
-   await page.locator('[data-a=task-detail]').first().click();
-   assert.deepEqual(await overflow(page),[],'A2: menu task details');
-   await page.keyboard.press('Escape');
-   await page.locator('[data-a=view-select][data-id=completed]').click();
+   await page.locator('.task-target').first().focus();
+   assert.deepEqual(await overflow(page),[],'F13: focused shared row stays within the menu');
+   await page.locator('.view-dropdown>summary').click();
+   await page.locator('.view-options [data-a=view-select][data-id=completed]').click();
    const completed=await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1)?.open);
    assert.equal(completed.page,'conversations','MP14: Completed uses the current Conversations destination');assert.equal(completed.filter,'finished');
    assert.equal(await summary.locator('.host-chip').count(),5,'#1724 A2: Completed keeps every host');
@@ -100,6 +102,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
     }
     await window.close();
    }
+   await page.locator('.view-dropdown>summary').click();await page.locator('.view-options [data-id=all]').click();
    console.log('PASS #1709 menu/View/Settings '+width+' px / '+font+' px / '+theme);
   }
   await page.close();

@@ -31,7 +31,7 @@ Builder completes the ledger per [F6](https://github.com/taskqorg/specq/blob/mai
 | Menu composer | target context, attach/drop, history fill-only, Send opens conversation | M-A13/19 |
 | AI workspace | selected conversation, drafts, active/archived lists, search, all C4 states | C-A1–C-A10 |
 | AI windows | main/explicit detach, raise owner, recovery, no duplicated launch | C2/C-A2 |
-| Work sessions | worker/reviewer, host/runtime/attempt, live/ended, valid local link | C6/C-A8 |
+| Conversations task/session history | accepted attempts, source model/effort or unavailable, live/ended, exact event targets and valid local links | C6/C-A8, unified reader |
 | Setup | picker cancel, new/existing/old/nonrepo, exact external effects, empty-install gap | M-A14 |
 | Appearance | theme, 14/16/18/20, Icon/Summary/Custom, persistence; no icon scaling from text | D-A3–D-A8 |
 | Plans | four editable recipes, held creation, explicit start, dependencies and partial retry | UC-03/06/07, D06/D08/D14, G2/G5 |

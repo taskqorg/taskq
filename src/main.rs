@@ -1119,16 +1119,17 @@ fn closed_row(b: &dyn Board, i: &board::Issue, closed: Option<i64>, gitlab: bool
         (json!(t.publication.as_deref().and_then(|p| p.lines().next()).map(|l| l.trim_start_matches("Changed:").trim())), json!(pr.map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))))
     });
     let conversation=log.as_ref().ok().and_then(|log|core::conversation(i.number,log));
-    let history=if conversation.is_some() {log.as_ref().ok().zip(comments.as_ref().ok()).map(|(log,comments)| {
-        dispatch::history(i.number,log,&core::project(i.number,log,false),comments).iter().map(|(q,a)|json!({"question":q.as_deref().map(snapshot::question),"answered":a})).collect::<Vec<_>>()
-    })}else{None};
+    let history=log.as_ref().ok().zip(comments.as_ref().ok()).map(|(log,comments)| {
+        dispatch::timeline(i.number,log,&core::project(i.number,log,false),comments).iter().map(|(q,a)|json!({"question":q.as_deref().map(snapshot::question),"answered":a})).collect::<Vec<_>>()
+    });
+    let workers=log.as_ref().ok().map(|log|core::project(i.number,log,false).changes.into_iter().filter(|(id,_,t)|t.role.as_deref()==Some("worker")&&t.attempt==Some(*id)).map(|(id,_,t)|json!({"attempt":id,"role":"worker","session":t.session})).collect::<Vec<_>>());
     let merged = log.as_ref().ok().and_then(|log| merge_receipt(log));
     // § 7 close outcome (#1800): delivered, no change or replaced by #M with its current state, plus unverified items
     let verdict = log.as_ref().ok().and_then(|log| log.iter().rev().find(|e| !e.edited && e.body.starts_with("taskq: close")).map(|e| core::verdict(i.number, log, e.body.split_once('\n').map_or("", |x| x.1))));
     let verdict = verdict.as_deref();
     let next = verdict.and_then(display::successor).map(|m| dispatch::current(b, m).map_or("unknown", |(i, t, _)| if i.open { t.state.name() } else { "closed" }));
     let close = log.is_ok().then(|| display::close_outcome(verdict, next));
-    json!({"n": i.number,"revision":log.as_ref().ok().map(|log|core::revision(i.number,log)), "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "history":history,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err()})
+    json!({"n": i.number,"revision":log.as_ref().ok().map(|log|core::revision(i.number,log)), "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "history":history,"workers":workers,"brief":i.body,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err()})
 }
 
 fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {
@@ -1139,12 +1140,12 @@ fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {
 
 /// Read only: use the last accepted worker's native identity, only on its recorded host.
 /// The last recorded worker of a closed task: runtime, board session id, owning host, attempt.
-fn closed_worker(b: &dyn Board, n: u64) -> Res<(String, String, String, u64)> {
+fn closed_worker(b: &dyn Board, n: u64, wanted: Option<u64>) -> Res<(String, String, String, u64)> {
     let i = b.issue(n)?;
     if i.number != n || i.open || !service::is_task(&i) { return Err("Transcript requires a closed trusted task; refresh the project".into()); }
     let log = entries(b,n)?;
     let projection = core::project(n,&log,false);
-    let t = projection.changes.iter().rev().map(|(_,_,t)|t).find(|t| t.role.as_deref()==Some("worker") && t.session.is_some()).ok_or("No recorded worker transcript")?;
+    let t = projection.changes.iter().rev().map(|(_,_,t)|t).find(|t| t.role.as_deref()==Some("worker") && t.session.is_some() && wanted.is_none_or(|a|t.attempt==Some(a))).ok_or("No recorded worker transcript for this attempt")?;
     let (native,owner) = t.session.as_deref().unwrap_or_default().rsplit_once(' ').ok_or("Worker identity unavailable")?;
     let (runtime,session) = native.split_once(':').ok_or("Worker session unavailable")?;
     Ok((runtime.into(),session.into(),owner.into(),t.attempt.ok_or("Worker attempt unavailable")?))
@@ -1160,7 +1161,7 @@ fn closed_session(root: &Path, runtime: &str, id: &str, n: u64, attempt: u64) ->
 
 /// A closed worker's page: from its transcript on this host, else through `remote` (the host link) on its host.
 fn closed_transcript(b: &dyn Board, root: &Path, n: u64, host: &str, before: Option<u64>, remote: impl FnOnce(&str,u64)->Res<Value>) -> Res<Value> {
-    let (runtime,id,owner,attempt) = closed_worker(b,n)?;
+    let (runtime,id,owner,attempt) = closed_worker(b,n,None)?;
     if owner != host { return remote(&owner,attempt); }
     let session = closed_session(root,&runtime,&id,n,attempt)?;
     let path = runtime::owner::transcript(&runtime,&session)?;
@@ -1171,7 +1172,7 @@ fn closed_transcript(b: &dyn Board, root: &Path, n: u64, host: &str, before: Opt
 pub(crate) fn closed_peer_session(root: &Path, local: &str, n: u64, attempt: u64) -> Res<String> {
     let (cfg, raw) = load(root)?;
     let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
-    let (runtime,id,owner,last) = closed_worker(&*board,n)?;
+    let (runtime,id,owner,last) = closed_worker(&*board,n,Some(attempt))?;
     if owner != local || last != attempt { return Err("Worker transcript is available only on its host".into()); }
     Ok(format!("{runtime}:{}",closed_session(root,&runtime,&id,n,attempt)?))
 }
@@ -5072,9 +5073,10 @@ mod tests {
         c.board.comment(2,&format!("taskq: result {} attempt {attempt}\nChanged: Done\nOpen: none","a".repeat(40))).unwrap();
         c.board.comment(2,"taskq: close\nChanged: Done\nOpen: none").unwrap();
         let mut issue=c.board.issue(2).unwrap();issue.open=false;issue.reason=Some("completed".into());
-        let closed=closed_row(&*c.board,&issue,None,false);assert_eq!(closed["history"].as_array().unwrap().len(),1);
-        assert_eq!(closed["history"][0]["question"]["done"],"Original work");
-        assert_eq!(closed["history"][0]["question"]["evidence"][0]["url"],"https://example.org/evidence");
+        let closed=closed_row(&*c.board,&issue,None,false);
+        let questions:Vec<_>=closed["history"].as_array().unwrap().iter().filter(|r|!r["question"].is_null()).collect();assert_eq!(questions.len(),1);
+        assert_eq!(questions[0]["question"]["done"],"Original work");
+        assert_eq!(questions[0]["question"]["evidence"][0]["url"],"https://example.org/evidence");
         assert_eq!(closed["conversation"]["id"],"owner-1929");
     }
 
@@ -7313,7 +7315,7 @@ mod tests {
         b.comment(2,&format!("taskq: result {} attempt {job}","b".repeat(40))).unwrap();
         fs::create_dir_all(dot(&local)).unwrap();
         fs::write(runtime::attempt_log(&local,"worker",2,job),"{\"type\":\"thread.started\",\"session_id\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\",\"runtime\":\"claude-bg\"}\n{\"type\":\"system\",\"sessionId\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\"}\n").unwrap();
-        let (rt,id,owner,attempt) = closed_worker(&b,2).unwrap();
+        let (rt,id,owner,attempt) = closed_worker(&b,2,None).unwrap();
         assert_eq!((owner.as_str(),attempt),("mac",job));
         assert_eq!(closed_session(&local,&rt,&id,2,attempt).unwrap(),"3aae983f-ee51-4fa1-af25-7252766bec4b");
         b.state.borrow_mut().issues[0].trusted=false;

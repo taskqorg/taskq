@@ -235,6 +235,14 @@
         "session": "claude:abc mac",
         "role": "worker"
       },
+      "workers": [
+        {
+          "attempt": 3,
+          "session": "claude:abc mac",
+          "role": "worker",
+          "started": 3
+        }
+      ],
       "executions": [
         {
           "task": 2,
@@ -273,7 +281,26 @@
           "complete": false
         }
       ],
-      "stuck": false
+      "stuck": false,
+      "history": [
+        {
+          "question": null,
+          "answered": {
+            "by": "",
+            "text": "taskq: spawn worker claude:abc mac",
+            "at": 3,
+            "source": {
+              "id": 3,
+              "kind": "spawn",
+              "question": null,
+              "asked_at": 3,
+              "attempt": 3,
+              "session": "claude:abc mac",
+              "role": "worker"
+            }
+          }
+        }
+      ]
     },
     {
       "n": 4,
@@ -330,6 +357,7 @@
         "later"
       ],
       "verdict": null,
+      "brief": "Depends on #3",
       "since": null,
       "created": 6,
       "steps": [
@@ -410,7 +438,26 @@
           "complete": false
         }
       ],
-      "stuck": false
+      "stuck": false,
+      "history": [
+        {
+          "question": null,
+          "answered": {
+            "by": "",
+            "text": "taskq: failed\nReason: no login",
+            "at": 8,
+            "source": {
+              "id": 8,
+              "kind": "failed",
+              "question": null,
+              "asked_at": 8,
+              "attempt": null,
+              "session": null,
+              "role": null
+            }
+          }
+        }
+      ]
     },
     {
       "n": 7,
@@ -471,6 +518,14 @@
         "session": "claude:def mac",
         "role": "worker"
       },
+      "workers": [
+        {
+          "attempt": 11,
+          "session": "claude:def mac",
+          "role": "worker",
+          "started": 11
+        }
+      ],
       "result": "cccccccccccccccccccccccccccccccccccccccc",
       "executions": [
         {
@@ -511,6 +566,42 @@
         }
       ],
       "stuck": false,
+      "history": [
+        {
+          "question": null,
+          "answered": {
+            "by": "",
+            "text": "taskq: spawn worker claude:def mac",
+            "at": 11,
+            "source": {
+              "id": 11,
+              "kind": "spawn",
+              "question": null,
+              "asked_at": 11,
+              "attempt": 11,
+              "session": "claude:def mac",
+              "role": "worker"
+            }
+          }
+        },
+        {
+          "question": null,
+          "answered": {
+            "by": "",
+            "text": "taskq: result cccccccccccccccccccccccccccccccccccccccc attempt 11\nChanged: faster status\nfor every reader\nChecks: cargo test --locked -- pass\nChecks: cargo run -- selftest -- pass\nOpen: none\nop-id: op-1",
+            "at": 12,
+            "source": {
+              "id": 12,
+              "kind": "result",
+              "question": null,
+              "asked_at": 12,
+              "attempt": 11,
+              "session": "claude:def mac",
+              "role": "worker"
+            }
+          }
+        }
+      ],
       "ops": [
         "op-1"
       ]

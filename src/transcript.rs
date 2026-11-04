@@ -155,9 +155,14 @@ pub fn after(format: &str, session: &str, path: &Path, from: u64) -> Res<Page> {
 /// in the exact source only.
 fn view(format: &str, events: &[Value]) -> Vec<Value> {
     let mut out = Vec::<Value>::new();
+    let (mut model,mut effort)=(Value::Null,Value::Null);
     let (claude, codex) = (format.starts_with("claude-"), format.starts_with("codex-"));
     for e in events {
         let first = out.len();
+        let raw:Value=serde_json::from_str(e["raw"].as_str().unwrap_or_default()).unwrap_or_default();
+        // Only source-recorded metadata: a page without its earlier context keeps provenance unknown.
+        if let Some(m)=raw["message"]["model"].as_str().or(raw["payload"]["model"].as_str()).or(raw["model"].as_str()){model=json!(m);effort=Value::Null;}
+        if let Some(e)=raw["payload"]["effort"].as_str().or(raw["payload"]["reasoning_effort"].as_str()).or(raw["reasoning_effort"].as_str()){effort=json!(e);}
         let author = e["author"].as_str().unwrap_or("unknown");
         let blocks = e["blocks"].as_array().map(Vec::as_slice).unwrap_or_default();
         match e["kind"].as_str().unwrap_or_default() {
@@ -200,6 +205,7 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
         }
         for (i, item) in out[first..].iter_mut().enumerate() {
             item["at"] = e["start"].clone(); item["i"] = json!(i);
+            item["model"]=model.clone();item["effort"]=effort.clone();
             if e["time"].is_string() { item["updated"] = e["time"].clone(); }
         }
     }
@@ -430,6 +436,14 @@ mod tests {
     use std::{io::Write, path::PathBuf};
 
     fn tmp() -> PathBuf { let p = std::env::temp_dir().join(format!("taskq-transcript-{}", crate::runtime::uuid())); fs::create_dir(&p).unwrap(); p }
+    // F16: actual model changes belong to their source blocks; missing context never borrows a current task model.
+    #[test]
+    fn historical_blocks_keep_recorded_models() {
+        let source=[("invented-model-one","first"),("invented-model-two","second")].map(|(model,text)|json!({"type":"assistant","message":{"role":"assistant","model":model,"content":[{"type":"text","text":text}]}}).to_string()).join("\n")+"\n";
+        let items=read(false,&source);
+        assert_eq!(items.iter().filter(|i|i["role"]=="assistant").map(|i|i["model"].as_str().unwrap()).collect::<Vec<_>>(),["invented-model-one","invented-model-two"]);
+        assert!(read(false,"{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"unattributed\"}}\n").iter().all(|i|i["model"].is_null()));
+    }
     /// The view text of items, without their record identity.
     fn text(items: &[Value]) -> Vec<Value> { items.iter().map(|i| json!({"role": i["role"], "text": i["text"]})).collect() }
     fn key(i: &Value) -> (u64, u64) { (i["at"].as_u64().unwrap(), i["i"].as_u64().unwrap()) }

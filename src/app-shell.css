@@ -80,3 +80,8 @@
 .head .conversations-entry{gap:5px;inline-size:auto;padding-inline:5px}
 .communication-count{display:inline-flex;align-items:center;gap:2px;font-variant-numeric:tabular-nums}.communication-count .ui-icon,.communication-count .ui-icon svg{width:12px;height:12px}.communication-count.New{color:var(--new,var(--work))}.communication-count.Needs.me{color:var(--ask)}
 .conversations-entry .notification-warning{display:inline-flex;flex:none}
+
+/* F04/F05: no empty root title track; contextual path uses one baseline and type scale. */
+.head .nav-title:has(>h1){align-items:baseline}.menu .breadcrumbs{font-size:1em;line-height:1.25}.head .breadcrumbs a{display:inline-flex;align-items:center}.menu .head{cursor:default}
+
+.head:has(.nav-title:empty){grid-template-columns:auto minmax(0,1fr) auto}.head .nav-title:empty{display:none}.head:has(.nav-title:empty) .nav-actions{grid-column:2;flex-wrap:wrap;min-width:0;justify-content:flex-end}.head:has(.nav-title:empty) .window-controls{grid-column:3}.top-task-counters{display:inline-flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:.85em}
