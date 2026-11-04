@@ -30,4 +30,6 @@ The complete task is not ready for result/acceptance. Preserve the branch and dr
 
 ## Candidate gate
 
-Pending the one rebase and selected canonical gate; no claim of CI, native qualification, publication or deployment.
+Rebased once onto `026db2524d6d5d7b34452d4c8d0fbf17073df7b9`. `python scripts/check.py --base HEAD^` failed after 7.860 s at the rule gate: task scope does not name `M3`, `M13`, `Product`. No Rust suite, offline selftest or later canonical checks ran. The gate ran at `eff7fd050d5ae008425b36f83eebaea993df78ed`; subsequent changes only record evidence and opt-in browser capture. The required owner rule-scope record is missing even though the requested behavior is explicit; the gate was not bypassed and the started issue body was not edited. The candidate remains incomplete and cannot be accepted or merged.
+
+Browser pictures: [dark Home](home-dark.png), [light Home](home-light.png), [Conversations](conversations.png). These show content rendering, not native titlebars or movement. They were captured after the one rebase. No claim of CI, native qualification, publication or deployment.
