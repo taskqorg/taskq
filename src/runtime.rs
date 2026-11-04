@@ -2173,6 +2173,12 @@ impl ClaudeTurn {
             }
             if !claude_exit(row, self.native.as_ref(), self.handed)? { return Err(format!("Claude job {state}; native process exit unconfirmed; inspect the original job")); }
             if self.history.ended {return self.complete();}
+            // #2330: the hand-in runs inside the worker's own turn, so the service stops that turn (R11) before it ends;
+            // the stop is the retirement of a clean attempt, not a failure. A native failed or crashed stays failed.
+            if state=="stopped" && self.handed {
+                self.done=true;
+                return Ok(Some(0));
+            }
             self.failure = Some(claude_failure(row, &self.root, &self.id, self.native_home().as_deref()));
             return Ok(Some(-1));
         }
@@ -5267,6 +5273,44 @@ finally:
             assert_eq!(t.exited(),Ok(Some(if api_error {-1} else {0})),"terminal result must remain stable");
             if api_error {assert_eq!(t.exit_error(),Some("auth"));assert!(t.history.answer.is_none(),"native API error cannot be a success answer");assert!(t.history.failure.as_ref().unwrap().1.contains("authentication_failed: Login expired; please run /login"));}
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // #2330 Chain: hand-in -> service stops the turn still running it -> native row `stopped` with no process -> reap.
+    // Risk: the service's own stop logs a clean hand-in as exit failed/other, or the exemption hides a real failure.
+    #[test]
+    fn claude_handed_in_job_stopped_by_the_service_exits_ok_and_real_failures_stay_failed() {
+        let root=std::env::temp_dir().join(format!("taskq-claude-handed-stop-{}",uuid()));
+        std::fs::create_dir_all(&root).unwrap();
+        let log=root.join("attempt.log");
+        File::create(&log).unwrap();
+        let mut child=Command::new(std::env::current_exe().unwrap()).args(["--exact","runtime::tests::stop_child","--ignored"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();
+        let gone=coreq::process::identity(child.id()).unwrap().unwrap();child.kill().unwrap();child.wait().unwrap();
+        let live=coreq::process::identity(std::process::id()).unwrap();
+        let session=uuid();
+        let turn=|handed:bool,native:Option<coreq::process::Identity>| ClaudeTurn { root:root.clone(), log:log.clone(), session:session.clone(),
+            id: "c37eb75a".into(), announced: false, accepted:handed, history:ClaudeHistory::default(), before: 0, mode: "dontAsk".into(),
+            input: "invented input".into(), _input_file: coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid: 0, native, recovery:None, done: false, failure: None, handed,released:false, launch_error:None, resumed:None, lost:None };
+        let row=|state:&str,detail:Option<&str>| serde_json::json!({"id":"c37eb75a","sessionId":session,"state":state,"detail":detail,"pid":null});
+        for native in [None,Some(gone.clone())] {
+            let mut t=turn(true,native.clone());
+            assert_eq!(t.observe(&row("stopped",Some("stopped"))),Ok(Some(0)),"stopped after hand-in, identity {native:?}");
+            assert_eq!(t.exit_error(),None,"a clean hand-in has no exit reason");
+            assert_eq!(t.exited(),Ok(Some(0)),"terminal result must remain stable");
+            for (state,detail,class) in [("failed","permission denied","permission"),("crashed","ENAMETOOLONG: name too long, uv_spawn","argument-too-long"),("failed","exit 4","other")] {
+                let mut t=turn(true,native.clone());
+                assert_eq!(t.observe(&row(state,Some(detail))),Ok(Some(-1)),"native {state} after hand-in stays failed");
+                assert_eq!(t.exit_error(),Some(class),"{state} keeps its reason");
+            }
+        }
+        // Without a hand-in a stopped job is still no clean exit; its attempt is released as an ordinary failure.
+        let mut t=turn(false,Some(gone));
+        assert_eq!(t.observe(&row("stopped",Some("stopped"))),Ok(Some(-1)));
+        assert_eq!(t.exit_error(),Some("other"));
+        // A hand-in never stands in for process exit: the recorded process still runs, so the stop stays pending.
+        let mut t=turn(true,live);
+        assert!(t.observe(&row("stopped",Some("stopped"))).unwrap_err().contains("native process exit unconfirmed"));
+        assert!(!t.done);
         std::fs::remove_dir_all(root).unwrap();
     }
 
