@@ -636,7 +636,15 @@ impl Proc for CliTurn {
 
 /// Native conversation identity from the owning adapter; never resolve another runtime's event.
 pub fn native_session(rt: &str, log: &Path) -> Option<String> {
-    classify(rt, &std::fs::read_to_string(log).ok()?)?.session
+    let text = std::fs::read_to_string(log).ok()?;
+    classify(rt, &text)?.session.or_else(|| background_session(&text))
+}
+
+/// The session taskq itself records for a Claude background job: its copied transcript rows carry `sessionId` only.
+fn background_session(text: &str) -> Option<String> {
+    text.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["type"] == "thread.started" && v["runtime"] == "claude-bg")
+        .and_then(|v| v["session_id"].as_str().map(String::from))
 }
 
 /// Codex's thread id: the first `thread.started` line of the attempt log.

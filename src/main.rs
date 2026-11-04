@@ -7307,7 +7307,7 @@ mod tests {
         let job = b.comment(2,"taskq: spawn worker claude:88b43179-06e0-4c61-bf19-5cd156f22dd3 mac").unwrap();
         b.comment(2,&format!("taskq: result {} attempt {job}","b".repeat(40))).unwrap();
         fs::create_dir_all(dot(&local)).unwrap();
-        fs::write(runtime::attempt_log(&local,"worker",2,job),"{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\"}\n").unwrap();
+        fs::write(runtime::attempt_log(&local,"worker",2,job),"{\"type\":\"thread.started\",\"session_id\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\",\"runtime\":\"claude-bg\"}\n{\"type\":\"system\",\"sessionId\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\"}\n").unwrap();
         let (rt,id,owner,attempt) = closed_worker(&b,2).unwrap();
         assert_eq!((owner.as_str(),attempt),("mac",job));
         assert_eq!(closed_session(&local,&rt,&id,2,attempt).unwrap(),"3aae983f-ee51-4fa1-af25-7252766bec4b");
