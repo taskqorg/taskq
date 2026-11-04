@@ -4198,7 +4198,7 @@ Problem: pick one
         let verdict = "Changed: tested publication\nChecks: Task fit A1 ok; merge-result CI pending\nOpen: none";
         b.comment(n, &core::entry("publish", &[], Some(r), verdict)).unwrap();
         let frozen=crate::readiness::Publication {repository:"invented/repo".into(),pr:3,base:Some("b".repeat(40)),head:"a".repeat(40),
-            integration:None,merged:None,parent:None,ci_kind:None,ci_sha:None};
+            integration:None,merged:None,parent:None,ci_kind:None,ci_sha:None,ci_run_id:None,ci_run_attempt:None};
         b.state.borrow_mut().evidence=vec![frozen.clone()];
         b.state.borrow_mut().publish = "queue-admitted".into();
         {

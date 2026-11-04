@@ -2171,7 +2171,8 @@ mod tests {
         let state = std::rc::Rc::new(RefCell::new(recorded("queue-open")));
         let head = state.borrow()["data"]["node"]["headRefOid"].as_str().unwrap().to_string();
         state.borrow_mut()["data"]["node"]["mergeable"] = "MERGEABLE".into();
-        let runs = recorded("runs-green");
+        let mut runs = recorded("runs-green");
+        runs["workflow_runs"][0]["id"]=123.into();runs["workflow_runs"][0]["run_attempt"]=2.into();
         let merge = runs["workflow_runs"][0]["head_sha"].as_str().unwrap().to_string();
         let mut pulls = recorded("pulls-open");
         pulls[0]["head"]["sha"] = head.clone().into();
@@ -2217,6 +2218,7 @@ mod tests {
         let landed=h.take_publication_evidence();
         assert_eq!(landed.len(),1);assert_eq!(landed[0].parent,frozen[0].base);
         assert_eq!(landed[0].ci_sha.as_deref(),Some(merge.as_str()));
+        assert_eq!(landed[0].ci_run_id,Some(123));assert_eq!(landed[0].ci_run_attempt,Some(2));
         assert!(h.take_publication_evidence().is_empty(),"publication observations are consumed once");
         assert_eq!(writes.borrow().len(), 1, "one enqueue, no rebase or push: {:?}", writes.borrow());
     }

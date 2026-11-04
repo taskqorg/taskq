@@ -12,7 +12,7 @@ pub const KIND: Kind = Kind {
     reload_token: true,
     token_env: &["GH_TOKEN", "GITHUB_TOKEN"],
     api,
-    board: |api| Box::new(GitHub { api, rules: Default::default(), open: Default::default(), heartbeat: Default::default(), evidence: Default::default() }),
+    board: |api| Box::new(GitHub { api, rules: Default::default(), open: Default::default(), heartbeat: Default::default(), evidence: Default::default(), ci: Default::default() }),
 };
 
 pub const TOKEN_ERROR: &str = "GitHub board token missing, empty or unreadable; owner must install it in <install>/token; never run gh auth login";
@@ -34,6 +34,7 @@ const PLAN: &str = "this private repository's GitHub plan has no branch rules or
 
 pub struct GitHub {
     evidence: std::cell::RefCell<Vec<crate::readiness::Publication>>,
+    ci: std::cell::RefCell<Option<(String,Option<u64>,Option<u64>)>>,
     pub(super) api: Api,
     /// `main` branch rules, read once per credential (#1359), a plan refusal too (#1935). ponytail: same-token rules changes need a service restart.
     /// Keyed by repository API too: a task PR in another repository reads that repository's rules (#2047).
@@ -141,9 +142,11 @@ impl GitHub {
             if commit["sha"]!=sha {return None;}
             commit["parents"][0]["sha"].as_str().filter(|s|hex40(s)).map(String::from)
         });
+        let ci=self.ci.borrow();
+        let run=landed.and_then(|(_,_,sha)|ci.as_ref().filter(|(at,_,_)|at==sha));
         self.evidence.borrow_mut().push(crate::readiness::Publication {repository,pr:pr["number"].as_u64().unwrap_or(0),
             base,head:s(&pr["head"],"sha"),integration:landed.map(|(sha,_,_)|sha.into()),
-            merged:landed.map(|(sha,_,_)|sha.into()),parent,ci_kind:landed.map(|(_,kind,_)|kind.into()),ci_sha:landed.map(|(_,_,sha)|sha.into())});
+            merged:landed.map(|(sha,_,_)|sha.into()),parent,ci_kind:landed.map(|(_,kind,_)|kind.into()),ci_sha:landed.map(|(_,_,sha)|sha.into()),ci_run_id:run.and_then(|r|r.1),ci_run_attempt:run.and_then(|r|r.2)});
     }
     /// Every task change bumps some `taskq` issue's `updated_at`; one `since` query of the newest known task update
     /// finds them, a 304 when nothing changed (#1819). The probe asks for `taskq` issues only (#2083): heartbeat writes
@@ -276,6 +279,7 @@ impl GitHub {
     /// § 7: qualify the merge result, never substitute green checks on the original head.
     /// Err: pending or unknown; `Ok(Err)`: the merge result's CI failed; `Ok(Ok)`: green, plus a note on ignored push failures.
     fn merge_ci(&self, sha: &str) -> Result<Result<String>> {
+        *self.ci.borrow_mut()=None;
         if !hex40(sha) { return Err("merge result SHA unknown".into()); }
         let v = self.api.call("GET", &format!("/actions/runs?event=merge_group&head_sha={sha}&per_page=100"), None)?.json()?;
         let runs = v["workflow_runs"].as_array().ok_or("merge_group CI unknown")?;
@@ -299,6 +303,9 @@ impl GitHub {
         };
         if let Some(fail) = self.ci_where(sha, &keep)? { return Ok(Err(fail)); }
         let ignored = ignored.into_inner();
+        if let Some(run)=group.iter().find(|r|r["status"]=="completed"&&r["conclusion"]=="success") {
+            *self.ci.borrow_mut()=Some((sha.into(),run["id"].as_u64().filter(|n|*n>0),run["run_attempt"].as_u64().filter(|n|*n>0)));
+        }
         Ok(Ok(if ignored.is_empty() { String::new() } else { format!("; push CI {} ignored", ignored.join(", ")) }))
     }
 
@@ -438,6 +445,7 @@ impl GitHub {
 
     fn try_publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
         self.evidence.borrow_mut().clear();
+        *self.ci.borrow_mut()=None;
         // #2061 (#2010 pilotq#200, #2015 dashq#241): a task PR of another repository publishes there, before any board
         // repository read; a named PR that is not this task's (head `taskq-<N>`, the result, or #2308 the result as its
         // merge commit) is only a mention
@@ -1152,7 +1160,7 @@ mod token_tests {
             };
             Ok(Reply {status:200,headers:vec![],body:body.to_string(),operation:operation(method)})
         }));
-        let h = GitHub {api,rules:Default::default(),open:Default::default(),heartbeat:Default::default(),evidence:Default::default()};
+        let h = GitHub {api,rules:Default::default(),open:Default::default(),heartbeat:Default::default(),evidence:Default::default(),ci:Default::default()};
         let mut writes = 0;
         for pass in 0..60 {
             clock.set(start + pass * 60);
@@ -1187,7 +1195,7 @@ mod token_tests {
             let mut api = api("github.com", "o/r", "invented-token");
             api.transport = Some(Box::new(move |_, _, _| Ok(super::super::Reply {status:200, headers:vec![], operation:"read",
                 body:json!({"errors":[{"type":kind,"message":"invented refusal"}]}).to_string()})));
-            let board = GitHub {api, rules:Default::default(), open:Default::default(), heartbeat:Default::default(),evidence:Default::default()};
+            let board = GitHub {api, rules:Default::default(), open:Default::default(), heartbeat:Default::default(),evidence:Default::default(),ci:Default::default()};
             assert!(board.open_issues().unwrap_err().starts_with(expected));
         }
     }
