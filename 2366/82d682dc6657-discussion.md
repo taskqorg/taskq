@@ -1,0 +1,24 @@
+All four corrections accepted. Retained facts and corrected plan below.
+
+**1. Board tail — concede.** My "tail-first exists end-to-end" claim was true only for native transcripts (`transcript::before(None)`) and thread `open()`. Board history is forward-from-oldest: `history()` initializes `state={start:0,revision}` and `read(state.start)` sends `{action:'history',start:0}` (conversations.js:389-395). So first open of merged history shows oldest board rows, not latest mixed content. Corrected requirement: board-history initial read backward from `sourceTotal` (`before` cursor), symmetric with native; explicit question/event targets and saved anchors stay separate intents; merged projection must disclose unloaded older range — never imply full history is resident. New dedicated stage.
+
+**2. GitHub wording — concede.** "Clean" overstated. Retained fact: open tasks in `status.tasks` cost zero board calls (history_page:517-538 snapshot path). Correction applies to closed/fallback paths: task_body:496 and history_page:517 fall back to `closed_pin()`; worker_read:556-575 hits `closed_worker()` per closed native page; each queries `b.issue` + `b.comments` (per_page 100) — HTTP round trips and comment traversal per page even when 304/unbilled. Budget must distinguish four tiers: logical board reads, HTTP/304 round trips, billed GETs, local decode. Agree the fix is worth doing, scoped as you propose: bounded read-through, coalesced selected-closed-task metadata/history projection under the existing collector + shared ETag store, explicit revision/TTL revalidation; UI page scroll never revalidates every comment page. No new store, no framework.
+
+**3. Checkpoint cache — concede, and your point is stronger than stated.** AgentQ pinned (2a530cbb, runtime/src/agent/history.rs:82-158): `open()` always runs `digest_prefix(file, self.offset)`; `poll()`/`poll_before()` hash again. A TaskQ-side verified-checkpoint removes only TaskQ's synthetic `at()` hash; AgentQ's two remain. Worse: today's full-prefix rehash per poll is the only mechanism that detects in-place rewrites beyond the first line (generation covers file ID + first line only; ai-workspace.md:108 marks deeper mutation unqualified). A cached-verify shortcut would silently weaken that. Corrected plan: (a) measure first — bytes hashed per poll, empty-vs-live poll ratio, via CoreQ telemetry (no bench harness); (b) safe-only reductions: Codex session-path memo (runtime/owner.rs:288 — path resolution, no integrity role), coalesced/shared reads, cursor reuse across ticks, drop TaskQ's duplicate hash only where AgentQ's own open() re-verifies the same prefix; (c) constant-cost validation = AgentQ cursor-at-offset/integrity API change = separate owner proposal, only if stage-measurement numbers justify. No validation skip ships.
+
+**4. Staging and approvals — concede.** Stages 1-2 also touch conversations.js; no non-overlap promise with #2363 possible. Rule: every stage lands against #2363's merged immutable result, or its actual diff gets inspected first. Sidebar toggle at all widths + persisted divider: user-authorized now — removed from the owner-decision list. Header scroller: in the minimum-scrollers goal — compact non-scrolling header + existing in-flow Details, no owner question unless implementation surfaces a real tradeoff. §7 shrinks to: nothing pending; escalate only genuine tradeoffs found during work.
+
+**Cost language — accepted.** `at()` prefix rehash and the Codex directory walk are concrete O(N) paths with in-code ponytail notes, not proven dominant costs. Relative weight and perceived jitter need native profiling. All "largest/dominant" phrasing withdrawn.
+
+**Corrected stages** (each lands against #2363 merged result):
+1. Key grammar + `anchored()` unification; deliberate tail fallback for legacy keys.
+2. Anchor-controller convergence: one per-viewport coordinator, reusable `block()` rows; no intended behavior change.
+3. Board-history tail intent: backward initial read from `sourceTotal`; unloaded-range disclosure in merged projection; question/event/saved intents preserved.
+4. Measurement: CoreQ telemetry for bytes hashed, empty/live polls, logical-vs-HTTP-vs-billed board reads. No behavior change.
+5. Safe read reductions: session-path memo, read coalescing, cursor reuse, duplicate-hash removal without validation skip. AgentQ API change deferred to owner if numbers warrant.
+6. Closed-task bounded read-through projection with revision/TTL revalidation.
+7. Splitter + persisted logical-px left width + all-widths sidebar toggle (web layer).
+8. Window geometry persistence (tray.rs pin pattern, per-display clamp).
+9. Compact non-scrolling header; third scroller removed.
+
+Each stage keeps prior acceptance/rollback shape: unit or fixture proof per stage, telemetry after 5-6, visual matrix ≤10 screens for 7-9, isolated revert per stage. No disagreements remain.
