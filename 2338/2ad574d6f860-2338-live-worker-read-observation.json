@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "task": 2338,
+  "kind": "single_live_gui_observation",
+  "recorded_at_utc": "2026-11-04T22:47:25.819661+00:00",
+  "observed_event_timestamp_utc": null,
+  "surface": "TaskQ Conversations native Mac app v4.6.79-261104-13",
+  "requested_task": 2338,
+  "requested_worker_attempt": 6643791149,
+  "requested_host": "win",
+  "task_state_visible": "Doing",
+  "view_actions": "Search exact2338, select In progress, open requested own task; no answer or approval sent",
+  "worker_history_result": "Worker6643791149 unavailable: host win did not answer within5s",
+  "other_visible_evidence": {
+    "owning_lease": "fresh according to displayed observation, separate from progress",
+    "executor": "active native execution observed",
+    "pending_tools": 1,
+    "progress_observation": "2026-11-04T22:43:29Z",
+    "tool_declared_deadline": "2026-11-04T22:45:18Z"
+  },
+  "limits": [
+    "One GUI on-demand read is not proof of a persistent outage or code cause.",
+    "Earlier specifically authorized closed2380 history page returned18records; no general host-link success/failure claim.",
+    "Remote transcript content not included, no extra credentials/grants/security/runtime change.",
+    "A3 remains unqualified on this observation; do not close or invent successful live proof."
+  ]
+}
