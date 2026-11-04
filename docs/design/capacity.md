@@ -312,13 +312,15 @@ Detail of [taskq.md § 3 Runtime accounts](../../taskq.md#runtime-accounts) (R1,
 
 Antigravity has one `default` account per host until a per-account `agy` home is qualified; `accounts add antigravity` refuses until then, an `accounts.json` that lists another label is an error, and a fleet `use` of another account reports `policy unmet`.
 
-Claude retains the fixed `five_hour`/`seven_day*` windows and structured `limits[]`: `session` maps to `five_hour`, `weekly` to `seven_day`, with the lowercase model display name (or id) appended after `_` and spaces replaced by `_` (for example `seven_day_fable`). `seven_day_breakdown` is explanatory metadata, not a quota window. Structured entries replace the same legacy window. Null legacy windows are absent; an unreadable observed window, unsupported group or unsafe name makes the poll unknown, never a partial healthy account.
+Claude retains the fixed `five_hour`/`seven_day*` windows and structured `limits[]`: `session` maps to `five_hour`, `weekly` to `seven_day`, with the lowercase model display name (or id) appended after `_` and spaces replaced by `_` (for example `seven_day_fable`). `seven_day_breakdown`, kind, severity and activity metadata do not determine quota validity. Null legacy windows and null scope dimensions (including `surface`) are absent. Non-null unsupported scopes never become an unscoped quota. Each readable window survives an unreadable sibling; the account also publishes an unknown reason naming each unreadable window or its source position when identity is unsupported. Structured entries replace the same legacy window, including invalidating its reading when utilization is unreadable. Missing/unreadable utilization never becomes zero; an absent or unreadable reset stays unknown. Transport, authentication, non-object or wholly unrecognized responses remain whole-account unknown.
+
+A Claude poll with unreadable windows has unknown aggregate headroom for account ranking and Balancing, even while its readable windows are visible. It never clears quota holds. Recovery requires a complete readable poll or fresh independent evidence after that incomplete poll expires.
 
 Antigravity reads `loadCodeAssist` from `cloudcode-pa.googleapis.com`; `retrieveUserQuotaSummary` uses that production host only when `currentTier.usesGcpTos` is true, otherwise `daily-cloudcode-pa.googleapis.com`, as the consumer quota route does. Calls use the compatible `antigravity/hub/2.28.2` User-Agent. Every group's buckets survive, including `gemini-5h`, `gemini-weekly` and `3p-*`. A malformed group or bucket is unknown, not an omitted model family. No missing reading is synthesized as zero.
 
 Each window result is an observation in `quota-headroom.json`, the existing store and 300 s expiry, so `Balancing` needs no new input. A poll never clears a quota record or hold: only a reported reset or the existing probe does.
 
-**Heartbeat.** One row per polled window, or one `unknown` row per failing account:
+**Heartbeat.** One row per readable polled window, plus one `unknown` row per unreadable Claude window or source position; a whole-account failure has one `unknown` row. A partial Claude poll retains both kinds. Unknown reasons use only validated names and fixed diagnostics, never provider text:
 
 ```text
 limit <rt> <label> id <id|-> window <name> used <0-100> reset <UTC|-> at <UTC>

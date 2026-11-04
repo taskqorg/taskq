@@ -126,6 +126,7 @@ pub fn remaining(install:&Path,rt:&str,now:i64)->Result<Option<f64>,String> {
     let accounts=super::accounts::Host::read(install);
     if let Some(e)=accounts.error {return Err(e);}
     let Some(label)=accounts.active(rt,now) else {return Ok(None)};
+    if accounts.usage.incomplete(rt,&label,now) {return Ok(None);}
     Ok(saved.get(rt).and_then(|a|a.get(&label)).into_iter().flat_map(|w|w.values())
         .filter(|o|now>=o.at && now-o.at<=TTL && o.reset.is_none_or(|reset|now<reset))
         .map(|o|o.remaining).min_by(f64::total_cmp))
@@ -135,6 +136,7 @@ pub fn remaining(install:&Path,rt:&str,now:i64)->Result<Option<f64>,String> {
 pub fn cause(install:&Path,rt:&str,now:i64)->String {
     let accounts=super::accounts::Host::read(install);
     let Some(label)=accounts.active(rt,now) else {return "every account on quota hold".into()};
+    if accounts.usage.incomplete(rt,&label,now) {return format!("account {label}: unreadable quota windows");}
     let latest=read(install).ok().and_then(|s|s.get(rt).and_then(|a|a.get(&label)).and_then(|w|w.values().map(|o|o.at).max()));
     match latest {
         None if super::of(rt).has("background") => format!("account {label}: Claude background jobs report no quota"),

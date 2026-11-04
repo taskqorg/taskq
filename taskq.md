@@ -48,6 +48,7 @@ Stop workers/reviewers only after close/parking/replacement, except owner-confir
 ### R12. Unverified means unknown
 Follow [shared verification][vf]. Gate `python3 scripts/check.py` ([selection](docs/testing.md)): PRs Linux; `merge_group` affected-OS matrix, the merge gate; main push none. A state marked `⟳` ([menu] M8) is expected, unconfirmed.
 Account usage preserves every supported account/model window; missing or unsupported readings stay unknown ([capacity](docs/design/capacity.md#account-usage-and-fleet-policy)).
+Claude publishes readable windows alongside explicit unknowns for unreadable ones; incomplete account headroom stays unknown.
 Release and AgentQ adoption need exact-source CI and staged offline selftest; fake clients never prove native behavior.
 [Advisory readiness](docs/design/advisory-readiness.md#contract-detail) binds accepted source/publication evidence and fresh running-binary identity; accepted-result identity stays explicit when coverage is unknown. It changes no dependency admission or build trigger.
 [Live acceptance](docs/runtime-qualification.md), including isolated fallback admission, reruns for changed runtime paths, permissions or clients. Prototypes are instruments; [UI acceptance](docs/design/ui-acceptance.md#contract-detail) owns browser/screenshot/native scope.
