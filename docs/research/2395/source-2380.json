@@ -1,0 +1,28 @@
+{
+  "task": 2380,
+  "url": "https://github.com/taskqorg/taskq/issues/2380",
+  "state": "closed",
+  "result": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+  "source_readiness": {
+    "schema": 1,
+    "accepted_result_state": "proven",
+    "url": "https://github.com/taskqorg/taskq/issues/2380",
+    "current_result_sha": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+    "state": "unknown",
+    "reason": "frozen inputs or successful publication unknown",
+    "task": 2380,
+    "result_entry": 6640375476,
+    "attempt": 6639398822,
+    "result_sha": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+    "evidence": {
+      "schema": 1,
+      "task": 2380,
+      "url": "https://github.com/taskqorg/taskq/issues/2380",
+      "result_entry": 6640375476,
+      "attempt": 6639398822,
+      "result_sha": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+      "frozen": null,
+      "landed": null
+    }
+  }
+}

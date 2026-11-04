@@ -158,8 +158,11 @@ class Replay(unittest.TestCase):
         b.git(self.repo, 'add', '.')
         b.git(self.repo, 'commit', '-qm', 'Synthetic moved input')
         m['frozen_head'] = self.head()
-        with self.assertRaisesRegex(b.Refusal, 'moved'):
-            b.verify(self.repo, m)
+        with self.assertRaisesRegex(b.Refusal, 'Git refused apply'):
+            frozen, moved = b.verify(self.repo, m)
+            target = self.root / 'moved'
+            target.mkdir()
+            b.prepare(self.repo, target, frozen, moved)
         m = self.manifest()
         # A duplicate delta under a distinct task identity must not pass independence.
         item = copy.deepcopy(m['members'][0])
@@ -255,6 +258,63 @@ class Replay(unittest.TestCase):
         self.assertEqual(subset['outcome'], 'unknown')
         self.assertIn('check inputs changed', subset['comparability'])
         self.assertIn([1, 2], result['diagnostics']['unknown'])
+
+    def test_prepared_bundle_requires_reviewed_source_and_stays_pending(self):
+        def no_gate(repo, subset):
+            raise AssertionError('preparation must not execute or qualify a gate')
+        receipts = self.root / 'receipts'
+        m = self.manifest()
+        result = b.execute(self.repo, m, receipts, no_gate, prepare_only=True)
+        self.assertEqual(result['outcome'], 'pending')
+        public = result['prepared_manifest']
+        self.assertEqual(public['outcome'], 'pending')
+        self.assertEqual(public['publication'], 'none')
+        bundle = receipts / public['bundle_sha256']
+        self.assertIn(m['frozen_head'].encode(), bundle.read_bytes().split(b'PACK', 1)[0])
+        b.git(self.repo, 'bundle', 'verify', str(bundle))
+        owner = self.root / 'operator'
+        b.git(self.root, 'clone', '--quiet', '--no-hardlinks', str(self.repo), str(owner))
+        b.git(owner, 'fetch', '--quiet', str(bundle), 'refs/heads/pilot:refs/heads/replay')
+        self.assertEqual(b.git(owner, 'rev-parse', 'refs/heads/replay^{tree}').decode().strip(), public['expected_tree'])
+        self.assertEqual(b.git(owner, 'rev-parse', 'refs/heads/replay').decode().strip(), public['replay_head'])
+
+    def test_frozen_reviewed_later_hunks_survive_exact_reverse_and_every_replay(self):
+        m = self.manifest()
+        b.git(self.repo, 'reset', '--hard', '--quiet', self.base)
+        lines = ['invented baseline line ' + str(n) + '\n' for n in range(80)]
+        (self.repo / 'anchor').write_text(''.join(lines))
+        b.git(self.repo, 'add', '.')
+        b.git(self.repo, 'commit', '-qm', 'Synthetic long baseline')
+        for n, item in enumerate(m['members'], 1):
+            parent = self.head()
+            if n == 1:
+                lines[5] = 'invented accepted task change\n'
+                (self.repo / 'anchor').write_text(''.join(lines))
+            else:
+                (self.repo / ('member-' + str(n))).write_text('invented task ' + str(n) + '\n')
+            b.git(self.repo, 'add', '.')
+            b.git(self.repo, 'commit', '-qm', 'Synthetic accepted member ' + str(n))
+            head = self.head()
+            item['result_sha'] = item['source_export']['result'] = head
+            source = item['source_export']['source_readiness']
+            source.update(result_sha=head, current_result_sha=head)
+            source['evidence']['result_sha'] = head
+            for pub in (source['evidence']['frozen'], source['evidence']['landed']):
+                pub.update(base=parent, parent=parent, head=head, merged=head, integration=head, ci_sha=head)
+            item['source_export_sha256'] = b.digest(b.encoded(item['source_export']))
+            item['delta_sha256'] = b.digest(b.delta(self.repo, parent, head))
+            item['ci']['head_sha'] = item['ci']['observation']['head_sha'] = head
+        lines[60] = 'invented later reviewed change outside task hunk\n'
+        (self.repo / 'anchor').write_text(''.join(lines))
+        b.git(self.repo, 'add', '.')
+        b.git(self.repo, 'commit', '-qm', 'Synthetic reviewed later source')
+        m['frozen_head'] = self.head()
+        def no_gate(repo, subset):
+            raise AssertionError('prepare only')
+        result = b.execute(self.repo, m, self.root / 'receipts', no_gate, prepare_only=True)
+        self.assertEqual(result['outcome'], 'pending')
+        public = result['prepared_manifest']
+        self.assertEqual(public['expected_tree'], b.git(self.repo, 'rev-parse', 'HEAD^{tree}').decode().strip())
 
 
 if __name__ == '__main__':

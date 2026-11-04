@@ -166,7 +166,6 @@ def verify(repo, manifest):
         names = paths(repo, parent, merged)
         require(not names & occupied, 'overlapping task deltas refuse independence')
         occupied |= names
-        require(entries(repo, frozen, names) == entries(repo, merged, names), 'frozen source inputs moved')
         verified.append({**m, 'patch': patch, 'paths': names, 'parent': parent, 'merged': merged,
                          'source_patch': source_patch, 'original_pr_base': original})
     return frozen, verified
@@ -183,23 +182,27 @@ def import_tree(source, target, head):
     return tree.decode()
 
 
-def apply(repo, member, reverse=False):
+def apply(repo, member):
     # Exact per-path blob/mode checks disallow fuzzy application to moved inputs.
-    require(entries(repo, git(repo, 'write-tree').decode().strip(), member['paths']) == member[('after' if reverse else 'before')],
+    require(entries(repo, git(repo, 'write-tree').decode().strip(), member['paths']) == member['before'],
             'replay input changed for task ' + str(member['task']))
-    git(repo, 'apply', '--cached', '--binary', *(['--reverse'] if reverse else []), data=member['patch'])
+    git(repo, 'apply', '--cached', '--binary', data=member['patch'])
 
 
 def prepare(source, target, head, members):
     tree = import_tree(source, target, head)
-    for m in members:
-        m['before'] = entries(source, m['parent'], m['paths'])
-        m['after'] = entries(source, m['merged'], m['paths'])
+    # Retain this exact reviewed commit as the bundle boundary, never a task branch.
+    body = git(source, 'cat-file', 'commit', head)
+    require(git(target, 'hash-object', '-t', 'commit', '-w', '--stdin', data=body).decode().strip() == head,
+            'reviewed source commit changed')
+    (target / '.git' / 'shallow').write_text(head + '\n', encoding='ascii')
     git(target, 'read-tree', tree)
     for m in reversed(members):
-        apply(target, m, reverse=True)
+        m['after'] = entries(target, git(target, 'write-tree').decode().strip(), m['paths'])
+        git(target, 'apply', '--cached', '--binary', '--reverse', data=m['patch'])
+        m['before'] = entries(target, git(target, 'write-tree').decode().strip(), m['paths'])
     base = git(target, 'write-tree').decode().strip()
-    base_commit = git(target, 'commit-tree', base, data=b'Private experimental base\n').decode().strip()
+    base_commit = git(target, 'commit-tree', base, '-p', head, data=b'Private experimental base\n').decode().strip()
     orders = []
     for order in itertools.permutations(members):
         git(target, 'read-tree', base)
@@ -216,7 +219,9 @@ def checkout(repo, base, members):
     for member in members:
         apply(repo, member)
     tree = git(repo, 'write-tree').decode().strip()
-    commit = git(repo, 'commit-tree', tree, '-p', base, data=b'Isolated replay; no publication\n').decode().strip()
+    trailers = ['Task: ' + m['source_export']['source_readiness']['url'] for m in members]
+    message = 'Isolated replay; no publication\n\n' + '\n'.join(trailers) + '\n'
+    commit = git(repo, 'commit-tree', tree, '-p', base, data=message.encode()).decode().strip()
     git(repo, 'clean', '-fdx')
     git(repo, 'reset', '--hard', '--quiet', commit)
     return commit, tree
@@ -237,7 +242,7 @@ def localize(members, check):
             'unknown': [r['tasks'] for r in outcomes if r['outcome'] == 'unknown']}
 
 
-def execute(source, manifest, receipts, runner=None):
+def execute(source, manifest, receipts, runner=None, prepare_only=False):
     started = time.monotonic()
     input_id = store(receipts, encoded(manifest))
     tool_id = store(receipts, Path(__file__).read_bytes())
@@ -273,6 +278,32 @@ def execute(source, manifest, receipts, runner=None):
                             'deltas': deltas, 'original_gate_identity': original_gate,
                             'replay_command': ['git', 'apply', '--cached', '--binary']}))
         command = [sys.executable, 'scripts/check.py', '--full']
+        if prepare_only:
+            head, replay_tree = checkout(repo, base, members)
+            require(replay_tree == tree, 'prepared head differs from reviewed source tree')
+            git(repo, 'update-ref', 'refs/heads/pilot', head)
+            bundle = repo / '.git' / 'pilot.bundle'
+            git(repo, 'bundle', 'create', str(bundle), 'refs/heads/pilot', '^' + frozen)
+            bundle_log = git(source, 'bundle', 'verify', str(bundle))
+            public = {'schema': 1, 'synthetic': manifest['synthetic'], 'outcome': 'pending',
+                      'frozen_source_head': frozen, 'expected_tree': tree, 'replay_head': head,
+                      'experimental_base_head': base, 'replay_tree': replay_tree,
+                      'input_sha256': input_id, 'pilot_tool_sha256': tool_id,
+                      'original_gate_identity': original_gate, 'replay_receipt': replay_id,
+                      'producer_revision': manifest['producer_revision'],
+                      'producer_executable_sha256': manifest['producer_executable_sha256'],
+                      'bundle_sha256': store(receipts, bundle.read_bytes()),
+                      'gate_command': ['python3', 'scripts/check.py', '--full'],
+                      'members': [{k: m[k] for k in ('task', 'pr', 'attempt', 'result_entry', 'result_sha',
+                                                   'original_pr_base', 'ci')} for m in members],
+                      'publication': 'none', 'runtime_qualification': 'none'}
+            public['manifest_sha256'] = store(receipts, encoded(public))
+            record = {**identity, 'prepared_manifest': public, 'outcome': 'pending',
+                      'elapsed_seconds': time.monotonic() - started,
+                      'log_sha256': store(receipts, bundle_log),
+                      'next': 'operator exact-SHA full-matrix proof required'}
+            record['receipt'] = store(receipts, encoded(record))
+            return record
         cache = {}
 
         def check(subset):
@@ -348,12 +379,14 @@ def main():
     parser.add_argument('manifest', type=Path)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--receipts', type=Path, required=True)
+    parser.add_argument('--prepare-bundle', action='store_true', help='prepare offline operator proof; never qualifies the gate')
     args = parser.parse_args()
     started = time.monotonic()
     manifest_bytes = None
     try:
         manifest_bytes = args.manifest.read_bytes()
-        result = execute(args.source.resolve(), json.loads(manifest_bytes), args.receipts.resolve())
+        result = execute(args.source.resolve(), json.loads(manifest_bytes), args.receipts.resolve(),
+                         prepare_only=args.prepare_bundle)
     except (Refusal, KeyError, TypeError, AttributeError, OSError, UnicodeError,
             json.JSONDecodeError, subprocess.TimeoutExpired) as error:
         result = {'outcome': 'unknown', 'reason': str(error), 'qualification': 'refused',
@@ -362,7 +395,7 @@ def main():
                   'host': platform.node(), 'elapsed_seconds': time.monotonic() - started}
         result['receipt'] = store(args.receipts.resolve(), encoded(result))
     print(json.dumps(result, sort_keys=True))
-    return 0 if result['outcome'] == 'passed' else 1
+    return 0 if result['outcome'] in ('passed', 'pending') else 1
 
 
 if __name__ == '__main__':
