@@ -520,9 +520,17 @@ fn rpc(mut c: std::process::Command, deadline: Duration) -> Poll {
     let exit = Instant::now() + Duration::from_secs(3);
     while Instant::now() < exit && matches!(child.try_wait(), Ok(None)) { std::thread::sleep(Duration::from_millis(50)); }
     if matches!(child.try_wait(), Ok(None)) { let _ = child.kill(); }
-    let _ = child.wait();
-    if let Some(reason) = failed { return Poll::failed(reason); }
+    let code = child.wait().ok().and_then(|status| status.code());
+    if let Some(reason) = failed { return Poll::failed(&rpc_failure(reason, code)); }
     rpc_poll(&account.unwrap_or_default(), &limits.unwrap_or_default())
+}
+
+/// A server that ended before it answered names its exit code, so a host's row shows more than that it failed.
+fn rpc_failure(reason: &str, code: Option<i32>) -> String {
+    match code {
+        Some(code) if reason == "app-server failed" => format!("app-server exit {code}"),
+        _ => reason.to_string(),
+    }
 }
 
 fn rpc_poll(account: &Value, limits: &Value) -> Poll {
@@ -552,9 +560,9 @@ fn rate_windows(reply: &Value) -> Result<Vec<Window>, &'static str> {
 
 /// The OAuth route: read the access token, never refresh or store it; it travels to the provider on curl's stdin only.
 fn oauth(rt: &str, home: &Path) -> Poll {
-    let token = match credentials(rt, home).and_then(|text| access_token(&text, accounts::now())) {
+    let token = match credentials(rt, home).and_then(|text| access_token(&text, accounts::now()).map_err(String::from)) {
         Ok(token) => token,
-        Err(reason) => return Poll::failed(reason),
+        Err(reason) => return Poll::failed(&reason),
     };
     let config = format!("url = \"https://api.anthropic.com/api/oauth/usage\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\nmax-time = {HTTP_DEADLINE}\n");
     match https_json(&config).and_then(|v| oauth_windows(&v).map_err(String::from)) {
@@ -581,9 +589,9 @@ fn https_json(config: &str) -> Result<Value, String> {
 
 /// The two Code Assist calls with the `agy` login. Both endpoints are undocumented, so any other reply fails closed.
 fn code_assist(rt: &str) -> Poll {
-    let token = match agy_credentials(rt).and_then(|text| agy_token(&text, accounts::now())) {
+    let token = match agy_credentials(rt).and_then(|text| agy_token(&text, accounts::now()).map_err(String::from)) {
         Ok(token) => token,
-        Err(reason) => return Poll::failed(reason),
+        Err(reason) => return Poll::failed(&reason),
     };
     let load = match https_json(&code_assist_call("loadCodeAssist", &token, r#"{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}"#)) {
         Ok(v) => v,
@@ -645,14 +653,11 @@ fn agy_login_files() -> Vec<PathBuf> {
     home.map_or(vec![], |h| [".gemini/antigravity-cli/antigravity-oauth-token", ".gemini/oauth_creds.json"].iter().map(|f| Path::new(&h).join(f)).collect())
 }
 
-fn agy_credentials(rt: &str) -> Result<String, &'static str> {
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(text) = keychain::read("gemini", rt)? { return Ok(text); }
+fn agy_credentials(rt: &str) -> Result<String, String> {
+    if cfg!(target_os = "macos") {
+        if let Some(text) = keychain_read("gemini", rt)? { return Ok(text); }
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = rt;
-    agy_login_files().iter().find_map(|f| std::fs::read_to_string(f).ok()).ok_or("no login")
+    agy_login_files().iter().find_map(|f| std::fs::read_to_string(f).ok()).ok_or_else(|| "no login".to_string())
 }
 
 /// Plan windows only: `five_hour` and the `seven_day` family; credits are no window.
@@ -685,59 +690,51 @@ fn access_token(text: &str, now: i64) -> Result<String, &'static str> {
     Ok(token.to_string())
 }
 
-fn credentials(rt: &str, home: &Path) -> Result<String, &'static str> {
-    #[cfg(target_os = "macos")]
-    {
+fn credentials(rt: &str, home: &Path) -> Result<String, String> {
+    if cfg!(target_os = "macos") {
         // A home named by the home variable has its own keychain service, as the native login stores it.
         let suffix = accounts::environment(rt, home).map_or(String::new(), |(_, h)| format!("-{}", &sha256(h.to_string_lossy().as_bytes())[..8]));
-        if let Some(text) = keychain::read(&format!("Claude Code-credentials{suffix}"), "")? { return Ok(text); }
+        if let Some(text) = keychain_read(&format!("Claude Code-credentials{suffix}"), "")? { return Ok(text); }
     }
-    #[cfg(not(target_os = "macos"))]
-    let _ = rt;
-    std::fs::read_to_string(home.join(".credentials.json")).map_err(|_| "no login")
+    std::fs::read_to_string(home.join(".credentials.json")).map_err(|_| "no login".to_string())
 }
 
-#[cfg(target_os = "macos")]
-mod keychain {
-    use std::ffi::c_void;
-    #[link(name = "Security", kind = "framework")]
-    unsafe extern "C" {
-        fn SecKeychainGetUserInteractionAllowed(state: *mut u8) -> i32;
-        fn SecKeychainSetUserInteractionAllowed(state: u8) -> i32;
-        fn SecKeychainFindGenericPassword(keychain: *const c_void, service_len: u32, service: *const u8, account_len: u32, account: *const u8,
-            password_len: *mut u32, password: *mut *mut c_void, item: *mut *mut c_void) -> i32;
-        fn SecKeychainItemFreeContent(attributes: *const c_void, data: *mut c_void) -> i32;
-    }
-    const NOT_FOUND: i32 = -25300;
-    const WOULD_PROMPT: i32 = -25308;
+const KEYCHAIN: &str = "/usr/bin/security";
+/// A silent read takes milliseconds, so a read this long waits on a dialog.
+const KEYCHAIN_DEADLINE: Duration = Duration::from_secs(5);
+/// ponytail: one latch per service process; per-item latches if a host ever mixes trusted and untrusted items.
+static KEYCHAIN_PROMPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-    /// A read that would prompt fails instead of showing a dialog; `None` is no item.
-    /// ponytail: the interaction flag is per process; this is taskq's only keychain read, so nothing else sees it.
-    pub fn read(service: &str, account: &str) -> Result<Option<String>, &'static str> {
-        let (mut len, mut data, mut allowed) = (0u32, std::ptr::null_mut(), 1u8);
-        // SAFETY: every pointer outlives its call; the item out-pointer may be null, and data is freed once below.
-        let status = unsafe {
-            let saved = SecKeychainGetUserInteractionAllowed(&mut allowed) == 0;
-            SecKeychainSetUserInteractionAllowed(0);
-            let status = SecKeychainFindGenericPassword(std::ptr::null(), service.len() as u32, service.as_ptr(), account.len() as u32, account.as_ptr(),
-                &mut len, &mut data, std::ptr::null_mut());
-            SecKeychainSetUserInteractionAllowed(if saved { allowed } else { 1 });
-            status
-        };
-        match status {
-            0 => {
-                // SAFETY: on success `data` holds `len` bytes owned by the keychain until freed here.
-                let text = unsafe {
-                    let text = String::from_utf8_lossy(std::slice::from_raw_parts(data as *const u8, len as usize)).into_owned();
-                    SecKeychainItemFreeContent(std::ptr::null(), data);
-                    text
-                };
-                Ok(Some(text))
-            }
-            NOT_FOUND => Ok(None),
-            WOULD_PROMPT => Err("keychain would prompt"),
-            _ => Err("keychain read failed"),
+/// A macOS keychain item, read through the tool both native logins store it with, the one the item's access list trusts.
+/// `None` is no item. A read that outlasts its deadline would prompt: it stops, and this process reads no item again.
+fn keychain_read(service: &str, account: &str) -> Result<Option<String>, String> {
+    use std::sync::atomic::Ordering;
+    if KEYCHAIN_PROMPTED.load(Ordering::Relaxed) { return Err("keychain would prompt".into()); }
+    match coreq::process::output("account.usage", crate::platform::command(KEYCHAIN).args(keychain_args(service, account)), KEYCHAIN_DEADLINE) {
+        Ok(o) | Err(coreq::process::Failure::Exit(o)) => keychain_reply(o.status.code(), &o.stdout),
+        Err(coreq::process::Failure::Timeout) => {
+            KEYCHAIN_PROMPTED.store(true, Ordering::Relaxed);
+            Err("keychain would prompt".into())
         }
+        Err(_) => Err("keychain read failed".into()),
+    }
+}
+
+fn keychain_args(service: &str, account: &str) -> Vec<String> {
+    let mut args = vec!["find-generic-password".to_string(), "-s".to_string(), service.to_string()];
+    if !account.is_empty() { args.extend(["-a".to_string(), account.to_string()]); }
+    args.push("-w".to_string());
+    args
+}
+
+/// The tool exits with the low byte of the keychain status: 44 no item, 36 interaction not allowed.
+fn keychain_reply(code: Option<i32>, stdout: &[u8]) -> Result<Option<String>, String> {
+    match code {
+        Some(0) => Ok(Some(String::from_utf8_lossy(stdout).trim().to_string()).filter(|t| !t.is_empty())),
+        Some(44) => Ok(None),
+        Some(36) => Err("keychain would prompt".into()),
+        Some(code) => Err(format!("keychain read failed {code}")),
+        None => Err("keychain read failed".into()),
     }
 }
 
@@ -1183,6 +1180,25 @@ for line in sys.stdin:
     }
 
     // #2341 A1 instrument: a real read-only poll on this host, run by hand on each host from a checkout:
+    #[test]
+    fn keychain_reads_the_item_and_never_reads_a_prompt_as_a_login() {
+        assert_eq!(keychain_args("Claude Code-credentials", ""), ["find-generic-password", "-s", "Claude Code-credentials", "-w"]);
+        assert_eq!(keychain_args("gemini", "antigravity"), ["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"]);
+        assert_eq!(keychain_reply(Some(0), b"{\"a\":1}\n"), Ok(Some("{\"a\":1}".to_string())));
+        assert_eq!(keychain_reply(Some(0), b"\n"), Ok(None));
+        assert_eq!(keychain_reply(Some(44), b""), Ok(None));
+        assert_eq!(keychain_reply(Some(36), b"").unwrap_err(), "keychain would prompt");
+        assert_eq!(keychain_reply(Some(51), b"").unwrap_err(), "keychain read failed 51");
+        assert_eq!(keychain_reply(None, b"").unwrap_err(), "keychain read failed");
+    }
+
+    #[test]
+    fn app_server_failure_names_its_exit_code_only_when_it_exited() {
+        assert_eq!(rpc_failure("app-server failed", Some(1)), "app-server exit 1");
+        assert_eq!(rpc_failure("app-server failed", None), "app-server failed");
+        assert_eq!(rpc_failure("timeout", Some(1)), "timeout");
+    }
+
     // `cargo test --locked --bin taskq native_poll_qualifies -- --ignored --nocapture`. It prints rows only: fingerprints,
     // percents and fixed reasons, and fails when a login file changes or a row carries an email.
     #[test]
