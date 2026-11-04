@@ -1,0 +1,11 @@
+release: 4.6.73 on pds18.ufobe.com (installed launcher; local paths omitted)
+contains 1e5ff561: yes
+CLI telemetry: collecting · scope this-process · pid 25 · at 2026-11-04 12:02 UTC
+CLI telemetry counts: lost 0 · failed batches 0 · timeouts unknown (not counted) · append avg 1677 us · max 1677 us
+Service telemetry: unknown (service pid 23349 not running)
+Telemetry store: database 307.1 MiB of 384.0 MiB · WAL file 1.8 MiB (live 1.6 MiB) of 64.0 MiB · budget within
+export --since 30m: ok, 85933 rows; legacy source absent, 0 samples, recorded recovery gaps 0
+watch: Board: 12337 calls · failed 322 (2.61%) · lowest remaining 1066
+taskq.log: 147011 bytes; watching 150s
+window (0 new bytes): stall errors 0, legacy_offset errors 0, re-baselines 0
+verdict: PASS (no stalled legacy import, no repeated legacy_offset error)
