@@ -328,3 +328,86 @@ assert warn(report) == ['Warning: COMPACT: taskq.md: 60024 bytes > target 55910 
 assert warn(report, True)[0].startswith('::warning::COMPACT: taskq.md: 60024 bytes')
 assert warn('taskq.md: 55898 bytes\nPASS\n') == []
 print('PASS contract lint COMPACT markers surface as warnings')
+
+# R8/R12: unavailable contract lint must refuse before any test/build command.
+from unittest.mock import patch
+import hashlib
+import io
+gate = check['main'].__globals__
+with tempfile.TemporaryDirectory(prefix='taskq-lint-unavailable-') as directory:
+    lint = check['contract_lint']
+    with patch.dict(gate, changes=lambda _: ['README.md'], rule_gate=lambda _: None,
+                    contract_lint=lambda: lint(Path(directory))), \
+         patch.object(sys, 'argv', ['check.py']), \
+         patch.dict(os.environ, {}, clear=True), \
+         patch('urllib.request.urlopen', side_effect=OSError('offline')) as download, \
+         patch.object(subprocess, 'run', side_effect=AssertionError('checks started before contract lint')):
+        try:
+            check['main']()
+        except SystemExit as error:
+            assert 'contract lint unknown (R12)' in str(error), error
+        else:
+            raise AssertionError('unavailable lint passed')
+        assert download.call_count == 1, 'no preparation retries'
+print('PASS unavailable contract lint refuses before checks')
+
+# R8: fetch only the pinned standalone script, verify before publishing/executing,
+# reuse valid caches offline and refuse invalid checkout/cache/download bytes.
+body = b'print("fixture lint")\n'
+with tempfile.TemporaryDirectory(prefix='taskq-lint-cache-') as directory, \
+     patch.dict(gate, CONTRACT_LINT_SHA256=hashlib.sha256(body).hexdigest()):
+    root = Path(directory)
+    cached = root / '.taskq' / 'specq' / check['SPECQ'] / check['CONTRACT_LINT']
+    with patch('urllib.request.urlopen', return_value=io.BytesIO(body)) as download:
+        command = lint(root)
+        assert command == [sys.executable, str(cached), 'taskq.md']
+        download.assert_called_once_with(
+            f'https://raw.githubusercontent.com/taskqorg/specq/{check["SPECQ"]}/engineering/scripts/contract_lint.py', timeout=10)
+    assert cached.read_bytes() == body
+    with patch('urllib.request.urlopen', side_effect=AssertionError('offline cache fetched')):
+        assert lint(root) == command
+    checkout = root / '.specq' / check['CONTRACT_LINT']
+    checkout.parent.mkdir(parents=True)
+    checkout.write_bytes(body)
+    with patch('urllib.request.urlopen', side_effect=AssertionError('CI checkout fetched')):
+        assert lint(root)[1] == str(checkout)
+    for invalid in (checkout, cached):
+        invalid.write_bytes(b'changed')
+        with patch('urllib.request.urlopen', side_effect=AssertionError('invalid local copy fetched')):
+            try:
+                lint(root)
+            except SystemExit as error:
+                assert 'unknown (R12)' in str(error) and 'SHA-256 mismatch' in str(error), error
+            else:
+                raise AssertionError('invalid local linter accepted')
+        invalid.unlink()
+    for invalid in (b'changed', b'x' * (128 * 1024 + 2)):
+        with patch('urllib.request.urlopen', return_value=io.BytesIO(invalid)):
+            try:
+                lint(root)
+            except SystemExit as error:
+                assert 'SHA-256 mismatch' in str(error), error
+            else:
+                raise AssertionError('invalid downloaded linter accepted')
+        assert not cached.exists(), 'unverified bytes never published'
+print('PASS pinned lint preparation, offline reuse and integrity refusal')
+
+# R8/R12: lint runs once before every other check; findings stop the gate.
+with tempfile.TemporaryDirectory(prefix='taskq-lint-gate-') as directory:
+    command = [sys.executable, 'fixture-linter.py', 'taskq.md']
+    for status in (0, 1):
+        with patch.dict(gate, ROOT=Path(directory), changes=lambda _: ['README.md'], rule_gate=lambda _: None,
+                        contract_lint=lambda: command), \
+             patch.object(sys, 'argv', ['check.py']), \
+             patch.dict(os.environ, {}, clear=True), \
+             patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess(command, status, 'fixture lint\n', '')) as run:
+            try:
+                check['main']()
+            except subprocess.CalledProcessError as error:
+                assert status == error.returncode == 1
+            else:
+                assert status == 0
+            assert run.call_args_list[0].args[0] == command
+            assert sum(call.args[0] == command for call in run.call_args_list) == 1
+            assert run.call_count == (5 if status == 0 else 1), run.call_args_list
+print('PASS lint runs first and once; findings stop before tests/builds')
