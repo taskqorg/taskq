@@ -1866,7 +1866,7 @@ mod tests {
                 if url.contains("/commits?per_page=1") && scenario != "ok" {
                     return Err(format!("GET /commits?per_page=1: HTTP {scenario} Resource not accessible by personal access token"));
                 }
-                assert!(url.contains("/issues?per_page=1") || url.contains("/pulls?per_page=1") || url.contains("/commits?per_page=1"), "unexpected {url}");
+                assert!(url.contains("/issues?labels=taskq&per_page=1") || url.contains("/pulls?per_page=1") || url.contains("/commits?per_page=1"), "unexpected {url}");
                 Ok(Reply { status: 200, headers: vec![], body: "[]".into(), operation: operation(method) })
             }));
             let access = h.access();
