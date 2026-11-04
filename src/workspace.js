@@ -291,7 +291,7 @@ const {create}=execution.module('workspace',{
       if(operations.operationAction(b.dataset))return;
      }
      if(b.dataset.a==='control'){const target=api.answerContext(),p=target&&answers.project(target.board),t=p?.tasks?.find(t=>t.n===target.task);if(t&&p.alive&&p.complete!==false&&!conversations.sidebarState().archived?.['task:'+p.issues+'/'+t.n]&&(t.controls||[]).includes(b.dataset.control))ui.effect('workspace.task-control',()=>answers.answerSend(p.issues,require('./task-controls.js').op(t,b.dataset.control,'conversation')),()=>{});api.draw();return;}
-     if(b.dataset.a==='global-task-pin'){ui.send(b.dataset.pinned==='true'?{a:'task-pin',root:b.dataset.root,task:Number(b.dataset.task),pinned:true}:{a:'task-pin',ref:b.dataset.ref,pinned:false});return;}
+     if(b.dataset.a==='global-task-pin'){ui.send(b.dataset.pinned==='true'?{a:'task-pin',root:b.dataset.root,task:Number(b.dataset.task),pinned:true}:{a:'task-pin',ref:b.dataset.ref,...(b.dataset.root?{root:b.dataset.root,task:Number(b.dataset.task)}:{}),pinned:false});return;}
      if(b.dataset.a==='pin-retry'){const pin=view.taskDashboard?.pins.find(p=>p.ref===b.dataset.ref);if(pin){pinReads.read(pin,true);api.draw();}return;}
      if(b.dataset.a==='unavailable-pin'){conversations.select(b.dataset.id,false);api.draw();return;}
      if(b.dataset.a==='question-jump'){const q=b.dataset.question?Number(b.dataset.question):Number(menu.querySelector('[data-question]')?.dataset.question);if(q&&view.answer)conversations.target('task:'+view.answer.board+'/'+view.answer.task,{kind:'question',revision:q});else{view.threadNotice={thread:conversations.context().selected,text:'No question is loaded for this source. Load recorded history to inspect earlier questions.'};api.draw();}return;}

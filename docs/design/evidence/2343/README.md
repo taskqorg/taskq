@@ -96,6 +96,8 @@ The canonical gate is rerun because this correction changes shared source code. 
 
 The first correction gate stopped at compilation (`cannot find function now in the crate root`, 58.187 s). The persistence path now calls the tray's existing local clock. The same focused `cargo +stable test --locked --bin taskq task_pin_ -- --nocapture` passes all three cases, including exact unavailable Unpin, first-observation persistence/reset, source-backed Finished pinning and storage failure preservation. The next full gate includes the same checks; no failed run is reported as passing.
 
+The next gate passed 995 Rust unit cases, 21 integration cases, offline selftest and all 38 Node checks, then stopped at the eight-state navigation instrument (353.859 s): a known-task Unpin had lost its existing `root`/`task` payload fields. Those fields are retained alongside the exact saved reference; unavailable sources still send no invented root/task. The unchanged `task-navigation.browser.cjs` now passes all eight states, real-wheel metadata, closed reading, pin IPC and draft/Back checks. The extended closed-pin instrument also passes. No assertion was weakened to accept the integration mismatch.
+
 ## Checks and artifacts
 
 Host: Windows; Node 24.5.0, Python 3.12.10, Cargo 1.99.0; Playwright 1.64.1. Chromium/WebKit instruments are isolated in the OS temporary browser cache. These are production web bundles with invented source data, not installed/native acceptance.
