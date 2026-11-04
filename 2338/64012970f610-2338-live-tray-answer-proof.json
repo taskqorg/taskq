@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "task": 2338,
+  "acceptance": "A1 live ordinary tray answer on Mac",
+  "recorded_at_utc": "2026-11-04T23:30:26.245363+00:00",
+  "question": {
+    "id": 6644877938,
+    "at_utc": "2026-11-04T23:21:39Z",
+    "purpose": "Explicit technical QA, no approval or closure"
+  },
+  "board_answer": {
+    "id": 6644925136,
+    "at_utc": "2026-11-04T23:23:31Z",
+    "revision": 6644877938,
+    "option": 1,
+    "operation_id": "qac-mw2qt478f6uweftko3e",
+    "by": "alexkirs",
+    "url": "https://github.com/taskqorg/taskq/issues/2338#issuecomment-6644925136",
+    "late": false,
+    "text": "Tray acknowledged - + qualifies A1 live on Mac; - needs one tray click"
+  },
+  "native_continuation": {
+    "execution_entry": 6644949708,
+    "at_utc": "2026-11-04T23:24:26Z",
+    "attempt": 6643791149
+  },
+  "ui_observation": {
+    "native_app": "TaskQ on selected Mac, v4.6.79-261104-13",
+    "before": "Task2338 Ask visible",
+    "after": "Task2338 Doing/no open question visible",
+    "computer_use_notice": "App changed during the open-task interaction; initiating click is not attributed to this agent",
+    "no_repeat_answer_sent": true
+  },
+  "mac_local_operation_metadata": {
+    "source": "taskq profile export --since10m, local universal committed action observations",
+    "versions": [
+      "4.6.79-261104-13"
+    ],
+    "trace_count": 1,
+    "traces": [
+      "90b74b7bd72c07230e00e53bfe3a8388.20224"
+    ],
+    "raw_selected_sha256": "68288e24e4a52fe4ddca2efaedc0aa2298d797a0e077d7cddcd2a527c0b07302",
+    "terminal_rows": [
+      {
+        "record_id": "4f3fc82bbecf1fc3a992aecf1c00a91e",
+        "seq": 19109015,
+        "operation": "taskq.operation.tray.answer.dispatch",
+        "started_utc": "2026-11-04T23:23:25.751000+00:00",
+        "duration_us": 80,
+        "outcome": "ok",
+        "error": "none",
+        "trace": "90b74b7bd72c07230e00e53bfe3a8388.20224",
+        "span": "8975677e2914f1c6a4151e1354eaa7ce.660460",
+        "parent": "8975677e2914f1c6a4151e1354eaa7ce.660459"
+      },
+      {
+        "record_id": "7e19504ff6f13bfd09b2a2869ca0c8f5",
+        "seq": 19109472,
+        "operation": "taskq.operation.tray.answer-command",
+        "started_utc": "2026-11-04T23:23:25.755000+00:00",
+        "duration_us": 2598934,
+        "outcome": "ok",
+        "error": "none",
+        "trace": "90b74b7bd72c07230e00e53bfe3a8388.20224",
+        "span": "8975677e2914f1c6a4151e1354eaa7ce.660466",
+        "parent": "8975677e2914f1c6a4151e1354eaa7ce.660465"
+      },
+      {
+        "record_id": "cbd852f905947e0542c404950fc05df0",
+        "seq": 19110118,
+        "operation": "taskq.operation.tray.answer-command",
+        "started_utc": "2026-11-04T23:23:28.357000+00:00",
+        "duration_us": 8961514,
+        "outcome": "ok",
+        "error": "none",
+        "trace": "90b74b7bd72c07230e00e53bfe3a8388.20224",
+        "span": "8975677e2914f1c6a4151e1354eaa7ce.660913",
+        "parent": "8975677e2914f1c6a4151e1354eaa7ce.660465"
+      },
+      {
+        "record_id": "cd34eda1a6489b0d496ef7a5413a558b",
+        "seq": 19110125,
+        "operation": "taskq.operation.tray.answer.execute",
+        "started_utc": "2026-11-04T23:23:25.754000+00:00",
+        "duration_us": 11565466,
+        "outcome": "ok",
+        "error": "none",
+        "trace": "90b74b7bd72c07230e00e53bfe3a8388.20224",
+        "span": "8975677e2914f1c6a4151e1354eaa7ce.660465",
+        "parent": "8975677e2914f1c6a4151e1354eaa7ce.660464"
+      },
+      {
+        "record_id": "43ea6ac7bba7092e5ec2b660fc647ba2",
+        "seq": 19110127,
+        "operation": "taskq.operation.tray.answer.report",
+        "started_utc": "2026-11-04T23:23:37.319000+00:00",
+        "duration_us": 20,
+        "outcome": "ok",
+        "error": "none",
+        "trace": "90b74b7bd72c07230e00e53bfe3a8388.20224",
+        "span": "8975677e2914f1c6a4151e1354eaa7ce.662352",
+        "parent": "8975677e2914f1c6a4151e1354eaa7ce.660464"
+      }
+    ],
+    "source_limits": "No op-id field in these method observations. Correlation uses the single local tray-answer chain, exact time/version, GUI state change and UI-format board op-id; no claim about the initiating person."
+  },
+  "source_reference": {
+    "answer_card_ui_id": "src/answer-card.js:184 qac fallback ID generator",
+    "native_answer_path": "src/tray.rs:580-625 plain project status precheck then exact op-id/revision CLI answer, matching receipt"
+  },
+  "conclusion": "The real QA reply is durably accepted and the Mac tray answer/precheck path is observed. This is ordinary answering, not PR approval. A2/A3 and historical source/CI remain separate.",
+  "private_data": "No worker transcript, tool arguments, credentials, local paths or raw UI payload included"
+}
