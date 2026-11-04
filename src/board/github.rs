@@ -12,7 +12,7 @@ pub const KIND: Kind = Kind {
     reload_token: true,
     token_env: &["GH_TOKEN", "GITHUB_TOKEN"],
     api,
-    board: |api| Box::new(GitHub { api, rules: Default::default(), open: Default::default(), heartbeat: Default::default() }),
+    board: |api| Box::new(GitHub { api, rules: Default::default(), open: Default::default(), heartbeat: Default::default(), evidence: Default::default() }),
 };
 
 pub const TOKEN_ERROR: &str = "GitHub board token missing, empty or unreadable; owner must install it in <install>/token; never run gh auth login";
@@ -33,6 +33,7 @@ fn plan_gap(e: &str) -> bool { e.contains("HTTP 403") && e.contains("Upgrade to 
 const PLAN: &str = "this private repository's GitHub plan has no branch rules or merge queue";
 
 pub struct GitHub {
+    evidence: std::cell::RefCell<Vec<crate::readiness::Publication>>,
     pub(super) api: Api,
     /// `main` branch rules, read once per credential (#1359), a plan refusal too (#1935). ponytail: same-token rules changes need a service restart.
     /// Keyed by repository API too: a task PR in another repository reads that repository's rules (#2047).
@@ -131,6 +132,19 @@ impl Open {
 }
 
 impl GitHub {
+    /// Publication already read the PR and qualified CI. Only a retained freeze can qualify its historical parent.
+    fn observe_publication(&self, pr: &Value, landed: Option<(&str,&str,&str)>) {
+        let repository=self.api.repo().rsplit_once("/repos/").map(|x|x.1.to_string()).unwrap_or_default();
+        let base=pr["base"]["sha"].as_str().filter(|s|hex40(s)).map(String::from);
+        let parent=landed.filter(|_|base.is_some()).and_then(|(sha,_,_)| {
+            let commit=self.api.call("GET",&format!("/commits/{sha}"),None).ok()?.json().ok()?;
+            if commit["sha"]!=sha {return None;}
+            commit["parents"][0]["sha"].as_str().filter(|s|hex40(s)).map(String::from)
+        });
+        self.evidence.borrow_mut().push(crate::readiness::Publication {repository,pr:pr["number"].as_u64().unwrap_or(0),
+            base,head:s(&pr["head"],"sha"),integration:landed.map(|(sha,_,_)|sha.into()),
+            merged:landed.map(|(sha,_,_)|sha.into()),parent,ci_kind:landed.map(|(_,kind,_)|kind.into()),ci_sha:landed.map(|(_,_,sha)|sha.into())});
+    }
     /// Every task change bumps some `taskq` issue's `updated_at`; one `since` query of the newest known task update
     /// finds them, a 304 when nothing changed (#1819). The probe asks for `taskq` issues only (#2083): heartbeat writes
     /// of three hosts changed every reply and billed each pass. Heartbeats, held drafts and other open issues come from
@@ -320,6 +334,7 @@ impl GitHub {
                 Err(fail) => return Ok(Publish::Blocked(format!("PR #{} merged as {merged}, {fail}", pr["number"]))),
                 Ok(note) => note,
             };
+            self.observe_publication(pr,Some((merged,"merge_group",merged)));
             self.publication_ancestry(merged, "pr");
             return Ok(Publish::Done(format!("merged #{} as {merged}; merge-result CI green{note}", pr["number"])));
         }
@@ -361,6 +376,7 @@ impl GitHub {
         // Read back admission: a mutation response alone is not proof (R12); a retry recovers it after a lost response.
         let v = self.graphql("query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }", json!({"id": id}))?;
         let id = v["node"]["mergeQueueEntry"]["id"].as_str().ok_or("queue admission not yet read back")?;
+        self.observe_publication(pr,None);
         Ok(Publish::Enqueued(id.into()))
     }
 
@@ -421,6 +437,7 @@ impl GitHub {
     }
 
     fn try_publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
+        self.evidence.borrow_mut().clear();
         // #2061 (#2010 pilotq#200, #2015 dashq#241): a task PR of another repository publishes there, before any board
         // repository read; a named PR that is not this task's (head `taskq-<N>`, the result, or #2308 the result as its
         // merge commit) is only a mention
@@ -552,6 +569,7 @@ impl GitHub {
                         Ok(note) => format!("merge-result CI green{note}"),
                     }
                 } else if let Some(fail) = self.ci(&head)? { return Ok(Publish::Failed(fail)); } else { format!("exact-SHA CI green on {head}") };
+                self.observe_publication(pr,Some((&merged,if queue || enqueued {"merge_group"} else {"exact_sha"},if queue || enqueued {&merged} else {&head})));
                 return Ok(Publish::Done(format!("merged #{}{} as {}{note}; {ci}", pr["number"], into(&s(&pr["base"], "ref")), merged)));
             }
             // #1777: superseded by PRs merged at other heads; `Failed` would cancel a PR that is gone and retry each pass
@@ -592,6 +610,7 @@ impl GitHub {
                 return Err(format!("#{p} is still a draft: {}", ready["errors"]));
             }
         }
+        self.observe_publication(&prs[0],None);
         let merged = match self.api.call("PUT", &format!("/pulls/{p}/merge"), Some(json!({ "merge_method": "squash", "sha": sha, "commit_title": format!("{title} (#{p})"), "commit_message": task_line }))) {
             Err(e) if e.contains("HTTP 405") || e.contains("HTTP 409") => return Err("main moved or merge unavailable; service will reread the private fallback".into()),
             r => r?,
@@ -607,7 +626,7 @@ impl GitHub {
         if back["merged"] == true {
             if let Ok(merged) = merged.json() { self.publication_ancestry(&s(&merged, "sha"), mode); }
         }
-        if back["merged"] == true { Ok(Publish::Done(format!("merged #{p} as {}; exact-SHA CI green on {sha}", s(&back, "merge_commit_sha")))) } else { Err(format!("#{p} not merged yet")) }
+        if back["merged"] == true { self.observe_publication(&back,Some((&s(&back,"merge_commit_sha"),"private_exact_sha",sha))); Ok(Publish::Done(format!("merged #{p} as {}; exact-SHA CI green on {sha}", s(&back, "merge_commit_sha")))) } else { Err(format!("#{p} not merged yet")) }
     }
 }
 
@@ -709,6 +728,7 @@ fn landed(pr: &Value, sha: &str) -> bool {
 }
 
 impl Board for GitHub {
+    fn take_publication_evidence(&self) -> Vec<crate::readiness::Publication> { self.evidence.take() }
     fn forget(&self) { *self.open.borrow_mut() = None; }
     fn kept(&self) -> Option<i64> { Open::reused_at(&self.open) }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.merge_ci(sha)?.map(|_| ()) }
@@ -1132,7 +1152,7 @@ mod token_tests {
             };
             Ok(Reply {status:200,headers:vec![],body:body.to_string(),operation:operation(method)})
         }));
-        let h = GitHub {api,rules:Default::default(),open:Default::default(),heartbeat:Default::default()};
+        let h = GitHub {api,rules:Default::default(),open:Default::default(),heartbeat:Default::default(),evidence:Default::default()};
         let mut writes = 0;
         for pass in 0..60 {
             clock.set(start + pass * 60);
@@ -1167,7 +1187,7 @@ mod token_tests {
             let mut api = api("github.com", "o/r", "invented-token");
             api.transport = Some(Box::new(move |_, _, _| Ok(super::super::Reply {status:200, headers:vec![], operation:"read",
                 body:json!({"errors":[{"type":kind,"message":"invented refusal"}]}).to_string()})));
-            let board = GitHub {api, rules:Default::default(), open:Default::default(), heartbeat:Default::default()};
+            let board = GitHub {api, rules:Default::default(), open:Default::default(), heartbeat:Default::default(),evidence:Default::default()};
             assert!(board.open_issues().unwrap_err().starts_with(expected));
         }
     }

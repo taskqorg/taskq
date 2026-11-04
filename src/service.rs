@@ -160,6 +160,10 @@ fn stable(body: &str) -> Vec<String> {
         if let Some((_,status))=l.strip_prefix("doctor ").and_then(|s|s.split_once(' ')) {
             return format!("doctor {status}");
         }
+        if let Some(mut binary)=l.strip_prefix("binary-evidence ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
+            if let Some(o)=binary.as_object_mut() {o.remove("observed");o.remove("native_observed");}
+            return format!("binary-evidence {binary}");
+        }
         if let Some(mut execution)=l.strip_prefix("execution ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
             if let Some(progress)=execution.get_mut("progress").and_then(Value::as_object_mut) {progress.remove("observed");}
             return format!("execution {execution}");
@@ -661,6 +665,7 @@ pub struct Service<'a> {
     pub version: String,
     started: u64,
     diagnostics: std::cell::RefCell<Option<(std::time::Instant,Value)>>,
+    binary: std::cell::RefCell<Option<(std::time::Instant,Value)>>,
     /// #2194: when the health checks last ran and their heartbeat `doctor` line.
     health: Option<(std::time::Instant, String)>,
     /// #2194: the last `taskq doctor --hosts` request these health checks answered.
@@ -1060,7 +1065,7 @@ fn record_unresolved_hold(cfg: &Config, task: u64, attempt: u64, execution: u64,
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), dep_closed: None, label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), fleet: Default::default(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), unknown_pids: HashMap::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), binary: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), dep_closed: None, label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), fleet: Default::default(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), unknown_pids: HashMap::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1763,6 +1768,13 @@ impl<'a> Service<'a> {
         Some(format!("selected {selected} waits {}",if !waits.is_empty() {waits.join(", ")} else {host.unwrap_or_else(||"restart pending".into())}))
     }
 
+    pub fn binary_evidence(&self)->Value {
+        if let Some((_,value))=self.binary.borrow().as_ref().filter(|(at,_)|at.elapsed().as_secs()<60) {return value.clone();}
+        let generation=self.host.as_ref().and_then(|h|h.lock().ok().map(|h|h.instance.clone()));
+        let value=crate::service_versions::binary(&self.cfg.install,&self.instance,generation.as_deref());
+        *self.binary.borrow_mut()=Some((std::time::Instant::now(),value.clone()));value
+    }
+
     pub fn service_diagnostics(&self)->Value {
         if let Some((at,value))=self.diagnostics.borrow().as_ref().filter(|(at,_)|at.elapsed().as_secs()<60) {let _=at;return value.clone();}
         let selected=crate::platform::tool(&self.cfg.install).current();
@@ -1831,6 +1843,7 @@ impl<'a> Service<'a> {
         if !self.instance.is_empty() {
             lines.push(format!("service {}", self.instance));
             lines.push(format!("diagnostics {}", self.service_diagnostics()));
+            lines.push(format!("binary-evidence {}", self.binary_evidence()));
         }
         lines.extend(self.selected_line());
         if !self.machine.is_empty() {
@@ -4184,6 +4197,9 @@ Problem: pick one
         let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
         let verdict = "Changed: tested publication\nChecks: Task fit A1 ok; merge-result CI pending\nOpen: none";
         b.comment(n, &core::entry("publish", &[], Some(r), verdict)).unwrap();
+        let frozen=crate::readiness::Publication {repository:"invented/repo".into(),pr:3,base:Some("b".repeat(40)),head:"a".repeat(40),
+            integration:None,merged:None,parent:None,ci_kind:None,ci_sha:None};
+        b.state.borrow_mut().evidence=vec![frozen.clone()];
         b.state.borrow_mut().publish = "queue-admitted".into();
         {
             let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no reviewer for pending publication")));
@@ -4197,10 +4213,15 @@ Problem: pick one
         assert_eq!(task(&b, n).publication.as_deref(), Some(verdict));
         assert_eq!(task(&b, n).retries, 0);
         assert!(b.issue(n).unwrap().open);
+        b.state.borrow_mut().evidence=vec![crate::readiness::Publication {integration:Some("c".repeat(40)),merged:Some("c".repeat(40)),
+            parent:Some("b".repeat(40)),ci_kind:Some("merge_group".into()),ci_sha:Some("c".repeat(40)),..frozen}];
         b.state.borrow_mut().publish = String::new();
         s.pass().unwrap();
         assert_eq!(task(&b, n).state, State::Closed);
         assert!(!b.issue(n).unwrap().open);
+        let log=entries(&b,n).unwrap();let reads=b.state.borrow().comment_reads;
+        assert_eq!(crate::readiness::source(n,&b.url(n),&log)["state"],"source_ready","publication retains the original result binding and frozen inputs");
+        assert_eq!(b.state.borrow().comment_reads,reads,"source projection makes no board or CI reads");
         let comments = b.comments(n).unwrap();
         let close = comments.iter().find(|e| e.body.starts_with("taskq: close")).unwrap();
         // § 2 Summary: the close names the publish it repeats; readers resolve it to the verdict
@@ -6192,7 +6213,7 @@ Open: none")).unwrap();
     // splits one machine into several Hosts rows or breaks the one-service-per-host check.
     #[test]
     fn heartbeat_body_lists_version_service_machine_focus() {
-        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ") && !l.starts_with("balancing ") && !l.starts_with("queue ") && !l.starts_with("account-policy ") && crate::runtime::usage::Row::parse(l).is_none()).collect::<Vec<_>>().join("\n");
+        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ") && !l.starts_with("binary-evidence ") && !l.starts_with("balancing ") && !l.starts_with("queue ") && !l.starts_with("account-policy ") && crate::runtime::usage::Row::parse(l).is_none()).collect::<Vec<_>>().join("\n");
         let b = Fake::default();
         let c = cfg("win");
         let mut s = service(&b, &c, Default::default());
@@ -6421,6 +6442,9 @@ Open: none")).unwrap();
     // Chain: § 4 step 3 (#2352). Risk: the host-wide cut hides a change another host or the owner must see at once.
     #[test]
     fn stable_lists_what_forces_a_heartbeat_write() {
+        let binary=r#"binary-evidence {"observed":100,"native_observed":99,"revision":"a","state":"binary_ready"}"#;
+        assert_eq!(stable(binary),stable(&binary.replace(":100",":200").replace(":99",":199")),"advisory sample clocks retain the heartbeat budget");
+        assert_ne!(stable(binary),stable(&binary.replace("binary_ready","unknown")),"lost proof is a meaningful change");
         let bal = |code: &str, full: bool, last: u64| format!(r#"balancing {{"schema":2,"last_spawn":{last},"mode":"any","has":["gui"],"focus":["all"],"runtimes":{{"codex":{{"code":"{code}","reason":"r{code}","full":{full},"disabled":false,"quota":[],"load":{{"free":1}}}}}}}}"#);
         let base = format!("version 1\n{}\nqueue {{\"restart\":null,\"projects\":[{{\"ready\":1}}]}}\ndoctor 100 ok\nservice ab", bal("admitted", false, 5));
         for (from, to) in [
