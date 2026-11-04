@@ -286,9 +286,14 @@ pub fn is_task(i: &Issue) -> bool {
     i.trusted && i.labels.iter().any(|l| l == TASK_LABEL)
 }
 
-/// A held task (§ 1): labelled `q-held` without `taskq`, so no version admits it; listed as `held` whatever its log.
+/// The held label projection (§ 1), including a start whose eligibility-label write failed.
 pub fn is_held(i: &Issue) -> bool {
     i.trusted && !is_task(i) && i.labels.iter().any(|l| l == "q-held")
+}
+
+/// Only an accepted start authorizes repairing eligibility (§ 1).
+pub fn start_logged(n: u64, log: &[core::Entry], p: &core::Projection) -> bool {
+    log.iter().any(|e| p.accepts(e.id) && core::kind(n, &e.body) == "start")
 }
 
 pub fn is_host(i: &Issue) -> bool {
@@ -529,7 +534,7 @@ pub fn views_asked(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCa
     let request = crate::health::request_of(&issues);
     let (hosts, tasks): (Vec<Issue>, Vec<Issue>) = issues.into_iter().filter(|i| i.trusted).partition(is_host);
     let mut out = vec![];
-    for issue in tasks.into_iter().filter(|i| is_task(i) || is_held(i)) {
+    for issue in tasks.into_iter().filter(|i| is_task(i) || is_held(i) || i.labels.iter().any(|l| matches!(l.as_str(), "q-ready" | "q-blocked"))) {
         let (read, comments) = match cache.get(&issue.number) {
             Some((u, at, c)) if *u == issue.updated && *at >= issue.updated + SETTLE => (*at, c.clone()),
             _ => { let c = board.comments(issue.number)?; (board.now().unwrap_or(issue.updated), c) },
@@ -538,10 +543,13 @@ pub fn views_asked(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCa
         let log = crate::board::reply::log(issue.number, &comments)?;
         // only a task that would be ready reads its dependencies (§ 4 budget)
         let mut projection = core::project(issue.number, &log, false);
-        let ready = !is_held(&issue) && projection.task.state == State::Ready;
+        let started = start_logged(issue.number, &log, &projection);
+        if !is_task(&issue) && !is_held(&issue) && !started { continue; }
+        let held = is_held(&issue) && !started;
+        let ready = !held && projection.task.state == State::Ready;
         let blockers = if ready { blockers(board, &core::dep_body(&issue.body, &projection.task), Some(&open), deps) } else { vec![] };
         if !blockers.is_empty() { projection.task.state = State::Waiting; }
-        if is_held(&issue) {
+        if held {
             projection.task.state = State::Held;
         }
         out.push(View { projection, issue, comments, log, blockers });
@@ -2357,6 +2365,8 @@ impl<'a> Service<'a> {
                 touched.insert(n);
                 continue;
             }
+            // Keep the failed start discoverable until its explicit retry repairs eligibility.
+            if !is_task(&v.issue) && start_logged(n, &v.log, &v.projection) { continue; }
             let want = self.board.state_label(v.projection.task.state.name())?;
             let mut stale: Vec<_> = v.issue.labels.iter().filter(|l| l.starts_with("q-") && **l != want).cloned().collect();
             stale.sort();
@@ -2584,7 +2594,8 @@ impl<'a> Service<'a> {
             // `needs-gate`: every host of this version has gates; N-1 lacks them and leaves the task alone (§ 8)
             let lacks = || v.issue.labels.iter().filter_map(|l| l.strip_prefix("needs-"))
                 .find(|x| !(*x == "gate" || if *x == "gui" { self.gui().is_ok() } else { self.cfg.has.iter().any(|h| h == x) }));
-            let refusal = if self.execution_waits.contains_key(&n) { Some(("unknown", crate::snapshot::ADMISSION_UNKNOWN[3].to_string())) }
+            let refusal = if !is_task(&v.issue) { Some(("labels", crate::snapshot::START_LABELS.into())) }
+                else if self.execution_waits.contains_key(&n) { Some(("unknown", crate::snapshot::ADMISSION_UNKNOWN[3].to_string())) }
                 else if let Some(r) = self.launch_refusal(n) { Some(r) }
                 else if let Err(e) = crate::labels::validate(&v.issue.labels) { log!("#{n}: {e}; not admitted"); Some(("labels", e.to_string())) }
                 else if let Some(reason)=self.host_claim(v,&hosts,now).err() {Some(("host",reason))}
@@ -4713,6 +4724,41 @@ Open: none")).unwrap();
         root
     }
 
+    // #2362: status exposes a logged start, but only read-back eligibility admits it; retries cannot replace active work.
+    #[test]
+    fn logged_start_waits_for_eligibility_before_admission() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        for (body, edited) in [("taskq: requeue", false), ("taskq: start-invalid", false), ("taskq: start", true)] {
+            let held = b.create("Still held", "", &["q-held".into()]).unwrap();
+            b.comment(held, "taskq: hold").unwrap();
+            let id = b.comment(held, body).unwrap();
+            if edited { b.edit_comment(held, id, &format!("{body}\nedited")).unwrap(); }
+            let snap = crate::snapshot::read(&b, &c, &json!({}), &[]);
+            assert_eq!(snap.tasks.iter().find(|r| r.n == held).unwrap().task.state, State::Held, "only an accepted start overrides held labels");
+            assert!(!crate::start_one(&b, &c.root, held, &crate::Op { revision: Some(0), ..Default::default() }).ok());
+        }
+        let n = b.create("Logged start", "", &["q-held".into()]).unwrap();
+        b.comment(n, "taskq: hold").unwrap();
+        b.comment(n, "taskq: start").unwrap();
+        let mut s = service(&b, &c, Default::default());
+        s.pass().unwrap();
+        assert!(s.kids.is_empty(), "a logged start without taskq is never admitted");
+        assert_eq!(b.issue(n).unwrap().labels, ["q-held"], "the service preserves discoverability for repair");
+        let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap();
+        assert_eq!(row.task.state, State::Ready);
+        assert_eq!(row.json()["admission"]["code"], "labels");
+        assert_eq!(entries(&b, n).unwrap().len(), 2);
+        assert!(crate::start_tasks(&b, &c.root, &[n.to_string()], &crate::Op::default()).unwrap()[0].ok());
+        s.pass().unwrap();
+        assert_eq!(s.kids.len(), 1, "the repaired task is admitted");
+        let attempt = task(&b, n).attempt;
+        b.labels(n, &["q-held".into()], &["q-doing".into(), "taskq".into()]).unwrap();
+        assert!(!crate::start_tasks(&b, &c.root, &[n.to_string()], &crate::Op::default()).unwrap()[0].ok());
+        assert_eq!(task(&b, n).attempt, attempt, "a retry never replaces active work");
+        assert_eq!(s.kids.len(), 1);
+    }
+
     // Chain: § 1 held, a person adds `taskq` on the board. Risk: the label path leaves a held log under a `taskq` label,
     // so the task never starts, or a plain labelled issue gets a stray `start`.
     #[test]
@@ -6167,11 +6213,13 @@ Open: none")).unwrap();
     // Chain: slow native children -> bounded observation round -> honest heartbeat -> fair next round.
     #[test]
     fn slow_observations_defer_without_releasing_and_rotate_fairly() {
+        // Windows file reads and scheduling can consume 10ms before the first fixture poll.
+        const POLL_MS:u64=if cfg!(windows) {100} else {10};
         struct Slow {task:u64,calls:Rc<RefCell<Vec<u64>>>}
         impl Proc for Slow {
             fn accepted(&mut self)->Result<bool,String> {Ok(true)}
             fn exited(&mut self)->Result<Option<i32>,String> {
-                self.calls.borrow_mut().push(self.task);std::thread::sleep(std::time::Duration::from_millis(25));Ok(None)
+                self.calls.borrow_mut().push(self.task);std::thread::sleep(std::time::Duration::from_millis(POLL_MS*5/2));Ok(None)
             }
             fn kill(&mut self)->Result<(),String> {Err("fixture must stay owned".into())}
             fn id(&self)->u32 {0}
@@ -6183,7 +6231,7 @@ Open: none")).unwrap();
         let calls=Rc::new(RefCell::new(vec![]));
         for kid in &mut s.kids {kid.proc=Box::new(Slow {task:kid.task,calls:calls.clone()});}
         for round in 1..=3 {
-            s.pass_inner(std::time::Duration::from_millis(10)).unwrap();
+            s.pass_inner(std::time::Duration::from_millis(POLL_MS)).unwrap();
             assert_eq!(calls.borrow().len(),round,"a slow poll must not delay status behind all children");
             assert_eq!(s.kids.len(),3);
             assert_eq!(s.kids.iter().filter(|k|k.unknown.is_some()).count(),2,"deferred observations must be unknown, not freshly healthy");
@@ -6193,7 +6241,7 @@ Open: none")).unwrap();
         assert_eq!(calls.borrow().iter().collect::<std::collections::HashSet<_>>().len(),3,"slow first child starved another execution");
         calls.borrow_mut().clear();
         for round in 1..=3 {
-            s.reap_owned_within(std::time::Duration::from_millis(10));
+            s.reap_owned_within(std::time::Duration::from_millis(POLL_MS));
             assert_eq!(calls.borrow().len(),round);assert_eq!(s.kids.len(),3);assert_eq!(s.kids.iter().filter(|k|k.unknown.is_some()).count(),2);
         }
         assert_eq!(calls.borrow().iter().collect::<std::collections::HashSet<_>>().len(),3,"reduced pass starved an execution");
@@ -6201,10 +6249,10 @@ Open: none")).unwrap();
         s.kids.clear();calls.borrow_mut().clear();
         let recovery_calls=calls.clone();
         s.recover=Some(Box::new(move |task,_| {
-            recovery_calls.borrow_mut().push(task);std::thread::sleep(std::time::Duration::from_millis(25));Err("fixture: native recovery unknown".into())
+            recovery_calls.borrow_mut().push(task);std::thread::sleep(std::time::Duration::from_millis(POLL_MS*5/2));Err("fixture: native recovery unknown".into())
         }));
         for round in 1..=3 {
-            s.pass_inner(std::time::Duration::from_millis(10)).unwrap();assert_eq!(calls.borrow().len(),round);
+            s.pass_inner(std::time::Duration::from_millis(POLL_MS)).unwrap();assert_eq!(calls.borrow().len(),round);
             assert_eq!(s.execution_waits.len(),3);assert!(s.kids.is_empty(),"unknown recovery cannot replay work");
         }
         assert_eq!(calls.borrow().iter().collect::<std::collections::HashSet<_>>().len(),3,"cold recovery starved an execution");
