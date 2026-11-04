@@ -21,6 +21,8 @@ jobs:
         shell: bash
     env:
       TASKQ_SELFTEST_OFFLINE: '1'
+      # docs/design/ui-bundle.md: only a release binary follows the published interface channel.
+      TASKQ_UI_CHANNEL: release
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: |

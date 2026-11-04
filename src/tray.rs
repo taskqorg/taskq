@@ -18,8 +18,8 @@ use wry::{WebView, WebViewBuilder};
 use crate::icon::{self, Rgba, compact};
 use crate::notify;
 
-const HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/tray.html"));
-const WORKSPACE_HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/workspace.html"));
+/// #2365: the menu's adoption surface; `#` keeps it apart from detached conversation ids.
+const MENU_SURFACE: &str = "#menu";
 /// R22: the Settings window's web surface; `#` keeps it apart from detached conversation ids.
 const SETTINGS_SURFACE: &str = "#settings";
 const VIEWS_SURFACE: &str = "#views";
@@ -56,8 +56,16 @@ fn quit_label(st: &Value, phase: Option<&str>) -> String {
     s
 }
 
+/// The native windows a stamped page message belongs to; a retired page's message never gets authority.
+#[derive(Clone, Copy)]
+enum PageSurface { Menu, Settings, Views }
+
 enum Ev {
     Tick,
+    Page(PageSurface,u64,String),
+    /// #2365: move one surface to the active bundle; the window keeps its visibility and focus.
+    AdoptPage(String),
+    BundleChecked(crate::ui_bundle::Checked),
     /// M15: Quit TaskQ from the tray menu or Cmd+Q; a refused Quit returns its reason.
     Quit,
     /// M15: Restart TaskQ drain-stops as Quit, then starts a new tray that runs Open.
@@ -77,7 +85,7 @@ enum Ev {
     /// P-W4: IPC from the one View window (the tray page as its `views` surface).
     Views(String),
     WorkspaceEvaluated(u64, String, u64, &'static str),
-    Evaluated(u64, &'static str),
+    Evaluated(u64, u64, &'static str),
     Click(Rect),
     Shot,
     Shot2,
@@ -1126,6 +1134,13 @@ struct WebCalls {
     /// The loop turn that last checked deadlines, and the window's last tick push.
     seen: Instant,
     tick: Option<u64>,
+    /// #2365: the bundle this page was built from, when it acknowledged boot, whether its boot or the next 5 s faulted,
+    /// whether it replaced a page with no user present, and when it was last offered the active bundle.
+    bundle: String,
+    booted: Option<Instant>,
+    start_fault: Option<&'static str>,
+    background: bool,
+    offered: Option<Instant>,
 }
 /// #1755: the running tray's `<install>/tray.fault`; the service heartbeat carries its code (`tray <code>`, § 4).
 static FAULT_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
@@ -1133,7 +1148,7 @@ static TICK_QUEUED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 impl WebCalls {
     fn new() -> Self {
         static GENERATION: std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
-        let mut calls=Self{generation:GENERATION.fetch_add(1,std::sync::atomic::Ordering::Relaxed),safe:false,recovery_ready:false,workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false,logged:0,seen:Instant::now(),tick:None};
+        let mut calls=Self{generation:GENERATION.fetch_add(1,std::sync::atomic::Ordering::Relaxed),safe:false,recovery_ready:false,workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false,logged:0,seen:Instant::now(),tick:None,bundle:crate::ui_bundle::active().version.clone(),booted:None,start_fault:None,background:false,offered:None};
         calls.begin("tray.web.boot",Instant::now());
         calls
     }
@@ -1149,6 +1164,7 @@ impl WebCalls {
     fn fault(&mut self, reason: &'static str) {
         if !self.failed {
             self.failed=true;
+            if reason!="page-not-ready" && self.booted.is_none_or(|at|at.elapsed()<START_PROOF) {self.start_fault=Some(reason);}
             eprintln!("taskq tray: interface outcomes unknown ({reason}); check service status before retry");
             if let Some(file)=FAULT_FILE.get() {let _=fs::write(file,reason);}
             let _=coreq::telemetry::capture::operation("tray.web.delivery",||Err::<(),_>(reason),|code|*code);
@@ -1156,6 +1172,7 @@ impl WebCalls {
     }
     fn finish(&mut self, id: u64, result: &'static str) {
         let Some((_,span))=self.pending.remove(&id) else {return};
+        if id==0 && result=="ok" {self.booted=Some(Instant::now());}
         match result {
             "ok" => {span.record("coreq_result","observed");}
             "script-error"|"submit-error" => {
@@ -1230,17 +1247,50 @@ fn workspace_checkpoint(calls:&WebCalls,checkpoints:&mut std::collections::BTree
 
 // The native closure stamps generation; retired renderer IPC never gets authority after reload.
 fn recreate_workspace<W,V>(window:&W,view:&mut V,calls:&mut WebCalls,safe:bool,build:impl FnOnce(&W,&WebCalls)->Result<V,String>)->Result<(),String> {
-    let mut reader=WebCalls::new();reader.workspace=true;reader.surface=calls.surface.clone();reader.safe=safe;
+    let mut reader=WebCalls::new();reader.workspace=calls.workspace;reader.surface=calls.surface.clone();reader.safe=safe;reader.background=std::mem::take(&mut calls.background);
     let next=build(window,&reader)?;
     *view=next;*calls=reader;Ok(())
 }
 
+/// A bundle has to stay clean this long after boot before it counts as started.
+const START_PROOF: Duration = Duration::from_secs(5);
+/// A page that declined adoption is asked again after this long.
+const ADOPT_RETRY: Duration = Duration::from_secs(15);
+const UI_CHECK_EVERY: Duration = Duration::from_secs(15*60);
+
+/// #2365 A6: one navigation per webview, to the inline page wry loads; nothing after it.
+fn navigation_allowed(armed:&std::sync::atomic::AtomicBool,url:&str)->bool {
+    (url.starts_with("about:")||url.starts_with("data:"))&&armed.swap(false,std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Every tray webview: only its inline page, no new windows; a link goes to the browser through the bridge.
+fn page_builder<'a>(window:&Window,html:&str,calls:&WebCalls)->WebViewBuilder<'a> {
+    let armed=std::sync::atomic::AtomicBool::new(true);
+    WebViewBuilder::new().with_accept_first_mouse(true).with_html(html).with_focused(!calls.background||window.is_focused())
+        .with_navigation_handler(move |url|navigation_allowed(&armed,&url))
+        .with_new_window_req_handler(|_,_|wry::NewWindowResponse::Deny)
+}
+
+/// #2365 A6: the inline page has no origin (`about:blank`, a `data:` document); any other document's message stops here.
+fn bridge_message(request:wry::http::Request<String>)->Option<String> {
+    let inline=request.uri().scheme_str().is_none_or(|scheme|scheme.eq_ignore_ascii_case("about")||scheme.eq_ignore_ascii_case("data"));
+    inline.then(||request.into_body())
+}
+
+fn surface_view(window:&Window,proxy:tao::event_loop::EventLoopProxy<Ev>,html:&str,init:&str,surface:PageSurface,calls:&WebCalls)->Result<WebView,String> {
+    let generation=calls.generation;
+    page_builder(window,html,calls).with_transparent(matches!(surface,PageSurface::Menu)).with_initialization_script(init).with_ipc_handler(move |r|{
+        if let Some(body)=bridge_message(r) {let _=proxy.send_event(Ev::Page(surface,generation,body));}
+    }).build(window).map_err(|e|e.to_string())
+}
+
 fn workspace_view(window:&Window, proxy:tao::event_loop::EventLoopProxy<Ev>, surface:String, calls:&WebCalls)->Result<WebView,String> {
     let generation=calls.generation;
-    WebViewBuilder::new().with_accept_first_mouse(true).with_html(WORKSPACE_HTML)
+    page_builder(window,&crate::ui_bundle::active().workspace,calls)
         .with_initialization_script(&format!("window.taskqNativeFrame=true;window.taskqSafeRecovery={};",calls.safe))
-        .with_navigation_handler(own_page).with_ipc_handler(move |r|{
-            if let Ok(mut m)=serde_json::from_str::<Value>(&r.into_body()) {
+        .with_ipc_handler(move |r|{
+            let Some(body)=bridge_message(r) else {return};
+            if let Ok(mut m)=serde_json::from_str::<Value>(&body) {
                 if let Some(m)=m.as_object_mut(){m.insert("readerGeneration".into(),json!(generation));}
                 let _=proxy.send_event(Ev::Workspace(surface.clone(),m.to_string()));
             }
@@ -1276,9 +1326,7 @@ fn web_site(message: &Value) -> Option<(&str,&str)> {
 fn web_observation(row: &Value) -> crate::Res<Value> {
     let object=row.as_object().ok_or("invalid-web-observation")?;
     if row.to_string().len()>4096||object.keys().any(|key|!matches!(key.as_str(),"kind"|"source"|"operation"|"trace"|"span"|"parent"|"started_ms"|"duration_us"|"outcome"|"error"|"counts")) {return Err("invalid-web-observation".into());}
-    static INVENTORY:std::sync::OnceLock<Vec<String>>=std::sync::OnceLock::new();
-    let inventory=INVENTORY.get_or_init(||serde_json::from_str(include_str!(concat!(env!("OUT_DIR"),"/web/operations.json"))).expect("build-owned web inventory"));
-    if !inventory.iter().any(|name|row["operation"].as_str()==Some(name)) {return Err("unknown-web-operation".into());}
+    if !row["operation"].as_str().is_some_and(crate::ui_bundle::known_operation) {return Err("unknown-web-operation".into());}
     let (kind,source)=match row["kind"].as_str() {
         Some("ui.start")=>("method.start","action"),Some("ui")=>("method","action"),
         Some("method")=>("method","diagnostic"),Some("method.aggregate")=>("method.aggregate","aggregate"),
@@ -1324,12 +1372,16 @@ pub(crate) fn steady_tick() -> impl FnMut() {
     }
 }
 fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_loop::EventLoopProxy<Ev>, calls: &mut WebCalls) {
-    if calls.pending.contains_key(&0) {calls.fault("page-not-ready");return;}
+    if calls.pending.contains_key(&0) {
+        // #2365: a page booting behind a live window gets everything from its ready snapshot.
+        if !calls.background {calls.fault("page-not-ready");}
+        return;
+    }
     let Some(id)=calls.begin(name,Instant::now()) else {return};
     if name==TICK {calls.tick=Some(id);}
     let p=proxy.clone();
     let workspace=calls.workspace;let surface=calls.surface.clone();let generation=calls.generation;
-    if wv.evaluate_script_with_callback(&web_script(script),move |value| {let _=p.send_event(if workspace {Ev::WorkspaceEvaluated(generation,surface.clone(),id,web_result(&value))} else {Ev::Evaluated(id,web_result(&value))});}).is_err() {
+    if wv.evaluate_script_with_callback(&web_script(script),move |value| {let _=p.send_event(if workspace {Ev::WorkspaceEvaluated(generation,surface.clone(),id,web_result(&value))} else {Ev::Evaluated(generation,id,web_result(&value))});}).is_err() {
         calls.finish(id,"submit-error");
     }
 }
@@ -1485,6 +1537,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let mut asked = false;
     let mut bursts = notify::Bursts::new();
     let mut shot_wait=None;
+    // #2365: a snapshot shows the embedded copy unless a proof asks for the store.
+    let mut ui_store=(snapshot.is_none()||crate::ui_bundle::snapshot_uses_store()).then(||crate::ui_bundle::Store::open(&install));
+    let (mut next_ui_check,mut ui_checking)=(Instant::now(),false);
     let mut web=WebCalls::new();
     // #1819: the owner's in-flight writes, and the projects of the last tick they are matched against
     let mut sync=crate::pending::Pending::default();
@@ -1536,6 +1591,48 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         };
         match event {
             Event::UserEvent(Ev::WorkspaceClose)=>{if focused_workspace=="main" {if let Some((w,_))=&workspace {w.set_visible(false);}}else if let Some((w,_,_))=detached.get(&focused_workspace){w.set_visible(false);}}
+            Event::UserEvent(Ev::Page(surface,generation,body))=>{
+                let current=match surface {PageSurface::Menu=>Some(&web),PageSurface::Settings=>settings_web.as_ref(),PageSurface::Views=>views_web.as_ref()};
+                if current.is_none_or(|calls|calls.generation!=generation) {return;}
+                let _=proxy.send_event(match surface {PageSurface::Menu=>Ev::Ipc(body),PageSurface::Settings=>Ev::Settings(body),PageSurface::Views=>Ev::Views(body)});
+            }
+            Event::UserEvent(Ev::BundleChecked(checked))=>{
+                if let Some(store)=&mut ui_store {store.apply(checked);}
+                ui_checking=false;
+                shown.clear();workspace_shown.clear();settings_shown.clear();views_shown.clear();detached_shown.clear();
+            }
+            // Same recreation as Reload; the checkpoint and the ready handoff carry the reader across.
+            Event::UserEvent(Ev::AdoptPage(surface))=>{
+                if workspace_checkpoint_errors.contains(&surface) {return;}
+                let bundle=crate::ui_bundle::active();
+                let (mut failure,mut retired)=(None,None);
+                match surface.as_str() {
+                    MENU_SURFACE=>if let Some((window,view))=&mut ui {
+                        web.background=true;shown.clear();
+                        if let Err(error)=recreate_workspace(window,view,&mut web,false,|window,reader|surface_view(window,proxy.clone(),&bundle.tray,"",PageSurface::Menu,reader)) {failure=Some(error);retired=Some(&mut web);}
+                    },
+                    SETTINGS_SURFACE=>if let (Some((window,view)),Some(calls))=(&mut settings_window,&mut settings_web) {
+                        calls.background=true;settings_shown.clear();
+                        if let Err(error)=recreate_workspace(window,view,calls,false,|window,reader|surface_view(window,proxy.clone(),&bundle.tray,"window.taskqSurface='settings';",PageSurface::Settings,reader)) {failure=Some(error);retired=Some(calls);}
+                    },
+                    VIEWS_SURFACE=>if let (Some((window,view)),Some(calls))=(&mut views_window,&mut views_web) {
+                        calls.background=true;views_shown.clear();
+                        if let Err(error)=recreate_workspace(window,view,calls,false,|window,reader|surface_view(window,proxy.clone(),&bundle.tray,"window.taskqSurface='views';",PageSurface::Views,reader)) {failure=Some(error);retired=Some(calls);}
+                    },
+                    "main"=>if let (Some((window,view)),Some(calls))=(&mut workspace,&mut workspace_web) {
+                        calls.background=true;workspace_shown.clear();
+                        let safe=calls.safe;
+                        if let Err(error)=recreate_workspace(window,view,calls,safe,|window,reader|workspace_view(window,proxy.clone(),"main".into(),reader)) {failure=Some(error);retired=Some(calls);}
+                    },
+                    id=>if let Some((window,view,calls))=detached.get_mut(id) {
+                        calls.background=true;detached_shown.remove(id);
+                        let safe=calls.safe;
+                        if let Err(error)=recreate_workspace(window,view,calls,safe,|window,reader|workspace_view(window,proxy.clone(),surface.clone(),reader)) {failure=Some(error);retired=Some(calls);}
+                    },
+                }
+                // The old page stays; it is not asked again until a newer bundle, and Reload remains its way out.
+                if let (Some(error),Some(calls))=(failure,retired) {calls.log(format_args!("interface bundle not adopted: {error}"));calls.bundle=bundle.version.clone();}
+            }
             Event::UserEvent(Ev::RecoverWorkspace(surface,safe))=>{
                 let surface=if surface.is_empty(){focused_workspace.clone()}else{surface};
                 if workspace_checkpoint_errors.contains(&surface){eprintln!("taskq tray: Conversations recovery checkpoint exceeds 32 MiB; reader retained, reload refused");if let Some(tray)=&tray {let _=tray.set_tooltip(Some("Conversations recovery unknown: checkpoint exceeds 32 MiB; reader retained"));}return;}
@@ -1578,12 +1675,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let b = tao::platform::windows::WindowBuilderExtWindows::with_skip_taskbar(b, !settings.pin.pinned);
                 let p = proxy.clone();
                 let built = b.build(target).map_err(|e| e.to_string()).and_then(|w| {
-                    // only our page: a link goes to the browser through the bridge
-                    WebViewBuilder::new().with_transparent(true).with_accept_first_mouse(true).with_html(if conversation_shots {WORKSPACE_HTML} else {HTML}).with_initialization_script(if views_shots {"window.taskqSurface='views';"} else {""}).with_navigation_handler(own_page)
-                        .with_ipc_handler(move |r| {
-                            let _ = p.send_event(Ev::Ipc(r.into_body()));
-                        })
-                        .build(&w).map(|v| (w, v)).map_err(|e| e.to_string())
+                    let bundle=crate::ui_bundle::active();
+                    surface_view(&w,p,if conversation_shots {&bundle.workspace} else {&bundle.tray},if views_shots {"window.taskqSurface='views';"} else {""},PageSurface::Menu,&web).map(|v| (w, v))
                 });
                 match built {
                     Ok(x) => {
@@ -1698,6 +1791,42 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if visible(&ui) || visible(&workspace) || visible(&settings_window) || visible(&views_window) || detached.values().any(|(w,_,_)|front(w)) {
                     crate::touch(&install.join("menu-open"));
                 }
+                // #2365 A3/A5: faults retire a bundle, a clean start proves it, and each page moves when it holds nothing in flight.
+                if let Some(store)=&mut ui_store {
+                    let mut pages:Vec<&mut WebCalls>=vec![&mut web];
+                    pages.extend(workspace_web.as_mut());pages.extend(settings_web.as_mut());pages.extend(views_web.as_mut());pages.extend(detached.values_mut().map(|(_,_,calls)|calls));
+                    for calls in &mut pages {
+                        let Some(reason)=calls.start_fault.take() else {continue};
+                        let bundle=calls.bundle.clone();
+                        if bundle!=crate::ui_bundle::embedded().version {
+                            eprintln!("taskq tray: interface bundle {bundle} failed to start ({reason})");
+                            store.fail(&bundle,&format!("failed to start ({reason})"));
+                            let _=fs::remove_file(install.join("tray.fault"));
+                            icon_sig.clear();
+                        }
+                    }
+                    let active=crate::ui_bundle::active();
+                    if store.on_trial() && pages.iter().any(|calls|calls.bundle==active.version&&!calls.failed&&calls.booted.is_some_and(|at|at.elapsed()>=START_PROOF)) {store.commit();}
+                    let now=Instant::now();
+                    // A page with a user on it decides for itself; the receive hook declines while an edit is open.
+                    let offer=|view:&WebView,calls:&mut WebCalls,surface:&str,eligible:bool|{
+                        if calls.bundle==active.version {return;}
+                        if calls.failed {let _=proxy.send_event(Ev::AdoptPage(surface.into()));return;}
+                        if !eligible||!calls.idle()||calls.offered.is_some_and(|at|now.saturating_duration_since(at)<ADOPT_RETRY) {return;}
+                        calls.offered=Some(now);
+                        web_eval(view,"taskq.receive({bundleAdopt:true})","tray.web.receive",&proxy,calls);
+                    };
+                    if let Some((window,view))=&ui {offer(view,&mut web,MENU_SURFACE,!window.is_visible()||settings.pin.pinned);}
+                    if let (Some((window,view)),Some(calls))=(&settings_window,&mut settings_web) {offer(view,calls,SETTINGS_SURFACE,!window.is_visible());}
+                    if let (Some((window,view)),Some(calls))=(&views_window,&mut views_web) {offer(view,calls,VIEWS_SURFACE,!window.is_visible());}
+                    if let (Some((_,view)),Some(calls))=(&workspace,&mut workspace_web) {offer(view,calls,"main",true);}
+                    for (id,(_,view,calls)) in detached.iter_mut() {offer(view,calls,id,true);}
+                    if crate::ui_bundle::follows_channel() && !ui_checking && now>=next_ui_check {
+                        ui_checking=true;next_ui_check=now+UI_CHECK_EVERY;
+                        let (check,p)=(store.check(),proxy.clone());
+                        std::thread::spawn(move ||{let _=p.send_event(Ev::BundleChecked(check.run(&crate::ui_bundle::fetch)));});
+                    }
+                }
                 if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));}
                 notes(&install, &mut settings, &st, &mut asked, &mut bursts);
                 work_item.set_text(quit_label(&st, quitting));
@@ -1791,7 +1920,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     push(&mut web,&ui, &json!({"open": {"root": id["root"], "n": id["n"], "kind": id["k"], "title": id["t"], "event":id["e"]}}));
                 }
             }
-            Event::UserEvent(Ev::Evaluated(id,result)) => {
+            Event::UserEvent(Ev::Evaluated(generation,id,result)) => {
+                if web.generation!=generation {return;}
                 web.finish(id,result);
                 if web.pending.is_empty() && let Some(next)=shot_wait.take() {let _=proxy.send_event(next);}
             }
@@ -1809,7 +1939,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 else if let Some((_,wv,calls))=detached.get_mut(&surface) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
                 shown.clear();workspace_shown.clear();detached_shown.clear();
             }
-            Event::UserEvent(Ev::WorkspaceEvaluated(generation,surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {if calls.generation==generation {calls.finish(id,result);}}}else if surface==SETTINGS_SURFACE {if let Some(calls)=&mut settings_web {calls.finish(id,result);}}else if surface==VIEWS_SURFACE {if let Some(calls)=&mut views_web {calls.finish(id,result);}}else if let Some((_,_,calls))=detached.get_mut(&surface){if calls.generation==generation {calls.finish(id,result);}}}
+            Event::UserEvent(Ev::WorkspaceEvaluated(generation,surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {if calls.generation==generation {calls.finish(id,result);}}}else if surface==SETTINGS_SURFACE {if let Some(calls)=&mut settings_web {if calls.generation==generation {calls.finish(id,result);}}}else if surface==VIEWS_SURFACE {if let Some(calls)=&mut views_web {if calls.generation==generation {calls.finish(id,result);}}}else if let Some((_,_,calls))=detached.get_mut(&surface){if calls.generation==generation {calls.finish(id,result);}}}
             Event::UserEvent(Ev::Workspace(surface,message)) => {
                 let Ok(input)=serde_json::from_str::<Value>(&message) else {return};
                 let current=if surface=="main" {workspace_web.as_ref()}else{detached.get(&surface).map(|(_,_,c)|c)};
@@ -1863,7 +1993,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     }
                     return;
                 }
-                if m["a"]=="workspace-reload" {let _=proxy.send_event(Ev::RecoverWorkspace(surface.clone(),m["safe"]==true));return;}
+                if m["a"]=="workspace-reload" {let _=proxy.send_event(if m["adopt"]==true {Ev::AdoptPage(surface.clone())} else {Ev::RecoverWorkspace(surface.clone(),m["safe"]==true)});return;}
+                if m["a"]=="update"||m["a"]=="ui-check" {next_ui_check=Instant::now();}
+                if m["a"]=="ui-check" {return;}
                 if m["a"]=="hide" {w.set_visible(false);return;}
                 if calls.failed {return;}
                 match m["a"].as_str() {
@@ -1968,6 +2100,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if calls.failed {return;}
                 let chrome=|w:&Window|json!({"settingsWindow":{"top":w.is_always_on_top(),"maximized":w.is_maximized()}});
                 match m["a"].as_str().unwrap_or("") {
+                    "bundle-reload" => {let _=proxy.send_event(Ev::AdoptPage(SETTINGS_SURFACE.into()));}
                     "ready" => {
                         calls.finish(0,"ok");
                         web_eval(swv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);
@@ -1997,6 +2130,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if m["a"]=="web-observation" {calls.metadata(&m["row"]);return;}
                 if calls.failed {return;}
                 match m["a"].as_str().unwrap_or("") {
+                    "bundle-reload" => {let _=proxy.send_event(Ev::AdoptPage(VIEWS_SURFACE.into()));}
                     "ready" => {
                         calls.finish(0,"ok");
                         let st=state(&install,&settings,dark,None,&adding,&mut sync);
@@ -2013,6 +2147,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             }
             Event::UserEvent(Ev::Ipc(m)) => {
                 let Ok(m) = serde_json::from_str::<Value>(&m) else {web.fault("invalid-ipc");return;};
+                if m["a"]=="bundle-reload" {let _=proxy.send_event(Ev::AdoptPage(MENU_SURFACE.into()));return;}
+                if m["a"]=="ui-check" {next_ui_check=Instant::now();return;}
+                if m["a"]=="update" {next_ui_check=Instant::now();}
                 let Some((w, _)) = &ui else { return };
                 if m["a"]=="web-error" {web.errors(&m);return;}
                 if m["a"]=="web-observation" {
@@ -2061,11 +2198,12 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         settings_open=if m["page"].is_string() {json!({"page":m["page"]})} else {Value::Null};
                         if settings_window.is_none() {
                             let p=proxy.clone();
+                            let mut calls=WebCalls::new();calls.workspace=true;calls.surface=SETTINGS_SURFACE.into();
                             let built=WindowBuilder::new().with_title("TaskQ Settings").with_decorations(true).with_always_on_top(requests_file(&install)["settings_top"]==true).with_inner_size(LogicalSize::new(420.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
-                                WebViewBuilder::new().with_accept_first_mouse(true).with_html(HTML).with_initialization_script("window.taskqSurface='settings';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Settings(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                                surface_view(&window,p,&crate::ui_bundle::active().tray,"window.taskqSurface='settings';",PageSurface::Settings,&calls).map(|wv|(window,wv))
                             });
                             match built {
-                                Ok(window)=>{settings_window=Some(window);let mut calls=WebCalls::new();calls.workspace=true;calls.surface=SETTINGS_SURFACE.into();settings_web=Some(calls);settings_shown.clear();}
+                                Ok(window)=>{settings_window=Some(window);settings_web=Some(calls);settings_shown.clear();}
                                 Err(error)=>{reply!(&json!({"workspaceError":format!("Settings unavailable: {error}")}));return;}
                             }
                         }
@@ -2077,11 +2215,12 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     "views-open" if snapshot.is_none() => {
                         if views_window.is_none() {
                             let p=proxy.clone();
+                            let mut calls=WebCalls::new();calls.workspace=true;calls.surface=VIEWS_SURFACE.into();
                             let built=WindowBuilder::new().with_title("TaskQ View").with_decorations(true).with_inner_size(LogicalSize::new(480.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
-                                WebViewBuilder::new().with_accept_first_mouse(true).with_html(HTML).with_initialization_script("window.taskqSurface='views';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Views(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                                surface_view(&window,p,&crate::ui_bundle::active().tray,"window.taskqSurface='views';",PageSurface::Views,&calls).map(|wv|(window,wv))
                             });
                             match built {
-                                Ok(window)=>{views_window=Some(window);let mut calls=WebCalls::new();calls.workspace=true;calls.surface=VIEWS_SURFACE.into();views_web=Some(calls);views_shown.clear();}
+                                Ok(window)=>{views_window=Some(window);views_web=Some(calls);views_shown.clear();}
                                 Err(error)=>{reply!(&json!({"workspaceError":format!("View window unavailable: {error}")}));return;}
                             }
                         }
@@ -2554,6 +2693,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
         "now": observed, "palette":icon::css(dark), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": seen, "workspace_local": requests_file(install)["answers"], "conversations":crate::conversations::observed(install), "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "launch_choices":ps.iter().filter_map(|p|p["root"].as_str()).map(|root|(root.to_string(),json!(crate::runtime::setup_runtimes().map(|runtime|(runtime.to_string(),crate::runtime::choices::view(install,Path::new(root),runtime))).collect::<serde_json::Map<String,Value>>()))).collect::<serde_json::Map<String,Value>>(), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "peak":icon::peak(&sum.bins), "svg":icon::svg(&icon::Data {paused:false,..icon_data(&sum)},dark), "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
+    st["ui"]=crate::ui_bundle::status();
     project_task_pins(&mut st);
     st["display"] = display;
     st["opacity"]=json!(s.opacity);
@@ -3229,9 +3369,6 @@ fn capture(wv: &WebView, path: PathBuf, done: impl Fn() + 'static) {
     }
 }
 
-/// Navigation filter of every tray webview: the inline page loads (wry navigates to it), web links do not.
-fn own_page(u: String) -> bool { !u.starts_with("http") }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3337,11 +3474,46 @@ mod tests {
     }
 
     #[test]
-    fn own_page_loads_inline_html_only() {
-        assert!(own_page("about:blank".into()));
-        assert!(own_page("data:text/html,x".into()));
-        assert!(!own_page("https://example.com".into()));
-        assert!(!own_page("http://example.com".into()));
+    fn page_fence_loads_one_inline_document_and_bridges_only_it() {
+        use std::sync::atomic::AtomicBool;
+        // #2365 A6: the first inline load passes on either platform's form of it.
+        for first in ["about:blank","data:text/html;base64,AA"] {
+            let armed=AtomicBool::new(true);
+            assert!(navigation_allowed(&armed,first));
+            // Nothing after it: not a remote page, a file, or another inline document.
+            for later in ["about:blank","data:text/html,x","https://example.com","http://example.com","file:///C:/x.html","HTTPS://example.com"] {assert!(!navigation_allowed(&armed,later),"{later}");}
+        }
+        for first in ["https://example.com","http://example.com","file:///C:/x.html","taskq://x"] {
+            let armed=AtomicBool::new(true);
+            assert!(!navigation_allowed(&armed,first),"{first}");
+            assert!(navigation_allowed(&armed,"about:blank"),"a refused page does not consume the inline load");
+        }
+        let message=|uri:&str|bridge_message(wry::http::Request::builder().uri(uri).body("x".to_string()).unwrap());
+        assert_eq!(message("about:blank").as_deref(),Some("x"));
+        for source in ["https://example.com/","http://example.com/","file://host/x.html","HTTPS://example.com/"] {assert_eq!(message(source),None,"{source}");}
+        // wry drops a source it cannot parse before the handler, which covers a local file document.
+        assert!(wry::http::Request::builder().uri("file:///C:/x.html").body(String::new()).is_err());
+    }
+
+    // #2365 A3/A5: boot and the next 5 s decide whether a bundle started; a page behind a live window does not fault early.
+    #[test]
+    fn start_fault_covers_boot_and_proof_time_only() {
+        let mut calls=WebCalls::new();
+        calls.fault("script-error");
+        assert_eq!(calls.start_fault,Some("script-error"),"a fault before boot is a failed start");
+        let mut calls=WebCalls::new();
+        calls.finish(0,"ok");
+        assert!(calls.booted.is_some());
+        calls.fault("page-error");
+        assert_eq!(calls.start_fault,Some("page-error"),"a fault right after boot is a failed start");
+        let mut calls=WebCalls::new();
+        calls.finish(0,"ok");
+        calls.booted=Some(Instant::now()-START_PROOF);
+        calls.fault("page-error");
+        assert_eq!(calls.start_fault,None,"a proven page keeps the ordinary fault path");
+        let mut calls=WebCalls::new();
+        calls.fault("page-not-ready");
+        assert_eq!(calls.start_fault,None,"a push before boot is the tray's mistake, not the bundle's");
     }
 
     // #1464 A4/A5/A7: native drafts survive restart/corruption and never replay owner/task effects.
