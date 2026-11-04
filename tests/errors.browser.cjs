@@ -26,6 +26,13 @@ const fixture=require('./fixtures/errors.js'),base=require('./fixtures/task-work
   assert.equal(await page.locator('.errors-entry .badge').innerText(),'0','recovery removes cause without acknowledgement');
   assert.equal(await page.locator('.errors-panel').count(),1,'icon never disappears');
   if(surface==='workspace'){await page.locator('.errors-entry').click();await page.locator('.conversation-view>summary').click();await page.locator('[data-c=result-filter][data-filter=needs]').click();assert.match(await page.locator('.conversation-row').innerText(),/Keep this question/);}
+  await page.evaluate(s=>taskq.receive({...s,settings_error:'tray.json: corrupt (invented fixture); file kept'}),f.fresh);
+  assert.match(await page.locator('.errors-entry [role=status]').innerText(),/tray.json: corrupt/,'corrupt settings remain readable and announced in the header');
+  assert.equal(await page.locator('.content').getByText(/tray.json: corrupt/).count(),0);
+  await page.evaluate(()=>taskq.receive({viewStateError:'Invented navigation save failure'}));
+  await page.evaluate(s=>taskq.receive(s),f.fresh);
+  assert.match(await page.locator('.errors-entry [role=status]').innerText(),/navigation save failure/,'a status poll cannot clear an unconfirmed save');
+  await page.evaluate(()=>taskq.receive({viewStateError:null}));assert.equal(await page.locator('.errors-entry .badge').innerText(),'0');
   assert.deepEqual(errors,[]);await page.close();
   if(surface==='tray'){
    const cold=await browser.newPage({viewport:{width:420,height:800}});await cold.setContent(fs.readFileSync('build/web/tray.html','utf8'));

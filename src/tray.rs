@@ -4185,7 +4185,7 @@ mod tests {
         assert_eq!(fs::read_to_string(install.join("tray.json")).unwrap(), "{\"view\": \"fu", "a read never resets it");
         let reason = state(&install, &s, false, None, &Value::Null, &mut crate::pending::Pending::default())["settings_error"].clone();
         assert!(reason.as_str().unwrap().starts_with("tray.json: corrupt"), "the popover names the reason: {reason}");
-        assert!(HTML.contains("Settings unknown:"));
+        // tests/errors.browser.cjs verifies the corruption reason in the shared header, not a page-text literal.
         assert!(s.save(&install));
         assert_eq!(state(&install, &s, false, None, &Value::Null, &mut crate::pending::Pending::default())["settings_error"], Value::Null, "a save clears it");
         assert_eq!(fs::read_to_string(install.join("tray.json.corrupt")).unwrap(), "{\"view\": \"fu", "a save keeps a copy");
