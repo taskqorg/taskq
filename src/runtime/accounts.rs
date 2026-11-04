@@ -1,6 +1,7 @@
 //! Runtime accounts per host ([taskq.md § 3 Runtime accounts](../taskq.md#runtime-accounts),
 //! [detail](../docs/design/capacity.md#runtime-accounts)): an ordered list of named login homes per CLI runtime,
-//! each enabled or disabled. A usage limit on one account moves new starts to the next enabled one.
+//! each enabled or disabled. Polled usage and fleet policy ([usage](usage.rs)) rank new starts; a usage limit moves
+//! them to another enabled account.
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write};
@@ -67,6 +68,7 @@ fn parse_policy(v: &Value) -> Result<Policy, String> {
             if !seen.insert(label) { return Err(format!("{FILE}: {rt} lists {label} twice")); }
             entries.push(Entry { label: label.into(), enabled });
         }
+        if entries.iter().any(|e| e.label != DEFAULT) { one_account(rt).map_err(|e| format!("{FILE}: {e}"))?; }
         p.insert(rt.clone(), entries);
     }
     Ok(p)
@@ -197,7 +199,7 @@ pub fn record_limit(install: &Path, rt: &str, label: &str, at: i64, until: Optio
 }
 
 /// Atomically reserve a due probe. No second project may probe this account during the bounded interval.
-/// A resume supplies its original label; a new launch selects the first available enabled account.
+/// A resume supplies its original label; a new launch selects the best-ranked available enabled account.
 pub fn claim(install: &Path, rt: &str, label: Option<&str>, now: i64, owner: &Path) -> Result<String, String> {
     std::fs::create_dir_all(install).map_err(|e| e.to_string())?;
     let _lock = coreq::file_lock::try_lock(&install.join("accounts-state.lock")).map_err(|e| format!("quota state busy or unavailable: {e}"))?;
@@ -240,15 +242,18 @@ pub struct Host {
     pub observations: Value,
     /// Unknown policy or availability holds every new launch.
     pub error: Option<String>,
+    /// Polled usage and fleet policy: they order new starts, and their loss holds nothing.
+    pub usage: super::usage::View,
 }
 
 impl Host {
     pub fn read(install: &Path) -> Host {
         let (policy, error) = match read_policy(install) { Ok(p) => (p, None), Err(_) => (Policy::new(), Some("host account policy unreadable".into())) };
         let error=error.or_else(||pending_error(install));
+        let usage=super::usage::View::read(install);
         match state_value(install) {
-            Ok(observations) => Host { policy, state: summaries(&observations), observations, error },
-            Err(e) => Host { policy, error: Some(error.unwrap_or(e)), ..Default::default() },
+            Ok(observations) => Host { policy, state: summaries(&observations), observations, error, usage },
+            Err(e) => Host { policy, error: Some(error.unwrap_or(e)), usage, ..Default::default() },
         }
     }
 
@@ -259,9 +264,17 @@ impl Host {
 
     fn free(&self, rt: &str, label: &str, now: i64) -> bool { self.limit(rt, label).is_none_or(|l| l.end() <= now) }
 
-    /// The first enabled account whose limit has ended.
+    /// The best-ranked enabled account whose limit has ended and that fleet policy does not avoid.
     pub fn active(&self, rt: &str, now: i64) -> Option<String> {
-        self.list(rt).into_iter().find(|e| self.error.is_none() && e.enabled && self.free(rt, &e.label, now)).map(|e| e.label)
+        if self.error.is_some() { return None; }
+        let candidates: Vec<String> = self.list(rt).into_iter()
+            .filter(|e| e.enabled && self.free(rt, &e.label, now) && !self.usage.avoided(rt, &e.label, now)).map(|e| e.label).collect();
+        self.usage.rank(rt, &candidates, now)
+    }
+
+    /// A selected account can still start: enabled, past its limit, not avoided. Ranking may have moved past it.
+    pub fn usable(&self, rt: &str, label: &str, now: i64) -> bool {
+        self.error.is_none() && self.list(rt).iter().any(|e| e.enabled && e.label == label) && self.free(rt, label, now) && !self.usage.avoided(rt, label, now)
     }
 
     /// The account a new start takes: the active one, else the first enabled one; None when all are disabled.
@@ -279,12 +292,20 @@ impl Host {
 
     /// The hold end with none left: the earliest live limit end of an enabled account and whether it was reported.
     pub fn hold(&self, rt: &str, now: i64) -> Option<(i64, bool)> {
-        self.list(rt).iter().filter(|e| e.enabled).filter_map(|e| self.limit(rt, &e.label)).filter(|l| l.end() > now)
+        self.list(rt).iter().filter(|e| e.enabled && !self.usage.avoided(rt, &e.label, now)).filter_map(|e| self.limit(rt, &e.label)).filter(|l| l.end() > now)
             .map(|l| (l.end(), l.until.is_some())).min()
     }
 
-    /// Every account of `rt` disabled: the runtime admits nothing on this host.
-    pub fn off(&self, rt: &str) -> bool { applies(rt) && self.list(rt).iter().all(|e| !e.enabled) }
+    /// Every account of `rt` disabled or avoided by fleet policy: the runtime admits nothing on this host.
+    pub fn off(&self, rt: &str, now: i64) -> bool { applies(rt) && self.list(rt).iter().all(|e| !e.enabled || self.usage.avoided(rt, &e.label, now)) }
+
+    /// Why [`Host::off`] holds.
+    pub fn off_reason(&self, rt: &str) -> &'static str {
+        if self.list(rt).iter().all(|e| !e.enabled) { "every account disabled on this host" } else { "every account disabled or avoided on this host" }
+    }
+
+    #[cfg(test)]
+    pub fn limit_end(&self, rt: &str, label: &str) -> Option<i64> { self.limit(rt, label).map(Limit::end) }
 
     /// Heartbeat lines of the listed runtimes: labels and state only, never an email, path or token.
     pub fn heartbeat(&self, now: i64) -> Vec<String> {
@@ -305,16 +326,30 @@ impl Host {
         lines
     }
 
+    /// The heartbeat's usage rows and `account-policy` lines: fingerprints, percents and fixed reasons only.
+    pub fn usage_lines(&self, now: i64) -> Vec<String> {
+        let mut lines = vec![];
+        for rt in crate::runtime::CLI_RUNTIMES.iter().filter(|rt| applies(rt)) {
+            for e in self.list(rt) { lines.extend(self.usage.lines(rt, &e.label, e.enabled, now)); }
+        }
+        lines.extend(self.usage.policy_lines(now, |rt| self.list(rt).iter().filter_map(|e| self.usage.id(rt, &e.label).map(String::from)).collect()));
+        lines
+    }
+
     /// The local rows of `taskq accounts`; `email` reads each home's login (None: unknown).
     pub fn rows(&self, host: &str, now: i64, email: impl Fn(&str, &str) -> Option<String>) -> Vec<Row> {
-        ["claude", "codex"].iter().flat_map(|rt| {
+        let mut rows: Vec<Row> = crate::runtime::CLI_RUNTIMES.iter().filter(|rt| applies(rt)).flat_map(|rt| {
             let active = self.active(rt, now);
             self.list(rt).into_iter().map(|e| {
                 let l = self.limit(rt, &e.label);
-                Row { host: host.into(), runtime: rt.to_string(), email: email(rt, &e.label), active: active.as_deref() == Some(e.label.as_str()),
-                    limited: l.map(|l| crate::board::stamp(l.at)), reset: l.map(reset), label: e.label, enabled: e.enabled }
+                let email = email(rt, &e.label);
+                let id = email.as_deref().map(super::usage::fingerprint).or_else(|| self.usage.id(rt, &e.label).map(String::from));
+                Row { active: active.as_deref() == Some(e.label.as_str()), limited: l.map(|l| crate::board::stamp(l.at)), reset: l.map(reset), email, id,
+                    ..blank(host, rt, &e.label, e.enabled) }
             }).collect::<Vec<_>>()
-        }).collect()
+        }).collect();
+        join_usage(&mut rows, host, self.usage_lines(now).iter().map(String::as_str));
+        rows
     }
 }
 
@@ -338,24 +373,61 @@ pub struct Row {
     pub limited: Option<String>,
     /// `until <time>` (reported) or `probe <time>`.
     pub reset: Option<String>,
+    /// The account fingerprint: the one identity a heartbeat carries.
+    pub id: Option<String>,
+    /// One cell per polled window, or `unknown <reason>`.
+    pub usage: Vec<String>,
+    /// `use`, `avoid`, `unmet` or `local <reason>`.
+    pub policy: Option<String>,
 }
 
 impl Row {
     pub fn json(&self) -> Value {
         json!({"host": self.host, "runtime": self.runtime, "label": self.label, "email": self.email, "enabled": self.enabled,
-            "active": self.active, "limited": self.limited, "reset": self.reset})
+            "active": self.active, "limited": self.limited, "reset": self.reset, "id": self.id, "usage": self.usage, "policy": self.policy})
     }
 
     pub fn text(&self) -> String {
-        format!("{}  {} {}{}  {}  {}  limited {}  reset {}", self.host, self.runtime, self.label, if self.active { " *" } else { "" },
-            self.email.as_deref().unwrap_or("-"), if self.enabled { "enabled" } else { "disabled" },
-            self.limited.as_deref().unwrap_or("-"), self.reset.as_deref().unwrap_or("-"))
+        format!("{}  {} {}{}  {}  id {}  {}  usage {}  limited {}  reset {}  policy {}", self.host, self.runtime, self.label, if self.active { " *" } else { "" },
+            self.email.as_deref().unwrap_or("-"), self.id.as_deref().unwrap_or("-"), if self.enabled { "enabled" } else { "disabled" },
+            if self.usage.is_empty() { "-".to_string() } else { self.usage.join(", ") },
+            self.limited.as_deref().unwrap_or("-"), self.reset.as_deref().unwrap_or("-"), self.policy.as_deref().unwrap_or("-"))
     }
 }
 
-/// The rows of another host's heartbeat `account` lines.
+fn blank(host: &str, rt: &str, label: &str, enabled: bool) -> Row {
+    Row { host: host.into(), runtime: rt.into(), label: label.into(), email: None, enabled, active: false, limited: None, reset: None, id: None, usage: vec![], policy: None }
+}
+
+/// Adds one host's usage rows and `account-policy` lines to its rows: a host without a list has rows from these alone,
+/// and a `use` with no home here is a row of its own.
+fn join_usage<'a>(rows: &mut Vec<Row>, host: &str, lines: impl Iterator<Item = &'a str>) {
+    use super::usage::Usage;
+    let disabled = Usage::Unknown("disabled".into());
+    let mut policy = vec![];
+    for l in lines {
+        if let Some(rest) = l.strip_prefix("account-policy ") { policy.push(rest); continue; }
+        let Some(u) = super::usage::Row::parse(l) else { continue };
+        let i = rows.iter().position(|r| r.runtime == u.rt && r.label == u.label).unwrap_or_else(|| {
+            rows.push(blank(host, &u.rt, &u.label, u.usage != disabled));
+            rows.len() - 1
+        });
+        if rows[i].id.is_none() { rows[i].id = u.id.clone(); }
+        if u.usage != disabled { rows[i].usage.push(u.text()); }
+    }
+    for p in policy {
+        match p.split(' ').collect::<Vec<_>>()[..] {
+            ["local", ..] => rows.iter_mut().for_each(|r| r.policy = Some(p.to_string())),
+            ["unmet", rt, id] if applies(rt) => rows.push(Row { id: Some(id.to_string()), policy: Some("unmet".into()), ..blank(host, rt, "-", false) }),
+            [state @ ("use" | "avoid"), rt, id] => rows.iter_mut().filter(|r| r.runtime == rt && r.id.as_deref() == Some(id)).for_each(|r| r.policy = Some(state.to_string())),
+            _ => {}
+        }
+    }
+}
+
+/// The rows of another host's heartbeat `account`, usage and `account-policy` lines.
 pub fn heartbeat_rows(host: &str, body: &str) -> Vec<Row> {
-    body.lines().filter_map(|l| {
+    let mut rows: Vec<Row> = body.lines().filter_map(|l| {
         let w: Vec<&str> = l.strip_prefix("account ")?.split(' ').collect();
         let (rt, label, on) = (*w.first()?, *w.get(1)?, *w.get(2)?);
         if !applies(rt) || !valid_label(label) || !matches!(on, "on" | "off") { return None; }
@@ -366,8 +438,10 @@ pub fn heartbeat_rows(host: &str, body: &str) -> Vec<Row> {
             ["limited", at, kind @ ("until" | "probe"), end] => (Some(at.to_string()), Some(format!("{kind} {end}"))),
             _ => (None, None),
         };
-        Some(Row { host: host.into(), runtime: rt.into(), label: label.into(), email: None, enabled: on == "on", active, limited, reset })
-    }).collect()
+        Some(Row { active, limited, reset, ..blank(host, rt, label, on == "on") })
+    }).collect();
+    join_usage(&mut rows, host, body.lines());
+    rows
 }
 
 // ---------- homes ----------
@@ -392,7 +466,8 @@ pub fn var(rt: &str) -> &'static str { crate::runtime::of(rt).home_var }
 /// Native default semantics depend on an absent override, even when the physical path is the same.
 pub fn environment<'a>(rt: &str, home: &'a Path) -> Option<(&'static str, &'a Path)> {
     let var = var(rt);
-    (std::env::var_os(var).is_some() || default_home(rt).as_deref() != Some(home)).then_some((var, home))
+    // a runtime with no home variable has only its native default
+    (!var.is_empty() && (std::env::var_os(var).is_some() || default_home(rt).as_deref() != Some(home))).then_some((var, home))
 }
 
 /// The home of a non-default account; None for `default` (the child keeps the service's own value).
@@ -477,6 +552,10 @@ pub fn switches(h: &Host, now: i64, seen: &mut BTreeMap<String, Option<String>>)
                     Some(f) if !h.free(rt, f, now) => "limit",
                     // a limit that ended brings back an account ahead of the current one
                     _ if to.as_ref().is_some_and(|t| h.limit(rt, t).is_some()) => "reset",
+                    // fleet policy names the account it moves to, or the one it moves from
+                    _ if to.as_ref().is_some_and(|t| h.usage.preferred(rt, t, now)) || from.as_ref().is_some_and(|f| h.usage.avoided(rt, f, now)) => "fleet",
+                    Some(f) if h.list(rt).iter().any(|e| e.enabled && e.label == *f)
+                        && (h.usage.remaining(rt, f, now).is_some() || to.as_ref().is_some_and(|t| h.usage.remaining(rt, t, now).is_some())) => "usage",
                     _ => "policy",
                 };
                 out.push(Switch { runtime: rt.to_string(), from, to, reason });
@@ -497,7 +576,12 @@ fn guard() -> Result<(), String> {
 }
 
 fn runtime_arg(rt: &str) -> Result<&str, String> {
-    applies(rt).then_some(rt).ok_or_else(|| format!("runtime {rt} has no accounts; use claude or codex"))
+    applies(rt).then_some(rt).ok_or_else(|| format!("runtime {rt} has no accounts; use claude, codex or antigravity"))
+}
+
+/// A runtime with no home variable cannot keep a second login apart from its default.
+fn one_account(rt: &str) -> Result<(), String> {
+    if var(rt).is_empty() { Err(format!("{rt} has one `default` account per host until a per-account home is qualified")) } else { Ok(()) }
 }
 
 /// enable/disable/move on a list; the caller saves it.
@@ -543,6 +627,7 @@ fn append(p: &mut Policy, rt: &str, label: &str) -> Result<(), String> {
 pub fn add(install: &Path, rt: &str, label: &str) -> Result<String, String> {
     guard()?;
     let rt = runtime_arg(rt)?;
+    one_account(rt)?;
     let base = base(rt).ok_or("runtime home unknown: no home folder")?;
     let bin = crate::runtime::which(crate::runtime::of(rt).bin);
     if !bin.is_absolute() { return Err(format!("{} CLI not found on PATH", crate::runtime::of(rt).bin)); }
@@ -553,6 +638,7 @@ pub fn add(install: &Path, rt: &str, label: &str) -> Result<String, String> {
 
 fn add_in(install: &Path, rt: &str, label: &str, base: &Path, login: impl FnOnce(&Path, &[&str]) -> Result<bool, String>) -> Result<String, String> {
     let rt = runtime_arg(rt)?;
+    one_account(rt)?;
     if !valid_label(label) || label == DEFAULT { return Err("label: 1-32 of a-z, 0-9 and -, not `default`".into()); }
     let mut p = read_policy(install)?;
     if p.get(rt).is_some_and(|l| l.iter().any(|e| e.label == label)) { return Err(format!("{rt} already has account {label}")); }
@@ -668,10 +754,10 @@ mod tests {
         assert_eq!(h.spare("codex", 200), None, "every enabled account limited: no spare");
         assert_eq!(h.hold("codex", 200), Some((150 + PROBE, false)), "the hold ends at the earliest enabled limit end");
         assert_eq!(h.pick("codex", 200), None, "an exhausted account cannot start");
-        assert!(!h.off("codex"));
+        assert!(!h.off("codex", 0));
         let h = host(&[("claude", &[("default", false)])], &[]);
-        assert!(h.off("claude") && h.pick("claude", 0).is_none(), "all disabled: the runtime admits nothing");
-        assert!(!h.off("codex-app") && h.spare("codex-app", 0).is_none(), "codex-app has no accounts");
+        assert!(h.off("claude", 0) && h.pick("claude", 0).is_none(), "all disabled: the runtime admits nothing");
+        assert!(!h.off("codex-app", 0) && h.spare("codex-app", 0).is_none(), "codex-app has no accounts");
     }
 
     // Chain: §3 Runtime accounts (#2043 A2, A6): heartbeat lines carry labels and state, never an email; another host

@@ -45,7 +45,7 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 | `taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. \| --revoke ID] [--json]` | [PM authority/receipts](pm-requests.md); owner-only, off by default |
 | `taskq profile [guide\|export\|tasks\|board\|actions\|health\|migrate] [--since 24h]` | Local telemetry; no board; [detail](profiling.md#contract-detail) |
 | `taskq agents` | read-only login probe per startable runtime: [runtime login](capacity.md#runtime-login) |
-| `taskq accounts [--json]` / `taskq accounts enable\|disable <runtime> <label>` / `move <runtime> <label> <position>` / `add <runtime> <label>` | list every host's runtime accounts; change this host's list or add one by device login: [runtime accounts](capacity.md#runtime-accounts) |
+| `taskq accounts [--json]` / `taskq accounts enable\|disable <runtime> <label>` / `move <runtime> <label> <position>` / `add <runtime> <label>` / `fleet use\|avoid\|clear <runtime> <id>` | list every host's runtime accounts with usage; change this host's list, add one by device login, or set board-wide policy: [runtime accounts](capacity.md#runtime-accounts) |
 | `taskq selftest` / `taskq --version` | load config, fold built-in `tests/golden`, read the board; no writes / [binary version](host-service.md#contract-detail) |
 
 ### Outputs, op ids and receipts

@@ -82,7 +82,7 @@ pub type Res<T> = Result<T, String>;
 
 const USAGE: &str = "taskq agents
  taskq reroute --from <runtime> --to <runtime> [--json]
- taskq accounts [--json] | taskq accounts enable|disable|move <runtime> <label> [<position>] | taskq accounts add <runtime> <label>
+ taskq accounts [--json] | taskq accounts enable|disable|move <runtime> <label> [<position>] | taskq accounts add <runtime> <label> | taskq accounts fleet use|avoid|clear <runtime> <id>
  taskq labels
  taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all] [--gate] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
@@ -3591,7 +3591,12 @@ fn accounts_cli(a: &Args) -> Res<()> {
         [op @ ("enable" | "disable"), rt, label] => accounts::write(&install, op, rt, label, None)?,
         ["move", rt, label, at] => accounts::write(&install, "move", rt, label, Some(at.parse().map_err(|_| "position must be a number")?))?,
         ["add", rt, label] => accounts::add(&install, rt, label)?,
-        _ => return Err("usage: taskq accounts [--json] | taskq accounts enable|disable <runtime> <label> | taskq accounts move <runtime> <label> <position> | taskq accounts add <runtime> <label>".into()),
+        ["fleet", op, rt, id] => {
+            runtime::usage::fleet_allowed()?;
+            let c = ctx()?;
+            runtime::usage::fleet_write(&*c.board, op, rt, id)?
+        }
+        _ => return Err("usage: taskq accounts [--json] | taskq accounts enable|disable <runtime> <label> | taskq accounts move <runtime> <label> <position> | taskq accounts add <runtime> <label> | taskq accounts fleet use|avoid|clear <runtime> <id>".into()),
     };
     println!("{out}");
     Ok(())

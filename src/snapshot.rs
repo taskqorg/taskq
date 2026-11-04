@@ -423,6 +423,8 @@ pub struct Host {
     pub focus: Option<String>,
     /// `<rt> until|probe <time>` per runtime held after a usage limit (§ 4 step 1).
     pub limits: Vec<String>,
+    /// § 3 Runtime accounts: `use|avoid|unmet <rt> <id>` or `local <reason>` of this host's fleet policy.
+    pub account_policy: Vec<String>,
     /// The code of this host's tray interface fault (§ 4 step 3, #1755).
     pub tray: Option<String>,
     /// Heartbeat `requests <n>/h`: billed board requests of this host's last full hour (#1985).
@@ -614,7 +616,9 @@ pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
         version: h.body.lines().find_map(|l| l.strip_prefix("version ")).unwrap_or("?").to_string(),
         updated: h.updated,
         focus: h.body.lines().find_map(|l| l.strip_prefix("focus ")).map(str::to_string),
-        limits: h.body.lines().filter_map(|l| l.strip_prefix("limit ").map(str::to_string).or_else(|| l.starts_with("quota ").then(||l.to_string()))).collect(),
+        // usage rows share the `limit ` prefix; only a hold line is a limit here
+        limits: h.body.lines().filter(|l| crate::runtime::usage::Row::parse(l).is_none()).filter_map(|l| l.strip_prefix("limit ").map(str::to_string).or_else(|| l.starts_with("quota ").then(||l.to_string()))).collect(),
+        account_policy: h.body.lines().filter_map(|l| l.strip_prefix("account-policy ")).map(str::to_string).collect(),
         tray: h.body.lines().find_map(|l| l.strip_prefix("tray ")).map(str::to_string),
         requests: h.body.lines().find_map(|l| l.strip_prefix("requests ")?.strip_suffix("/h")?.parse::<u64>().ok()),
         github: h.body.lines().find_map(|l| l.strip_prefix("requests api.github.com ")?.strip_suffix("/h")?.parse::<u64>().ok()),
@@ -1145,6 +1149,7 @@ impl Snapshot {
         let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}", h.name, h.version_text(), age(self.observed - h.updated),
             h.focus.as_ref().filter(|f| *f != "unknown").map(|f| format!(" focus {f}")).unwrap_or_default()
             + &h.limits.iter().map(|l| if l.starts_with("quota ") {format!(" {l}")} else {l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))}).collect::<String>()
+            + &h.account_policy.iter().filter(|l| l.starts_with("unmet ")).map(|l| format!(" account-policy {l}")).collect::<String>()
             + &h.balancing["weights"].as_object().map(|weights|weights.iter().map(|(rt,w)| {
                 let load=&h.balancing["runtimes"][rt]["load"];
                 let running=load["running"].as_u64().map(|n|format!(" running {n} /")).unwrap_or_default();
@@ -1368,6 +1373,20 @@ mod tests {
         let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
         assert!(line.contains("mac v1.0 ") && !line.contains("stale"), "{line}");
         assert_eq!(text.lines().filter(|l| l.contains("stale")).collect::<Vec<_>>(), ["- host win · heartbeat stale 5m · Next: inspect the host service (`taskq doctor --hosts`)"], "R6 A3: a stale host is one anomaly row");
+    }
+
+    // Chain: §3 Runtime accounts (#2341 A5): heartbeat usage rows share the `limit ` prefix with a hold. Risk: status
+    // and health read a usage row as a usage limit. Protection: only the hold line is a limit; unmet policy shows.
+    #[test]
+    fn usage_rows_are_no_limits_and_unmet_policy_shows() {
+        let mut i = host(0);
+        i.body = "version 4\nlimit codex 2026-01-01T00:00:00Z\nlimit codex work id abcd1234 window 10080m used 20 reset - at 2026-01-01T00:00:00Z\nlimit claude default id - unknown no login\naccount-policy unmet codex abcd1234\n".into();
+        let h = super::host(&i, 1000, 300);
+        assert_eq!(h.limits, ["codex 2026-01-01T00:00:00Z"]);
+        assert_eq!(h.account_policy, ["unmet codex abcd1234"]);
+        let snap = Snapshot { source: "board", observed: 1000, reason: None, board: json!({"url": "b"}), tasks: vec![], hosts: vec![h] };
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        assert!(text.contains("account-policy unmet codex abcd1234") && !text.contains("window") && !text.contains("no login"), "{text}");
     }
 
     // Chain: heartbeat `selected` line -> status Hosts line and JSON (#2247 A1, A2). Risk: during a handover status

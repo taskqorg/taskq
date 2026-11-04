@@ -127,6 +127,7 @@ impl Policy {
             }
         }
         let weights=crate::balance::weights(&v)?;
+        crate::runtime::usage::floor_of(&v)?;
         let policy=Self { raw: v, cap, me, has, claim, spillover_grace, weights, default_runtime, codex, permission_mode, update_every, rollback_after };
         policy.command()?;
         Ok(policy)
@@ -951,6 +952,8 @@ pub fn run(install: &Path) -> Res<()> {
     shared.lock().map_err(|_|"host occupancy recovery unknown")?.rebuilding=true;
     let native=coreq::process::identity(std::process::id()).map_err(|e|e.to_string())?.ok_or("host process identity missing")?;
     let instance=shared.lock().map_err(|_|"host owner unknown")?.instance.clone();
+    // § 3 Runtime accounts: one poll per host, independent of project count; the host owner above admits one process.
+    if !cfg!(test) { crate::runtime::usage::spawn(install.to_path_buf()); }
     let mut threads: BTreeMap<PathBuf, std::thread::JoinHandle<Res<()>>> = BTreeMap::new();
     let mut roots = vec![];
     let mut stopped = BTreeSet::new();

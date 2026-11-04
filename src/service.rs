@@ -51,7 +51,7 @@ impl Config {
     pub fn runtime_disabled(&self, rt: &str, limits: Option<&BTreeMap<String, u32>>) -> bool {
         self.allowed_runtimes.as_ref().is_some_and(|a| !a.iter().any(|r| r == rt))
             || limits.is_some_and(|l| l.get(rt) == Some(&0))
-            || { let a = crate::runtime::accounts::Host::read(&self.install); a.error.is_none() && a.off(rt) }
+            || { let a = crate::runtime::accounts::Host::read(&self.install); a.error.is_none() && a.off(rt, crate::runtime::accounts::now()) }
     }
 }
 
@@ -140,7 +140,8 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
 /// Only issues labelled `taskq` are tasks (§ 1): a user issue never starts by itself.
 /// Heartbeat lines a write compares: the `at` stamp and diagnostics observation times change every pass (#1358).
 fn stable(body: &str) -> Vec<String> {
-    body.lines().filter(|l| !l.starts_with("at ")).map(|l| {
+    // A changed usage row never forces a write; rows travel with the periodic write (capacity.md).
+    body.lines().filter(|l| !l.starts_with("at ") && crate::runtime::usage::Row::parse(l).is_none()).map(|l| {
         if let Some(mut execution)=l.strip_prefix("execution ").and_then(|s|serde_json::from_str::<Value>(s).ok()) {
             if let Some(progress)=execution.get_mut("progress").and_then(Value::as_object_mut) {progress.remove("observed");}
             return format!("execution {execution}");
@@ -733,6 +734,7 @@ pub struct Service<'a> {
     pub clis: BTreeMap<String, String>,
     /// § 3 Runtime accounts: the active account of each listed runtime at the last pass (switch record).
     pub accounts: BTreeMap<String, Option<String>>,
+    fleet: crate::runtime::usage::FleetCache,
     pub gui_checked: Option<std::time::Instant>,
     pub gui_probe: Result<(), String>,
     /// #1803: the last gui probe read a stale grant (`platform::stale_grant`); the tray notifies once.
@@ -993,7 +995,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), dep_closed: None, label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), dep_closed: None, label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), fleet: Default::default(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1411,7 +1413,8 @@ impl<'a> Service<'a> {
         let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
         if accounts.error.is_some() { gate="unknown"; }
         reasons.extend(accounts.heartbeat(self.board.now().unwrap_or(self.wall)).into_iter().filter(|l|l.starts_with("quota ")).map(|l|("usage-limit",l)));
-        reasons.extend(accounts.policy.keys().filter(|rt| accounts.off(rt)).map(|rt| ("capability", format!("{rt}: every account disabled on this host"))));
+        let off_at = self.board.now().unwrap_or(self.wall);
+        reasons.extend(crate::runtime::CLI_RUNTIMES.iter().filter(|rt| accounts.off(rt, off_at)).map(|rt| ("capability", format!("{rt}: {}", accounts.off_reason(rt)))));
         let res =|r: &Res, state: &str| json!({"task": r.0, "attempt": r.1, "rt": r.2, "state": state});
         let reservations: Vec<Value> = self.kids.iter().map(|k| res(&(k.task, k.attempt, k.rt.clone()), "held"))
             .chain(self.reserved.iter().map(|r| res(r, "held"))).chain(self.requested.iter().map(|r| res(r, "requested"))).collect();
@@ -1783,7 +1786,9 @@ impl<'a> Service<'a> {
         lines.extend(self.logged_out.iter().map(|rt| format!("login {rt} off")));
         lines.extend(self.clis.iter().map(|(bin, v)| format!("cli {bin} {v}")));
         // § 3 Runtime accounts: labels and state only, never an email, path or token
-        lines.extend(crate::runtime::accounts::Host::read(&self.cfg.install).heartbeat(self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now())));
+        let (accounts, at) = (crate::runtime::accounts::Host::read(&self.cfg.install), self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now()));
+        lines.extend(accounts.heartbeat(at));
+        lines.extend(accounts.usage_lines(at));
         lines.extend(tray_fault(&self.cfg.install).map(|code| format!("tray {code}")));
         lines.extend(self.health.as_ref().map(|(_, line)| line.clone()));
         lines.extend(self.answered.as_deref().map(crate::health::answer_line));
@@ -2287,6 +2292,11 @@ impl<'a> Service<'a> {
                     self.execution_waits.insert(v.issue.number,format!("input pending on {owner}; await or restore the owning service"));
                 }
             }
+        }
+
+        // § 3 Runtime accounts: only the project the connection approved reads fleet policy for this host
+        if self.fleet.due(now) && crate::enrollment::approves(&self.cfg.install, self.cfg.board.name, &self.cfg.web_host, &self.cfg.repo) {
+            if let Err(e) = self.fleet.refresh(self.board, &self.cfg.install, &hosts, &me, now) { self.log.push(format!("account policy: {e}")); }
         }
 
         // 3. heartbeat
@@ -2968,7 +2978,7 @@ impl<'a> Service<'a> {
         if let Some(r) = self.refused_access.get(rt) { return Err(("access", format!("{rt}: {r}"))); }
         let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
         if let Some(e) = &accounts.error { return Err(("unknown", format!("account availability unknown: {e}"))); }
-        if accounts.off(rt) {return Err(("capability",format!("{rt}: every account disabled on this host")));}
+        if accounts.off(rt,self.board.now().map_err(|e| ("unknown",e))?) {return Err(("capability",format!("{rt}: {}",accounts.off_reason(rt))));}
         if accounts.active(rt, self.board.now().map_err(|e| ("unknown",e))?).is_none() {
             if let Some(hold) = accounts.hold(rt, self.board.now().map_err(|e| ("unknown",e))?) {
                 return Err(("usage-limit",format!("{rt}: {} {}; account quotas {}", if hold.1 {"until"} else {"probe"},crate::board::stamp(hold.0),accounts.heartbeat(self.board.now().unwrap_or(0)).join("; "))));
@@ -6068,7 +6078,7 @@ Open: none")).unwrap();
     // splits one machine into several Hosts rows or breaks the one-service-per-host check.
     #[test]
     fn heartbeat_body_lists_version_service_machine_focus() {
-        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ") && !l.starts_with("balancing ") && !l.starts_with("queue ")).collect::<Vec<_>>().join("\n");
+        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ") && !l.starts_with("balancing ") && !l.starts_with("queue ") && !l.starts_with("account-policy ") && crate::runtime::usage::Row::parse(l).is_none()).collect::<Vec<_>>().join("\n");
         let b = Fake::default();
         let c = cfg("win");
         let mut s = service(&b, &c, Default::default());
@@ -6231,6 +6241,11 @@ Open: none")).unwrap();
         let mut d: Value = serde_json::from_str(&line["diagnostics ".len()..]).unwrap();
         d["running"]["value"] = json!("9.9.9");
         assert_ne!(stable(&body), stable(&body.replace(line, &format!("diagnostics {d}"))), "a changed diagnostics value is written at once");
+        // § 3 Runtime accounts: a changed usage row travels with the periodic write; a hold or unmet policy is state.
+        let usage = |used: u8, policy: &str| format!("host x\nlimit codex 2026-01-01T00:00:00Z\nlimit codex work id - window 10080m used {used} reset - at 2026-01-01T00:00:00Z\naccount-policy {policy}\n");
+        assert_eq!(stable(&usage(10, "local no connection")), stable(&usage(90, "local no connection")), "a usage change forces no write");
+        assert!(stable(&usage(10, "local no connection")).iter().any(|l| l == "limit codex 2026-01-01T00:00:00Z"), "a hold line stays compared");
+        assert_ne!(stable(&usage(10, "local no connection")), stable(&usage(10, "unmet codex abcd1234")), "a policy change is written at once");
     }
 
     // Chain: § 8 step 3, board budget. Risk: a reduced or observe pass (Stop barrier, quarantine) rewrote the

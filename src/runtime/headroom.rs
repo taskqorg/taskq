@@ -95,6 +95,32 @@ fn observe_in(install:&Path,rt:&str,log:&Path,now:i64,rollout:impl Fn(&str)->Opt
     Ok(())
 }
 
+/// Every saved window per runtime, label and name: (at, remaining fraction, reset). Unreadable storage is empty, so
+/// ranking reads unknown usage; it never holds a start.
+pub(crate) type Observed=BTreeMap<String,BTreeMap<String,BTreeMap<String,(i64,f64,Option<i64>)>>>;
+
+pub(crate) fn observed(install:&Path)->Observed {
+    read(install).unwrap_or_default().into_iter().map(|(rt,accounts)|(rt,accounts.into_iter().map(|(label,windows)|
+        (label,windows.into_iter().map(|(name,o)|(name,(o.at,o.remaining,o.reset))).collect())).collect())).collect()
+}
+
+/// Saves a poll's windows as observations; the caller holds the account lock. A newer observation stays.
+pub(crate) fn record_polled(install:&Path,at:i64,polls:&[(&str,&str,&[super::usage::Window])])->Result<(),String> {
+    if polls.iter().all(|(_,_,windows)|windows.is_empty()) {return Ok(());}
+    let mut saved=read(install)?;
+    for (rt,label,polled) in polls {
+        if polled.is_empty() {continue;}
+        let windows=saved.entry(rt.to_string()).or_default().entry(label.to_string()).or_default();
+        for w in polled.iter() {
+            if windows.len()>=32 && !windows.contains_key(&w.name) {continue;}
+            if windows.get(&w.name).is_none_or(|old|old.at<=at) {
+                windows.insert(w.name.clone(),Observation{source:"poll".into(),at,remaining:1.0-f64::from(w.used)/100.0,reset:w.reset});
+            }
+        }
+    }
+    crate::platform::write_synced(&install.join(FILE),&serde_json::to_string(&saved).map_err(|e|e.to_string())?)
+}
+
 pub fn remaining(install:&Path,rt:&str,now:i64)->Result<Option<f64>,String> {
     let saved=read(install)?;
     let accounts=super::accounts::Host::read(install);
