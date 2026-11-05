@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 pub const KIND: Kind = Kind {
     closed_reason: true,
+    core_budget: true,
     name: "github",
     user_key: "login",
     default_host: "github.com",

@@ -7,6 +7,7 @@ use std::cell::RefCell;
 
 pub const KIND: Kind = Kind {
     closed_reason: false,
+    core_budget: false,
     reload_token: false,
     name: "gitlab",
     user_key: "username",

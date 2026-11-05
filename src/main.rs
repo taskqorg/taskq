@@ -3914,7 +3914,7 @@ fn status_text(c: &Ctx, a: &Args, read: Option<(snapshot::Snapshot, Value)>, t: 
     lap(t, "deploy wait");
     let quota = requests::quota(&b.quota());
     lap(t, "quota");
-    if quota.starts_with("Board quota: unknown") {
+    if cfg.board.core_budget && quota.starts_with("Board quota: unknown") {
         extra.push("- board quota unread: no core budget headers on this read · Next: rerun `taskq status`; a lasting gap is a board client defect".into());
     }
     out.push(snap.text_extra(cfg, &c.raw, Some(&decide), extra)?);
@@ -5020,6 +5020,21 @@ mod tests {
         let c=Ctx {cfg:cfg(),raw:json!({}),board:Box::new(Fake::default())};
         command(&c,"add",&parse(&["add","Invented runtime pin","--goal","G","--acceptance","Observable result","--runtime","antigravity"])).unwrap();
         assert!(c.board.issues(None).unwrap().iter().any(|t|t.labels.contains(&"run-antigravity".into())));
+    }
+
+    // Chain: R6 Anomalies. Defect: every GitLab status printed `board quota unread` though a GitLab instance may send no
+    // budget headers, so the row asked for an action nobody could take. Risk: a GitHub read without them is a client
+    // defect and loses its row, or an unknown quota prints as a normal `Board quota:` line.
+    #[test]
+    fn board_quota_anomaly_only_where_the_board_always_sends_its_budget() {
+        for (kind, anomaly) in [(&board::github::KIND, true), (&board::gitlab::KIND, false)] {
+            let mut config = cfg();
+            config.board = kind;
+            let c = Ctx { cfg: config, raw: json!({}), board: Box::new(Fake::default()) };
+            let (text, _) = status_text(&c, &Args::default(), None, &mut vec![]).unwrap();
+            assert_eq!(text.contains("board quota unread"), anomaly, "{}: {text}", kind.name);
+            assert!(!text.contains("Board quota:"), "{}: an unknown quota is never a normal line: {text}", kind.name);
+        }
     }
 
     // Chain: § 5 CLI arguments. Risk: stray words or a consumed scope/JSON flag change the requested command.
