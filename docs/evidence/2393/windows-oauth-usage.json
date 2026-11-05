@@ -1,0 +1,77 @@
+{
+  "source": "https://api.anthropic.com/api/oauth/usage",
+  "observed_at": "2026-11-04T22:22:31.467606+00:00",
+  "host": "win",
+  "http_status": 200,
+  "sampling": "One read only; service period 120 seconds; no retry or refresh",
+  "login_unchanged": true,
+  "redaction": "Quota fields only; no credentials, headers, cookies or account identity retained. Non-public strings redacted.",
+  "response": {
+    "five_hour": null,
+    "seven_day": {
+      "utilization": 43.0,
+      "resets_at": "2026-11-09T05:00:00.327577+00:00",
+      "limit_dollars": null,
+      "used_dollars": null,
+      "remaining_dollars": null,
+      "locked_reason": null
+    },
+    "seven_day_oauth_apps": null,
+    "seven_day_opus": null,
+    "seven_day_sonnet": null,
+    "seven_day_cowork": null,
+    "seven_day_omelette": null,
+    "limits": [
+      {
+        "kind": "<redacted string>",
+        "group": "weekly",
+        "percent": 43,
+        "severity": "<redacted string>",
+        "resets_at": "2026-11-09T05:00:00.327577+00:00",
+        "scope": null,
+        "is_active": true
+      },
+      {
+        "kind": "<redacted string>",
+        "group": "weekly",
+        "percent": 4,
+        "severity": "<redacted string>",
+        "resets_at": "2026-11-09T05:00:00.327754+00:00",
+        "scope": {
+          "model": {
+            "id": null,
+            "display_name": "Fable"
+          },
+          "surface": null
+        },
+        "is_active": false
+      }
+    ],
+    "seven_day_breakdown": {
+      "as_of": "<redacted string>",
+      "window_started_at": "<redacted string>",
+      "rows": [
+        {
+          "key": "<redacted string>",
+          "display_name": "<redacted string>",
+          "percent": 100
+        },
+        {
+          "key": "<redacted string>",
+          "display_name": "<redacted string>",
+          "percent": 0
+        },
+        {
+          "key": "<redacted string>",
+          "display_name": "<redacted string>",
+          "percent": 0
+        },
+        {
+          "key": "<redacted string>",
+          "display_name": "<redacted string>",
+          "percent": 0
+        }
+      ]
+    }
+  }
+}

@@ -61,11 +61,12 @@ async function historyCase(browser,html,runtime){
  // DOM keys in order, unique and in file order; the bound holds at every sample
  const sample=()=>page.evaluate(()=>{const keys=[...document.querySelectorAll('.dialogue-transcript>[data-key]')].map(e=>e.dataset.key);return {keys,earlier:!!document.querySelector('[data-c=earlier]')};});
  const order=(keys,where)=>{const n=keys.map(k=>k.split(':').map(Number));for(let k=1;k<n.length;k++)if(!(n[k][0]>n[k-1][0]||n[k][0]===n[k-1][0]&&n[k][1]>n[k-1][1]))throw new Error(runtime+' '+where+': order or duplicate at '+keys[k-1]+' / '+keys[k]);};
- const anchor=()=>page.evaluate(()=>{const el=document.querySelector('.conversation-reader'),top=el.getBoundingClientRect().top;const node=[...el.querySelectorAll('.dialogue-transcript>[data-key]')].find(n=>n.getBoundingClientRect().bottom>top);return {key:node.dataset.key,y:node.getBoundingClientRect().top-top};});
- const offset=key=>page.evaluate(key=>{const el=document.querySelector('.conversation-reader'),node=el.querySelector('.dialogue-transcript>[data-key="'+key+'"]');return node?node.getBoundingClientRect().top-el.getBoundingClientRect().top:null;},key);
- const near=async(a,where)=>{const y=await offset(a.key);if(y===null||Math.abs(y-a.y)>2)throw new Error(runtime+' '+where+': anchor '+a.key+' moved from '+a.y+' to '+y);
+ // The reader also contains the original request. Measure an actually visible native paragraph, not an offscreen record or its reflowing shell.
+ const anchor=()=>page.evaluate(()=>{const el=document.querySelector('.conversation-reader'),box=el.getBoundingClientRect();const node=[...el.querySelectorAll('.dialogue-transcript>[data-key] [data-native-part]')].find(n=>{const r=n.getBoundingClientRect();return r.bottom>box.top&&r.top<box.bottom;});if(!node)throw new Error('No visible native paragraph');return {key:node.closest('[data-key]').dataset.key,part:node.dataset.nativePart,y:node.getBoundingClientRect().top-box.top};});
+ const offset=(key,part)=>page.evaluate(({key,part})=>{const el=document.querySelector('.conversation-reader'),record=el.querySelector('.dialogue-transcript>[data-key="'+key+'"]'),node=part===undefined?record:record?.querySelector('[data-native-part="'+part+'"]');return node?node.getBoundingClientRect().top-el.getBoundingClientRect().top:null;},{key,part});
+ const near=async(a,where)=>{const y=await offset(a.key,a.part);if(y===null||Math.abs(y-a.y)>2)throw new Error(runtime+' '+where+': anchor '+a.key+' moved from '+a.y+' to '+y);
   // no delayed second jump
-  await page.waitForTimeout(150);const later=await offset(a.key);if(later===null||Math.abs(later-a.y)>2)throw new Error(runtime+' '+where+': delayed jump to '+later);};
+  await page.waitForTimeout(150);const later=await offset(a.key,a.part);if(later===null||Math.abs(later-a.y)>2)throw new Error(runtime+' '+where+': delayed jump to '+later);};
  const scrollBy=dy=>page.evaluate(dy=>{const e=document.querySelector('.conversation-reader');e.scrollTop+=dy;e.dispatchEvent(new Event('scroll',{bubbles:true}));},dy);
  await settle();
  const total=await page.evaluate(()=>history1742.all.length);
@@ -75,9 +76,9 @@ async function historyCase(browser,html,runtime){
 
  // A1: prepend keeps the visible record within 2 px
  await scrollBy(-200);await settle();let a=await anchor();
- await page.evaluate(()=>{const e=document.querySelector('.conversation-reader');e.scrollTop=Math.min(e.scrollTop,40);e.dispatchEvent(new Event('scroll',{bubbles:true}));});
+ await page.evaluate(()=>{const e=document.querySelector('.conversation-reader'),node=e.querySelector('.dialogue-transcript>[data-key] [data-native-part]');e.scrollTop+=node.getBoundingClientRect().top-e.getBoundingClientRect().top+10;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
  a=await anchor();await settle();await near(a,'prepend');
- assert.equal(await page.locator('.sr-only[role=status]').first().innerText(),'Earlier messages loaded',runtime+': a prepend is announced briefly');
+ assert.equal(await page.locator('.conversation-reader .sr-only[role=status]').first().innerText(),'Earlier messages loaded',runtime+': a prepend is announced briefly');
  // A1: font and width changes keep it too
  a=await anchor();state.font=20;await page.evaluate(s=>taskq.receive(s),state);await settle();assert.equal(await page.locator('.menu').evaluate(e=>getComputedStyle(e).fontSize),'20px');await near(a,'font 20');
  // Font loading can change metrics without a status snapshot; the same paragraph owner must correct it.
@@ -96,6 +97,8 @@ async function historyCase(browser,html,runtime){
  await near(a,'return');
 
  // A3/A4: traverse to the start by keyboard-free scrolling; every record once, mounted nodes bounded
+ // A draw may page again and evict records before settle() returns. Observe additions, including detached subtrees, rather than sampling only the final window.
+ await page.evaluate(()=>{const h=history1742;h.traversed=new Set([...document.querySelectorAll('.dialogue-transcript>[data-key]')].map(n=>n.dataset.key));h.mounts=new MutationObserver(records=>{for(const r of records)for(const n of r.addedNodes)if(n.nodeType===1){if(n.matches('.dialogue-transcript>[data-key]'))h.traversed.add(n.dataset.key);for(const child of n.querySelectorAll('.dialogue-transcript>[data-key]'))h.traversed.add(child.dataset.key);}});h.mounts.observe(document.querySelector('.conversation-reader'),{childList:true,subtree:true});});
  const seen=new Set();let n=0,clicks=0;
  for(;;){
   s=await sample();order(s.keys,'backward');for(const k of s.keys)seen.add(k);max=Math.max(max,s.keys.length);
@@ -106,6 +109,7 @@ async function historyCase(browser,html,runtime){
   s=await sample();if(s.keys[0]===first&&s.earlier&&await page.evaluate(()=>document.querySelector('.conversation-reader').scrollTop<1)){clicks++;await page.locator('[data-c=earlier]').click();await settle();}
  }
  s=await sample();const all=await page.evaluate(()=>history1742.all);
+ for(const key of await page.evaluate(()=>{history1742.mounts.disconnect();return [...history1742.traversed];}))seen.add(key);
  assert.equal(s.keys[0],all[0],runtime+': the first record is reached');assert.equal(clicks,1,runtime+': only the long skipped run needs Load earlier');
  // every record from the first one mounted on return back to the file start was mounted on the way
  const upto=Math.max(...[...seen].map(k=>all.indexOf(k)));assert(upto>all.length-400,runtime+': traversal starts near the end');
@@ -124,21 +128,25 @@ async function historyCase(browser,html,runtime){
  assert.equal(await page.locator('[data-c=latest]').count(),0,runtime+': following hides Jump to latest');
 
  // A4: a selection for copy stays mounted while more history loads
- await page.evaluate(()=>{const nodes=document.querySelectorAll('.dialogue-transcript>[data-key] .conversation-text');const r=document.createRange();r.setStart(nodes[nodes.length-3].firstChild,0);r.setEnd(nodes[nodes.length-2].firstChild,5);getSelection().removeAllRanges();getSelection().addRange(r);});
- const copied=await page.evaluate(()=>getSelection().toString());
- for(let k=0;k<6;k++){await page.evaluate(()=>{const e=document.querySelector('.conversation-reader');e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});await settle();max=Math.max(max,(await sample()).keys.length);}
+ await page.evaluate(()=>{const nodes=document.querySelectorAll('.dialogue-transcript>[data-key] [data-native-part]');const r=document.createRange();r.setStartBefore(nodes[nodes.length-3]);r.setEndAfter(nodes[nodes.length-2]);getSelection().removeAllRanges();getSelection().addRange(r);});
+ const copied=await page.evaluate(()=>getSelection().toString());let selectedMax=0;
+ for(let k=0;k<6;k++){await page.evaluate(()=>{const e=document.querySelector('.conversation-reader');e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});await settle();const mounted=(await sample()).keys.length;selectedMax=Math.max(selectedMax,mounted);if(mounted>800)assert.match(await page.locator('.conversation-reader').innerText(),/Resident history: \d+ records .*selected text is pinned/,'D4 permits pinned-selection overflow only with an explicit disclosure');}
  assert.equal(await page.evaluate(()=>getSelection().toString()),copied,runtime+': selection survives loads');
  await page.evaluate(()=>getSelection().removeAllRanges());
- // A4: keyboard reading moves the reader and loads earlier history
  // A4: keyboard reading moves the reader and reaches earlier history
+ // The preceding selection traversal can end at the intentional fill-budget gap; keyboard paging starts from a fresh tail.
+ await page.locator('[data-c=latest]').click();await settle();
+ await page.locator('[data-c=select][data-id="'+other+'"]').click();await settle();await page.locator('[data-c=select][data-id="'+id+'"]').click();await settle();
  // #1747: headless Chromium on macOS sometimes drops the first PageUp (no scroll event, no view scrollTop write); a second
  // press scrolls. The visible record moving down is the check: scrollTop also grows when the scroll prepends a page.
- await page.locator('.dialogue-transcript').focus();const k0=(await sample()).keys[0],a0=await anchor();
- let moved=false;for(let k=0;k<2&&!moved;k++){await page.keyboard.press('PageUp');await settle();const y=await offset(a0.key);moved=y===null||y>a0.y+100;}
+ // Focusing the whole document scrolls to its start. Start inside a visible passage and focus its Copy control without moving it.
+ await page.locator('.conversation-reader').evaluate(e=>{e.scrollTop=Math.min(e.scrollHeight-e.clientHeight,e.clientHeight*2);e.dispatchEvent(new Event('scroll'));});await settle();
+ const a0=await anchor();await page.evaluate(a=>document.querySelector('[data-key="'+a.key+'"] .copy-block').focus({preventScroll:true}),a0);const k0=(await sample()).keys[0];
+ let moved=false;for(let k=0;k<2&&!moved;k++){await page.keyboard.press('PageUp');await settle();const y=await offset(a0.key,a0.part);moved=y===null||y>a0.y+100;}
  assert(moved,runtime+': PageUp scrolls the transcript');
  for(let k=0;k<80&&(await sample()).keys[0]===k0;k++){await page.keyboard.press('PageUp');await settle();max=Math.max(max,(await sample()).keys.length);}
  assert.notEqual((await sample()).keys[0],k0,runtime+': PageUp reads earlier history');
- assert(max<=800,runtime+': mounted items stay bounded while a selection is held: '+max);
+ assert(max<=800,runtime+': unpinned mounted items return to the bound after clearing selection: '+max);
  assert(await page.evaluate(()=>history1742.ignored>0),runtime+': pages of only ignored records still reach earlier history');
  // Q-A6: receive-and-render time per page and frame intervals during continuous wheel scrolling, measured in headless Chromium, not asserted
  await page.mouse.move(450,300);await page.evaluate(()=>{const h=history1742;let last=performance.now();h.frames=[];h.run=true;const tick=t=>{h.frames.push(t-last);last=t;if(h.run)requestAnimationFrame(tick);};requestAnimationFrame(tick);});
@@ -154,7 +162,7 @@ async function historyCase(browser,html,runtime){
  const controls={static_clone_p95:staticFrames[Math.floor(staticFrames.length*.95)],empty_p95:emptyFrames[Math.floor(emptyFrames.length*.95)],budget_ms:32,product_budget:frames[Math.floor(frames.length*.95)]<=32?'Pass':'Fail'};
  const long=await page.evaluate(()=>history1742.longtasks),renders=(await page.evaluate(()=>history1742.renders)).sort((x,y)=>x-y);
  await page.close();
- return {runtime,records:10000,items:total,reads:renders.length,mounted_max:max,load_render_ms:{median:Math.round(renders[renders.length>>1]),p95:Math.round(renders[Math.floor(renders.length*.95)]),max:Math.round(renders.at(-1))},longtasks:{count:long.length,max_ms:Math.round(Math.max(0,...long))},controls,wheel_frame_ms:{frames:frames.length,median:Math.round(frames[frames.length>>1]),p95:Math.round(frames[Math.floor(frames.length*.95)]),max:Math.round(frames.at(-1))},result:'Pass: browser model; timings measured, not asserted'};
+ return {runtime,records:10000,items:total,reads:renders.length,mounted_max:max,pinned_selection_max:selectedMax,load_render_ms:{median:Math.round(renders[renders.length>>1]),p95:Math.round(renders[Math.floor(renders.length*.95)]),max:Math.round(renders.at(-1))},longtasks:{count:long.length,max_ms:Math.round(Math.max(0,...long))},controls,wheel_frame_ms:{frames:frames.length,median:Math.round(frames[frames.length>>1]),p95:Math.round(frames[Math.floor(frames.length*.95)]),max:Math.round(frames.at(-1))},result:'Pass: browser model; timings measured, not asserted'};
 }
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')()),html=fs.readFileSync('build/web/workspace.html');fs.mkdirSync(out,{recursive:true});

@@ -42,11 +42,12 @@ pub struct Window {
     pub reset: Option<i64>,
 }
 
-/// One account's poll: its identity fingerprint, windows, or the fixed reason it has none.
+/// One account's poll: readable windows, per-window diagnostics, or a whole-response failure.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Poll {
     pub id: Option<String>,
     pub windows: Vec<Window>,
+    pub unreadable: Vec<String>,
     pub unknown: Option<String>,
 }
 
@@ -59,6 +60,13 @@ struct Record {
     id: Option<String>,
     at: i64,
     windows: Vec<Window>,
+    /// A partial poll's readable windows. A binary through v4.6.79 ignores this field, so it republishes none of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    partial: Vec<Window>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    unreadable: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unreadable_at: Option<i64>,
     unknown: Option<String>,
 }
 
@@ -88,10 +96,13 @@ fn fresh(at: i64, reset: Option<i64>, now: i64) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Usage {
     Window { window: Window, at: i64 },
+    /// A readable window of an incomplete poll: published, never aggregated. Its `limit-partial` prefix keeps it from
+    /// readers through v4.6.79, which ignore `unknown` rows and would take the readable windows for the whole account.
+    Partial { window: Window, at: i64 },
     Unknown(String),
 }
 
-/// One heartbeat `limit <rt> <label> id <id|-> ...` row.
+/// One heartbeat `limit <rt> <label> id <id|-> ...` or `limit-partial <rt> <label> id <id|-> window ...` row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub rt: String,
@@ -102,27 +113,34 @@ pub struct Row {
 
 impl Row {
     pub fn line(&self) -> String {
-        let head = format!("limit {} {} id {}", self.rt, self.label, self.id.as_deref().unwrap_or("-"));
+        let head = |kind: &str| format!("{kind} {} {} id {}", self.rt, self.label, self.id.as_deref().unwrap_or("-"));
+        let reading = |kind: &str, window: &Window, at: i64| format!("{} window {} used {} reset {} at {}", head(kind), window.name, window.used,
+            window.reset.map_or("-".to_string(), crate::board::stamp), crate::board::stamp(at));
         match &self.usage {
-            Usage::Window { window, at } => format!("{head} window {} used {} reset {} at {}", window.name, window.used,
-                window.reset.map_or("-".to_string(), crate::board::stamp), crate::board::stamp(*at)),
-            Usage::Unknown(reason) => format!("{head} unknown {reason}"),
+            Usage::Window { window, at } => reading("limit", window, *at),
+            Usage::Partial { window, at } => reading("limit-partial", window, *at),
+            Usage::Unknown(reason) => format!("{} unknown {reason}", head("limit")),
         }
     }
 
     /// A usage row; `None` for anything else, the `limit <rt> until|probe <time>` hold line included.
     pub fn parse(line: &str) -> Option<Row> {
-        let w: Vec<&str> = line.strip_prefix("limit ")?.split(' ').collect();
+        let (partial, body) = match line.strip_prefix("limit-partial ") {
+            Some(body) => (true, body),
+            None => (false, line.strip_prefix("limit ")?),
+        };
+        let w: Vec<&str> = body.split(' ').collect();
         let [rt, label, "id", id, rest @ ..] = w.as_slice() else { return None };
         if !accounts::applies(rt) || !accounts::valid_label(label) || !(*id == "-" || valid_id(id)) { return None; }
         let time = |t: &str| crate::board::iso(t).filter(|at| crate::board::stamp(*at) == t);
         let usage = match rest {
-            ["window", name, "used", used, "reset", reset, "at", at] if valid_window(name) => Usage::Window {
-                window: Window { name: name.to_string(), used: used.parse().ok().filter(|u| *u <= 100)?,
-                    reset: if *reset == "-" { None } else { Some(time(reset)?) } },
-                at: time(at)?,
-            },
-            ["unknown", reason @ ..] if !reason.is_empty() => Usage::Unknown(reason.join(" ")),
+            ["window", name, "used", used, "reset", reset, "at", at] if valid_window(name) => {
+                let window = Window { name: name.to_string(), used: used.parse().ok().filter(|u| *u <= 100)?,
+                    reset: if *reset == "-" { None } else { Some(time(reset)?) } };
+                let at = time(at)?;
+                if partial { Usage::Partial { window, at } } else { Usage::Window { window, at } }
+            }
+            ["unknown", reason @ ..] if !partial && !reason.is_empty() => Usage::Unknown(reason.join(" ")),
             _ => return None,
         };
         Some(Row { rt: rt.to_string(), label: label.to_string(), id: (*id != "-").then(|| id.to_string()), usage })
@@ -131,7 +149,7 @@ impl Row {
     /// The usage cell of `taskq accounts`.
     pub fn text(&self) -> String {
         match &self.usage {
-            Usage::Window { window, .. } => format!("{} used {}% reset {}", window.name, window.used, window.reset.map_or("-".to_string(), crate::board::stamp)),
+            Usage::Window { window, .. } | Usage::Partial { window, .. } => format!("{} used {}% reset {}", window.name, window.used, window.reset.map_or("-".to_string(), crate::board::stamp)),
             Usage::Unknown(reason) => format!("unknown {reason}"),
         }
     }
@@ -315,6 +333,7 @@ impl View {
     /// The smallest window's fresh remaining percent: per window the freshest reading of this home and of other hosts'
     /// rows with the same `id`. `None` is unknown.
     pub fn remaining(&self, rt: &str, label: &str, now: i64) -> Option<u8> {
+        if self.incomplete(rt, label, now) { return None; }
         let mut windows: BTreeMap<&str, (i64, u8)> = BTreeMap::new();
         let mut add = |name, at, left| { if windows.get(name).is_none_or(|(old, _)| *old < at) { windows.insert(name, (at, left)); } };
         for (name, (at, remaining, reset)) in self.observed.get(rt).and_then(|a| a.get(label)).into_iter().flatten() {
@@ -330,6 +349,18 @@ impl View {
             }
         }
         windows.values().map(|(_, left)| *left).min()
+    }
+
+    /// A partial poll cannot establish aggregate headroom, locally or on a host sharing this account.
+    pub(crate) fn incomplete(&self, rt: &str, label: &str, now: i64) -> bool {
+        if self.store.get(rt).and_then(|a| a.get(label)).is_some_and(|r| !r.unreadable.is_empty() && fresh(r.unreadable_at.unwrap_or(r.at), None, now)) { return true; }
+        let Some(id) = self.id(rt, label) else { return false };
+        self.fleet(now).is_some_and(|f| f.rows.iter().filter_map(|l| Row::parse(l)).any(|r|
+            r.rt == rt && r.id.as_deref() == Some(id) && match r.usage {
+                Usage::Partial { .. } => true,
+                Usage::Unknown(reason) => reason.starts_with("quota unreadable "),
+                Usage::Window { .. } => false,
+            }))
     }
 
     /// The best of `candidates` (enabled, limit ended, not avoided) in list order: `use`, then fresh remaining at or
@@ -358,8 +389,15 @@ impl View {
         if !enabled { return vec![row(Usage::Unknown("disabled".into()))]; }
         let Some(r) = record else { return vec![row(Usage::Unknown("not polled".into()))] };
         if !fresh(r.at, None, now) { return vec![row(Usage::Unknown("poll stale".into()))]; }
-        if let Some(reason) = &r.unknown { return vec![row(Usage::Unknown(reason.clone()))]; }
-        r.windows.iter().map(|w| row(Usage::Window { window: w.clone(), at: r.at })).collect()
+        let mut lines: Vec<_> = match &r.unknown {
+            Some(reason) => vec![row(Usage::Unknown(reason.clone()))],
+            None => r.windows.iter().map(|w| row(Usage::Window { window: w.clone(), at: r.at }))
+                .chain(r.partial.iter().map(|w| row(Usage::Partial { window: w.clone(), at: r.at }))).collect(),
+        };
+        if fresh(r.unreadable_at.unwrap_or(r.at), None, now) {
+            lines.extend(r.unreadable.iter().map(|reason| row(Usage::Unknown(format!("quota unreadable {reason}")))));
+        }
+        lines
     }
 
     /// The `account-policy` heartbeat lines: `ids` lists the fingerprints of a runtime's listed homes.
@@ -398,12 +436,25 @@ pub fn poll_with(install: &Path, now: i64, mut fetch: impl FnMut(&str, &str) -> 
             crate::platform::log(&format!("account usage {rt} {label}: unknown {reason}"));
         }
         let id = poll.id.clone().or_else(|| old.and_then(|o| o.id.clone()));
-        store.entry(rt.clone()).or_default().insert(label.clone(), Record { id, at: now, windows: poll.windows.clone(), unknown: poll.unknown.clone() });
+        // Only a complete poll reaches `windows`: older binaries read that field and ignore every `unreadable` diagnostic.
+        let (windows, partial) = if poll.unreadable.is_empty() { (poll.windows.clone(), vec![]) } else { (vec![], poll.windows.clone()) };
+        let mut record = Record { id, at: now, windows, partial, unreadable: poll.unreadable.clone(),
+            unreadable_at: (!poll.unreadable.is_empty()).then_some(now), unknown: poll.unknown.clone() };
+        if poll.unknown.is_some() && poll.unreadable.is_empty() {
+            if let Some(old) = old.filter(|o| o.id == record.id && !o.unreadable.is_empty()) {
+                record.unreadable = old.unreadable.clone();
+                record.unreadable_at = Some(old.unreadable_at.unwrap_or(old.at));
+            }
+        }
+        store.entry(rt.clone()).or_default().insert(label.clone(), record);
     }
     // an account dropped from the list leaves no row; a disabled one keeps its id
     store.retain(|rt, a| { a.retain(|label, _| list(rt).iter().any(|e| e.label == *label)); !a.is_empty() });
     crate::platform::write_synced(&install.join(FILE), &serde_json::to_string(&store).map_err(|e| e.to_string())?)?;
-    let observations: Vec<_> = results.iter().map(|(rt, label, poll)| (rt.as_str(), label.as_str(), poll.windows.as_slice())).collect();
+    let observations: Vec<_> = results.iter().map(|(rt, label, poll)| {
+        let complete: &[Window] = if poll.unreadable.is_empty() { &poll.windows } else { &[] };
+        (rt.as_str(), label.as_str(), complete)
+    }).collect();
     super::headroom::record_polled(install, now, &observations)
 }
 
@@ -483,7 +534,7 @@ fn guarded(file: &Path, run: impl FnOnce() -> Poll) -> Poll {
     let poll = run();
     if sign() == before { return poll; }
     crate::platform::log("account usage: a poll changed a login file");
-    Poll { id: poll.id, windows: vec![], unknown: Some("login file changed".into()) }
+    Poll { id: poll.id, ..Poll::failed("login file changed") }
 }
 
 /// `codex app-server`: stdin must stay open until the replies arrive, or the server exits without answering.
@@ -539,8 +590,8 @@ fn rpc_poll(account: &Value, limits: &Value) -> Poll {
     let identity = a["email"].as_str().or_else(|| account["result"]["workspaceRouting"]["chatgptAccountId"].as_str()).filter(|s| !s.trim().is_empty());
     let id = identity.map(fingerprint);
     match rate_windows(limits) {
-        Ok(windows) => Poll { id, windows, unknown: None },
-        Err(reason) => Poll { id, windows: vec![], unknown: Some(reason.into()) },
+        Ok(windows) => Poll { id, windows, ..Default::default() },
+        Err(reason) => Poll { id, ..Poll::failed(reason) },
     }
 }
 
@@ -566,7 +617,7 @@ fn oauth(rt: &str, home: &Path) -> Poll {
     };
     let config = format!("url = \"https://api.anthropic.com/api/oauth/usage\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\nmax-time = {HTTP_DEADLINE}\n");
     match https_json(&config).and_then(|v| oauth_windows(&v).map_err(String::from)) {
-        Ok(windows) => Poll { windows, ..Default::default() },
+        Ok(poll) => poll,
         Err(reason) => Poll::failed(&reason),
     }
 }
@@ -610,7 +661,7 @@ fn code_assist_with(token: &str, mut read: impl FnMut(&str) -> Result<Value, Str
         _ => return Poll { id, ..Poll::failed("usage shape changed") },
     };
     match read(&code_assist_call(host, "retrieveUserQuotaSummary", token, &body)).and_then(|v| quota_windows(&v).map_err(String::from)) {
-        Ok(windows) => Poll { id, windows, unknown: None },
+        Ok(windows) => Poll { id, windows, ..Default::default() },
         Err(reason) => Poll { id, ..Poll::failed(&reason) },
     }
 }
@@ -673,36 +724,60 @@ fn agy_credentials(rt: &str) -> Result<String, String> {
 }
 
 /// Plan and model windows, including scoped `limits[]`; credits are no window.
-fn oauth_windows(v: &Value) -> Result<Vec<Window>, &'static str> {
+fn oauth_windows(v: &Value) -> Result<Poll, &'static str> {
     let shape = "usage shape changed";
-    let mut out = vec![];
-    for (name, w) in v.as_object().ok_or(shape)? {
+    let mut poll = Poll::default();
+    for (index, (name, w)) in v.as_object().ok_or(shape)?.iter().enumerate() {
         if !(name.starts_with("five_hour") || name.starts_with("seven_day")) || name == "seven_day_breakdown" || w.is_null() { continue; }
-        if !valid_window(name) { return Err(shape); }
-        let used = w["utilization"].as_f64().filter(|n| n.is_finite()).ok_or(shape)?;
-        out.push(Window { name: name.clone(), used: percent(used), reset: w["resets_at"].as_str().and_then(utc) });
-    }
-    if let Some(limits) = v.get("limits").filter(|l| !l.is_null()) {
-        for l in limits.as_array().ok_or(shape)? {
-            let mut name = match l["group"].as_str() {
-                Some("session") => "five_hour".to_string(),
-                Some("weekly") => "seven_day".to_string(),
-                _ => return Err(shape),
-            };
-            let scope = l.get("scope").filter(|s| !s.is_null()).map(|s| s.as_object().ok_or(shape)).transpose()?;
-            if scope.is_some_and(|s| s.keys().any(|k| k != "model")) { return Err(shape); }
-            if let Some(model) = scope.and_then(|s| s.get("model")).filter(|m| !m.is_null()) {
-                let model = model["display_name"].as_str().or_else(|| model["id"].as_str()).filter(|m| !m.is_empty()).ok_or(shape)?;
-                name.push('_');
-                name.push_str(&model.to_ascii_lowercase().replace(' ', "_"));
-            }
-            if !valid_window(&name) { return Err(shape); }
-            let used = l["percent"].as_f64().filter(|n| n.is_finite()).ok_or(shape)?;
-            let w = Window { name, used: percent(used), reset: l["resets_at"].as_str().and_then(utc) };
-            if let Some(old) = out.iter_mut().find(|old| old.name == w.name) { *old = w; } else { out.push(w); }
+        if !valid_window(name) {
+            poll.unreadable.push(format!("legacy[{index}]: unsafe window name"));
+            continue;
+        }
+        match oauth_window(name.clone(), &w["utilization"], &w["resets_at"]) {
+            Ok(w) => poll.windows.push(w),
+            Err(reason) => poll.unreadable.push(format!("{name}: {reason}")),
         }
     }
-    if out.is_empty() { Err(shape) } else { Ok(out) }
+    if let Some(limits) = v.get("limits").filter(|l| !l.is_null()) {
+        if let Some(limits) = limits.as_array() {
+            for (index, l) in limits.iter().enumerate() {
+                let mut source = format!("limits[{index}]");
+                let parsed = (|| {
+                    let mut name = match l["group"].as_str() {
+                        Some("session") => "five_hour".to_string(),
+                        Some("weekly") => "seven_day".to_string(),
+                        _ => return Err("unsupported group"),
+                    };
+                    let scope = l.get("scope").filter(|s| !s.is_null()).map(|s| s.as_object().ok_or("unreadable scope")).transpose()?;
+                    if let Some(model) = scope.and_then(|s| s.get("model")).filter(|m| !m.is_null()) {
+                        let model = model["display_name"].as_str().or_else(|| model["id"].as_str()).filter(|m| !m.is_empty()).ok_or("unreadable model")?;
+                        name.push('_');
+                        name.push_str(&model.to_ascii_lowercase().replace(' ', "_"));
+                    }
+                    if !valid_window(&name) { return Err("unsafe window name"); }
+                    source.push(' ');
+                    source.push_str(&name);
+                    if scope.is_some_and(|s| s.iter().any(|(key, value)| key != "model" && !value.is_null())) { return Err("unsupported scope"); }
+                    // An authoritative structured reading must not leave a healthier legacy value behind.
+                    poll.windows.retain(|w| w.name != name);
+                    poll.unreadable.retain(|reason| !reason.starts_with(&format!("{name}: ")));
+                    oauth_window(name, &l["percent"], &l["resets_at"])
+                })();
+                match parsed {
+                    Ok(w) => poll.windows.push(w),
+                    Err(reason) => poll.unreadable.push(format!("{source}: {reason}")),
+                }
+            }
+        } else {
+            poll.unreadable.push("limits: unreadable list".into());
+        }
+    }
+    if poll.windows.is_empty() && poll.unreadable.is_empty() { Err(shape) } else { Ok(poll) }
+}
+
+fn oauth_window(name: String, used: &Value, reset: &Value) -> Result<Window, &'static str> {
+    let used = used.as_f64().filter(|n| n.is_finite() && *n >= 0.0).ok_or("unreadable utilization")?;
+    Ok(Window { name, used: percent(used), reset: reset.as_str().and_then(utc) })
 }
 
 /// `2026-11-04T10:00:00.123+00:00` or `...Z` as board seconds; `None` for anything else.
@@ -797,7 +872,7 @@ mod tests {
         poll_with(install, now, |rt, label| {
             if rt != "codex" { return Poll::failed("no login"); }
             match used.iter().find(|(l, _)| *l == label) {
-                Some((l, u)) => Poll { id: Some(fingerprint(&format!("{l}@example.com"))), windows: vec![Window { name: "10080m".into(), used: *u, reset: Some(now + 3600) }], unknown: None },
+                Some((l, u)) => Poll { id: Some(fingerprint(&format!("{l}@example.com"))), windows: vec![Window { name: "10080m".into(), used: *u, reset: Some(now + 3600) }], ..Default::default() },
                 None => Poll { id: Some(fingerprint(&format!("{label}@example.com"))), ..Poll::failed("token expired") },
             }
         }).unwrap();
@@ -877,7 +952,7 @@ mod tests {
         });
         assert_eq!(p.unknown, None);
         poll_with(&d, NOW, |rt, _| match rt {
-            "claude" => Poll { windows: oauth_windows(&claude).unwrap(), ..Default::default() },
+            "claude" => oauth_windows(&claude).unwrap(),
             "antigravity" => p.clone(),
             _ => Poll::failed("no login"),
         }).unwrap();
@@ -896,21 +971,237 @@ mod tests {
         std::fs::remove_dir_all(d).unwrap();
     }
 
+    // Chain: R12: the native null surface must not hide readable weekly/Fable quotas.
+    #[test]
+    fn claude_native_null_surface_preserves_windows() {
+        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
+        let parsed = oauth_windows(&native["response"]).expect("null scope.surface is absent, not an unsupported quota");
+        assert!(parsed.unreadable.is_empty());
+        assert_eq!(parsed.windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(),
+            [("seven_day", 43), ("seven_day_fable", 4)]);
+        assert!(parsed.windows.iter().all(|w| w.reset.is_some()), "native resets survive");
+        let d = dir("claude-native");
+        poll_with(&d, now, |rt, _| if rt == "claude" { parsed.clone() } else { Poll::failed("no login") }).unwrap();
+        let lines = View::read(&d).lines("claude", "default", true, now);
+        assert_eq!(lines.len(), 2);
+        for (line, window) in lines.iter().zip(&parsed.windows) {
+            assert_eq!(Row::parse(line).unwrap().usage, Usage::Window { window: window.clone(), at: now });
+            println!("{line}");
+        }
+        assert_eq!(View::read(&d).remaining("claude", "default", now), Some(57));
+        assert!((super::super::headroom::remaining(&d, "claude", now).unwrap().unwrap() - 0.57).abs() < 1e-12);
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    // Chain: R12: mixed quota validity preserves readable rows without turning incomplete headroom healthy.
+    #[test]
+    fn claude_partial_windows_keep_unknown_through_publication_and_headroom() {
+        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
+        let d = dir("claude-partial");
+        let mut response = native["response"].clone();
+        response["seven_day_fable"] = serde_json::json!({"utilization": 1});
+        response["limits"][1].as_object_mut().unwrap().remove("percent");
+        let mut parsed = oauth_windows(&response).unwrap();
+        parsed.id = Some(id("default"));
+        assert_eq!(parsed.windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(), [("seven_day", 43)], "an unreadable structured quota invalidates the same legacy window");
+        assert_eq!(parsed.unreadable, ["limits[1] seven_day_fable: unreadable utilization"]);
+        let save = |p: &Poll| poll_with(&d, now, |rt, _| if rt == "claude" { p.clone() } else { Poll::failed("no login") }).unwrap();
+        save(&parsed);
+        let view = View::read(&d);
+        let lines = view.lines("claude", "default", true, now);
+        assert_eq!(lines.len(), 2, "both readable and unknown rows survive persistence");
+        assert!(lines[0].contains("window seven_day used 43"));
+        assert!(lines[1].ends_with("unknown quota unreadable limits[1] seven_day_fable: unreadable utilization"));
+        for line in &lines { assert_eq!(Row::parse(line).unwrap().line(), *line); }
+        assert_eq!(view.remaining("claude", "default", now), None);
+        assert_eq!(super::super::headroom::remaining(&d, "claude", now).unwrap(), None);
+        assert!(super::super::headroom::cause(&d, "claude", now).contains("unreadable quota windows"));
+
+        // No readable window left still masks a previous saved observation; no zero is synthesized.
+        let empty = oauth_windows(&serde_json::json!({"seven_day": {}})).unwrap();
+        save(&empty);
+        assert_eq!(View::read(&d).lines("claude", "default", true, now).len(), 1);
+        assert_eq!(super::super::headroom::remaining(&d, "claude", now).unwrap(), None);
+
+        let mut complete = oauth_windows(&native["response"]).unwrap();
+        complete.id = parsed.id.clone();
+        save(&complete);
+        assert_eq!(View::read(&d).remaining("claude", "default", now), Some(57), "a complete poll recovers headroom");
+        fleet(&d, now, Policy::new(), vec![lines[1].clone()], None);
+        assert_eq!(View::read(&d).remaining("claude", "default", now), None, "a matching fleet account's unknown also survives");
+        assert_eq!(super::super::headroom::remaining(&d, "claude", now).unwrap(), None);
+        fleet(&d, now, Policy::new(), vec![lines[1].replace(&id("default"), &id("other"))], None);
+        assert_eq!(View::read(&d).remaining("claude", "default", now), Some(57), "unknown never crosses account identity");
+        fleet(&d, now - FLEET_TTL - 1, Policy::new(), vec![lines[1].clone()], None);
+        assert_eq!(View::read(&d).remaining("claude", "default", now), Some(57), "stale fleet evidence expires");
+
+        for reason in ["network failed", "call refused 401", "token expired", "usage shape changed"] {
+            save(&Poll::failed(reason));
+            assert_eq!(View::read(&d).lines("claude", "default", true, now), [Row { rt: "claude".into(), label: "default".into(), id: parsed.id.clone(), usage: Usage::Unknown(reason.into()) }.line()]);
+        }
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    /// The account reader of v4.6.79 and earlier: its `Row::parse` grammar and `View::remaining` fleet aggregation, kept
+    /// here because a released binary cannot change. It ignores `unknown` rows.
+    fn n1_remaining(rows: &[String], want: &str, now: i64) -> Option<u8> {
+        let mut windows: BTreeMap<String, (i64, u8)> = BTreeMap::new();
+        for line in rows {
+            let Some(w) = line.strip_prefix("limit ") else { continue };
+            let w: Vec<&str> = w.split(' ').collect();
+            let [rt, _, "id", row_id, "window", name, "used", used, "reset", reset, "at", at] = w.as_slice() else { continue };
+            let (Some(at), Ok(used)) = (crate::board::iso(at), used.parse::<u8>()) else { continue };
+            let reset = if *reset == "-" { None } else { crate::board::iso(reset) };
+            if *rt == "claude" && *row_id == want && fresh(at, reset, now) && windows.get(*name).is_none_or(|(old, _)| *old < at) {
+                windows.insert(name.to_string(), (at, 100 - used));
+            }
+        }
+        windows.values().map(|(_, left)| *left).min()
+    }
+
+    /// The rows a v4.6.79 binary rolled back onto this install publishes from `account-usage.json`: it never read fields
+    /// added later, so it only knows `windows` and `unknown`.
+    fn n1_rollback_rows(install: &Path, id: &str, at: i64) -> Vec<String> {
+        #[derive(Deserialize)]
+        struct N1Record { windows: Vec<Window>, unknown: Option<String> }
+        let store: BTreeMap<String, BTreeMap<String, N1Record>> = serde_json::from_str(&std::fs::read_to_string(install.join(FILE)).unwrap()).unwrap();
+        let r = &store["claude"]["default"];
+        match &r.unknown {
+            Some(reason) => vec![format!("limit claude default id {id} unknown {reason}")],
+            None => r.windows.iter().map(|w| Row { rt: "claude".into(), label: "default".into(), id: Some(id.into()), usage: Usage::Window { window: w.clone(), at } }.line()).collect(),
+        }
+    }
+
+    // Chain: R12, capacity.md Heartbeat: a released reader ignores `unknown` rows, so weekly 43 beside an unreadable Fable
+    // would read as headroom 57 on a mixed fleet or after a rollback; only a complete poll may reach it.
+    #[test]
+    fn claude_partial_poll_is_invisible_to_released_readers() {
+        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
+        let d = dir("claude-n1");
+        let account = id("default");
+        let mut response = native["response"].clone();
+        response["limits"][1].as_object_mut().unwrap().remove("percent");
+        let mut partial = oauth_windows(&response).unwrap();
+        partial.id = Some(account.clone());
+        assert!(!partial.unreadable.is_empty() && !partial.windows.is_empty(), "the fixture is a partial poll");
+        let save = |p: &Poll| poll_with(&d, now, |rt, _| if rt == "claude" { p.clone() } else { Poll::failed("no login") }).unwrap();
+        save(&partial);
+        let lines = View::read(&d).lines("claude", "default", true, now);
+        assert_eq!(n1_remaining(&lines, &account, now), None, "mixed fleet: an old reader cannot derive headroom from a partial poll");
+        assert!(lines.iter().all(|l| l.contains(" unknown ") || !l.starts_with("limit ")), "an old status shows no garbled hold row: {lines:?}");
+        assert_eq!(n1_remaining(&n1_rollback_rows(&d, &account, now), &account, now), None, "rollback: the old binary republishes nothing from the partial store");
+        assert!(View::read(&d).observed.get("claude").is_none(), "rollback: no partial observation is left for the old binary's headroom");
+        let row = Row::parse(&lines[0]).unwrap();
+        assert_eq!((row.id.as_deref(), &row.usage), (Some(account.as_str()), &Usage::Partial { window: partial.windows[0].clone(), at: now }), "this reader keeps the window, its identity and its time");
+        assert_eq!(row.text(), format!("seven_day used 43% reset {}", crate::board::stamp(partial.windows[0].reset.unwrap())));
+        assert_eq!(row.line(), lines[0]);
+        assert_eq!(View::read(&d).lines("claude", "default", true, now + TTL + 1).len(), 1, "a partial row expires with its poll");
+
+        let mut complete = oauth_windows(&native["response"]).unwrap();
+        complete.id = Some(account.clone());
+        save(&complete);
+        let lines = View::read(&d).lines("claude", "default", true, now);
+        assert_eq!(n1_remaining(&lines, &account, now), Some(57), "a complete poll keeps the released row grammar");
+        assert_eq!(n1_remaining(&lines, &id("other"), now), None, "identity still separates accounts");
+        assert_eq!(n1_remaining(&lines, &account, now + TTL + 1), None, "an old reader's expiry still applies");
+        assert_eq!(View::read(&d).remaining("claude", "default", now), Some(57));
+        let shared = Row { rt: "claude".into(), label: "x".into(), id: Some(account.clone()), usage: Usage::Partial { window: complete.windows[0].clone(), at: now } }.line();
+        fleet(&d, now, Policy::new(), vec![shared.clone()], None);
+        assert_eq!(View::read(&d).remaining("claude", "default", now), None, "a partial row alone marks the shared account incomplete");
+        fleet(&d, now, Policy::new(), vec![shared.replace(&account, &id("other"))], None);
+        assert_eq!(View::read(&d).remaining("claude", "default", now), Some(57), "another account's partial row changes nothing here");
+        for not_usage in [format!("limit-partial claude default id {account} unknown quota unreadable x"), "limit-partial claude until 2026-01-01T00:00:00Z".to_string()] {
+            assert_eq!(Row::parse(&not_usage), None, "{not_usage}");
+        }
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    // Chain: R12: transport failures cannot turn a previous partial poll into healthy aggregate headroom.
+    #[test]
+    fn claude_failed_polls_preserve_incomplete_origin_until_expiry() {
+        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
+        let d = dir("claude-failed-partial");
+        let mut response = native["response"].clone();
+        response["limits"][1].as_object_mut().unwrap().remove("percent");
+        let partial = oauth_windows(&response).unwrap();
+        poll_with(&d, now, |rt, _| if rt == "claude" { partial.clone() } else { Poll::failed("no login") }).unwrap();
+        for (index, reason) in ["network failed", "call refused 401", "token expired", "usage shape changed"].iter().enumerate() {
+            let at = now + 120 + index as i64;
+            poll_with(&d, at, |rt, _| Poll::failed(if rt == "claude" { reason } else { "no login" })).unwrap();
+            assert_eq!(View::read(&d).remaining("claude", "default", at), None, "{reason} cannot restore partial headroom");
+            assert_eq!(super::super::headroom::remaining(&d, "claude", at).unwrap(), None);
+            let lines = View::read(&d).lines("claude", "default", true, at);
+            assert_eq!(lines.len(), 2, "whole-response failure keeps the still-fresh window unknown for fleet readers");
+            assert!(lines.iter().any(|l| l.ends_with(reason)));
+            assert!(lines.iter().any(|l| l.contains("unknown quota unreadable limits[1] seven_day_fable")));
+        }
+        let log = d.join("turn.jsonl");
+        std::fs::write(&log, "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"rateLimitType\":\"five_hour\",\"utilization\":0.25}}\n").unwrap();
+        let at = now + TTL + 1;
+        super::super::headroom::observe(&d, "claude", &log, at).unwrap();
+        assert_eq!(View::read(&d).remaining("claude", "default", at), Some(75), "failures do not renew the original incomplete observation's expiry");
+        assert_eq!(super::super::headroom::remaining(&d, "claude", at).unwrap(), Some(0.75));
+        assert_eq!(View::read(&d).lines("claude", "default", true, at).len(), 1, "expired per-window unknowns stop travelling to the fleet");
+        let complete = oauth_windows(&native["response"]).unwrap();
+        poll_with(&d, at + 1, |rt, _| if rt == "claude" { complete.clone() } else { Poll::failed("no login") }).unwrap();
+        assert_eq!(View::read(&d).remaining("claude", "default", at + 1), Some(57), "a complete poll recovers all quotas");
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    // Chain: R12: unsupported scope/identity and malformed quota fields never invent utilization or public names.
+    #[test]
+    fn claude_unreadable_scopes_and_fields_preserve_siblings() {
+        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        for (field, value) in [
+            ("percent", serde_json::json!("private@example.invalid")),
+            ("percent", serde_json::json!(-1)),
+            ("scope", serde_json::json!({"model": {"display_name": "private@example.invalid"}})),
+            ("scope", serde_json::json!({"model": {"display_name": "Fable"}, "surface": "private@example.invalid"})),
+            ("scope", serde_json::json!("private@example.invalid")),
+            ("group", serde_json::json!("private@example.invalid")),
+        ] {
+            let mut response = native["response"].clone();
+            response["limits"][1][field] = value;
+            let parsed = oauth_windows(&response).unwrap();
+            assert_eq!(parsed.windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(), [("seven_day", 43)]);
+            assert_eq!(parsed.unreadable.len(), 1);
+            assert!(parsed.unreadable[0].starts_with("limits[1]"));
+            assert!(!parsed.unreadable[0].contains('@'), "provider text never reaches public diagnostics");
+            assert_eq!(parsed.unknown, None, "a sibling failure is not a whole-response failure");
+        }
+        let parsed = oauth_windows(&serde_json::json!({"seven_day": {"utilization": 43}, "limits": "changed"})).unwrap();
+        assert_eq!(parsed.windows.len(), 1);
+        assert_eq!(parsed.unreadable, ["limits: unreadable list"]);
+        let mut response = native["response"].clone();
+        response["seven_day"] = serde_json::json!({});
+        let parsed = oauth_windows(&response).unwrap();
+        assert_eq!(parsed.windows.len(), 2, "a readable structured quota also replaces an unreadable legacy value");
+        assert!(parsed.unreadable.is_empty());
+        for response in [Value::Null, serde_json::json!([]), serde_json::json!({}), serde_json::json!({"error": "private@example.invalid"})] {
+            assert_eq!(oauth_windows(&response), Err("usage shape changed"), "no quota evidence stays whole-response unknown");
+        }
+    }
+
     // Chain: R12: new structured limits retain legacy names and cannot turn an unreadable model cap into headroom.
     #[test]
     fn model_windows_claude_scoped_limits() {
         let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2359/macos-oauth-usage.json")).unwrap();
-        let windows = oauth_windows(&native["response"]).expect("native OAuth metadata must not hide Fable");
+        let windows = oauth_windows(&native["response"]).expect("native OAuth metadata must not hide Fable").windows;
         assert_eq!(windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(),
             [("seven_day", 38), ("seven_day_fable", 4)]);
         assert!(windows.iter().all(|w| w.reset.is_some()), "native resets survive");
-        assert_eq!(oauth_windows(&serde_json::json!({"seven_day": {"utilization": 38}, "seven_day_fable": {}})),
-            Err("usage shape changed"), "an unreadable quota window is still unknown");
+        let partial = oauth_windows(&serde_json::json!({"seven_day": {"utilization": 38}, "seven_day_fable": {}})).unwrap();
+        assert_eq!(partial.windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(), [("seven_day", 38)]);
+        assert_eq!(partial.unreadable, ["seven_day_fable: unreadable utilization"], "an unreadable quota window is still unknown");
         let v = serde_json::json!({"seven_day": {"utilization": 34}, "seven_day_fable": {"utilization": 1},
             "limits": [{"group": "weekly", "percent": 2, "scope": {"model": {"display_name": "Fable"}}},
                 {"group": "session", "percent": 10, "scope": {"model": {"id": "new-model"}}},
                 {"group": "session", "percent": 4}]});
-        assert_eq!(oauth_windows(&v).unwrap().iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(),
+        assert_eq!(oauth_windows(&v).unwrap().windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(),
             [("seven_day", 34), ("seven_day_fable", 2), ("five_hour_new-model", 10), ("five_hour", 4)]);
         for limit in [
             serde_json::json!({"group": "monthly", "percent": 2}),
@@ -919,7 +1210,9 @@ mod tests {
             serde_json::json!({"group": "weekly", "percent": 2, "scope": {"unsupported": true}}),
             serde_json::json!({"group": "weekly", "percent": 2, "scope": {"model": {"display_name": "private@example.invalid"}}}),
         ] {
-            assert_eq!(oauth_windows(&serde_json::json!({"seven_day": {"utilization": 34}, "limits": [limit]})), Err("usage shape changed"));
+            let partial = oauth_windows(&serde_json::json!({"seven_day": {"utilization": 34}, "limits": [limit]})).unwrap();
+            assert_eq!(partial.unreadable.len(), 1, "unsupported scope or utilization stays unknown");
+            assert!(partial.windows.iter().all(|w| w.name == "seven_day"), "no invented model scope");
         }
     }
 
@@ -973,7 +1266,7 @@ mod tests {
         let poll = |id: Option<String>, used: u8| poll_with(&d, NOW, |r, label| {
             if r != rt { return Poll::failed("no login"); }
             assert_eq!(label, accounts::DEFAULT);
-            Poll { id: id.clone(), windows: vec![Window { name: "gemini-5h".into(), used, reset: None }], unknown: None }
+            Poll { id: id.clone(), windows: vec![Window { name: "gemini-5h".into(), used, reset: None }], ..Default::default() }
         }).unwrap();
         poll(Some(fingerprint("project-1")), 30);
         let lines = Host::read(&d).usage_lines(NOW);
@@ -1017,7 +1310,7 @@ mod tests {
 
         let v = serde_json::json!({"five_hour": {"utilization": 12.4, "resets_at": "2026-11-04T10:00:00.123456+00:00"}, "seven_day": {"utilization": 100.0, "resets_at": null},
             "seven_day_opus": null, "extra_usage": {"utilization": 90.0}});
-        assert_eq!(oauth_windows(&v).unwrap(), [
+        assert_eq!(oauth_windows(&v).unwrap().windows, [
             Window { name: "five_hour".into(), used: 12, reset: crate::board::iso("2026-11-04T10:00:00Z") },
             Window { name: "seven_day".into(), used: 100, reset: None },
         ], "credits and empty windows are no window");
@@ -1063,7 +1356,7 @@ for line in sys.stdin:
         let d = dir("guard");
         let file = d.join("auth.json");
         std::fs::write(&file, "one").unwrap();
-        let ok = Poll { id: Some("00000000".into()), windows: vec![Window { name: "300m".into(), used: 1, reset: None }], unknown: None };
+        let ok = Poll { id: Some("00000000".into()), windows: vec![Window { name: "300m".into(), used: 1, reset: None }], ..Default::default() };
         assert_eq!(guarded(&file, || ok.clone()), ok, "an unchanged login file passes");
         let refreshed = guarded(&file, || { std::fs::write(&file, "two").unwrap(); ok.clone() });
         assert_eq!((refreshed.windows.len(), refreshed.unknown.as_deref()), (0, Some("login file changed")));
@@ -1360,7 +1653,8 @@ for line in sys.stdin:
                 let row = |usage| Row { rt: rt.to_string(), label: label.clone(), id: id.clone(), usage }.line();
                 let rows: Vec<String> = match &p.unknown {
                     Some(reason) => vec![row(Usage::Unknown(reason.clone()))],
-                    None => p.windows.iter().map(|w| row(Usage::Window { window: w.clone(), at })).collect(),
+                    None => p.windows.iter().map(|w| row(if p.unreadable.is_empty() { Usage::Window { window: w.clone(), at } } else { Usage::Partial { window: w.clone(), at } }))
+                        .chain(p.unreadable.iter().map(|reason| row(Usage::Unknown(format!("quota unreadable {reason}"))))).collect(),
                 };
                 for r in rows {
                     assert!(!r.contains('@'), "a row carries an email");

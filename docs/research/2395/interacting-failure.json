@@ -1,0 +1,15 @@
+{
+  "synthetic": true,
+  "case": "interacting-failure",
+  "result_receipt": "7cb9d34a69a778f37ee99694cad7ff28799b373de8382808087e2ac40c46b077",
+  "original_outcome": "failed",
+  "minimal_failures": [
+    [
+      1,
+      2
+    ]
+  ],
+  "unresolved_failures": [],
+  "interaction": true,
+  "unknown": []
+}

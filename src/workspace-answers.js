@@ -1,4 +1,5 @@
 'use strict';
+const readingAnchor=require('./reading-anchor.js');
 const ui=require('./ui-runtime.js'),{execution}=ui,{h}=require('preact');
 const replyFiles=require('./reply-files.js'),time=require('./relative-time.js'),copyLabel=require('./copy-label.js');
 const {create}=execution.module('workspace.answers',{
@@ -81,15 +82,15 @@ answerHistory:function(t,root){
   const block=require('./conversations.js').block;
   return (t.history||[]).map(({question:q,answered:a},i)=>{
    const source=a?.source||{},key=source.question??a?.revision??((t.history_start||0)+i),answerKey=source.id??key;
-   if(source.kind&&!q)return block({role:source.role||'event',label:'Task '+source.kind,text:a.text,updated:time.seconds(a.at),attempt:source.attempt,session:source.session},h('div',{class:'conversation-text'},require('./reports.js').body(a.text)),{'data-event':String(source.id),'data-reading-key':'event:'+t.n+':'+source.id});
+   if(source.kind&&!q)return block({role:source.role||'event',label:'Task '+source.kind,text:a.text,updated:time.seconds(a.at),attempt:source.attempt,session:source.session},h('div',{class:'conversation-text'},require('./reports.js').body(a.text,readingAnchor.key('event',t.n,source.id))),{'data-event':String(source.id),'data-reading-key':readingAnchor.key('event',t.n,source.id)});
    const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:key,question:{choices:[],evidence:[],...q}};
    const files=(a?.files||[]).length>0&&h('ul',{class:'conversation-files'},a.files.map(f=>h('li',{key:f.url},h('a',{href:f.url,target:'_blank',rel:'noreferrer'},f.name||f.url))));
    const receipt=a?.read===true?h('span',{class:'note-read','aria-label':'Read by worker'},' · Read'):null,paged=!!historyText&&(q?.text||'').length>32768;
-   return [q&&block({role:'question',label:source.role==='reviewer'?'Reviewer question':'Worker question',text:q.text,updated:source.asked_at!=null?time.seconds(source.asked_at):q.updated,session:source.session,attempt:source.attempt},[paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question',project:view.S?.projects.find(p=>p.root===root)?.name})}})],{key:'asked:'+key,class:'thread-card asked','data-question':key,'data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+key+' of '+copyLabel.task(view.S?.projects.find(p=>p.root===root)?.name||'Board',t.n)}),
-    source.kind==='ask'?null:block({role:'answer',label:q?'Answered by '+(a?.by||'Author unknown'):a?.by||'Author unknown',text:a?.text,updated:a?.at!=null?time.seconds(a.at):a?.updated},[h('div',{class:'conversation-text'},a?.text||(files?'':'Answer text unavailable')),files,receipt],{key:'answered:'+answerKey,'data-event':String(answerKey),'data-reading-key':'answer:'+t.n+':'+answerKey,class:'body answered'})];
+   return [q&&block({role:'question',label:source.role==='reviewer'?'Reviewer question':'Worker question',text:q.text,updated:source.asked_at!=null?time.seconds(source.asked_at):q.updated,session:source.session,attempt:source.attempt},[paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question',project:view.S?.projects.find(p=>p.root===root)?.name})}})],{key:'asked:'+key,class:'thread-card asked','data-question':key,'data-reading-key':readingAnchor.key('question',t.n,key),'aria-label':'Question '+key+' of '+copyLabel.task(view.S?.projects.find(p=>p.root===root)?.name||'Board',t.n)}),
+    source.kind==='ask'?null:block({role:'answer',label:q?'Answered by '+(a?.by||'Author unknown'):a?.by||'Author unknown',text:a?.text,updated:a?.at!=null?time.seconds(a.at):a?.updated},[h('div',{class:'conversation-text'},a?.text?require('./reports.js').body(a.text,readingAnchor.key('answer',t.n,answerKey)):(files?'':'Answer text unavailable')),files,receipt],{key:'answered:'+answerKey,'data-event':String(answerKey),'data-reading-key':readingAnchor.key('answer',t.n,answerKey),class:'body answered'})];
   });
 },
-readingAnchors:function(el,t){if(el)for(const [i,node]of [...el.querySelectorAll('.qac-done,.qac-problem,.qac-detail,.qac-context>summary,.qac-images,.qac-evidence,.qac-text,[data-choice]')].entries())node.dataset.readingKey='report:question-'+t.n+'-'+t.revision+'-'+i;},
+readingAnchors:function(el,t){if(el)for(const [i,node]of [...el.querySelectorAll('.qac-done,.qac-problem,.qac-detail,.qac-context>summary,.qac-images,.qac-evidence,.qac-text,[data-choice]')].entries())node.dataset.readingKey=readingAnchor.key('report','question',t.n,t.revision,i);},
 // ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
 answerSteerComposer:function(board,t){
   const key=board+'#'+t.n,local=saved[key],text=steers[key]??local?.draft??'',files=local?.files||[];

@@ -1,1 +1,3 @@
 taskq.md text eol=lf
+docs/research/2395/** -text
+docs/research/2395/receipts/* -diff

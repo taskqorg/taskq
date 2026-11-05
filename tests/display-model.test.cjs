@@ -18,10 +18,15 @@ const section=name=>(fx.cli.split('\n\n').find(b=>b.split('\n').some(l=>l===name
 const cliReady=[...section('Ready').matchAll(/^\| \[#(\d+) /gm)].map(m=>Number(m[1]));
 assert.deepEqual(cliReady,shown.filter(k=>fx.projects[0].tasks.find(t=>t.n===k).state==='ready'));
 for(const t of fx.projects[0].tasks.filter(t=>['held','later'].includes(t.state)))assert(section('Held and stuck').includes('| [#'+t.n+' '),t.state);
-// age: the CLI stuck age and the page row age are one text
+// The noncompact row retains CLI state age. Approved compact timing uses its source boundaries;
+// this incomplete fixture must show unknowns rather than substitute the old stuck age.
 const ask=fx.projects[0].tasks.find(t=>t.state==='ask');
 assert(fx.cli.includes('stuck '+ask.age+' |'));
-assert(page.includes('<span class="tqp-age" title="Current stage elapsed">'+ask.age+'</span>'));
+assert(require('../src/project-blocks.js').task({name:'a',board:{kind:'github',url:fx.projects[0].issues}},ask).includes('<small class="tqp-age" title="Since the last state change">'+ask.age+'</small>'));
+const timing=page.replace(/<!--[\s\S]*?-->/g,'');
+for(const field of ['total','changes','current'])assert.equal([...timing.matchAll(new RegExp('class="timing-'+field+'">\\s*Unknown</span>','g'))].length,fx.projects[0].tasks.length,field);
+assert.equal([...page.matchAll(/class="task-timing"/g)].length,fx.projects[0].tasks.length);
+assert(page.includes('aria-description="Total elapsed since first worker ownership: Unknown'));
 // mode: the paused project reads paused on the page as the CLI Paused line does
 assert.equal(fx.projects[0].mode,'paused');assert(page.includes('Paused: running tasks finish'));
 

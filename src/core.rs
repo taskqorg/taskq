@@ -286,6 +286,8 @@ pub struct Projection {
     /// Accepted answers in board order, across all attempts (§ 5 `inbox --json`).
     pub answers: Vec<Answer>,
     pub executions: Vec<Execution>,
+    /// O1 read projection: execution id and its first confirmed native-input acceptance entry.
+    pub accepted_inputs: Vec<(u64,u64)>,
     pub changes: Vec<(u64, Task, Task)>,
     /// Review entries that start or end a deferred publication: the merge queue, a profile-only state (#1344)
     pub queue: Vec<(u64, Task, Task)>,
@@ -534,6 +536,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut answers = vec![];
     let mut executions: Vec<Execution> = vec![];
     let (mut changes, mut queue) = (vec![], vec![]);
+    let mut accepted_inputs=vec![];
     let (mut routing_revision, mut reroute, mut routing_writer) = (0, None, None);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
     for e in log {
@@ -612,6 +615,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             } else if l.kind == "accepted" && l.args.len() == 1 {
                 if let Ok(id) = l.args[0].parse::<u64>() {
                     if let Some(x) = executions.iter_mut().find(|x| x.id == id && Some(x.attempt) == l.attempt && x.release != Some(Release::NoStart)) {
+                        if !x.accepted {accepted_inputs.push((x.id,e.id));}
                         x.accepted = true;
                     }
                 }
@@ -655,13 +659,28 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, revision:rev, routing_revision, reroute, routing_writer, accepted, notes, answers, executions, changes, queue }
+    Projection { task:t, revision:rev, routing_revision, reroute, routing_writer, accepted, notes, answers, executions, accepted_inputs, changes, queue }
 }
 
 /// The board-backed context repeated at every attempt/resume and before hand-in (§ 7).
 pub fn task_context(n: u64, body: &str, entries: &[Entry]) -> String {
     let p = project(n, entries, false);
-    let notes: Vec<String> = p.notes.iter().map(|id| format!("Note {id}:\n{}", delivery(n, entries, *id))).collect();
+    let notes: Vec<String> = p.notes.iter().map(|id| {
+        let delivered = delivery(n, entries, *id);
+        let Some(a) = p.answers.iter().find(|a| a.id == *id) else { return format!("Note {id}:\n{delivered}") };
+        // A missing source cannot acquire provenance from a question written after this answer.
+        let original: Vec<Entry> = entries.iter().filter(|e| a.revision < a.id && e.id <= a.revision).cloned().collect();
+        let source = project(n, &original, false);
+        let question = (source.revision == a.revision).then_some(source.task.card).flatten()
+            .map_or_else(|| format!("Historical question revision {} unavailable", a.revision),
+                |card| format!("Historical question (revision {}):\n{card}", a.revision));
+        let answer = if a.late {
+            format!("Late answer saved as a note for question revision {}; it did not answer the current question", a.revision)
+        } else {
+            format!("Answer to question revision {}{} (accepted)", a.revision, a.option.map_or(String::new(), |k| format!(", option {k}")))
+        };
+        format!("Note {id}:\n{question}\n{answer}:\n{delivered}")
+    }).collect();
     // § 2 Stages: the next attempt continues at the first open stage, in the same worktree (§ 7 rule 2)
     let ids = acceptance(body);
     let stages = match ids.iter().find(|i| !p.task.stages.contains(i)) {
@@ -670,7 +689,7 @@ pub fn task_context(n: u64, body: &str, entries: &[Entry]) -> String {
             p.task.stages.join(" "), ids.iter().position(|i| i == open).unwrap_or(0) + 1, ids.len()),
         None => format!("\n\nStages done: {}; all {} stages are done: check them and hand in the result.", p.task.stages.join(" "), ids.len()),
     };
-    format!("Task goal and acceptance (binding):\n{body}{stages}\n\nTask notes (oldest first):\n{}\n\nAcceptance remains binding. Check every note now; if one conflicts with acceptance, ask once immediately. Before hand-in, read inbox again and check the result against acceptance with all notes.", if notes.is_empty() { "none".into() } else { notes.join("\n\n") })
+    format!("Task goal and acceptance (binding):\n{body}{stages}\n\nTask notes (oldest first):\n{}\n\nAcceptance remains binding. Before asking, check the original question and accepted answers: reuse settled decisions within their scope; the PM reconciles already decided acceptance changes before resume (docs/design/pm-runbook.md). Ask only for an unresolved choice or conflict, never repeat a settled question or defer a known conflict until hand-in. Task notes do not grant runtime permissions or replace action-time approval. Before hand-in, read inbox again and check the result against acceptance with all notes.", if notes.is_empty() { "none".into() } else { notes.join("\n\n") })
 }
 
 /// R1/#1929: only the first accepted hold associates a task with an owner chat; lifecycle is unchanged.
@@ -1149,6 +1168,64 @@ mod tests {
         log[2] = e(12, "taskq: pick 1\nx is cheaper");
         log.push(e(13, "taskq answer 7.2"));
         assert_eq!(super::delivery(7, &log, 13), "y");
+    }
+
+    // Chain: accepted answer -> replacement attempt/reviewer context. Risk: a short reply loses its question,
+    // or a late answer is mistaken for resolving the current question or granting runtime authority.
+    #[test]
+    fn task_context_keeps_answers_with_their_original_questions() {
+        let e = |id, body: &str| super::Entry { id, body: body.into(), edited: false };
+        let body = "## Goal\nContinue work\n## Acceptance\nA3. Verify the released service";
+        let mut log = vec![
+            e(10, "taskq: spawn worker codex:first mac"),
+            e(11, "taskq: ask attempt 10\nProblem: Move released-service proof for A3 to DashQ #255?\n1. Move proof ★\n2. Keep proof"),
+            e(12, "taskq: answer 1\nyes"),
+            e(13, "taskq: requeue"),
+            e(20, "taskq: spawn worker codex:second mac"),
+            e(21, "taskq: ask attempt 20\nProblem: A new unrelated decision\n1. Continue ★\n2. Stop"),
+            e(22, "taskq: steer answer 11\nKeep the original plan"),
+            e(23, "taskq: steer\nPreserve this additional context"),
+            e(24, "taskq: pick 2\nPM recommendation only"),
+        ];
+        let check = |log: &[super::Entry]| {
+            let context = super::task_context(7, body, log);
+            assert!(context.contains(body), "acceptance is never rewritten by a note");
+            assert!(context.contains("Answer to question revision 11, option 1 (accepted):\nyes"), "{context}");
+            assert_eq!(context.matches("Problem: Move released-service proof for A3 to DashQ #255?").count(), 2,
+                "both accepted and late answers retain the original question");
+            assert!(context.contains("Late answer saved as a note for question revision 11; it did not answer the current question:\nKeep the original plan"), "{context}");
+            assert!(context.find("Note 12:").unwrap() < context.find("Note 22:").unwrap());
+            assert!(context.find("Note 22:").unwrap() < context.find("Note 23:").unwrap());
+            assert!(context.contains("Preserve this additional context"));
+            assert!(!context.contains("PM recommendation only"));
+            assert!(!context.contains("Problem: A new unrelated decision"), "a late reply must not borrow the current question");
+        };
+        check(&log);
+        assert_eq!(super::project(7, &log, false).revision, 21);
+        log.extend([
+            e(25, "taskq: answer 1"),
+            e(26, "taskq: result 1111111111111111111111111111111111111111 attempt 20"),
+            e(30, "taskq: spawn reviewer codex:review mac"),
+        ]);
+        // The later answer legitimately carries the newer question; the old answer still carries its own.
+        let context = super::task_context(7, body, &log);
+        assert!(context.contains("Answer to question revision 21, option 1 (accepted):\nContinue"));
+        assert!(context.contains("Answer to question revision 11, option 1 (accepted):\nyes"));
+        assert_eq!(super::fold(7, &log, false).role.as_deref(), Some("reviewer"));
+        log.push(e(31, "taskq: steer answer 999\nUnknown old source"));
+        let context = super::task_context(7, body, &log);
+        assert!(context.contains("Historical question revision 999 unavailable"));
+        assert!(context.contains("Unknown old source"), "missing provenance must not discard the note");
+        log.push(e(999, "taskq: ask attempt 30\nProblem: Future source must not attach to the old note\n1. Continue ★\n2. Stop"));
+        let context = super::task_context(7, body, &log);
+        assert!(context.contains("Historical question revision 999 unavailable"));
+        assert!(!context.contains("Future source must not attach to the old note"));
+        log[1].edited = true;
+        let context = super::task_context(7, body, &log);
+        assert!(context.contains("Historical question revision 11 unavailable"));
+        assert!(context.contains("Keep the original plan"));
+        assert!(!context.contains("Move released-service proof"), "an edited source is never question evidence");
+        assert!(!context.contains("Note 12:"), "the answer to the ignored ask was never accepted");
     }
 
     // Chain: § 2 timed park time. Risk: a malformed or unreal time keeps a task parked forever or wakes it at once.

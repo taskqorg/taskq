@@ -53,7 +53,9 @@ fn generation(path: &Path) -> Res<String> {
     let identity=format!("{:?}",meta.created().map_err(|_|"transcript creation identity unavailable")?);
     let mut prefix=vec![];
     (&mut file).take(meta.len().min(128)).read_to_end(&mut prefix).map_err(|e|format!("transcript unreadable: {e}"))?;
+    crate::profile::source_count("generation_read_bytes",prefix.len() as u64);
     let prefix=&prefix[..prefix.iter().position(|b|*b==b'\n').map_or(prefix.len(),|i|i+1)];
+    crate::profile::source_count("taskq_hash_bytes",prefix.len() as u64);
     // #2176: AgentQ item ordinals replace the TaskQ parser's; old saved positions must never bind to another item.
     Ok(format!("history-v1:{identity}:{}",hex(ring::digest::digest(&ring::digest::SHA256,prefix).as_ref())))
 }
@@ -64,9 +66,14 @@ fn len(path: &Path) -> Res<u64> { fs::metadata(path).map(|m| m.len()).map_err(|e
 
 /// AgentQ file identities by source, learnt from its own checkpoints; bounded, a miss costs one tail read.
 static IDENTITY: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+static CHECKPOINTS: Mutex<Vec<Value>> = Mutex::new(Vec::new());
 
 fn remember(h: &History) {
     let c = h.checkpoint();
+    let mut saved=CHECKPOINTS.lock().unwrap_or_else(|e|e.into_inner());
+    saved.retain(|v|v["format"]!=c["format"]||v["source"]!=c["source"]||v["session"]!=c["session"]||v["offset"]!=c["offset"]);
+    if saved.len()>=64 {saved.remove(0);}
+    saved.push(c.clone());drop(saved);
     if let (Some(source), Some(id)) = (c["source"].as_str(), c["identity"].as_str()) {
         let mut m = IDENTITY.lock().unwrap_or_else(|e| e.into_inner());
         let m = m.get_or_insert_with(HashMap::new);
@@ -77,12 +84,17 @@ fn remember(h: &History) {
 
 /// An AgentQ cursor at the record boundary `offset`. The checkpoint is AgentQ's: identity from its own readback,
 /// prefix the SHA-256 of the bytes before `offset`; AgentQ verifies both and refuses a replaced or rewritten source.
-// ponytail: each read hashes the prefix here and twice in AgentQ; a 100 MiB source costs ~3 full hashes per poll.
-// Upgrade: an AgentQ cursor-at-offset API or a checkpoint cache keyed by offset.
+// AgentQ still verifies the entire checkpoint prefix on open and hashes it again after polling.
+// Reusing its exact checkpoint removes only TaskQ's duplicate synthesis, never either native integrity check.
 fn at(format: &str, path: &Path, session: &str, offset: u64) -> Res<History> {
     let source = path.to_string_lossy();
     let h = History::new(format, &source, session)?;
     if offset == 0 { return Ok(h); }
+    let reuse=true;
+    #[cfg(test)] let reuse=!crate::profile::SOURCE_BASELINE.get();
+    if reuse && let Some(saved)=CHECKPOINTS.lock().unwrap_or_else(|e|e.into_inner()).iter().rev().find(|v|v["format"]==format&&v["source"]==source.as_ref()&&v["session"]==session&&v["offset"]==offset).cloned() {
+        crate::profile::source_count("checkpoint_hits",1);return History::recover(&saved);
+    }
     let known = IDENTITY.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(source.as_ref()).cloned());
     let identity = match known {
         Some(id) => id,
@@ -94,6 +106,8 @@ fn at(format: &str, path: &Path, session: &str, offset: u64) -> Res<History> {
     while left > 0 {
         let n = file.read(&mut buf[..left.min(65536) as usize]).map_err(|e| e.to_string())?;
         if n == 0 { return Err("truncated".into()); }
+        crate::profile::source_count("taskq_hash_bytes",n as u64);
+        crate::profile::source_count("taskq_prefix_read_bytes",n as u64);
         ctx.update(&buf[..n]); left -= n as u64;
     }
     History::recover(&json!({"schema":1,"format":format,"source":source,"session":session,"offset":offset,"identity":identity,"prefix":hex(ctx.finish().as_ref())}))
@@ -124,6 +138,10 @@ fn page(format: &str, path: &Path, generation: String, events: &[Value], start: 
 
 /// The complete records that end at `before` (the file end when none): one AgentQ backward page.
 pub fn before(format: &str, session: &str, path: &Path, before: Option<u64>) -> Res<Page> {
+    crate::profile::source_read(||read_before(format,session,path,before))
+}
+fn read_before(format:&str,session:&str,path:&Path,before: Option<u64>)->Res<Page>{
+    crate::profile::source_count("native_polls",1);
     let generation = generation(path)?;
     let size = len(path)?;
     if before.is_some_and(|b| b > size) { return Err("transcript shrank; view unknown".into()); }
@@ -139,6 +157,10 @@ pub fn before(format: &str, session: &str, path: &Path, before: Option<u64>) -> 
 /// The complete records that start at `from`: D4 polling while the view is open, and forward reads of an evicted
 /// range. A partial record at the file end waits for its newline.
 pub fn after(format: &str, session: &str, path: &Path, from: u64) -> Res<Page> {
+    crate::profile::source_read(||read_after(format,session,path,from))
+}
+fn read_after(format:&str,session:&str,path:&Path,from: u64)->Res<Page>{
+    crate::profile::source_count("native_polls",1);
     let generation = generation(path)?;
     let size = len(path)?;
     if from > size { return Err("transcript shrank; view unknown".into()); }
@@ -155,11 +177,12 @@ pub fn after(format: &str, session: &str, path: &Path, from: u64) -> Res<Page> {
 /// in the exact source only.
 fn view(format: &str, events: &[Value]) -> Vec<Value> {
     let mut out = Vec::<Value>::new();
-    let (mut model,mut effort)=(Value::Null,Value::Null);
+    let (mut model,mut effort,mut version)=(Value::Null,Value::Null,Value::Null);
     let (claude, codex) = (format.starts_with("claude-"), format.starts_with("codex-"));
     for e in events {
         let first = out.len();
         let raw:Value=serde_json::from_str(e["raw"].as_str().unwrap_or_default()).unwrap_or_default();
+        if let Some(v)=raw["payload"]["cli_version"].as_str().or(raw["claude_code_version"].as_str()) {version=json!(v);}
         // Only source-recorded metadata: a page without its earlier context keeps provenance unknown.
         if let Some(m)=raw["message"]["model"].as_str().or(raw["payload"]["model"].as_str()).or(raw["model"].as_str()){model=json!(m);effort=Value::Null;}
         if let Some(e)=raw["payload"]["effort"].as_str().or(raw["payload"]["reasoning_effort"].as_str()).or(raw["reasoning_effort"].as_str()){effort=json!(e);}
@@ -205,7 +228,7 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
         }
         for (i, item) in out[first..].iter_mut().enumerate() {
             item["at"] = e["start"].clone(); item["i"] = json!(i);
-            item["model"]=model.clone();item["effort"]=effort.clone();
+            item["model"]=model.clone();item["effort"]=effort.clone();item["version"]=version.clone();
             if e["time"].is_string() { item["updated"] = e["time"].clone(); }
         }
     }
@@ -436,6 +459,60 @@ mod tests {
     use std::{io::Write, path::PathBuf};
 
     fn tmp() -> PathBuf { let p = std::env::temp_dir().join(format!("taskq-transcript-{}", crate::runtime::uuid())); fs::create_dir(&p).unwrap(); p }
+    // A5: the saved AgentQ checkpoint removes only TaskQ's synthesis; native prefix verification remains mandatory.
+    #[test]
+    fn checkpoint_reuse_refuses_deep_rewrite_and_replacement() {
+        let dir=tmp();let path=dir.join("native.jsonl");
+        let row=json!({"type":"assistant","message":{"content":"invented preserved source"}}).to_string()+"\n";
+        fs::write(&path,row.repeat(200)).unwrap();
+        let tail=before("claude-native","-",&path,None).unwrap();
+        after("claude-native","-",&path,tail.end).unwrap();
+        after("claude-native","-",&path,tail.end).unwrap();
+        assert_eq!(crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().get("checkpoint_hits").copied()),Some(1));
+        let mut changed=fs::read(&path).unwrap();changed[row.len()*150+35]=b'X';fs::write(&path,&changed).unwrap();
+        assert!(after("claude-native","-",&path,tail.end).unwrap_err().contains("replaced"),"deep prefix rewrite must be rejected even on a cache hit");
+        let replacement=dir.join("replacement");fs::write(&replacement,row.repeat(200)).unwrap();fs::rename(&path,dir.join("old")).unwrap();fs::rename(replacement,&path).unwrap();
+        assert!(after("claude-native","-",&path,tail.end).unwrap_err().contains("replaced"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A1/A5 instrument: real local files and pinned AgentQ; no board/provider/session launch.
+    #[test]
+    #[ignore = "source cost checkpoint; run alone with --nocapture --test-threads=1"]
+    fn conversations_source_cost_checkpoint() {
+        #[cfg(windows)]
+        fn io()->Option<[u64;2]> {
+            #[repr(C)] #[derive(Default)] struct Counters {read:u64,write:u64,other:u64,read_bytes:u64,write_bytes:u64,other_bytes:u64}
+            unsafe extern "system" {fn GetCurrentProcess()->isize;fn GetProcessIoCounters(process:isize,counters:*mut Counters)->i32;}
+            let mut counters=Counters::default();
+            unsafe { (GetProcessIoCounters(GetCurrentProcess(),&mut counters)!=0).then_some([counters.read,counters.read_bytes]) }
+        }
+        #[cfg(not(windows))] fn io()->Option<[u64;2]>{None}
+        for count in [12,4096] {
+            let dir=tmp();let session=crate::runtime::uuid();let sessions=dir.join("sessions/2026/11/05");fs::create_dir_all(&sessions).unwrap();
+            let path=sessions.join(format!("rollout-invented-{session}.jsonl"));
+            let row=json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"invented ".repeat(128)}]}}).to_string()+"\n";
+            fs::write(&path,row.repeat(count)).unwrap();for n in 0..1000 {fs::write(sessions.join(format!("irrelevant-{n}")),"").unwrap();}
+            for baseline in [true,false] {
+                crate::profile::SOURCE_BASELINE.set(baseline);
+                let resolve=std::time::Instant::now();assert_eq!(crate::runtime::owner::codex_transcript_in(&dir,&session).unwrap(),path);
+                let cold_path=crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().clone());let cold_resolve_us=resolve.elapsed().as_micros();
+                let render=std::time::Instant::now();let tail=before("codex-rollout",&session,&path,None).unwrap();let cold_us=render.elapsed().as_micros();
+                let cold_work=crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().clone());assert!(!tail.items.is_empty());
+                // Prime the end checkpoint, then measure an empty poll without replacing either AgentQ verification.
+                after("codex-rollout",&session,&path,tail.end).unwrap();
+                let previous=io();let start=std::time::Instant::now();
+                assert_eq!(crate::runtime::owner::codex_transcript_in(&dir,&session).unwrap(),path);
+                let warm_path=crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().clone());
+                let page=after("codex-rollout",&session,&path,tail.end).unwrap();assert!(page.items.is_empty());
+                let elapsed=start.elapsed().as_micros();let transfer=previous.zip(io()).map(|(a,b)|[b[0]-a[0],b[1]-a[1]]);
+                let warm_work=crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().clone());
+                println!("SOURCE_COST {}",json!({"count":count,"baseline":baseline,"file_bytes":fs::metadata(&path).unwrap().len(),"cold_native_us":cold_us,"cold_work":cold_work,"cold_path_us":cold_resolve_us,"cold_path":cold_path,"warm_path":warm_path,"warm_native_and_path_us":elapsed,"warm_work":warm_work,"process_read_operations_and_bytes":transfer,"agentq_hash_bytes":"not instrumented; both native prefix verifications retained"}));
+                if !baseline {assert_eq!(warm_work.get("checkpoint_hits"),Some(&1));assert!(!warm_work.contains_key("taskq_prefix_read_bytes"));assert_eq!(warm_path.get("path_cache_hits"),Some(&1));}
+            }
+            crate::profile::SOURCE_BASELINE.set(false);fs::remove_dir_all(dir).unwrap();
+        }
+    }
     // F16: actual model changes belong to their source blocks; missing context never borrows a current task model.
     #[test]
     fn historical_blocks_keep_recorded_models() {

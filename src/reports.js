@@ -1,3 +1,4 @@
+const readingAnchor=require('./reading-anchor.js');
 /*! PrismJS 1.30.0
 MIT LICENSE
 
@@ -229,7 +230,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,onMove,navigation=()=>(
 body:function(text,source='body',nativeAt){
  if(nativeAt===undefined)text=text.replace(/```taskq-tasks\n[\s\S]*?```/g,'').replace(/(^|\n)#{1,6}[ \t]+Proposed tasks[ \t]*(?=\n|$)/gi,'$1');
  const lines=text.split('\n'),starts=[];let offset=0;for(const line of lines){starts.push(offset);offset+=line.length+1;}
- const blocks=[],props=at=>nativeAt===undefined?(source===null?{}:{'data-reading-key':'report:'+source+':'+blocks.length}):{'data-native-part':nativeAt+at,...(source?{'data-reading-key':'report:'+source+':part:'+(nativeAt+at)}:{})};
+ const blocks=[],props=at=>nativeAt===undefined?(source===null?{}:{'data-reading-key':readingAnchor.key('report',source,blocks.length)}):{'data-native-part':nativeAt+at,...(source?{'data-reading-key':readingAnchor.key('report',source,'part',nativeAt+at)}:{})};
  const plain=(text,at)=>{const nodes=[];for(let n=0;n<text.length;){let end=Math.min(text.length,n+1024);if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end++;nodes.push(nativeAt===undefined?text.slice(n,end):h('span',{key:at+n,...props(at+n)},text.slice(n,end)));n=end;}return nodes;};
  const inline=(text,at)=>{const nodes=[];let end=0;for(const m of text.matchAll(/`(?<code>[^`\n]+)`|\*\*(?<strong>[^*\n]+)\*\*|\*(?<em>[^*\n]+)\*|_(?<italic>[^_\n]+)_|\[(?<label>[^\]\n]+)\]\((?<url>https?:\/\/[^\s)]+)\)|https?:\/\/[^\s<>\]\)]+/g)){
   nodes.push(...plain(text.slice(end,m.index),at+end));const g=m.groups,value=g.code??g.strong??g.em??g.italic??g.label??m[0],tag=g.code!==undefined?'code':g.strong!==undefined?'strong':g.em!==undefined||g.italic!==undefined?'em':'a';

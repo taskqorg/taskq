@@ -281,25 +281,49 @@ pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
     }
 }
 
+#[derive(Default)]
+struct TranscriptPaths { home:PathBuf, dirs:Vec<(PathBuf,std::time::SystemTime)>, paths:std::collections::BTreeMap<String,(PathBuf,bool)> }
+static TRANSCRIPT_PATHS:std::sync::Mutex<Vec<TranscriptPaths>>=std::sync::Mutex::new(Vec::new());
+
 pub(crate) fn codex_transcript_in(home: &Path, session: &str) -> Res<PathBuf> {
+    crate::profile::source_read(||codex_path(home,session))
+}
+fn codex_path(home:&Path,session:&str)->Res<PathBuf> {
     if !super::plain_thread(session) { return Err("Codex thread identity invalid".into()); }
+    let mut caches=TRANSCRIPT_PATHS.lock().map_err(|_|"Codex transcript path cache unavailable")?;
+    let index=if let Some(i)=caches.iter().position(|c|c.home==home){i}else{if caches.len()>=4 {caches.remove(0);}caches.push(TranscriptPaths{home:home.into(),..Default::default()});caches.len()-1};
+    let cache=&mut caches[index];let prior=cache.paths.get(session).cloned();
+    // A vanished accepted path refuses; finding another matching name must never silently replace it.
+    if prior.as_ref().is_some_and(|(p,_)|!p.is_file()){return Err("Codex transcript path lost; native source unavailable".into());}
+    let reuse=true;
+    #[cfg(test)] let reuse=!crate::profile::SOURCE_BASELINE.get();
+    if reuse && let Some((path,true))=&prior && !cache.dirs.is_empty() && cache.dirs.iter().all(|(p,at)|{crate::profile::source_count("path_directory_checks",1);fs::metadata(p).and_then(|m|m.modified()).ok().as_ref()==Some(at)}) {crate::profile::source_count("path_cache_hits",1);return Ok(path.clone());}
     let suffix = format!("-{session}.jsonl");
-    let (mut found, mut dirs, mut seen) = (vec![], vec![(home.join("sessions"), 0)], 0);
-    // ponytail: one scan of sessions/YYYY/MM/DD per read; remember the path per session if this shows up in telemetry
+    let (mut found, mut dirs, mut seen,mut stamps) = (vec![], vec![(home.join("sessions"), 0)], 0,vec![]);
     while let Some((dir, depth)) = dirs.pop() {
+        crate::profile::source_count("path_directories_scanned",1);
+        let at=fs::metadata(&dir).and_then(|m|m.modified()).map_err(|e|format!("Codex transcript unavailable: {e}"))?;
         for entry in fs::read_dir(&dir).map_err(|e| format!("Codex transcript unavailable: {e}"))? {
-            seen += 1;
+            seen += 1;crate::profile::source_count("path_entries_scanned",1);
             if seen > 200_000 { return Err("Codex transcript scan exceeds 200000 entries".into()); }
             let p = entry.map_err(|e| e.to_string())?.path();
             let name = p.file_name().and_then(|s| s.to_str()).unwrap_or_default();
             if depth < 3 && p.is_dir() { dirs.push((p.clone(), depth + 1)); } else if name.starts_with("rollout-") && name.ends_with(&suffix) && p.is_file() { found.push(p); }
         }
+        if fs::metadata(&dir).and_then(|m|m.modified()).ok()!=Some(at){return Err("Codex transcript directory changed during resolution; retry exact source".into());}
+        stamps.push((dir,at));
     }
-    match found.len() {
-        1 => Ok(found.remove(0)),
-        0 => Err("Codex transcript unavailable".into()),
-        _ => Err("Codex session has multiple transcript paths; inspect native history".into()),
-    }
+    let path=match found.len() {
+        1 => found.remove(0),
+        0 => return Err("Codex transcript unavailable".into()),
+        _ => return Err("Codex session has multiple transcript paths; inspect native history".into()),
+    };
+    if prior.as_ref().is_some_and(|(p,_)|p!=&path){return Err("Codex transcript path changed; native source unavailable".into());}
+    // Directory stamps detect tree changes, not transcript integrity; AgentQ still verifies the file every read.
+    // shortcut: cache at most 4096 directories / 64 sessions per account; larger trees keep the bounded full scan.
+    // Invalidate other sessions' scan proof while retaining their accepted path fences.
+    if stamps.len()<=4096 {if cache.dirs!=stamps {for (_,verified) in cache.paths.values_mut(){*verified=false;}}cache.dirs=stamps;if cache.paths.len()>=64&&!cache.paths.contains_key(session){cache.paths.pop_first();}cache.paths.insert(session.into(),(path.clone(),true));}
+    Ok(path)
 }
 
 /// Claude's project key: forward slashes on every platform; a Windows backslash key never matches (#1546),
@@ -444,6 +468,23 @@ pub(crate) const ACCESS: &str = "access refused:";
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // A5: a warm directory memo avoids entry scans, but tree changes still reveal ambiguity and lost paths refuse.
+    #[test]
+    fn codex_path_memo_revalidates_tree_and_never_substitutes_lost_source() {
+        let root=std::env::temp_dir().join(format!("taskq-source-paths-{}",super::super::uuid()));
+        let dir=root.join("sessions/2026/11/05");fs::create_dir_all(&dir).unwrap();let session=super::super::uuid();let file=format!("rollout-invented-{session}.jsonl");let path=dir.join(&file);fs::write(&path,"invented").unwrap();
+        assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);
+        assert_eq!(crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().get("path_cache_hits").copied()),Some(1));
+        let duplicate=root.join("sessions/2026/11/06");fs::create_dir_all(&duplicate).unwrap();fs::write(duplicate.join(&file),"invented").unwrap();
+        assert!(codex_transcript_in(&root,&session).unwrap_err().contains("multiple"));
+        fs::remove_file(&path).unwrap();assert!(codex_transcript_in(&root,&session).unwrap_err().contains("lost"));
+        // Revalidating a different session must not erase this session's accepted-path fence.
+        let other=super::super::uuid();fs::write(duplicate.join(format!("rollout-invented-{other}.jsonl")),"invented").unwrap();
+        codex_transcript_in(&root,&other).unwrap();
+        assert!(codex_transcript_in(&root,&session).unwrap_err().contains("lost"));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     // R12 / #2022: Windows owner reads must resolve the same native homes as worker recovery, including overrides.
     #[test]

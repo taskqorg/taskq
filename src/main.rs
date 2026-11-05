@@ -1126,13 +1126,14 @@ fn closed_row(b: &dyn Board, i: &board::Issue, closed: Option<i64>, gitlab: bool
         dispatch::timeline(i.number,log,&core::project(i.number,log,false),comments).iter().map(|(q,a)|json!({"question":q.as_deref().map(snapshot::question),"answered":a})).collect::<Vec<_>>()
     });
     let workers=log.as_ref().ok().map(|log|core::project(i.number,log,false).changes.into_iter().filter(|(id,_,t)|t.role.as_deref()==Some("worker")&&t.attempt==Some(*id)).map(|(id,_,t)|json!({"attempt":id,"role":"worker","session":t.session})).collect::<Vec<_>>());
+    let timing=log.as_ref().ok().zip(comments.as_ref().ok()).map(|(log,comments)|snapshot::task_timing(&core::project(i.number,log,false),comments,!i.open,closed));
     let merged = log.as_ref().ok().and_then(|log| merge_receipt(log));
     // § 7 close outcome (#1800): delivered, no change or replaced by #M with its current state, plus unverified items
     let verdict = log.as_ref().ok().and_then(|log| log.iter().rev().find(|e| !e.edited && e.body.starts_with("taskq: close")).map(|e| core::verdict(i.number, log, e.body.split_once('\n').map_or("", |x| x.1))));
     let verdict = verdict.as_deref();
     let next = verdict.and_then(display::successor).map(|m| dispatch::current(b, m).map_or("unknown", |(i, t, _)| if i.open { t.state.name() } else { "closed" }));
     let close = log.is_ok().then(|| display::close_outcome(verdict, next));
-    json!({"n": i.number,"revision":log.as_ref().ok().map(|log|core::revision(i.number,log)), "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "source_readiness": log.as_ref().map_or_else(|_|readiness::unavailable(i.number,&b.url(i.number),"task log unavailable"),|log|readiness::source(i.number,&b.url(i.number),log)), "history":history,"workers":workers,"brief":i.body,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err()})
+    json!({"n": i.number,"revision":log.as_ref().ok().map(|log|core::revision(i.number,log)), "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "source_readiness": log.as_ref().map_or_else(|_|readiness::unavailable(i.number,&b.url(i.number),"task log unavailable"),|log|readiness::source(i.number,&b.url(i.number),log)), "timing":timing,"history":history,"workers":workers,"brief":i.body,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err()})
 }
 
 fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {
@@ -1164,7 +1165,8 @@ fn closed_session(root: &Path, runtime: &str, id: &str, n: u64, attempt: u64) ->
 
 /// A closed worker's page: from its transcript on this host, else through `remote` (the host link) on its host.
 fn closed_transcript(b: &dyn Board, root: &Path, n: u64, host: &str, before: Option<u64>, remote: impl FnOnce(&str,u64)->Res<Value>) -> Res<Value> {
-    let (runtime,id,owner,attempt) = closed_worker(b,n,None)?;
+    let value=reports::selected(root,b,n,false,None)?;
+    let (runtime,id,owner,attempt) = reports::worker(&value,None)?;
     if owner != host { return remote(&owner,attempt); }
     let session = closed_session(root,&runtime,&id,n,attempt)?;
     let path = runtime::owner::transcript(&runtime,&session)?;
@@ -1175,7 +1177,8 @@ fn closed_transcript(b: &dyn Board, root: &Path, n: u64, host: &str, before: Opt
 pub(crate) fn closed_peer_session(root: &Path, local: &str, n: u64, attempt: u64) -> Res<String> {
     let (cfg, raw) = load(root)?;
     let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
-    let (runtime,id,owner,last) = closed_worker(&*board,n,Some(attempt))?;
+    let value=reports::selected(root,&*board,n,!cfg.board.closed_reason,None)?;
+    let (runtime,id,owner,last) = reports::worker(&value,Some(attempt))?;
     if owner != local || last != attempt { return Err("Worker transcript is available only on its host".into()); }
     Ok(format!("{runtime}:{}",closed_session(root,&runtime,&id,n,attempt)?))
 }
@@ -4259,7 +4262,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                     if a.flags.contains_key("transcript") {
                         let before = a.one("before").map(|v|v.parse::<u64>().map_err(|_|"bad --before")).transpose()?;
                         json!({"transcript":closed_transcript(b,&cfg.root,n,&cfg.me,before,|host,attempt|conversations::closed_remote(&cfg.install,&cfg.root,host,n,attempt,before)).map_or_else(|reason|json!({"reason":reason}),|v|v)})
-                    } else { closed_pin(b,n,!cfg.board.closed_reason)? }
+                    } else { reports::selected(&cfg.root,b,n,!cfg.board.closed_reason,None)? }
                 } else { closed_history(b,page,since,!cfg.board.closed_reason)? };
                 println!("{value}");
                 return Ok(());
@@ -7342,6 +7345,27 @@ mod tests {
     }
 
     // #1829 A1/A2: a pin outside page one reads its exact board outcome; native reads cannot resume work or cross hosts.
+    /// A1/A4 read-only live board instrument; no labels, comments, source bodies or credentials are printed.
+    #[test]
+    #[ignore = "requires explicit TASKQ_SOURCE_COST_ROOT and closed TASKQ_SOURCE_COST_TASK"]
+    fn conversations_board_cost_checkpoint() {
+        let root=PathBuf::from(std::env::var_os("TASKQ_SOURCE_COST_ROOT").expect("explicit project root"));
+        let n=std::env::var("TASKQ_SOURCE_COST_TASK").unwrap().parse::<u64>().unwrap();
+        let (cfg,raw)=load(&root).unwrap();let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&platform::tool(&cfg.install)).unwrap();
+        let diff=|before:&std::collections::BTreeMap<String,u64>,after:&std::collections::BTreeMap<String,u64>|after.iter().filter_map(|(k,v)|{let n=v.saturating_sub(before.get(k).copied().unwrap_or(0));(n>0).then(||(k.clone(),n))}).collect::<std::collections::BTreeMap<_,_>>();
+        for baseline in [true,false] {
+            let cache=reports::Selected::default();let mut revision=None;
+            for page in 0..3 {
+                let before=b.requests().ops;let started=Instant::now();
+                let value=if baseline {closed_pin(&*b,n,!cfg.board.closed_reason)}else{cache.read(b.url(n),revision,Instant::now(),||closed_pin(&*b,n,!cfg.board.closed_reason))}.unwrap();
+                assert_eq!(value["tasks"][0]["state"],"closed","the instrument is closed-task read-only");assert!(value["tasks"][0]["error"].is_null());revision=value["tasks"][0]["revision"].as_u64();
+                let ops=diff(&before,&b.requests().ops);let http=ops.values().sum::<u64>();let not_modified=ops.iter().filter(|(k,_)|k.ends_with(" 304")).map(|(_,n)|n).sum::<u64>();
+                println!("BOARD_COST {}",json!({"task":n,"baseline":baseline,"page":page,"logical_selected_reads":1,"http":http,"not_modified_304":not_modified,"billed":requests::billed(&ops),"operations":ops,"elapsed_us":started.elapsed().as_micros(),"projection_bytes":value.to_string().len(),"history_rows":value["tasks"][0]["history"].as_array().map(Vec::len)}));
+                if !baseline&&page>0 {assert_eq!(http,0,"warm paging must not revalidate any HTTP page");}
+            }
+        }
+    }
+
     #[test]
     fn closed_pin_reads_exact_issue_and_fences_transcript() {
         let b = Fake::default();
