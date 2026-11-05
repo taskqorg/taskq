@@ -1,0 +1,30 @@
+Candidate: 3bc1c84f81d72e172940a568b40efff1946c7f73 parser with the new native-response assertion only.
+Command: cargo test --locked --bin taskq claude_native_null_surface_preserves_windows -- --nocapture
+Platform: Windows; initial dependency build, after npm ci --ignore-scripts --no-audit --no-fund.
+Exit: 101
+
+running 1 test
+null scope.surface is absent, not an unsupported quota: "usage shape changed"
+test runtime::usage::tests::claude_native_null_surface_preserves_windows ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1073 filtered out; finished in 0.00s
+
+The earlier setup attempt stopped before parser execution because esbuild was absent; it is not defect reproduction evidence.
+Full local build logs are retained in the worktree scratch directory, not published.
+
+Recovery regression before correction:
+Candidate: 31910f17fd82a7a145a39106d1671d9b4e04be97 with the new recovery assertion only.
+Command: cargo test --locked --bin taskq claude_failed_polls_preserve_incomplete_origin_until_expiry -- --nocapture
+Outcome: FAIL (nonzero exit).
+assertion `left == right` failed: network failed cannot restore partial headroom
+  left: Some(57)
+ right: None
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1076 filtered out; finished in 0.04s
+
+Released-reader regression before correction:
+Candidate: 39ba68a1c7cf68484bc49d453b99549a671cbe2f with the new old-reader assertions only.
+Command: cargo test --locked --bin taskq runtime::usage::tests::claude_partial_poll_is_invisible
+Outcome: FAIL (exit 101).
+assertion `left == right` failed: mixed fleet: an old reader cannot derive headroom from a partial poll
+  left: Some(57)
+ right: None
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1077 filtered out; finished in 0.02s

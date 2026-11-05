@@ -1,0 +1,19 @@
+Command: cargo test --locked --bin taskq runtime::usage::tests -- --nocapture
+Platform: Windows; warm dependency cache; isolated temporary installation and child environment from scripts/check.py.
+Exit: 0
+Native-response parser, persisted heartbeat publication, mixed validity, account/fleet identity, unknown aggregate headroom, authentication/transport failure projection, privacy and quota-hold protections passed. Partial-to-failed-poll regression also passes, retaining original expiry and fleet-visible unknowns, with recovery through a complete poll or fresh native-event evidence after expiry.
+The manual all-provider native test remains ignored; these are source/model proofs.
+
+limit claude default id - window seven_day used 43 reset 2026-11-09T05:00:00Z at 2026-11-04T22:22:31Z
+limit claude default id - window seven_day_fable used 4 reset 2026-11-09T05:00:00Z at 2026-11-04T22:22:31Z
+test result: ok. 20 passed; 0 failed; 1 ignored; 0 measured; 1056 filtered out; finished in 3.64s
+
+Released-reader regression after correction:
+Command: cargo test --locked --bin taskq runtime::usage::tests
+Platform: Windows; worker bindings removed from the child environment.
+Exit: 0
+test runtime::usage::tests::claude_partial_poll_is_invisible_to_released_readers ... ok
+test runtime::usage::tests::claude_partial_windows_keep_unknown_through_publication_and_headroom ... ok
+test runtime::usage::tests::claude_failed_polls_preserve_incomplete_origin_until_expiry ... ok
+test runtime::usage::tests::claude_native_null_surface_preserves_windows ... ok
+test result: ok. 21 passed; 0 failed; 1 ignored; 0 measured; 1056 filtered out; finished in 3.80s
