@@ -140,7 +140,7 @@ Claude worker/reviewer #969 includes a rejected first result (missing reproducib
 
 ## Runtime adapters
 
-Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `codex`, `antigravity`, `codex-app`) is one `crate::runtime::Adapter` in `src/runtime.rs`, found by `crate::runtime::of(name)`.
+Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `codex`, `antigravity`, `codex-app`) is one `crate::runtime::Adapter`, data only, in the table `src/runtime/table.rs`, found by `crate::runtime::of(name)`.
 
 - The adapter owns everything that differs by runtime: launch and resume, the command line, policy and sandbox arguments, the session link, process identity, auth and login hints.
 - The runtime module keeps that code; other modules ask the adapter (binary, client name, home, CLI child, Remote Control session, app turn, Codex family, setup access) and never compare runtime names.
@@ -148,8 +148,8 @@ Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `cod
 - Owner sessions (`service setup`, tray AI requests, `retro`) launch, link and get Claude trust through `crate::runtime::owner`; `src/setup.rs` keeps only the request state machine.
 - `crate::runtime::session_link` is the only session-link resolver and `crate::runtime::open_link` the only opener; `thread_url`, `plain_thread`, `remote_url` and `link_ok` are the only link builder and checks.
 - Kid adoption (`crate::runtime::adopt`), handover waits (`handover_waits`), the worker default runtime (`preferred`) and the Claude process lookup go through the adapter.
-- Allowed exceptions: the sandbox files (`src/linux_sandbox.rs`, `src/windows_sandbox*`) and tests.
-- `scripts/check.py` refuses, anywhere else in non-test Rust including `src/main.rs`, a runtime name literal and the native names `claude.exe`, `.claude.json`, `CODEX_HOME` and `CODEX_THREAD_ID`.
+- Only the table and tests hold those names; no sandbox file or runtime module is exempt.
+- `scripts/check.py` refuses, in all other non-test Rust, a runtime name literal and the native names `claude.exe`, `.claude.json`, `CODEX_HOME` and `CODEX_THREAD_ID`; it refuses a branch on a runtime name everywhere, the table included.
 - New runtime policy changes update the golden admission traces; existing pin, grant and ownership protections remain binding.
 
 ## Contract detail

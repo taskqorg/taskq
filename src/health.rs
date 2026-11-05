@@ -203,7 +203,7 @@ pub fn trust_item(home: &Path, root: &Path, claude: bool) -> Item {
         Ok(Some(true)) => Item::ok("claude-trust", format!("Claude trusts {key}")),
         Ok(Some(false)) => Item::gap("claude-trust", format!("Claude does not trust {key}; Claude workers cannot start here"),
             format!("run `claude` in {key} and accept its trust prompt; other Claude sessions keep running")),
-        Err(e) => Item::unknown("claude-trust", format!("Claude config unreadable: {}", short(&e)), format!("repair `~/{}`, then `taskq doctor`", crate::runtime::owner::CLAUDE_CONFIG)),
+        Err(e) => Item::unknown("claude-trust", format!("Claude config unreadable: {}", short(&e)), format!("repair `~/{}`, then `taskq doctor`", crate::runtime::CLAUDE_CONFIG)),
     }
 }
 

@@ -36,7 +36,7 @@ fn checked(path: &Path) -> Result<PathBuf, String> {
 }
 
 fn home() -> Result<PathBuf, String> {
-    checked(&std::env::var_os("CODEX_HOME").map(PathBuf::from)
+    checked(&std::env::var_os(crate::runtime::CODEX_DIR_VAR).map(PathBuf::from)
         .or_else(|| crate::platform::user_home().map(|p| p.join(".codex")))
         .ok_or("Windows sandbox: runtime home missing")?)
 }
@@ -111,7 +111,7 @@ fn prepare(root: &Path, install: &Path, home: &Path, p: &mut Paths, bootstrap: &
     let preflight = (|| {
     fs::write(p.state.join("config.toml"), config).map_err(|e| e.to_string())?;
     let out = match coreq::process::output("sandbox.preflight", crate::platform::command(&p.bin).args(["-c", "windows.sandbox=unelevated", "sandbox", "-P", "taskq", "--include-managed-config", "--", "cmd.exe", "/d", "/c", "exit 0"])
-        .current_dir(root).env("CODEX_HOME", &p.state).env("TASKQ_WINDOWS_SANDBOX_HOME", &p.state)
+        .current_dir(root).env(crate::runtime::CODEX_DIR_VAR, &p.state).env("TASKQ_WINDOWS_SANDBOX_HOME", &p.state)
         .env("TEMP", &p.temp).env("TMP", &p.temp), std::time::Duration::from_secs(30)) {
         Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
         Err(e) => return Err(format!("Windows native preflight: {e}")),
@@ -140,7 +140,7 @@ pub fn command(env: &crate::runtime::Env) -> Result<Command, String> {
     let mut c = crate::platform::command(p.bin);
     c.args(["-c", "windows.sandbox=unelevated", "sandbox", "-P", "taskq", "--include-managed-config", "--"])
         .arg(env.exe).arg(BOOT).arg(root).arg(install).arg(home)
-        .env("CODEX_HOME", &p.state).env("TASKQ_WINDOWS_SANDBOX_HOME", &p.state)
+        .env(crate::runtime::CODEX_DIR_VAR, &p.state).env("TASKQ_WINDOWS_SANDBOX_HOME", &p.state)
         .env("TEMP", &p.temp).env("TMP", &p.temp);
     Ok(c)
 }
@@ -158,7 +158,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Err("Windows sandbox: explicit Workspace project grant required".into());
     }
     let p = paths(&root, &install, &home)?;
-    if std::env::var_os("CODEX_HOME").map(PathBuf::from).as_ref() != Some(&p.state) || hash(&p.bin)? != native
+    if std::env::var_os(crate::runtime::CODEX_DIR_VAR).map(PathBuf::from).as_ref() != Some(&p.state) || hash(&p.bin)? != native
         || hash(&p.bin.with_file_name("codex-code-mode-host.exe"))? != CODE_HOST_SHA256 {
         return Err("Windows sandbox: control state or native dependency changed".into());
     }
@@ -178,7 +178,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     security::lower_restricted_process()?;
     let status = crate::platform::command(p.bin).args(["exec", "--add-dir"]).arg(home).args(&args[4..])
-        .env("CODEX_HOME", &args[2]).env("TASKQ_WINDOWS_SANDBOX_HOME", p.state)
+        .env(crate::runtime::CODEX_DIR_VAR, &args[2]).env("TASKQ_WINDOWS_SANDBOX_HOME", p.state)
         .current_dir(root).status().map_err(|e| e.to_string())?;
     crate::platform::exit(status.code().unwrap_or(1));
 }

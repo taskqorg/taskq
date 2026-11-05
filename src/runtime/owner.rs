@@ -1,6 +1,6 @@
 //! Owner sessions (§ 8): how a setup or project request launches, links and gets trusted per runtime. Only this
 //! adapter knows the native argv, output and refusals; `setup` keeps the request state machine.
-use crate::runtime::Cap;
+use crate::runtime::{CLAUDE_CONFIG, Cap};
 use crate::setup::{dir, Request};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -233,7 +233,7 @@ fn holds(rows: &[serde_json::Value], r: &Request) -> Hold {
 }
 
 fn claude_rows() -> Res<Vec<serde_json::Value>> {
-    let (ok, out) = super::probe("runtime.agents", &super::which("claude"), &["agents", "--json"]).ok_or("Claude agents unavailable or timed out")?;
+    let (ok, out) = super::probe("runtime.agents", &super::which(super::of(super::CLAUDE).bin), &["agents", "--json"]).ok_or("Claude agents unavailable or timed out")?;
     if !ok { return Err(format!("claude agents: {}", out.trim())); }
     serde_json::from_str(&out).map_err(|e| format!("claude agents: {e}"))
 }
@@ -241,7 +241,7 @@ fn claude_rows() -> Res<Vec<serde_json::Value>> {
 /// D3: Claude resumes only a stopped session, so the turn stops the idle launched job first and reads its release back.
 fn release_idle(r: &Request) -> Res<()> {
     let job = match holds(&claude_rows()?, r) { Hold::Free => return Ok(()), Hold::Other => return Err(open_in(&r.runtime)), Hold::Own => r.job.as_deref().unwrap_or_default() };
-    let (ok, out) = super::probe("runtime.stop", &super::which("claude"), &["stop", job]).ok_or("Claude stop unavailable or timed out; state unknown")?;
+    let (ok, out) = super::probe("runtime.stop", &super::which(super::of(super::CLAUDE).bin), &["stop", job]).ok_or("Claude stop unavailable or timed out; state unknown")?;
     if !ok { return Err(format!("claude stop: {}", out.trim())); }
     if holds(&claude_rows()?, r) == Hold::Free { Ok(()) } else { Err("Claude session still open after stop; state unknown".into()) }
 }
@@ -340,9 +340,9 @@ pub fn claude_key(p: &Path) -> String { crate::platform::plain_path(p).display()
 pub fn trust_step(folder: &str) -> String { format!("Next: run `claude` in {folder} and accept its trust prompt; other Claude sessions keep running") }
 
 /// Whether this host has a claude binary a worker launch would find (#2417).
-pub fn claude_installed() -> bool { super::which("claude").is_absolute() }
+pub fn claude_installed() -> bool { super::which(super::of(super::CLAUDE).bin).is_absolute() }
 
-/// Whether Claude trusts `root` per `<home>/.claude.json`, read only: `None` without a Claude config (#1555, #2300).
+/// Whether Claude trusts `root` per its config file in `<home>`, read only: `None` without a Claude config (#1555, #2300).
 pub fn trust_state(home: &Path, root: &Path) -> Result<Option<bool>, String> {
     let v: serde_json::Value = match fs::read_to_string(home.join(CLAUDE_CONFIG)) {
         Ok(t) => serde_json::from_str(&t).map_err(|e| e.to_string())?,
@@ -354,7 +354,7 @@ pub fn trust_state(home: &Path, root: &Path) -> Result<Option<bool>, String> {
 }
 
 /// Onboarding trust (#1546): `<install>/setup` and every registered root get `hasTrustDialogAccepted` in
-/// `<home>/.claude.json`. Nothing trusted yet changes only while no Claude runs, after a backup; gap lines only.
+/// Claude's config file in `<home>`. Nothing trusted yet changes only while no Claude runs, after a backup; gap lines only.
 pub fn trust(install: &Path, home: &Path, claude_pids: impl FnOnce() -> Res<Vec<String>>) -> Res<Vec<String>> {
     let roots = fs::read_to_string(install.join("projects")).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(String::new()) } else { Err(format!("project registry unreadable: {e}")) })?;
     let keys: Vec<String> = std::iter::once(dir(install)).chain(roots.lines().filter(|l| !l.trim().is_empty()).map(PathBuf::from)).map(|p| claude_key(&p)).collect();
@@ -376,7 +376,7 @@ pub(crate) fn registered_trust_with(install: &Path, root: &Path, config: Option<
         Some(p) => p.to_path_buf(),
         None => crate::platform::user_home().ok_or("trust setup: host home unknown")?,
     };
-    // A selected CLAUDE_CONFIG_DIR stores .claude.json inside that directory.
+    // A selected CLAUDE_CONFIG_DIR stores the config file inside that directory.
     let key = claude_key(&root);
     let mut keys = vec![key.clone()];
     if cfg!(windows) { keys.push(key.replace('/', "\\")); }
@@ -385,14 +385,14 @@ pub(crate) fn registered_trust_with(install: &Path, root: &Path, config: Option<
 
 /// Host registration/startup prepares the default config; selected account configs are checked at launch.
 pub(crate) fn registered_host_trust(install: &Path, root: &Path) -> Res<Vec<String>> {
-    if !super::which("claude").is_file() { return Ok(vec![]); }
+    if !super::which(super::of(super::CLAUDE).bin).is_file() { return Ok(vec![]); }
     let config = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
     registered_trust(install, root, config.as_deref())
 }
 
 fn trust_keys(home: &Path, keys: &[String], claude_pids: impl FnOnce() -> Res<Vec<String>>, automatic: bool) -> Res<Vec<String>> {
     let _guard = TRUST_WRITE.lock().map_err(|_| "Claude trust writer unavailable")?;
-    let _file_lock = coreq::file_lock::try_lock(&home.join(".claude.json.taskq-lock")).map_err(|e| format!("Claude trust writer busy: {e}"))?;
+    let _file_lock = coreq::file_lock::try_lock(&home.join(format!("{CLAUDE_CONFIG}.taskq-lock"))).map_err(|e| format!("Claude trust writer busy: {e}"))?;
     let path = home.join(CLAUDE_CONFIG);
     let text = match fs::read_to_string(&path) { Ok(t) => Some(t), Err(e) if e.kind() == std::io::ErrorKind::NotFound => None, Err(e) => return Err(format!("Claude config unreadable: {e}")) };
     let (next, changed) = trusted(text.as_deref(), &keys)?;
@@ -406,12 +406,12 @@ fn trust_keys(home: &Path, keys: &[String], claude_pids: impl FnOnce() -> Res<Ve
     }
     if let Some(t) = &text {
         let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
-        let backup = home.join(format!(".claude.json.bak-onboard-{ms}"));
+        let backup = home.join(format!("{CLAUDE_CONFIG}.bak-onboard-{ms}"));
         // copy keeps the config's owner-only mode; a plain write would leave it world-readable
         fs::copy(&path, &backup).map_err(|e| format!("Claude config backup: {e}; trust unchanged"))?;
         lines.push(format!("Backup: {}", backup.display()));
     }
-    let tmp = home.join(".claude.json.onboard-tmp");
+    let tmp = home.join(format!("{CLAUDE_CONFIG}.onboard-tmp"));
     let mut open = fs::OpenOptions::new();
     open.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -444,7 +444,7 @@ pub(crate) fn trusted(text: Option<&str>, keys: &[String]) -> Res<(String, Vec<S
 /// Running Claude processes of this user's machine; an unreadable list is an error, never none (R12).
 pub fn claude_pids() -> Res<Vec<String>> {
     let out = if cfg!(windows) {
-        crate::platform::command("tasklist").args(["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"]).output()
+        crate::platform::command("tasklist").args(["/FI", format!("IMAGENAME eq {}", super::CLAUDE_EXE).as_str(), "/FO", "CSV", "/NH"]).output()
     } else {
         // ponytail: process name `claude` (native installs); an npm `node` Claude is missed, match the command line if one shows up
         crate::platform::command("pgrep").args(["-x", super::of(super::OWNER).bin]).output()
@@ -452,13 +452,11 @@ pub fn claude_pids() -> Res<Vec<String>> {
     let text = String::from_utf8_lossy(&out.stdout);
     if cfg!(windows) {
         if !out.status.success() { return Err(format!("tasklist exit {:?}", out.status.code())); }
-        return Ok(text.lines().filter_map(|l| l.split("\",\"").nth(1).filter(|_| l.starts_with("\"claude.exe\"")).map(String::from)).collect());
+        return Ok(text.lines().filter_map(|l| l.split("\",\"").nth(1).filter(|_| l.starts_with(&format!("\"{}\"", super::CLAUDE_EXE))).map(String::from)).collect());
     }
     match out.status.code() { Some(0) => Ok(text.split_whitespace().map(String::from).collect()), Some(1) => Ok(vec![]), c => Err(format!("pgrep exit {c:?}")) }
 }
 
-/// Claude's config file in the user's home: project trust lives there.
-pub const CLAUDE_CONFIG: &str = ".claude.json";
 pub(crate) const MISSING: &str = "runtime missing:";
 pub(crate) const LOGIN: &str = "sign-in needed:";
 pub(crate) const ACCESS: &str = "access refused:";

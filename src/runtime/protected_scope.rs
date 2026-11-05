@@ -81,7 +81,7 @@ pub(super) fn launch(install:&Path,home:&Path,r:&Request,key:&str)->Res<()> {
     let environment=environment(home);
     let job=plist(&label,p.authority["adapter"]["executable"].as_str().ok_or("adapter path unknown")?,key,p.root.to_str().ok_or("project path invalid")?,&environment)?;
     resources::within(install,resources::WAIT,|s| {
-        if crate::external_slots::reserved(install,s,&r.slot,"codex")?!=key {return Err("slot changed".into());}
+        if crate::external_slots::reserved(install,s,&r.slot,crate::runtime::CODEX)?!=key {return Err("slot changed".into());}
         super::mac::refresh(install,home,r,&p.authority)?;
         consume(s,key,r,&p.authority,&frontend)?;
         let launch=&mut s.ops.get_mut(key).unwrap().bound["local_slot"]["launch"];
@@ -110,7 +110,7 @@ pub(super) fn launch(install:&Path,home:&Path,r:&Request,key:&str)->Res<()> {
     membership(&supervisor,&binding)?;
     if binding["coalition"]==coalition(frontend.pid)? {return Err("scope shares frontend coalition; native input refused".into());}
     resources::within(install,resources::WAIT,|s| {
-        crate::external_slots::reserved(install,s,&r.slot,"codex")?;super::mac::refresh(install,home,r,&p.authority)?;
+        crate::external_slots::reserved(install,s,&r.slot,crate::runtime::CODEX)?;super::mac::refresh(install,home,r,&p.authority)?;
         input_gate(s,key,r)?;
         let launch=&mut s.ops.get_mut(key).unwrap().bound["local_slot"]["launch"];
         if launch["frontend"]!=json!({"pid":frontend.pid,"started":frontend.started})||launch["scope"]["label"]!=label {return Err("scope launch binding changed".into());}

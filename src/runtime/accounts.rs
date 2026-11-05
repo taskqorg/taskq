@@ -438,7 +438,7 @@ pub fn heartbeat_rows(host: &str, body: &str) -> Vec<Row> {
 
 /// The runtime's own home, including an explicit override inside a named account.
 pub fn default_home(rt: &str) -> Option<PathBuf> {
-    (crate::runtime::of(rt).native_home)()
+    crate::runtime::of(rt).native_home.path()
 }
 
 /// The parent home containing TaskQ's named accounts.

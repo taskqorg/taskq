@@ -144,7 +144,7 @@ pub fn profile(install: &Path, writable: Option<&[PathBuf]>, home: &Path) -> Str
     if let Some(w) = writable {
         let mut any: Vec<String> = w.iter().map(|p| format!("(subpath {})", sb(&canon(p)))).collect();
         // Claude rewrites its home config through sibling temp files
-        let esc: String = canon(home).join(crate::runtime::owner::CLAUDE_CONFIG).display().to_string().chars().flat_map(|c| if c.is_alphanumeric() || c == '/' { vec![c] } else { vec!['\\', c] }).collect();
+        let esc: String = canon(home).join(crate::runtime::CLAUDE_CONFIG).display().to_string().chars().flat_map(|c| if c.is_alphanumeric() || c == '/' { vec![c] } else { vec!['\\', c] }).collect();
         any.push(format!("(regex #\"^{esc}\")"));
         s += &format!("(deny file-write* (require-not (require-any {})))\n", any.join(" "));
     }

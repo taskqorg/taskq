@@ -18,7 +18,7 @@ fn trusted(path: &Path) -> Result<(), String> {
 
 pub fn ready(root: &Path) -> Result<(), String> {
     for p in [HELPER, BWRAP] { trusted(Path::new(p))?; }
-    prerequisites(root, &crate::runtime::accounts::active_in(&crate::platform::default_install(), "codex", &codex_home()?))
+    prerequisites(root, &crate::runtime::accounts::active_in(&crate::platform::default_install(), crate::runtime::CODEX, &codex_home()?))
 }
 
 fn prerequisites(root: &Path, home: &Path) -> Result<(), String> {
@@ -34,7 +34,7 @@ fn prerequisites(root: &Path, home: &Path) -> Result<(), String> {
 }
 
 fn codex_home() -> Result<PathBuf, String> {
-    std::env::var_os("CODEX_HOME").map(PathBuf::from).or_else(|| crate::platform::user_home().map(|h| h.join(".codex")))
+    std::env::var_os(crate::runtime::CODEX_DIR_VAR).map(PathBuf::from).or_else(|| crate::platform::user_home().map(|h| h.join(".codex")))
         .ok_or("linux sandbox: Codex home unknown")?.canonicalize().map_err(|e| e.to_string())
 }
 
@@ -93,7 +93,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
         return Err("linux sandbox: only bounded Codex exec allowed".into());
     }
     let home = crate::platform::user_home().ok_or("linux sandbox: HOME missing")?;
-    let ch = crate::runtime::accounts::active_in(&install, "codex", &codex_home()?);
+    let ch = crate::runtime::accounts::active_in(&install, crate::runtime::CODEX, &codex_home()?);
     let mut c = crate::platform::command(BWRAP);
     c.args(["--die-with-parent", "--new-session", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--cap-drop", "ALL", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/var/tmp"]);
     let dns = Path::new("/etc/resolv.conf").canonicalize().map_err(|e| format!("linux sandbox DNS: {e}"))?;

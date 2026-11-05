@@ -256,7 +256,7 @@
         let root = home.join("work").join("assetq");
         std::fs::create_dir_all(&root).unwrap();
         assert_eq!(trust_item(&home, &root, true).status, "ok", "no Claude config: Claude is not set up here");
-        let config = home.join(crate::runtime::owner::CLAUDE_CONFIG);
+        let config = home.join(crate::runtime::CLAUDE_CONFIG);
         std::fs::write(&config, json!({"projects": {"/elsewhere": {"hasTrustDialogAccepted": true}}}).to_string()).unwrap();
         let gap = trust_item(&home, &root, true);
         let key = crate::runtime::owner::claude_key(&root);
@@ -284,7 +284,7 @@
         let home = scratch("no-claude");
         let root = home.join("work");
         std::fs::create_dir_all(&root).unwrap();
-        let config = home.join(crate::runtime::owner::CLAUDE_CONFIG);
+        let config = home.join(crate::runtime::CLAUDE_CONFIG);
         std::fs::write(&config, json!({"projects": {}}).to_string()).unwrap();
         assert_eq!(trust_item(&home, &root, true).status, "gap", "a host with Claude keeps the gap");
         let item = trust_item(&home, &root, false);

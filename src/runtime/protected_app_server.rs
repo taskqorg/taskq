@@ -171,12 +171,12 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
         }
     }
     // A poll may rank another account first between preparation and launch; the prepared account stays.
-    if !accounts.usable("codex",&r.account,runtime::accounts::now()) {
+    if !accounts.usable(runtime::CODEX,&r.account,runtime::accounts::now()) {
         return Err("selected host account unavailable; no account fallback".into());
     }
     let base=home.join(".codex");
     let account=canonical(&if r.account==runtime::accounts::DEFAULT {base.clone()}else{base.join(runtime::accounts::HOMES).join(&r.account)})?;
-    let mut access=policy::resolve(&Ok(p.clone()),&policy::Host{os,install:&install,root:&root,home:&home},"codex",&host.permission_mode,&host.codex);
+    let mut access=policy::resolve(&Ok(p.clone()),&policy::Host{os,install:&install,root:&root,home:&home},runtime::CODEX,&host.permission_mode,&host.codex);
     if access.refused.is_some()||access.mode!="workspace"||access.profile.is_none() {return Err("protected enforcement unknown; no native input".into());}
     let adapter=canonical(&std::env::current_exe().map_err(|_|"adapter executable unknown")?)?;
     // Staged qualification binaries need the same write protection as an installed launcher.
@@ -201,7 +201,7 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
             args.extend([a.clone(),v.clone()]);},
         _=>return Err("unsupported host app-server arguments; existing paths unchanged".into()),
     }}
-    let authority=json!({"project":root,"runtime":"codex","profile_sha256":digest(access.profile.as_ref().unwrap().as_bytes()),
+    let authority=json!({"project":root,"runtime":runtime::CODEX,"profile_sha256":digest(access.profile.as_ref().unwrap().as_bytes()),
         "requested":access.requested,"saved":{"revision":p.revision,"grant":g},"resolved":access.json(),
         "executable":bin,"executable_identity":stamp(&bin)?,"executable_sha256":file_digest(&bin)?,
         "adapter":{"executable":adapter,"identity":stamp(&adapter)?,"sha256":file_digest(&adapter)?,"version":crate::platform::VERSION},
@@ -325,7 +325,7 @@ mod mac {
         if status!=0||result.is_null() {return Err("host account identity unknown".into());}
         let home=canonical(Path::new(std::ffi::OsStr::from_bytes(unsafe{CStr::from_ptr((*result).pw_dir)}.to_bytes())))?;
         let install=canonical(&home.join(".local/share/taskq"))?;
-        for (name,expected) in [("HOME",&home),("TASKQ_INSTALL",&install),("CODEX_HOME",&home.join(".codex"))] {
+        for (name,expected) in [("HOME",&home),("TASKQ_INSTALL",&install),(runtime::CODEX_DIR_VAR,&home.join(".codex"))] {
             if let Some(value)=std::env::var_os(name) {if canonical(Path::new(&value))?!=canonical(expected)? {
                 return Err("ambient host/account override cannot select authority".into());
             }}
@@ -336,7 +336,7 @@ mod mac {
         // shortcut: standard host CLI locations; use host-owned runtime resolution if custom installations need support.
         let defaults=std::ffi::OsStr::new("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
         let path=runtime::user_bin_path(defaults,Some(home.as_os_str())).unwrap_or_else(||defaults.to_os_string());
-        runtime::agent(runtime::crate::runtime::RuntimeId::CodexApp.name())?.executable(Some(&path))
+        runtime::agent(runtime::RuntimeId::CodexApp.name())?.executable(Some(&path))
     }
     pub(super) fn live(id:&coreq::process::Identity)->Res<()> {exact(id,coreq::process::identity(id.pid).map_err(|_|"native liveness unknown".into()))}
     fn child_of(id:&coreq::process::Identity,supervisor:&coreq::process::Identity)->Res<()> {
@@ -379,7 +379,7 @@ mod mac {
         if p.authority!=*original {return Err("bound project/profile/account/executable authority changed; native input refused".into());}Ok(p)
     }
     fn key(install:&Path,r:&Request)->Res<String> {
-        resources::within(install,resources::WAIT,|s|external_slots::reserved(install,s,&r.slot,"codex"))
+        resources::within(install,resources::WAIT,|s|external_slots::reserved(install,s,&r.slot,runtime::CODEX))
     }
     pub(super) fn dispatch(action:&str,text:&str)->Res<()> {
         if action=="scope-run" {return scope::run(text);}
@@ -392,9 +392,9 @@ mod mac {
             if input.schema!=SCHEMA {return Err("unsupported preparation schema".into());}
             let (install,home)=host_paths()?;
             let result=resources::within(&install,resources::WAIT,|s| {
-                let account=runtime::accounts::Host::read(&install).active("codex",runtime::accounts::now()).ok_or("active account unknown")?;
+                let account=runtime::accounts::Host::read(&install).active(runtime::CODEX,runtime::accounts::now()).ok_or("active account unknown")?;
                 let r=Request{schema:input.schema.clone(),slot:input.slot.clone(),policy_revision:policy::load(&install)?.revision,account,preparation:String::new()};
-                let key=external_slots::reserved(&install,s,&r.slot,"codex")?;
+                let key=external_slots::reserved(&install,s,&r.slot,runtime::CODEX)?;
                 let p=resolve(&install,&home,&r,"macos",&executable(&home)?)?;
                 let op=s.ops.get_mut(&key).ok_or("slot absent")?;
                 if !op.bound["local_slot"]["launch"].is_null() {return Err("launch already consumed; never derive expected authority from a launch receipt".into());}
@@ -456,11 +456,11 @@ mod mac {
         // Neither authority secrets nor an ambient environment choose native account, configuration or executable.
         cmd.env_clear();for name in ["PATH","LANG","LC_ALL","TMPDIR","TERM"] {if let Some(v)=std::env::var_os(name) {cmd.env(name,v);}}
         cmd.env("HOME",home);
-        let spec=runtime::optimized(runtime::crate::runtime::RuntimeId::CodexApp.name(),agentq_runtime::agent::NativeSpec{root:p.root.clone(),session:"-".into(),
+        let spec=runtime::optimized(runtime::RuntimeId::CodexApp.name(),agentq_runtime::agent::NativeSpec{root:p.root.clone(),session:"-".into(),
             resume:false,args:p.args.iter().map(Into::into).collect(),home:Some(PathBuf::from(p.authority["account_home"].as_str().ok_or("account home unknown")?)),env:vec![]})?;
-        let mut cmd=runtime::agent(runtime::crate::runtime::RuntimeId::CodexApp.name())?.app_server_command(cmd,&spec)?;
+        let mut cmd=runtime::agent(runtime::RuntimeId::CodexApp.name())?.app_server_command(cmd,&spec)?;
         cmd.stdin(Stdio::piped()).stdout(stdout).stderr(stderr);
-        resources::within(install,resources::WAIT,|s|{external_slots::reserved(install,s,&r.slot,"codex")?;input_gate(s,key,r)})?;
+        resources::within(install,resources::WAIT,|s|{external_slots::reserved(install,s,&r.slot,runtime::CODEX)?;input_gate(s,key,r)})?;
         let mut child=cmd.spawn().map_err(|_|"native spawn outcome unknown; intent retained, never replay")?;
         let id=coreq::process::identity(child.id()).map_err(|_|"spawned native identity unknown; retain intent")?.ok_or("spawned native absent; retain intent")?;
         resources::within(install,resources::WAIT,|s| {
@@ -475,7 +475,7 @@ mod mac {
                 match image(&id,&p.bin) {Ok(())=>break,Err(e)=>{if Instant::now()>=until||child.try_wait().map_err(|_|"native liveness unknown")?.is_some() {return Err(e);}std::thread::sleep(Duration::from_millis(10));}}
             }
             resources::within(install,resources::WAIT,|s| {
-                external_slots::reserved(install,s,&r.slot,"codex")?;refresh(install,home,r,&p.authority)?;
+                external_slots::reserved(install,s,&r.slot,runtime::CODEX)?;refresh(install,home,r,&p.authority)?;
                 bound_gate(s,key,r,&p.authority,&id,&supervisor,None)?;child_of(&id,&supervisor)?;
                 let effective=verified(&id,&p,&original["scope"])?;
                 let launch=&mut s.ops.get_mut(key).ok_or("slot disappeared")?.bound["local_slot"]["launch"];
@@ -489,7 +489,7 @@ mod mac {
             if let Some(status)=child.try_wait().map_err(|_|"native liveness unknown; slot retained")? {
                 return if status.success(){Ok(())}else{Err("native app-server exited; turn outcome unproved, slot retained".into())};
             }
-            resources::within(install,resources::WAIT,|s| {external_slots::reserved(install,s,&r.slot,"codex")?;input_gate(s,key,r)})?;
+            resources::within(install,resources::WAIT,|s| {external_slots::reserved(install,s,&r.slot,runtime::CODEX)?;input_gate(s,key,r)})?;
             let mut bytes=vec![0;65536];
             let count=match transport.read(&mut bytes) {
                 Ok(n)=>n,Err(e) if matches!(e.kind(),io::ErrorKind::WouldBlock|io::ErrorKind::TimedOut|io::ErrorKind::Interrupted)=>continue,
@@ -498,7 +498,7 @@ mod mac {
             if count==0 {drop(input);return Err("consumer input ended; retain native scope until descendants finish".into());}
             bytes.truncate(count);
             resources::within(install,resources::WAIT,|s| {
-                external_slots::reserved(install,s,&r.slot,"codex")?;refresh(install,home,r,&p.authority)?;let effective=verified(&id,&p,&original["scope"])?;
+                external_slots::reserved(install,s,&r.slot,runtime::CODEX)?;refresh(install,home,r,&p.authority)?;let effective=verified(&id,&p,&original["scope"])?;
                 bound_gate(s,key,r,&p.authority,&id,&supervisor,Some(&effective))?;child_of(&id,&supervisor)?;scope::membership(&id,&original["scope"]["binding"])?;
                 let until=Instant::now()+Duration::from_secs(1);let mut left=bytes.as_slice();
                 while !left.is_empty() {match input.write(left) {
