@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "observed_utc": "2026-11-05T02:49:55.835749+00:00",
+  "scope": "Manual native qualification for TaskQ #2393 released-row acceptance; automatic Mac binary_evidence remains unknown.",
+  "source_merge": "f6e9b2b0b8dc58fb2a190d7a79bd71a6c459e059",
+  "merge_group": 41944457246,
+  "release_runs": [
+    41945775423,
+    41952490451
+  ],
+  "hosts": [
+    {
+      "host": "win",
+      "issue": 745,
+      "heartbeat_at": "2026-11-05T02:49:26Z",
+      "version": "4.6.81",
+      "source": "dd4d655af62847d82dfc86a4660f57f995a45397",
+      "producer_binary_state": "binary_ready",
+      "producer_digest": "0f9198672a81349a22c197be68b45a4b8330149e13604395f2b975237b3625ad",
+      "rows": [
+        {
+          "label": "default",
+          "window": "seven_day",
+          "used": 45,
+          "reset": "2026-11-09T05:00:00Z",
+          "at": "2026-11-05T02:48:04Z"
+        },
+        {
+          "label": "default",
+          "window": "seven_day_fable",
+          "used": 4,
+          "reset": "2026-11-09T04:59:59Z",
+          "at": "2026-11-05T02:48:04Z"
+        }
+      ]
+    },
+    {
+      "host": "mac",
+      "issue": 722,
+      "heartbeat_at": "2026-11-05T02:47:15Z",
+      "version": "4.6.81-261105-0",
+      "source": "f6e9b2b0b8dc58fb2a190d7a79bd71a6c459e059",
+      "producer_binary_state": "unknown",
+      "producer_digest": null,
+      "rows": [
+        {
+          "label": "default",
+          "window": "seven_day",
+          "used": 45,
+          "reset": "2026-11-09T05:00:00Z",
+          "at": "2026-11-05T02:46:40Z"
+        },
+        {
+          "label": "default",
+          "window": "seven_day_fable",
+          "used": 4,
+          "reset": "2026-11-09T05:00:00Z",
+          "at": "2026-11-05T02:46:40Z"
+        }
+      ]
+    }
+  ],
+  "same_account_identity_privately_verified": true,
+  "mac_native_chain": {
+    "original_upgrade_receipt": "Observed completion of the same original queued operation, no new receipt.",
+    "source_commit": "f6e9b2b0b8dc58fb2a190d7a79bd71a6c459e059",
+    "source_binding": "Local dev build pinned to this immutable source through the verified normal installer; original candidate binding retained privately.",
+    "codesign_verify_exit": 0,
+    "codesign_result": "Valid on disk; satisfies its Designated Requirement.",
+    "kernel_text_vnode_matches_prepared_artifact": true,
+    "artifact_sha256_matches_original_candidate": true,
+    "same_native_incarnation_across_readback": true,
+    "stable_artifact_across_readback": true,
+    "automatic_producer_digest": "null/unknown intentionally at source f6e9b2b0 src/service_versions.rs:45-47; unchanged.",
+    "qualification": "Manual native cutover/source/signature/vnode witness, not a GitHub attestation of local dev bytes. Raw process, path and local hash identifiers are retained privately."
+  },
+  "privacy": "No account fingerprint, email, token, PID, native generation, private path or local artifact hash is included."
+}
