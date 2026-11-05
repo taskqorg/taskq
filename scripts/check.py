@@ -18,10 +18,12 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 BUDGET = 900
+# taskq.md Product: this page is contract text under that ID, so it keeps the root contract's gate and lane.
+PRODUCT_DOC = 'docs/design/product-contract.md'
 
 
 def selection(paths):
-    if paths and all(Path(p).suffix in {'.md', '.txt'} and p not in {'taskq.md', 'AGENTS.md', 'CLAUDE.md'} for p in paths):
+    if paths and all(Path(p).suffix in {'.md', '.txt'} and p not in {'taskq.md', 'AGENTS.md', 'CLAUDE.md', PRODUCT_DOC} for p in paths):
         # These pages carry published asset hashes, checked by the Node components.
         return 'web' if any(p in {'docs/design/answer-card.md', 'docs/design/shared-resource-controls.md'} for p in paths) else 'docs'
     if paths and all((p.startswith('src/') and Path(p).suffix in {'.js', '.css', '.html'}) or (p.startswith('tests/') and Path(p).suffix == '.cjs') for p in paths):
@@ -57,7 +59,7 @@ def runtime_names(path, text):
 
 
 # docs/design/rule-ids.md#contract-detail: rule IDs, the rule-change gate and coverage.
-RULE_DOCS = ('taskq.md', 'docs/design/menu.md')
+RULE_DOCS = ('taskq.md', 'docs/design/menu.md', PRODUCT_DOC)
 RULE_TESTS = ('src', 'tests', 'scripts')
 TEST_PATH = re.compile(r'^(src/.*\.rs|tests/.*|scripts/.*\.test\.py)$')
 ASSERTION = re.compile(r'\bassert|\bexpect\(|Chain:')
@@ -66,6 +68,8 @@ MEANING_WORDS = {'not', 'no', 'never', 'only', 'now', 'all', 'any', 'none', 'mus
 
 def rule_blocks(path, text):
     """Rule ID -> whitespace-normalized text; text without its own ID joins the enclosing ID."""
+    if path == PRODUCT_DOC:
+        return {'Product': ' '.join(text.split())} if text.strip() else {}
     blocks, cur, sec, num, sub = {}, None, None, None, None
     menu = path.endswith('menu.md')
     for line in text.splitlines():
@@ -99,7 +103,11 @@ def rule_order(rule):
 
 
 def doc_rules(docs):
-    return {k: v for path, text in docs.items() for k, v in rule_blocks(path, text).items()}
+    rules = {}
+    for path, text in docs.items():
+        for k, v in rule_blocks(path, text).items():
+            rules[k] = f'{rules[k]} {v}' if k in rules else v
+    return rules
 
 
 def edit_distance(a, b):

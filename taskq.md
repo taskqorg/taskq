@@ -1,9 +1,9 @@
 # taskq contract
 <!-- contract-budget: bytes=79872 lines=390 -->
-taskq queues agent work on GitHub and GitLab boards: the board holds every task state (R1), one host service runs workers and reviewers, and the owner decides through a PM. Principles bind first; sections state rules before detail; a linked `Contract detail` binds like this file. **v4**: Rust in `src/`. [Alpha][menu].
+taskq queues agent work on GitHub/GitLab boards, which hold every task state (R1); one host service runs workers/reviewers; the owner decides through a PM. Principles bind first; sections put rules before detail; linked `Contract detail` binds like this file. **v4**: Rust in `src/`. [Alpha][menu].
 ## Principles (R1–R13)
 ### Change rule
-Rule changes name the R-number, edit this file with code and list amended R-numbers in the result. Changed rules keep numbers; new rules get the next one. A rule conflicting with this file elsewhere is a defect. No history, dates or decision logs.
+Rule changes name their R-numbers, edit this file with code and list amended R-numbers in the result. Keep changed rules' numbers; number new rules next. Rules elsewhere conflicting with this file are defects. No history, dates or decision logs.
 ### R1. The board's own objects are the only state
 Trusted comments are truth; labels and the summary (§2) project them. A closed task still takes `deployed` entries (§2). Public: labels, issue text, `taskq:` comments, summary, heartbeats (§4); no issue machine block. Restart rebuilds caches; no local task DB/queue.
 Non-task state: minimal native recovery identity (§3); [DashQ](docs/design/enrollment.md#contract-detail); owner requests, tray AI history and agentq preferences (§4); incidents/profiles; host policy/migration backup; emergency hold; local external-consumer slot identities (§3); [operator grants/receipts](docs/design/shared-resource-controls.md#host-adapter). Fresh `status.json` checks per-root pid; `<install>/service` checks native host identity/generation (§4). [Chat](docs/design/ai-workspace.md).
@@ -17,7 +17,7 @@ One coherent outcome is one task, any diff size, with ≤ 1 live attempt (worker
 - **Reviewer** `R<N>`: a child of the service, spawned on demand for a result. Checks the exact candidate, then `close`, `requeue` with fixes, or `ask`. No resident supervisor session.
 - **Owner session**: a new visible session the service opens for a person (setup, tray AI request, `retro`; § 4), then owned by its runtime; any may act as PM. Authority per [shared approval boundaries](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#approval-boundaries); task-state writes use TaskQ commands. Session name `<work|review|setup> #<N> <title[:40]>`: Claude `--name`; Codex first input line.
 ### R4. Comments move the queue
-Each command that changes a task appends one `taskq:` comment, sets the projected labels and pokes the local service. Services poll the board every `poll` seconds. No sender session, timer or PM chat is on the critical path.
+Each task-changing command appends one `taskq:` comment, projects labels and pokes the local service. Services poll the board every `poll` seconds. No sender session, timer or PM chat is on the critical path.
 ### R5. Completion is written to the task
 Result SHA, checks, questions and blockers go to the issue: `result`, `ask`, `requeue` or `later`; evidence follows [specq verification][vf].
 ### R6. Human report
@@ -34,8 +34,7 @@ Commands refuse over-limit new input before writing, naming the excess; historic
 ### R8. The contract is the SoT and matches code
 TaskQ code and contract ship together (§8); every §2 row has a golden trace. Host acceptance: [H-A1–H-A5](docs/design/host-service.md#command-surface-acceptance); Claude is optional; admission policy lives in §4/§9. Targets and AgentQ adoption need TaskQ qualification.
 The [protected app-server adapter](docs/design/protected-app-server.md#contract-detail) needs native boundary readback; portable checks never qualify it. Its detail owns non-launching preparation, original-slot retention and sandbox/path query refusals (R9/R12): missing, changed or unknown paths refuse, never count as denial; refusals never expose private paths.
-`taskq.md` keeps its declared `contract-budget` and 70% [target](https://github.com/taskqorg/specq/blob/main/engineering/contracts.md#size-budgets); `python3 scripts/check.py` runs the [specq contract lint](https://github.com/taskqorg/specq/blob/main/engineering/contracts.md#lint) and the § 2 trace test on it and prints each `COMPACT:` marker.
-Local checks prepare the pinned, hash-verified linter before other checks; unavailable or invalid lint refuses (R12).
+`taskq.md` keeps its declared `contract-budget` and 70% [target](https://github.com/taskqorg/specq/blob/main/engineering/contracts.md#size-budgets); `python3 scripts/check.py` runs the [specq contract lint](https://github.com/taskqorg/specq/blob/main/engineering/contracts.md#lint) and the § 2 trace test on it and prints each `COMPACT:` marker. Local checks prepare the pinned, hash-verified linter before other checks; unavailable or invalid lint refuses (R12).
 ### R9. No silent changes to model, effort or permissions
 Name model, effort or permission changes to the owner first. AgentQ gives mechanics, never authority or host policy. External app-server launches reuse the operator project Workspace grant, resolver and protected boundary, with one launch per existing external slot; no new grants or Full fallback ([adapter](docs/design/protected-app-server.md#contract-detail)).
 The adapter accepts the supported host Codex request, including Workspace with network access, only inside that required outer boundary; unknown config refuses.
@@ -60,8 +59,7 @@ A closed issue is done, unless the board records that it closed without completi
 Issue text is for people, hand-editable: `## Goal`, `## Acceptance`, optional `## Scope`, one `Depends on #N` line per dependency; `Depends on <repo>#N` names an issue of another repository on the board's host, read with the board's token (`<repo>`: `name` under the board's owner, or `owner/name`). An unreadable dependency reads unknown.
 Acceptance items `A1.`, `A2.` never renumber; each is an observable result checked without code. What `add` writes and its limits: [commands][cm]. **Create claim (R1, R12, R13).** `add --op-id` and `taskq claim-issue [N]`: [finding tasks](docs/design/finding-tasks.md#contract-detail).
 **Finding CLI (R1, R12, R13).** `taskq finding` (§ 5) runs only as the owner-authenticated local CLI on the configured board; one permanent claim per source episode; creates are always held, `--start`/`start` separate: [finding tasks](docs/design/finding-tasks.md#contract-detail). Held: every `add` (PM, worker, `retro`, `finding`, recipe) labels `q-held`, not `taskq`, then writes `hold`; no flag skips it.
-Without an accepted `start`, listed as `held`; no version admits it. `taskq start N [M..]` checks all first, then in order writes `start` and adds `taskq`.
-A retry of an accepted start still ready/waiting with incomplete eligibility labels repairs and reads them back without another entry; stale revisions still refuse.
+Without an accepted `start`, listed as `held`; no version admits it. `taskq start N [M..]` checks all first, then in order writes `start` and adds `taskq`. A retry of an accepted start still ready/waiting with incomplete eligibility labels repairs and reads them back without another entry; stale revisions still refuse.
 Status reports the folded state and the label mismatch with `taskq start N` as its repair; services never admit it without `taskq` (R1/R4/R6). A person adding `taskq` starts it (service writes `start`).
 Labels: `q-<state>` (projection; `waiting`: `q-blocked`); type `code|docs|research|asset`; `p0|p1|p2` (lower first, absent: 2; `p0` passes focus, § 4);
 `run-<runtime>` (none: § 4 Filter); `prefer-claude|prefer-codex|prefer-antigravity` (soft worker preference, §4); `host-<name>` (none: `any` hosts, § 4; `add --host` takes a heartbeat's name); `needs-<x>` (only hosts with x in `has`, § 9); `assignee-only` (start only when the board's user is an assignee); any other. Reserved: `taskq-host`.
@@ -168,8 +166,7 @@ Owner weights, quota headroom and host spread: [contract detail](docs/design/cap
 ### Profiling
 Coreq always records actions; owned methods: bounded opt-in detail. UI/board/agent work; local store, optional sync. Follow [shared profiling](https://github.com/taskqorg/specq/blob/main/engineering/profiling.md); [detail][pf] owns coverage and qualification, recovery proof, selftest capture and limits.
 ### Board request records
-A running service records its unrecorded board request counts to telemetry every 4 minutes and at each clean end, so `taskq profile` keeps the hour across a restart. A clean stop, restart or update handover loses no count; any other end (kill, crash, OS signal, power loss) loses at most the last 5 minutes.
-Each count is recorded once and recording sends no board request; the `requests 1h:` log and heartbeat counts stay hourly ([budget](docs/budget-1032.md#counting-format)).
+A running service records unrecorded board request counts to telemetry every 4 minutes and at clean end, preserving `taskq profile`'s hour across restart. Clean stop/restart/update handover loses none; any other end (kill, crash, OS signal, power loss) loses at most the last 5 minutes. Record each count once, with no board request; `requests 1h:` log and heartbeat counts stay hourly ([budget](docs/budget-1032.md#counting-format)).
 ### Host link
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
@@ -249,24 +246,7 @@ These own runtime mechanics; labels own the §4 preference/pin/fallback policy, 
 GitLab keeps coreq token lookup and `Authorization: Bearer`. A cutover is one step per project, not per host; board formats never mix. No migration code: `CHANGELOG.md` says per release what changed on the board and what an open issue needs. Publication cutover, planning, owner approval, apply order and repair: [configuration][cf].
 Balancing requires every board host to adopt compatible readers before routing fences or reviewer quota input: [cutover](docs/design/configuration.md#balancing-cutover). Preserve active ownership, results, retries and quota windows; no live policy or account changes are implied.
 ## Product
-Looks/sound: one line each (R13).
-- Home: current work, unresolved questions. Communication: [Notifications](docs/design/menu.md#m14-notifications). Read/clear changes no task state.
-- Errors and service notices use one steady header icon and deduplicated list in tray and Conversations; failed reads retain aged last-known data ([attention](docs/design/menu.md#errors-and-service-notices)). R6/R12 freshness and action gates still bind.
-- One [Conversations](docs/design/reports.md) entrance; New and Needs me use icon/count counters in the top task bar. One chronological reader opens exact target (including receipt tails), saved passage, else latest mixed history; bounded paging keeps source positions. Cache budgets evict projections, never restrict readable history. Ordinary completions need no Accept.
-- [Promo A](docs/video-experiments/planning-802/approval.md).
-- Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 first, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
-- UI: Preact/Signals/Wouter O1–O3; [UI30 targets](docs/design/ui-polish.md): palette A, exact counts ordered Ready+Blocked / Ask / Work, event stack A; no Custom. Native proof pending (R12).
-- Menu, Settings, View and Conversations use ordinary opaque native OS titlebars and integrated frames, drag areas and Close, without duplicate app Close. Conversations safe Reload preserves drafts/files, exact sources, anchors and receipts without replay; [unified reader](docs/design/tray-workspace.md#unified-task-and-session-reader) owns rows, history, provenance and exact event jumps.
-- Conversations preserves scope, selection and paragraph offsets within 2 CSS px with one anchor owner per viewport; saved logical-pixel sidebar width/visibility and display-clamped native geometry survive reopening ([reader and layout](docs/design/tray-workspace.md#unified-task-and-session-reader)).
-- Compact task rows share numbers-only timing: elapsed since first accepted worker ownership, subsequent actual state-change count, current-state elapsed; unknown boundaries stay explicit ([task rows](docs/design/project-blocks.md)).
-- Closed pins: unpin after first open or 24 h; [P-W1](docs/design/menu-product.md#windows-and-task-pins).
-- Settings keeps twelve destinations with bounded summaries, useful Balancing/Recovery state and direct existing reviews; client facts once, project details available ([M8/M12](docs/design/menu.md#m8-implementation-boundary)).
-- Every UI task identifier displays `project#NNN`; lists and headers share a keyboard/touch-accessible copy widget for it; status-bar versions reuse it with their exact displayed text ([workspace](docs/design/task-workspace.md)).
-- Home agent totals: confirmed lower bounds, accessible Partial/Unknown explanations without a standalone compact label, shared runtime icons, host age and cause ([M3](docs/design/menu.md#running-agents)); Sigma total first, subtle Held outline and scoped frozen-review Start ([K-A3/K-A6](docs/design/task-counters.md)).
-- Shared relative times, exact on hover/focus, future and unknown explicit: [D-A19](docs/design/ai-workspace.md#conversation-time-d-a19).
-- Menu/View/Settings wrap, no horizontal scroll; compact rows, growing input; M2 rail; M3/M1.2 opaque sticky Home host strip starts at its pinned position. Home has no Tasks heading; [filter row](docs/design/menu.md#m3-navigation-and-tasks) reuses current/previous views and grouping.
-- Standalone: [onboarding](docs/design/standalone-onboarding.md); [telemetry](docs/design/standalone-telemetry.md): local SQLite/WAL, 30 days, async only under revocable `taskq-telemetry/1`. `profile export`: analysis; `guide`: agents. Migration keeps legacy rows (R1).
-- README: header, three-part setup (install phrase; repository and Issues-as-board permission, existing or new private; optional SDD request), purpose, three visual examples, shots, disclosures and final line: [README rules](docs/design/readme-plan.md#contract-detail).
+Looks/sound requirements and their specification links: [product contract](docs/design/product-contract.md#contract-detail), binding under R13.
 ### [menu]
 [menu]: docs/design/menu.md#contract-detail
 [hs]: docs/design/host-service.md#contract-detail
@@ -289,3 +269,4 @@ Looks/sound: one line each (R13).
 - [docs/design/host-service.md][hs]: Heartbeat lines, host lock, release channels, service internals.
 - [docs/design/profiling.md][pf]: Profiling coverage, recovery proof, selftest capture, churn.
 - [docs/design/menu.md](docs/design/menu.md#contract-detail): Menu, tray, history JSON, events.
+- [docs/design/product-contract.md](docs/design/product-contract.md#contract-detail): Product requirements and their specification links.
