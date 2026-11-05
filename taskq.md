@@ -63,7 +63,7 @@ Status reports the folded state and the label mismatch with `taskq start N` as i
 Labels: `q-<state>` (projection; `waiting`: `q-blocked`); type `code|docs|research|asset`; `p0|p1|p2` (lower first, absent: 2; `p0` passes focus, § 4);
 `run-<runtime>` (none: § 4 Filter); `prefer-claude|prefer-codex|prefer-antigravity` (soft worker preference, §4); `host-<name>` (none: `any` hosts, § 4; `add --host` takes a heartbeat's name); `needs-<x>` (only hosts with x in `has`, § 9); `assignee-only` (start only when the board's user is an assignee); any other. Reserved: `taskq-host`.
 ### Task text
-`add`/`start` refuse unknown rule IDs and commands; issue `Rules: IDs|all` scopes the [gate](docs/design/rule-ids.md).
+`add`/`start` refuse unknown rule IDs and commands; issue `Rules: IDs|all` scopes the [gate](docs/design/rule-ids.md). Owner/PM `taskq deps N --board URL --deps LIST --op-id ID --revision R` amends never-started held drafts through a durable intent/writer/completion fence and body readback (R1/R3/R4/R12): [commands][cm].
 ## 2. Log and states
 A log entry is a trusted author's comment with first line `taskq: <kind> [<arg>] [attempt <id>]`; the rest is text. Entries fold in comment-id order; edited (`updated_at` after `created_at`) or unknown-kind ones are ignored. A hand-typed entry counts like a command.
 The CLI form `taskq answer K` or `taskq answer N.K` (no colon, N = this task) counts as `answer K`. In `ask` a comment whose whole body is K or option K's text (trimmed, any case, `K. ` optional) of the open card counts as `answer K` if one option matches; `fold` ignores other comments.
