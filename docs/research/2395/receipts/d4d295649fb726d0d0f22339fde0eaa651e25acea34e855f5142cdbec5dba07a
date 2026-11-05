@@ -1,0 +1,3 @@
+        def runner(repo, subset):
+            done = subprocess.run(command, cwd=repo, capture_output=True)
+            return done.returncode, done.stdout + done.stderr

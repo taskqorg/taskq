@@ -1,0 +1,213 @@
+{
+  "schema": 1,
+  "purpose": "operator actual full-matrix evidence for isolated replay; not publication or runtime qualification",
+  "run_id": 41914656647,
+  "run_attempt": 1,
+  "event": "workflow_dispatch",
+  "head_sha": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
+  "run_url": "https://github.com/taskqorg/taskq/actions/runs/41914656647",
+  "outcome": "success",
+  "job_skips": 0,
+  "total_wall_seconds": 539,
+  "workflow_sha256": "114f9c14d4f5d576207646b505edd1d1bdd6be24af5207f47919a57c20300de0",
+  "check_py_sha256": "1ed0458309132d2c5848ca390d33254ef4aa4409821118bc8d94c9777e24f4d2",
+  "canonical_argv": [
+    "python3",
+    "scripts/check.py"
+  ],
+  "canonical_full_environment": {
+    "CHECK_FULL": "true"
+  },
+  "experimental_base_head": "437b96ac58375c3dab9c3c9966114832bd2ae503",
+  "reviewed_source_sha": "d82957095f9e8c2117ac56f64dbd1f4c2e1a0c29",
+  "source_and_replay_tree": "7300a5b79d6e0f5851990887bde393e722b62666",
+  "jobs": [
+    {
+      "id": 126871020580,
+      "name": "shots",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
+      "run_attempt": 1,
+      "html_url": "https://github.com/taskqorg/taskq/actions/runs/41914656647/job/126871020580",
+      "runner_name": "GitHub Actions 1000029067",
+      "started_at": "2026-11-04T21:17:18Z",
+      "completed_at": "2026-11-04T21:17:30Z",
+      "normalized_log_sha256": "4eaca38c56b2e033ffc706a6008575a1149142448d20fe49ffeae873cb2c6f24",
+      "normalized_log_bytes": 107543,
+      "tool_versions_observed": {
+        "runner": "2.338.2",
+        "git": "2.56.0",
+        "rustc": null,
+        "cargo": null,
+        "image": "ubuntu-26.04",
+        "node": null,
+        "python": null,
+        "limits": "Only explicitly logged versions captured; null is unknown, not inferred from runner inventory.",
+        "image_version": "20261101.186.1"
+      }
+    },
+    {
+      "id": 126871021040,
+      "name": "plan",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
+      "run_attempt": 1,
+      "html_url": "https://github.com/taskqorg/taskq/actions/runs/41914656647/job/126871021040",
+      "runner_name": "GitHub Actions 1000029068",
+      "started_at": "2026-11-04T21:17:18Z",
+      "completed_at": "2026-11-04T21:17:35Z",
+      "normalized_log_sha256": "14c8b2b14a90f380f363ae8170be32c7b80068d88959edfdf19fa93fb1be625b",
+      "normalized_log_bytes": 117972,
+      "tool_versions_observed": {
+        "runner": "2.338.2",
+        "git": "2.56.0",
+        "rustc": null,
+        "cargo": null,
+        "image": "ubuntu-26.04",
+        "node": null,
+        "python": null,
+        "limits": "Only explicitly logged versions captured; null is unknown, not inferred from runner inventory.",
+        "image_version": "20261025.179.1"
+      }
+    },
+    {
+      "id": 126871198253,
+      "name": "windows-gnu",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
+      "run_attempt": 1,
+      "html_url": "https://github.com/taskqorg/taskq/actions/runs/41914656647/job/126871198253",
+      "runner_name": "GitHub Actions 1000029070",
+      "started_at": "2026-11-04T21:17:37Z",
+      "completed_at": "2026-11-04T21:21:36Z",
+      "normalized_log_sha256": "541bf23fc178389d82e6f535f5f1686611d7b21fc37e92c9dbb1df33282eec1a",
+      "normalized_log_bytes": 41816,
+      "tool_versions_observed": {
+        "runner": "2.338.2",
+        "git": "2.56.0.windows.4",
+        "rustc": "1.99.1 (58cf8f9c3 2026-10-13)",
+        "cargo": null,
+        "image": "windows-2025-vs2026",
+        "node": null,
+        "python": null,
+        "limits": "Only explicitly logged versions captured; null is unknown, not inferred from runner inventory.",
+        "image_version": "20261030.294.1"
+      }
+    },
+    {
+      "id": 126871198365,
+      "name": "rust (macos-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
+      "run_attempt": 1,
+      "html_url": "https://github.com/taskqorg/taskq/actions/runs/41914656647/job/126871198365",
+      "runner_name": "mac-taskq",
+      "started_at": "2026-11-04T21:17:39Z",
+      "completed_at": "2026-11-04T21:20:16Z",
+      "normalized_log_sha256": "594f5ab20c7975fddb962c69764c149149d51409c90894c45a554b38fdb53080",
+      "normalized_log_bytes": 280940,
+      "tool_versions_observed": {
+        "runner": "2.338.2",
+        "git": "2.55.0",
+        "rustc": null,
+        "cargo": null,
+        "image": null,
+        "node": null,
+        "python": null,
+        "limits": "Only explicitly logged versions captured; null is unknown, not inferred from runner inventory."
+      }
+    },
+    {
+      "id": 126871198448,
+      "name": "rust (windows-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
+      "run_attempt": 1,
+      "html_url": "https://github.com/taskqorg/taskq/actions/runs/41914656647/job/126871198448",
+      "runner_name": "GitHub Actions 1000029069",
+      "started_at": "2026-11-04T21:17:37Z",
+      "completed_at": "2026-11-04T21:26:07Z",
+      "normalized_log_sha256": "ea9532546a38977a01fde04c5f84f3277437f83a3d7ad3366a670d88b8461d79",
+      "normalized_log_bytes": 409628,
+      "tool_versions_observed": {
+        "runner": "2.338.2",
+        "git": "2.56.0.windows.4",
+        "rustc": null,
+        "cargo": null,
+        "image": "windows-2025-vs2026",
+        "node": null,
+        "python": null,
+        "limits": "Only explicitly logged versions captured; null is unknown, not inferred from runner inventory.",
+        "image_version": "20261103.298.1"
+      }
+    },
+    {
+      "id": 126871198524,
+      "name": "rust (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
+      "run_attempt": 1,
+      "html_url": "https://github.com/taskqorg/taskq/actions/runs/41914656647/job/126871198524",
+      "runner_name": "GitHub Actions 1000029071",
+      "started_at": "2026-11-04T21:17:37Z",
+      "completed_at": "2026-11-04T21:21:37Z",
+      "normalized_log_sha256": "6e6535baf1aa16b6dc3cd6740350e9708454848c6f4500b299129f705e1f624a",
+      "normalized_log_bytes": 502342,
+      "tool_versions_observed": {
+        "runner": "2.338.2",
+        "git": "2.56.0",
+        "rustc": null,
+        "cargo": null,
+        "image": "ubuntu-26.04",
+        "node": null,
+        "python": null,
+        "limits": "Only explicitly logged versions captured; null is unknown, not inferred from runner inventory.",
+        "image_version": "20261025.179.1"
+      }
+    },
+    {
+      "id": 126875892040,
+      "name": "tests",
+      "status": "completed",
+      "conclusion": "success",
+      "head_sha": "cc7941f4d4db1d2f50e7ce95f5d59733210654f1",
+      "run_attempt": 1,
+      "html_url": "https://github.com/taskqorg/taskq/actions/runs/41914656647/job/126875892040",
+      "runner_name": "GitHub Actions 1000029081",
+      "started_at": "2026-11-04T21:26:09Z",
+      "completed_at": "2026-11-04T21:26:12Z",
+      "normalized_log_sha256": "6098c7c9a50bd06849a90bc4729fc8a225317c65deecbfd601143318f336f872",
+      "normalized_log_bytes": 2949,
+      "tool_versions_observed": {
+        "runner": "2.338.2",
+        "git": null,
+        "rustc": null,
+        "cargo": null,
+        "image": "ubuntu-26.04",
+        "node": null,
+        "python": null,
+        "limits": "Only explicitly logged versions captured; null is unknown, not inferred from runner inventory.",
+        "image_version": "20261101.186.1"
+      }
+    }
+  ],
+  "log_digest_definition": "SHA256 of UTF-8 decoded job log, initial BOM removed, CRLF normalized to LF, one final LF",
+  "logs_location": "GitHub job URLs; normalized logs retained privately by operator, no private paths uploaded",
+  "operator_tools": {
+    "git": "git version 2.55.0",
+    "python": "3.14.8"
+  },
+  "remaining": [
+    "per-order execution receipt and failure-localization evidence audit",
+    "feature result and its canonical/PR/merge gates",
+    "source_ready and running runtime qualification remain separate/unknown"
+  ],
+  "security": "No production/live/ui-live/v-tag refs, credentials, trust stores or runtime policies changed.",
+  "head_branch": "taskq-2395-replay-cc7941f4d4db1d2f50e7ce95f5d59733210654f1"
+}

@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "synthetic": false,
+  "outcome": "pending",
+  "preparation_seconds": 63.203000000008615,
+  "host": "Windows worker; exact host retained in private receipt",
+  "preparation_receipt_sha256": "ec90e98ab4f6df7ff81fbcf95ac48cabceb85f50fa9cee11dcfded6e9fbbff80",
+  "preparation_log_sha256": "5b269a1c62bcad7c5ce638a0c963ac7b4da1f2da0ccfc7a68e176b1523e1a582",
+  "initial_refusal": {
+    "receipt_sha256": "c0abea3254d830b8307795ae0dba0805a4d3cebafa32cfe67a4b9a34af00272f",
+    "reason": "frozen source inputs moved",
+    "finding": "Whole-file historical blob guard rejected unrelated later reviewed hunks; exact reversal and frozen-context checks preserve them."
+  },
+  "orders": [
+    {
+      "tasks": [
+        2359,
+        2375,
+        2380
+      ],
+      "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+    },
+    {
+      "tasks": [
+        2359,
+        2380,
+        2375
+      ],
+      "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+    },
+    {
+      "tasks": [
+        2375,
+        2359,
+        2380
+      ],
+      "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+    },
+    {
+      "tasks": [
+        2375,
+        2380,
+        2359
+      ],
+      "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+    },
+    {
+      "tasks": [
+        2380,
+        2359,
+        2375
+      ],
+      "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+    },
+    {
+      "tasks": [
+        2380,
+        2375,
+        2359
+      ],
+      "tree": "7300a5b79d6e0f5851990887bde393e722b62666"
+    }
+  ],
+  "gate": "not run; operator full-matrix proof pending",
+  "publication": "none",
+  "runtime_qualification": "none"
+}

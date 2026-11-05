@@ -1,0 +1,8 @@
+        def runner(repo, subset):
+            ids = [m['task'] for m in subset]
+            calls.append(ids)
+            # Distinct files interact at the gate, not at patch application.
+            self.assertEqual((repo / 'member-1').exists(), 1 in ids)
+            self.assertEqual((repo / 'member-2').exists(), 2 in ids)
+            done = subprocess.run(command, cwd=repo, capture_output=True)
+            return done.returncode, done.stdout + done.stderr
