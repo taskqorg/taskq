@@ -2800,19 +2800,29 @@ Open: none")).unwrap();
     // Chain: native observation -> aggregate heartbeat -> remote read -> durable terminal after lost response.
     #[test]
     fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {
-        let b=Fake::default();let c=cfg("mac");let remote=cfg("win");
-        let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
+        for rt in crate::runtime::RUNTIMES {
+        if crate::runtime::of(rt).has(crate::runtime::Cap::AppTurn) && !cfg!(any(target_os="macos",windows)) {continue;}
+        let b=Fake::default();let mut c=cfg("mac");let remote=cfg("win");
+        c.default_runtime=crate::runtime::RuntimeId::parse(rt).unwrap();
+        c.limits=BTreeMap::from([(rt.into(),1)]);c.has=vec![rt.into()];
+        let n=b.create("T","",&[TASK_LABEL.into(),format!("run-{rt}")]).unwrap();
         let exits:Exits=Default::default();let mut s=service(&b,&c,exits.clone());
         s.pass().unwrap();s.pass().unwrap();let a=task(&b,n).attempt.unwrap();
         let read=||crate::snapshot::read(&b,&remote,&json!({}),&[]).tasks.into_iter().find(|r|r.n==n).unwrap().json();
         let host=b.issues(None).unwrap().into_iter().find(|i|i.title=="taskq host mac").unwrap();
         let running=host.body.clone();
         assert_eq!(read()["executions"][0]["state"],"running");
-        assert_eq!(read()["executions"][0]["runtime"],"claude");
+        assert_eq!(read()["executions"][0]["runtime"],rt);
         assert_eq!(read()["executions"][0]["role"],"worker");
         let snapshot=s.snapshot.as_ref().unwrap();
-        assert_eq!(snapshot.tasks[0].executions[0]["runtime"],"claude","local overlay keeps runtime");
+        assert_eq!(snapshot.tasks[0].executions[0]["runtime"],rt,"local overlay keeps runtime");
         assert_eq!(snapshot.tasks[0].executions[0]["role"],"worker","local overlay keeps role");
+        let mut local=snapshot.tasks[0].json()["executions"].clone();let mut published=read()["executions"].clone();
+        // Heartbeat publication advances the fixture board clock after the local snapshot.
+        let local_at=local[0].as_object_mut().unwrap().remove("observed").unwrap().as_i64().unwrap();
+        let published_at=published[0].as_object_mut().unwrap().remove("observed").unwrap().as_i64().unwrap();
+        assert!(published_at>=local_at,"publication cannot predate its local observation");
+        assert_eq!(local,published,"local status and heartbeat readback agree for {rt}");
         assert_eq!(snapshot.status_keys(None).into_iter().find(|(k,_)|*k=="hosts").unwrap().1,snapshot.json()["hosts"]);
         for fault in ["foreign","execution","input","duplicate","malformed","partial-duplicate","invalid-state","untrusted","stale","future"] {
             let mut body=running.clone();
@@ -2847,6 +2857,8 @@ Open: none")).unwrap();
         b.edit(host.number,&running).unwrap();let row=read();assert!(row.get("executions").is_none(),"late heartbeat cannot reopen terminal");
         let mut fresh=service(&b,&c,Default::default());fresh.focus.clear();fresh.pass().unwrap();
         assert!(!fresh.heartbeat_body().lines().any(|l|l.starts_with("execution ")),"restart reads durable terminal");
+        println!("{rt}: local status/heartbeat running, unknown, waiting and ended projections agree; fixture board/process only");
+        }
     }
 
     // Chain: slow native children -> bounded observation round -> honest heartbeat -> fair next round.
