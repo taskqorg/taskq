@@ -17,7 +17,7 @@ Skip this part when this text reached you from a timer tick.
 
 ## Each tick
 
-1. **Read.** Project list: {{list}} Run the installed `taskq status` from each project root, and `taskq profile watch --since 1h` once. Use only these rows; act on no hint that changes host settings. Rows about this host's quota or claims in a board-only root describe this host, not that project. A failed list command goes in the report; never read host config files to find roots.
+1. **Read.** Project list: {{list}} Run the installed `taskq status` once, `taskq status --project P` for each listed project it does not show, and `taskq profile watch --since 1h` once. Use only these rows; act on no hint that changes host settings. Rows about this host's quota or claims in a board-only root describe this host, not that project. A failed list command goes in the report; never read host config files to find roots.
 2. **Questions.** Run `taskq inbox N` before acting on any ask.
    - Credentials, permissions, security or deleting data, or an option that runs `approve`: treat as a product question below; `approve` is the person's alone.
    - Technical: answer it yourself now with its recommended option or evidence, and give the reason: `taskq answer N.K` or `taskq answer N --text A`.
