@@ -199,8 +199,10 @@ pub fn error_item(status: Result<Option<Value>, String>, age: Option<u64>, ttl: 
 }
 
 /// `claude-trust` (#2300): Claude trusts the registered root `root`, per the home Claude config (#1555). No Claude
-/// config is ok: Claude is not set up for this OS user.
-pub fn trust_item(home: &Path, root: &Path) -> Item {
+/// config is ok: Claude is not set up for this OS user. A host without a claude binary has no trust to give and no worker
+/// it could block, whatever config it holds (#2417).
+pub fn trust_item(home: &Path, root: &Path, claude: bool) -> Item {
+    if !claude { return no_claude(); }
     let key = crate::runtime::owner::claude_key(root);
     match crate::runtime::owner::trust_state(home, root) {
         Ok(None) => Item::ok("claude-trust", "no Claude config for this OS user"),
@@ -210,6 +212,8 @@ pub fn trust_item(home: &Path, root: &Path) -> Item {
         Err(e) => Item::unknown("claude-trust", format!("Claude config unreadable: {}", short(&e)), format!("repair `~/{}`, then `taskq doctor`", crate::runtime::owner::CLAUDE_CONFIG)),
     }
 }
+
+fn no_claude() -> Item { Item::ok("claude-trust", "no claude binary on this host") }
 
 /// The agentq executable name of this platform.
 fn agentq_exe() -> &'static str { if cfg!(windows) { "agentq.exe" } else { "agentq" } }
@@ -236,53 +240,108 @@ fn hook_binaries(v: &Value, out: &mut Vec<String>) {
     }
 }
 
+/// AgentQ's disable intent as its own `data/integration.json` records it; only explicit `agentq enable` clears it, and
+/// onboarding would re-enable, so an intent or an unread state rules out onboard advice (#2417).
+#[derive(PartialEq)]
+enum Intent { Enabled, HostDisabled, ClientDisabledOrUnread }
+
+fn agentq_intent(agentq: &Path) -> Intent {
+    let text = match std::fs::read_to_string(agentq.join("data").join("integration.json")) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Intent::Enabled,
+        Err(_) => return Intent::ClientDisabledOrUnread,
+    };
+    let Ok(state) = serde_json::from_str::<Value>(&text) else { return Intent::ClientDisabledOrUnread };
+    match (state.get("host_disabled").and_then(Value::as_bool), state.get("profiles").and_then(Value::as_object)) {
+        (Some(true), _) => Intent::HostDisabled,
+        (Some(false), Some(profiles)) if profiles.is_empty() => Intent::Enabled,
+        _ => Intent::ClientDisabledOrUnread,
+    }
+}
+
+/// `path` resolves outside the agentq install: a binary agentq did not install.
+fn outside_install(agentq: &Path, path: &Path) -> bool {
+    match (agentq.canonicalize(), path.canonicalize()) {
+        (Ok(install), Ok(p)) => !p.starts_with(install),
+        _ => false,
+    }
+}
+
+/// `binary` has the bytes of a release agentq still keeps.
+fn kept_release(agentq: &Path, binary: &[u8]) -> bool {
+    let Ok(releases) = std::fs::read_dir(agentq.join("releases")) else { return false };
+    releases.flatten().any(|r| {
+        let path = r.path().join(agentq_exe());
+        std::fs::metadata(&path).is_ok_and(|m| m.len() == binary.len() as u64) && std::fs::read(&path).is_ok_and(|b| b == binary)
+    })
+}
+
+/// The install launcher is not one agentq installed: it resolves elsewhere or equals no kept release. A removed release
+/// looks the same, so callers do not assert a dev build; they only withhold onboard, which would replace the launcher.
+fn foreign_launcher(agentq: &Path) -> bool {
+    let launcher = agentq.join(agentq_exe());
+    outside_install(agentq, &launcher) || std::fs::read(&launcher).is_ok_and(|b| !kept_release(agentq, &b))
+}
+
 /// `agentq-hook` (#2300, agentq#190): each agentq hook in `files` (client hook files) runs the current release of the
 /// agentq install `agentq`. The hook runs in the binary it names, a bare `agentq` being the install launcher, so a
-/// binary whose bytes differ from `releases/<current>/agentq` runs old hook code.
+/// binary whose bytes differ from `releases/<current>/agentq` runs old hook code. Onboard advice appears only where
+/// onboarding undoes nothing (#2417): AgentQ is enabled and neither launcher nor hook binary is foreign.
 pub fn hook_item(agentq: &Path, files: &[std::path::PathBuf]) -> Item {
     const ID: &str = "agentq-hook";
     const ONBOARD: &str = "run `agentq onboard --yes`: it installs the current launcher and rewrites the hooks";
-    let unknown = |what: String| Item::unknown(ID, what, "run `agentq doctor`; if it names no cause, `agentq onboard --yes`");
+    let unknown = |what: String, onboard: bool| Item::unknown(ID, what, if onboard { "run `agentq doctor`; if it names no cause, `agentq onboard --yes`" } else { "run `agentq doctor`" });
     match std::fs::metadata(agentq) {
         Ok(m) if m.is_dir() => {},
-        Ok(_) => return unknown("agentq install folder is not a directory".into()),
+        Ok(_) => return unknown("agentq install folder is not a directory".into(), true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Item::ok(ID, "agentq is not installed"),
-        Err(e) => return unknown(format!("agentq install folder unreadable: {}", short(&e.to_string()))),
+        Err(e) => return unknown(format!("agentq install folder unreadable: {}", short(&e.to_string())), true),
     }
+    let intent = agentq_intent(agentq);
+    if intent == Intent::HostDisabled { return Item::ok(ID, "agentq is disabled on this host"); }
+    let mut onboard = intent == Intent::Enabled && !foreign_launcher(agentq);
     let mut hooks = vec![];
     for f in files {
         let name = f.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let text = match std::fs::read_to_string(f) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return unknown(format!("hook file {name} unreadable: {}", short(&e.to_string()))),
+            Err(e) => return unknown(format!("hook file {name} unreadable: {}", short(&e.to_string())), onboard),
         };
-        let Ok(v) = serde_json::from_str::<Value>(&text) else { return unknown(format!("hook file {name} is not JSON")) };
+        let Ok(v) = serde_json::from_str::<Value>(&text) else { return unknown(format!("hook file {name} is not JSON"), onboard) };
         let mut found = vec![];
         hook_binaries(&v, &mut found);
         hooks.extend(found.into_iter().map(|b| (name.clone(), b)));
     }
     if hooks.is_empty() { return Item::ok(ID, "no agentq hook installed"); }
+    let hook_path = |bin: &str| if bin.contains(['/', '\\']) { std::path::PathBuf::from(bin) } else { agentq.join(agentq_exe()) };
+    onboard &= !hooks.iter().any(|(_, bin)| outside_install(agentq, &hook_path(bin)));
     let current = match std::fs::read_to_string(agentq.join("current")) {
         Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
-        Ok(_) => return unknown("agentq names no current release".into()),
-        Err(e) => return unknown(format!("agentq current release unreadable: {}", short(&e.to_string()))),
+        Ok(_) => return unknown("agentq names no current release".into(), onboard),
+        Err(e) => return unknown(format!("agentq current release unreadable: {}", short(&e.to_string())), onboard),
     };
     let release = match std::fs::read(agentq.join("releases").join(&current).join(agentq_exe())) {
         Ok(b) => b,
-        Err(e) => return unknown(format!("agentq release {current} unreadable: {}", short(&e.to_string()))),
+        Err(e) => return unknown(format!("agentq release {current} unreadable: {}", short(&e.to_string())), onboard),
     };
+    let mut dev = None;
     for (file, bin) in &hooks {
-        let path = if bin.contains(['/', '\\']) { std::path::PathBuf::from(bin) } else { agentq.join(agentq_exe()) };
+        let path = hook_path(bin);
         let binary = match std::fs::read(&path) {
             Ok(b) => b,
-            Err(e) => return unknown(format!("agentq hook in {file} binary unreadable: {}", short(&e.to_string()))),
+            Err(e) => return unknown(format!("agentq hook in {file} binary unreadable: {}", short(&e.to_string())), onboard),
         };
-        if binary != release {
-            return Item::gap(ID, format!("agentq hook in {file} runs {}, not the current release {current}", path.display()), ONBOARD);
+        if binary == release { continue; }
+        if outside_install(agentq, &path) {
+            dev.get_or_insert_with(|| format!("agentq hook in {file} runs dev launcher {}", path.display()));
+            continue;
         }
+        let stale = format!("agentq hook in {file} runs {}, not the current release {current}", path.display());
+        if onboard && kept_release(agentq, &binary) { return Item::gap(ID, stale, ONBOARD); }
+        return unknown(format!("{stale}; AgentQ may be disabled or run a dev build here"), false);
     }
-    Item::ok(ID, format!("agentq hooks run release {current}"))
+    Item::ok(ID, dev.unwrap_or_else(|| format!("agentq hooks run release {current}")))
 }
 
 /// `agentq-data` (#2300, agentq#190): the data folder of the agentq install `agentq` takes a write. One probe file is
@@ -292,7 +351,11 @@ pub fn data_item(agentq: &Path) -> Item {
     const FIX: &str = "give this OS user write access to the agentq data folder";
     if !agentq.exists() { return Item::ok(ID, "agentq is not installed"); }
     let data = agentq.join("data");
-    if !data.is_dir() { return Item::gap(ID, format!("agentq data folder {} missing", data.display()), "run `agentq onboard --yes`"); }
+    if !data.is_dir() {
+        let missing = format!("agentq data folder {} missing", data.display());
+        if foreign_launcher(agentq) { return Item::unknown(ID, format!("{missing}; AgentQ may run a dev build here"), "run `agentq doctor`"); }
+        return Item::gap(ID, missing, "run `agentq onboard --yes`");
+    }
     let probe = data.join(format!(".taskq-doctor-{}", std::process::id()));
     let wrote = std::fs::OpenOptions::new().write(true).create_new(true).open(&probe).map(drop);
     let _ = std::fs::remove_file(&probe);
@@ -322,8 +385,10 @@ pub fn board_items(b: &dyn crate::board::Board, repo: &str, gitlab: bool, root: 
     items.push(error_item(crate::data::json(&path), crate::file_age(&path), crate::snapshot::ttl(root)));
     // #2300: what a worker launch needs on this host beyond the board
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from);
+    let claude = crate::runtime::owner::claude_installed();
     items.push(match &home {
-        Some(h) => trust_item(h, &root.canonicalize().unwrap_or_else(|_| root.to_path_buf())),
+        Some(h) => trust_item(h, &root.canonicalize().unwrap_or_else(|_| root.to_path_buf()), claude),
+        None if !claude => no_claude(),
         None => Item::unknown("claude-trust", "no home folder (HOME, USERPROFILE) to read the Claude config from", "run `taskq service install` as the OS user that runs Claude"),
     });
     match crate::platform::agentq_root() {
@@ -840,25 +905,117 @@ mod tests {
         let home = scratch("trust");
         let root = home.join("work").join("assetq");
         std::fs::create_dir_all(&root).unwrap();
-        assert_eq!(trust_item(&home, &root).status, "ok", "no Claude config: Claude is not set up here");
+        assert_eq!(trust_item(&home, &root, true).status, "ok", "no Claude config: Claude is not set up here");
         let config = home.join(crate::runtime::owner::CLAUDE_CONFIG);
         std::fs::write(&config, json!({"projects": {"/elsewhere": {"hasTrustDialogAccepted": true}}}).to_string()).unwrap();
-        let gap = trust_item(&home, &root);
+        let gap = trust_item(&home, &root, true);
         let key = crate::runtime::owner::claude_key(&root);
         assert_eq!((gap.status, gap.text.as_str()), ("gap", format!("Claude does not trust {key}; Claude workers cannot start here").as_str()));
         assert!(gap.fix.as_deref().unwrap().contains(&key), "{:?}", gap.fix);
         assert_eq!(line(7, &[gap]), "doctor 7 claude-trust:gap");
         let parent = crate::runtime::owner::claude_key(&home.join("work"));
         std::fs::write(&config, json!({"projects": {parent: {"hasTrustDialogAccepted": true}}}).to_string()).unwrap();
-        assert_eq!(trust_item(&home, &root).status, "ok", "a trusted parent covers the root");
+        assert_eq!(trust_item(&home, &root, true).status, "ok", "a trusted parent covers the root");
         std::fs::write(&config, "{").unwrap();
-        assert_eq!(trust_item(&home, &root).status, "unknown", "an unreadable config is unknown, never ok");
+        assert_eq!(trust_item(&home, &root, true).status, "unknown", "an unreadable config is unknown, never ok");
         let now = 10_000;
         let h = Host { name: "win".into(), version: "4.7.0".into(), updated: now - 10, doctor: Some("9900 claude-trust:gap".into()), ..Default::default() };
         let row = host_row(&h, "o/r", false, now, 120, None);
         assert_eq!((row["state"].as_str(), row["gaps"][0].as_str()), (Some("gap"), Some("claude-trust")), "{row}");
         assert!(row["fix"].as_str().unwrap().contains("accept its trust prompt"), "{row}");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // Chain: Claude config left on a host -> `taskq doctor` claude-trust -> heartbeat (#2417 A1). Risk: a Linux service
+    // host without a claude binary read as a trust gap it could never act on, because a `~/.claude.json` was present.
+    // Protection: no binary is ok whatever the config says; with a binary the #2300 readings stay.
+    #[test]
+    fn doctor_reports_no_trust_gap_without_a_claude_binary() {
+        let home = scratch("no-claude");
+        let root = home.join("work");
+        std::fs::create_dir_all(&root).unwrap();
+        let config = home.join(crate::runtime::owner::CLAUDE_CONFIG);
+        std::fs::write(&config, json!({"projects": {}}).to_string()).unwrap();
+        assert_eq!(trust_item(&home, &root, true).status, "gap", "a host with Claude keeps the gap");
+        let item = trust_item(&home, &root, false);
+        assert_eq!((item.status, item.fix.as_deref()), ("ok", None), "{item:?}");
+        assert_eq!(line(7, &[item]), "doctor 7 ok");
+        std::fs::write(&config, "{").unwrap();
+        assert_eq!(trust_item(&home, &root, false).status, "ok", "an unreadable config cannot block a host without Claude");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// An install on release 1.2.0 whose launcher is the kept release 1.1.0, with a bare agentq hook: the #2300 gap.
+    fn stale_install(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, Vec<std::path::PathBuf>) {
+        let base = scratch(tag);
+        let agentq = base.join("agentq");
+        let exe = agentq_exe();
+        for version in ["1.2.0", "1.1.0"] {
+            std::fs::create_dir_all(agentq.join("releases").join(version)).unwrap();
+            std::fs::write(agentq.join("releases").join(version).join(exe), format!("agentq {version}")).unwrap();
+        }
+        std::fs::write(agentq.join("current"), "1.2.0").unwrap();
+        std::fs::write(agentq.join(exe), "agentq 1.1.0").unwrap();
+        let hooks = base.join("settings.json");
+        std::fs::write(&hooks, json!({"command": "agentq hook claude pre"}).to_string()).unwrap();
+        (base, agentq, vec![hooks])
+    }
+
+    fn no_onboard(item: &Item, status: &str) {
+        assert_eq!(item.status, status, "{item:?}");
+        assert!(!item.fix.as_deref().unwrap_or("").contains("onboard"), "{item:?}");
+        assert!(!line(7, std::slice::from_ref(item)).contains(":gap"), "`--hosts` turns a gap into onboard advice: {item:?}");
+    }
+
+    // Chain: `agentq disable` -> `data/integration.json` -> `taskq doctor` agentq-hook -> `--hosts` (#2417 A2). Risk: the
+    // doctor told a host where AgentQ is off on purpose to run `agentq onboard --yes`, which undoes that choice.
+    // Protection: host disable is ok, a disabled client or an unread state is unknown, and neither names onboard; a
+    // resumed install keeps the #2300 gap.
+    #[test]
+    fn doctor_never_advises_onboard_on_a_disabled_agentq() {
+        let (base, agentq, files) = stale_install("disabled");
+        std::fs::create_dir_all(agentq.join("data")).unwrap();
+        let state = agentq.join("data/integration.json");
+        assert_eq!(hook_item(&agentq, &files).status, "gap", "no state file: no disable intent");
+        std::fs::write(&state, json!({"schema": 1, "host_disabled": true, "profiles": {}}).to_string()).unwrap();
+        no_onboard(&hook_item(&agentq, &files), "ok");
+        std::fs::write(&state, json!({"schema": 1, "host_disabled": false, "profiles": {"codex": {}}}).to_string()).unwrap();
+        no_onboard(&hook_item(&agentq, &files), "unknown");
+        std::fs::write(&state, "{").unwrap();
+        no_onboard(&hook_item(&agentq, &files), "unknown");
+        std::fs::write(&state, json!({"schema": 1, "host_disabled": false, "profiles": {}}).to_string()).unwrap();
+        let resumed = hook_item(&agentq, &files);
+        assert_eq!(resumed.status, "gap", "{resumed:?}");
+        assert!(resumed.fix.as_deref().unwrap().contains("agentq onboard --yes"), "{resumed:?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // Chain: dev launcher -> `taskq doctor` agentq-hook, agentq-data -> `--hosts` (#2417 A2). Risk: a host running its own
+    // agentq build was told to run `agentq onboard --yes`, which replaces that launcher. Protection: a binary outside the
+    // install is ok and named; a launcher equal to no kept release is unknown, since a removed release looks the same;
+    // neither names onboard. A launcher equal to a kept older release stays the #2300 gap (stale_install).
+    #[test]
+    fn doctor_never_advises_onboard_on_a_dev_launcher() {
+        let (base, agentq, files) = stale_install("dev");
+        assert_eq!(hook_item(&agentq, &files).status, "gap", "a kept older release is a stale launcher");
+        let dev = base.join("checkout").join(agentq_exe());
+        std::fs::create_dir_all(dev.parent().unwrap()).unwrap();
+        std::fs::write(&dev, "local build").unwrap();
+        std::fs::write(&files[0], json!({"command": format!("\"{}\" hook claude pre", dev.display())}).to_string()).unwrap();
+        let outside = hook_item(&agentq, &files);
+        no_onboard(&outside, "ok");
+        assert!(outside.text.contains("dev launcher"), "{outside:?}");
+        std::fs::write(&files[0], json!({"command": "agentq hook claude pre"}).to_string()).unwrap();
+        std::fs::write(agentq.join(agentq_exe()), "local build").unwrap();
+        no_onboard(&hook_item(&agentq, &files), "unknown");
+        no_onboard(&data_item(&agentq), "unknown");
+        #[cfg(unix)]
+        {
+            std::fs::remove_file(agentq.join(agentq_exe())).unwrap();
+            std::os::unix::fs::symlink(&dev, agentq.join(agentq_exe())).unwrap();
+            no_onboard(&hook_item(&agentq, &files), "ok");
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     // Chain: agentq onboarding -> client hook files -> `taskq doctor` agentq-hook -> `--hosts` (#2300 A1, agentq#190).

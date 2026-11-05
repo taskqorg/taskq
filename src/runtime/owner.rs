@@ -348,6 +348,9 @@ pub fn trust_gap(home: &Path, root: &Path) -> Vec<String> {
     }
 }
 
+/// Whether this host has a claude binary a worker launch would find (#2417).
+pub fn claude_installed() -> bool { super::which("claude").is_absolute() }
+
 /// Whether Claude trusts `root` per `<home>/.claude.json`, read only: `None` without a Claude config (#1555, #2300).
 pub fn trust_state(home: &Path, root: &Path) -> Result<Option<bool>, String> {
     let v: serde_json::Value = match fs::read_to_string(home.join(CLAUDE_CONFIG)) {
