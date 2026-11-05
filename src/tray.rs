@@ -119,6 +119,46 @@ struct Settings {
     notify: Value,
     navigation: Value,
     workspace_navigation: Value,
+    conversation_geometry: Option<ConversationGeometry>,
+}
+
+/// Logical size and work-area-relative position; native settings, independent of page content.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct ConversationGeometry { display:String, position:[f64;2], size:[f64;2] }
+impl ConversationGeometry {
+    fn valid(&self)->bool {self.display.len()<=1024 && self.position.iter().chain(&self.size).all(|n|n.is_finite()) && self.size.iter().all(|n|*n>0.0&&*n<=32768.0)}
+    fn restore(&self,area:(i32,i32,i32,i32),scale:f64,frame:(u32,u32))->((i32,i32),(u32,u32)) {
+        let width=(self.size[0]*scale).round().max(1.0).min((area.2 as f64-frame.0 as f64).max(1.0)) as u32;
+        let height=(self.size[1]*scale).round().max(1.0).min((area.3 as f64-frame.1 as f64).max(1.0)) as u32;
+        let position=clamp((area.0.saturating_add((self.position[0]*scale).round() as i32),area.1.saturating_add((self.position[1]*scale).round() as i32)),((width+frame.0) as i32,(height+frame.1) as i32),area);
+        (position,(width,height))
+    }
+    fn capture(window:&Window)->Option<Self> {
+        if window.is_maximized() || !window.is_visible(){return None;}
+        let monitor=window.current_monitor()?;let area=work_area(&monitor);let scale=window.scale_factor();let p=window.outer_position().ok()?;let size=client_size(window);
+        let value=Self{display:key(&monitor),position:[f64::from(p.x-area.0)/scale,f64::from(p.y-area.1)/scale],size:[f64::from(size.width)/scale,f64::from(size.height)/scale]};
+        value.valid().then_some(value)
+    }
+    fn monitor(&self,window:&Window)->Option<tao::monitor::MonitorHandle> {
+        window.available_monitors().find(|m|key(m)==self.display).or_else(||window.primary_monitor()).or_else(||window.current_monitor())
+    }
+    fn apply(&self,window:&Window) {
+        let Some(monitor)=self.monitor(window) else {return;};
+        let scale=monitor.scale_factor();let (outer,inner)=(window.outer_size(),client_size(window));let frame=(outer.width.saturating_sub(inner.width),outer.height.saturating_sub(inner.height));
+        let (p,size)=self.restore(work_area(&monitor),scale,frame);
+        window.set_outer_position(PhysicalPosition::new(p.0,p.1));window.set_inner_size(PhysicalSize::new(size.0,size.1));
+    }
+}
+
+fn conversations_window(target:&tao::event_loop::EventLoopWindowTarget<Ev>,reference:&Window,geometry:Option<&ConversationGeometry>,pinned:bool)->Result<Window,String> {
+    let mut builder=WindowBuilder::new().with_title("TaskQ Conversations").with_decorations(true).with_always_on_top(pinned).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false);
+    // Select the target DPI before measuring decorations; a later cross-display move changes the frame.
+    if let Some(monitor)=geometry.and_then(|g|g.monitor(reference)) {
+        let area=work_area(&monitor);builder=builder.with_position(PhysicalPosition::new(area.0+area.2/2,area.1+area.3/2));
+    }
+    let window=builder.build(target).map_err(|e|e.to_string())?;
+    if let Some(geometry)=geometry {geometry.apply(&window);}
+    Ok(window)
 }
 
 /// Pinned window (menu.md M13): pinned or not, the last display and the last top-left per display, physical pixels.
@@ -152,7 +192,7 @@ impl Settings {
         let size_anchor = v["size_anchor"].as_str().filter(|v| ["auto","fixed","bottom","top"].contains(v)).unwrap_or(if size.is_some() {"fixed"} else {"auto"}).to_string();
         let pin = Pin { size_anchor, attached_edge: "top".into(), auto_anchor: v["auto_anchor"].as_str().filter(|v| ["top","bottom"].contains(v)).unwrap_or("top").into(), top: v["top"].as_bool().unwrap_or(true), size, pinned: v["pinned"] == true, display: v["display"].as_str().unwrap_or("").into(), pos };
         let mut s = Settings { view: "icon".into(), font: 16, opacity: 100, opacity_mode: "whole".into(), background_opacity: 100, opacity_error: None, period: "1d".into(), start: 0, end: 0, tz: "local".into(), pin,
-            navigation: Value::Null, workspace_navigation: Value::Null, notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
+            navigation: Value::Null, workspace_navigation: Value::Null, conversation_geometry: serde_json::from_value::<ConversationGeometry>(v["conversation_geometry"].clone()).ok().filter(ConversationGeometry::valid), notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
         s.set(&v);
         s
     }
@@ -198,7 +238,7 @@ impl Settings {
 
     fn save(&self, install: &Path) -> bool {
         let fields = json!({"view": self.view, "font": self.font, "opacity": self.opacity, "opacity_mode": self.opacity_mode, "background_opacity": self.background_opacity, "period": self.period, "start": self.start, "end": self.end, "tz": self.tz,
-            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "auto_anchor": self.pin.auto_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify, "navigation": self.navigation, "workspace_navigation": self.workspace_navigation});
+            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "auto_anchor": self.pin.auto_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify, "navigation": self.navigation, "workspace_navigation": self.workspace_navigation, "conversation_geometry": self.conversation_geometry});
         let p = install.join("tray.json");
         let mut v = crate::data::json(&p).ok().flatten().filter(Value::is_object).unwrap_or_else(||json!({}));
         v.as_object_mut().unwrap().remove("icon");
@@ -1451,7 +1491,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let views_shots=snapshot.is_some() && routes.iter().any(|r|r=="views");
     if views_shots && routes.len()>1 {return Err("route views renders the View window alone; run it without other routes".into());}
     // #1699 A8: Conversations is the workspace surface, so its snapshot renders the workspace page alone at that window's size
-    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations"||r=="health-conversation"||r=="errors-conversations");
+    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="conversations-checkpoint"||r=="reports-conversations"||r=="results-conversations"||r=="health-conversation"||r=="errors-conversations");
     if conversation_shots && routes.len()>1 {return Err("route conversations renders the workspace alone; run it without other routes".into());}
     if snapshot.is_some()&&routes.iter().any(|r|r=="reports")&&routes.len()>1 {return Err("route reports renders its menu cases alone".into());}
     let mut settings = Settings::load(&install);
@@ -1558,6 +1598,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let mut tray: Option<TrayIcon> = None;
     let (mut shown, mut icon_sig, mut dark) = (String::new(), String::new(), true);
     let mut workspace_shown=String::new();
+    let mut geometry_dirty=false;
     let mut hidden_at = Instant::now() - Duration::from_secs(1);
     let mut shown_at = hidden_at;
     let mut anchor: Option<Rect> = None;
@@ -1565,6 +1606,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     // snapshot pages wider than their window (#1073): `tray --snapshot` fails naming them
     let mut overflow: Vec<String> = Vec::new();
     let mut capture_errors:Vec<String>=Vec::new();
+    let mut checkpoint_complete=false;
     let mut adding = Value::Null;
     let mut add_generation=0u64;
     let mut moved = false;
@@ -1600,6 +1642,19 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         if let Event::WindowEvent{window_id,event:WindowEvent::Focused(true),..}=&event {
             if workspace.as_ref().is_some_and(|(w,_)|w.id()==*window_id){focused_workspace="main".into();}
             else if let Some((id,_))=detached.iter().find(|(_, (w,_,_))|w.id()==*window_id){focused_workspace=id.clone();}
+        }
+        if snapshot.is_none() {
+            if let Event::WindowEvent{window_id,event:WindowEvent::Moved(_)|WindowEvent::Resized(_),..}=&event {
+                if let Some((window,_))=&workspace && window.id()==*window_id && let Some(value)=ConversationGeometry::capture(window) {
+                    if settings.conversation_geometry.as_ref()!=Some(&value){settings.conversation_geometry=Some(value);geometry_dirty=true;}
+                }
+            }
+            if geometry_dirty && matches!(&event,Event::UserEvent(Ev::Tick|Ev::WorkspaceClose)|Event::WindowEvent{event:WindowEvent::CloseRequested,..}) {
+                geometry_dirty=false;
+                if !settings.save(&install) || Settings::load(&install).conversation_geometry!=settings.conversation_geometry {
+                    if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){web_eval(wv,"taskq.receive({workspaceError:'Window geometry save failed; previous saved position may be retained'})","tray.web.notice",&proxy,calls);}
+                }
+            }
         }
         web.expire(Instant::now());
         if let Some(calls)=&mut workspace_web {
@@ -2214,7 +2269,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         if workspace_open["page"]=="conversations" && workspace_open["thread"].is_null() && workspace_open["task"].is_null() {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
                         if workspace.is_none() {
                             let p=proxy.clone();let mut reader=WebCalls::new();reader.workspace=true;
-                            let built=WindowBuilder::new().with_title("TaskQ Conversations").with_decorations(true).with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
+                            let built=conversations_window(target,w,settings.conversation_geometry.as_ref(),requests_file(&install)["workspace_pin"]==true).and_then(|window| {
                                 workspace_view(&window,p,"main".into(),&reader).map(|wv|(window,wv))
                             });
                             match built {
@@ -2269,6 +2324,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     "sync-retry" if snapshot.is_none() => {
                         if let Some(request)=sync.retry(m["root"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or("")) {let _=send_answer(&answer_actions,&mut sync,&request,&seen_projects,&proxy);}
                     }
+                    "snapshot-checkpoint" if snapshot.is_some() && routes.iter().any(|r|r=="conversations-checkpoint") && m["state"]=="passed" => {checkpoint_complete=true;println!("PASS native Conversations checkpoint: {}",m["value"]);}
                     "overflow" if snapshot.is_some() => overflow.push(format!("{} by {} px", m["shot"].as_str().unwrap_or("?"), m["x"])),
                     "ready" => {
                         let _=proxy.send_event(Ev::Sync);
@@ -2553,6 +2609,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 }
                 let st=state(&install, &s, theme == "dark", Some((theme, &page)), &Value::Null, &mut crate::pending::Pending::default());
                 // the Conversations and question fixtures merge invented tasks into the real pushed state (palette, font, theme)
+                checkpoint_complete=false;
                 let merged=conversation_shots||ANSWERS.iter().any(|(_, s)| *s==script)||REPORT_SHOTS.iter().any(|(_,s)|*s==script);
                 if merged {if let Some((_, wv))=&ui {web_eval(wv,&format!("{script}({st})"),"tray.web.fixture",&proxy,&mut web);}}
                 else {push(&mut web,&ui,&st);}
@@ -2574,6 +2631,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     shot_wait=Some(Ev::Shot2);return;
                 }
                 // the workspace page has no menu to measure
+                if routes.iter().any(|r|r=="conversations-checkpoint") && !checkpoint_complete {capture_errors.push(format!("{name}: native checkpoint did not complete"));}
                 if !conversation_shots {web_eval(wv,&format!("taskq.measure({})",json!(&name)),"tray.web.measure",&proxy,&mut web);}
                 #[cfg(windows)]
                 if opacity_shots {capture_errors.push(format!("{name}: native composition capture is unavailable on this snapshot adapter"));}
@@ -2642,7 +2700,8 @@ const CONVERSATIONS: [(&str, &str); 4] = [
 // M1.1: explicit native-alpha cases; a webview snapshot alone cannot capture window alpha.
 const OPACITY_SHOTS:[(&str,&str,u64);5]=[("/* opacity: off */","whole",100),("/* opacity: contrast */","whole",90),("/* opacity: minimum */","whole",60),("/* background: clear */","background",0),("/* background: half */","background",50)];
 const ROUTES: [&str; 26] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "notification-settings", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
-const REPORT_SHOTS:[(&str,&str);14]=[
+const REPORT_SHOTS:[(&str,&str);15]=[
+    ("conversations-checkpoint",concat!(include_str!("../tests/fixtures/conversations-checkpoint.js"),"taskqConversationsCheckpoint")),
     ("errors",concat!(include_str!("../tests/fixtures/errors.js"),"taskqErrorsShot.bind(null,'tray')")),
     ("errors-conversations",concat!(include_str!("../tests/fixtures/errors.js"),"taskqErrorsShot.bind(null,'conversations')")),
     ("health-list",concat!(include_str!("../tests/fixtures/execution-health.js"),"taskqExecutionHealthShot.bind(null,'list')")),
@@ -4598,11 +4657,11 @@ mod tests {
     // Chain: § 4 tray settings input. Risk: webview input stores unknown values.
     #[test]
     fn settings_keep_only_known_values() {
-        let mut s = Settings { view: "icon".into(), font: 16, opacity: 100, opacity_mode: "whole".into(), background_opacity: 100, opacity_error: None, period: "1d".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null };
+        let mut s = Settings { view: "icon".into(), font: 16, opacity: 100, opacity_mode: "whole".into(), background_opacity: 100, opacity_error: None, period: "1d".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null, conversation_geometry:None };
         s.set(&json!({"view": "full", "font": 18, "period": "1w"}));
         s.set(&json!({"view": "x", "font": 15, "period": "2y"}));
         s.set(&json!({"period": "custom", "start": 50, "end": 50, "tz": "UTC"}));
-        assert!(s == Settings { view: "full".into(), font: 18, opacity: 100, opacity_mode: "whole".into(), background_opacity: 100, opacity_error: None, period: "1w".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null });
+        assert!(s == Settings { view: "full".into(), font: 18, opacity: 100, opacity_mode: "whole".into(), background_opacity: 100, opacity_error: None, period: "1w".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null, conversation_geometry:None });
         assert_eq!(s.range(1000), (100800 - 604800, 100800), "whole 28 h bins, the newest holds now");
         s.set(&json!({"period": "custom", "start": 40, "end": 160, "tz": "UTC"}));
         assert_eq!((s.range(1000), s.tz.as_str()), ((40, 160), "UTC"));
@@ -4677,6 +4736,68 @@ mod tests {
                 }}}
             }
         }
+    }
+
+    // A7: logical geometry survives DPI changes and missing displays cannot strand the titlebar.
+    #[test]
+    fn conversations_geometry_clamps_and_roundtrips_additively() {
+        let geometry=ConversationGeometry{display:"removed invented display".into(),position:[9000.0,-300.0],size:[800.0,600.0]};
+        let (position,size)=geometry.restore((100,40,1600,900),1.5,(16,40));
+        assert_eq!(size,(1200,860));assert_eq!(position,(484,40));
+        let dir=std::env::temp_dir().join(format!("taskq-geometry-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("tray.json"),json!({"unknown_owner_field":{"kept":true},"font":20}).to_string()).unwrap();
+        let mut settings=Settings::load(&dir);settings.conversation_geometry=Some(geometry.clone());assert!(settings.save(&dir));
+        let restored=Settings::load(&dir);assert!(restored.conversation_geometry==Some(geometry));assert_eq!(restored.font,20);
+        assert_eq!(crate::data::json(&dir.join("tray.json")).unwrap().unwrap()["unknown_owner_field"]["kept"],true);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Isolated native windows and temporary settings; never starts a tray/service or takes its host lock.
+    #[cfg(target_os="windows")]
+    #[test]
+    #[ignore="native Windows geometry instrument"]
+    fn conversations_geometry_native_reopen() {
+        use tao::platform::{windows::EventLoopBuilderExtWindows,run_return::EventLoopExtRunReturn};
+        let Ok(dir)=std::env::var("TASKQ_GEOMETRY_FIXTURE") else {
+            let dir=std::env::temp_dir().join(format!("taskq-native-geometry-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
+            for phase in ["save","restore"] {
+                let mut child=crate::platform::command(std::env::current_exe().unwrap()).args(["--ignored","--exact","tray::tests::conversations_geometry_native_reopen","--nocapture"])
+                    .env("TASKQ_GEOMETRY_FIXTURE",&dir).env("TASKQ_GEOMETRY_PHASE",phase).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+                let deadline=Instant::now()+Duration::from_secs(15);
+                while child.try_wait().unwrap().is_none(){if Instant::now()>=deadline {child.kill().unwrap();let output=child.wait_with_output().unwrap();panic!("native geometry fixture timed out: {}{}",String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));}std::thread::sleep(Duration::from_millis(50));}
+                let output=child.wait_with_output().unwrap();
+                assert!(output.status.success(),"{}{}",String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));
+                println!("{}",String::from_utf8_lossy(&output.stdout));
+            }
+            fs::remove_dir_all(dir).unwrap();return;
+        };
+        let dir=PathBuf::from(dir);let mut events=EventLoopBuilder::<Ev>::with_user_event().with_any_thread(true).build();
+        let mut settings=Settings::load(&dir);let save=std::env::var("TASKQ_GEOMETRY_PHASE").unwrap()=="save";
+        let check=|actual:&ConversationGeometry,expected:&ConversationGeometry| {
+            assert_eq!(actual.display,expected.display);
+            for (a,b) in actual.position.iter().chain(&actual.size).zip(expected.position.iter().chain(&expected.size)){assert!((a-b).abs()<=2.0,"geometry drift {a} vs {b}");}
+        };
+        let (mut reference,mut window,mut captured,mut step)=(None,None,None,0);
+        let mut deadline=Instant::now()+Duration::from_millis(300);
+        events.run_return(|event,target,flow|{
+            *flow=ControlFlow::WaitUntil(deadline);
+            if matches!(event,Event::NewEvents(StartCause::Init)) {
+                reference=Some(WindowBuilder::new().with_visible(false).build(target).unwrap());
+                let w=conversations_window(target,reference.as_ref().unwrap(),settings.conversation_geometry.as_ref(),false).unwrap();w.set_visible(true);
+                if save {let area=work_area(&w.current_monitor().unwrap());w.set_outer_position(PhysicalPosition::new(area.0+100,area.1+80));w.set_inner_size(LogicalSize::new(760.0,500.0));}window=Some(w);
+            }
+            if !matches!(event,Event::NewEvents(_))||Instant::now()<deadline {return;}
+            let w=window.as_ref().unwrap();
+            match step {
+                0=>{let value=ConversationGeometry::capture(w).expect("visible native geometry");if save {settings.conversation_geometry=Some(value.clone());assert!(settings.save(&dir));}check(&value,settings.conversation_geometry.as_ref().unwrap());captured=Some(value);window.take();let w=conversations_window(target,reference.as_ref().unwrap(),Settings::load(&dir).conversation_geometry.as_ref(),false).unwrap();w.set_visible(true);window=Some(w);}
+                1=>{check(&ConversationGeometry::capture(w).unwrap(),captured.as_ref().unwrap());let mut missing=captured.clone().unwrap();missing.display="removed invented display".into();missing.position=[9000.0,-9000.0];missing.size=[9000.0,9000.0];missing.apply(w);}
+                _=>{let p=w.outer_position().unwrap();let size=w.outer_size();let area=work_area(&w.current_monitor().unwrap());assert!(p.x>=area.0&&p.y>=area.1&&i64::from(p.x)+i64::from(size.width)<=i64::from(area.0)+i64::from(area.2)+1&&i64::from(p.y)+i64::from(size.height)<=i64::from(area.1)+i64::from(area.3)+1,"native fallback remains reachable");let value=captured.as_ref().unwrap();println!("PASS native {}: logical position {:?}, client size {:?}, scale {}; same-process reopen, fresh-process settings and missing-display fallback",if save {"save"}else{"restore"},value.position,value.size,w.scale_factor());
+                    // This child owns only fixture windows; process exit avoids Tao's off-main-thread teardown hang.
+                    std::process::exit(0);
+                }
+            }
+            step+=1;deadline=Instant::now()+Duration::from_millis(300);
+        });
     }
 
     #[test]

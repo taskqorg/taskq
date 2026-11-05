@@ -30,9 +30,11 @@
 .task-health dt,.task-health dd{margin:0;overflow-wrap:anywhere;}
 .task-health-warning{position:relative;}
 .task-health-tip{display:none;position:absolute;z-index:20;right:0;top:100%;width:max-content;max-width:min(32ch,70vw);padding:.4em;background:var(--surface);color:inherit;border:1px solid currentColor;white-space:normal;font-size:.85em;text-align:left;}
-.task-health-warning:hover .task-health-tip,.task-health-warning:focus .task-health-tip,.conversation-row:focus .task-health-tip{display:block;}
+.task-health-warning:hover .task-health-tip,.task-health-warning:focus .task-health-tip,.conversation-row:hover .task-health-tip,.conversation-row:focus .task-health-tip{display:block;}
 
-.conversation-row .task-health-tip{left:auto;right:0;box-sizing:border-box;overflow-wrap:anywhere;}
+.conversation-row{position:relative;}
+.conversation-row .task-health-warning{position:static;}
+.conversation-row .task-health-tip{left:0;right:auto;max-width:min(32ch,100%);box-sizing:border-box;overflow-wrap:anywhere;}
 
 /* F13/F14: this template owns task appearance on every list surface. */
 .menu .task-row .task-target{display:block;width:100%;font:inherit;color:inherit;text-align:left;border:0;border-radius:4px;background:transparent;padding:4px 2px 5px;white-space:normal;min-width:0;box-sizing:border-box}
@@ -44,3 +46,9 @@
 .menu .task-row .task-target .tqp-task-title{display:block;width:100%;font:inherit;line-height:1.4;font-weight:400;overflow-wrap:anywhere}
 .menu .task-row .task-target :is(.tqp-stage,.tqp-parked){display:block;font-size:.85em}
 .menu .task-row .task-target:focus-visible .task-health-tip{display:block}
+
+.task-timing{display:inline-flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
+.timing-total{font-weight:500}.timing-changes,.timing-current{color:var(--secondary,var(--muted))}
+.timing-changes{display:inline-flex;align-items:center;gap:2px}.timing-changes svg{width:12px;height:12px}
+.menu .task-row .task-target .task-when{max-width:100%;flex-wrap:wrap;white-space:normal}
+.task-timing{max-width:100%;flex-wrap:wrap}

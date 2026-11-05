@@ -478,7 +478,7 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
                 if !crate::host::project_paths(install)?.iter().any(|p|p==root) {return Err("Owner project is not registered".into());}
                 let (cfg,raw)=crate::load(root)?;
                 let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
-                let mut value=if let Some(n)=m["task"].as_u64().filter(|n|*n>0) {crate::closed_pin(&*b,n,!cfg.board.closed_reason)?}
+                let mut value=if let Some(n)=m["task"].as_u64().filter(|n|*n>0) {crate::reports::selected(root,&*b,n,!cfg.board.closed_reason,None)?}
                     else {crate::closed_history(&*b,m["page"].as_u64().and_then(|n|u32::try_from(n).ok()).filter(|n|*n>0).unwrap_or(1),None,!cfg.board.closed_reason)?};
                 if value["tasks"].as_array().is_some_and(|rows|rows.iter().any(|t|!t["error"].is_null())) {return Err("Task history incomplete; board comments unavailable".into());}
                 value["tasks"]=json!(value["tasks"].as_array().into_iter().flatten().filter(|t|t["conversation"]["id"]==id).cloned().collect::<Vec<_>>());
@@ -502,7 +502,7 @@ fn task_body(install:&Path,m:&Value)->Res<Value> {
     let mut row=if let Some(t)=status["tasks"].as_array().into_iter().flatten().find(|t|t["n"]==n){t.clone()}else{
         let (cfg,raw)=crate::load(root)?;
         let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
-        crate::closed_pin(&*b,n,!cfg.board.closed_reason)?["tasks"].as_array().and_then(|a|a.first()).cloned().ok_or("Task source unavailable")?
+        crate::reports::selected(root,&*b,n,!cfg.board.closed_reason,m["source_revision"].as_u64())?["tasks"].as_array().and_then(|a|a.first()).cloned().ok_or("Task source unavailable")?
     };
     if !m["source_revision"].is_number()||row["revision"]!=m["source_revision"] {return Err("Task body revision changed; refresh before reading".into());}
     if !row["error"].is_null(){return Err("Task source incomplete; refresh or open its board".into());}
@@ -523,7 +523,7 @@ fn history_page(install:&Path,m:&Value)->Res<Value> {
     let closed;
     let task=if let Some(t)=status["tasks"].as_array().and_then(|a|a.iter().find(|t|t["n"]==n)){t}else{
         let (cfg,raw)=crate::load(root)?;let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
-        closed=crate::closed_pin(&*b,n,!cfg.board.closed_reason)?;closed["tasks"].as_array().and_then(|a|a.first()).filter(|t|t["error"].is_null()).ok_or("History source unavailable")?
+        closed=crate::reports::selected(root,&*b,n,!cfg.board.closed_reason,m["revision"].as_u64())?;closed["tasks"].as_array().and_then(|a|a.first()).filter(|t|t["error"].is_null()).ok_or("History source unavailable")?
     };
     if !m["revision"].is_number()||task["revision"]!=m["revision"] {return Err("Recorded questions changed; refresh before paging".into());}
     let rows=task["history"].as_array().ok_or("Recorded questions unavailable")?;
@@ -566,7 +566,8 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
     let worker=row.and_then(|r|r["workers"].as_array().and_then(|a|a.iter().find(|w|w["attempt"]==read.attempt)).or_else(||Some(r.get("worker").unwrap_or(r)).filter(|w|w["attempt"]==read.attempt)));
     if row.is_none()&&m["closed"]==true{
         let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
-        let (rt,id,host,attempt)=crate::closed_worker(&*b,n,Some(read.attempt))?;
+        let projected=crate::reports::selected(root,&*b,n,!cfg.board.closed_reason,m["revision"].as_u64())?;
+        let (rt,id,host,attempt)=crate::reports::worker(&projected,Some(read.attempt))?;
         if host!=local{return remote_read(install,&cfg,&raw,&status,&host,&read);}
         let session=crate::closed_session(root,&rt,&id,n,attempt)?;
         let mut value=crate::dialogue::worker_transcript(&format!("{rt}:{session}"),&crate::runtime::attempt_log(root,"worker",n,attempt),read.before,read.after)?;
@@ -735,6 +736,7 @@ fn valid_navigation(v:&Value)->bool {
         &&(v["search"].is_null()||v["search"].as_str().is_some_and(|s|s.chars().count()<=512))
         &&(v["selected"].is_null()||v["selected"].as_str().is_some_and(crate::setup::owner_id))
         &&(v["listOnly"].is_null()||v["listOnly"].is_boolean())
+        &&(v["pane"].is_null()||v["pane"].is_object()&&v["pane"]["width"].as_u64().is_some_and(|n|(180..=1200).contains(&n))&&v["pane"]["hidden"].is_boolean())
         &&(v["scrolls"].is_null()||v["scrolls"].as_object().is_some_and(|map|map.iter().all(|(k,v)|["recent","archive"].contains(&k.as_str())&&v.as_u64().is_some_and(|n|n<=u32::MAX as u64))))
         &&(v["selection"].is_null()||v["selection"].as_object().is_some_and(|map|map.iter().all(|(k,v)|["recent","archive"].contains(&k.as_str())&&(v.is_null()||v.as_str().is_some_and(crate::setup::owner_id)))))
 }

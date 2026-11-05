@@ -10,7 +10,8 @@ const owner=(id,archived)=>({id,archived,title:id,revision:1,root:'fixture',text
 const state={font:20,theme:'dark',host:'fixture',projects:[{root:'fixture',name:'Alpha',issues:board,alive:true,complete:true,tasks:[question]}],ai:{history:[],runtime:{id:'claude',available:true}},conversations:{complete:true,items:[owner('active-owner',false),owner('archived-owner',true)],navigation:{selected:'active-owner',list:'recent'}},messages:{complete:true,entries:[{key:event,id:'orphan',kind:'request',title:'Archived event',archived:true,read:true,state:'launched',request:{next:'Original event'}}]}};
 (async()=>{const browser=await chromium.launch(require('./browser.cjs')());try{
  const page=await browser.newPage({viewport:{width:940,height:740}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.exposeFunction('read',async m=>page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:m.conversation,state:'accepted',value:m.action==='status'?{state:'idle',watch:{prompt:'Long watch prompt. '.repeat(250),every:30,events:[]},last_line:'Last native answer'}:{items:[{role:'user',text:'Transcript question'},{role:'assistant',text:'Native transcript answer'}],start:0,end:80}}));
+ // Stable native record/ordinal identities are part of the adapter contract; missing IDs alias both passages.
+ await page.exposeFunction('read',async m=>page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:m.conversation,state:'accepted',value:m.action==='status'?{state:'idle',watch:{prompt:'Long watch prompt. '.repeat(250),every:30,events:[]},last_line:'Last native answer'}:{items:[{at:0,i:0,role:'user',text:'Transcript question'},{at:1,i:0,role:'assistant',text:'Native transcript answer'}],start:0,end:80}}));
  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
  await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:t=>{const m=JSON.parse(t);sent.push(m);if(m.a==='conversation-dialogue')window.read(m);}};});
  await page.evaluate(s=>taskq.receive(s),state);
@@ -49,19 +50,22 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root:'fixture',name:
   const before=await detail.evaluate(e=>e.scrollTop);await page.evaluate(({s,font})=>taskq.receive({...s,font}),{s:state,font});assert(Math.abs(await detail.evaluate(e=>e.scrollTop)-before)<2,'snapshot keeps reading position '+JSON.stringify({before,after:await detail.evaluate(e=>({top:e.scrollTop,height:e.scrollHeight,client:e.clientHeight})),status:await page.locator('.conversation-info').evaluate(e=>e.open)}));
   if(out)await page.screenshot({path:out+'/expanded-status-dark-'+font+'.png'});
  }
- assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='answer'||m.a==='message-action'||m.a==='conversation-action').length),0,'navigation/reading never sends, acknowledges or saves an owner record');
+ // #2363 checkpoints caret changes on navigation; the frozen baseline emits this save too.
+ const actions=await page.evaluate(()=>sent.filter(m=>m.a==='answer'||m.a==='message-action'||m.a==='conversation-action'));
+ assert.equal(actions.filter(m=>m.a!=='conversation-action'||m.action!=='save').length,0,'navigation/reading never sends or acknowledges');
+ for(const m of actions){const original=state.conversations.items.find(c=>c.id===m.conversation);assert(original,'save retains exact owner identity');assert.equal(m.draft.text,original.text,'caret checkpoint cannot change owner text');assert.equal(m.draft.root,original.root);assert.equal(m.draft.title,original.title);assert.deepEqual(Object.keys(m.draft).sort(),['caret','next','root','scroll','text','title'],'no submitted input, receipts or source identities are rewritten');}
  // An explicit project root must survive unified selection when the board has two registered roots.
  await page.evaluate(({s,n,board})=>{taskq.receive({...s,projects:[{...s.projects[0],root:'other-root',name:'Other',alive:false},s.projects[0]]});taskq.receive({open:{page:'conversations',board,root:s.projects[0].root,task:n}});},{s:state,n:question.n,board});
  assert.match(await page.locator('.thread-title').innerText(),/^Alpha/,'task navigation retains the requested project root');
- // A2: the actual menu detail dispatcher exposes one entry for each task state, without lifecycle actions.
+ // A2 / #2363: each actual whole-row target opens one exact Conversations object, without inline lifecycle actions.
  const menu=await browser.newPage({viewport:{width:800,height:740}});menu.on('pageerror',e=>errors.push(e.message));
  await menu.setContent(fs.readFileSync('build/web/tray.html','utf8'));await menu.evaluate(()=>{window.sent=[];window.ipc={postMessage:t=>sent.push(JSON.parse(t))};});
  await menu.evaluate(s=>taskq.receive(s),{...state,page:'home',platform:'macos',display:require('./fixtures/display-model.json').display,projects:[{...state.projects[0],board_kind:'github',tasks:['later','doing','review','ask'].map((state,i)=>({n:i+1,state,title:'Menu task '+(i+1),revision:i+10,controls:[]}))}]});
+ await menu.locator('.tqp-counts [data-state=doing]').first().click();await menu.locator('[data-a=all-tasks]').first().click();
  for(const n of [1,2,3,4]){
-  await menu.locator('[data-a=task-detail][data-key="'+board+'/'+n+'"]').click();
-  const entry=menu.locator('.task-inline-details [data-a=workspace]');assert.equal(await entry.count(),1,'one thread entry per task');
-  await entry.click();const open=await menu.evaluate(()=>sent.filter(m=>m.a==='workspace').at(-1).open);assert.deepEqual([open.board,open.task,open.revision],[board,n,n+9]);await menu.keyboard.press('Escape');
+  const entry=menu.locator('.task-target[data-task="'+n+'"]');assert.equal(await entry.count(),1,'one thread entry per task');
+  await entry.click();const open=await menu.evaluate(()=>sent.filter(m=>m.a==='workspace').at(-1).open);assert.deepEqual([open.board,open.task,open.revision],[board,n,n+9]);assert.equal(await menu.locator('.task-inline-details').count(),0,'no competing task reader');
  }
  assert.equal(await menu.evaluate(()=>sent.filter(m=>['answer','control','start','ai-send'].includes(m.a)).length),0,'opening a menu task has no lifecycle effect');await menu.close();
- assert.deepEqual(errors,[]);console.log('PASS #1723: mixed Recent/Archive selections both directions, read-only archived D4 transcript, one heading/source choices, one status/transcript/composer scroll at 18/20 px, position and drafts preserved; no task or owner writes');
+ assert.deepEqual(errors,[]);console.log('PASS #1723: mixed Recent/Archive selections, read-only archived transcript, one heading/source choices and scroll at 18/20 px, position/draft text preserved, exact whole-row targets; no submissions or acknowledgements');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -148,6 +148,14 @@
           "complete": false
         }
       ],
+      "timing": {
+        "started": false,
+        "first": null,
+        "changes": null,
+        "current": null,
+        "completed": false,
+        "closed": null
+      },
       "stuck": false,
       "admission": {
         "code": "unknown",
@@ -281,6 +289,14 @@
           "complete": false
         }
       ],
+      "timing": {
+        "started": null,
+        "first": null,
+        "changes": null,
+        "current": 4,
+        "completed": false,
+        "closed": null
+      },
       "stuck": false,
       "history": [
         {
@@ -368,6 +384,14 @@
           "complete": false
         }
       ],
+      "timing": {
+        "started": false,
+        "first": null,
+        "changes": null,
+        "current": null,
+        "completed": false,
+        "closed": null
+      },
       "stuck": false,
       "admission": {
         "code": "dependency",
@@ -438,6 +462,14 @@
           "complete": false
         }
       ],
+      "timing": {
+        "started": false,
+        "first": null,
+        "changes": null,
+        "current": 8,
+        "completed": false,
+        "closed": null
+      },
       "stuck": false,
       "history": [
         {
@@ -565,6 +597,14 @@
           "complete": false
         }
       ],
+      "timing": {
+        "started": null,
+        "first": null,
+        "changes": null,
+        "current": 12,
+        "completed": false,
+        "closed": null
+      },
       "stuck": false,
       "history": [
         {

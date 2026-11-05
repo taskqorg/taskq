@@ -1,6 +1,9 @@
 // #2110 CS5/C2/Q-A5: cached metadata cannot erase a confirmed draft or its immutable sent history.
 const assert=require('node:assert/strict'),conversations=require('../src/conversations.js'),failures=[];
 const ui=require('../src/ui-runtime.js');ui.defer=()=>0;ui.cancel=()=>{};
+// A8: historical facts name their exact source/time; a reader capability version is never old-record provenance.
+const shell=JSON.stringify(conversations.block({role:'assistant',text:'Invented',updated:'2026-11-01T10:00:00Z',model:'recorded-model',version:'recorded-version',session:'invented-session'},'Invented',{'data-key':'attempt:71:100:0'}));
+assert.match(shell,/2026-11-01T10:00:00.000Z/);assert.match(shell,/Source attempt:71:100:0/);assert.match(shell,/recorded-version/);
 function instance(){return conversations.create({window:{crypto:require('node:crypto').webcrypto},document:{},menu:{querySelector(){return null;}},draw(){},navigate(){}});}
 const owner={id:'owner',revision:2,title:'Retained',root:'fixture',text:'Independent unsent draft',caret:[2,4],files:[{id:'file',name:'draft.txt'}],sent:{root:'fixture',runtime:'claude',text:'Immutable submitted text',files:[{id:'sent',name:'sent.txt',hash:'a'.repeat(64)}]}};
 const initial={projects:[],conversations:{items:[owner],complete:true,catalog_epoch:2,navigation:{selected:'owner',list:'recent'}}};

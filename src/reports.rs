@@ -5,6 +5,83 @@ use serde_json::{Value,json};
 use std::path::Path;
 pub(crate) fn now()->i64 {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs() as i64)}
 
+/// Selected-task read-through on the existing board projection, never a task-state authority.
+/// The per-source lock coalesces concurrent metadata/history/worker reads, without serializing other sources.
+#[derive(Default)]
+pub(crate) struct Selected {
+    entries:std::sync::Mutex<std::collections::VecDeque<(String,std::sync::Arc<std::sync::Mutex<Option<(std::time::Instant,Res<Value>)>>>)>>,
+}
+impl Selected {
+    pub(crate) fn read(&self,key:String,revision:Option<u64>,now:std::time::Instant,load:impl FnOnce()->Res<Value>)->Res<Value> {
+        let source={
+            let mut entries=self.entries.lock().map_err(|_|"Selected history cache unavailable")?;
+            let source=entries.iter().position(|(k,_)|*k==key).and_then(|i|entries.remove(i)).map(|(_,v)|v)
+                .unwrap_or_else(||std::sync::Arc::new(std::sync::Mutex::new(None)));
+            if entries.len()>=8 {
+                let index=entries.iter().position(|(_,v)|std::sync::Arc::strong_count(v)==1).ok_or("Selected history reads busy; retry")?;
+                entries.remove(index);
+            }
+            entries.push_back((key,source.clone()));source
+        };
+        let mut entry=source.lock().map_err(|_|"Selected history source unavailable")?;
+        if let Some((at,value))=&*entry {
+            let ttl=if value.is_ok(){60}else{2};
+            if now.checked_duration_since(*at).is_some_and(|age|age<std::time::Duration::from_secs(ttl))
+                &&value.as_ref().map_or(true,|v|revision.is_none_or(|r|v["tasks"][0]["revision"].as_u64()==Some(r))) {return value.clone();}
+        }
+        let value=load();
+        // Eight sources / 8 MiB, matching the reader's transient body budget. An oversized cold read stays uncached.
+        if value.as_ref().map_or(true,|v|v["tasks"][0]["state"]=="closed"&&v.to_string().len()<=1024*1024) {*entry=Some((now,value.clone()));}
+        else {*entry=None;}
+        value
+    }
+}
+
+pub(crate) fn selected(root:&Path,b:&dyn Board,n:u64,gitlab:bool,revision:Option<u64>)->Res<Value> {
+    static CACHE:std::sync::OnceLock<Selected>=std::sync::OnceLock::new();
+    let key=format!("{}|{}|{gitlab}",root.display(),b.url(n));
+    CACHE.get_or_init(Selected::default).read(key,revision,std::time::Instant::now(),||{let value=crate::closed_pin(b,n,gitlab)?;if !value["tasks"][0]["error"].is_null(){return Err("Selected task source incomplete; refresh or open its board".into());}Ok(value)})
+}
+
+pub(crate) fn worker(value:&Value,wanted:Option<u64>)->Res<(String,String,String,u64)> {
+    let row=&value["tasks"][0];
+    if row["state"]!="closed"||!row["error"].is_null(){return Err("Transcript requires a closed trusted task; refresh the project".into());}
+    let source=row["workers"].as_array().into_iter().flatten().rev().find(|w|wanted.is_none_or(|a|w["attempt"]==a)).ok_or("No recorded worker transcript for this attempt")?;
+    let (native,owner)=source["session"].as_str().and_then(|s|s.rsplit_once(' ')).ok_or("Worker identity unavailable")?;
+    let (runtime,session)=native.split_once(':').ok_or("Worker session unavailable")?;
+    Ok((runtime.into(),session.into(),owner.into(),source["attempt"].as_u64().ok_or("Worker attempt unavailable")?))
+}
+
+#[cfg(test)]
+mod selected_tests {
+    use super::*;
+    // A4: concurrent selected metadata/history/native pages share a full folded source, never a last-page fold.
+    #[test]
+    fn selected_read_coalesces_and_revalidates_revision_ttl_and_failures() {
+        let cache=std::sync::Arc::new(Selected::default());let now=std::time::Instant::now();
+        let value=json!({"tasks":[{"revision":71,"state":"closed","workers":[{"attempt":7,"session":"codex:invented remote"}]}]});
+        let (entered,ready)=std::sync::mpsc::channel();let (release,wait)=std::sync::mpsc::channel();
+        let c=cache.clone();let v=value.clone();
+        let first=std::thread::spawn(move||c.read("board/task".into(),None,now,||{entered.send(()).unwrap();wait.recv().unwrap();Ok(v)}));
+        ready.recv().unwrap();let c=cache.clone();
+        let second=std::thread::spawn(move||c.read("board/task".into(),Some(71),now,||panic!("duplicate concurrent board read")));
+        release.send(()).unwrap();assert_eq!(first.join().unwrap().unwrap(),value);assert_eq!(second.join().unwrap().unwrap(),value);
+        assert_eq!(cache.read("board/task".into(),Some(71),now,||panic!("warm paging revalidated HTTP")).unwrap(),value);
+        let changed=json!({"tasks":[{"revision":72,"state":"closed"}]});
+        assert_eq!(cache.read("board/task".into(),Some(72),now,||Ok(changed.clone())).unwrap(),changed);
+        assert!(cache.read("board/task".into(),None,now+std::time::Duration::from_secs(61),||Err("invented unavailable".into())).is_err());
+        assert!(cache.read("board/task".into(),None,now+std::time::Duration::from_secs(62),||panic!("failure was not coalesced")).is_err());
+        assert_eq!(cache.read("board/task".into(),None,now+std::time::Duration::from_secs(64),||Ok(value.clone())).unwrap(),value);
+        assert_eq!(worker(&value,Some(7)).unwrap(),("codex".into(),"invented".into(),"remote".into(),7));
+        assert!(worker(&value,Some(8)).is_err());
+        let open=json!({"tasks":[{"revision":71,"state":"open"}]});
+        assert_eq!(cache.read("open".into(),None,now,||Ok(open.clone())).unwrap(),open);
+        assert_eq!(cache.read("open".into(),None,now,||Ok(value.clone())).unwrap(),value,"an open fallback must not hide a newly closed exact source");
+        for n in 0..20 {cache.read(n.to_string(),None,now,||Ok(value.clone())).unwrap();}
+        assert_eq!(cache.entries.lock().unwrap().len(),8);
+    }
+}
+
 /// R1/R12: disposable board projection. Negative discoveries are cached too; immutable content is SHA-bound.
 #[derive(Default)]
 pub struct Cache {

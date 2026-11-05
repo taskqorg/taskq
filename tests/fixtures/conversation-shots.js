@@ -13,11 +13,11 @@ function taskqConversationShot(step,state){
   ai:{...state.ai,draft:'',history:[],runtime:{available:true,name:'Claude Code',id:'claude'}},workspace_local:{}};
  delete s.page;
  // #1773 A6: the PM chat reads an invented transcript locally, so a snapshot never reaches a native session
- const log=[['user','What needs my attention today?'],['assistant','One design question needs your answer. Two tasks are held for later; current work continues while you decide.'],['user','Which changes are we keeping?'],['assistant','The compact menu stays the place to find tasks. Conversations is the place to read and answer; saved views, pins, files and task actions stay available.'],['event','turn complete']].map(([role,text],at)=>({role,text,at,i:0}));
- // the native view freezes window.ipc, so the stub wraps the WebKit handler it calls instead
- const sink=window.webkit?.messageHandlers?.ipc||window.ipc,post=sink&&sink.postMessage.bind(sink);
+ const log=[['user','What needs my attention today?'],['assistant','One design question needs your answer. Two tasks are held for later; current work continues while you decide.'],['user','Which changes are we keeping?'],['assistant','The compact menu stays the place to find tasks. Conversations is the place to read and answer; saved views, pins, files and task actions stay available.'],['event','turn complete']].map(([role,text],at)=>({role,text,at,i:0,updated:new Date((1700000000+at*60)*1000).toISOString(),...(role==='assistant'?{model:'invented-model',version:'invented-cli'}:{})}));
+ // Native wrappers are frozen; intercept the platform handler on WebKit and WebView2.
+ const sink=window.webkit?.messageHandlers?.ipc||window.chrome?.webview||window.ipc,post=sink&&sink.postMessage.bind(sink);
  const stub=t=>{const m=JSON.parse(t);if(m.a!=='conversation-dialogue'||m.conversation!=='pm-1')return post&&post(t);
-  setTimeout(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='status'?{state:'idle',watch:'no watch',turn:{state:'done',watch:false,outcome:'done'},last_line:log.at(-1).text}:{items:m.after!==undefined?[]:log,start:0,end:log.length,size:log.length}}}),0);};
+  setTimeout(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='tasks'?{tasks:[],more:false}:m.action==='status'?{state:'idle',watch:'no watch',turn:{state:'done',watch:false,outcome:'done'},last_line:log.at(-1).text}:{items:m.after!==undefined?[]:log,start:0,end:log.length,size:log.length}}}),0);};
  if(sink)sink.postMessage=stub;else window.ipc={postMessage:stub};
  taskq.receive(s);
  // the menu badge names the unread thread; the open question's task thread is selected and nothing is acknowledged
@@ -27,7 +27,7 @@ function taskqConversationShot(step,state){
   // #1781: the badge screen shows the empty answer with its placeholder, even after an earlier screen typed a draft
   if(step==='badge'){const a=document.querySelector('[data-c-field=answer]');if(a&&a.value)type(a,'');}
   if(step==='question'){const a=document.querySelector('[data-c-field=answer]');if(a)type(a,'Keep the larger quantity. Retain unavailable items with a warning.');}
-  if(step==='chat'){document.querySelector('[data-c=select][data-id=pm-1]')?.click();setTimeout(()=>{const t=document.querySelector('[data-c-field=text]');if(t)type(t,'What should we check before implementation?');},300);}
+  if(step==='chat'){document.querySelector('[data-c=select][data-id=pm-1]')?.click();setTimeout(()=>{const t=document.querySelector('[data-c-field=text]');if(t)type(t,'What should we check before implementation?');const reader=document.querySelector('.conversation-reader');if(reader){reader.dispatchEvent(new WheelEvent('wheel',{deltaY:-1,bubbles:true}));reader.scrollTop=0;reader.dispatchEvent(new Event('scroll'));}},300);}
   if(step==='owner'){document.querySelector('[data-c=select][data-id=owner-1]')?.click();setTimeout(()=>{const t=document.querySelector('[data-c-field=text]');if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length);}},50);}
  },50);
 }
