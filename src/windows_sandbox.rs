@@ -64,6 +64,13 @@ pub fn ready(root: &Path, install: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Removes a stale preparation test fixture whose denials refuse a plain removal, restoring them from its own journal
+/// first (#2417). A real preparation journal lives under the installation, never in such a folder.
+pub fn remove_denied_fixture(base: &Path) -> Result<(), String> { preparation::remove_fixture(base) }
+
+#[cfg(test)]
+pub use preparation::prepared_fixture;
+
 fn restricted() -> Result<bool, String> {
     use std::ffi::c_void;
     #[link(name="advapi32")]

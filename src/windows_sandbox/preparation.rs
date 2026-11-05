@@ -169,10 +169,18 @@ pub(super) fn ready(install: &Path) -> Result<(), String> {
 /// Restore only saved object security. Missing/replaced files and all file contents are preserved.
 pub(super) fn restore(install: &Path) -> Result<(), String> {
     if super::restricted()? || std::env::var_os("TASKQ_ATTEMPT").is_some() { return Err("Windows security restore requires an unrestricted operator".into()); }
+    restore_journal(install, None)
+}
+
+/// `within` is the one tree the journal may name; a record elsewhere refuses the whole restore before any change.
+fn restore_journal(install: &Path, within: Option<&Path>) -> Result<(), String> {
     let file = install.join("windows-native/security-preparation.json");
     let lock = fs::OpenOptions::new().read(true).write(true).share_mode(0).open(file.with_extension("lock")).map_err(|e| e.to_string())?;
     let journal: Journal = serde_json::from_slice(&fs::read(&file).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     if journal.version != 1 { return Err("Windows security journal version unknown".into()); }
+    if let Some(base) = within {
+        if journal.records.iter().any(|r| !r.original.path.starts_with(base)) { return Err("Windows security journal names a path outside its preparation folder".into()); }
+    }
     let mut plan = Preparation { file, journal, targets: vec![], home: PathBuf::new(), _lock: lock };
     let mut pairs = Vec::new();
     for (i, record) in plan.journal.records.iter().enumerate().rev() {
@@ -194,13 +202,69 @@ pub(super) fn restore(install: &Path) -> Result<(), String> {
     plan.journal.phase = "complete".into(); plan.save()
 }
 
+/// Restores the denials of a preparation fixture from its own journal, then removes the folder (#2417). Any temp user can
+/// write such a folder, so this asks for no operator: the journal reaches only the folder, and `Snapshot` refuses reparse
+/// points, hard links and `..`.
+pub(super) fn remove_fixture(base: &Path) -> Result<(), String> {
+    let base = super::checked(base)?;
+    let journal = base.join("install/windows-native/security-preparation.json");
+    if journal.exists() {
+        super::checked(&journal)?;
+        restore_journal(&base.join("install"), Some(&base))?;
+    }
+    fs::remove_dir_all(&base).map_err(|e| e.to_string())
+}
+
+/// Removes a fixture on drop, so a test that panics between `apply` and its own cleanup leaves no denials in temp.
+#[cfg(test)]
+pub struct Fixture(PathBuf);
+#[cfg(test)]
+impl Drop for Fixture { fn drop(&mut self) { let _ = remove_fixture(&self.0); } }
+
+#[cfg(test)]
+pub fn prepared_fixture(base: &Path) -> Fixture {
+    let fixture = Fixture(base.to_owned());
+    let (root, install, home, temp) = (base.join("workspace"), base.join("install"), base.join("home"), base.join("temp"));
+    let state = install.join("windows-native/state");
+    for path in [root.join(".codex"), state.clone(), home.clone(), temp.clone()] { fs::create_dir_all(path).unwrap(); }
+    fs::write(root.join("data.txt"), "fixture data").unwrap();
+    fs::write(home.join("config.toml"), "# invented fixture configuration\n").unwrap();
+    Preparation::begin(&root, &install, &home, &state, &temp, &[]).unwrap().apply().unwrap();
+    fixture
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `restore` refuses a worker, which is how a worker's `cargo test` left this fixture behind on every run (#2417).
+    fn operator_restore(install: &Path) {
+        if std::env::var_os("TASKQ_ATTEMPT").is_none() { return restore(install).unwrap(); }
+        assert_eq!(restore(install).unwrap_err(), "Windows security restore requires an unrestricted operator");
+        restore_journal(install, None).unwrap();
+    }
+
+    // #2417 defect: a fixture removal restores from a journal in a temp folder, and such a file can be forged. Protection:
+    // a journal naming a path outside its folder changes nothing, there or anywhere.
+    #[test]
+    fn fixture_removal_refuses_a_journal_outside_its_folder() {
+        let stamp = crate::runtime::uuid();
+        let name = |tag: &str| std::env::temp_dir().join(format!("taskq-preparation-forged-{tag}-{stamp}"));
+        let (own, other) = (name("own"), name("other"));
+        let _guards = (prepared_fixture(&own), prepared_fixture(&other));
+        let journal = "install/windows-native/security-preparation.json";
+        let saved = fs::read(own.join(journal)).unwrap();
+        fs::copy(other.join(journal), own.join(journal)).unwrap();
+        assert!(remove_fixture(&own).unwrap_err().contains("outside its preparation folder"));
+        assert_eq!(fs::remove_file(other.join("home/state_5.sqlite-wal")).unwrap_err().raw_os_error(), Some(5), "the other folder keeps its denials");
+        fs::write(own.join(journal), saved).unwrap();
+    }
+
     #[test]
     #[ignore = "native Windows security journal fixture"]
     fn native_preparation_tolerates_sdk_temp_cleanup() {
         let base = std::env::temp_dir().join(format!("taskq-preparation-temp-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _fixture = Fixture(base.clone());
         let root = base.join("workspace"); let install = base.join("install"); let home = base.join("home");
         let state = install.join("windows-native/state"); let temp = base.join("temp");
         let state_temp = state.join("TMP"); let generated = state_temp.join("arg0/codex-arg0-fixture");
@@ -237,6 +301,7 @@ mod tests {
     #[test]
     fn native_preparation_and_restore_preserve_controls_and_data() {
         let base = std::env::temp_dir().join(format!("taskq-preparation-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _fixture = Fixture(base.clone());
         let root = base.join("workspace"); let install = base.join("install"); let home = base.join("home");
         let state = install.join("windows-native/state"); let temp = base.join("temp");
         for path in [root.join(".CODEX"), state.clone(), home.clone(), temp.clone()] { fs::create_dir_all(path).unwrap(); }
@@ -258,7 +323,7 @@ mod tests {
         let wal = home.join("state_5.sqlite-wal");
         assert_eq!(fs::remove_file(&wal).unwrap_err().raw_os_error(), Some(5));
         // Replacing an owner control is a conflict, not permission to restore over its new identity.
-        restore(&install).unwrap();
+        operator_restore(&install);
         assert_eq!(Snapshot::capture(&root).unwrap(), before);
         assert_eq!(Snapshot::capture(&home).unwrap(), home_before);
         assert_eq!(fs::read_to_string(root.join("data.txt")).unwrap(), "owner data survives rollback");

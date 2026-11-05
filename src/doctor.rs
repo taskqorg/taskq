@@ -58,12 +58,22 @@ impl Outcome {
             return true;
         }
         let meta = fs::symlink_metadata(path);
-        let gone = if meta.as_ref().is_ok_and(|m| m.is_dir()) { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+        let gone = if meta.as_ref().is_ok_and(|m| m.is_dir()) { remove_tree(path) } else { fs::remove_file(path).map_err(|e| e.to_string()) };
         match gone {
             Ok(()) => { self.freed += bytes; self.lines.push(format!("removed {what}{}", mib(bytes))); true }
             Err(e) => { self.failed += 1; self.lines.push(format!("{what} kept: removal failed: {e}")); false }
         }
     }
+}
+
+/// One tree. A `taskq-preparation-*` test fixture whose denials refuse this restores them first (#2417).
+fn remove_tree(path: &Path) -> Result<(), String> {
+    let removed = fs::remove_dir_all(path);
+    #[cfg(windows)]
+    if removed.as_ref().is_err_and(|e| e.raw_os_error() == Some(5)) && path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("taskq-preparation-")) {
+        return crate::windows_sandbox::remove_denied_fixture(path);
+    }
+    removed.map_err(|e| e.to_string())
 }
 
 /// `taskq doctor [--dry-run]` (#2060): one pass now. `<install>/doctor.lock` keeps a CLI pass and the service's apart.
@@ -384,6 +394,27 @@ mod tests {
         for v in ["4.0.3", "4.0.4", "4.0.7.tmp"] { assert!(!on_disk.contains(&v.to_string()), "{v} removed: {on_disk:?}"); }
         assert_eq!((o.releases, o.freed, o.kept, o.failed, o.unknown), (3, 210, 4, 0, 0));
         let _ = fs::remove_dir_all(&base);
+    }
+
+    // #2417 defect: a test that died before restoring left `taskq-preparation-*` with its denials. `remove_dir_all` then
+    // stopped at the first WAL/SHM sidecar with os error 5, on every pass, so the folders piled up in the OS temp dir.
+    // Protection: the doctor restores such a fixture from its own journal and removes it, including one a failed pass
+    // already emptied in part. Any other folder gets no restore: its failure stays reported.
+    #[cfg(windows)]
+    #[test]
+    fn doctor_removes_a_preparation_folder_its_denials_block() {
+        let temp = scratch("preparation");
+        let fixture = temp.join("taskq-preparation-1-2");
+        let _fixture = crate::windows_sandbox::prepared_fixture(&fixture);
+        let other = crate::windows_sandbox::prepared_fixture(&temp.join("taskq-other"));
+        assert_eq!(fs::remove_dir_all(&fixture).unwrap_err().raw_os_error(), Some(5), "the denials block a plain removal");
+        assert!(fixture.join("install/windows-native/security-preparation.json").exists(), "the failed removal leaves the journal");
+        let later = SystemTime::now() + Duration::from_secs(2 * 86_400);
+        let o = pass(&temp.join("install"), &temp, later, &Native::None, false);
+        assert_eq!((o.temp, o.failed), (1, 1), "{:?}", o.lines);
+        assert_eq!(names(&temp), vec!["taskq-other".to_string()]);
+        drop(other);
+        fs::remove_dir_all(&temp).unwrap();
     }
 
     // #2060 defect: the doctor ran only hourly and printed no item, so nobody could preview or force a pass. Kept
