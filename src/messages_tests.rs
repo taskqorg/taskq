@@ -52,7 +52,7 @@
         let store=fs::read_to_string(f.0.join("messages.json")).unwrap();assert!(!store.contains("invented private request"));assert!(!store.contains("live"));
         assert!(crate::setup::open_id(&f.0,&f.0,"replacement work","live","claude",false).unwrap_err().contains("deleted"));
         assert_eq!(snapshot(&f.0,&[])["entries"].as_array().unwrap().len(),1);
-        crate::platform::sweep(&f.0,&f.0.join("unused-shim"));
+        crate::platform::sweep(&f.0);
         assert!(f.0.join("messages.json").exists());assert!(f.0.join("setup/waiting.json").exists(),"update preserves pending work and marks");
     }
 

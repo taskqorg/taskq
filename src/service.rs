@@ -854,9 +854,8 @@ impl Capacity {
     }
 }
 
-/// Capacity of `host` from `taskq.json` (§ 9): its `capacity_hosts` limits override the top-level ones; its
-/// `load_gate` replaces the top-level object; omitted gate fields take the defaults. Invalid values are an error.
-pub fn capacity(v: &Value, host: &str) -> Result<Capacity, String> {
+/// Capacity from host policy text (§ 9): omitted gate fields take the defaults. Invalid values are an error.
+pub fn capacity(v: &Value) -> Result<Capacity, String> {
     let limits = |x: &Value, at: &str| -> Result<BTreeMap<String, u32>, String> {
         match x {
             Value::Null => Ok(BTreeMap::new()),
@@ -864,41 +863,36 @@ pub fn capacity(v: &Value, host: &str) -> Result<Capacity, String> {
             _ => Err(format!("{at}: not an object")),
         }
     };
-    if !matches!(v["capacity_hosts"], Value::Null | Value::Object(_)) {
-        return Err("capacity_hosts: not an object".into());
-    }
-    let h = &v["capacity_hosts"][host];
-    let mut out = limits(&v["limits"], "limits")?;
-    out.extend(limits(&h["limits"], &format!("capacity_hosts.{host}.limits"))?);
-    let (a, aat) = if h["admission"].is_null() { (&v["admission"], "admission".to_string()) } else { (&h["admission"], format!("capacity_hosts.{host}.admission")) };
+    let out = limits(&v["limits"], "limits")?;
+    let a = &v["admission"];
     if !matches!(a, Value::Null | Value::Object(_)) {
-        return Err(format!("{aat}: not an object"));
+        return Err("admission: not an object".into());
     }
     let auto = match &a["mode"] {
         Value::Null => false,
         x if x == "auto" => true,
         x if x == "fixed" => false,
-        _ => return Err(format!("{aat}.mode: auto or fixed")),
+        _ => return Err("admission.mode: auto or fixed".into()),
     };
     let max = match &a["max"] {
         Value::Null => None,
-        x => Some(x.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or(format!("{aat}.max: not an integer 0..{}", u32::MAX))?),
+        x => Some(x.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or(format!("admission.max: not an integer 0..{}", u32::MAX))?),
     };
     let d = if auto { GATE_AUTO } else { GATE_DEFAULT };
-    let (g, at) = if h["load_gate"].is_null() { (&v["load_gate"], "load_gate".to_string()) } else { (&h["load_gate"], format!("capacity_hosts.{host}.load_gate")) };
+    let g = &v["load_gate"];
     if !matches!(g, Value::Null | Value::Object(_)) {
-        return Err(format!("{at}: not an object"));
+        return Err("load_gate: not an object".into());
     }
     let pct = |k: &str, d: u32, lo: u64, hi: u64| match &g[k] {
         Value::Null => Ok(d),
-        x => x.as_u64().filter(|n| (lo..=hi).contains(n)).map(|n| n as u32).ok_or(format!("{at}.{k}: not an integer {lo}..{hi}")),
+        x => x.as_u64().filter(|n| (lo..=hi).contains(n)).map(|n| n as u32).ok_or(format!("load_gate.{k}: not an integer {lo}..{hi}")),
     };
     let enabled = match &g["enabled"] {
         Value::Null => d.enabled,
-        x => x.as_bool().ok_or(format!("{at}.enabled: not true or false"))?,
+        x => x.as_bool().ok_or("load_gate.enabled: not true or false")?,
     };
     if auto && !enabled {
-        return Err(format!("{at}.enabled: Auto admission needs the load gate; use admission mode fixed"));
+        return Err("load_gate.enabled: Auto admission needs the load gate; use admission mode fixed".into());
     }
     let gate = GateCfg { enabled, cpu_max: pct("cpu_max", d.cpu_max, 10, 100)?, memory_min: pct("memory_min", d.memory_min, 1, 95)?, mean: d.mean };
     Ok(Capacity { limits: out, gate, auto, max })
@@ -2701,7 +2695,7 @@ impl<'a> Service<'a> {
             .filter_map(|(id,_,t)|host_of(t).map(|h|(*id,h.to_string())))
             .chain(hosts.iter().filter(|h|h.trusted).filter_map(|h| {
                 let b=Balancing::read(&h.body)?;
-                matches!(b.mode.as_str(),"any"|"primary").then_some((b.last_spawn?,host_name(h)?.to_string()))
+                (b.mode=="any").then_some((b.last_spawn?,host_name(h)?.to_string()))
             }))
             .max_by_key(|(id,_)|*id).map(|(_,h)|h);
         for v in queue {
@@ -2967,7 +2961,7 @@ impl<'a> Service<'a> {
         let mut known=false;
         for host in hosts.iter().filter(|h|h.trusted && host_name(h).is_some_and(|name|name!=self.cfg.me)) {
             let Some(balance)=Balancing::read(&host.body) else {reasons.push("primary availability unknown: incompatible heartbeat".into());continue;};
-            if balance.mode!="any" && balance.mode!="primary" {continue;}
+            if balance.mode!="any" {continue;}
             known=true;
             let name=host_name(host).unwrap();
             if !crate::snapshot::live(now-host.updated,self.cfg.ttl) {reasons.push(format!("primary {name} availability unknown: stale heartbeat"));continue;}
@@ -2992,7 +2986,7 @@ impl<'a> Service<'a> {
         for h in hosts.iter().filter(|h|h.trusted && host_name(h).is_some_and(|n|n!=self.cfg.me)) {
             let name=host_name(h).unwrap();
             let Some(b)=Balancing::read(&h.body) else {unknown.push(format!("{name} incompatible/unknown"));continue;};
-            if !matches!(b.mode.as_str(),"any"|"primary") {continue;}
+            if b.mode!="any" {continue;}
             if !crate::snapshot::live(now-h.updated,self.cfg.ttl) {unknown.push(format!("{name} stale/unknown"));continue;}
             if b.weights.is_empty() {unknown.push(format!("{name} weights/occupancy unknown"));continue;}
             match b.weighted_capacity(v,false) {

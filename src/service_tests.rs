@@ -617,12 +617,6 @@ Problem: pick one
             text.push_str(&terminal);
             std::fs::write(&path, &text).unwrap();
             let mut writer = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
-            {
-                let _lock=crate::profile::log_lock(&path).unwrap();
-                let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-                crate::telemetry::read(&root,now).unwrap();
-            }
-            assert!(crate::profile::selftest(&root, "o/r", &vec![], 300).unwrap().contains("no overdue"), "legacy log size no longer stops collection");
             let lock = crate::profile::log_lock(&path).unwrap();
             s.pass().unwrap();
             assert!(std::fs::read_to_string(&path).unwrap()==text, "busy lock preserves evidence");
@@ -635,6 +629,7 @@ Problem: pick one
             use std::io::Write;
             writer.write_all(b"still open diagnostic\n").unwrap();
             crate::profile::tests::append_line(&path, newest).unwrap();
+            crate::profile::tests::append_line(&path, &terminal).unwrap();
             assert!(crate::profile::selftest(&root, "o/r", &vec![], 300).unwrap().contains("no overdue"));
             assert!(!crate::profile::report(&root).contains("collection stopped"));
             drop(writer);
@@ -3143,8 +3138,7 @@ Open: none")).unwrap();
         c.root = dir.clone();
         let record=json!({"project":c.repo,"host":"mac","stage":"build","open":true,"task":n,"attempt":a,"rt":"claude",
             "outcome":"unknown","error":"none","at_ms":1,"unknown":"open-stage"});
-        drop(crate::profile::log_lock(&dir.join("taskq.log")).unwrap());
-        crate::telemetry::append(&dir,&format!("taskq-stage {record}"),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64).unwrap();
+        crate::profile::tests::append_line(&dir.join("taskq.log"),&format!("taskq-stage {record}")).unwrap();
         // #1389: an old gap warns once with a stable reason and passes; unavailable capture still fails (tests/telemetry_process.rs).
         let warn = crate::profile::selftest(&dir, &c.repo, &vec![], 300).unwrap();
         assert!(warn.starts_with("attempt terminal records: WARN (1 older than ttl 300s; not blocking)"), "{warn}");
@@ -3194,14 +3188,14 @@ Open: none")).unwrap();
             let path = dir.join("taskq.log");
             let record = json!({"project": c.repo, "host":"mac", "stage":"review", "task":n,
                 "attempt":a, "rt":"codex", "outcome":"unknown", "error":"left-board", "at_ms":1});
-            std::fs::write(&path, format!("taskq-stage {record}\n")).unwrap();
+            crate::profile::tests::append_line(&path, &format!("taskq-stage {record}")).unwrap();
             if closed {
                 b.comment(n, "taskq: close").unwrap();
                 b.close(n).unwrap();
             } else {
                 b.labels(n, &[], &["taskq".into()]).unwrap();
             }
-            assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).is_err(), "unimported legacy evidence reads unknown");
+            assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).unwrap().contains("WARN"), "an ended attempt without a terminal record warns");
             let mut s = service(&b, &c, Default::default());
             s.focus.clear();
             s.pass().unwrap();
@@ -3283,15 +3277,14 @@ Open: none")).unwrap();
                 c.install = dir.clone();
                 c.root = dir.clone();
                 let path = dir.join("taskq.log");
+                let (_capture,_guard)=crate::profile::tests::collecting(&dir);
                 let project = if evidence == "foreign-project" { "other/project" } else { &c.repo };
                 let rt = if evidence == "runtime-mismatch" { "claude" } else { "codex" };
-                let mut original = String::new();
                 for (stage, outcome, error) in [("claim", "ok", "none"), ("start", "ok", "none"), ("checks", "ok", "none"), ("close", "failed", "other"), ("review", "unknown", "left-board")] {
                     let record = json!({"project":project, "stage":stage, "task":n, "attempt":a,
                         "rt":rt, "outcome":outcome, "error":error, "at_ms":1, "unknown":"no-usage"});
-                    original += &format!("taskq-stage {record}\n");
+                    crate::profile::tests::append_line(&path,&format!("taskq-stage {record}")).unwrap();
                 }
-                std::fs::write(&path, &original).unwrap();
                 let attempt_log = crate::runtime::attempt_log(&dir, "reviewer", n, a);
                 if evidence == "unreadable-log" {
                     std::fs::create_dir(&attempt_log).unwrap();
@@ -3306,17 +3299,13 @@ Open: none")).unwrap();
                 }
                 if evidence == "unreadable-board" { b.state.borrow_mut().fail_issue_read = Some((n, 1)); }
                 if evidence == "unreadable-comments" { b.state.borrow_mut().fail_comment_reads = 1; }
-                // Prepare the legacy fixture before collection; this case proves ownership, not import contention.
-                crate::profile::prune(&dir).unwrap();
                 let history = crate::profile::tests::read_log(&dir).unwrap();
-                let (_capture,_guard)=crate::profile::tests::collecting(&dir);
                 assert!(crate::profile::selftest(&dir, project, &vec![], 300).unwrap().contains("WARN"));
                 let mut s = service(&b, &c, Default::default());
                 s.focus.clear();
                 s.pass().unwrap();
                 let repaired = crate::profile::tests::read_log(&dir).unwrap();
                 assert!(repaired.starts_with(&history), "original history must survive");
-                assert!(std::fs::read_to_string(&path).unwrap().starts_with(&original), "original archive text must survive unchanged");
                 if evidence == "local" {
                     assert!(crate::profile::selftest(&dir, project, &vec![], 300).unwrap().contains("no overdue"), "{closed}: {repaired}");
                     let record: serde_json::Value = serde_json::from_str(repaired.lines().last().unwrap().strip_prefix("taskq-stage ").unwrap()).unwrap();
@@ -4758,7 +4747,7 @@ Open: none";
     // #2138 A2-A4/R13: mode and collaborator policy must reach real claims; preserve strict pins by default.
     #[test]
     fn balancing_modes_and_project_execution() {
-        for (mode, own, unlabelled) in [("primary",true,true),("any",true,true),("pinned-only",true,false),("labelled",true,false),("manager-only",false,false),("none",false,false)] {
+        for (mode, own, unlabelled) in [("any",true,true),("labelled",true,false),("none",false,false)] {
             let b=Fake::default();
             let n=b.create("unlabelled","", &["taskq".into()]).unwrap();
             let pin=b.create("pinned","", &["taskq".into(),"host-mac".into()]).unwrap();
@@ -5518,19 +5507,18 @@ Open: none";
         if os { assert!(task(&b, app).session.unwrap().starts_with("codex-app:- mac")); }
     }
 
-    // Chain: § 3 capacity config. Risk: host override ignored or invalid limits accepted.
+    // Chain: § 3 capacity config. Risk: a gate field ignored, invalid limits accepted, or a per-host copy honoured.
     #[test]
-    fn capacity_merges_host_overrides_and_validates() {
+    fn capacity_reads_one_policy_and_validates() {
         let v = json!({"limits": {"claude": 4, "codex": 4}, "load_gate": {"cpu_max": 90},
             "capacity_hosts": {"win": {"limits": {"codex": 2}, "load_gate": {"enabled": true}}}});
-        let win = capacity(&v, "win").unwrap();
-        assert_eq!(win.limits, BTreeMap::from([("claude".into(), 4), ("codex".into(), 2)]));
-        assert_eq!(win.gate, GateCfg { enabled: true, cpu_max: 85, memory_min: 15, mean: false }, "a host gate replaces the default object");
-        assert_eq!(capacity(&v, "mac").unwrap().gate, GateCfg { enabled: false, cpu_max: 90, memory_min: 15, mean: false });
-        assert_eq!(capacity(&json!({"limits": {"claude": 1}}), "mac").unwrap(), Capacity::fixed(BTreeMap::from([("claude".into(), 1)]), GATE_DEFAULT), "absent keys: today");
+        let cap = capacity(&v).unwrap();
+        assert_eq!(cap.limits, BTreeMap::from([("claude".into(), 4), ("codex".into(), 4)]));
+        assert_eq!(cap.gate, GateCfg { enabled: false, cpu_max: 90, memory_min: 15, mean: false });
+        assert_eq!(capacity(&json!({"limits": {"claude": 1}})).unwrap(), Capacity::fixed(BTreeMap::from([("claude".into(), 1)]), GATE_DEFAULT), "absent keys: today");
         for bad in [json!({"limits": {"claude": -1}}), json!({"limits": {"claude": 5_000_000_000u64}}), json!({"load_gate": {"cpu_max": 9}}),
-            json!({"load_gate": {"memory_min": 96}}), json!({"load_gate": {"enabled": "yes"}}), json!({"capacity_hosts": {"mac": {"limits": {"codex": "2"}}}})] {
-            assert!(capacity(&bad, "mac").is_err(), "{bad}");
+            json!({"load_gate": {"memory_min": 96}}), json!({"load_gate": {"enabled": "yes"}})] {
+            assert!(capacity(&bad).is_err(), "{bad}");
         }
     }
 
@@ -5697,14 +5685,14 @@ Open: none";
     // Chain: § 9 Auto admission config. Risk: Auto silently off, or a cap or invalid mode accepted wrong.
     #[test]
     fn auto_admission_takes_d03_defaults_and_caps() {
-        let a = capacity(&json!({"admission": {"mode": "auto", "max": 6}, "limits": {"codex": 2}}), "mac").unwrap();
+        let a = capacity(&json!({"admission": {"mode": "auto", "max": 6}, "limits": {"codex": 2}})).unwrap();
         assert_eq!((a.auto, a.max, a.gate), (true, Some(6), GATE_AUTO));
-        let tuned = capacity(&json!({"capacity_hosts": {"mac": {"admission": {"mode": "auto"}, "load_gate": {"cpu_max": 80}}}}), "mac").unwrap();
-        assert_eq!((tuned.gate.cpu_max, tuned.gate.memory_min, tuned.gate.enabled), (80, 10, true), "a host gate field overrides one default");
-        assert!(!capacity(&json!({}), "mac").unwrap().auto, "absent: Fixed, today's behavior");
+        let tuned = capacity(&json!({"admission": {"mode": "auto"}, "load_gate": {"cpu_max": 80}})).unwrap();
+        assert_eq!((tuned.gate.cpu_max, tuned.gate.memory_min, tuned.gate.enabled), (80, 10, true), "a gate field overrides one default");
+        assert!(!capacity(&json!({})).unwrap().auto, "absent: Fixed, today's behavior");
         for bad in [json!({"admission": "auto"}), json!({"admission": {"mode": "fast"}}), json!({"admission": {"max": -1}}),
             json!({"admission": {"mode": "auto"}, "load_gate": {"enabled": false}})] {
-            assert!(capacity(&bad, "mac").is_err(), "{bad}");
+            assert!(capacity(&bad).is_err(), "{bad}");
         }
     }
 
@@ -5720,7 +5708,7 @@ Open: none";
         c.install = install.clone();
         let e: Exits = Default::default();
         let mut s = service(&b, &c, e.clone());
-        s.reload(capacity(&json!({"admission": {"mode": "auto", "max": 1}}), "mac"));
+        s.reload(capacity(&json!({"admission": {"mode": "auto", "max": 1}})));
         // unknown: no sample yet, nothing claimed
         s.pass().unwrap();
         assert_eq!((s.capacity_json()["gate"].as_str(), e.borrow().len()), (Some("unknown"), 0));

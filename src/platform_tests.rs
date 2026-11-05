@@ -614,7 +614,7 @@
         let install = std::env::temp_dir().join(format!("taskq-update-lock-{}", crate::runtime::uuid()));
         let lock = update_lock(&install).unwrap();
         assert!(update_lock(&install).is_err(), "a competing updater must return without blocking service heartbeats");
-        sweep(&install, &install.join("absent-shim"));
+        sweep(&install);
         let other = fs::OpenOptions::new().write(true).open(install.join("update.lock")).unwrap();
         assert!(other.try_lock().is_err(), "cleanup must not unlink the live update lock");
         #[cfg(unix)]
@@ -691,11 +691,7 @@
         let recovery=format!("pid {} {} executor-v1\n7 41 codex 123 child 43 40\n",owner.pid,owner.started);
         fs::write(&native,&recovery).unwrap();
         coreq::launcher::set_rollback_floor(&tool(&install),"4.2.0").unwrap();
-        let (shim, other) = (t.join("bin-taskq"), t.join("bin-other"));
-        fs::write(&shim, format!("exec python3 {}/releases/cc33ae6/taskq.py launch --install-dir {} -- \"$@\"", install.display(), install.display())).unwrap();
-        fs::write(&other, "#!/bin/sh\nexec something").unwrap();
-        sweep(&install, &shim);
-        sweep(&install, &other);
+        sweep(&install);
         let ls = |d: &Path| {
             let mut v: Vec<String> = fs::read_dir(d).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into()).collect();
             v.sort();
@@ -715,26 +711,25 @@
         assert_eq!(ls(&install),owned);
         assert_eq!(crate::admission::hold(&install).as_deref(), Some("invented incident hold"), "update cleanup must never release an emergency hold");
         assert_eq!(fs::read_to_string(install.join("windows-native/state/cap_sid")).unwrap(), "native control state");
-        assert!(!shim.exists() && other.exists(), "only the v3 shim of this install goes");
         // § 4 Data: a corrupt status.json leaves the project's version unknown, so every release stays and so does the file
         fs::write(root.join(".taskq/status.json"), "{\"version\": \"4.0").unwrap();
         fs::create_dir_all(install.join("releases/4.0.1")).unwrap();
-        sweep(&install, &shim);
+        sweep(&install);
         assert!(install.join("releases/4.0.1").exists() && install.join("releases/4.0.5").exists());
         assert_eq!(fs::read_to_string(root.join(".taskq/status.json")).unwrap(), "{\"version\": \"4.0");
         crate::tests::with_test_capture(|store,_| {
             fs::write(root.join(".taskq/status.json"),r#"{"version":"4.0.5"}"#).unwrap();
             fs::write(install.join("projects"),b"\xff").unwrap();
-            fs::create_dir_all(install.join("releases/4.0.2")).unwrap();sweep(&install,&shim);
+            fs::create_dir_all(install.join("releases/4.0.2")).unwrap();sweep(&install);
             assert!(install.join("releases/4.0.2").exists(),"unreadable registry cannot authorize release deletion");
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
             fs::write(install.join("projects.pending"),"retained registry prepare").unwrap();
-            sweep(&install,&shim);
+            sweep(&install);
             assert!(install.join("releases/4.0.2").exists(),"interrupted registry cannot authorize release deletion");
             assert_eq!(fs::read_to_string(install.join("projects.pending")).unwrap(),"retained registry prepare");
             fs::remove_file(install.join("projects.pending")).unwrap();
             fs::remove_file(root.join(".taskq/status.json")).unwrap();
-            sweep(&install,&shim);
+            sweep(&install);
             assert!(install.join("releases/4.0.2").exists(),"missing project status cannot authorize release deletion");
             flush_settled(||{});
             let export=store.export(0,0,1024).unwrap();

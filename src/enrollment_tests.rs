@@ -11,7 +11,7 @@
             threads.into_iter().map(|t| t.join().unwrap()).collect::<Vec<_>>()
         });
         assert!(ids.iter().all(|id| id == &ids[0]));
-        crate::platform::sweep(&install, &root.join("absent-shim"));
+        crate::platform::sweep(&install);
         crate::data::prune(&root, &install, "p", &[]);
         assert_eq!(installation_id(&install).unwrap(), ids[0]);
         fs::write(install.join("installation-id"), "broken").unwrap();
@@ -20,7 +20,7 @@
         // connection state survives the sweep and pruning too
         fs::create_dir_all(dir(&install)).unwrap();
         fs::write(dir(&install).join("connection.json"), "{}").unwrap();
-        crate::platform::sweep(&install, &root.join("absent-shim"));
+        crate::platform::sweep(&install);
         assert!(dir(&install).join("connection.json").exists());
         fs::remove_file(install.join("installation-id")).unwrap();
         assert_ne!(installation_id(&install).unwrap(), ids[0]);

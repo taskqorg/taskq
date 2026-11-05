@@ -1,7 +1,8 @@
     use super::*;
+    const RECORD: &str = "taskq-requests ";
 
     // Chain: #1084 A1 CLI process -> source record -> `taskq profile` hour table. Risk: a source is merged with
-    // another, a request outside the hour is counted, a missing or corrupt record reads as zero, or free text
+    // another, a request outside the hour is counted, a missing record reads as zero, or free text
     // from arguments reaches the log.
     // Chain: #1985 A4 `taskq status` quota line. Risk: the PM reads no used/remaining of the board user.
     #[test]
@@ -70,15 +71,14 @@
         assert!(report.contains("| service | 1 | 90 | POST graphql 60, PATCH issues/N 30 |\n| worker result | 2 | 5 | GET issues/N/comments 4, POST issues/N/comments 1 |"), "{report}");
         assert!(!report.contains("cli status"), "a record before the hour is not counted");
         assert!(sources(&text[line(now - 3_700_000, "cli status", &[("GET issues", 50)]).len()..], now).contains("(partial: records start 9940000"));
-        assert!(sources(&format!("{text}{RECORD}{{\"at_ms\":1}}\n"), now).starts_with("Board requests by source: unknown (corrupt"));
         let dir = std::env::temp_dir().join(format!("taskq-sources-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let wall = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-        std::fs::write(dir.join("taskq.log"), line(wall - 60_000, "worker result", &[("GET issues/N/comments", 5)]).repeat(2)).unwrap();
-        drop(crate::profile::log_lock(&dir.join("taskq.log")).unwrap());
-        crate::telemetry::read(&dir,wall).unwrap();
+        let (capture,guard)=crate::profile::tests::collecting(&dir);
+        for _ in 0..2 {crate::profile::tests::append_line(&dir.join("taskq.log"),&line(wall - 60_000, "worker result", &[("GET issues/N/comments", 5)])).unwrap();}
+        capture.flush().unwrap();
         assert!(crate::profile::report(&dir).contains("| worker result | 2 | 10 |"), "`taskq profile` prints the table");
-        std::fs::remove_dir_all(dir).unwrap();
+        drop(guard);drop(capture);std::fs::remove_dir_all(dir).unwrap();
     }
 
     // Chain: §4 Board request records -> `taskq profile` hour table. Defect #2367: the table assumed one service record
@@ -260,4 +260,4 @@
         let s = json!({"host": "mac", "requests": b.json(0, None, &BTreeMap::new())});
         assert_eq!(warning(&s).unwrap(), "Board budget low: 500/5000 graphql until unknown (mac); top here: none");
     }
-    pub(crate) fn sources(text:&str,now_ms:u64)->String {sources_samples(&crate::telemetry::Sample::archive(text),now_ms)}
+    pub(crate) fn sources(text:&str,now_ms:u64)->String {sources_samples(&crate::telemetry::Sample::fixtures(text),now_ms)}

@@ -24,7 +24,12 @@
 
     struct T { base: PathBuf, install: PathBuf, root: PathBuf, me: String }
 
-    /// One registered project with ID `project-1` at revision `r1` and the fixture's host grant.
+    thread_local! {
+        /// The project revision of this test's `setup`; `submit` expects it.
+        static REVISION: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    }
+
+    /// One registered project with ID `project-1` under a host policy, and the fixture's grant with project limits.
     fn setup(name: &str) -> T {
         let base = std::env::temp_dir().join(format!("taskq-resources-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
@@ -33,19 +38,21 @@
         fs::create_dir_all(&install).unwrap();
         fs::write(root.join("taskq.json"), "{\n  \"repo\": \"o/r\",\n  \"limits\": {\"codex\": 2},\n  \"custom\": {\"keep\": true}\n}\n").unwrap();
         fs::write(install.join("projects"), format!("{}\n", root.display())).unwrap();
+        fs::write(install.join("host.json"), "{\"limits\":{\"codex\":5}}").unwrap();
         with(&install, |s| {
             sync(s, &install, 0)?;
-            let (_, mut p) = s.projects.pop_first().unwrap();
-            p.revision = "r1".into();
+            let (_, p) = s.projects.pop_first().unwrap();
+            REVISION.with_borrow_mut(|r| r.clone_from(&p.revision));
             s.projects.insert("project-1".into(), p);
             let mut g = fix()["grant"].clone();
+            g["project_limits"] = json!(true);
             g.as_object_mut().unwrap().remove("grant_id");
             g["by"] = json!("test");
             g["at"] = json!(0);
             s.grants.insert("grant-1".into(), serde_json::from_value(g).unwrap());
             Ok(())
         }).unwrap();
-        let me = crate::load(&root).unwrap().0.me;
+        let me = crate::host::Policy::read(&install).unwrap().me;
         fs::create_dir_all(enrollment::dir(&install)).unwrap();
         fs::write(conn_file(&install), conn(Some(active())).to_string()).unwrap();
         T { base, install, root, me }
@@ -83,30 +90,28 @@
         fs::remove_dir_all(base).unwrap();
     }
 
-    // H-A2: legacy remote profiles cannot report saved after writing an ignored project fallback.
+    // H-A2: a retired or local-only schema never writes, and a broken host policy never falls back to project settings.
     #[test]
-    fn host_policy_refuses_legacy_remote_project_writes() {
-        let t=setup("host-profile");let before=config(&t);
+    fn host_policy_refuses_other_remote_schemas() {
+        let t=setup("host-profile");let before=project_config(&t);
         let host=json!({"limits":{"codex":2},"owner_field":"preserve"}).to_string();
         fs::write(t.install.join("host.json"),&host).unwrap();
         let fence=Fence {clock:&||100,live:&||true};
-        with(&t.install,|s|decide(&t.install,s,&submit("host-profile",json!({"runtime_limit":0})),(INST,1),true,100,&fence)).unwrap();
-        assert_eq!(receipt_of(&t,"host-profile")["state"],"rejected");
-        assert_eq!(receipt_of(&t,"host-profile")["reason"],"unsupported");
-        assert_eq!(config(&t),before);assert_eq!(fs::read_to_string(t.install.join("host.json")).unwrap(),host);
-        with(&t.install,|s|prepare(s,&t.install,101)).unwrap();
+        with(&t.install,|s|prepare(s,&t.install,100)).unwrap();
         let observed=read(&t.install).unwrap().projects["project-1"].clone();
+        for schema in ["taskq.capacity/1","taskq.admission/1","taskq.host-capacity/1"] {
+            let mut remote=submit(schema.replace(['.','/'],"-").as_str(),json!({"runtime_limit":0}));
+            remote["expected_revision"]=json!(observed.revision);
+            remote["policy_schema"]=json!(schema);
+            with(&t.install,|s|decide(&t.install,s,&remote,(INST,1),true,100,&fence)).unwrap();
+            assert_eq!(receipt_of(&t,remote["op_id"].as_str().unwrap())["reason"],"unsupported","{schema}");
+        }
+        assert_eq!(project_config(&t),before);assert_eq!(config(&t),host);
         let authority=crate::host::Policy::read(&t.install).unwrap();
         let mut want=authority.cap.json();want["project_limits"]=json!({"codex":2});
         assert_eq!(observed.policy,want);
         assert_eq!(observed.revision,authority.project_revision(&t.root, &crate::load(&t.root).unwrap().1).unwrap());
-        assert_ne!(observed.policy,crate::service::capacity(&serde_json::from_str(&before).unwrap(),&t.me).unwrap().json());
         assert!(report(&t.install,101).unwrap().iter().any(|s|s.contains("remote writes: taskq.project-limits/1 under a --project-limits grant")));
-        let mut remote=submit("host-schema",json!({"runtime_limit":0}));
-        remote["expected_revision"]=json!(observed.revision);
-        remote["policy_schema"]=json!("taskq.host-capacity/1");
-        with(&t.install,|s|decide(&t.install,s,&remote,(INST,1),true,101,&fence)).unwrap();
-        assert_eq!(receipt_of(&t,"host-schema")["reason"],"unsupported");
         fs::write(t.install.join("host.json"),"{\"limits\":{\"codex\":5}}").unwrap();
         with(&t.install,|s|prepare(s,&t.install,102)).unwrap();
         let changed=read(&t.install).unwrap().projects["project-1"].clone();
@@ -115,24 +120,9 @@
         for (file,body) in [("host.json","broken"),("host.json.pending","retained")] {
             fs::write(t.install.join(file),body).unwrap();
             with(&t.install,|s|prepare(s,&t.install,103)).unwrap();
-            assert!(read(&t.install).unwrap().projects["project-1"].policy.is_null(),"no legacy fallback from {file}");
+            assert!(read(&t.install).unwrap().projects["project-1"].policy.is_null(),"no project fallback from {file}");
         }
-        assert_eq!(config(&t),before);
-        fs::remove_dir_all(t.base).unwrap();
-    }
-
-    // Chain: legacy saved write -> host cutover -> matching old project readback cannot imply host application.
-    #[test]
-    fn host_cutover_keeps_legacy_saved_outcome_unknown() {
-        let t=setup("host-cutover");let fence=Fence {clock:&||100,live:&||true};
-        with(&t.install,|s|decide(&t.install,s,&submit("old",json!({"runtime_limit":0})),(INST,1),true,100,&fence)).unwrap();
-        assert_eq!(receipt_of(&t,"old")["state"],"saved");
-        let old=read(&t.install).unwrap().projects["project-1"].policy.clone();
-        fs::write(crate::dot(&t.root).join("status.json"),json!({"at":101,"host":t.me,"capacity":old}).to_string()).unwrap();
-        fs::write(t.install.join("host.json"),"{\"limits\":{\"codex\":0}}").unwrap();
-        with(&t.install,|s|prepare(s,&t.install,101)).unwrap();
-        assert_eq!(receipt_of(&t,"old")["state"],"unknown");
-        assert!(receipt_of(&t,"old")["effective_revision"].is_null());
+        assert_eq!(project_config(&t),before);
         fs::remove_dir_all(t.base).unwrap();
     }
 
@@ -179,6 +169,8 @@
     fn submit(op: &str, changes: Value) -> Value {
         let mut v = fix()["submit"].clone();
         v["op_id"] = json!(op);
+        v["policy_schema"] = json!(OVERLAY);
+        v["expected_revision"] = json!(REVISION.with_borrow(Clone::clone));
         v["changes"] = changes;
         v
     }
@@ -194,37 +186,40 @@
         read(&t.install).unwrap().ops.get(op).unwrap_or_else(|| panic!("{op} not recorded")).receipt.clone()
     }
 
+    /// The one file a remote write may change.
     fn config(t: &T) -> String {
+        fs::read_to_string(t.install.join("host.json")).unwrap()
+    }
+
+    fn project_config(t: &T) -> String {
         fs::read_to_string(t.root.join("taskq.json")).unwrap()
     }
 
-    // Chain: DashQ submit -> exchange -> host grant check -> canonical capacity write -> service status readback ->
-    // receipt. Risk: a saved write reported applied before the service runs it, or the write losing other keys.
+    // Chain: DashQ submit -> exchange -> host grant check -> host.json overlay write -> service status readback ->
+    // receipt. Risk: a saved write reported applied before the service runs it.
     #[test]
     fn saved_turns_applied_only_on_a_fresh_matching_readback() {
         let t = setup("apply");
+        let first = read(&t.install).unwrap().projects["project-1"].clone();
         let (sent, log) = go(&t, &[submit("op-1", json!({"runtime_limit": 0}))], &[], 100);
         assert_eq!((sent.len(), log), (0, vec!["resources: op-1 saved".to_string()]));
-        let v: Value = serde_json::from_str(&config(&t)).unwrap();
-        assert_eq!((&v["repo"], &v["limits"], &v["custom"]), (&json!("o/r"), &json!({"codex": 2}), &json!({"keep": true})), "unrelated keys kept");
-        assert_eq!(v["capacity_hosts"][&t.me]["limits"]["codex"], 0);
-        assert!(t.root.join(".taskq/poke").exists(), "the service reloads");
+        assert!(t.install.join("poke").exists(), "the service reloads");
         let s = read(&t.install).unwrap();
         let p = s.projects["project-1"].clone();
         let r = receipt_of(&t, "op-1");
-        assert_ne!(p.revision, "r1");
+        assert_ne!(p.revision, first.revision);
         assert_eq!((&r["state"], &r["saved_revision"], &r["effective_revision"]), (&json!("saved"), &json!(p.revision), &Value::Null));
-        let mut old = p.policy.clone();
-        old["limits"]["codex"] = json!(2);
-        let status = |at: u64, host: &str, cap: &Value| fs::write(t.root.join(".taskq/status.json"), json!({"at": at, "host": host, "capacity": cap}).to_string()).unwrap();
+        fs::create_dir_all(crate::dot(&t.root)).unwrap();
+        let status = |at: u64, host: &str, revision: &str, limits: &Value| fs::write(crate::dot(&t.root).join("status.json"), json!({"at": at, "host": host, "capacity": {"project_revision": revision, "project_limits": limits}}).to_string()).unwrap();
         let (sent, _) = go(&t, &[], &[], 101);
         assert_eq!((sent.len(), &sent[0]["state"]), (1, &json!("saved")), "no status yet: saved");
-        for (at, host, cap, now) in [(90, t.me.as_str(), &p.policy, 110), (110, t.me.as_str(), &old, 110), (110, "other", &p.policy, 110), (110, t.me.as_str(), &p.policy, 171)] {
-            status(at, host, cap);
+        let limits = &p.policy["project_limits"];
+        for (at, host, revision, seen, now) in [(90, t.me.as_str(), &p.revision, limits, 110), (110, t.me.as_str(), &first.revision, limits, 110), (110, t.me.as_str(), &p.revision, &first.policy["project_limits"], 110), (110, "other", &p.revision, limits, 110), (110, t.me.as_str(), &p.revision, limits, 171)] {
+            status(at, host, revision, seen);
             go(&t, &[], &[], now);
             assert_eq!(receipt_of(&t, "op-1")["state"], "saved", "stale, old, other host or old readback at {now}");
         }
-        status(110, &t.me, &p.policy);
+        status(110, &t.me, &p.revision, limits);
         let (sent, _) = go(&t, &[], &[], 111);
         let r = receipt_of(&t, "op-1");
         assert_eq!((&r["state"], &r["effective_revision"], &r["observed_at"]), (&json!("applied"), &json!(p.revision), &json!(110)));
@@ -238,7 +233,7 @@
     #[test]
     fn conflicts_duplicates_and_mismatches_never_write_again() {
         let t = setup("dedup");
-        fs::write(t.root.join("taskq.json"), config(&t).replace("\"codex\": 2", "\"codex\": 3")).unwrap();
+        fs::write(t.root.join("taskq.json"), project_config(&t).replace("\"codex\": 2", "\"codex\": 3")).unwrap();
         let edited = config(&t);
         go(&t, &[submit("op-0", json!({"runtime_limit": 0}))], &[], 100);
         assert_eq!((receipt_of(&t, "op-0")["reason"].as_str(), config(&t)), (Some("conflict"), edited), "a hand edit gets a new revision");
@@ -291,7 +286,8 @@
         let t = setup("overlay");
         let host = json!({"limits": {"codex": 5, "claude": 3}, "projects": {"/elsewhere": {"limits": {"codex": 1}}}, "owner_field": "keep"});
         fs::write(t.install.join("host.json"), host.to_string()).unwrap();
-        let project = config(&t);
+        let project = project_config(&t);
+        with(&t.install, |s| { s.grants.get_mut("grant-1").unwrap().project_limits = false; Ok(()) }).unwrap();
         let rev = |t: &T| read(&t.install).unwrap().projects["project-1"].revision.clone();
         let op = |id: &str, limit: Value, expected: &str| {
             let mut v = submit(id, json!({"runtime_limit": limit}));
@@ -328,7 +324,7 @@
         let key = t.root.display().to_string();
         assert_eq!(saved["projects"][&key], json!({"limits": {"codex": 1}, "op": "lower"}));
         assert_eq!((&saved["limits"], &saved["owner_field"], &saved["projects"]["/elsewhere"]), (&host["limits"], &host["owner_field"], &host["projects"]["/elsewhere"]), "other keys, projects and runtimes kept");
-        assert_eq!(config(&t), project, "the project's taskq.json is never written");
+        assert_eq!(project_config(&t), project, "the project's taskq.json is never written");
         assert!(t.install.join("poke").exists(), "the host reloads");
         let r1 = rev(&t);
         let policy = crate::host::Policy::read(&t.install).unwrap();
@@ -411,14 +407,14 @@
         with(&t.install, |s| { s.grants.get_mut("grant-1").unwrap().revoked = false; Ok(()) }).unwrap();
         fs::remove_file(t.install.join("host.json")).unwrap();
         go(&t, &[], &[], 123);
-        go(&t, &[op("legacy-host", json!(1), &rev(&t))], &[], 123);
-        assert_eq!(receipt_of(&t, "legacy-host")["reason"], "unsupported");
-        assert_eq!(config(&t), project);
+        go(&t, &[op("no-policy", json!(1), &rev(&t))], &[], 123);
+        assert_eq!(receipt_of(&t, "no-policy")["reason"], "unsupported");
+        assert_eq!(project_config(&t), project);
         fs::remove_dir_all(&t.base).unwrap();
     }
 
     // Chain: DashQ-approved submit outside the host grant -> exchange -> authorize. Risk: DashQ's grant alone, another
-    // host or generation, a revoked or expired grant, or a path or privilege change reaching taskq.json.
+    // host or generation, a revoked or expired grant, or a path or privilege change reaching host.json.
     #[test]
     fn grant_scope_typing_and_lifetime_refuse_before_any_write() {
         let t = setup("scope");
@@ -446,11 +442,10 @@
             (set(rt(json!(0)), &["target", "installation_id"], json!("b".repeat(64))), 100, "scope"),
             (set(rt(json!(0)), &["target", "project_id"], json!("project-2")), 100, "scope"),
             (set(rt(json!(0)), &["target", "runtime_id"], json!("claude")), 100, "scope"),
-            (set(set(submit("x", json!({"maximum": 2})), &["target", "project_id"], Value::Null), &["target", "runtime_id"], Value::Null), 100, "scope"),
+            (set(set(submit("x", json!({"maximum": 2})), &["target", "project_id"], Value::Null), &["target", "runtime_id"], Value::Null), 100, "invalid"),
             (submit("x", json!({"runtime_limit": 0, "path": "/etc"})), 100, "invalid"),
             (submit("x", json!({"privileged": true})), 100, "invalid"),
             (set(rt(json!(0)), &["policy_schema"], json!("taskq.capacity/2")), 100, "unsupported"),
-            (rt(Value::Null), 100, "unsupported"),
             (set(rt(json!(0)), &["expected_revision"], json!("r0")), 100, "conflict"),
         ];
         for (i, (mut op, now, want)) in cases.into_iter().enumerate() {
@@ -469,17 +464,12 @@
         go(&t, &[submit("op-e", json!({"runtime_limit": 0}))], &[], 400);
         go(&t, &[submit("op-e", json!({"runtime_limit": 0}))], &[], 401);
         assert_eq!((receipt_of(&t, "op-e")["state"].as_str(), config(&t)), (Some("expired"), before.clone()), "redelivered after expiry");
-        // a host-policy grant still has no host-wide store; capacity/1 is the Fixed authority only
+        // a host-policy grant still has no host-wide remote write; a retired schema never writes
         with(&t.install, |s| { s.grants.get_mut("grant-1").unwrap().host_policy = true; Ok(()) }).unwrap();
         go(&t, &[set(set(submit("op-h", json!({"maximum": 2})), &["target", "project_id"], Value::Null), &["target", "runtime_id"], Value::Null)], &[], 100);
-        assert_eq!(receipt_of(&t, "op-h")["reason"], "unsupported");
-        fs::write(t.root.join("taskq.json"), before.replace("\"repo\"", "\"admission\": {\"mode\": \"auto\"},\n  \"repo\"")).unwrap();
-        let auto = config(&t);
-        go(&t, &[], &[], 100);
-        let mut op = set(submit("op-f", json!({"runtime_limit": 0})), &["policy_schema"], json!("taskq.capacity/1"));
-        op["expected_revision"] = json!(read(&t.install).unwrap().projects["project-1"].revision);
-        go(&t, &[op], &[], 100);
-        assert_eq!((receipt_of(&t, "op-f")["reason"].as_str(), config(&t)), (Some("unsupported"), auto));
+        assert_eq!(receipt_of(&t, "op-h")["reason"], "invalid");
+        go(&t, &[set(submit("op-f", json!({"runtime_limit": 0})), &["policy_schema"], json!("taskq.capacity/1"))], &[], 100);
+        assert_eq!((receipt_of(&t, "op-f")["reason"].as_str(), config(&t)), (Some("unsupported"), before));
         // the project leaves the registry: its ID goes for good
         fs::write(t.install.join("projects"), "").unwrap();
         go(&t, &[submit("op-u", json!({"runtime_limit": 0}))], &[], 100);
@@ -705,15 +695,15 @@
             }),
         ];
         for (op, change) in changes {
-            fs::write(t.root.join("taskq.json"), &before).unwrap();
+            fs::write(t.install.join("host.json"), &before).unwrap();
             fs::write(conn_file(&t.install), conn(Some(active())).to_string()).unwrap();
-            with(&t.install, |s| { sync(s, &t.install, 0)?; s.projects.get_mut("project-1").unwrap().revision = "r1".into(); Ok(()) }).unwrap();
+            with(&t.install, |s| sync(s, &t.install, 0)).unwrap();
             let seen = std::cell::RefCell::new(None);
             // the final read sees the operation's connection; the change starts right after it
             let live = || {
                 let up = enrollment::active(&t.install).unwrap() == Some(active());
-                let (install, root) = (t.install.clone(), t.root.clone());
-                seen.replace(Some(std::thread::spawn(move || { change(&install); fs::read_to_string(root.join("taskq.json")).unwrap() })));
+                let install = t.install.clone();
+                seen.replace(Some(std::thread::spawn(move || { change(&install); fs::read_to_string(install.join("host.json")).unwrap() })));
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 up
             };
@@ -773,11 +763,12 @@
         let g = grant(&t.install, "g", "op", &scope(&["proj", "project-1"], &["codex"], 2), "me", 10).unwrap();
         assert_eq!((g.project_ids, g.runtime_ids, g.installation_id.as_str(), g.generation, g.expires_at), (vec!["project-1".to_string()], vec!["codex".to_string()], INST, 1, 10 + 7200));
         let r = report(&t.install, 20).unwrap();
-        assert!(r.iter().any(|l| l == "Project proj: project-1 revision r1"), "{r:?}");
+        let revision = REVISION.with_borrow(Clone::clone);
+        assert!(r.iter().any(|l| *l == format!("Project proj: project-1 revision {revision}")), "{r:?}");
         assert!(r.iter().any(|l| l.starts_with("Grant g: actor op generation 1, projects project-1, runtimes codex; expires")), "{r:?}");
         revoke(&t.install, "g").unwrap();
         assert!(report(&t.install, 20).unwrap().iter().any(|l| l == "Grant g: actor op generation 1, projects project-1, runtimes codex; revoked"));
-        crate::platform::sweep(&t.install, &t.base.join("absent-shim"));
+        crate::platform::sweep(&t.install);
         crate::data::prune(&t.root, &t.install, "proj", &[]);
         assert!(read(&t.install).unwrap().grants.contains_key("g"), "the store survives sweep and pruning");
         // a corrupt store is kept and refuses everything

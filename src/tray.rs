@@ -261,31 +261,6 @@ fn save_workspace_navigation(settings:&mut Settings,install:&Path,navigation:&Va
     Some("Workspace view state was not saved: storage write/readback failed; current view kept in this window")
 }
 
-// F19: retain legacy task pins in both surfaces without writing preferences during a read.
-fn legacy_task_pins(st:&Value)->Vec<(String,Value)> {
-    st["conversations"]["sidebar"]["pins"].as_array().into_iter().flatten().filter_map(|v| {
-        let key=v.as_str()?.strip_prefix("task:")?;let (board,n)=key.rsplit_once('/')?;let n=n.parse::<u64>().ok().filter(|n|*n>0)?;
-        let project=st["projects"].as_array().into_iter().flatten().find(|p|p["issues"]==board);
-        let reference=project.and_then(|p|p["root"].as_str()).and_then(|root|crate::load(Path::new(root)).ok()).map(|(cfg,_)|format!("{}://{}/{}#{n}",cfg.board.name,cfg.web_host.to_lowercase(),cfg.repo)).unwrap_or_else(||format!("task:{key}"));
-        let title=project.and_then(|p|p["tasks"].as_array()).and_then(|ts|ts.iter().find(|t|t["n"]==n)).and_then(|t|t["title"].as_str()).unwrap_or(key);
-        Some((format!("task:{key}"),json!({"ref":reference,"title":title,"url":key})))
-    }).collect()
-}
-fn project_task_pins(st:&mut Value) {
-    let legacy=legacy_task_pins(st);if legacy.is_empty(){return;}
-    if !st["navigation"].is_object(){st["navigation"]=json!({"schema":1});}
-    if !st["navigation"]["dashboard"].is_object(){st["navigation"]["dashboard"]=json!({"schema":1,"pins":[]});}
-    if st["navigation"]["dashboard"]["pins"].is_null(){st["navigation"]["dashboard"]["pins"]=json!([]);}
-    if let Some(pins)=st["navigation"]["dashboard"]["pins"].as_array_mut(){for (_,pin) in legacy {if !pins.iter().any(|p|p["ref"]==pin["ref"]){pins.push(pin);}}}
-}
-fn clear_legacy_task_pins(install:&Path,st:&Value,dashboard:&Value)->Result<(),String> {
-    let pins=dashboard["pins"].as_array().ok_or("Task pin readback unavailable")?;
-    for (key,pin) in legacy_task_pins(st) {if !pins.iter().any(|p|p["ref"]==pin["ref"]) {
-        let receipt=crate::conversations::sidebar(install,&json!({"sidebar":{"action":"pin","key":key,"value":false}}));
-        if receipt["state"]!="accepted" {return Err(format!("Task pin partially saved; legacy unpin readback unknown: {}",receipt["reason"].as_str().unwrap_or("refresh before retrying")));}
-    }}Ok(())
-}
-
 // Global task pins share the same dashboard metadata across task lists and Conversations.
 fn task_pin(settings:&mut Settings,install:&Path,st:&Value,m:&Value)->Result<Value,String> {
     let pinned=m["pinned"].as_bool().ok_or("Pin selection missing")?;
@@ -300,8 +275,7 @@ fn task_pin(settings:&mut Settings,install:&Path,st:&Value,m:&Value)->Result<Val
         let row=p["tasks"].as_array().into_iter().flatten().chain(p["reports"]["reports"].as_array().into_iter().flatten()).find(|t|t["n"]==n);
         (format!("{}://{}/{}#{n}",cfg.board.name,cfg.web_host.to_lowercase(),cfg.repo),row)
     };
-    let mut projected=st.clone();projected["navigation"]=settings.navigation.clone();project_task_pins(&mut projected);
-    let mut nav=if projected["navigation"].is_object(){projected["navigation"].clone()}else{json!({"schema":1})};
+    let mut nav=if settings.navigation.is_object(){settings.navigation.clone()}else{json!({"schema":1})};
     if nav["dashboard"].is_null(){nav["dashboard"]=json!({"schema":1,"pins":[]});}
     let pins=nav["dashboard"]["pins"].as_array_mut().ok_or("Task views unavailable; refresh before pinning")?;
     if pinned&&observed {
@@ -317,7 +291,6 @@ fn task_pin(settings:&mut Settings,install:&Path,st:&Value,m:&Value)->Result<Val
     if nav.to_string().len()>65536{return Err("Task view exceeds 64 KiB; prior pins kept".into());}
     let previous=std::mem::replace(&mut settings.navigation,nav);
     if !settings.save(install)||!crate::data::json(&install.join("tray.json")).ok().flatten().is_some_and(|v|v["navigation"]==settings.navigation){settings.navigation=previous;return Err("Task pin save/readback unknown; refresh before changing it again".into());}
-    clear_legacy_task_pins(install,st,&settings.navigation["dashboard"])?;
     Ok(settings.navigation["dashboard"].clone())
 }
 
@@ -2777,7 +2750,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
     st["ui"]=crate::ui_bundle::status();
-    project_task_pins(&mut st);
+
     st["display"] = display;
     st["opacity"]=json!(s.opacity);
     st["opacity_mode"]=json!(s.opacity_mode);

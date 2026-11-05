@@ -3,7 +3,7 @@
 //! DashQ-delivered operations through the canonical capacity writer. No listener, shell or second task queue: the
 //! enrolled service posts its receipts and receives operations. State: `<install>/resource-state/` (kept by sweep).
 
-use crate::{CapEdit, Res, enrollment, snapshot::Snapshot};
+use crate::{Res, enrollment, snapshot::Snapshot};
 use coreq::enroll::{Https, Wire};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
@@ -68,7 +68,7 @@ pub struct Project {
     pub root: String,
     /// Opaque; new on every change of `policy` and on every canonical write.
     pub revision: String,
-    /// Saved authority's capacity; host policy on host installs, legacy project policy otherwise. Null: unreadable.
+    /// Saved host policy capacity. Null: unreadable.
     pub policy: Value,
     pub since: u64,
 }
@@ -272,18 +272,15 @@ fn host_authority(install:&Path)->bool {
 /// The one remote profile a host-policy install takes: this root's host.json overlay (#1282).
 const OVERLAY: &str = "taskq.project-limits/1";
 
-/// Observe the actual saved authority; an unreadable host policy never falls back to legacy settings. On a host
-/// install: the host capacity, this root's effective `project_limits` and its project revision.
-fn policy(install:&Path, root: &Path) -> Res<(Value, Option<String>)> {
-    if host_authority(install) {
-        let host=crate::host::Policy::read(install)?;
-        let project=crate::load(root)?.1;
-        let mut v=host.cap.json();
-        v["project_limits"]=json!(host.project_limits(root,&project)?);
-        return Ok((v,Some(host.project_revision(root,&project)?)));
-    }
-    let (cfg, v) = crate::load(root)?;
-    Ok((crate::service::capacity(&v, &cfg.me)?.json(),None))
+/// Observe the saved host authority: the host capacity, this root's effective `project_limits` and its project
+/// revision. An unreadable host policy reads as an error, never as project settings.
+fn policy(install:&Path, root: &Path) -> Res<(Value, String)> {
+    let host=crate::host::Policy::read(install)?;
+    let project=crate::load(root)?.1;
+    let mut v=host.cap.json();
+    v["project_limits"]=json!(host.project_limits(root,&project)?);
+    let revision=host.project_revision(root,&project)?;
+    Ok((v,revision))
 }
 
 fn registered(install: &Path, root: &str) -> Res<bool> {
@@ -312,7 +309,7 @@ fn sync(s: &mut State, install: &Path, now: u64) -> Res<()> {
         }
     }
     for p in s.projects.values_mut() {
-        let (now_policy,revision) = policy(install,Path::new(&p.root)).unwrap_or((Value::Null,None));
+        let (now_policy,revision) = policy(install,Path::new(&p.root)).map(|(v,r)|(v,Some(r))).unwrap_or((Value::Null,None));
         if p.revision.is_empty() || now_policy != p.policy || revision.as_ref().is_some_and(|r|r!=&p.revision) {
             *p = Project { root: p.root.clone(), revision: revision.unwrap_or_else(||token("r")), policy: now_policy, since: now };
         }
@@ -356,31 +353,12 @@ pub fn typed(v: &Value) -> Result<(), &'static str> {
     if expires <= issued || expires - issued > 300 {
         return Err("invalid");
     }
-    let (project, runtime) = (!v["target"]["project_id"].is_null(), !v["target"]["runtime_id"].is_null());
-    let auto = match v["policy_schema"].as_str() {
-        Some("taskq.capacity/1") => false,
-        Some("taskq.admission/1") => true,
-        // exactly one runtime of one project; null removes the overlay entry
-        Some(OVERLAY) => return if runtime && changes.len() == 1 && changes.get("runtime_limit").is_some_and(|x| x.is_null() || count(x)) { Ok(()) } else { Err("invalid") },
-        _ => return Err("unsupported"),
-    };
-    for (k, x) in changes {
-        let valid = match k.as_str() {
-            "runtime_limit" => runtime && (count(x) || (auto && x.is_null())),
-            "maximum" => auto && !runtime && (x.is_null() || count(x)),
-            "mode" => auto && !runtime && (x == "auto" || x == "fixed"),
-            "load_gate" => project && !runtime && keys(x, &["enabled", "cpu_max", "memory_min"]) && x["enabled"].is_boolean()
-                && x["cpu_max"].as_u64().is_some_and(|n| (10..=100).contains(&n)) && x["memory_min"].as_u64().is_some_and(|n| (1..=95).contains(&n)),
-            _ => false,
-        };
-        if !valid {
-            return Err("invalid");
-        }
+    if v["policy_schema"] != OVERLAY {
+        return Err("unsupported");
     }
-    if changes.get("mode") == Some(&json!("auto")) && changes.get("load_gate").is_some_and(|g| g["enabled"] == false) {
-        return Err("invalid");
-    }
-    Ok(())
+    // exactly one runtime of one project; null removes the overlay entry
+    let runtime = !v["target"]["runtime_id"].is_null();
+    if runtime && changes.len() == 1 && changes.get("runtime_limit").is_some_and(|x| x.is_null() || count(x)) { Ok(()) } else { Err("invalid") }
 }
 
 /// The connection this exchange speaks for: `(installation, generation)`.
@@ -397,47 +375,17 @@ fn authorize(s: &State, v: &Value, conn: Conn, now: u64) -> Result<String, &'sta
     if t["installation_id"] != inst || t["generation"] != generation || g.installation_id != inst || g.generation != generation {
         return Err("scope");
     }
-    let Some(pid) = t["project_id"].as_str() else {
-        // The legacy remote profiles have no qualified host mutation authority.
-        return if g.host_policy { Err("unsupported") } else { Err("scope") };
-    };
+    let Some(pid) = t["project_id"].as_str() else { return Err("scope") };
     if !s.projects.contains_key(pid) || !g.project_ids.iter().any(|x| x == pid) {
         return Err("scope");
     }
     if t["runtime_id"].as_str().is_some_and(|rt| !g.runtime_ids.iter().any(|x| x == rt)) {
         return Err("scope");
     }
-    if v["policy_schema"] == OVERLAY && !g.project_limits {
+    if !g.project_limits {
         return Err("scope");
     }
     Ok(pid.to_string())
-}
-
-/// The edit of a typed change set; `v["limits"]`: the project-wide limits a removed override would fall back to.
-fn edit(changes: &Value, runtime: Option<&str>, project_limits: &Value) -> Result<CapEdit, &'static str> {
-    let mut e = CapEdit::default();
-    for (k, x) in changes.as_object().into_iter().flatten() {
-        match k.as_str() {
-            "runtime_limit" => {
-                let rt = runtime.ok_or("invalid")?.to_string();
-                match x.as_u64() {
-                    Some(n) => { e.limits.insert(rt, n as u32); }
-                    // `null` removes this host's override; a project-wide limit would stay, so that is unsupported here
-                    None if project_limits[&rt].is_null() => { e.unset.insert(rt); }
-                    None => return Err("unsupported"),
-                }
-            }
-            "mode" => e.mode = Some(x == "auto"),
-            "maximum" => e.max = Some(x.as_u64().map(|n| n as u32)),
-            "load_gate" => {
-                e.gate = x["enabled"].as_bool();
-                e.cpu_max = x["cpu_max"].as_u64().map(|n| n as u32);
-                e.memory_min = x["memory_min"].as_u64().map(|n| n as u32);
-            }
-            _ => return Err("invalid"),
-        }
-    }
-    Ok(e)
 }
 
 /// What `decide` re-checks immediately before the write: the time now (never earlier than the checks before) and
@@ -490,62 +438,9 @@ fn decide(install: &Path, s: &mut State, v: &Value, conn: Conn, clock: bool, now
     if v["expected_revision"] != p.revision.as_str() {
         return Ok(record(s, "rejected", Some("conflict")));
     }
-    // The legacy wire profiles own legacy project policy, never fallback authority for host.json; the overlay
-    // exists only in host.json.
-    let overlay = v["policy_schema"] == OVERLAY;
-    if host_authority(install) != overlay {return Ok(record(s,"rejected",Some("unsupported")));}
+    // the overlay exists only in host.json
+    if !host_authority(install) {return Ok(record(s,"rejected",Some("unsupported")));}
     let root = PathBuf::from(&p.root);
-    if overlay {
-        record(s, "unknown", None);
-        s.ops.get_mut(&op).unwrap().writing = true;
-        save(install, s)?;
-        s.ops.get_mut(&op).unwrap().writing = false;
-        let now = now.max((fence.clock)());
-        if !(fence.live)() || !registered(install, &p.root)? {
-            return Ok(record(s, "rejected", Some("scope")));
-        }
-        if let Err(r) = authorize(s, v, conn, now) {
-            return Ok(record(s, "rejected", Some(r)));
-        }
-        if now >= expires {
-            return Ok(record(s, "expired", None));
-        }
-        let limit = v["changes"]["runtime_limit"].as_u64().map(|n| n as u32);
-        let written = match crate::host::write_project_limit(install, &root, t["runtime_id"].as_str().unwrap_or_default(), limit, &op, &p.revision) {
-            Ok(Ok(written)) => written,
-            Ok(Err(r)) => return Ok(record(s, "rejected", Some(r))),
-            Err(x) => return Ok(Some(format!("resources: {op} unknown: {x}"))),
-        };
-        let wake = crate::platform::write_atomic(&install.join("poke"), "");
-        let (Ok((saved, Some(rev))), Ok(want)) = (policy(install, &root), crate::load(&root).and_then(|(_,v)|written.project_revision(&root,&v))) else {
-            return Ok(Some(format!("resources: {op} unknown: readback failed")));
-        };
-        if rev != want {
-            return Ok(Some(format!("resources: {op} unknown: readback differs")));
-        }
-        let o = s.ops.get_mut(&op).unwrap();
-        o.receipt = receipt(&t, &op, "saved", None, Some(&rev), None, None);
-        o.saved_at = Some(now);
-        s.projects.insert(pid, Project { revision: rev, policy: saved, since: now, ..p });
-        return Ok(Some(match wake { Ok(()) => format!("resources: {op} saved"), Err(error) => format!("resources: {op} saved; host notification: {error}") }));
-    }
-    let Ok((cfg, cv)) = crate::load(&root) else { return Ok(record(s, "rejected", Some("unsupported"))) };
-    let Ok(cur) = crate::service::capacity(&cv, &cfg.me) else { return Ok(record(s, "rejected", Some("unsupported"))) };
-    if cur.json() != p.policy {
-        return Ok(record(s, "rejected", Some("conflict")));
-    }
-    // taskq.capacity/1 is the legacy Fixed authority
-    if v["policy_schema"] == "taskq.capacity/1" && cur.auto {
-        return Ok(record(s, "rejected", Some("unsupported")));
-    }
-    let e = match edit(&v["changes"], v["target"]["runtime_id"].as_str(), &cv["limits"]) {
-        Ok(e) => e,
-        Err(r) => return Ok(record(s, "rejected", Some(r))),
-    };
-    let path = root.join("taskq.json");
-    let Ok(text) = fs::read_to_string(&path) else { return Ok(record(s, "rejected", Some("conflict"))) };
-    let Ok(out) = crate::edit_capacity(&text, &cfg.me, &cfg.me, &e, Some(&cur.json())) else { return Ok(record(s, "rejected", Some("invalid"))) };
-    let want = serde_json::from_str::<Value>(&out).ok().and_then(|x| crate::service::capacity(&x, &cfg.me).ok()).map(|c| c.json());
     // the marker is durable before the write: a crash from here on reads unknown and never writes again
     record(s, "unknown", None);
     s.ops.get_mut(&op).unwrap().writing = true;
@@ -562,23 +457,24 @@ fn decide(install: &Path, s: &mut State, v: &Value, conn: Conn, clock: bool, now
     if now >= expires {
         return Ok(record(s, "expired", None));
     }
-    if fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) {
-        return Ok(record(s, "rejected", Some("conflict")));
-    }
-    if let Err(x) = crate::platform::write_atomic(&path, &out) {
-        return Ok(Some(format!("resources: {op} unknown: {x}")));
-    }
-    let wake = crate::poke(&root);
-    let saved = policy(install,&root).ok().map(|x| x.0);
-    let Some(saved) = saved.filter(|x| Some(x) == want.as_ref()) else {
-        return Ok(Some(format!("resources: {op} unknown: readback differs")));
+    let limit = v["changes"]["runtime_limit"].as_u64().map(|n| n as u32);
+    let written = match crate::host::write_project_limit(install, &root, t["runtime_id"].as_str().unwrap_or_default(), limit, &op, &p.revision) {
+        Ok(Ok(written)) => written,
+        Ok(Err(r)) => return Ok(record(s, "rejected", Some(r))),
+        Err(x) => return Ok(Some(format!("resources: {op} unknown: {x}"))),
     };
-    let rev = token("r");
+    let wake = crate::platform::write_atomic(&install.join("poke"), "");
+    let (Ok((saved, rev)), Ok(want)) = (policy(install, &root), crate::load(&root).and_then(|(_,v)|written.project_revision(&root,&v))) else {
+        return Ok(Some(format!("resources: {op} unknown: readback failed")));
+    };
+    if rev != want {
+        return Ok(Some(format!("resources: {op} unknown: readback differs")));
+    }
     let o = s.ops.get_mut(&op).unwrap();
     o.receipt = receipt(&t, &op, "saved", None, Some(&rev), None, None);
     o.saved_at = Some(now);
     s.projects.insert(pid, Project { revision: rev, policy: saved, since: now, ..p });
-    Ok(Some(match wake { Ok(()) => format!("resources: {op} saved"), Err(error) => format!("resources: {op} saved; {error}") }))
+    Ok(Some(match wake { Ok(()) => format!("resources: {op} saved"), Err(error) => format!("resources: {op} saved; host notification: {error}") }))
 }
 
 /// A cancellation: a recorded operation repeats its receipt (a completed write is never rolled back); an unknown
@@ -605,24 +501,16 @@ fn readback(s: &mut State, install:&Path, now: u64) {
     for o in s.ops.values_mut() {
         if local(o) {continue;}
         let Some(at) = o.saved_at.filter(|t| o.receipt["state"] == "saved" && now < t + RECONCILE) else { continue };
-        let overlay = o.bound["policy_schema"] == OVERLAY;
-        if host_authority(install) && !overlay {
-            o.receipt["state"]=json!("unknown");
-            o.receipt["reason"]=json!("unsupported");
-            o.sent=false;
-            continue;
-        }
         let Some(p) = o.receipt["target"]["project_id"].as_str().and_then(|pid| s.projects.get(pid)) else { continue };
         if o.receipt["saved_revision"] != p.revision.as_str() {
             continue;
         }
         let root = PathBuf::from(&p.root);
         let st: Value = fs::read_to_string(crate::dot(&root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-        let me = if overlay { crate::host::Policy::read(install).map(|x| x.me) } else { crate::load(&root).map(|x| x.0.me) }.unwrap_or_default();
+        let me = crate::host::Policy::read(install).map(|x| x.me).unwrap_or_default();
         let seen = st["at"].as_u64().filter(|t| *t >= at && *t <= now && now - t <= FRESH && st["host"] == me.as_str());
-        // the overlay: the service ran the exact saved host revision for this root, with the saved project limits
-        let same = if overlay { st["capacity"]["project_revision"] == p.revision.as_str() && st["capacity"]["project_limits"] == p.policy["project_limits"] }
-            else { ["limits", "load_gate", "admission"].iter().all(|k| st["capacity"][k] == p.policy[k]) };
+        // the service ran the exact saved host revision for this root, with the saved project limits
+        let same = st["capacity"]["project_revision"] == p.revision.as_str() && st["capacity"]["project_limits"] == p.policy["project_limits"];
         if let (Some(seen), true) = (seen, same) {
             o.receipt["state"] = json!("applied");
             o.receipt["effective_revision"] = json!(p.revision);
@@ -830,12 +718,10 @@ pub fn report(install: &Path, now: u64) -> Res<Vec<String>> {
             Some(a) => format!("Connection: {} generation {}", a["destination"].as_str().unwrap_or("?"), a["generation"]),
             None => "Connection: none (grants need an active DashQ connection)".into(),
         }];
-        if host_authority(install) {
-            out.push(match crate::host::Policy::read(install).and_then(|p|p.revision()) {
-                Ok(revision)=>format!("Host policy: revision {revision}; local edits only; remote writes: {OVERLAY} under a --project-limits grant"),
-                Err(e)=>format!("Host policy: unknown ({e}); remote writes refused"),
-            });
-        }
+        out.push(match crate::host::Policy::read(install).and_then(|p|p.revision()) {
+            Ok(revision)=>format!("Host policy: revision {revision}; local edits only; remote writes: {OVERLAY} under a --project-limits grant"),
+            Err(e)=>format!("Host policy: unknown ({e}); remote writes refused"),
+        });
         for (k, p) in &s.projects {
             let name = names.get(&p.root).map_or("?", String::as_str);
             out.push(format!("Project {name}: {k} revision {}{}", p.revision, if p.policy.is_null() { " (config unreadable)" } else { "" }));

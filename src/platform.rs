@@ -331,8 +331,7 @@ pub(crate) fn transition_ready(install:&Path)->Result<(),String> {
 fn update_inner(install: &Path, check: bool) -> Result<Option<String>, String> {
     let v = update_result(coreq::update::update(&tool(install), check))?;
     if v.is_some() && !check {
-        let shim = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/bin/taskq")).unwrap_or_default();
-        sweep(install, &shim);
+        sweep(install);
     }
     #[cfg(target_os = "macos")]
     if let Some(v) = v.as_deref().filter(|_| !check) {
@@ -758,9 +757,9 @@ pub fn releases_in_use(install: &Path) -> Option<Vec<String>> {
     (!unknown).then_some(keep)
 }
 
-/// § 8 step 2 sweep: everything in `<install>` the current version does not own, and the v3 shim. Best effort: a file
-/// in use (a running Windows exe) stays until a later update.
-pub fn sweep(install: &Path, shim: &Path) {
+/// § 8 step 2 sweep: everything in `<install>` the current version does not own. Best effort: a file in use (a running
+/// Windows exe) stays until a later update.
+pub fn sweep(install: &Path) {
     let keep = releases_in_use(install);
     let owned = |n: &str| {
         ["releases", "ui", "current", "previous", "projects", "token", "gitlab-token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "taskqw.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off", "accounts.json", "accounts-state.json", "accounts-state.pending.json", "accounts-state.lock"].contains(&n)
@@ -781,9 +780,6 @@ pub fn sweep(install: &Path, shim: &Path) {
         if keep.as_ref().is_some_and(|keep| !n.ends_with(".tmp") && !keep.contains(&n)) {
             gone(&e.path());
         }
-    }
-    if fs::read_to_string(shim).is_ok_and(|t| t.contains("taskq.py launch") && t.contains(&install.display().to_string())) {
-        gone(shim);
     }
 }
 

@@ -1,4 +1,29 @@
     use super::*;
+    const TAGS:[(&str,&str);5]=[("taskq-profile","operation"),("taskq-stage","stage"),("taskq-board","board"),("taskq-transition","transition"),("taskq-requests","requests")];
+    /// Fixture text: one `taskq-<kind> <json>` line per typed sample.
+    impl Sample {
+        pub(crate) const KINDS:&'static [&'static str]=&["operation","stage","board","transition","requests"];
+        pub(crate) fn fixture(line:&str)->Res<Self> {
+            let (tag,text)=line.split_once(' ').ok_or("unknown fixture kind")?;
+            let (_,kind)=TAGS.iter().find(|(t,_)|*t==tag).ok_or("unknown fixture kind")?;
+            Self::decode(kind,serde_json::from_str(text).map_err(|e|e.to_string())?)
+        }
+        /// Unmarked lines and marked lines that do not parse are not samples.
+        pub(crate) fn fixtures(text:&str)->Vec<Self> {
+            text.lines().filter_map(|line|Self::fixture(line).ok()).collect()
+        }
+        pub(crate) fn line(&self)->Res<String> {
+            let (tag,_)=TAGS.iter().find(|(_,k)|*k==self.kind()).ok_or("unknown semantic kind")?;
+            Ok(format!("{tag} {}",self.canonical()?))
+        }
+    }
+    fn canonical(line:&str)->Res<Value> {Sample::fixture(line)?.canonical()}
+    fn observation(line:&str)->Res<Value> {let sample=Sample::fixture(line)?;encode(sample.kind(),sample.canonical()?)}
+    fn line(value:&Value)->Res<String> {decoded(value)?.line()}
+    fn read(store:&coreq::telemetry::Reader,kinds:&[&str])->Res<String> {
+        let mut lanes:[Vec<Sample>;2]=Default::default();visit_samples(Some(store),kinds,|lane,sample|lanes[lane].push(sample))?;
+        let mut text=String::new();for sample in lanes.into_iter().flatten() {text.push_str(&sample.line()?);text.push('\n');}Ok(text)
+    }
     #[test]
     fn all_semantic_kinds_roundtrip_through_the_shared_store() {
         let source=[
@@ -37,39 +62,11 @@
         assert_eq!((&service["unknown"]["model"],&service["unknown"]["output_tokens"],&service["unknown"]["cache_read_tokens"]),(&json!("no-model"),&json!("no-model"),&json!("no-model")));
     }
     #[test]
-    #[ignore="read-only archive qualification; requires TASKQ_SEMANTIC_SOURCE snapshot"]
-    fn retained_archive_roundtrips_through_shared_storage() {
-        let source=std::env::var_os("TASKQ_SEMANTIC_SOURCE").expect("explicit snapshot path");
-        let archive=rusqlite::Connection::open_with_flags(source,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        assert_eq!(archive.pragma_query_value(None,"application_id",|r|r.get::<_,i64>(0)).unwrap(),0x5451544d);
-        assert_eq!(archive.pragma_query_value(None,"user_version",|r|r.get::<_,i64>(0)).unwrap(),1);
-        let dir=std::env::temp_dir().join(format!("taskq-semantic-real-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir(&dir).unwrap();
-        let store=coreq::telemetry::Store::open(&dir.join("db")).unwrap();
-        let mut statement=archive.prepare("SELECT seq,retained_ms,line FROM records ORDER BY seq").unwrap();
-        let rows=statement.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?))).unwrap();
-        let mut expected=ring::digest::Context::new(&ring::digest::SHA256);let mut events=Vec::new();let mut clocks=Vec::new();let mut cursor=None::<String>;let mut count=0;
-        for row in rows {
-            let (seq,received,text)=row.unwrap();let value=observation(&text).unwrap();
-            expected.update(format!("{received} {} {}\n",text.split_once(' ').unwrap().0,canonical(&text).unwrap()).as_bytes());
-            events.push(coreq::telemetry::Event::identified("qualification.archive",&seq.to_string(),value).unwrap());clocks.push(received);count+=1;
-            if events.len()==1024 {let next=format!("position.{seq}");store.import_history("archive",cursor.as_deref(),&next,&events,&clocks).unwrap();cursor=Some(next);events.clear();clocks.clear();}
-        }
-        if !events.is_empty() {store.import_history("archive",cursor.as_deref(),"done",&events,&clocks).unwrap();}
-        let mut actual=ring::digest::Context::new(&ring::digest::SHA256);let mut after=0;let mut retained=0;
-        loop {let page=store.export(0,after,1024).unwrap();for row in page["events"].as_array().unwrap() {
-            let text=line(&row["observation"]).unwrap();let received=row["received_ms"].as_i64().unwrap();actual.update(format!("{received} {} {}\n",text.split_once(' ').unwrap().0,canonical(&text).unwrap()).as_bytes());retained+=1;
-        }after=page["next"].as_i64().unwrap();if page["more"]==false {break;}}
-        let digest=|value:ring::digest::Digest|value.as_ref().iter().map(|byte|format!("{byte:02x}")).collect::<String>();
-        let expected=digest(expected.finish());let actual=digest(actual.finish());assert_eq!(retained,count);assert_eq!(actual,expected);assert_eq!(store.storage().unwrap()["pruned_count"],0);
-        println!("semantic archive: {count} rows; canonical+receipt SHA256 {actual}; original receipt clocks preserved; pruning 0");
-        drop(store);std::fs::remove_dir_all(dir).unwrap();
-    }
-    #[test]
     fn indexed_report_reader_selects_stages_without_exposing_generic_calls() {
         let dir=std::env::temp_dir().join(format!("taskq-indexed-read-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir(&dir).unwrap();let path=dir.join("db");let store=coreq::telemetry::Store::open(&path).unwrap();
         let generic=coreq::telemetry::Event::new(json!({"product":"taskq","version":"1","operation":"generic.method","kind":"method","trace":"trace","span":"span","started_ms":1,"outcome":"ok","error":"none"})).unwrap();store.append(&[generic]).unwrap();
         let stage=r#"taskq-stage {"stage":"claim","task":1,"attempt":2,"rt":"other","us":1,"outcome":"ok","error":"none","at_ms":1,"unknown":"no-model"}"#;store.append(&[coreq::telemetry::Event::new(observation(stage).unwrap()).unwrap()]).unwrap();
-        let reader=coreq::telemetry::Reader::open(&path).unwrap();let text=read(&reader,&["stage"],"").unwrap();assert_eq!(text.lines().count(),1);assert_eq!(canonical(text.trim()).unwrap(),canonical(stage).unwrap());assert!(read(&reader,&["board"],"").unwrap().is_empty());
+        let reader=coreq::telemetry::Reader::open(&path).unwrap();let text=read(&reader,&["stage"]).unwrap();assert_eq!(text.lines().count(),1);assert_eq!(canonical(text.trim()).unwrap(),canonical(stage).unwrap());assert!(read(&reader,&["board"]).unwrap().is_empty());
         drop(reader);drop(store);std::fs::remove_dir_all(dir).unwrap();
     }
     /// DashQ's telemetry line key rule (dashq `counter_field`, dashq#181): ≤ 128 bytes, each `:` segment an identifier
@@ -145,7 +142,7 @@
         ];
         let mut observations=Vec::new();
         for (index,text) in full.iter().enumerate() {
-            let value=observation(text).unwrap();let kind=KINDS[index];assert_eq!(value["kind"],kind);
+            let value=observation(text).unwrap();let kind=Sample::KINDS[index];assert_eq!(value["kind"],kind);
             // a new field mapping needs a value in this kind's full record, or the fixture would not list it
             for (old,new) in fields(kind).unwrap() {assert!(value.get(*new).is_some_and(|v|!v.is_null()),"{kind}: full record misses {old}, so the fixture lacks {new}");}
             observations.push(value);

@@ -126,12 +126,11 @@
         fs::write(root.join("host.json"),value.to_string()).unwrap();
         let first=Policy::read_for_hostname(&root,||"owner-identity".into()).unwrap();
         if std::env::var("TASKQ_HOST").ok().filter(|s|!s.is_empty()).is_none() {assert_eq!(first.me,"mapped-owner");}
-        migrate_for_hostname(&root,&[],"owner-identity").unwrap();
         let mut changed=value;changed["limits"]["codex"]=json!(0);fs::write(root.join("host.json"),changed.to_string()).unwrap();
         assert_eq!(Policy::read_for_hostname(&root,||"owner-identity".into()).unwrap().cap.limits["codex"],0);
         fs::write(root.join("host.json.pending"),"retained").unwrap();
         assert!(Policy::read_for_hostname(&root,||panic!("identity ran before pending-write refusal")).unwrap_err().contains("interrupted"));
-        assert!(migrate_for_hostname(&root,&[],"owner-identity").is_err());fs::remove_file(root.join("host.json.pending")).unwrap();
+        fs::remove_file(root.join("host.json.pending")).unwrap();
         fs::write(root.join("host.json"),"{").unwrap();assert!(Policy::read_for_hostname(&root,||"owner-identity".into()).is_err());
         fs::remove_file(root.join("host.json")).unwrap();assert!(Policy::read_for_hostname(&root,||"owner-identity".into()).is_err());
         fs::remove_dir_all(root).unwrap();
@@ -403,11 +402,11 @@
     // #2138 A2/A3/R13: invalid new policy must hold launches; defaults and lower-only overlays remain intact.
     #[test]
     fn balancing_policy_validates_modes_and_project_execution() {
-        for (alias,mode) in [("primary",ClaimMode::Any),("any",ClaimMode::Any),("spillover",ClaimMode::Spillover),("pinned-only",ClaimMode::Labelled),("labelled",ClaimMode::Labelled),("manager-only",ClaimMode::None),("none",ClaimMode::None)] {
+        for (alias,mode) in [("any",ClaimMode::Any),("spillover",ClaimMode::Spillover),("labelled",ClaimMode::Labelled),("none",ClaimMode::None)] {
             assert_eq!(Policy::parse(json!({"claim":alias,"spillover_grace":0}),"invented").unwrap().claim,mode);
         }
         assert_eq!(policy().spillover_grace,300);
-        for invalid in [json!({"spillover_grace":-1}),json!({"spillover_grace":"5"}),json!({"claim":true}),json!({"claim":"primari"})] {assert!(Policy::parse(invalid,"invented").is_err());}
+        for invalid in [json!({"spillover_grace":-1}),json!({"spillover_grace":"5"}),json!({"claim":true}),json!({"claim":"primary"}),json!({"claim":"pinned-only"}),json!({"claim":"manager-only"})] {assert!(Policy::parse(invalid,"invented").is_err());}
         for entry in [json!({"default_runtime":"unknown"}),json!({"default_runtime":"codex-app"}),json!({"auto_reroute":1}),json!({"allowed_runtimes":null}),json!({"allowed_runtimes":["codex","codex"]}),json!({"allowed_runtimes":["unknown"]}),json!({"limits":null}),json!({"auto_reroute":false,"unexpected":true})] {
             assert!(Policy::parse(json!({"projects":{"/invented":entry}}),"invented").is_err());
         }
@@ -542,7 +541,7 @@
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let entered=fs::read_to_string(&first).unwrap_or_default();
-        crate::platform::sweep(&install,&base.join("absent-shim"));
+        crate::platform::sweep(&install);
         let probe=coreq::process::output("test.host-owner",std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact","host::tests::owner_probe","--ignored"])
             .env("TASKQ_OWNER_INSTALL",&install).env("TASKQ_OWNER_MARKER",&second).env_remove("TASKQ_OWNER_HOLD"),
@@ -601,8 +600,8 @@
             assert_eq!(fs::read_to_string(install.join("service")).unwrap(),text);
         }
         fs::write(install.join("service"),child.id().to_string()).unwrap();
-        assert_eq!(service_status(&install)["state"],"unknown","PID-only compatibility cannot certify a native host owner");
-        assert_eq!(other(&install).unwrap(),Some(child.id()));
+        assert_eq!(service_status(&install)["state"],"unknown","a PID-only record cannot certify a native host owner");
+        assert!(other(&install).is_err(),"a retired PID-only record reads as an unknown owner");
         publish_service(&install,&native,"second").unwrap();
         child.kill().unwrap();child.wait().unwrap();
         assert_eq!(service_status(&install)["state"],"exited");assert_eq!(other(&install).unwrap(),None);
@@ -984,78 +983,35 @@
         }
     }
 
-    // Chain A4: six effective copies -> preflight -> durable originals -> all readbacks -> repeat.
-    // Risk: conflict/unknown inputs cause partial edits, foreign-host policy leaks in, or retry changes owner policy.
+    // Chain § 9: project text -> host policy. Risk: a stale per-project copy reaches admission or the host identity.
     #[test]
-    fn six_copy_migration_is_atomic_on_conflict_and_restart_safe() {
-        let install = temp("migration");
-        let _ = fs::remove_dir_all(install.join("host-policy-migration"));
-        let _ = fs::remove_file(install.join("host.json"));
-        let roots: Vec<_> = (0..6).map(|i| { let p = install.join(format!("project{i}")); fs::create_dir_all(&p).unwrap(); p }).collect();
-        let me = std::env::var("TASKQ_HOST").ok().filter(|s| !s.is_empty()).unwrap_or_else(crate::hostname);
-        let originals: Vec<_> = roots.iter().enumerate().map(|(i, r)| {
-            let text = format!("  {{\"repo\":\"invented/p{i}\",\"untouched\":{{\"x\":7}},\"limits\":{{\"codex\":0}},\"capacity_hosts\":{},\"admission\":{{\"mode\":\"auto\",\"max\":2}}}}\n",
-                json!({me.clone(): {"limits": {"codex": 2}}, "invented-other-host": {"limits": {"codex": 999}}}));
-            fs::write(r.join("taskq.json"), &text).unwrap(); text
-        }).collect();
-        #[cfg(unix)] {
-            use std::os::unix::fs::PermissionsExt;
-            for r in &roots { fs::set_permissions(r.join("taskq.json"), fs::Permissions::from_mode(0o640)).unwrap(); }
-        }
-        let owners: Vec<_> = roots.iter().map(|r| ownership(&r.join("taskq.json")).unwrap()).collect();
-        let path = roots[5].join("taskq.json");
-        let mut conflict: Value = serde_json::from_str(&originals[5]).unwrap();
-        conflict["capacity_hosts"][&me]["limits"]["codex"] = json!(1);
-        let conflicting = serde_json::to_string(&conflict).unwrap(); fs::write(&path, &conflicting).unwrap();
-        let e = migrate(&install, &roots).unwrap_err();
-        assert!(e.contains("invented/p5: limits"), "{e}");
-        assert!(!install.join("host.json").exists()); assert!(!install.join("host-policy-migration").exists());
-        for (i, r) in roots.iter().enumerate() { assert_eq!(fs::read_to_string(r.join("taskq.json")).unwrap(), if i == 5 { &conflicting } else { &originals[i] }.as_str()); }
-        fs::write(&path, &originals[5]).unwrap();
-        fs::rename(roots[4].join("taskq.json"), roots[4].join("missing")).unwrap();
-        assert!(migrate(&install, &roots).unwrap_err().contains("unknown")); assert!(!install.join("host.json").exists());
-        fs::rename(roots[4].join("missing"), roots[4].join("taskq.json")).unwrap();
-        migrate(&install, &roots).unwrap();
-        assert_eq!(Policy::read(&install).unwrap().cap.limits["codex"], 2, "only the effective local host copy migrates");
-        for (i, r) in roots.iter().enumerate() {
-            assert_eq!(fs::read_to_string(install.join(format!("host-policy-migration/{i}.json"))).unwrap(), originals[i]);
-            let v: Value = serde_json::from_slice(&fs::read(r.join("taskq.json")).unwrap()).unwrap();
-            assert_eq!(v["untouched"], json!({"x": 7})); assert!(v["capacity_hosts"].is_null()); assert!(v["limits"].is_null());
-            assert_eq!(ownership(&r.join("taskq.json")).unwrap(), owners[i]);
-            #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; assert_eq!(fs::metadata(r.join("taskq.json")).unwrap().permissions().mode() & 0o777, 0o640); }
-        }
-        // Simulate a crash halfway through staged replacements. Resume consumes the saved mapping, not remaining copies.
-        fs::remove_file(install.join("host-policy-migration/complete")).unwrap();
-        let mut interrupted = fs::metadata(roots[0].join("taskq.json")).unwrap().permissions();
-        #[cfg(windows)] interrupted.set_readonly(true);
-        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; interrupted.set_mode(0o600); }
-        fs::set_permissions(roots[0].join("taskq.json"), interrupted).unwrap();
-        fs::write(roots[2].join("taskq.json"), &originals[2]).unwrap();
-        migrate(&install, &roots).unwrap();
-        assert!(!fs::metadata(roots[0].join("taskq.json")).unwrap().permissions().readonly());
-        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; assert_eq!(fs::metadata(roots[0].join("taskq.json")).unwrap().permissions().mode() & 0o777, 0o640); }
-        let mut edited = Policy::read(&install).unwrap().raw; edited["limits"]["codex"] = json!(1);
-        fs::write(install.join("host.json"), serde_json::to_string(&edited).unwrap()).unwrap();
-        migrate(&install, &roots).unwrap(); assert_eq!(Policy::read(&install).unwrap().raw, edited, "completed retry preserves later owner edits");
+    fn project_copies_never_reach_the_host_policy() {
+        let install=temp("project-copies");
+        fs::write(install.join("host.json"),json!({"hosts":{"this":"named"},"has":{"named":["gpu"]},"limits":{"codex":3}}).to_string()).unwrap();
+        let policy=Policy::parse(serde_json::from_str(&fs::read_to_string(install.join("host.json")).unwrap()).unwrap(),"this").unwrap();
+        let project=json!({"repo":"invented/project","hosts":{"this":"copy"},"has":{"copy":["other"]},"permission_mode":"bypass","capacity_hosts":{"named":{"limits":{"codex":9}}},"admission":{"max":9},"load_gate":{"enabled":false}});
+        let cap=policy.project(&install,&project).unwrap();
+        assert_eq!((cap.limits.get("codex"),cap.max,cap.gate.enabled),(Some(&3),None,true));
+        let (mut config,_)=crate::project_config_value(&install,project).unwrap();
+        assert_eq!((config.has.len(),config.permission_mode.as_str()),(0,"dontAsk"));
+        policy.apply(&mut config);
+        assert_eq!((config.has,config.me),(vec!["gpu".to_string()],if std::env::var("TASKQ_HOST").ok().filter(|s|!s.is_empty()).is_none() {"named".to_string()} else {std::env::var("TASKQ_HOST").unwrap()}));
         fs::remove_dir_all(install).unwrap();
     }
 
-    // Chain A4: Windows protected DACL -> staged replacement. Risk: changing file access during migration.
-    #[cfg(windows)]
+    // Chain § 9: `service install` -> first policy. Risk: a host stays held for ever, or a later install replaces owner policy.
     #[test]
-    fn migration_preserves_protected_windows_acl() {
-        let root = temp("protected-acl");
-        let path = root.join("taskq.json");
-        fs::write(&path, r#"{"repo":"invented/protected","limits":{"codex":2},"admission":{"mode":"auto","max":2}}"#).unwrap();
-        let owner = ownership(&path).unwrap();
-        let mut protected = owner.clone();
-        protected[3] = json!(protected[3].as_u64().unwrap() | 0x10);
-        stage_owner(&path, &protected).unwrap();
-        let expected = ownership(&path).unwrap();
-        migrate(&root, &[root.clone()]).unwrap();
-        assert_eq!(ownership(&path).unwrap(), expected);
-        assert_eq!(Policy::read(&root).unwrap().cap.limits["codex"], 2);
-        fs::remove_dir_all(root).unwrap();
+    fn install_seeds_a_missing_policy_and_keeps_an_existing_one() {
+        let install=temp("policy-seed");
+        assert!(Policy::read(&install).is_err(),"no policy reads unknown and holds launches");
+        seed_policy(&install).unwrap();
+        let seeded=Policy::read(&install).unwrap();
+        assert_eq!((seeded.claim,seeded.update_every,seeded.rollback_after,seeded.cap.limits.len(),seeded.cap.auto),(ClaimMode::Any,60,600,0,true));
+        let owner=json!({"limits":{"codex":2},"owner_field":"kept"}).to_string();
+        fs::write(install.join("host.json"),&owner).unwrap();
+        seed_policy(&install).unwrap();
+        assert_eq!(fs::read_to_string(install.join("host.json")).unwrap(),owner);
+        fs::remove_dir_all(install).unwrap();
     }
 
     #[cfg(windows)]
@@ -1245,13 +1201,15 @@
         assert!(startup_status(&install, &install, "invented malformed config","fixture").is_err());
         assert_eq!(fs::read_to_string(crate::dot(&install).join("status.json")).unwrap(), legacy_status, "startup failure cannot overwrite a live legacy pid");
         assert!(legacy(&install,&[install.clone()]).is_err());
-        fs::write(install.join("service"), child.id().to_string()).unwrap(); assert_eq!(other(&install).unwrap(), Some(child.id()));
+        // A bare PID is no owner record: unknown holds, whatever the PID.
+        fs::write(install.join("service"), child.id().to_string()).unwrap(); assert!(other(&install).unwrap_err().contains("unknown"));
+        publish_service(&install,&coreq::process::identity(child.id()).unwrap().unwrap(),"invented-live-owner").unwrap(); assert_eq!(other(&install).unwrap(), Some(child.id()));
         let stale=std::time::SystemTime::now()-std::time::Duration::from_secs(120);
         fs::OpenOptions::new().write(true).open(install.join("service")).unwrap()
             .set_times(fs::FileTimes::new().set_modified(stale)).unwrap();
         assert_eq!(other(&install).unwrap(),Some(child.id()),"stale heartbeat cannot release a live service owner");
 
-        fs::write(install.join("service"), std::process::id().to_string()).unwrap(); assert_eq!(other(&install).unwrap(), None);
+        publish_service(&install,&coreq::process::identity(std::process::id()).unwrap().unwrap(),"invented-own-owner").unwrap(); assert_eq!(other(&install).unwrap(), None);
         fs::write(install.join("service"), "bad").unwrap(); assert!(other(&install).unwrap_err().contains("unknown"));
         fs::write(install.join("projects"), format!("{}\n", install.display())).unwrap();
         assert_eq!(projects(&install).unwrap(), vec![install.canonicalize().unwrap()]);
@@ -1277,5 +1235,3 @@
         assert!(registry.error.is_some() && registry.roots.len() == 1, "a vanished registry keeps the last roots and reads unknown");
         fs::remove_dir_all(install).unwrap();
     }
-    /// Compare all copies before any write. The durable plan is a configuration backup, never task state (R1).
-    pub fn migrate(install: &Path, roots: &[PathBuf]) -> Res<()> {migrate_for_hostname(install,roots,&crate::hostname())}

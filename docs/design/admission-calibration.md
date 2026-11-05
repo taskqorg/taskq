@@ -1,6 +1,6 @@
 # Admission calibration on the Mac host (D03)
 
-Scope: measurement/calibration evidence is retained. Its legacy capacity_hosts/admission.mode persistence detail is superseded by taskq.md sections3/9 and [host-service transition](host-service.md#command-surface-acceptance); it is not a current host-policy writer. No measurement result here qualifies the later topology cutover.
+Scope: measurement and calibration evidence. Persistence follows taskq.md sections3/9 and [host-service acceptance](host-service.md#command-surface-acceptance).
 
 Research for [#893](https://github.com/taskqorg/taskq/issues/893), plan batch 2 D03; input for WS5 host admission.
 Target: [dynamic resources](dynamic-resources.md) R2. Authority: [taskq.md](../../taskq.md) § 3, § 4, § 9 until WS5 ships.
@@ -113,4 +113,4 @@ needs a named limit: attempt logs and `cli-errors.log` have none today. WS5 or a
 ## Contract detail
 
 Moved verbatim from `taskq.md` (#1179) to keep the contract under its R8 size bound. `taskq.md` keeps the decision and links here; this text keeps the same authority (R8, R13).
-- `capacity_hosts` `{name: {"limits": {..}, "load_gate": {..}}}`: partial `limits` override the top-level ones for that host; a host `load_gate` replaces the top-level `load_gate` object; omitted gate fields are `enabled` false, `cpu_max` 85, `memory_min` 15. Valid: limits 0..u32::MAX, `cpu_max` 10..100, `memory_min` 1..95, integer percent. `admission` `{"mode": "auto"|"fixed", "max": n}` (a host's replaces the top-level one; absent: fixed; setup (§ 4 Add project) writes auto): auto turns the gate on with the [D03](admission-calibration.md) defaults `cpu_max` 90, `memory_min` 10 and CPU as the 60 s mean, a 100 % latest interval vetoing, memory floor max(`memory_min` %, 2.5 GiB) and macOS pressure level >= 4 holding; given gate fields override them; `enabled` false is invalid. Absent keys keep today's behavior; nothing migrates or enables itself; old binaries ignore these keys, so use them only on hosts with a compatible version.
+- Host policy gate defaults (D03): `cpu_max` 90, `memory_min` 10 and CPU as the 60 s mean, a 100 % latest interval vetoing, memory floor max(`memory_min` %, 2.5 GiB) and macOS pressure level >= 4 holding; given gate fields override them; `enabled` false is invalid.

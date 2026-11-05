@@ -16,15 +16,15 @@ pub fn enter(root: &Path, install: &Path) {
 /// host.json `default_runtime` values (§ 9); `codex-app` stays opt-in per task.
 pub const DEFAULT_RUNTIMES: [&str; 3] = crate::runtime::CLI_RUNTIMES;
 
-/// §4/§9: aliases preserve existing policy while extending task admission, not manager turns.
+/// §4/§9: task admission on this host; manager turns stay outside it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ClaimMode { #[default] Any, Spillover, Labelled, None }
 impl ClaimMode {
     pub fn parse(s: &str) -> Res<Self> {
         match s {
-            "primary" | "any" => Ok(Self::Any), "spillover" => Ok(Self::Spillover),
-            "pinned-only" | "labelled" => Ok(Self::Labelled), "manager-only" | "none" => Ok(Self::None),
-            _ => Err("claim must be primary/any, spillover, pinned-only/labelled or manager-only/none".into()),
+            "any" => Ok(Self::Any), "spillover" => Ok(Self::Spillover),
+            "labelled" => Ok(Self::Labelled), "none" => Ok(Self::None),
+            _ => Err("claim must be any, spillover, labelled or none".into()),
         }
     }
     pub fn name(self) -> &'static str {
@@ -38,7 +38,7 @@ pub struct Policy {
     pub cap: Capacity,
     pub me: String,
     pub has: Vec<String>,
-    /// Task-claim mode (§4/§9); aliases preserve any/labelled policies.
+    /// Task-claim mode (§4/§9).
     pub claim: ClaimMode,
     pub spillover_grace: u64,
     pub weights: crate::balance::Weights,
@@ -104,7 +104,7 @@ impl Policy {
         // The host policy allows the owner to disable the gate, without a Fixed-mode bypass.
         let off = c["load_gate"]["enabled"] == false;
         if off { c["load_gate"]["enabled"] = json!(true); }
-        let mut cap = service::capacity(&c, &me)?;
+        let mut cap = service::capacity(&c)?;
         if off { cap.gate.enabled = false; }
         // The project overlay only lowers: a count above the host ceiling is invalid policy, never clamped.
         if !matches!(v["projects"], Value::Null | Value::Object(_)) { return Err("host.json: projects must be an object".into()); }
@@ -212,7 +212,7 @@ impl Policy {
     }
 }
 
-/// Existing resource-control lock serializes policy writers with grants and migration.
+/// Existing resource-control lock serializes policy writers with grants.
 pub fn write_capacity(install:&Path, host:&str, edit:&crate::CapEdit, expect:Option<&Value>)->Res<(Capacity,Capacity,CommandReceipt)> {
     crate::resources::locked(install,||write_capacity_locked(install,host,edit,expect,None))
 }
@@ -220,7 +220,6 @@ pub fn write_capacity(install:&Path, host:&str, edit:&crate::CapEdit, expect:Opt
 #[tracing::instrument(name="host.policy.write",skip_all)]
 fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:Option<&Value>,mut local:Option<(&mut crate::resources::State,&Value)>)->Res<(Capacity,Capacity,CommandReceipt)> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot change host policy".into());}
-        migration_done(install)?;
         let path=install.join("host.json");
         let original=fs::read_to_string(&path).map_err(|e|format!("host.json unknown: {e}"))?;
         let hostname=crate::hostname();
@@ -307,19 +306,20 @@ fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:
         Ok((old.cap,saved.cap,command))
 }
 
-fn migration_done(install:&Path)->Res<()> {
-    let migration=install.join("host-policy-migration");
-    if migration.join("plan.json").try_exists().map_err(|e|e.to_string())?
-        && !migration.join("complete").try_exists().map_err(|e|e.to_string())? {
-        return Err("host policy migration incomplete; edits held until verified readback".into());
-    }
-    Ok(())
+/// The first policy of a host: an explicit `service install` writes it when none exists (§ 9); the service never does.
+pub(crate) fn seed_policy(install:&Path)->Res<()> {
+    let path=install.join("host.json");
+    if path.try_exists().map_err(|e|format!("host.json unknown: {e}"))? {return Ok(());}
+    let policy=json!({"hosts":{},"has":{},(crate::runtime::CODEX_ARGS):["-s","danger-full-access"],"permission_mode":"dontAsk","update_every":60,"rollback_after":600});
+    Policy::parse(policy.clone(),&crate::hostname())?;
+    fs::create_dir_all(install).map_err(|e|e.to_string())?;
+    crate::platform::write_atomic(&path,&format!("{}\n",serde_json::to_string_pretty(&policy).map_err(|e|e.to_string())?))
 }
 
 /// The remote project overlay writer (#1282, shared-resource-controls.md#project-overlay); the caller holds the
 /// resource lock. Only `projects.<root>` changes. `Ok(Err(reason))`: refused before any write; `Err`: write uncertain.
 pub(crate) fn write_project_limit(install:&Path, root:&Path, rt:&str, limit:Option<u32>, op:&str, expect:&str)->Res<Result<Policy,&'static str>> {
-    if std::env::var_os("TASKQ_ATTEMPT").is_some() || migration_done(install).is_err() || !service::RUNTIMES.contains(&rt) {return Ok(Err("unsupported"));}
+    if std::env::var_os("TASKQ_ATTEMPT").is_some() || !service::RUNTIMES.contains(&rt) {return Ok(Err("unsupported"));}
     let path=install.join("host.json");
     let Ok(original)=fs::read_to_string(&path) else {return Ok(Err("conflict"))};
     let hostname=crate::hostname();
@@ -768,9 +768,7 @@ struct ServiceRecord {
     #[serde(default)] install_protocol:Option<u8>,
     #[serde(default,skip_serializing_if="Option::is_none")] install_cancel_protocol:Option<u8>,
 }
-enum OwnerRecord { Legacy(u32), Current(ServiceRecord) }
-
-fn service_record(install:&Path)->Res<Option<OwnerRecord>> {
+fn service_record(install:&Path)->Res<Option<ServiceRecord>> {
     use std::io::Read;
     let file=match fs::File::open(install.join("service")) {
         Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(None),
@@ -780,17 +778,13 @@ fn service_record(install:&Path)->Res<Option<OwnerRecord>> {
     let mut bytes=Vec::new();file.take(1025).read_to_end(&mut bytes).map_err(|e|format!("host service owner unknown: {e}"))?;
     if bytes.len()>1024 {return Err("host service owner unknown: oversized record".into());}
     let text=String::from_utf8(bytes).map_err(|_|"host service owner unknown: invalid text")?;
-    if let Ok(pid)=text.trim().parse::<u32>() {
-        if pid==0||pid>i32::MAX as u32 {return Err("process liveness unknown: invalid pid".into());}
-        return Ok(Some(OwnerRecord::Legacy(pid)));
-    }
     let r:ServiceRecord=serde_json::from_str(&text).map_err(|_|"host service owner unknown: malformed record")?;
     if r.install_cancel_protocol.is_some_and(|v|v!=1) {return Err("host service cancellation protocol unknown; kept".into());}
     if r.schema!=1||r.pid==0||r.pid>i32::MAX as u32||r.started.is_empty()||r.started.len()>128
         ||!r.started.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-')||!crate::resources::id(&r.instance)||r.version.is_empty()||r.version.len()>80||r.restart_protocol.is_some_and(|v|v!=1)||r.stop_protocol.is_some_and(|v|v!=1&&v!=2)||r.full_stop_protocol.is_some_and(|v|v!=1)||r.uninstall_protocol.is_some_and(|v|v!=1)||r.install_protocol.is_some_and(|v|v!=1)||r.slots_protocol.is_some_and(|v|v!=1) {
         return Err("host service owner unknown: unsupported record; kept".into());
     }
-    Ok(Some(OwnerRecord::Current(r)))
+    Ok(Some(r))
 }
 
 fn publish_service(install:&Path,native:&coreq::process::Identity,instance:&str)->Res<()> {
@@ -804,14 +798,9 @@ pub fn other(install: &Path) -> Res<Option<u32>> {
         Err(e)=>return if unreadable_exited(install)?||zeroed_unowned(install)? {Ok(None)} else {Err(e)},
         Ok(record)=>record,
     };
-    match record {
-        None=>Ok(None),
-        Some(OwnerRecord::Legacy(pid))=>Ok((pid!=std::process::id()&&crate::runtime::liveness(pid)?).then_some(pid)),
-        Some(OwnerRecord::Current(r))=> {
-            let live=coreq::process::identity(r.pid).map_err(|e|format!("host service owner unknown: {e}"))?;
-            Ok((r.pid!=std::process::id()&&live.as_ref().is_some_and(|p|p.started==r.started)).then_some(r.pid))
-        }
-    }
+    let Some(r)=record else {return Ok(None)};
+    let live=coreq::process::identity(r.pid).map_err(|e|format!("host service owner unknown: {e}"))?;
+    Ok((r.pid!=std::process::id()&&live.as_ref().is_some_and(|p|p.started==r.started)).then_some(r.pid))
 }
 
 /// #1445: a power loss can zero the record; the free native owner lock proves no live owner, so keep it aside.
@@ -840,8 +829,7 @@ fn unreadable_exited(install:&Path)->Res<bool> {
 /// Native process state and projection freshness are separate; neither releases any owned execution.
 pub fn service_status(install:&Path)->Value {
     let result=coreq::telemetry::capture::operation("host.service.observe",||->Res<Value> {
-        let record=service_record(install)?.ok_or("host service owner record missing")?;
-        let OwnerRecord::Current(r)=record else {return Err("legacy PID-only owner record; host identity unknown".into());};
+        let r=service_record(install)?.ok_or("host service owner record missing")?;
         let native=coreq::process::identity(r.pid).map_err(|e|format!("host service owner unknown: {e}"))?;
         let live=native.as_ref().is_some_and(|p|p.started==r.started);
         let age=wall()?.checked_sub(r.at);
@@ -996,7 +984,7 @@ pub fn run(install: &Path) -> Res<()> {
         }
         let old = legacy(install,&roots);
         if hostname.is_empty() {hostname=crate::hostname();}
-        let configured = match &old { Ok(()) => migrate_for_hostname(install, &roots,&hostname).and_then(|_| Policy::read_for_hostname(install,||hostname.clone())), Err(_) => Policy::read_for_hostname(install,||hostname.clone()) };
+        let configured = Policy::read_for_hostname(install,||hostname.clone());
         let (policy,timers)=guarded_policy(configured,&old);
         // #1769: a Stop whose generation ended can never complete; this owner resolves it instead of holding forever
         if restart.current.as_ref().ok().and_then(Option::as_ref).is_some_and(|p|p.stops()&&p.origin()!=instance) {
@@ -1476,128 +1464,20 @@ fn maintenance_once(last:&mut String,text:&str)->bool {
     changed
 }
 
-fn migrate_for_hostname(install:&Path,roots:&[PathBuf],hostname:&str)->Res<()> {
-    crate::resources::try_locked(install,||migrate_locked(install,roots,hostname))
-}
-
-fn migrate_locked(install: &Path, roots: &[PathBuf],hostname:&str) -> Res<()> {
-    let backup = install.join("host-policy-migration");
-    let manifest = backup.join("plan.json");
-    if backup.join("complete").exists() { Policy::read_for_hostname(install,||hostname.into())?; return Ok(()); }
-    if !manifest.exists() && install.join("host.json").exists() { Policy::read_for_hostname(install,||hostname.into())?; return Ok(()); }
-    let plan: Value = if manifest.exists() {
-        serde_json::from_slice(&fs::read(&manifest).map_err(|e| e.to_string())?).map_err(|e| format!("migration backup unknown: {e}"))?
-    } else {
-        if roots.is_empty() { return Err("host.json unknown: no registered policy inputs".into()); }
-        let mut files = vec![];
-        let mut policies = vec![];
-        for root in roots {
-            if root.join("taskq.json.host-policy.tmp").exists() { return Err("migration staging path already exists; originals unchanged".into()); }
-            let owner = ownership(&root.join("taskq.json")).map_err(|e| format!("migration input unknown: {e}"))?;
-            let original = fs::read_to_string(root.join("taskq.json")).map_err(|e| format!("migration input unknown: {e}"))?;
-            let mut v: Value = serde_json::from_str(&original).map_err(|e| format!("migration input unknown: {e}"))?;
-            let host = std::env::var("TASKQ_HOST").ok().filter(|s| !s.is_empty()).or_else(|| v["hosts"][hostname].as_str().map(String::from)).unwrap_or_else(||hostname.into());
-            let cap = service::capacity(&v, &host)?;
-            if !cap.auto { return Err(format!("migration owner choice: {} uses Fixed; originals unchanged", v["repo"].as_str().unwrap_or("project"))); }
-            let mut policy = cap.json();
-            policy["admission"].as_object_mut().unwrap().remove("mode");
-            for (key, default) in [("hosts", json!({})), ("has", json!({})), (crate::runtime::CODEX_ARGS, json!(["-s", "danger-full-access"])),
-                ("permission_mode", json!("dontAsk")), ("update_every", json!(60)), ("rollback_after", json!(600))] {
-                policy[key] = v.get(key).cloned().unwrap_or(default);
-            }
-            Policy::parse(policy.clone(), hostname)?;
-            policies.push((v["repo"].as_str().unwrap_or("project").to_string(), policy));
-            for key in ["capacity_hosts", "admission", "load_gate", "hosts", "has", crate::runtime::CODEX_ARGS, "permission_mode", "update_every", "rollback_after"] {
-                v.as_object_mut().ok_or("migration input is not an object")?.remove(key);
-            }
-            // Identical effective policies need no project cap; top-level limits may be overridden locally.
-            v.as_object_mut().unwrap().remove("limits");
-            files.push(json!({"root": root, "owner": owner, "original": original, "next": serde_json::to_string_pretty(&v).unwrap() + "\n"}));
-        }
-        let first = &policies[0].1;
-        let differences: Vec<_> = policies.iter().filter(|(_, p)| p != first).map(|(repo, p)| {
-            let fields: Vec<_> = first.as_object().unwrap().keys().filter(|k| first[*k] != p[*k]).cloned().collect();
-            format!("{repo}: {}", fields.join(", "))
-        }).collect();
-        if !differences.is_empty() { return Err(format!("migration owner choice: differing {}; originals unchanged", differences.join("; "))); }
-        let plan = json!({"policy": first, "files": files});
-        fs::create_dir_all(&backup).map_err(|e| e.to_string())?;
-        for (i, f) in files.iter().enumerate() {
-            fs::copy(Path::new(f["root"].as_str().unwrap()).join("taskq.json"), backup.join(format!("{i}.json"))).map_err(|e| e.to_string())?;
-        }
-        crate::platform::write_atomic(&manifest, &serde_json::to_string_pretty(&plan).unwrap())?;
-        plan
-    };
-    let policy = plan.get("policy").ok_or("migration plan missing policy")?;
-    Policy::parse(policy.clone(), hostname)?;
-    let files = plan["files"].as_array().ok_or("migration plan missing files")?;
-    let planned: BTreeSet<PathBuf> = files.iter().map(|f| f["root"].as_str().map(PathBuf::from).ok_or("migration plan invalid root")).collect::<Result<_, _>>()?;
-    if planned != roots.iter().cloned().collect() || planned.len() != files.len() { return Err("migration registry changed; originals kept, launches held".into()); }
-    // Validate every input before resuming any partial replacement; never overwrite a later owner edit.
-    for f in files {
-        let root = Path::new(f["root"].as_str().ok_or("migration plan invalid root")?);
-        let current = fs::read_to_string(root.join("taskq.json")).map_err(|e| e.to_string())?;
-        if current != f["original"].as_str().ok_or("migration plan invalid original")? && current != f["next"].as_str().ok_or("migration plan invalid next")? {
-            return Err("migration interrupted by changed input; originals kept in backup, launches held".into());
-        }
-        if ownership(&root.join("taskq.json"))? != f["owner"] { return Err("migration ownership changed; originals kept, launches held".into()); }
-    }
-    // Stage every replacement with its final metadata before any target changes. Plan ownership makes retry safe.
-    let mut staged = vec![];
-    for (i, f) in files.iter().enumerate() {
-        let path = Path::new(f["root"].as_str().unwrap()).join("taskq.json");
-        let stage = path.with_file_name("taskq.json.host-policy.tmp");
-        let metadata = fs::metadata(backup.join(format!("{i}.json"))).map_err(|e| e.to_string())?;
-        let next = f["next"].as_str().unwrap();
-        if fs::read_to_string(&path).map_err(|e| e.to_string())? == next {
-            // A completed replacement still verifies/restores metadata after an interrupted prior run.
-            fs::set_permissions(&path, metadata.permissions()).map_err(|e| e.to_string())?;
-            staged.push(None); continue;
-        }
-        if stage.exists() { fs::remove_file(&stage).map_err(|e| e.to_string())?; }
-        fs::copy(&path, &stage).map_err(|e| e.to_string())?;
-        let mut writable = fs::metadata(&stage).map_err(|e| e.to_string())?.permissions();
-        #[cfg(windows)] writable.set_readonly(false);
-        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; writable.set_mode(writable.mode() | 0o200); }
-        fs::set_permissions(&stage, writable).map_err(|e| e.to_string())?;
-        fs::write(&stage, next).map_err(|e| e.to_string())?;
-        fs::set_permissions(&stage, metadata.permissions()).map_err(|e| e.to_string())?;
-        stage_owner(&stage, &f["owner"])?;
-        if ownership(&stage)? != f["owner"] { return Err("migration staging ownership differs; originals unchanged".into()); }
-        if fs::read_to_string(&stage).map_err(|e| e.to_string())? != next { return Err("migration staging readback differs".into()); }
-        staged.push(Some(stage));
-    }
-    crate::platform::write_atomic(&install.join("host.json"), &(serde_json::to_string_pretty(policy).unwrap() + "\n"))?;
-    for (i, f) in files.iter().enumerate() {
-        let path = Path::new(f["root"].as_str().unwrap()).join("taskq.json");
-        let next = f["next"].as_str().unwrap();
-        if let Some(stage) = &staged[i] {
-            replace_project(&path, stage)?;
-            // ReplaceFileW merges DACL inheritance flags; restore the recorded descriptor before readback.
-            #[cfg(windows)]
-            stage_owner(&path, &f["owner"])?;
-        }
-        if fs::read_to_string(&path).map_err(|e| e.to_string())? != next || ownership(&path)? != f["owner"] { return Err("migration content/ownership readback differs; launches held".into()); }
-    }
-    if Policy::read_for_hostname(install,||hostname.into())?.raw != *policy { return Err("host.json migration readback differs".into()); }
-    crate::platform::write_atomic(&backup.join("complete"), "verified\n")?;
-    Ok(())
-}
-
 #[cfg(unix)]
 pub(crate) fn ownership(path: &Path) -> Res<Value> {
     use std::os::unix::fs::MetadataExt;
     let m = fs::metadata(path).map_err(|e| e.to_string())?;
-    if m.uid() != unsafe { libc::geteuid() } { return Err("migration needs owner: cannot preserve another user's file ownership".into()); }
+    if m.uid() != unsafe { libc::geteuid() } { return Err("cannot preserve another user's file ownership".into()); }
     Ok(json!({"uid": m.uid(), "gid": m.gid()}))
 }
 #[cfg(unix)]
 fn stage_owner(path: &Path, owner: &Value) -> Res<()> {
     use std::os::unix::ffi::OsStrExt;
     let p = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
-    let uid = owner["uid"].as_u64().and_then(|n| u32::try_from(n).ok()).ok_or("migration owner unknown")?;
-    let gid = owner["gid"].as_u64().and_then(|n| u32::try_from(n).ok()).ok_or("migration group unknown")?;
-    if unsafe { libc::chown(p.as_ptr(), uid, gid) } != 0 { return Err(format!("migration cannot preserve ownership: {}", std::io::Error::last_os_error())); }
+    let uid = owner["uid"].as_u64().and_then(|n| u32::try_from(n).ok()).ok_or("file owner unknown")?;
+    let gid = owner["gid"].as_u64().and_then(|n| u32::try_from(n).ok()).ok_or("file group unknown")?;
+    if unsafe { libc::chown(p.as_ptr(), uid, gid) } != 0 { return Err(format!("cannot preserve ownership: {}", std::io::Error::last_os_error())); }
     Ok(())
 }
 #[cfg(unix)]
@@ -1611,11 +1491,11 @@ pub(crate) fn ownership(path: &Path) -> Res<Value> {
     let path: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
     let mut size = 0;
     unsafe { GetFileSecurityW(path.as_ptr(), 7, std::ptr::null_mut(), 0, &mut size); }
-    if size == 0 { return Err(format!("migration ownership unknown: {}", std::io::Error::last_os_error())); }
+    if size == 0 { return Err(format!("file ownership unknown: {}", std::io::Error::last_os_error())); }
     let mut descriptor = vec![0; size as usize];
-    if unsafe { GetFileSecurityW(path.as_ptr(), 7, descriptor.as_mut_ptr(), size, &mut size) } == 0 { return Err(format!("migration ownership unknown: {}", std::io::Error::last_os_error())); }
+    if unsafe { GetFileSecurityW(path.as_ptr(), 7, descriptor.as_mut_ptr(), size, &mut size) } == 0 { return Err(format!("file ownership unknown: {}", std::io::Error::last_os_error())); }
     // SetFileSecurityW clears AUTO_INHERITED bookkeeping even with byte-identical owner, group and DACL.
-    *descriptor.get_mut(3).ok_or("migration ownership descriptor truncated")? &= !0x04;
+    *descriptor.get_mut(3).ok_or("file ownership descriptor truncated")? &= !0x04;
     Ok(json!(descriptor))
 }
 #[cfg(windows)]
@@ -1623,28 +1503,28 @@ fn stage_owner(path: &Path, owner: &Value) -> Res<()> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "advapi32")]
     unsafe extern "system" { fn SetFileSecurityW(path: *const u16, info: u32, descriptor: *const u8) -> i32; }
-    let descriptor: Vec<u8> = owner.as_array().ok_or("migration ownership unknown")?.iter()
-        .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()).ok_or("migration ownership corrupt")).collect::<Result<_, _>>()?;
+    let descriptor: Vec<u8> = owner.as_array().ok_or("file ownership unknown")?.iter()
+        .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()).ok_or("file ownership corrupt")).collect::<Result<_, _>>()?;
     // Self-relative SID slices avoid native pointer reads from a retained migration manifest.
     fn sid(descriptor:&[u8],field:usize)->Res<&[u8]> {
-        if descriptor.len()<20||descriptor[0]!=1||descriptor[3]&0x80==0 {return Err("migration ownership descriptor corrupt".into());}
+        if descriptor.len()<20||descriptor[0]!=1||descriptor[3]&0x80==0 {return Err("file ownership descriptor corrupt".into());}
         let offset=u32::from_le_bytes(descriptor[field..field+4].try_into().unwrap()) as usize;
         if offset==0 {return Ok(&[]);}
-        let header=descriptor.get(offset..offset.saturating_add(8)).filter(|s|offset>=20&&s[0]==1&&s[1]<=15).ok_or("migration ownership SID corrupt")?;
-        descriptor.get(offset..offset.saturating_add(8+4*header[1] as usize)).ok_or_else(||"migration ownership SID truncated".into())
+        let header=descriptor.get(offset..offset.saturating_add(8)).filter(|s|offset>=20&&s[0]==1&&s[1]<=15).ok_or("file ownership SID corrupt")?;
+        descriptor.get(offset..offset.saturating_add(8+4*header[1] as usize)).ok_or_else(||"file ownership SID truncated".into())
     }
     let current=ownership(path)?;
     if &current==owner {return Ok(());}
-    let current:Vec<u8>=serde_json::from_value(current).map_err(|_|"migration ownership corrupt")?;
+    let current:Vec<u8>=serde_json::from_value(current).map_err(|_|"file ownership corrupt")?;
     let mut information=4;
     for (flag,field) in [(1,4),(2,8)] {
         if sid(&descriptor,field)?!=sid(&current,field)? {information|=flag;}
     }
-    let control = descriptor.get(2..4).ok_or("migration ownership corrupt")?;
+    let control = descriptor.get(2..4).ok_or("file ownership corrupt")?;
     let protected = u16::from_le_bytes([control[0], control[1]]) & 0x1000 != 0;
     let path: Vec<_> = path.as_os_str().encode_wide().chain(Some(0)).collect();
     if unsafe { SetFileSecurityW(path.as_ptr(), information | if protected { 0x80000000 } else { 0x20000000 }, descriptor.as_ptr()) } == 0 {
-        return Err(format!("migration cannot preserve ownership: {}", std::io::Error::last_os_error()));
+        return Err(format!("cannot preserve ownership: {}", std::io::Error::last_os_error()));
     }
     Ok(())
 }
@@ -1654,7 +1534,7 @@ fn replace_project(path: &Path, stage: &Path) -> Res<()> {
     #[link(name = "kernel32")]
     unsafe extern "system" { fn ReplaceFileW(path: *const u16, stage: *const u16, backup: *const u16, flags: u32, exclude: *mut std::ffi::c_void, reserved: *mut std::ffi::c_void) -> i32; }
     let wide = |p: &Path| p.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
-    if unsafe { ReplaceFileW(wide(path).as_ptr(), wide(stage).as_ptr(), std::ptr::null(), 0, std::ptr::null_mut(), std::ptr::null_mut()) } == 0 { return Err(format!("migration replace: {}", std::io::Error::last_os_error())); }
+    if unsafe { ReplaceFileW(wide(path).as_ptr(), wide(stage).as_ptr(), std::ptr::null(), 0, std::ptr::null_mut(), std::ptr::null_mut()) } == 0 { return Err(format!("replace: {}", std::io::Error::last_os_error())); }
     Ok(())
 }
 

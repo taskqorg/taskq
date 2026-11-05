@@ -270,18 +270,6 @@
         fs::remove_dir_all(&base).unwrap();
     }
 
-    // Legacy migration input: test project timers independently of an installed host policy.
-    #[test]
-    fn update_every_defaults_to_60_and_keeps_override() {
-        let t = std::env::temp_dir().join(format!("taskq-update-every-{}", crate::runtime::uuid()));
-        fs::create_dir_all(&t).unwrap();
-        fs::write(t.join("taskq.json"), r#"{"repo": "o/r"}"#).unwrap();
-        assert_eq!(project_config(&t).unwrap().0.update_every, 60);
-        fs::write(t.join("taskq.json"), r#"{"repo": "o/r", "update_every": 900}"#).unwrap();
-        assert_eq!(project_config(&t).unwrap().0.update_every, 900);
-        fs::remove_dir_all(&t).unwrap();
-    }
-
     // Defect (#1938 A6): `publish: pr` beside `delivery.preset: direct` refused every command, so the setup check could
     // not say why. Protection: `check_load` keeps the project readable and reports the disagreement as the delivery item.
     #[test]
@@ -417,54 +405,15 @@
         fs::remove_dir_all(&t).unwrap();
     }
 
-    // Chain: § 5 capacity edit. Risk: an invalid edit replaces the file.
+    // Chain: § 5 capacity edit -> the changes line. Risk: a mode or maximum change reads as no change.
     #[test]
-    fn capacity_edit_keeps_the_file_and_validates() {
-        let text = "{\n    \"repo\": \"o/r\",\n    \"limits\": {\"claude\": 4, \"codex\": 4},\n    \"hosts\": {\"a\": \"win\"},\n    \"zeta\": 1\n}\n";
-        let e = CapEdit { limits: BTreeMap::from([("claude".into(), 2)]), gate: Some(true), ..Default::default() };
-        let out = edit_capacity(text, "win", "mac", &e, None).unwrap();
-        assert!(out.starts_with("{\n    \"repo\"") && out.ends_with("}\n"), "indent, order and newline kept:\n{out}");
-        assert!(out.find("\"zeta\"").unwrap() < out.find("\"capacity_hosts\"").unwrap());
-        let v: Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["limits"], json!({"claude": 4, "codex": 4}), "top level untouched");
-        assert_eq!(v["capacity_hosts"]["win"], json!({"limits": {"claude": 2}, "load_gate": {"enabled": true, "cpu_max": 85, "memory_min": 15}}));
-        assert_eq!(service::capacity(&v, "mac").unwrap().limits["claude"], 4, "other hosts keep theirs");
-        let old = service::capacity(&serde_json::from_str(text).unwrap(), "win").unwrap().json();
-        assert!(edit_capacity(text, "win", "mac", &e, Some(&old)).is_ok());
-        let changed = edit_capacity(text, "win", "mac", &e, None).unwrap();
-        assert!(edit_capacity(&changed, "win", "mac", &e, Some(&old)).is_err(), "lost receipt retries cannot overwrite a concurrent config change");
-        for (host, e, expect, err) in [
-            ("nas", e.clone(), None, "unknown host"),
-            ("mac", CapEdit::default(), None, "nothing to change"),
-            ("mac", CapEdit { cpu_max: Some(5), ..Default::default() }, None, "cpu_max"),
-            ("mac", CapEdit { memory_min: Some(96), ..Default::default() }, None, "memory_min"),
-            ("mac", CapEdit { limits: BTreeMap::from([("gpt".into(), 1)]), ..Default::default() }, None, "unknown runtime"),
-            ("win", e.clone(), Some(json!({})), "nothing written"),
-        ] {
-            let r = edit_capacity(text, host, "mac", &e, expect.as_ref());
-            assert!(r.as_ref().is_err_and(|x| x.contains(err)), "{host} {err}: {r:?}");
-        }
-    }
-
-    // Chain: § 5 capacity --mode/--max -> § 9 admission. Risk: a mode edit drops the inherited maximum, `none`
-    // leaves it, or Auto saves with the gate off.
-    #[test]
-    fn capacity_edit_writes_mode_and_maximum() {
-        let text = r#"{"admission": {"mode": "auto", "max": 6}, "limits": {"claude": 0}, "hosts": {"a": "win"}}"#;
-        let get = |out: &str, h: &str| service::capacity(&serde_json::from_str(out).unwrap(), h).unwrap();
-        let fixed = edit_capacity(text, "mac", "mac", &CapEdit { mode: Some(false), ..Default::default() }, None).unwrap();
-        let (c, v): (_, Value) = (get(&fixed, "mac"), serde_json::from_str(&fixed).unwrap());
-        assert!(!c.auto && c.max == Some(6), "inherited maximum carried over");
-        assert_eq!(v["admission"], json!({"mode": "auto", "max": 6}), "top level untouched");
-        assert!(get(&fixed, "win").auto, "other hosts keep theirs");
-        assert_eq!(c.limits["claude"], 0, "explicit zero kept");
-        let none = edit_capacity(text, "mac", "mac", &CapEdit { max: Some(None), ..Default::default() }, None).unwrap();
-        assert!(get(&none, "mac").auto && get(&none, "mac").max.is_none());
-        assert_eq!(cap_changes(&get(text, "mac"), &get(&none, "mac")), "Maximum 6 → none");
-        assert_eq!(cap_changes(&get(text, "mac"), &c), "Mode Auto → Fixed, Load gate on (CPU 90 %, memory 10 %) → off");
-        let off = r#"{"load_gate": {"enabled": false}}"#;
-        let r = edit_capacity(off, "mac", "mac", &CapEdit { mode: Some(true), ..Default::default() }, None);
-        assert!(r.is_err_and(|x| x.contains("needs the load gate")), "Auto with the gate off is refused");
+    fn capacity_changes_name_mode_maximum_and_gate() {
+        let get = |v: Value| service::capacity(&v).unwrap();
+        let auto = get(json!({"admission": {"mode": "auto", "max": 6}, "limits": {"claude": 0}}));
+        let none = get(json!({"admission": {"mode": "auto"}, "limits": {"claude": 0}}));
+        let fixed = get(json!({"admission": {"mode": "fixed", "max": 6}, "load_gate": {"enabled": false}, "limits": {"claude": 0}}));
+        assert_eq!(cap_changes(&auto, &none), "Maximum 6 → none");
+        assert_eq!(cap_changes(&auto, &fixed), "Mode Auto → Fixed, Load gate on (CPU 90 %, memory 10 %) → off");
     }
 
     pub(crate) fn cfg() -> Config {
@@ -2648,7 +2597,7 @@
         assert!(text.contains("'taskq телеметрия': taskq profile watch --since 1h; procedure: ") && text.contains(profile::WATCH_DOC));
         assert_eq!(serde_json::from_str::<Value>(&help(true).unwrap()).unwrap(), catalog);
         assert!(USAGE.contains("--snapshot DIR"));
-        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim primary|any|spillover|pinned-only|labelled|manager-only|none] [--default-runtime claude|codex|antigravity]"));
+        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|spillover|labelled|none] [--default-runtime claude|codex|antigravity]"));
         run(&["service".into(), "capacity".into(), "--help".into()]).unwrap();
         let e = platform::error_text("#7 is ready", None);
         assert!(e.starts_with("Error: #7 is ready\nNext: "));

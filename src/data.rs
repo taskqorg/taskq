@@ -30,23 +30,19 @@ pub fn trim_tail(p: &Path, max: u64) -> bool {
     trim_tail_locked(p,max).unwrap_or(false)
 }
 
-/// Caller owns the profile lock for taskq.log; keep import and in-place rotation in that same critical section.
+/// Caller owns the profile lock for taskq.log, so rotation stays inside the installation budget boundary.
 pub(crate) fn trim_tail_locked(p: &Path, max: u64) -> Result<bool,String> {
-    let profile_log=p.file_name().is_some_and(|n|n=="taskq.log");
-    let threshold=if profile_log {max.saturating_sub(512)} else {max};
+    let threshold=if p.file_name().is_some_and(|n|n=="taskq.log") {max.saturating_sub(512)} else {max};
     match fs::metadata(p) {
         Ok(meta) if meta.len()<=threshold=>return Ok(false),
         Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(false),
         Err(e)=>return Err(format!("log retention: {e}")),
         Ok(_)=>{},
     }
-    let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_millis() as u64);
-    if profile_log {crate::telemetry::read(p.parent().unwrap(),now)?;}
     let b=fs::read(p).map_err(|e|format!("log retention: {e}"))?;
     let tail=&b[b.len().saturating_sub((max/2) as usize)..];
     let tail=tail.iter().position(|c|*c==b'\n').map_or(tail,|i|&tail[i+1..]);
     fs::write(p,tail).map_err(|e|format!("log retention: {e}"))?;
-    if profile_log {crate::telemetry::read(p.parent().unwrap(),now)?;}
     Ok(true)
 }
 

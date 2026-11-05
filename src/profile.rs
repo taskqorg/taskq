@@ -244,7 +244,7 @@ fn terminal(r: &Stage) -> bool {
 fn unresolved_samples(samples:&[Sample]) -> Result<Vec<Stage>, String> {
     let mut last = BTreeMap::new();
     for sample in samples {
-        let r=match sample {Sample::Stage(r)=>r.clone(),Sample::Corrupt("stage")=>return Err("corrupt stage record".into()),_=>continue};
+        let Sample::Stage(r)=sample else {continue};let r=r.clone();
         if !STAGES.contains(&r.stage.as_str()) || !OUTCOMES.contains(&r.outcome.as_str())
             || !RUNTIMES.contains(&r.rt.as_str()) || !(ERRORS.contains(&r.error.as_str()) || STAGE_ERRORS.contains(&r.error.as_str()))
             || r.unknown.as_deref().is_some_and(|u| !UNKNOWN.contains(&u)) {
@@ -409,11 +409,11 @@ fn stage_at(path: Option<&Path>, name: &'static str, task: u64, attempt: u64, rt
     }
 }
 
-/// Attempt stages ranked per runtime (§ 4 Profiling); a corrupt record makes the whole section unknown.
+/// Attempt stages ranked per runtime (§ 4 Profiling); an unknown code makes the whole section unknown.
 fn render_stages_samples(samples:&[Sample]) -> Result<String, &'static str> {
     let mut rows: Vec<((usize, &str), Vec<Stage>)> = vec![];
     for sample in samples {
-        let r=match sample {Sample::Stage(r)=>r.clone(),Sample::Corrupt("stage")=>return Err("corrupt stage record; log kept"),_=>continue};
+        let Sample::Stage(r)=sample else {continue};let r=r.clone();
         let i = STAGES.iter().position(|s| *s == r.stage).ok_or("unknown stage; log kept")?;
         let rt = RUNTIMES.into_iter().find(|k| *k == r.rt).ok_or("unknown stage runtime; log kept")?;
         if !OUTCOMES.contains(&r.outcome.as_str()) || !(ERRORS.contains(&r.error.as_str()) || STAGE_ERRORS.contains(&r.error.as_str()))
@@ -562,7 +562,7 @@ fn in_state(s: &[u64], unknown: usize) -> String {
     }
 }
 
-/// Board operations by p95 and queue transitions (§ 4 Profiling); a corrupt record makes its section unknown.
+/// Board operations by p95 and queue transitions (§ 4 Profiling); an unknown code makes its section unknown.
 fn render_system_summary(summary:&Summary) -> (String, String) {
     let samples=summary.samples();
     let board = || -> Result<String, &'static str> {
@@ -580,7 +580,7 @@ fn render_system_summary(summary:&Summary) -> (String, String) {
     let moves = || -> Result<String, &'static str> {
         let mut rows: BTreeMap<(usize, usize, String), (Vec<u64>, usize)> = BTreeMap::new();
         for sample in samples {
-            let r=match sample {Sample::Transition(r)=>r.clone(),Sample::Corrupt("transition")=>return Err("corrupt transition record; log kept"),_=>continue};
+            let Sample::Transition(r)=sample else {continue};let r=r.clone();
             let state = |s: &str| STATES.iter().position(|k| *k == s).ok_or("unknown transition state; log kept");
             if r.rt.as_deref().is_some_and(|rt| !RUNTIMES.contains(&rt)) { return Err("unknown transition runtime; log kept"); }
             let row = rows.entry((state(&r.from)?, state(&r.to)?, r.rt.unwrap_or_else(|| "none".into()))).or_default();
@@ -623,17 +623,13 @@ pub fn log_lock(path: &Path) -> std::io::Result<LogLock> {
 
 fn acquire_log_lock(path: &Path, wait: bool) -> std::io::Result<LogLock> {
     let lock = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path.parent().unwrap().join("taskq-profile.lock"))?;
-    lock_log(lock,wait,false)
+    lock_log(lock,wait)
 }
 
-pub(crate) fn read_log_lock(install: &Path) -> std::io::Result<LogLock> {
-    lock_log(fs::File::open(install.join("taskq-profile.lock"))?,true,true)
-}
-
-fn lock_log(lock: fs::File, wait: bool, shared: bool) -> std::io::Result<LogLock> {
+fn lock_log(lock: fs::File, wait: bool) -> std::io::Result<LogLock> {
     let deadline = Instant::now() + std::time::Duration::from_secs(1);
     loop {
-        match if shared {lock.try_lock_shared()} else {lock.try_lock()} {
+        match lock.try_lock() {
             Ok(()) => return Ok(LogLock(lock)),
             Err(std::fs::TryLockError::Error(e)) => return Err(e),
             Err(std::fs::TryLockError::WouldBlock) if !wait => return Err(std::io::ErrorKind::WouldBlock.into()),
@@ -667,7 +663,7 @@ type BoardStats=(&'static str,Vec<u64>,BTreeMap<String,usize>,Option<u64>);
 
 struct Summary {
     operations:Vec<Stats>,board:Vec<BoardStats>,first:Option<u64>,last:Option<u64>,traces:usize,
-    corrupt_operation:bool,corrupt_board:bool,ordered:[Vec<Sample>;3],
+    corrupt_operation:bool,corrupt_board:bool,ordered:[Vec<Sample>;2],
 }
 impl Summary {
     fn new()->Self {Self {operations:OPS.into_iter().map(|op|Stats {op,times:vec![],errors:Default::default()}).collect(),board:vec![],first:None,last:None,traces:0,corrupt_operation:false,corrupt_board:false,ordered:Default::default()}}
@@ -685,7 +681,6 @@ impl Summary {
                 let row=&mut self.board[i];row.1.push(r.us);if r.outcome=="failed" {*row.2.entry(r.error).or_default()+=1;}
                 if let Some(m)=r.remaining {row.3=Some(row.3.map_or(m,|v|v.min(m)));}
             },
-            Sample::Corrupt("operation")=>self.corrupt_operation=true,Sample::Corrupt("board")=>self.corrupt_board=true,
             sample=>self.ordered[lane].push(sample),
         }
     }
@@ -693,7 +688,7 @@ impl Summary {
         for stats in &mut self.operations {stats.times.sort_unstable();}
         for row in &mut self.board {row.1.sort_unstable();}
         self.board.sort_by_key(|r|(std::cmp::Reverse(r.1[(r.1.len()*95).div_ceil(100)-1]),r.0));
-        let [mut history,mut archive,mut live]=std::mem::take(&mut self.ordered);history.append(&mut archive);history.append(&mut live);self.ordered[0]=history;
+        let [mut history,mut live]=std::mem::take(&mut self.ordered);history.append(&mut live);self.ordered[0]=history;
     }
     fn samples(&self)->&[Sample] {&self.ordered[0]}
 }
@@ -724,11 +719,10 @@ fn render_summary(summary:&Summary) -> Result<String, &'static str> {
     Ok(out)
 }
 
-/// Service-owned pruning uses the same writer boundary as profiling and legacy log rotation.
+/// Service-owned rotation of the service log under the installation budget lock.
 pub fn prune(install: &Path) -> Result<(), String> {
     fs::create_dir_all(install).map_err(|e| e.to_string())?;
     let _lock = acquire_log_lock(&install.join("taskq.log"), true).map_err(|e| e.to_string())?;
-    crate::telemetry::prune(install, now_ms().ok_or("telemetry clock unknown")?)?;
     crate::data::trim_tail_locked(&install.join("taskq.log"),crate::data::LOG_MAX).map(|_|())
 }
 
@@ -744,9 +738,9 @@ pub fn report(install: &Path) -> String {
             .unwrap_or_else(|e| format!("Attempt terminal records: unknown ({e})\n"));
         Ok(format!("{profile}\n{board}\n{moves}\n{stages}\n{terminal}\n{}", crate::requests::sources_samples(&samples, now)))
     };
-    let legacy=read().unwrap_or_else(|e| format!("Profile: unknown ({e}); all budgets unknown\n\nBoard operations: unknown ({e})\n\nQueue transitions: unknown ({e})\n\nAttempt stages: unknown ({e})\n\nBoard requests by source: unknown ({e})\n"));
+    let summary=read().unwrap_or_else(|e| format!("Profile: unknown ({e}); all budgets unknown\n\nBoard operations: unknown ({e})\n\nQueue transitions: unknown ({e})\n\nAttempt stages: unknown ({e})\n\nBoard requests by source: unknown ({e})\n"));
     let actions=crate::telemetry::diagnostic::actions(install,None).unwrap_or_else(|e|format!("Actions: unknown ({e})\n"));
-    format!("{legacy}\n{actions}")
+    format!("{summary}\n{actions}")
 }
 
 /// § 5 `taskq profile export` columns, in order; every row has each of them, null where its kind has none. A new
@@ -768,10 +762,10 @@ struct Row { kind: String, at_ms: Option<u64>, project: Option<String>, task: Op
 #[serde(deny_unknown_fields)]
 struct Header { schema: u64, columns: Vec<String>, since_ms: Option<u64>, window_ms: Option<[u64; 2]>, samples: usize, corrupt: usize }
 
-/// The export row of one log line: `None` for other lines, `Some(None)` for a corrupt record or an unknown code.
-fn row_sample(sample:&Sample) -> Option<Option<Row>> {
+/// The export row of one observation: `None` for request summaries, which have their own table.
+fn row_sample(sample:&Sample) -> Option<Row> {
     let s = |v: &str| Some(v.to_string());
-    Some(Some(match sample {
+    Some(match sample {
         Sample::Operation(r)=>Row {kind: "operation".into(), at_ms: r.at_ms, name: s(&r.op), us: Some(r.us), outcome: s(if r.error == "none" { "ok" } else { "failed" }), error: s(&r.error), ..Default::default()},
         Sample::Stage(r)=>{let r=r.clone();Row {
             kind: "stage".into(), at_ms: r.at_ms, project: r.project, task: Some(r.task), attempt: Some(r.attempt), name: Some(r.stage), runtime: Some(r.rt),
@@ -782,33 +776,22 @@ fn row_sample(sample:&Sample) -> Option<Option<Row>> {
         Sample::Transition(r)=>{let r=r.clone();Row {
             kind: "transition".into(), at_ms: r.at_ms, project: r.project, task: Some(r.task), entry: Some(r.entry), from: Some(r.from), to: Some(r.to),
             runtime: r.rt, host: r.host, prev_s: r.prev_s, ..Default::default() }},
-        Sample::Requests(_)|Sample::Corrupt("requests")=>return None,
-        Sample::Corrupt(_)=>return Some(None),
-    }))
-}
-
-/// Canonical typed legacy observation; reuse report validation before common-store conversion.
-pub(crate) fn legacy_value(line: &str) -> Result<serde_json::Value, String> {
-    let sample=crate::telemetry::Sample::legacy(line)?;
-    if sample.kind()=="requests" {return Err("unknown legacy profile kind".into());}
-    sample.canonical()
+        Sample::Requests(_)=>return None,
+    })
 }
 
 /// § 5 `taskq profile export`: a header naming window and sample count, then one JSON line per retained observation at or after `since_ms`.
-struct Projection {header:Header,rows:[Vec<Row>;3],selected:Option<&'static str>}
+struct Projection {header:Header,rows:[Vec<Row>;2],selected:Option<&'static str>}
 impl Projection {
     fn new(since_ms:Option<u64>,selected:Option<&'static str>)->Self {
         Self {header:Header {schema:EXPORT,columns:COLUMNS.map(String::from).to_vec(),since_ms,window_ms:None,samples:0,corrupt:0},rows:Default::default(),selected}
     }
     fn push(&mut self,lane:usize,sample:Sample) {
-        match row_sample(&sample) {
-            Some(Some(row)) if self.header.since_ms.is_none_or(|s|row.at_ms.is_some_and(|a|a>=s))=>{
-                self.header.samples+=1;
-                if let Some(at)=row.at_ms {self.header.window_ms=Some(self.header.window_ms.map_or([at,at],|[a,b]|[a.min(at),b.max(at)]));}
-                if self.selected.is_none_or(|kind|kind==row.kind) {self.rows[lane].push(row);}
-            },
-            Some(None)=>self.header.corrupt+=1,_=>{},
-        }
+        let Some(row)=row_sample(&sample) else {return};
+        if !self.header.since_ms.is_none_or(|s|row.at_ms.is_some_and(|a|a>=s)) {return;}
+        self.header.samples+=1;
+        if let Some(at)=row.at_ms {self.header.window_ms=Some(self.header.window_ms.map_or([at,at],|[a,b]|[a.min(at),b.max(at)]));}
+        if self.selected.is_none_or(|kind|kind==row.kind) {self.rows[lane].push(row);}
     }
     fn finish(self)->(Header,Vec<Row>) {(self.header,self.rows.into_iter().flatten().collect())}
 }

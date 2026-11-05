@@ -8,7 +8,6 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Historical source-record prefix; live summaries use capture at each CLI exit and each service record.
-const RECORD: &str = "taskq-requests ";
 /// The source of the service's records.
 pub const SERVICE: &str = "service";
 /// §4 Board request records: the 5-minute loss bound less a margin for host ticks and the store's commit.
@@ -338,13 +337,6 @@ pub fn flush(source: &str) {
     if record(source, &unrecorded) { unrecorded.clear(); }
 }
 
-/// Validate historical metadata with the same normalization used by the request writer.
-pub(crate) fn legacy_value(line: &str) -> Result<Value,String> {
-    let usage:Usage=serde_json::from_str(line.strip_prefix(RECORD).ok_or("unknown request record")?).map_err(|e|e.to_string())?;
-    usage.validate()?;
-    serde_json::to_value(usage).map_err(|e|e.to_string())
-}
-
 impl Usage {
 pub(crate) fn validate(&self)->Result<(),String> {
     let usage=self;
@@ -367,11 +359,7 @@ pub(crate) fn sources_samples(samples:&[crate::telemetry::Sample], now_ms: u64) 
     let start = now_ms.saturating_sub(3_600_000);
     let (mut rows, mut first) = (BTreeMap::<String, (u64, BTreeMap<String, u64>)>::new(), None::<u64>);
     for sample in samples {
-        let u=match sample {
-            crate::telemetry::Sample::Requests(r)=>r.clone(),
-            crate::telemetry::Sample::Corrupt("requests")=>return "Board requests by source: unknown (corrupt request record; log kept)\n".into(),
-            _=>continue,
-        };
+        let crate::telemetry::Sample::Requests(u)=sample else {continue};let u=u.clone();
         first = Some(first.map_or(u.at_ms, |f| f.min(u.at_ms)));
         if u.at_ms <= start || u.at_ms > now_ms { continue; }
         let row = rows.entry(u.source).or_default();

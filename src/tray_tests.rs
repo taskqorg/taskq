@@ -1724,40 +1724,6 @@
         task_session(Path::new("."), "win", None, &mut Value::Null);
     }
     #[test]
-    fn task_pin_legacy_union_and_partial_unpin() {
-        let dir=std::env::temp_dir().join(format!("taskq-pin-legacy-{}",crate::runtime::uuid()));
-        let root=dir.join("project");fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/alpha"}"#).unwrap();
-        let key="task:https://github.com/invented/alpha/issues/7";
-        let unknown="task:https://unregistered.invalid/source/issues/9";
-        let prefs=json!({"draft":"","history":[],"conversation_sidebar":{"pins":[key,unknown],"collapsed":[],"archived":{key:root.to_str().unwrap()}}});
-        crate::conversations::persist(&dir,&prefs).unwrap();
-        let mut settings=Settings::load(&dir);
-        let mut st=json!({"navigation":settings.navigation,"projects":[{"root":root,"issues":"https://github.com/invented/alpha/issues","tasks":[{"n":7,"title":"Legacy task"}]}],"conversations":{"sidebar":prefs["conversation_sidebar"]}});
-        project_task_pins(&mut st);project_task_pins(&mut st);
-        assert_eq!(st["navigation"]["dashboard"]["pins"].as_array().unwrap().len(),2,"read-only union deduplicates");
-        assert_eq!(st["navigation"]["dashboard"]["pins"][0]["ref"],"github://github.com/invented/alpha#7");
-        assert_eq!(st["navigation"]["dashboard"]["pins"][1]["ref"],unknown,"unknown identity is retained verbatim");
-        assert!(!dir.join("tray.json").exists(),"projection does not migrate on read");
-        let mut isolated=Settings::load(&dir);
-        let removed=task_pin(&mut isolated,&dir,&st,&json!({"ref":unknown,"pinned":false})).expect("F19: unavailable saved pin can be removed by exact reference");
-        assert!(!removed["pins"].as_array().unwrap().iter().any(|p|p["ref"]==unknown));
-        assert_eq!(crate::conversations::preferences(&dir).unwrap()["conversation_sidebar"]["pins"],json!([key]));
-        crate::conversations::persist(&dir,&prefs).unwrap();
-        let m=json!({"root":root,"task":7,"pinned":false});
-        let dashboard=task_pin(&mut settings,&dir,&st,&m).unwrap();
-        assert_eq!(dashboard["pins"].as_array().unwrap().len(),1);
-        let after=crate::conversations::preferences(&dir).unwrap();
-        assert_eq!(after["conversation_sidebar"]["pins"],json!([unknown]));
-        assert_eq!(after["conversation_sidebar"]["archived"],prefs["conversation_sidebar"]["archived"]);
-        crate::conversations::persist(&dir,&prefs).unwrap();
-        fs::create_dir(dir.join("tray-requests.tmp")).unwrap();
-        assert!(task_pin(&mut settings,&dir,&st,&m).unwrap_err().contains("partially saved"));
-        assert_eq!(crate::conversations::preferences(&dir).unwrap(),prefs,"refused cleanup preserves legacy preferences");
-        assert_eq!(Settings::load(&dir).navigation,settings.navigation,"partial result still reads back the global write");
-        fs::remove_dir_all(dir).unwrap();
-    }
-    #[test]
     fn task_pin_keeps_shared_views_and_failed_storage() {
         let dir=std::env::temp_dir().join(format!("taskq-pin-{}",crate::runtime::uuid()));
         let root=dir.join("project");fs::create_dir_all(&root).unwrap();
@@ -1775,6 +1741,9 @@
         assert_eq!(Settings::load(&dir).navigation,settings.navigation,"first observation survives restart");
         assert!(task_pin(&mut settings,&dir,&st,&json!({"ref":reference,"pinned":true,"closedSeen":0})).unwrap()["pins"][0]["closedSeen"].is_null(),"reopened live task clears its old observation without unpinning");
         assert!(task_pin(&mut settings,&dir,&st,&json!({"ref":"invented-missing","pinned":true,"closedSeen":1})).is_err(),"observation never creates another pin");
+        settings.navigation["dashboard"]["pins"].as_array_mut().unwrap().push(json!({"ref":"invented-saved","title":"Unavailable"}));
+        let removed=task_pin(&mut settings,&dir,&st,&json!({"ref":"invented-saved","pinned":false})).expect("F19: unavailable saved pin can be removed by exact reference");
+        assert!(!removed["pins"].as_array().unwrap().iter().any(|p|p["ref"]=="invented-saved"));
         let mut finished=st.clone();finished["projects"][0]["reports"]=json!({"reports":[{"n":9,"title":"Finished task","url":"https://example.org/9"}]});
         assert!(task_pin(&mut settings,&dir,&finished,&json!({"root":root,"task":9,"pinned":true})).unwrap()["pins"].as_array().unwrap().iter().any(|pin|pin["ref"]=="github://github.com/invented/alpha#9"),"Finished header can pin a source-backed closed task");
         let before=settings.navigation.clone();

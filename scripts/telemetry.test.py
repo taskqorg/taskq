@@ -13,7 +13,7 @@ rows = [dict(kind='worker', task=2337, attempt=42, project='invented/repo', host
              runtime='codex', source='work', process_id=12345, operation=e, to='fixture', started_ms=1000)
         for e in events]
 rows.append(dict(kind='transition', task=2337, project='invented/repo', to='closed', started_ms=2000))
-header = dict(sources=dict(universal=dict(samples=7), legacy=dict(samples=0)))
+header = dict(sources=dict(universal=dict(samples=7)))
 
 def run(expected):
     exported = '\n'.join(json.dumps(x) for x in [header] + [dict(observation=o) for o in rows]) + '\n'

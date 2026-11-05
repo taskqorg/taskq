@@ -133,7 +133,7 @@ pub fn uninstall_guard(install:&Path,id:&str,root:&Path)->Res<()> {
     Ok(())
 }
 
-/// Construct a review, not a command. Old PID-only/protocol-less services cannot take this operation.
+/// Construct a review, not a command. Protocol-less services cannot take this operation.
 pub fn review(install:&Path,id:&str)->Res<Value> {review_action(install,id,Action::Restart)}
 pub fn stop_review(install:&Path,id:&str)->Res<Value> {review_action(install,id,Action::Stop)}
 pub fn full_stop_review(install:&Path,id:&str)->Res<Value> {

@@ -1,8 +1,7 @@
-//! Product metadata types and historical conversion at import/export boundaries.
+//! Product metadata types and their shared-store observations.
 use serde_json::{Value,json};
 
 type Res<T> = Result<T,String>;
-pub(super) const KINDS:&[&str]=&["operation","stage","board","transition","requests"];
 
 #[derive(Clone,serde::Serialize)]
 #[serde(untagged)]
@@ -12,17 +11,15 @@ pub(crate) enum Sample {
     Board(crate::profile::BoardOp),
     Transition(crate::profile::Transition),
     Requests(crate::requests::Usage),
-    #[serde(skip)]
-    Corrupt(&'static str),
 }
 
 impl Sample {
     pub(crate) fn kind(&self)->&'static str {
-        match self {Self::Operation(_)=>"operation",Self::Stage(_)=>"stage",Self::Board(_)=>"board",Self::Transition(_)=>"transition",Self::Requests(_)=>"requests",Self::Corrupt(kind)=>kind}
+        match self {Self::Operation(_)=>"operation",Self::Stage(_)=>"stage",Self::Board(_)=>"board",Self::Transition(_)=>"transition",Self::Requests(_)=>"requests"}
     }
     fn validate(&self)->Res<()> {
-        let valid=match self {Self::Operation(r)=>r.valid(),Self::Stage(r)=>r.valid(),Self::Board(r)=>r.valid(),Self::Transition(r)=>r.valid(),Self::Requests(r)=>{r.validate()?;true},Self::Corrupt(_)=>false};
-        if !valid {return Err("invalid legacy profile observation".into());}
+        let valid=match self {Self::Operation(r)=>r.valid(),Self::Stage(r)=>r.valid(),Self::Board(r)=>r.valid(),Self::Transition(r)=>r.valid(),Self::Requests(r)=>{r.validate()?;true}};
+        if !valid {return Err("invalid profile observation".into());}
         Ok(())
     }
     pub(crate) fn canonical(&self)->Res<Value> {
@@ -36,31 +33,8 @@ impl Sample {
         }.map_err(|e|e.to_string())?;
         sample.validate()?;Ok(sample)
     }
-    pub(crate) fn legacy(line:&str)->Res<Self> {
-        let (tag,text)=line.split_once(' ').ok_or("unknown legacy kind")?;
-        let sample=match tag {
-            "taskq-profile"=>serde_json::from_str(text).map(Self::Operation),"taskq-stage"=>serde_json::from_str(text).map(Self::Stage),
-            "taskq-board"=>serde_json::from_str(text).map(Self::Board),"taskq-transition"=>serde_json::from_str(text).map(Self::Transition),
-            "taskq-requests"=>serde_json::from_str(text).map(Self::Requests),_=>return Err("unknown legacy kind".into()),
-        }.map_err(|e|e.to_string())?;
-        sample.validate()?;Ok(sample)
-    }
-    fn archive_iter(text:&str)->impl Iterator<Item=Self>+'_ {
-        text.lines().filter_map(|line| {
-            let (tag,_)=line.split_once(' ')?;
-            let kind=KINDS.iter().copied().find(|kind|prefix(kind).is_ok_and(|p|p==tag))?;
-            Some(Self::legacy(line).unwrap_or(Self::Corrupt(kind)))
-        })
-    }
-    #[cfg(test)]
-    pub(crate) fn archive(text:&str)->Vec<Self> {Self::archive_iter(text).collect()}
-    #[cfg(test)]
-    pub(crate) fn line(&self)->Res<String> {Ok(format!("{} {}",prefix(self.kind())?,self.canonical()?))}
 }
 
-fn canonical(line: &str) -> Res<Value> {
-    if line.starts_with("taskq-requests ") {crate::requests::legacy_value(line)} else {crate::profile::legacy_value(line)}
-}
 fn fields(kind: &str) -> Res<&'static [(&'static str,&'static str)]> {
     Ok(match kind {
         "operation" => &[("op","operation"),("us","duration_us"),("error","error"),("at_ms","started_ms"),("counts","counts")],
@@ -71,16 +45,6 @@ fn fields(kind: &str) -> Res<&'static [(&'static str,&'static str)]> {
         _ => return Err("unknown semantic kind".into()),
     })
 }
-fn prefix(kind: &str) -> Res<&'static str> {
-    match kind {"operation"=>Ok("taskq-profile"),"stage"=>Ok("taskq-stage"),"board"=>Ok("taskq-board"),"transition"=>Ok("taskq-transition"),"requests"=>Ok("taskq-requests"),_=>Err("unknown semantic kind".into())}
-}
-
-pub(super) fn observation(line: &str) -> Res<Value> {
-    let original=canonical(line)?;
-    let kind=match line.split_once(' ').map(|(p,_)|p) {Some("taskq-profile")=>"operation",Some("taskq-stage")=>"stage",Some("taskq-board")=>"board",Some("taskq-transition")=>"transition",Some("taskq-requests")=>"requests",_=>return Err("unknown legacy kind".into())};
-    encode(kind,original)
-}
-
 pub(super) fn encode(kind:&str,original:Value)->Res<Value> {
     let mut value=json!({"product":"taskq","version":null,"kind":kind,"operation":if kind=="requests" {"requests.summary"} else {"queue.transition"},
         "trace":null,"span":null,"started_ms":null,"outcome":"unknown","error":"unknown",
@@ -123,13 +87,8 @@ fn count_key(method:&str,path:&str)->String {
     format!("{method}:{}{unbilled}",path.split('/').map(|s|if s=="*"||s.len()>20 {"ID"} else {s}).collect::<Vec<_>>().join("."))
 }
 
-pub(super) fn encoded_size(kind:&str,original:&Value)->Res<usize> {
-    Ok(prefix(kind)?.len()+2+serde_json::to_vec(original).map_err(|e|e.to_string())?.len())
-}
-
-#[cfg(test)]
-pub(super) fn line(value: &Value) -> Res<String> {
-    decoded(value)?.line()
+pub(super) fn encoded_size(original:&Value)->Res<usize> {
+    Ok(serde_json::to_vec(original).map_err(|e|e.to_string())?.len())
 }
 
 fn decoded(value:&Value)->Res<Sample> {
@@ -154,33 +113,17 @@ fn decoded(value:&Value)->Res<Sample> {
     Sample::decode(kind,Value::Object(original))
 }
 
-/// Consume complete contiguous summary groups from a bounded semantic read; partial groups stay unknown.
-#[cfg(test)]
-pub(super) fn lines(values: &[Value]) -> Res<Vec<String>> {
-    let mut lines=Vec::new();let mut reader=coreq::telemetry::Assembler::default();
-    for value in values {if let Some(value)=reader.push(value.clone())? {lines.push(line(&value)?);}}
-    reader.finish()?;Ok(lines)
-}
-
-/// Compatibility report input from bounded indexed pages, never a scan of generic method payloads.
-pub(super) fn visit_samples(store:Option<&coreq::telemetry::Reader>,kinds:&[&str],archive:&str,mut accept:impl FnMut(usize,Sample))->Res<()> {
+/// Report input from bounded indexed pages, never a scan of generic method payloads. Lane 0 holds rows without a
+/// recorded version (imported history), lane 1 live rows; partial summary groups stay unknown.
+pub(super) fn visit_samples(store:Option<&coreq::telemetry::Reader>,kinds:&[&str],mut accept:impl FnMut(usize,Sample))->Res<()> {
+    let Some(store)=store else {return Ok(())};
     let mut reader=coreq::telemetry::Assembler::default();let mut after=0;
-    if let Some(store)=store {
     loop {
         let page=store.export_kinds(kinds,0,after,1024)?;
-        for row in page["events"].as_array().ok_or("invalid semantic page")? {if let Some(value)=reader.push(row["observation"].clone())? {accept(if value["version"].is_null() {0}else{2},decoded(&value)?);}}
+        for row in page["events"].as_array().ok_or("invalid semantic page")? {if let Some(value)=reader.push(row["observation"].clone())? {accept(usize::from(!value["version"].is_null()),decoded(&value)?);}}
         after=page["next"].as_i64().ok_or("missing semantic cursor")?;if page["more"]==false {break;}
     }
-    reader.finish()?;
-    }
-    for sample in Sample::archive_iter(archive).filter(|s|kinds.contains(&s.kind())) {accept(1,sample);}
-    Ok(())
-}
-
-#[cfg(test)]
-pub(super) fn read(store:&coreq::telemetry::Reader,kinds:&[&str],archive:&str)->Res<String> {
-    let mut lanes:[Vec<Sample>;3]=Default::default();visit_samples(Some(store),kinds,archive,|lane,sample|lanes[lane].push(sample))?;
-    let mut text=String::new();for sample in lanes.into_iter().flatten() {text.push_str(&sample.line()?);text.push('\n');}Ok(text)
+    reader.finish()
 }
 
 #[cfg(test)]

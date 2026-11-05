@@ -104,8 +104,7 @@ const USAGE: &str = "taskq agents
  taskq claim-issue [N] [--json]
  taskq deployed --version V --env E --range A..B [--host H] [--json]
  taskq results [N] [--action open|read|accept|followup|reopen|later|drop|make] [--sha SHA] [--text REASON] [--until UTC] [--page N|--before TIME:N] --json
- taskq reports ... (alias of results)
- taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
+ taskq profile [guide|export|tasks|board|actions|watch|health] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] [--dry-run] [--all] | taskq doctor [--dry-run] [--hosts] [--json] | taskq update [--check]
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
@@ -118,7 +117,7 @@ const USAGE: &str = "taskq agents
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
  taskq balance [claude=N codex=N antigravity=N | --clear]
- taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim primary|any|spillover|pinned-only|labelled|manager-only|none] [--default-runtime claude|codex|antigravity]
+ taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|spillover|labelled|none] [--default-runtime claude|codex|antigravity]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
  taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. | --revoke ID] [--json]
@@ -323,14 +322,8 @@ fn project_value(root: &Path) -> Res<Value> {
 fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
     let str_or = |k: &str, d: &str| v[k].as_str().unwrap_or(d).to_string();
     let secs = |k: &str, d: u64| v[k].as_u64().unwrap_or(d);
-    let h = hostname();
-    let me = std::env::var("TASKQ_HOST").ok().filter(|s| !s.is_empty()).or_else(|| v["hosts"][&h].as_str().map(String::from)).unwrap_or(h);
-    let has = v["has"][&me].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
+    let me = std::env::var("TASKQ_HOST").ok().filter(|s| !s.is_empty()).unwrap_or_else(hostname);
     let limits: BTreeMap<String, u32> = v["limits"].as_object().into_iter().flatten().map(|(k, n)| (k.clone(), n.as_u64().unwrap_or(0) as u32)).collect();
-    let codex = match v[runtime::CODEX_ARGS].as_array() {
-        Some(a) => a.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
-        None => vec!["-s".into(), "danger-full-access".into()],
-    };
     let board = board::kind(&str_or("board", "github"))?;
     let (publish, delivery, delivery_revision) = delivery(&v)?;
     let cfg = Config {
@@ -344,7 +337,7 @@ fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
         delivery_revision,
         me,
         limits,
-        has,
+        has: vec![],
         claim: host::ClaimMode::Any,
         spillover_grace: 300,
         weights: BTreeMap::new(),
@@ -352,12 +345,12 @@ fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
         auto_reroute: false,
         default_runtime: crate::runtime::OWNER.into(),
         routing: labels::routing(&v)?,
-        permission_mode: str_or("permission_mode", "dontAsk"),
-        codex,
+        permission_mode: "dontAsk".into(),
+        codex: vec!["-s".into(), "danger-full-access".into()],
         ttl: secs("ttl", TTL as u64) as i64,
         poll: secs("poll", 60),
-        update_every: secs("update_every", 60),
-        rollback_after: secs("rollback_after", 600),
+        update_every: 60,
+        rollback_after: 600,
         external: v["workspace"].as_str() == Some("external"),
         host_setup: v["host_setup"].as_str().filter(|s| !s.is_empty()).map(String::from),
     };
@@ -1464,7 +1457,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
                     s.project_revision=p.project_revision(&cfg.root,&v).ok();
                     Ok(cap)
                 }
-                None => service::capacity(&v, &cfg.me),
+                None => Err("no host policy; launches held".to_string()),
             }});
         if let Err(e) = &cap {
             log!("capacity: {e}; launches held");
@@ -1893,7 +1886,7 @@ struct CapEdit {
     /// `admission.max`: `Some(None)` removes it
     max: Option<Option<u32>>,
     limits: BTreeMap<String, u32>,
-    /// runtimes whose `capacity_hosts` limit override goes (resource policy `runtime_limit: null`)
+    /// runtimes whose host limit goes (`runtime_limit: null`)
     unset: std::collections::BTreeSet<String>,
     gate: Option<bool>,
     cpu_max: Option<u32>,
@@ -1942,56 +1935,6 @@ impl CapEdit {
 }
 
 use service::RUNTIMES;
-
-/// `taskq.json` text with `e` applied to `host` (§ 9): only that host's `capacity_hosts` entry changes, other keys
-/// and their order stay. `expect`: the capacity the owner saw; a different current one is a concurrent edit.
-fn edit_capacity(text: &str, host: &str, me: &str, e: &CapEdit, expect: Option<&Value>) -> Res<String> {
-    let mut v: Value = serde_json::from_str(text).map_err(|e| format!("taskq.json: {e}"))?;
-    let known = host == me || v["hosts"].as_object().is_some_and(|h| h.values().any(|n| n == host));
-    if !known {
-        return Err(format!("unknown host {host}: use this host ({me}) or a name in hosts"));
-    }
-    let old = service::capacity(&v, host)?;
-    if expect.is_some_and(|x| *x != old.json()) {
-        return Err("capacity changed since it was shown; nothing written".into());
-    }
-    if e.is_empty() {
-        return Err("nothing to change: give --mode, --max, --claude, --codex, --antigravity, --codex-app, --load-gate, --cpu-max or --memory-min".into());
-    }
-    if let Some(rt) = e.limits.keys().chain(&e.unset).find(|k| !RUNTIMES.contains(&k.as_str())) {
-        return Err(format!("unknown runtime {rt}"));
-    }
-    if !v["capacity_hosts"].is_object() {
-        v["capacity_hosts"] = json!({});
-    }
-    let h = &mut v["capacity_hosts"][host];
-    for (rt, n) in &e.limits {
-        h["limits"][rt] = json!(n);
-    }
-    for rt in &e.unset {
-        if let Some(l) = h["limits"].as_object_mut() {
-            l.remove(rt);
-        }
-    }
-    if e.mode.is_some() || e.max.is_some() {
-        // the host's object replaces the top-level one (§ 9): carry the unedited field over
-        h["admission"] = json!({"mode": if e.mode.unwrap_or(old.auto) { "auto" } else { "fixed" }});
-        if let Some(m) = e.max.unwrap_or(old.max) {
-            h["admission"]["max"] = json!(m);
-        }
-    }
-    if e.gate.is_some() || e.cpu_max.is_some() || e.memory_min.is_some() {
-        let g = old.gate;
-        h["load_gate"] = json!({"enabled": e.gate.unwrap_or(g.enabled), "cpu_max": e.cpu_max.unwrap_or(g.cpu_max), "memory_min": e.memory_min.unwrap_or(g.memory_min)});
-    }
-    service::capacity(&v, host)?;
-    // keep the file's indent
-    let indent = text.lines().nth(1).map(|l| l.len() - l.trim_start().len()).filter(|n| *n > 0).unwrap_or(2);
-    let (mut out, pad) = (vec![], " ".repeat(indent));
-    let mut ser = serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(pad.as_bytes()));
-    serde::Serialize::serialize(&v, &mut ser).map_err(|e| e.to_string())?;
-    Ok(String::from_utf8_lossy(&out).into_owned() + if text.ends_with('\n') { "\n" } else { "" })
-}
 
 fn cap_changes(old: &service::Capacity, new: &service::Capacity) -> String {
     let mut out = vec![];
@@ -2985,10 +2928,7 @@ fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<St
 /// `taskq service check [--json]` (§ 6): reads only; the board answers open tasks and the PR route when it opens.
 fn setup_check_cmd(root: &Path, json_out: bool) -> Res<()> {
     let (cfg, raw, delivery) = check_load(root)?;
-    let limits = match host::Policy::read(&cfg.install) {
-        Ok(p) => p.project(&cfg.root, &raw).map(|c| c.limits),
-        Err(_) => service::capacity(&raw, &cfg.me).map(|c| c.limits),
-    }.unwrap_or_else(|_| cfg.limits.clone());
+    let limits = host::Policy::read(&cfg.install).and_then(|p| p.project(&cfg.root, &raw)).map_or_else(|_| cfg.limits.clone(), |c| c.limits);
     let access = policy::report(&cfg.install, &cfg.root, &cfg.permission_mode, &cfg.codex);
     let (open, route) = match cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install)) {
         Ok(b) => (b.issues(None).ok().map(|v| v.into_iter().filter(service::is_task).map(|i| (i.number, i.labels)).collect()),
@@ -3395,10 +3335,6 @@ fn run(argv: &[String]) -> Res<()> {
     }
     match cmd {
         "profile" => match a.pos.get(1) {
-            Some(v) if v=="migrate" => {
-                let count=telemetry::migrate(&platform::default_install())?;
-                println!("Migrated {count} legacy records; original receipt clocks and source archive preserved");Ok(())
-            }
             Some(v) if v=="diagnose" => {
                 let pid=a.need("pid")?.parse().map_err(|_|"invalid --pid")?;
                 let period=a.one("duration-ms").unwrap_or("60000").parse().map_err(|_|"invalid --duration-ms")?;
@@ -3526,7 +3462,7 @@ fn run(argv: &[String]) -> Res<()> {
         "tray" => tray(platform::default_install(), a.one("snapshot"), a.one("open").is_some(), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
         "" => Err("command missing; use `taskq help`".into()),
         "status" if !a.flags.contains_key("closed") => status_all(&a),
-        "reports"|"results" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
+        "results" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
         _ => command(&ctx()?, cmd, &a),
     }
 }
@@ -3992,7 +3928,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         return Err("--revision names one task".into());
     }
     match cmd {
-        "reports"|"results" => {
+        "results" => {
             let value=match reports::read_cli(root,a)? {
                 Some(value)=>value,
                 None=>reports::act_with_reason(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"),a.one("text").unwrap_or(""),a.one("until"))?

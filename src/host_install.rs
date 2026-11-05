@@ -383,13 +383,9 @@ fn restore_files(install:&Path,folder:&Path,baseline:&Baseline)->Res<()> {
 }
 
 fn native_owner(install:&Path)->Res<Option<coreq::process::Identity>> {
-    match service_record(install)? {
-        None=>Ok(None),Some(OwnerRecord::Legacy(_))=>Err("legacy host owner requires migration; installation refused".into()),
-        Some(OwnerRecord::Current(r))=>{
-            let expected=coreq::process::Identity {pid:r.pid,started:r.started};
-            Ok(coreq::process::identity(r.pid).map_err(|e|e.to_string())?.filter(|native|native==&expected))
-        },
-    }
+    let Some(r)=service_record(install)? else {return Ok(None)};
+    let expected=coreq::process::Identity {pid:r.pid,started:r.started};
+    Ok(coreq::process::identity(r.pid).map_err(|e|e.to_string())?.filter(|native|native==&expected))
 }
 
 fn context(p:&Pending)->Res<String> {
@@ -435,6 +431,7 @@ fn acknowledge(install:&Path,expected:&Pending)->Res<bool> {
 pub fn install_project(install:&Path,root:&Path)->Res<String> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot install the host service".into());}
     preflight(install,root)?;
+    crate::host::seed_policy(install)?;
     upgrade(install,root)?;
     install_bound(install,root,None)
 }

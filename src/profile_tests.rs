@@ -309,7 +309,7 @@
             fs::create_dir_all(&bad_dir).unwrap();
             let bad = format!("{PREFIX}{corrupt}\n");
             fs::write(bad_dir.join("taskq.log"), &bad).unwrap();
-            assert!(report(&bad_dir).starts_with("Profile: unknown"));
+            assert!(!report(&bad_dir).contains("secret"), "retired log text stays unread");
             assert_eq!(fs::read_to_string(bad_dir.join("taskq.log")).unwrap(), bad);
         }
         let held = log_lock(&path).unwrap();
@@ -442,9 +442,6 @@ Changed: x"))];
         assert!(text.contains("| review | claude | 2 | 4.000/4.000/4.000 (1 of 2 timed; adopted) | ok:2 | 1 (1 of 2 known; adopted) | unknown (adopted, no-usage) |"), "{text}");
         assert!(text.contains("| claim | other | 1 | 3.000/3.000/3.000 | failed http5xx:1 | none (no model) | none (no model) |"), "{text}");
         assert!(text.contains("| review | codex | 1 | 6.000/6.000/6.000 | unknown left-board:1 |"), "{text}");
-        fs::write(&path, format!("{log}{STAGE_PREFIX}{{\"stage\":\"lunch\"}}\n")).unwrap();
-        assert!(report(&dir).contains("legacy telemetry awaits service import"));
-        assert_eq!(fs::read_to_string(&path).unwrap(),format!("{log}{STAGE_PREFIX}{{\"stage\":\"lunch\"}}\n"));
         drop(_guard);drop(_capture);fs::remove_dir_all(dir).unwrap();
     }
     // Chain: #1174 retained records -> `profile export` (header, one row per observation) -> `profile tasks` and `profile board`.
@@ -471,14 +468,13 @@ Changed: x"))];
             t(Some("o/a"), 10, "ready", "doing", Some(50), Some("codex"), Some("lin"), 134),
             t(Some("o/b"), 5, "ready", "doing", Some(20), Some("codex"), Some("win"), 110),
             b("list", 4000, None, Some(4900), 100), b("list", 2000, Some("http5xx"), Some(4100), 101), b("claim", 1000, None, None, 102),
-            format!("{BOARD_PREFIX}{{\"op\":\"lunch\"}}\n"),
             format!("{PREFIX}{}\n", serde_json::to_string(&Record { op: "spawn".into(), us: 7, error: "none".into(), at_ms: Some(140), trace: None, counts: None }).unwrap()),
             format!("{STAGE_PREFIX}{}\n", serde_json::to_string(&Stage { host: None, open: false, project: Some("o/a".into()), stage: "build".into(), task: 5, attempt: 9, rt: "codex".into(),
                 us: Some(5), outcome: "ok".into(), error: "none".into(), at_ms: Some(150), calls: None, tokens: Some(3), input_tokens: Some(1), cache_read_tokens: Some(2), cache_write_tokens: Some(0), model: None, output_tokens: Some(2), unknown: None }).unwrap()),
         ].concat();
         let text = export(&log, Some(100));
         let mut lines = text.lines();
-        assert_eq!(lines.next().unwrap(), format!(r#"{{"schema":3,"columns":{},"since_ms":100,"window_ms":[100,150],"samples":16,"corrupt":1}}"#, serde_json::to_string(&COLUMNS).unwrap()));
+        assert_eq!(lines.next().unwrap(), format!(r#"{{"schema":3,"columns":{},"since_ms":100,"window_ms":[100,150],"samples":16,"corrupt":0}}"#, serde_json::to_string(&COLUMNS).unwrap()));
         let first: serde_json::Map<String, serde_json::Value> = serde_json::from_str(lines.next().unwrap()).unwrap();
         assert_eq!(first.keys().collect::<Vec<_>>(), COLUMNS.iter().collect::<Vec<_>>());
         assert_eq!(serde_json::Value::Object(first), serde_json::json!({"kind":"transition","at_ms":100,"project":"o/a","task":5,"attempt":null,"entry":100,"name":null,
@@ -487,7 +483,7 @@ Changed: x"))];
         assert!(text.contains(r#""tokens":3,"input_tokens":1,"cache_read_tokens":2,"cache_write_tokens":0,"model":null,"output_tokens":2"#), "{text}");
         assert!(!text.contains("999"), "a record before the window is not exported");
         let tasks = render_tasks(&text).unwrap();
-        assert!(tasks.contains("Window: 100..150 Unix ms (since 100); 16 samples, 1 corrupt skipped; earlier/pruned history unknown
+        assert!(tasks.contains("Window: 100..150 Unix ms (since 100); 16 samples, 0 corrupt skipped; earlier/pruned history unknown
 Transitions: 9 unique of 11 rows"), "{tasks}");
         assert!(tasks.contains("| doing | codex | win | 1 | 300.000/300.000/300.000 |
 | doing | claude | mac | 2 | 100.000/100.000/100.000 (1 of 2 known; no entry time) |
@@ -578,26 +574,24 @@ not an event
     fn append(_path:&Path,r:&Record)->std::io::Result<()> {
         crate::telemetry::record(crate::telemetry::Sample::Operation(r.clone()))
     }
-    /// Historical compatibility input used by the regression fixtures, never by a live producer.
+    /// Fixture text through the live producer path.
     pub(crate) fn append_line(_path: &Path, line: &str) -> std::io::Result<()> {
-        crate::telemetry::observe(line).map_err(std::io::Error::other)
+        crate::telemetry::record(Sample::fixture(line.trim_end()).map_err(std::io::Error::other)?)
     }
     impl Summary {
-        fn fixture(text:&str)->Self {let mut summary=Self::new();for sample in Sample::archive(text) {summary.push(0,sample);}summary.finish();summary}
+        fn fixture(text:&str)->Self {let mut summary=Self::new();for sample in Sample::fixtures(text) {summary.push(0,sample);}summary.finish();summary}
     }
-    /// Committed universal observations and the read-only historical archive.
+    /// Committed universal observations as fixture text.
     pub(crate) fn read_log(install: &Path) -> Result<String, String> {
-        crate::telemetry::report_input(install)
-    }
-    pub(crate) fn legacy_reports(text: &str, now: u64) -> Result<Vec<String>,String> {
-        let exported=export(text,None);let (board,moves)=render_system(text);
-        Ok(vec![render(text)?,render_stages(text)?,board,moves,exported.clone(),render_tasks(&exported)?,render_board(&exported)?,defects(text,&vec![],None,now,300)?.0,crate::requests::tests::sources(text,now)])
+        let mut text=String::new();
+        for sample in crate::telemetry::report_samples(install,Sample::KINDS)? {text.push_str(&sample.line()?);text.push('\n');}
+        Ok(text)
     }
     fn report_rows(samples:&[Sample],since_ms:Option<u64>)->(Header,Vec<Row>) {
         let mut projection=Projection::new(since_ms,None);for sample in samples {projection.push(0,sample.clone());}projection.finish()
     }
     fn export(text:&str,since_ms:Option<u64>)->String {
-        let (h,rows)=report_rows(&Sample::archive(text),since_ms);
+        let (h,rows)=report_rows(&Sample::fixtures(text),since_ms);
         let mut out = serde_json::to_string(&h).unwrap() + "\n";
         for r in rows { out += &(serde_json::to_string(&r).unwrap() + "\n"); }
         out
@@ -609,9 +603,8 @@ not an event
         Ok((h, rows))
     }
     fn render(text:&str)->Result<String,&'static str> {render_summary(&Summary::fixture(text))}
-    fn render_stages(text:&str)->Result<String,&'static str> {render_stages_samples(&Sample::archive(text))}
     fn render_system(text:&str)->(String,String) {render_system_summary(&Summary::fixture(text))}
-    fn unresolved(text:&str)->Result<Vec<Stage>,String> {unresolved_samples(&Sample::archive(text))}
-    fn defects(text:&str,live:&Live,project:Option<&str>,now:u64,ttl:u64)->Result<(String,usize),String> {defects_samples(&Sample::archive(text),live,project,now,ttl)}
+    fn unresolved(text:&str)->Result<Vec<Stage>,String> {unresolved_samples(&Sample::fixtures(text))}
+    fn defects(text:&str,live:&Live,project:Option<&str>,now:u64,ttl:u64)->Result<(String,usize),String> {defects_samples(&Sample::fixtures(text),live,project,now,ttl)}
     fn render_tasks(text:&str)->Result<String,&'static str> {let (h,rows)=read_export(text)?;render_tasks_rows(&h,&rows)}
     fn render_board(text:&str)->Result<String,&'static str> {let (h,rows)=read_export(text)?;render_board_rows(&h,&rows)}

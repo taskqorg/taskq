@@ -979,7 +979,7 @@ const cutover='https://github.com/taskqorg/taskq/blob/main/taskq.md#9-config-and
 
 // Capacity (taskq.md § 4): the shared resource controls (docs/design/shared-resource-controls.md) over the tray's
 // taskq.resources/1 projection; this adapter only maps an operation onto `service capacity` and its receipt
-const workPageFor=p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('p',{role:'status'},'Legacy capacity editor unavailable; refresh host status.');
+const workPageFor=p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('p',{role:'status'},'Capacity editor unavailable; refresh host status.');
 const resourceCards=new Map(),resourceRequests=new Map(),resourcePayloads=new Map();
 
 // Balancing (menu M12): the shared editor over this host's projects; only the explicitly selected ones change
