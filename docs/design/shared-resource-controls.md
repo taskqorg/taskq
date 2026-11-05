@@ -164,7 +164,7 @@ Shared fixtures cover legacy and Auto modes, mixed targets, zero/absent limits, 
 
 `src/resource-controls.js`: the build derives its SHA-256 in `task-workspace.sources.json` (taskq.md §7, #1841); release integrity uses `SHA256SUMS`.
 `src/resource-controls.css` SHA-256: `9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907`
-`tests/fixtures/resource-controls.json` SHA-256: `a1637498fa9fcc346c7280186386b7a3d9d96aa09c38f8c27bd9a81e8d6fcbe9`
+`tests/fixtures/resource-controls.json` SHA-256: `f516b2496a7ce90e747b901de0c7c8728a48b8523549eb5f57fef1814402badc`
 
 B4 parent-to-child map: parent design `75757d5d843159726a2ea44ca1615f9cf7fd18fd` ([menu-next variants](../../tests/fixtures/design/menu-next-variants.html) `resourceEditor`, [menu M12](menu.md)); child tray Capacity places the shared component under its existing summary without restyling it; child Balancing (`◎ Balancing…` on home and project pages) is a page of the same component. The parent's project aggregate cap and load window stay absent until a producer advertises them.
 

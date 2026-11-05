@@ -987,7 +987,7 @@ impl Gate {
         let mut r = vec![];
         match self.last {
             None => r.push(("sample", "no sample yet".to_string())),
-            Some((at, ..)) if now.saturating_sub(at) > 60 => r.push(("sample", format!("last sample {} s old", now - at))),
+            Some((at, ..)) if now.saturating_sub(at) > 60 => r.push(("sample", format!("last sample {} ago", crate::time::age((now - at) as i64)))),
             Some((_, _, cpu, mem)) => {
                 match cpu {
                     None => r.push(("sample", "no CPU reading yet".into())),
@@ -1490,7 +1490,7 @@ impl<'a> Service<'a> {
             reasons.push(("focus", self.focus_error.clone().unwrap_or_else(|| FOCUS_OFF.into())));
         }
         reasons.extend(self.refused_access.iter().map(|(rt, r)| ("access", format!("{rt}: {r}"))));
-        reasons.extend(self.limited.keys().map(|rt| ("usage-limit", format!("{rt}: {}", self.limit_line(rt)))));
+        reasons.extend(self.limited.keys().map(|rt| ("usage-limit", format!("{rt}: {}", self.limit_text(rt)))));
         reasons.extend(self.logged_out.iter().map(|rt| ("login", format!("{rt}: not logged in; {}", crate::runtime::relogin(rt)))));
         let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
         if accounts.error.is_some() { gate="unknown"; }
@@ -1613,7 +1613,7 @@ impl<'a> Service<'a> {
             let (next, hold) = if local { self.account_limit(n, t, a, rt, hold, now) } else { (None, hold) };
             if local && next.is_none() { self.limited.insert(rt.to_string(), hold); }
             let next = next.map(|l| format!("; next account {l}")).unwrap_or_default();
-            let reason = format!("Usage limit: {rt} {} {}{next}", if reported { "until" } else { "probe" }, crate::board::stamp(at));
+            let reason = format!("Usage limit: {rt} {} {}{next}", if reported { "until" } else { "probe" }, crate::time::utc(at));
             self.gone(n, t, a, &["usage-limit"], &reason)
         } else if local && matches!(t.state,State::Doing|State::Review) && rt_of(t).is_some_and(|(rt,_)| crate::runtime::CLI_RUNTIMES.contains(&rt))
             && !crate::runtime::quota_windows(&crate::runtime::attempt_log(&self.cfg.root,t.role.as_deref().unwrap_or_default(),n,a),rt_of(t).unwrap().0).is_empty() {
@@ -1690,7 +1690,7 @@ impl<'a> Service<'a> {
         match t.attempt.filter(|_| t.state == State::Doing && host_of(&t) == Some(self.cfg.me.as_str())) {
             Some(a) => {
                 if !issue.open { self.board.reopen(n)?; }
-                let at = issue.closed.map_or_else(|| "an unknown time".to_string(), crate::board::stamp);
+                let at = issue.closed.map_or_else(|| crate::time::UNKNOWN.to_string(), crate::time::utc);
                 self.post(n, core::entry("ask", &[], Some(a), &closed_card(n, &at)))?;
                 Ok(true)
             }
@@ -1838,9 +1838,14 @@ impl<'a> Service<'a> {
         }
     }
 
+    /// The hold of a runtime as people read it; [`Self::limit_line`] is its heartbeat form.
+    fn limit_text(&self, rt: &str) -> String {
+        self.limited.get(rt).map(|(at, reset)| format!("{} {}", if *reset { "until" } else { "probe" }, crate::time::utc(*at))).unwrap_or_default()
+    }
+
     /// `until <time>` for a reported reset, else `probe <time>`, of a held runtime.
     fn limit_line(&self, rt: &str) -> String {
-        self.limited.get(rt).map(|(at, reset)| format!("{} {}", if *reset { "until" } else { "probe" }, crate::board::stamp(*at))).unwrap_or_default()
+        self.limited.get(rt).map(|(at, reset)| format!("{} {}", if *reset { "until" } else { "probe" }, crate::time::stamp(*at))).unwrap_or_default()
     }
 
     /// #2263: one `headroom <rt> <cause>` line per weighted runtime whose load has no headroom fraction.
@@ -2566,7 +2571,7 @@ impl<'a> Service<'a> {
                 continue;
             }
             // § 2 timed park: at its board time the service requeues it; one op id per park, so hosts write it once
-            if v.projection.task.state == State::Later && let Some(until) = v.projection.task.until.as_deref().filter(|u| crate::board::iso(u).is_some_and(|at| at <= now)) {
+            if v.projection.task.state == State::Later && let Some(until) = v.projection.task.until.as_deref().filter(|u| crate::time::iso(u).is_some_and(|at| at <= now)) {
                 let rev = v.projection.revision;
                 let op = crate::dispatch::Op { id: Some(format!("wake-{rev}")), revision: Some(rev) };
                 let r = crate::dispatch::act(self.board, &self.cfg.root, n, "requeue", &[], &format!("Reason: Timed park ended at {until}."), &op);
@@ -3079,7 +3084,7 @@ impl<'a> Service<'a> {
         })).collect();
         for (n, (last, state, a)) in &stuck {
             if self.stuck.insert(*n, *last) != Some(*last) {
-                self.log.push(format!("#{n} event stuck {state} {}", crate::display::age(*a)));
+                self.log.push(format!("#{n} event stuck {state} {}", crate::time::age(*a)));
             }
         }
         self.stuck.retain(|n, _| stuck.contains_key(n) || self.progress.iter().any(|((task,_,_),p)|task==n && p.2));
@@ -3246,10 +3251,10 @@ impl<'a> Service<'a> {
         if accounts.off(rt,self.board.now().map_err(|e| ("unknown",e.to_string()))?) {return Err(("capability",format!("{rt}: {}",accounts.off_reason(rt))));}
         if accounts.active(rt, self.board.now().map_err(|e| ("unknown",e.to_string()))?).is_none() {
             if let Some(hold) = accounts.hold(rt, self.board.now().map_err(|e| ("unknown",e.to_string()))?) {
-                return Err(("usage-limit",format!("{rt}: {} {}; account quotas {}", if hold.1 {"until"} else {"probe"},crate::board::stamp(hold.0),accounts.heartbeat(self.board.now().unwrap_or(0)).join("; "))));
+                return Err(("usage-limit",format!("{rt}: {} {}; account quotas {}", if hold.1 {"until"} else {"probe"},crate::time::utc(hold.0),accounts.heartbeat(self.board.now().unwrap_or(0)).join("; "))));
             }
         }
-        if self.limited.contains_key(rt) { return Err(("usage-limit", format!("{rt}: {}", self.limit_line(rt)))); }
+        if self.limited.contains_key(rt) { return Err(("usage-limit", format!("{rt}: {}", self.limit_text(rt)))); }
         if self.logged_out.contains(rt) { return Err(("login", format!("{rt}: not logged in"))); }
         if gui && !self.full.contains(rt) { return Err(("capability", format!("needs-gui: {rt} has no effective Full grant"))); }
         if self.cap.as_ref().is_ok_and(|c|c.limits.get(rt)==Some(&0)) {return Err(("capacity",format!("{rt} disabled (limit 0)")));}

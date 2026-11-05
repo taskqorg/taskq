@@ -66,7 +66,7 @@ use crate::runtime::Cap;
         assert!(call.contains("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist") && call.contains("Bearer tok"), "{call}");
 
         use base64::Engine;
-        let now = crate::board::iso("2026-11-04T10:00:00").unwrap();
+        let now = crate::time::iso("2026-11-04T10:00:00").unwrap();
         let file = r#"{"token":{"access_token":"ya29.a-b_c","refresh_token":"never-used","expiry":"2026-11-04T11:00:00.5+00:00"}}"#;
         assert_eq!(agy_token(file, now).as_deref(), Ok("ya29.a-b_c"));
         let keyring = format!("go-keyring-base64:{}", base64::engine::general_purpose::STANDARD.encode(file));
@@ -85,7 +85,7 @@ use crate::runtime::Cap;
     #[test]
     fn model_windows_survive_poll_to_heartbeat() {
         let d = dir("model-windows");
-        let reset = crate::board::stamp(NOW + 3600);
+        let reset = crate::time::stamp(NOW + 3600);
         let claude = serde_json::json!({"seven_day": {"utilization": 34, "resets_at": reset}, "seven_day_fable": null,
             "limits": [{"group": "weekly", "percent": 2, "resets_at": reset, "scope": {"model": {"display_name": "Fable"}}}]});
         let summary = serde_json::json!({"groups": [
@@ -200,8 +200,8 @@ use crate::runtime::Cap;
             let Some(w) = line.strip_prefix("limit ") else { continue };
             let w: Vec<&str> = w.split(' ').collect();
             let [rt, _, "id", row_id, "window", name, "used", used, "reset", reset, "at", at] = w.as_slice() else { continue };
-            let (Some(at), Ok(used)) = (crate::board::iso(at), used.parse::<u8>()) else { continue };
-            let reset = if *reset == "-" { None } else { crate::board::iso(reset) };
+            let (Some(at), Ok(used)) = (crate::time::iso(at), used.parse::<u8>()) else { continue };
+            let reset = if *reset == "-" { None } else { crate::time::iso(reset) };
             if *rt == "claude" && *row_id == want && fresh(at, reset, now) && windows.get(*name).is_none_or(|(old, _)| *old < at) {
                 windows.insert(name.to_string(), (at, 100 - used));
             }
@@ -244,7 +244,7 @@ use crate::runtime::Cap;
         assert!(View::read(&d).observed.get("claude").is_none(), "rollback: no partial observation is left for the old binary's headroom");
         let row = Row::parse(&lines[0]).unwrap();
         assert_eq!((row.id.as_deref(), &row.usage), (Some(account.as_str()), &Usage::Partial { window: partial.windows[0].clone(), at: now }), "this reader keeps the window, its identity and its time");
-        assert_eq!(row.text(), format!("seven_day used 43% reset {}", crate::board::stamp(partial.windows[0].reset.unwrap())));
+        assert_eq!(row.text(), format!("seven_day used 43% reset {}", crate::time::utc(partial.windows[0].reset.unwrap())));
         assert_eq!(row.line(), lines[0]);
         assert_eq!(View::read(&d).lines("claude", "default", true, now + TTL + 1).len(), 1, "a partial row expires with its poll");
 
@@ -418,7 +418,7 @@ use crate::runtime::Cap;
         }).unwrap();
         poll(Some(fingerprint("project-1")), 30);
         let lines = Host::read(&d).usage_lines(NOW);
-        let row = format!("limit {rt} default id {} window gemini-5h used 30 reset - at {}", fingerprint("project-1"), crate::board::stamp(NOW));
+        let row = format!("limit {rt} default id {} window gemini-5h used 30 reset - at {}", fingerprint("project-1"), crate::time::stamp(NOW));
         assert_eq!(lines.iter().filter(|l| at(l)).cloned().collect::<Vec<_>>(), [row]);
         assert_eq!(Host::read(&d).active(rt, NOW).as_deref(), Some(accounts::DEFAULT));
         let rows = Host::read(&d).rows("h", NOW, |_, _| None);
@@ -459,12 +459,12 @@ use crate::runtime::Cap;
         let v = serde_json::json!({"five_hour": {"utilization": 12.4, "resets_at": "2026-11-04T10:00:00.123456+00:00"}, "seven_day": {"utilization": 100.0, "resets_at": null},
             "seven_day_opus": null, "extra_usage": {"utilization": 90.0}});
         assert_eq!(oauth_windows(&v).unwrap().windows, [
-            Window { name: "five_hour".into(), used: 12, reset: crate::board::iso("2026-11-04T10:00:00Z") },
+            Window { name: "five_hour".into(), used: 12, reset: crate::time::iso("2026-11-04T10:00:00Z") },
             Window { name: "seven_day".into(), used: 100, reset: None },
         ], "credits and empty windows are no window");
         assert_eq!(oauth_windows(&serde_json::json!({"renamed": {"utilization": 1}})), Err("usage shape changed"));
-        assert_eq!(utc("2026-11-04T10:00:00+02:00"), crate::board::iso("2026-11-04T08:00:00Z"));
-        assert_eq!(utc("2026-11-04T10:00:00Z"), crate::board::iso("2026-11-04T10:00:00Z"));
+        assert_eq!(utc("2026-11-04T10:00:00+02:00"), crate::time::iso("2026-11-04T08:00:00Z"));
+        assert_eq!(utc("2026-11-04T10:00:00Z"), crate::time::iso("2026-11-04T10:00:00Z"));
         assert_eq!(utc("soon"), None);
 
         let token = |extra: &str| format!(r#"{{"claudeAiOauth":{{"accessToken":"sk-a_b.c"{extra}}}}}"#);
@@ -528,7 +528,7 @@ for line in sys.stdin:
         let lines = h.usage_lines(NOW);
         let text = lines.join("\n");
         assert!(!text.contains('@') && !text.contains("example.com") && !text.contains("sk-"), "{text}");
-        let stamp = crate::board::stamp;
+        let stamp = crate::time::stamp;
         assert!(lines.contains(&format!("limit codex work id {} window 10080m used 1 reset {} at {}", id("work"), stamp(NOW + 3600), stamp(NOW))), "{text}");
         assert!(lines.contains(&format!("limit codex default id {} unknown token expired", id("default"))), "{text}");
         assert!(lines.contains(&"limit codex old id - unknown disabled".to_string()), "{text}");

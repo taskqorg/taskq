@@ -325,10 +325,10 @@
         // #1979: a Later without a future revisit date is no decision and writes nothing.
         let count=b.comments(n).unwrap().len();let now=b.now().unwrap();
         assert!(owner_act_until(&b,&root,&raw,n,&sha,"later",None).unwrap_err().contains("--until"));
-        assert!(owner_act_until(&b,&root,&raw,n,&sha,"later",Some(&crate::board::stamp(now))).unwrap_err().contains("future"));
-        assert!(owner_act_until(&b,&root,&raw,n,&sha,"drop",Some(&crate::board::stamp(now+60))).is_err(),"--until only with Later");
+        assert!(owner_act_until(&b,&root,&raw,n,&sha,"later",Some(&crate::time::stamp(now))).unwrap_err().contains("future"));
+        assert!(owner_act_until(&b,&root,&raw,n,&sha,"drop",Some(&crate::time::stamp(now+60))).is_err(),"--until only with Later");
         assert_eq!(b.comments(n).unwrap().len(),count);
-        let until=crate::board::stamp(now+3600);
+        let until=crate::time::stamp(now+3600);
         assert_eq!(owner_act_until(&b,&root,&raw,n,&sha,"later",Some(&until)).unwrap()["report"]["later_until"],until.as_str());
         assert_eq!(list(&b,1).unwrap()["reports"][0]["closed"],45);
         let missing=owner_act_until(&b,&root,&json!({}),n,&sha,"make",None).unwrap();assert!(missing["reason"].as_str().unwrap().contains("create_claim_issue"));
@@ -355,7 +355,7 @@
             let mut cs=comments.clone();cs.extend_from_slice(extra);
             let mut r=project(&i,closed,&cs,format!("invented/{n}")).unwrap();r["body"]=json!(body);r
         };
-        let now=10_000;let at=|t:i64|crate::board::stamp(t);
+        let now=10_000;let at=|t:i64|crate::time::stamp(t);
         let rows=vec![
             row(5,300,&["verdict-refuted"],&[]),
             row(6,100,&[],&[marker(4,format!("taskq: report-read {sha}"))]),

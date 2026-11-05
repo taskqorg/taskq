@@ -411,7 +411,7 @@ impl<'a> ProjectLoop<'a> {
         if budget.low() && self.low_logged != Some(budget.reset) {
             let (top, n) = budget.top(&self.hour.1).unwrap_or(("none".into(), 0));
             log!("board budget low: {}/{}{} until {}; top here: {top} {n}", budget.remaining.unwrap_or(0), budget.limit.unwrap_or(0),
-                budget.resource.as_deref().map(|r| format!(" {r}")).unwrap_or_default(), budget.reset.map_or("unknown".into(), board::stamp));
+                budget.resource.as_deref().map(|r| format!(" {r}")).unwrap_or_default(), budget.reset.map_or(crate::time::UNKNOWN.into(), crate::time::utc));
             self.low_logged = Some(budget.reset);
         }
         if self.host.is_none() && self.hour.0.elapsed().as_secs() >= 3600 {

@@ -450,7 +450,7 @@ fn recommendation(body:&str)->Option<String> {
 pub fn decide(value:&Value,now:i64)->Value {
     let mut rows:Vec<&Value>=value["reports"].as_array().into_iter().flatten().filter(|r|r["kind"]!="task"&&r["visible"]==true&&r["pending_decision"].is_null()
         &&matches!(r["decision"].as_str(),Some("none"|"later"))
-        &&!(r["decision"]=="later"&&r["later_until"].as_str().and_then(crate::board::iso).is_some_and(|at|at>now))).collect();
+        &&!(r["decision"]=="later"&&r["later_until"].as_str().and_then(crate::time::iso).is_some_and(|at|at>now))).collect();
     rows.sort_by_key(|r|(r["closed"].as_i64().unwrap_or(0),r["n"].as_u64().unwrap_or(0)));
     let rows:Vec<Value>=rows.into_iter().map(|r|json!({"n":r["n"],"title":r["title"],"url":r["url"],"sha":r["sha"],"verdict":r["experiment_verdict"].as_str().unwrap_or("unknown"),
         "closed":r["closed"],"age_s":(now-r["closed"].as_i64().unwrap_or(now)).max(0),"recommendation":r["body"].as_str().and_then(recommendation),"later_until":r["later_until"]})).collect();
@@ -517,7 +517,7 @@ pub(crate) fn owner_act_until(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,
     if prior["visible"]==false {return Ok(json!({"report":prior}));}
     // #1979 Decide: a Later without a revisit date is not a decision.
     if action=="later" {
-        let at=until.filter(|u|crate::core::utc(u)).and_then(crate::board::iso).ok_or("Later needs --until YYYY-MM-DDTHH:MM:SSZ, the revisit date")?;
+        let at=until.filter(|u|crate::core::utc(u)).and_then(crate::time::iso).ok_or("Later needs --until YYYY-MM-DDTHH:MM:SSZ, the revisit date")?;
         if at<=b.now()? {return Err("Later's revisit date must be in the future".into());}
     }
     if matches!(action,"read"|"accept"|"later"|"drop") {

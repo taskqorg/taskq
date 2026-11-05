@@ -189,14 +189,14 @@ impl Budget {
     pub fn json(&self, since: u64, hour: Option<&BTreeMap<String, u64>>, start: &BTreeMap<String, u64>) -> Value {
         if let Some(reason) = &self.unknown { return json!({"reason": reason, "since": since, "total": null, "ops": null, "last_hour": null}); }
         json!({"since": since, "total": self.total(), "ops": self.ops, "last_hour": hour, "remaining": self.remaining, "limit": self.limit, "resource": self.resource,
-            "reset": self.reset.map(crate::board::stamp), "top": self.top(start).map(|(op, n)| format!("{op} {n}")),
-            "paused_until": self.paused_until().map(crate::board::stamp)})
+            "reset": self.reset.map(crate::time::stamp), "top": self.top(start).map(|(op, n)| format!("{op} {n}")),
+            "paused_until": self.paused_until().map(crate::time::stamp)})
     }
 }
 
 /// The refusal of a paused request: names the reset in UTC.
 pub fn paused_text(reset: i64) -> String {
-    format!("rate limit: board requests paused until {}", crate::board::stamp(reset))
+    format!("rate limit: board requests paused until {}", crate::time::stamp(reset))
 }
 
 /// Requests per operation between two cumulative counts.
@@ -232,12 +232,12 @@ pub fn warning(status: &Value) -> Option<String> {
     let r = &status["requests"];
     let host = status["host"].as_str().unwrap_or("this host");
     if let Some(until) = r["paused_until"].as_str() {
-        return Some(format!("Rate limit: board requests paused until {until} ({host})"));
+        return Some(format!("Rate limit: board requests paused until {} ({host})", crate::time::shown(until)));
     }
     let (remaining, limit) = (r["remaining"].as_u64()?, r["limit"].as_u64()?);
     let resource = r["resource"].as_str().map(|s| format!(" {s}")).unwrap_or_default();
     (limit > 0 && remaining * 5 <= limit).then(|| format!("Board budget low: {remaining}/{limit}{resource} until {} ({host}); top here: {}",
-        r["reset"].as_str().unwrap_or("unknown"), r["top"].as_str().unwrap_or("none")))
+        crate::time::shown(r["reset"].as_str().unwrap_or_default()), r["top"].as_str().unwrap_or("none")))
 }
 
 fn unbill(ops: &mut BTreeMap<String, u64>, op: &str) {
@@ -257,7 +257,7 @@ pub fn billed(ops: &BTreeMap<String, u64>) -> u64 {
 pub fn quota(b: &Budget) -> String {
     match b.buckets.get("core").map(|v| ("core", v)).or_else(|| b.buckets.get("").map(|v| ("", v))) {
         Some((name, (r, l, reset))) if *l > 0 => format!("Board quota: {}/{l}{} used, {r} left until {}", l.saturating_sub(*r),
-            if name.is_empty() { String::new() } else { format!(" {name}") }, reset.map_or("unknown".into(), crate::board::stamp)),
+            if name.is_empty() { String::new() } else { format!(" {name}") }, reset.map_or(crate::time::UNKNOWN.into(), crate::time::utc)),
         _ => "Board quota: unknown (no core budget headers)".into(),
     }
 }

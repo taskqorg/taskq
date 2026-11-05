@@ -116,7 +116,7 @@ impl Row {
     pub fn line(&self) -> String {
         let head = |kind: &str| format!("{kind} {} {} id {}", self.rt, self.label, self.id.as_deref().unwrap_or("-"));
         let reading = |kind: &str, window: &Window, at: i64| format!("{} window {} used {} reset {} at {}", head(kind), window.name, window.used,
-            window.reset.map_or("-".to_string(), crate::board::stamp), crate::board::stamp(at));
+            window.reset.map_or("-".to_string(), crate::time::stamp), crate::time::stamp(at));
         match &self.usage {
             Usage::Window { window, at } => reading("limit", window, *at),
             Usage::Partial { window, at } => reading("limit-partial", window, *at),
@@ -133,7 +133,7 @@ impl Row {
         let w: Vec<&str> = body.split(' ').collect();
         let [rt, label, "id", id, rest @ ..] = w.as_slice() else { return None };
         if !accounts::applies(rt) || !accounts::valid_label(label) || !(*id == "-" || valid_id(id)) { return None; }
-        let time = |t: &str| crate::board::iso(t).filter(|at| crate::board::stamp(*at) == t);
+        let time = |t: &str| crate::time::iso(t).filter(|at| crate::time::stamp(*at) == t);
         let usage = match rest {
             ["window", name, "used", used, "reset", reset, "at", at] if valid_window(name) => {
                 let window = Window { name: name.to_string(), used: used.parse().ok().filter(|u| *u <= 100)?,
@@ -150,7 +150,7 @@ impl Row {
     /// The usage cell of `taskq accounts`.
     pub fn text(&self) -> String {
         match &self.usage {
-            Usage::Window { window, .. } | Usage::Partial { window, .. } => format!("{} used {}% reset {}", window.name, window.used, window.reset.map_or("-".to_string(), crate::board::stamp)),
+            Usage::Window { window, .. } | Usage::Partial { window, .. } => format!("{} used {}% reset {}", window.name, window.used, window.reset.map_or("-".to_string(), crate::time::utc)),
             Usage::Unknown(reason) => format!("unknown {reason}"),
         }
     }
@@ -778,7 +778,7 @@ fn oauth_window(name: String, used: &Value, reset: &Value) -> Result<Window, &'s
 /// `2026-11-04T10:00:00.123+00:00` or `...Z` as board seconds; `None` for anything else.
 fn utc(s: &str) -> Option<i64> {
     let base = s.get(..19).filter(|b| b.as_bytes()[10] == b'T')?;
-    let at = crate::board::iso(base)?;
+    let at = crate::time::iso(base)?;
     let rest = s[19..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
     if rest.is_empty() || rest == "Z" { return Some(at); }
     let (sign, rest) = match rest.as_bytes()[0] { b'+' => (1, &rest[1..]), b'-' => (-1, &rest[1..]), _ => return None };

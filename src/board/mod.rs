@@ -2,6 +2,7 @@
 //! board modules (`github`, `gitlab`) and an in-memory board for tests. Every write is a native board object; nothing else is state.
 
 use crate::core::Entry;
+use crate::time::{http_date, iso, stamp};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 
@@ -390,33 +391,8 @@ impl Board for Profiled {
 
 // ---------- time ----------
 
-fn days(y: i64, m: i64, d: i64) -> i64 {
-    // days from 1970-01-01 to a civil date (Howard Hinnant's algorithm)
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
-    era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468
-}
-
-/// `2026-10-12T10:00:00Z`, with optional fraction or `+00:00`; UTC only, as both boards send.
-pub fn iso(s: &str) -> Option<i64> {
-    let n = |a: usize, b: usize| s.get(a..b).and_then(|x| x.parse::<i64>().ok());
-    Some(days(n(0, 4)?, n(5, 7)?, n(8, 10)?) * 86400 + n(11, 13)? * 3600 + n(14, 16)? * 60 + n(17, 19)?)
-}
-
-/// HTTP `Date`: `Mon, 12 Oct 2026 10:00:00 GMT`.
 fn wall() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
-}
-
-pub fn http_date(s: &str) -> Option<i64> {
-    let w: Vec<&str> = s.split_whitespace().collect();
-    let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    let mon = *w.get(2)?;
-    let m = months.iter().position(|x| *x == mon)? as i64 + 1;
-    let t: Vec<i64> = w.get(4)?.split(':').map(|x| x.parse().ok()).collect::<Option<_>>()?;
-    Some(days(w.get(3)?.parse().ok()?, m, w.get(1)?.parse().ok()?) * 86400 + t.first()? * 3600 + t.get(1)? * 60 + t.get(2)?)
 }
 
 // ---------- HTTP through curl ----------
@@ -1022,22 +998,6 @@ fn outcome(r: Result<Publish>) -> Publish {
 
 fn hex40(sha: &str) -> bool {
     sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-
-pub fn stamp(t: i64) -> String {
-    let (d, r) = (t.div_euclid(86400), t.rem_euclid(86400));
-    // civil from days (Hinnant)
-    let z = d + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
-    format!("{y:04}-{m:02}-{day:02}T{:02}:{:02}:{:02}Z", r / 3600, r % 3600 / 60, r % 60)
 }
 
 #[cfg(test)]

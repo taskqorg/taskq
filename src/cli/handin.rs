@@ -1,6 +1,6 @@
 //! Hand-in commands: ask, result and later (§ 2, § 7).
 
-use crate::{Res, board, reports, respond};
+use crate::{Res, reports, respond};
 use crate::cli::Args;
 use crate::cli::task_cmd::start_tasks;
 use crate::cli::text::{ask_card, attachment, file_stubs, held_blocker, image_files, media, park, result_text, stage_text, upload_attachments, upload_images};
@@ -45,7 +45,7 @@ pub(crate) fn later_cmd(c: &Ctx, a: &Args, op: &Op) -> Res<()> {
     let json = a.flags.contains_key("json");
     let n = a.num(1)?;
     let staged = a.all("stage");
-    let now = board::stamp(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64));
+    let now = crate::time::stamp(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64));
     let args = park(n, a.one("blocker"), a.one("until"), (!staged.is_empty()).then_some(now.as_str()), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?;
     let text = if staged.is_empty() { text.to_string() } else { stage_text(text, &staged, &b.issue(n)?.body)? };
     let mut out = vec![act(b, root, n, "later", &args, &text, op)];

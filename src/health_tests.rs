@@ -92,7 +92,7 @@
         let host = |name: &str, updated, version: &str, doctor: Option<&str>| Host { name: name.into(), version: version.into(), updated, doctor: doctor.map(String::from), ..Default::default() };
         let now = 10_000;
         let gone = host_row(&host("mac", now - 1500, "4.6.60", Some("9000 ok")), "o/r", false, now, 120, None);
-        assert_eq!((gone["state"].as_str(), gone["reason"].as_str()), (Some("unknown"), Some("heartbeat 25m old, read fresh; its service is not writing")));
+        assert_eq!((gone["state"].as_str(), gone["reason"].as_str()), (Some("unknown"), Some("heartbeat 25m ago, read fresh; its service is not writing")));
         assert!(!gone["fix"].as_str().unwrap().contains("install"), "{gone}");
         let ahead = host_row(&host("pds", now + 30, "4.6.60", Some("9990 ok")), "o/r", false, now, 120, None);
         assert_eq!(ahead["state"], "ok", "a heartbeat written after the reader's clock is fresh: {ahead}");
@@ -235,7 +235,7 @@
         assert_eq!(get(5)["account"], "unknown: no fresh codex account facts", "an inactive account line is no evidence");
         assert_eq!(get(6)["account"], "unknown: no fresh claude account facts", "no account line and no output: unknown, never ok");
         assert_eq!((&get(7)["alive"], &get(7)["account"]), (&json!(true), &json!("ok (runtime output fresh)")));
-        assert_eq!(get(8)["account"], "unknown: host heartbeat 15m old", "a stale heartbeat's account line is no evidence");
+        assert_eq!(get(8)["account"], "unknown: host heartbeat 15m ago", "a stale heartbeat's account line is no evidence");
         let lines = hosts_lines(&[], &w);
         assert!(lines.iter().any(|l| l.contains("#3") && l.contains("unknown: owning host heartbeat stale")), "{lines:#?}");
     }

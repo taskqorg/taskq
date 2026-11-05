@@ -177,8 +177,8 @@
 
     #[test]
     fn service_log_lines_start_with_utc_time_and_fold() {
-        let at = crate::board::iso("2026-10-14T04:27:05Z").unwrap();
-        assert_eq!(log_line(at, "pass: PATCH x: HTTP 502 <html>\n  <p>bad</p>\r\n\n</html>"),"2026-10-14T04:27:05Z pass: PATCH x: HTTP 502 <html> <p>bad</p> </html>");
+        let at = crate::time::iso("2026-10-14T04:27:05Z").unwrap();
+        assert_eq!(log_line(at, "pass: PATCH x: HTTP 502 <html>\n  <p>bad</p>\r\n\n</html>"),"2026-10-14 04:27 UTC pass: PATCH x: HTTP 502 <html> <p>bad</p> </html>");
     }
 
     // Chain: #1386 boot release. Risk: a wrong boot reading releases a live execution or never releases a dead one.

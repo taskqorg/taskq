@@ -27,7 +27,7 @@
         std::fs::write(&rollout,"{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":68.0,\"window_minutes\":10080}}}}\n").unwrap();
         observe_in(&root,"codex",&exec,1500,|_|None).unwrap();
         assert_eq!(remaining(&root,"codex",1500).unwrap(),None);
-        let expired=format!("account default: last quota observation {} expired",crate::board::stamp(1001));
+        let expired=format!("account default: last quota observation {} expired",crate::time::utc(1001));
         assert_eq!(cause(&root,"codex",1500),expired);
         assert_eq!(cause(&root,"codex",1500+3600),expired,"the cause names a fixed time, so later passes keep an equal heartbeat body");
         observe_in(&root,"codex",&exec,1500,|t|(t=="t1").then(||rollout.clone())).unwrap();

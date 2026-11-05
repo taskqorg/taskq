@@ -2513,7 +2513,7 @@ use std::time::{Duration, Instant, SystemTime};
             core::limit_text(7, &t, "requeue", ""),
             dispatch::blocked_card(7, "CI failed on https://x/run/1 for [#9](https://x/9)", None),
             dispatch::blocked_card(7, "the PR was merged elsewhere", Some("#86 at ddddddd")),
-            service::closed_card(7, "2026-10-31T09:00:00Z"),
+            service::closed_card(7, "2026-10-31 09:00 UTC"),
             service::refused_card(7, "rules over the cap\nNext: trim the rules"),
             service::input_card(7, "worker input", 3),
         ];

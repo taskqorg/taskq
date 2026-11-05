@@ -430,7 +430,7 @@
             let page=before(fm(codex),"-",&path,None).unwrap();assert!(page.items.last().unwrap()["updated"].is_null());
             assert!(last_update(fm(codex),"-",&path).unwrap().is_null(),"a source gap cannot borrow the earlier record time");
         }
-        for event in fixture["board"].as_array().unwrap() {assert_eq!(crate::board::iso(event["created_at"].as_str().unwrap()),event["seconds"].as_i64());}
+        for event in fixture["board"].as_array().unwrap() {assert_eq!(crate::time::iso(event["created_at"].as_str().unwrap()),event["seconds"].as_i64());}
         fs::remove_dir_all(dir).unwrap();
     }
 

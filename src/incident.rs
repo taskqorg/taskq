@@ -209,7 +209,7 @@ pub fn line(v: &Value) -> String {
     let state = v["state"].as_str().unwrap_or("none");
     if matches!(state, "none" | "disabled") { return format!("Incidents: {state}"); }
     if !matches!(state, "sent" | "local" | "unsupported-auth") { return "Incidents: unknown".into(); }
-    let age = crate::display::age(now().saturating_sub(v["at"].as_u64().unwrap_or(now())) as i64);
+    let age = crate::time::age(now().saturating_sub(v["at"].as_u64().unwrap_or(now())) as i64);
     let reason = v["reason"].as_str().map(|r| format!(" ({r})")).unwrap_or_default();
     let dest = v["url"].as_str().or_else(|| v["path"].as_str()).map(|s| format!(" · {s}")).unwrap_or_default();
     format!("Incident: {state} {} {age}{reason}{dest} · profile: `taskq profile`", v["fault"].as_str().unwrap_or("unknown"))

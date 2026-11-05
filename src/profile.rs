@@ -590,7 +590,7 @@ fn render_system_summary(summary:&Summary) -> (String, String) {
         let mut asks: BTreeMap<(String, String, String), usize> = BTreeMap::new();
         for sample in samples {
             if let Some((k, c, at_ms)) = match sample { Sample::Transition(t) => ask_key(t).map(|(k, c)| (k.to_string(), c.to_string(), t.at_ms)), _ => None } {
-                let day = at_ms.map_or("unknown".into(), |ms| crate::board::stamp((ms / 1000) as i64)[..10].to_string());
+                let day = at_ms.map_or("unknown".into(), |ms| crate::time::stamp((ms / 1000) as i64)[..10].to_string());
                 *asks.entry((day, k, c)).or_default() += 1;
             }
         }
@@ -915,7 +915,7 @@ fn status_line(project:&str,status:&Result<Option<serde_json::Value>,String>,now
     // a status written before #1766 has no `poll`: the § 9 default
     let poll=st["poll"].as_u64().unwrap_or(60).max(1);
     let age=now.saturating_sub(at);
-    format!("{project}: status {} old · refresh {poll}s{}",crate::display::age(age as i64),if age>2*poll {" · stale"} else {""})
+    format!("{project}: status {} old · refresh {poll}s{}",crate::time::age(age as i64),if age>2*poll {" · stale"} else {""})
 }
 
 /// The freshest status (under 60 s, live pid) among registered projects; anything else is unknown with its reason (R12).
@@ -925,7 +925,7 @@ fn service_health(statuses:&[Result<Option<serde_json::Value>,String>],now:u64,a
     for status in statuses {
         let st=match status {Ok(Some(st))=>st,Ok(None)=>{reason="service status.json missing".into();continue}Err(e)=>{reason=format!("service status unreadable: {e}");continue}};
         let (Some(at),Some(pid))=(st["at"].as_u64(),st["pid"].as_u64()) else {reason="service status has no pid or time".into();continue};
-        if at>now||now-at>60 {reason=format!("service status {} old",crate::display::age(now.saturating_sub(at) as i64));continue}
+        if at>now||now-at>60 {reason=format!("service status {} old",crate::time::age(now.saturating_sub(at) as i64));continue}
         if !alive(pid as u32) {reason=format!("service pid {pid} not running");continue}
         if !st["telemetry"].is_object() {reason="service status has no telemetry snapshot".into();continue}
         if best.as_ref().is_none_or(|b|at>b.2) {best=Some((st["telemetry"].clone(),pid,at));}
@@ -941,7 +941,7 @@ fn health_lines(label:&str,health:&Result<(serde_json::Value,u64,u64),String>)->
         _ if h["reason"].is_string()=>format!("unknown ({})",h["reason"].as_str().unwrap_or_default()),
         _=>"unknown (collector lost records or failed batches)".into(),
     };
-    let mut out=format!("{label}: {state} · scope {} · pid {pid} · at {} UTC\n",h["scope"].as_str().unwrap_or("unknown"),crate::board::stamp(*at as i64)[..16].replace('T'," "));
+    let mut out=format!("{label}: {state} · scope {} · pid {pid} · at {}\n",h["scope"].as_str().unwrap_or("unknown"),crate::time::utc(*at as i64));
     let n=|k:&str|h[k].as_u64();
     if let (Some(lost),Some(failed)) = (n("lost"),n("failed_batches")) {
         let append=match (n("append_us"),n("append_batches"),n("max_append_us")) {
@@ -977,7 +977,7 @@ pub const WATCH_DOC: &str = "https://github.com/taskqorg/taskq/blob/main/docs/de
 /// #1910 one stall line for a `status.json` task row at `now` (Unix s), thresholds of [`WATCH_DOC`]; a row matches its first rule.
 pub(crate) fn stall(t:&serde_json::Value,now:u64)->Option<String> {
     let since=|k:&str|t[k].as_u64().map(|s|now.saturating_sub(s));
-    let age=|s:u64|crate::display::age(s as i64);
+    let age=|s:u64|crate::time::age(s as i64);
     let health=if matches!(t["state"].as_str(),Some("doing"|"review")) && t["heartbeat"].is_object() {
         let mut h=t["heartbeat"].clone();crate::snapshot::refresh_heartbeat(&mut h,now as i64,t["attempt"].is_u64());
         h["warning"].as_str().map(String::from)
@@ -988,7 +988,7 @@ pub(crate) fn stall(t:&serde_json::Value,now:u64)->Option<String> {
             t["admission"]["code"].as_str().map_or(String::new(),|c|format!(" (admission {c})")))),
         "ask" => since("since").filter(|s|*s>1800).map(|s|format!("ask unanswered for {}",age(s))),
         "review" => t["publication"]["since"].as_u64().map(|s|now.saturating_sub(s)).filter(|s|*s>1800).map(|s|format!("merge queue for {}",age(s))),
-        "later" => t["until"].as_str().filter(|u|*u<crate::board::stamp(now as i64).as_str()).map(|u|format!("later past its until {u}")),
+        "later" => t["until"].as_str().filter(|u|*u<crate::time::stamp(now as i64).as_str()).map(|u|format!("later past its until {u}")),
         _ => None,
     });
     let reason=reason.or_else(|| (t["stuck"]==true).then(|| format!("stuck in {} for {}",t["state"].as_str().unwrap_or("unknown"),age(t["age_s"].as_u64().unwrap_or(0)))))?;

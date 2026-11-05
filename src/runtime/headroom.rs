@@ -143,7 +143,7 @@ pub fn cause(install:&Path,rt:&str,now:i64)->String {
         None if super::of(rt).has(Cap::Background) => format!("account {label}: Claude background jobs report no quota"),
         None => format!("account {label}: no quota observation yet"),
         // A fixed board time, not an age: the heartbeat body stays equal across passes until the state changes (§ 4 step 3).
-        Some(at) => format!("account {label}: last quota observation {} expired",crate::board::stamp(at)),
+        Some(at) => format!("account {label}: last quota observation {} expired",crate::time::utc(at)),
     }
 }
 

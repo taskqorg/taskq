@@ -12,11 +12,11 @@
             requests.borrow_mut().push(url.to_string());
             if url.contains("/events?") {
                 if url.contains("/issues/1/") && fail.get() {return Err("unavailable".into());}
-                return Ok(if url.contains("/issues/2/") {json!([{"id":72,"event":"labeled","label":{"name":"taskq"},"created_at":crate::board::stamp(100)}])} else {json!([])});
+                return Ok(if url.contains("/issues/2/") {json!([{"id":72,"event":"labeled","label":{"name":"taskq"},"created_at":crate::time::stamp(100)}])} else {json!([])});
             }
             assert!(url.contains("/issues?"), "unexpected request: {url}");
-            Ok(if !url.ends_with(&crate::board::stamp(200-MONTH)) {json!([])} else {Value::Array((1..=1006).map(|n|json!({"number":n,"title":"draft","state":"closed",
-                "author_association":"OWNER","updated_at":crate::board::stamp(100),"labels":[]})).collect())
+            Ok(if !url.ends_with(&crate::time::stamp(200-MONTH)) {json!([])} else {Value::Array((1..=1006).map(|n|json!({"number":n,"title":"draft","state":"closed",
+                "author_association":"OWNER","updated_at":crate::time::stamp(100),"labels":[]})).collect())
             })
         });
         let mut h=History::default();
@@ -34,8 +34,8 @@
             h.refresh(board.as_ref(),now);
             let requests=reads.borrow();
             // #2083: between scans of every issue, which ask from the last one, the `taskq` scan repeats from the newest update
-            let task=format!("/issues?state=all&labels=taskq&per_page=100&since={}",crate::board::stamp(70));
-            let full=format!("/issues?state=all&per_page=100&since={}",crate::board::stamp(now-FULL_SCAN-30));
+            let task=format!("/issues?state=all&labels=taskq&per_page=100&since={}",crate::time::stamp(70));
+            let full=format!("/issues?state=all&per_page=100&since={}",crate::time::stamp(now-FULL_SCAN-30));
             assert!(requests[0].ends_with(&task) || requests[0].ends_with(&full),
                 "an unresolved source cannot reset the list cursor, which repeats from the newest update (#1985): {}",requests[0]);
             assert!(requests.iter().filter(|u|u.contains("/events?")).count()<=5);

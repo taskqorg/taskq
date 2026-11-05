@@ -61,7 +61,7 @@ pub fn decide(h: &mut Host, root: &str, mut mine: Entry, want: Option<Want>, now
             } else if w.max.is_some_and(|m| used(h) + mine.held.len() as u32 >= m) {
                 Err(("max", format!("host at its maximum of {} sessions", w.max.unwrap_or(0))))
             } else if now - h.launched < SPACING {
-                Err(("spacing", format!("host launched {} s ago", now - h.launched)))
+                Err(("spacing", format!("host launched {} ago", crate::time::age(now - h.launched))))
             } else if w.sample_at.is_none_or(|s| s <= h.launched) {
                 Err(("spacing", "no load sample since the last host launch".into()))
             } else {

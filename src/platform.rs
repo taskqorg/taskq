@@ -145,7 +145,7 @@ pub fn is_service_log() -> bool {
 
 /// `<UTC time> <text>` on one line: the lines of `text`, trimmed, joined by a space (§ 4).
 pub fn log_line(at: i64, text: &str) -> String {
-    format!("{} {}", crate::board::stamp(at), text.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" "))
+    format!("{} {}", crate::time::utc(at), text.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" "))
 }
 
 thread_local!(static PROJECT_LOG: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) });
@@ -1107,11 +1107,11 @@ pub fn utc_offset(t: i64) -> i64 {
     // SYSTEMTIME: year, month, weekday, day, hour, minute, second, millisecond
     #[link(name = "kernel32")]
     unsafe extern "system" { fn SystemTimeToTzSpecificLocalTime(zone: *const std::ffi::c_void, utc: *const [u16; 8], local: *mut [u16; 8]) -> i32; }
-    let s = crate::board::stamp(t);
+    let s = crate::time::stamp(t);
     let f = |a: usize, b: usize| s.get(a..b).and_then(|x| x.parse::<u16>().ok()).unwrap_or(0);
     let (utc, mut l) = ([f(0, 4), f(5, 7), 0, f(8, 10), f(11, 13), f(14, 16), f(17, 19), 0], [0u16; 8]);
     if unsafe { SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut l) } == 0 { return 0; }
-    crate::board::iso(&format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", l[0], l[1], l[3], l[4], l[5], l[6])).map_or(0, |x| x - t)
+    crate::time::iso(&format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", l[0], l[1], l[3], l[4], l[5], l[6])).map_or(0, |x| x - t)
 }
 
 #[cfg(not(any(unix, windows)))]

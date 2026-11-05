@@ -241,7 +241,7 @@
     // ready work and free capacity stalls unseen; a short wait, an empty queue or a full host reads as a stall.
     #[test]
     fn queue_rows_flag_the_2026_11_03_win_stall_on_every_project() {
-        let at = |t: &str| crate::board::iso(&format!("2026-11-03T{t}:00Z")).unwrap();
+        let at = |t: &str| crate::time::iso(&format!("2026-11-03T{t}:00Z")).unwrap();
         let body = |full: bool, ready: u64, waiting: &str| format!("version 4.6.61\nbalancing {}\nqueue {}",
             json!({"schema": 1, "mode": "any", "default_runtime": "claude", "allowed_runtimes": null, "auto_reroute": false, "has": [], "focus": ["all"], "routing": [],
                 "runtimes": crate::runtime::RUNTIMES.iter().map(|rt| (rt.to_string(), json!({"code": "hold", "reason": format!("{rt}: hold; see host diagnostics"),
@@ -256,7 +256,7 @@
         let stalled = |s: &Snapshot| s.json()["hosts"][0]["queue"].as_array().unwrap().iter().map(|r| r["stalled"] == true).collect::<Vec<_>>();
         let hang = snap("00:55", false, 2, "00:42");
         let text = hang.text(&crate::tests::cfg(), &json!({})).unwrap();
-        assert!(text.contains("Queues:\n- win taskqorg/taskq ready 2 · last spawn 2026-11-03T00:30:00Z · restart pending 13m · STALLED 13m\n- win other project ready 1 · last spawn none · restart pending 13m · STALLED 13m"), "{text}");
+        assert!(text.contains("Queues:\n- win taskqorg/taskq ready 2 · last spawn 2026-11-03 00:30 UTC · restart pending 13m · STALLED 13m\n- win other project ready 1 · last spawn none · restart pending 13m · STALLED 13m"), "{text}");
         assert!(text.contains("Anomalies:\n- host win taskqorg/taskq · STALLED 13m: ready 2 without a spawn: host restart pending · Next: inspect the host service (`taskq doctor --hosts`)\n- host win other project · STALLED 13m: ready 1"), "A4: the win hang replay is an anomaly row: {text}");
         assert_eq!(stalled(&hang), [true, true]);
         assert_eq!(stalled(&snap("00:51", false, 2, "00:42")), [false, false], "9 min is not yet a stall");
@@ -270,7 +270,7 @@
     // project's row speaks for this board, or a long reason crowds out the other hosts.
     #[test]
     fn ready_rows_name_each_hosts_reason() {
-        let at = crate::board::iso("2026-11-03T12:00:00Z").unwrap();
+        let at = crate::time::iso("2026-11-03T12:00:00Z").unwrap();
         let reasons = [
             ("weight", "capacity: every candidate runtime has weight 0; pin one with run-<runtime>"),
             ("quota", "usage-limit: claude: until 2026-11-03T15:00:00Z"),
@@ -313,16 +313,15 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
     // the owner sees the raw UTC time instead of this host's clock.
     #[test]
     fn timed_park_shows_its_local_time_and_reason() {
-        let at = crate::board::iso("2026-11-05T09:00:00Z").unwrap();
+        let at = crate::time::iso("2026-11-05T09:00:00Z").unwrap();
         let row = |n, until: Option<&str>| Row { n, title: format!("T{n}"), url: format!("u{n}"), later: Some("Reason: 168 qualified hours".into()),
             task: Task { state: State::Later, until: until.map(str::to_string), ..Default::default() }, ..Default::default() };
         let snap = Snapshot { source: "board", observed: at, reason: None, reason_code: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
             tasks: vec![row(1, Some("2026-11-05T09:00:00Z")), row(2, None)] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
-        assert!(text.contains(&format!("| [#1 T1](u1) | owner until {}: 168 qualified hours | `taskq requeue 1` |\n| [#2 T2](u2) | owner | `taskq requeue 2` |", local_time(at))), "{text}");
+        assert!(text.contains(&format!("| [#1 T1](u1) | owner now · until {}: 168 qualified hours | `taskq requeue 1` |\n| [#2 T2](u2) | owner | `taskq requeue 2` |", crate::time::local(at, at))), "{text}");
         let off = crate::platform::utc_offset(at);
         assert!(off.abs() <= 14 * 3600 && off % 900 == 0, "a real zone offset: {off}");
-        assert_eq!(local_time(at), format!("{} {}", &crate::board::stamp(at + off)[..10], &crate::board::stamp(at + off)[11..16]));
         let rows = snap.json()["tasks"].clone();
         assert_eq!((rows[0]["until"].as_str(), rows[0]["later"].as_str()), (Some("2026-11-05T09:00:00Z"), Some("Reason: 168 qualified hours")));
         assert!(rows[1].get("until").is_none(), "an untimed park adds no keys");
@@ -332,7 +331,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
     // its progress, or a task without stage records gains stage text or keys.
     #[test]
     fn staged_task_shows_stage_k_of_n() {
-        let at = crate::board::iso("2026-11-05T09:00:00Z").unwrap();
+        let at = crate::time::iso("2026-11-05T09:00:00Z").unwrap();
         let row = |n, state, stage| Row { n, title: format!("T{n}"), url: format!("u{n}"), stage,
             task: Task { state, stages: if stage.is_some() { vec!["A1".into()] } else { vec![] }, ..Default::default() }, ..Default::default() };
         let snap = Snapshot { source: "board", observed: at, reason: None, reason_code: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
@@ -532,7 +531,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         let long="x".repeat(200);snap.tasks[5].heartbeat["progress"]["clock"]=json!(long);
         assert!(snap.text(&cfg,&json!({})).unwrap().contains(&format!("native execution events ([{}]({}))",cell(&compact(&long,160)),snap.tasks[5].url)),"long source metadata links to its full source");
         snap.tasks[1].heartbeat["observed"]=json!(now+60);refresh_heartbeat(&mut snap.tasks[1].heartbeat,now,true);
-        assert!(snap.text(&cfg,&json!({})).unwrap().contains("future by 1m"),"future observations never display as zero age");
+        assert!(snap.text(&cfg,&json!({})).unwrap().contains(" · <1m ago · "),"a future observation reads as the shortest age, never a negative one");
         let json_before=snap.json();
         for r in &mut snap.tasks[..8] {
             r.heartbeat["freshness"]=json!("fresh");r.heartbeat["observed"]=json!(now);r.heartbeat["executor"]=json!({"state":"active","observed":now});r.heartbeat["progress"]=quiet.clone();
@@ -574,7 +573,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
             ("input", Signals { local: true, child: Some(Child::default()), input_pending: true, ..Default::default() }, "waiting", "native input acceptance pending"),
             ("ask", Signals { local: true, child: Some(Child::default()), ask: true, ..Default::default() }, "waiting", "owner answer required"),
             ("held", Signals { local: true, held: true, ..Default::default() }, "waiting", "launch held by admission gate"),
-            ("#1386/#1551 boot after intent", Signals { local: true, boot: Some((200, 100)), ..Default::default() }, "ended", "host booted 1970-01-01T00:03:20Z after intent 1970-01-01T00:01:40Z"),
+            ("#1386/#1551 boot after intent", Signals { local: true, boot: Some((200, 100)), ..Default::default() }, "ended", "host booted 1970-01-01 00:03 UTC after intent 1970-01-01 00:01 UTC"),
             ("#1386 boot before intent", Signals { local: true, boot: Some((100, 200)), ..Default::default() }, "unknown", "native observation unavailable; restore owning runtime"),
             ("#1481 no heartbeat", Signals::default(), "unknown", STALE),
             ("#1561 recorded process exited", Signals { local: true, process: Some((&rec, Ok(None))), ..Default::default() }, "ended", "recorded native process exited"),

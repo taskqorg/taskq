@@ -49,6 +49,7 @@ mod windows_sandbox;
 mod profile;
 mod telemetry;
 mod telemetry_sync;
+mod time;
 mod tidy;
 mod tools;
 mod runtime;

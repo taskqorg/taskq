@@ -24,9 +24,9 @@ const ask=fx.projects[0].tasks.find(t=>t.state==='ask');
 assert(fx.cli.includes('stuck '+ask.age+' |'));
 assert(require('../src/project-blocks.js').task({name:'a',board:{kind:'github',url:fx.projects[0].issues}},ask).includes('<small class="tqp-age" title="Since the last state change">'+ask.age+'</small>'));
 const timing=page.replace(/<!--[\s\S]*?-->/g,'');
-for(const field of ['total','changes','current'])assert.equal([...timing.matchAll(new RegExp('class="timing-'+field+'">\\s*Unknown</span>','g'))].length,fx.projects[0].tasks.length,field);
+for(const [field,unknown] of [['total','\\? unavailable'],['changes','Unknown'],['current','\\? unavailable']])assert.equal([...timing.matchAll(new RegExp('class="timing-'+field+'">\\s*'+unknown+'</span>','g'))].length,fx.projects[0].tasks.length,field);
 assert.equal([...page.matchAll(/class="task-timing"/g)].length,fx.projects[0].tasks.length);
-assert(page.includes('aria-description="Total elapsed since first worker ownership: Unknown'));
+assert(page.includes('aria-description="Total elapsed since first worker ownership: ? unavailable'));
 // mode: the paused project reads paused on the page as the CLI Paused line does
 assert.equal(fx.projects[0].mode,'paused');assert(page.includes('Paused: running tasks finish'));
 

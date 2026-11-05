@@ -1834,7 +1834,7 @@ exit 0
         api.call("POST", "https://api.github.com/graphql", Some(json!({}))).unwrap();
         let h = (kind.board)(api);
         assert_eq!(crate::requests::quota(&h.requests()), "Board quota: unknown (no core budget headers)");
-        assert_eq!(crate::requests::quota(&h.quota()), "Board quota: 2000/5000 core used, 3000 left until 1970-01-01T00:00:00Z");
+        assert_eq!(crate::requests::quota(&h.quota()), "Board quota: 2000/5000 core used, 3000 left until 1970-01-01 00:00 UTC");
         assert_eq!(sent.borrow().last().map(String::as_str), Some("GET https://api.github.com/rate_limit"));
         h.quota();
         assert_eq!(sent.borrow().len(), 2, "a seen core budget needs no second read");

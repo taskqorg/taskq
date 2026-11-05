@@ -82,7 +82,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   const identity=p.locator('.task-target').filter({hasText:'Alpha#5'});
   // #2366: the existing remote/runtime marks precede the approved timing group; missing boundaries stay unknown.
   assert.deepEqual(await list().filter({has:identity}).locator('.tqp-task-head [data-icon]').evaluateAll(es=>es.map(e=>e.dataset.icon)),['play','github','network','claude','rotate-cw']);
-  assert.deepEqual((await list().filter({has:identity}).locator('.task-timing>span').allTextContents()).map(t=>t.trim()),['Unknown','Unknown','Unknown']);
+  assert.deepEqual((await list().filter({has:identity}).locator('.task-timing>span').allTextContents()).map(t=>t.trim()),['? unavailable','Unknown','? unavailable']);
   assert.equal(await list().filter({hasText:'Beta#1'}).locator('.task-stage.review').count(),1,'Review uses the purple review tone');
   // F13 replaces inline disclosure: reading and actions are checked in task-navigation.browser.cjs.
   await identity.hover();await identity.focus();assert.equal(await editor().count(),0,'hover/focus open nothing');
@@ -125,7 +125,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    await p.locator('[data-a=view-editor]').click();const popup=await editor().boundingBox();assert(popup.x>=0&&popup.y>=0&&popup.x+popup.width<=320.5&&popup.y+popup.height<=geometry.viewport+.5,'bounded anchored editor');
    if(out&&font===16){fs.mkdirSync(out,{recursive:true});await p.screenshot({path:out+'/'+theme+'-'+variant+'-editor.png'});}
    if(variant==='short'){const done=editor().getByRole('button',{name:'Done',exact:true});await done.scrollIntoViewIfNeeded();const end=await done.boundingBox();assert(end.y>=0&&end.y+end.height<=geometry.viewport+.5,'last overlay control remains reachable in short windows');await done.click();assert.equal(await editor().count(),0);}else await p.keyboard.press('Escape');if(out&&font===16)await p.screenshot({path:out+'/'+theme+'-'+variant+'.png'});
-   if(variant==='long'){assert.equal(await p.locator('.timing-current').first().innerText(),'Unknown','unknown elapsed stays on the parent row');}
+   if(variant==='long'){assert.equal(await p.locator('.timing-current').first().innerText(),'? unavailable','unknown elapsed stays on the parent row');}
    else {assert.equal((await p.locator('.filter-header').innerText()).includes('?'),true,'partial never zero');}
    observations.push({theme,font,variant,...geometry});await p.close();
   }

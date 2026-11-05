@@ -37,7 +37,7 @@
             fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH+std::time::Duration::from_secs(now as u64))).unwrap();
         let content=|mut v:Value| {v.as_object_mut().unwrap().remove("observed");v};
         // R12/A4: consumed bad timestamps must not hide a pending tool on later incremental reads.
-        for timestamp in [json!("invalid"),json!(crate::board::stamp(now+100)),json!(now),json!(false),Value::Null] {
+        for timestamp in [json!("invalid"),json!(crate::time::stamp(now+100)),json!(now),json!(false),Value::Null] {
             fs::write(&path,format!("{}\n",json!({"type":"item.completed","item":{"type":"agent_message"}}))).unwrap();pin_time();
             let mut r=Reader::default();
             assert_eq!(r.read(&path,0,||now,60)["status"],"quiet");
@@ -69,14 +69,14 @@
         let value=r.read(&path,0,|| {
             samples+=1;
             if samples==1 {
-                writeln!(f,"{}",json!({"timestamp":crate::board::stamp(1001),"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
+                writeln!(f,"{}",json!({"timestamp":crate::time::stamp(1001),"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
                 f.set_times(mtime(1001)).unwrap();1000
             } else {1001}
         },60);
         assert_eq!(value["status"],"quiet");assert_eq!(value["last_event"],1001);assert_eq!(value["observed"],1001);
         assert!(valid(&value));
         let offset=r.history.offset;
-        writeln!(f,"{}",json!({"timestamp":crate::board::stamp(1002),"type":"item.started","item":{"id":"c","type":"command_execution"}})).unwrap();
+        writeln!(f,"{}",json!({"timestamp":crate::time::stamp(1002),"type":"item.started","item":{"id":"c","type":"command_execution"}})).unwrap();
         f.set_times(mtime(1003)).unwrap();
         let future=r.read(&path,0,||1002,60);
         assert_eq!(future["status"],"unknown");assert_eq!(future["reason"],"native progress time is future or unknown");

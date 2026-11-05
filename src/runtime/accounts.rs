@@ -334,7 +334,7 @@ impl Host {
                 let l = self.limit(rt, &e.label);
                 let email = email(rt, &e.label);
                 let id = email.as_deref().map(super::usage::fingerprint).or_else(|| self.usage.id(rt, &e.label).map(String::from));
-                Row { active: active.as_deref() == Some(e.label.as_str()), limited: l.map(|l| crate::board::stamp(l.at)), reset: l.map(reset), email, id,
+                Row { active: active.as_deref() == Some(e.label.as_str()), limited: l.map(|l| crate::time::stamp(l.at)), reset: l.map(reset), email, id,
                     ..blank(host, rt, &e.label, e.enabled) }
             }).collect::<Vec<_>>()
         }).collect();
@@ -343,11 +343,11 @@ impl Host {
     }
 }
 
-fn reset(l: &Limit) -> String { format!("{} {}", if l.until.is_some() { "until" } else { "probe" }, crate::board::stamp(l.end())) }
+fn reset(l: &Limit) -> String { format!("{} {}", if l.until.is_some() { "until" } else { "probe" }, crate::time::stamp(l.end())) }
 
 fn line(rt: &str, e: &Entry, active: bool, limit: Option<&Limit>) -> String {
     format!("account {rt} {} {}{}{}", e.label, if e.enabled { "on" } else { "off" }, if active { " active" } else { "" },
-        limit.map(|l| format!(" limited {} {}", crate::board::stamp(l.at), reset(l))).unwrap_or_default())
+        limit.map(|l| format!(" limited {} {}", crate::time::stamp(l.at), reset(l))).unwrap_or_default())
 }
 
 /// One row of `taskq accounts`.

@@ -1,6 +1,6 @@
 //! Service lifecycle commands: install, start, stop, restart, focus and the tray (§ 4, § 5).
 
-use crate::display::age;
+use crate::time::age;
 use crate::{check, data, display, external_slots, host, host_control, incident, lifecycle, platform, recovery, reports, requests, resources, runtime, service, setup, snapshot, tools};
 #[cfg(any(target_os = "macos", windows))]
 use crate::tray;

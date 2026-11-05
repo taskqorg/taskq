@@ -5,7 +5,7 @@ use crate::runtime::Cap;
 use crate::board::{self, Board};
 use crate::core::{self, State, Task, options};
 use crate::service::{self, Config, View};
-use crate::{Res, display::age, cli::text::cell, cli::text::compact, runtime};
+use crate::{Res, time::age, cli::text::cell, cli::text::compact, runtime};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
@@ -78,7 +78,7 @@ const STALE: &str = "termination unconfirmed; status missing or stale; restore o
 /// The one execution verdict (§ 3 Recovery): state and a public reason of at most 240 characters.
 pub fn verdict(s: &Signals) -> (&'static str, String) {
     let (state, reason): (&'static str, String) = if let Some((at, intent)) = s.boot.filter(|(at, intent)| *intent > 0 && at > intent) {
-        ("ended", format!("host booted {} after intent {}", board::stamp(at), board::stamp(intent)))
+        ("ended", format!("host booted {} after intent {}", crate::time::utc(at), crate::time::utc(intent)))
     } else if s.child.as_ref().is_some_and(|c| c.exited) {
         ("ended", "native exit observed".into())
     } else if let Some((recorded, now)) = &s.process {
@@ -763,7 +763,7 @@ impl Row {
     fn wait(&self) -> Option<String> {
         // #1820: the reviewer has ended, so a publication wait outranks its execution diagnostic
         if let Some(p) = &self.publication {
-            return Some(format!("{} {} · {}", PUBLICATION_WAIT, p.age_s.map_or("?".into(), crate::display::age), compact(&p.reason, 200)));
+            return Some(format!("{} {} · {}", PUBLICATION_WAIT, p.age_s.map_or("?".into(), crate::time::age), compact(&p.reason, 200)));
         }
         if let Some(reason) = &self.execution_wait {
             // #2257: the worker-to-reviewer handover has no live agent to accept input
@@ -1044,8 +1044,8 @@ impl Snapshot {
                     let deps: Vec<String> = r.deps.iter().map(|b| format!("[{}]({}) {}", b.dep.name(), b.url, cell(&compact(&b.reason, 80)))).collect();
                     (format!("dependency ({})", deps.join(", ")), if r.stuck.is_some() { "re-read the dependencies; every blocker is closed".into() } else { "wait for the dependency".into() })
                 }
-                State::Later => (match r.task.until.as_deref().and_then(crate::board::iso) {
-                    Some(at) => format!("owner until {}: {}", local_time(at), cell(&compact(r.later.as_deref().unwrap_or("").trim_start_matches("Reason: "), 160))),
+                State::Later => (match r.task.until.as_deref().and_then(crate::time::iso) {
+                    Some(at) => format!("owner {} · until {}: {}", crate::time::left(at - self.observed), crate::time::local(at, self.observed), cell(&compact(r.later.as_deref().unwrap_or("").trim_start_matches("Reason: "), 160))),
                     None => "owner".into(),
                 }, format!("`taskq requeue {n}`")),
                 State::Ask if r.stuck.is_some() => ("owner".into(), "answer the Owner row".into()),
@@ -1081,7 +1081,7 @@ impl Snapshot {
             }
         }
         if let Some(d) = decide_unknown { anomalies.push(format!("- {} · Next: rerun `taskq status` after the next service pass", d.trim_end())); }
-        let stamp=|v:&Value|v.as_i64().filter(|at|*at>0).map(crate::board::stamp).unwrap_or("unknown".into());
+        let stamp=|v:&Value|v.as_i64().filter(|at|*at>0).map(crate::time::utc).unwrap_or(crate::time::UNKNOWN.into());
         for r in &self.tasks {
             if r.admission.as_ref().is_some_and(|a| a.code == "labels" && a.reason == START_LABELS) {
                 anomalies.push(format!("- {} · log {}; {START_LABELS} · Next: `taskq start {}`{}", link(r), r.task.state.name(), r.n, fix("start-labels")));
@@ -1093,10 +1093,7 @@ impl Snapshot {
                 };
                 let h=&r.heartbeat;let p=&h["progress"];
                 let now=h["as_of"].as_i64().unwrap_or(self.observed);
-                let observed=|v:&Value|v.as_i64().filter(|at|*at>0).map(|at| {
-                    let elapsed=now.saturating_sub(at);
-                    format!("{} · age {}",stamp(v),if elapsed<0 {format!("future by {}",age(elapsed.saturating_neg()))} else {age(elapsed)})
-                }).unwrap_or("unknown · age unknown".into());
+                let observed=|v:&Value|v.as_i64().filter(|at|*at>0).map(|at|format!("{} ago · {}",age(now.saturating_sub(at)),stamp(v))).unwrap_or(crate::time::UNKNOWN.into());
                 let rt=r.task.session.as_deref().and_then(|s|s.split_once(':')).map(|p|p.0).unwrap_or("unknown");
                 let current:Vec<_>=r.executions.iter().filter(|x|x["attempt"].as_u64()==r.task.attempt).map(|x|x["id"].as_u64().map(|id|id.to_string()).unwrap_or("unknown".into())).collect();
                 let execution=match current.len() {0=>"unknown".into(),1=>current[0].clone(),_=>format!("{} (ambiguous)",current.join(", "))};
@@ -1182,7 +1179,7 @@ impl Snapshot {
         // #1625: a heartbeat older than ttl is an anomaly row; unknown load values move there too
         let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}", h.name, h.version_text(), age(self.observed - h.updated),
             h.focus.as_ref().filter(|f| *f != "unknown").map(|f| format!(" focus {f}")).unwrap_or_default()
-            + &h.limits.iter().map(|l| if l.starts_with("quota ") {format!(" {l}")} else {l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))}).collect::<String>()
+            + &h.limits.iter().map(|l| if l.starts_with("quota ") {format!(" {l}")} else {l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {}", at.split(' ').map(|w| if w.ends_with('Z') { crate::time::shown(w) } else { w.to_string() }).collect::<Vec<_>>().join(" ")))}).collect::<String>()
             + &h.account_policy.iter().filter(|l| l.starts_with("unmet ")).map(|l| format!(" account-policy {l}")).collect::<String>()
             + &h.balancing["weights"].as_object().map(|weights|weights.iter().map(|(rt,w)| {
                 let load=&h.balancing["runtimes"][rt]["load"];
@@ -1200,7 +1197,7 @@ impl Snapshot {
         let queues: Vec<String> = self.hosts.iter().filter(|h| live(self.observed - h.updated, cfg.ttl)).flat_map(|h| h.queue_rows(self.observed).into_iter().filter(|r| r["ready"] != 0 || r["restart"].is_i64()).map(move |r| {
             let when = |v: &Value| v.as_i64().map_or("none".into(), |s| age(s));
             format!("- {} {} ready {} · last spawn {} · restart pending {}{}", h.name, r["project"].as_str().unwrap_or("other project"),
-                r["ready"], r["spawn"].as_i64().map_or("none".into(), crate::board::stamp),
+                r["ready"], r["spawn"].as_i64().map_or("none".into(), crate::time::utc),
                 when(&r["restart"]), if r["stalled"] == true { format!(" · STALLED {}", when(&r["waiting"])) } else { String::new() })
         })).collect();
         part(&mut out, "Queues:", queues);
@@ -1218,12 +1215,6 @@ pub fn decide_text(d: &Value) -> Option<String> {
         age(r["age_s"].as_i64().unwrap_or(0)), cell(r["recommendation"].as_str().unwrap_or("")))).collect();
     if rows.is_empty() { return None; }
     Some(format!("Decide:\n| Report | Verdict | Age | Recommendation |\n|---|---|---|---|\n{}", rows.join("\n")))
-}
-
-/// R6 timed park: board time `t` on this host's clock, `2026-11-05 10:00`.
-pub fn local_time(t: i64) -> String {
-    let s = crate::board::stamp(t + crate::platform::utc_offset(t));
-    format!("{} {}", &s[..10], &s[11..16])
 }
 
 /// The `Problem:` text of a card, else its first line.

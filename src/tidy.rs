@@ -340,7 +340,7 @@ impl Tidy<'_> {
             };
             // findings: a task worktree dirty while no child runs it; a closed task's worktree that stays
             if let Some(n) = task.filter(|_| !it.removed && !alive) {
-                if it.dirty { conditions.entry("dirty").or_default().push(format!("{} dirty, untouched {}", what(n, it.class), crate::display::age(at.saturating_sub(it.newest) as i64))); }
+                if it.dirty { conditions.entry("dirty").or_default().push(format!("{} dirty, untouched {}", what(n, it.class), crate::time::age(at.saturating_sub(it.newest) as i64))); }
                 if stages.get(&n) == Some(&Some(State::Closed)) && let Some(line) = refusal { conditions.entry("kept").or_default().push(line); }
             }
         }
@@ -508,7 +508,7 @@ impl Tidy<'_> {
         let touched = it.newest.max(commit);
         if it.dirty || it.entry.as_ref().is_some_and(|e| e.locked) || at.saturating_sub(touched) < UNOWNED_AFTER { return None; }
         let rel = format!(".worktrees/{}", it.name);
-        let age = crate::display::age(at.saturating_sub(touched) as i64);
+        let age = crate::time::age(at.saturating_sub(touched) as i64);
         if self.dry { return Some(Step::Done(format!("{rel} would be removed: unowned, untouched {age}"))); }
         Some(match git(self.root, &["worktree", "remove", &rel]) {
             Ok(_) => Step::Done(format!("{rel} removed: unowned, untouched {age}")),
@@ -596,7 +596,7 @@ pub fn health_line(project: &str, tidy: &Value, now: u64) -> String {
     let own = ["task", "reserved", "unowned"];
     let (k, d, s) = own.iter().fold((0, 0, 0), |(k, d, s), c| (k + n(c, "count"), d + n(c, "dirty"), s + n(c, "bytes")));
     format!("{project}: root {}; .worktrees {k} (dirty {d}, {}); foreign {} (dirty {}); tidy {} {}", tidy["root"].as_str().unwrap_or("unknown"),
-        size(s), n("foreign", "count"), n("foreign", "dirty"), crate::display::age(now.saturating_sub(at) as i64), tidy["outcome"].as_str().unwrap_or("unknown"))
+        size(s), n("foreign", "count"), n("foreign", "dirty"), crate::time::age(now.saturating_sub(at) as i64), tidy["outcome"].as_str().unwrap_or("unknown"))
 }
 
 fn size(b: u64) -> String {

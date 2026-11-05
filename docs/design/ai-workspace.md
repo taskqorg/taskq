@@ -113,7 +113,7 @@ Transcript generations use native file identity and the first record prefix. The
 
 ## Conversation time (D-A19)
 
-All Conversations messages, tool summaries/details, briefs, question/answer history, events, sidebar activity and turn/watch facts use one relative-time renderer (UX30-17–19). Labels use `<1m`, `3m`, `2h`, `4d` (ASCII lower-case units); future values say `in <1m` / `in 3m`, never silently clamped. Hover and keyboard focus expose local date, seconds and the IANA zone/UTC offset; accessible names retain the timed event.
+All Conversations messages, tool summaries/details, briefs, question/answer history, events, sidebar activity and turn/watch facts use one relative-time renderer (UX30-17–19). Labels use `<1m`, `3m`, `2h`, `4d` (ASCII lower-case units); a countdown reads `3d`, `21h`, `4:12` or `now`; an unknown time reads `? unavailable`. Hover and keyboard focus expose the local date and the IANA zone; accessible names retain the timed event.
 
 Native transcript `updated` is ISO time; `at`/`i` are byte-cursor identities only. Board comment times are seconds; request creation and turn/watch times are milliseconds. Label request creation and turn submission explicitly: neither proves delivery, completion or a changed request state. No issue-creation, earlier-record, read-time or window-open fallback. Missing, malformed, zone-less and unavailable values show Time unknown with a reason. Historical brief/question/result timestamps unavailable in the adapter remain unknown.
 

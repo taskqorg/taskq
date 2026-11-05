@@ -23,10 +23,10 @@
         b.observe(200, false, reply("core", "4000"), 0, now);
         b.observe(200, false, reply("graphql", "50"), 0, now);
         assert_eq!(b.resource.as_deref(), Some("graphql"), "the pause budget stays the lowest one");
-        assert_eq!(quota(&b), "Board quota: 1000/5000 core used, 4000 left until 1970-01-01T00:00:00Z");
+        assert_eq!(quota(&b), "Board quota: 1000/5000 core used, 4000 left until 1970-01-01 00:00 UTC");
         let mut gitlab = Budget::default();
         gitlab.observe(200, false, reply("", "4500"), 0, now);
-        assert_eq!(quota(&gitlab), "Board quota: 500/5000 used, 4500 left until 1970-01-01T00:00:00Z");
+        assert_eq!(quota(&gitlab), "Board quota: 500/5000 used, 4500 left until 1970-01-01 00:00 UTC");
     }
 
     // Chain: #2084 A1 heartbeat requests per API host. Defect: a host with GitHub and GitLab boards sent one sum, so
@@ -223,7 +223,7 @@
     fn request_lines_keep_unknown_and_name_the_pause() {
         assert_eq!(lines(&json!({})), ["Board requests: unknown (no request accounting in status)"]);
         let s = json!({"host": "mac", "requests": {"total": 3, "last_hour": null, "paused_until": "2026-10-14T04:41:00Z"}});
-        assert_eq!(lines(&s), ["Board requests: unknown (no full hour yet)", "Rate limit: board requests paused until 2026-10-14T04:41:00Z (mac)"]);
+        assert_eq!(lines(&s), ["Board requests: unknown (no full hour yet)", "Rate limit: board requests paused until 2026-10-14 04:41 UTC (mac)"]);
         let s = json!({"requests": {"last_hour": {"PATCH issues/N": 60}, "paused_until": null}});
         assert_eq!(lines(&s), ["Board requests: 60/h; PATCH issues/N 60"]);
     }
@@ -242,7 +242,7 @@
         b.ops = BTreeMap::from([("PATCH issues/N".to_string(), 80), ("GET issues".to_string(), 20)]);
         assert_eq!(b.top(&start), Some(("PATCH issues/N".into(), 30)));
         let s = json!({"host": "mac", "requests": b.json(0, None, &start)});
-        assert_eq!(warning(&s).unwrap(), "Board budget low: 1000/5000 until 2026-10-14T08:00:00Z (mac); top here: PATCH issues/N 30");
+        assert_eq!(warning(&s).unwrap(), "Board budget low: 1000/5000 until 2026-10-14 08:00 UTC (mac); top here: PATCH issues/N 30");
     }
 
     // Chain: § 4 per-resource budget. Risk: a drained GraphQL bucket hides behind a full REST one, or the reverse.
@@ -258,6 +258,6 @@
         b.observe(200, false, h("core", "4990"), 0, Instant::now());
         assert_eq!((b.resource.as_deref(), b.remaining, b.low()), (Some("graphql"), Some(500), true));
         let s = json!({"host": "mac", "requests": b.json(0, None, &BTreeMap::new())});
-        assert_eq!(warning(&s).unwrap(), "Board budget low: 500/5000 graphql until unknown (mac); top here: none");
+        assert_eq!(warning(&s).unwrap(), "Board budget low: 500/5000 graphql until ? unavailable (mac); top here: none");
     }
     pub(crate) fn sources(text:&str,now_ms:u64)->String {sources_samples(&crate::telemetry::Sample::fixtures(text),now_ms)}

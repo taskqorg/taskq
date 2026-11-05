@@ -2,6 +2,7 @@
 //! order, age text, history series, notification labels and history periods. The CLI prints from it and the tray page
 //! renders it; neither keeps its own copy (docs/design/task-counters.md, menu.md M3/M6/M14).
 
+use crate::time::age;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
@@ -50,16 +51,6 @@ pub fn close_outcome(verdict: Option<&str>, successor_state: Option<&str>) -> St
         0 => what.into(),
         1 => format!("{what}, 1 item unverified"),
         k => format!("{what}, {k} items unverified"),
-    }
-}
-
-/// Short age (menu.md M3): `<1m`, `5m`, `2h`, `3d`; a negative age reads as `<1m`.
-pub fn age(secs: i64) -> String {
-    match secs.max(0) {
-        s if s < 60 => "<1m".into(),
-        s if s < 3600 => format!("{}m", s / 60),
-        s if s < 86400 => format!("{}h", s / 3600),
-        s => format!("{}d", s / 86400),
     }
 }
 

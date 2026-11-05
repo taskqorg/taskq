@@ -16,7 +16,7 @@ pub struct Choice {
 
 fn models_at(path:&Path)->Res<Value> {
     let value:Value=serde_json::from_slice(&fs::read(path).map_err(|_|"Installed model catalog unavailable; use native defaults or refresh Codex")?).map_err(|_|"Installed model catalog unreadable")?;
-    let at=value["fetched_at"].as_str().and_then(crate::board::iso).ok_or("Model catalog time unknown")?;
+    let at=value["fetched_at"].as_str().and_then(crate::time::iso).ok_or("Model catalog time unknown")?;
     let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|"Model catalog clock unknown")?.as_secs() as i64;
     if !(0..=86400).contains(&(now-at)) {return Err("Model catalog stale; refresh Codex before choosing a model".into());}
     let rows=value["models"].as_array().ok_or("Model catalog incomplete")?;

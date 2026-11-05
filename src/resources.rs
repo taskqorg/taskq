@@ -727,7 +727,7 @@ pub fn report(install: &Path, now: u64) -> Res<Vec<String>> {
             out.push(format!("Project {name}: {k} revision {}{}", p.revision, if p.policy.is_null() { " (config unreadable)" } else { "" }));
         }
         for (k, g) in &s.grants {
-            let state = if g.revoked { "revoked".into() } else if now >= g.expires_at { "expired".into() } else { format!("expires {}", crate::board::stamp(g.expires_at as i64)) };
+            let state = if g.revoked { "revoked".into() } else if now >= g.expires_at { "expired".into() } else { format!("expires {}", crate::time::utc(g.expires_at as i64)) };
             let scope = [g.host_policy.then(|| "host".to_string()), g.project_limits.then(|| "project limits".to_string()), (!g.project_ids.is_empty()).then(|| format!("projects {}", g.project_ids.join(" "))),
                 (!g.runtime_ids.is_empty()).then(|| format!("runtimes {}", g.runtime_ids.join(" ")))].into_iter().flatten().collect::<Vec<_>>().join(", ");
             out.push(format!("Grant {k}: actor {} generation {}, {scope}; {state}", g.actor_id, g.generation));

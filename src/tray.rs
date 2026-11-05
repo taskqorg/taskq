@@ -853,7 +853,7 @@ fn liveness(s: &Value, age: Option<u64>, ttl: i64, tasks: &mut [Value]) -> (Valu
         let a = elapsed.zip(s["observed"].as_i64()).zip(o.get(at).and_then(Value::as_i64)).map(|((e, obs), at)| obs - at + e);
         o.insert("live".into(), json!(a.is_some_and(|a| crate::snapshot::live(a, ttl))));
         o.insert("age".into(), json!(a));
-        o.insert("age_text".into(), json!(a.filter(|a| *a >= 0).map(crate::display::age)));
+        o.insert("age_text".into(), json!(a.filter(|a| *a >= 0).map(crate::time::age)));
     };
     let mut hosts = s["hosts"].clone();
     for h in hosts.as_array_mut().into_iter().flatten() { row_live(h, "updated"); }
@@ -1774,7 +1774,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let display = crate::display::model(&mut ps, observed);
     let mut seen = agents(&ps);
     // AS5: a probe older than one probe cycle plus a minute reads "Signed in at <time>", never current
-    if let Some(at) = seen["at"].as_i64() { seen["age"] = json!(crate::display::age(observed - at)); seen["fresh"] = json!((0..=360).contains(&(observed - at))); }
+    if let Some(at) = seen["at"].as_i64() { seen["age"] = json!(crate::time::age(observed - at)); seen["fresh"] = json!((0..=360).contains(&(observed - at))); }
     // a probe runs at most 40 s (2 clients × 2 probes × 10 s); an older mark is a pass that never finished, not Checking
     if !seen.is_null() { seen["checking"] = json!(seen["checking"].as_i64().is_some_and(|c| (0..=60).contains(&(observed - c)))); }
     let messages=crate::messages::snapshot(install,&ps);

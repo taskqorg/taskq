@@ -25,14 +25,14 @@ const state={font:16,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   const log=page.locator('.dialogue-transcript');await log.locator('.dialogue-item').first().waitFor();assert(await log.locator('time').count()>0,'native messages must expose relative timestamps');
   assert.equal(await log.locator('.dialogue-item.user time').textContent(),'<1m','owner message has a relative label');
   const ownerTime=log.locator('.dialogue-item.user time');assert.equal(await ownerTime.getAttribute('data-time-source'),iso);assert.equal(await ownerTime.getAttribute('datetime'),iso);
-  assert.match(await ownerTime.getAttribute('title'),/31 Oct 2026.*19:00:30.*GMT\+07:00.*Asia\/Bangkok/);
+  assert.match(await ownerTime.getAttribute('title'),/Sat Oct 31( 2026)?, 19:00 · Asia\/Bangkok/);
   await ownerTime.focus();assert.match(await page.locator('.time-tooltip').innerText(),/You message.*19:00:30/);await page.keyboard.press('Escape');assert(await page.locator('.time-tooltip').isHidden());
-  const steps=log.locator('.dialogue-steps:not(.dialogue-setup)');assert.equal(await steps.locator('summary .time-unknown').textContent(),'Time unknown','latest group member cannot borrow earlier time');
+  const steps=log.locator('.dialogue-steps:not(.dialogue-setup)');assert.equal(await steps.locator('summary .time-unknown').textContent(),'? unavailable','latest group member cannot borrow earlier time');
   await steps.locator('summary').click();assert.equal(await steps.locator('p .relative-time').count(),2);assert.match(await steps.locator('p .time-unknown').getAttribute('title'),/Tool recorded.*unavailable/);
   assert.equal(await log.locator('.dialogue-item').filter({hasText:'Zone-less record'}).locator('.time-unknown').count(),1);
   assert.equal(await log.locator('.dialogue-setup time').count(),1,'recorded brief keeps its own time in inspectable setup evidence');
   await page.locator('.conversation-info>summary').click();
-  assert.equal(await page.locator('.dialogue-status time[aria-label^="Next scheduled turn"]').textContent(),'in 1h');
+  assert.equal(await page.locator('.dialogue-status time[aria-label^="Next scheduled turn"]').textContent(),'1:00');
   assert.match(await page.locator('.dialogue-status time[aria-label^="Turn submitted"]').getAttribute('title'),/Turn submitted/);
   const reader=page.locator('.conversation-reader'),anchor=log.locator('.dialogue-item').filter({hasText:'Reading anchor 10'});
   await anchor.evaluate(e=>{const r=e.closest('.conversation-reader');r.scrollTop+=e.getBoundingClientRect().top-r.getBoundingClientRect().top;r.dispatchEvent(new Event('scroll'));});

@@ -196,7 +196,7 @@ pub(crate) fn resources_cmd(root: &Path, a: &Args) -> Res<()> {
         let scope = resources::Scope { host_policy: a.flags.contains_key("host-policy"), project_limits: a.flags.contains_key("project-limits"), projects: a.all("project"), runtimes: a.all("runtime"), hours };
         let by = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_else(|_| "unknown".into());
         let g = resources::grant(&cfg.install, id, a.need("actor")?, &scope, &by, now)?;
-        println!("Granted {id} to {} until {}", g.actor_id, board::stamp(g.expires_at as i64));
+        println!("Granted {id} to {} until {}", g.actor_id, crate::time::utc(g.expires_at as i64));
     }
     for l in resources::report(&cfg.install, now)? {
         println!("{l}");
@@ -641,7 +641,7 @@ pub(crate) fn recover_cmd(root: &Path, apply: bool, json: bool) -> Res<()> {
     let kids = match (data::json(&p), coreq::status::age(&p)) {
         (Ok(Some(s)), Some(a)) if snapshot::live(a as i64, c.cfg.ttl) => Ok(s["kids"].as_array().cloned().unwrap_or_default()),
         (Err(e), _) => Err(e),
-        (Ok(Some(_)), Some(a)) => Err(format!("status.json {a} s old")),
+        (Ok(Some(_)), Some(a)) => Err(format!("status.json {} ago", crate::time::age(a as i64))),
         _ => Err("no service status".to_string()),
     };
     let rows = dispatch::proposal(&*c.board, &c.cfg.me, &kids)?;

@@ -13,7 +13,7 @@ for(const kind of ['stopped','unknown']){
 context.S.agentq.kind='shown';assert(context.agentq(true).includes('agentq-setup'),'not installed still offers setup');
 // A3: remote hosts show heartbeat freshness only; client facts read unknown with the missing source; expiry never from refresh
 context.S.agentq=null;const page=context.agents();
-assert(page.includes('hermes-fra1 · heartbeat 40s old · clients unknown'),'heartbeat freshness is sourced');
+assert(page.includes('hermes-fra1 · heartbeat 40s ago · clients unknown'),'heartbeat freshness is sourced');
 assert(page.includes('win · heartbeat unknown: no host row'),'host seen only in an execution has no heartbeat row');
 assert(page.includes('Codex · unknown: hermes-fra1 heartbeat publishes no client version, sign-in, account or access'),'remote client facts name the missing source');
 assert(page.includes('Expiry unknown')&&page.includes('not an expiry'),'refresh time is never an expiry');

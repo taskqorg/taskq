@@ -69,7 +69,7 @@
             let releases: Vec<_> = log.iter().filter(|e| e.body.starts_with("taskq: released")).collect();
             if case == "after" {
                 assert_eq!(releases.len(), 1, "one release over two passes");
-                assert_eq!(releases[0].body, format!("taskq: released {a} exit attempt {a}\nhost booted 2033-05-18T03:33:20Z after intent 1970-01-12T13:46:42Z\nop-id: release-{a}"));
+                assert_eq!(releases[0].body, format!("taskq: released {a} exit attempt {a}\nhost booted 2033-05-18 03:33 UTC after intent 1970-01-12 13:46 UTC\nop-id: release-{a}"));
                 assert_eq!(core::executions(n, &log)[0].release, Some(core::Release::Exit));
             } else {
                 assert!(releases.is_empty(), "{case}");
@@ -4054,7 +4054,7 @@ Open: none";
         *e.borrow()[0].1.borrow_mut() = Some(1);
         s.pass().unwrap();
         let gone = b.comments(any).unwrap().into_iter().rfind(|c| c.body.starts_with("taskq: usage-limit")).unwrap().body;
-        assert!(gone.starts_with("taskq: usage-limit attempt ") && gone.contains("\nUsage limit: claude until 1970-01-01T00:16:40Z"), "{gone}");
+        assert!(gone.starts_with("taskq: usage-limit attempt ") && gone.contains("\nUsage limit: claude until 1970-01-01 00:16 UTC"), "{gone}");
         assert_eq!((task(&b, any).state, task(&b, any).retries), (State::Ready, 0), "A2: the gone budget stays");
         assert_eq!(core::executions(any,&entries(&b,any).unwrap()).last().unwrap().usage_hold,Some((reset,true)),"release persists the deadline before outcome publication");
         s.pass().unwrap();
@@ -4062,10 +4062,10 @@ Open: none";
         assert!(task(&b, any).session.unwrap().starts_with("codex:"), "A4: work for another runtime starts");
         assert_eq!((task(&b, only).state, e.borrow().len()), (State::Ready, 2), "a claude-only task waits for the reset");
         let cap = s.capacity_json();
-        assert!(cap["reasons"].as_array().unwrap().iter().any(|r| r["code"] == "usage-limit" && r["text"] == "claude: until 1970-01-01T00:16:40Z"), "{cap}");
+        assert!(cap["reasons"].as_array().unwrap().iter().any(|r| r["code"] == "usage-limit" && r["text"] == "claude: until 1970-01-01 00:16 UTC"), "{cap}");
         assert!(s.heartbeat_body().contains("\nlimit claude until 1970-01-01T00:16:40Z"));
         let text = s.snapshot.as_ref().unwrap().text(&c, &Value::Null).unwrap();
-        assert!(text.contains(" claude limit until 1970-01-01T00:16:40Z"), "A3: {text}");
+        assert!(text.contains(" claude limit until 1970-01-01 00:16 UTC"), "A3: {text}");
 
         b.state.borrow_mut().clock = reset;
         *next.borrow_mut() = "late";
@@ -4120,7 +4120,7 @@ Open: none";
         *e.borrow()[0].1.borrow_mut() = Some(1);
         s.pass().unwrap();
         let gone = b.comments(n).unwrap().into_iter().rfind(|c| c.body.starts_with("taskq: usage-limit")).unwrap().body;
-        assert!(gone.contains("\nUsage limit: claude until 1970-01-01T00:16:40Z; next account work"), "{gone}");
+        assert!(gone.contains("\nUsage limit: claude until 1970-01-01 00:16 UTC; next account work"), "{gone}");
         assert!(s.limited.is_empty(), "a spare account holds nothing");
         if e.borrow().len() < 2 { s.pass().unwrap(); }
         assert_eq!((e.borrow().len(), task(&b, n).state, task(&b, n).retries), (2, State::Doing, 0), "respawn on the next account, retries kept");
@@ -4134,7 +4134,7 @@ Open: none";
         *e.borrow()[1].1.borrow_mut() = Some(1);
         s.pass().unwrap();
         let gone = b.comments(n).unwrap().into_iter().rfind(|c| c.body.starts_with("taskq: usage-limit")).unwrap().body;
-        assert!(gone.ends_with("Usage limit: claude until 1970-01-01T00:16:40Z") || gone.contains("until 1970-01-01T00:16:40Z\n"), "none left: {gone}");
+        assert!(gone.ends_with("Usage limit: claude until 1970-01-01 00:16 UTC") || gone.contains("until 1970-01-01 00:16 UTC\n"), "none left: {gone}");
         assert!(!gone.contains("next account"), "{gone}");
         assert_eq!(s.limited.get("claude"), Some(&(reset, true)), "every account limited: the usage-limit hold");
         s.pass().unwrap();
@@ -4420,7 +4420,7 @@ Open: none";
         let kids = |s: &Service| Ok(s.kids.iter().map(|k| json!({"attempt": k.attempt, "pid": 1, "live": if k.unknown.is_some() { "unknown" } else { "running" }, "reason": k.unknown.as_ref()})).collect());
         let rows = proposal(&b, "mac", &kids(&s)).unwrap();
         assert_eq!(rows.iter().map(|r| (r.task, r.live.as_str(), r.revision)).collect::<Vec<_>>(), [(n1, "unknown (read failed)", None), (n2, "no child", Some(core::revision(n2, &entries(&b, n2).unwrap())))]);
-        assert!(proposal(&b, "mac", &Err("status.json 90 s old".into())).unwrap().iter().all(|r| r.revision.is_none()), "stale status: all unknown");
+        assert!(proposal(&b, "mac", &Err("status.json 1m ago".into())).unwrap().iter().all(|r| r.revision.is_none()), "stale status: all unknown");
         // stale recovery: the worker writes after the proposal; the op is refused and the board is unchanged
         let before = b.comments(n2).unwrap().len();
         b.comment(n2, &core::entry("ask", &[], Some(a2), "Again?\n1. x\n2. y ★")).unwrap();
@@ -4673,7 +4673,7 @@ Open: none";
         std::fs::write(&log,"{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"rate_limits\":{\"primary\":{\"used_percent\":20,\"window_minutes\":300}}}}\n").unwrap();
         let t=b.now().unwrap();crate::runtime::headroom::observe(&w.install,"codex",&log,t).unwrap();
         b.state.borrow_mut().clock=t+400;let expired=win.heartbeat_body();
-        assert!(expired.contains(&format!("headroom codex account default: last quota observation {} expired",crate::board::stamp(t))),"{expired}");
+        assert!(expired.contains(&format!("headroom codex account default: last quota observation {} expired",crate::time::utc(t))),"{expired}");
         b.state.borrow_mut().clock=t+700;
         assert_eq!(stable(&expired),stable(&win.heartbeat_body()));
         let mut restarted=service(&b,&w,Default::default());
@@ -5999,7 +5999,7 @@ Open: none";
         s.progress_clock=|b|b.now().unwrap()+5;
         use std::io::Write;
         let mut hot=fs::OpenOptions::new().append(true).open(&path).unwrap();
-        writeln!(hot,"{}",json!({"timestamp":crate::board::stamp(sampled),"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
+        writeln!(hot,"{}",json!({"timestamp":crate::time::stamp(sampled),"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
         hot.set_times(fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH+std::time::Duration::from_secs(sampled as u64))).unwrap();
         // #2279: the 50 ms wall budget can cut the scan under full-suite load; a cut scan is unknown and resumes, never lost.
         s.progress_budget=std::time::Duration::ZERO;s.pass().unwrap();
@@ -6115,7 +6115,7 @@ Open: none";
     #[test]
     fn timed_park_wakes_at_its_board_time_after_restart() {
         let b = Fake::default();
-        b.state.borrow_mut().clock = crate::board::iso("2026-11-05T08:00:00Z").unwrap();
+        b.state.borrow_mut().clock = crate::time::iso("2026-11-05T08:00:00Z").unwrap();
         let c = cfg("mac");
         let timed = b.create("Timed", "", &["taskq".into()]).unwrap();
         b.comment(timed, &core::entry("later", &["until", "2026-11-05T09:00:00Z"], None, "Reason: 168 qualified hours")).unwrap();
@@ -6147,7 +6147,7 @@ Open: none";
     #[test]
     fn stage_boundary_continues_without_a_human_step() {
         let b = Fake::default();
-        b.state.borrow_mut().clock = crate::board::iso("2026-11-03T10:00:00Z").unwrap();
+        b.state.borrow_mut().clock = crate::time::iso("2026-11-03T10:00:00Z").unwrap();
         let c = cfg("mac");
         let n = b.create("Staged", "## Acceptance\nA1. a\nA2. b\n", &["taskq".into()]).unwrap();
         let w = b.comment(n, "taskq: spawn worker codex:w mac").unwrap();

@@ -149,7 +149,7 @@ pub fn run(b: &dyn Board, root: &Path, version: &str, env: &str, range_arg: &str
 
 /// Writes the record to each of `tasks`; `skipped` are the trailers of other boards.
 pub fn record(b: &dyn Board, d: &Deploy, tasks: &BTreeSet<u64>, skipped: BTreeSet<String>, version: &str, env: &str, host: Option<&str>) -> Res<Value> {
-    let at = board::stamp(b.now()?);
+    let at = crate::time::stamp(b.now()?);
     let rows: Vec<Value> = tasks.iter().map(|n| one(b, d, *n, version, env, host, &at)).collect();
     let mut skipped: Vec<Value> = skipped.into_iter().map(|u| json!({"url": u, "reason": "not a task of this board"})).collect();
     skipped.extend(rows.iter().filter(|r| r["outcome"] == "skipped").cloned());
@@ -205,8 +205,8 @@ pub fn status(b: &dyn Board, d: Option<&Deploy>) -> Res<Vec<String>> {
     rows.sort_by_key(|(i, closed)| (*closed, i.number));
     let now = b.now()?;
     let tasks = if rows.len() == 1 { "1 task".to_string() } else { format!("{} tasks", rows.len()) };
-    let mut out = vec![format!("Waiting for deploy: {tasks}, oldest {} ({})", crate::display::age(now - rows[0].1), d.project)];
-    out.extend(rows.iter().map(|(i, closed)| format!("  #{} {} · closed {} ago · {}", i.number, i.title, crate::display::age(now - closed), b.url(i.number))));
+    let mut out = vec![format!("Waiting for deploy: {tasks}, oldest {} ({})", crate::time::age(now - rows[0].1), d.project)];
+    out.extend(rows.iter().map(|(i, closed)| format!("  #{} {} · closed {} ago · {}", i.number, i.title, crate::time::age(now - closed), b.url(i.number))));
     Ok(out)
 }
 

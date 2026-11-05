@@ -47,7 +47,7 @@ impl Reader {
             now=clock();
             for v in events {
                 let at=match v.get("timestamp") {
-                    Some(Value::String(s))=>crate::board::iso(s).filter(|t|*t>0 && *t<=now),
+                    Some(Value::String(s))=>crate::time::iso(s).filter(|t|*t>0 && *t<=now),
                     None=>(modified<=now).then_some(modified),
                     _=>None,
                 };
