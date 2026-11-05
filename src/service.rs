@@ -98,7 +98,7 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
         if now.saturating_sub(since) > DAY {
             let (what, goal) = match *cond {
                 "dirty" => ("Task worktree dirty", format!("A task worktree on host {} stays dirty while no child of that host runs its task: keep or drop its changes so the tidy pass can remove it.", cfg.me)),
-                "stale" => ("Root stale", format!("The project root on host {} has not followed origin/main for over a day: settle the stale reason so the tidy pass can fast-forward it.", cfg.me)),
+                "stale" => ("Root stale", format!("The project root on host {} has not followed its origin default branch for over a day: settle the stale reason so the tidy pass can fast-forward it.", cfg.me)),
                 _ => ("Closed task worktree kept", format!("A closed task's worktree on host {} stays after each tidy pass: settle its kept reason so the worktree goes.", cfg.me)),
             };
             let new = crate::NewTask {

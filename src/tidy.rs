@@ -120,6 +120,7 @@ fn label(args: &[&str]) -> &'static str {
         "merge-base" => "cleanup.git.merge_base",
         "merge" => "cleanup.git.merge",
         "fetch" => "cleanup.git.fetch",
+        "ls-remote" => "cleanup.git.ls_remote",
         _ => "cleanup.git",
     }
 }
@@ -180,6 +181,19 @@ fn run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         Err(coreq::process::Failure::Exit(o)) => Err(String::from_utf8_lossy(&o.stderr).lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("git failed").to_string()),
         Err(e) => Err(format!("git {}: {e}", args.first().unwrap_or(&""))),
     }
+}
+
+/// The origin default branch ([rule](../docs/design/worktrees.md#origin-default-branch)) and whether origin answered:
+/// what origin states now, read without a write; only when it is unreachable, Git's recorded `refs/remotes/origin/HEAD`.
+/// Never the checked-out branch. `None` is unknown and refuses.
+fn default_branch(root: &Path) -> (Option<String>, bool) {
+    let listed = git(root, &["ls-remote", "--symref", "origin", "HEAD"]);
+    let name = match &listed {
+        Ok(text) => text.lines().find_map(|l| l.strip_prefix("ref: refs/heads/")?.strip_suffix("\tHEAD")).map(String::from),
+        Err(_) => git(root, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]).ok().and_then(|t| t.trim().strip_prefix("refs/remotes/origin/").map(String::from)),
+    };
+    let name = name.filter(|n| git(root, &["check-ref-format", &format!("refs/heads/{n}")]).is_ok());
+    (name, listed.is_ok())
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
@@ -285,8 +299,14 @@ impl Tidy<'_> {
         let mut notes = BTreeSet::new();
         let mut counts = BTreeMap::new();
         let mut conditions: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
-        // a dry run reads the last fetched `origin/main`
-        let fetched = if self.dry { Ok(String::new()) } else { git(self.root, &["fetch", "-q", "origin", "main"]) };
+        let (default, reachable) = default_branch(self.root);
+        let default = default.as_deref();
+        // a dry run reads the last fetched `origin/<default>`; an unreachable origin costs no second network wait
+        let fetched = match default {
+            Some(d) if !self.dry && reachable => git(self.root, &["fetch", "-q", "origin", &format!("refs/heads/{d}")]),
+            Some(_) if !self.dry => Err("origin unreachable".to_string()),
+            _ => Ok(String::new()),
+        };
         // 1. registry prune: entries whose directory is gone; Git keeps locked ones
         let before = registry(self.root).map_or(0, |r| r.len());
         let pruned = if self.dry {
@@ -325,11 +345,11 @@ impl Tidy<'_> {
             }
         }
         // 4. local `taskq-<N>` branches without a worktree
-        let (deleted, kept) = self.branches(live, known, &mut stages, &mut log);
+        let (deleted, kept) = self.branches(default, live, known, &mut stages, &mut log);
         branches += deleted;
         refused += kept;
         // 5. root
-        let (root, behind, moved) = self.root_step(&fetched, &gitdir, &mut log);
+        let (root, behind, moved) = self.root_step(default, &fetched, &gitdir, &mut log);
         if root.starts_with("stale") { conditions.entry("stale").or_default().push(format!("root {root}")); }
         let mut report = json!({"at": at, "outcome": "ok", "root": root});
         for c in CLASSES {
@@ -497,25 +517,26 @@ impl Tidy<'_> {
     }
 
     /// Step 4: delete local `taskq-<N>` branches without a worktree of closed tasks. `-D` only when the tip is in
-    /// `origin/main` or the close receipt records a merge of the task's result at this tip; else `-d`, whose refusal
-    /// keeps the branch. Returns (deleted, kept).
-    fn branches(&self, live: &mut dyn FnMut(u64) -> bool, known: &dyn Fn(u64) -> Option<State>, stages: &mut HashMap<u64, Option<State>>, log: &mut Vec<String>) -> (u64, u64) {
+    /// `origin/<default>` or the close receipt records a merge of the task's result at this tip; else `-d`, whose
+    /// refusal keeps the branch. An unknown default has no such tip. Returns (deleted, kept).
+    fn branches(&self, default: Option<&str>, live: &mut dyn FnMut(u64) -> bool, known: &dyn Fn(u64) -> Option<State>, stages: &mut HashMap<u64, Option<State>>, log: &mut Vec<String>) -> (u64, u64) {
         let Ok(refs) = git(self.root, &["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/taskq-*"]) else { return (0, 0) };
         let checked: BTreeSet<String> = registry(self.root).unwrap_or_default().into_iter().filter_map(|e| e.branch).collect();
         let (mut deleted, mut kept) = (0, 0);
+        let target = default.map_or("the default branch".to_string(), |d| format!("origin/{d}"));
         for (name, tip) in refs.lines().filter_map(|l| l.split_once(' ')) {
             let Class::Worker(n) = class(name) else { continue };
             if checked.contains(name) || live(n) || self.stage(n, known, stages) != Some(State::Closed) { continue; }
-            let merged = git(self.root, &["merge-base", "--is-ancestor", tip, "origin/main"]).is_ok() || self.receipt(n, tip);
+            let merged = default.is_some_and(|d| git(self.root, &["merge-base", "--is-ancestor", tip, &format!("refs/remotes/origin/{d}")]).is_ok()) || self.receipt(n, tip);
             // a dry run reads what `branch -d` checks: the tip merged into HEAD
             if self.dry {
                 if merged || git(self.root, &["merge-base", "--is-ancestor", tip, "HEAD"]).is_ok() { deleted += 1; log.push(format!("#{n} branch would be deleted")); }
-                else { kept += 1; log.push(format!("#{n} branch kept: not merged into origin/main")); }
+                else { kept += 1; log.push(format!("#{n} branch kept: not merged into {target}")); }
                 continue;
             }
             match git(self.root, &["branch", if merged { "-D" } else { "-d" }, name]) {
                 Ok(_) => { deleted += 1; log.push(format!("#{n} branch deleted")); }
-                Err(e) => { kept += 1; log.push(format!("#{n} branch kept: {}{e}", if merged { "" } else { "not merged into origin/main: " })); }
+                Err(e) => { kept += 1; log.push(if merged { format!("#{n} branch kept: {e}") } else { format!("#{n} branch kept: not merged into {target}: {e}") }); }
             }
         }
         (deleted, kept)
@@ -529,30 +550,34 @@ impl Tidy<'_> {
         merged && core::project(n, &entries, false).task.result.is_some_and(|r| r.len() >= 7 && tip.starts_with(&r))
     }
 
-    /// Step 5: fast-forward the root only on `main`; anything else is `stale <reason>`. Returns (report, behind, moved).
-    fn root_step(&self, fetched: &Result<String, String>, gitdir: &Path, log: &mut Vec<String>) -> (String, u64, bool) {
-        let counts = git(self.root, &["rev-list", "--left-right", "--count", "HEAD...origin/main"]).ok();
+    /// Step 5: fast-forward the root only on the origin default branch; anything else is `stale <reason>`.
+    /// Returns (report, behind, moved).
+    fn root_step(&self, default: Option<&str>, fetched: &Result<String, String>, gitdir: &Path, log: &mut Vec<String>) -> (String, u64, bool) {
+        let tracked = default.map(|d| format!("refs/remotes/origin/{d}"));
+        let counts = tracked.as_ref().and_then(|t| git(self.root, &["rev-list", "--left-right", "--count", &format!("HEAD...{t}")]).ok());
         let mut n = counts.as_deref().unwrap_or("").split_whitespace().map(|x| x.parse::<u64>().unwrap_or(0));
         let (ahead, behind) = (n.next().unwrap_or(0), n.next().unwrap_or(0));
         let branch = git(self.root, &["symbolic-ref", "-q", "HEAD"]).ok().map(|h| h.trim().trim_start_matches("refs/heads/").to_string());
+        let name = default.unwrap_or("");
         let reason = match branch.as_deref() {
             None => Some("detached HEAD".to_string()),
-            Some(b) if b != "main" => Some(format!("on branch {b}")),
+            Some(_) if default.is_none() => Some("default branch unknown".to_string()),
+            Some(b) if b != name => Some(format!("on branch {b}")),
             _ => OPERATIONS.iter().find(|(f, _)| gitdir.join(f).exists()).map(|(_, op)| format!("{op} in progress"))
                 .or_else(|| fetched.as_ref().err().map(|_| "fetch failed".to_string()))
-                .or_else(|| counts.is_none().then(|| "origin/main unknown".to_string()))
+                .or_else(|| counts.is_none().then(|| format!("origin/{name} unknown")))
                 .or_else(|| (ahead > 0 && behind > 0).then(|| "diverged".to_string())),
         };
         let reason = match reason {
             Some(r) => r,
             None if behind == 0 => return ("current".into(), 0, false),
             None if self.dry => {
-                log.push(format!("root would fast-forward {behind} commits to origin/main"));
+                log.push(format!("root would fast-forward {behind} commits to origin/{name}"));
                 return (format!("behind {behind}"), behind, false);
             }
-            None => match git(self.root, &["-c", "merge.autoStash=false", "merge", "--ff-only", "-q", "origin/main"]) {
+            None => match git(self.root, &["-c", "merge.autoStash=false", "merge", "--ff-only", "-q", tracked.as_deref().unwrap_or("")]) {
                 Ok(_) => {
-                    log.push(format!("root fast-forwarded {behind} commits to origin/main"));
+                    log.push(format!("root fast-forwarded {behind} commits to origin/{name}"));
                     return ("current".into(), 0, true);
                 }
                 Err(e) if e.contains("would be overwritten") => "overwrite conflict".into(),
@@ -695,6 +720,150 @@ mod tests {
         assert_eq!(pass(&r.tidy(&b, false)).report["outcome"], "skipped taskq lock held");
         drop(held);
         assert_eq!(r.head(), local, "no refusal moved the root");
+    }
+
+    /// The PAH shape: `origin` defaults to `master` and the clone has no `refs/remotes/origin/HEAD`.
+    fn master_repo(tag: &str) -> Repo {
+        let r = Repo::new(tag);
+        r.sh(&r.origin, &["branch", "-m", "main", "master"]);
+        r.sh(&r.root, &["fetch", "-q", "--prune", "origin"]);
+        r.sh(&r.root, &["branch", "-q", "-m", "main", "master"]);
+        r.sh(&r.root, &["branch", "-q", "--set-upstream-to=origin/master", "master"]);
+        r.sh(&r.root, &["remote", "set-head", "origin", "--delete"]);
+        r
+    }
+
+    /// Everything the task forbids a pass to change: refs, local Git config and the stash.
+    fn git_policy(r: &Repo) -> String {
+        [r.sh(&r.root, &["for-each-ref", "--format=%(refname) %(symref)"]), r.sh(&r.root, &["config", "--local", "--list"]), r.sh(&r.root, &["stash", "list"])].join("\n")
+    }
+
+    // Chain: tidy step 5 on a `master` repository. Defect (gradus/pah#3): the pass fetched `origin main`, so a current
+    // `master` root read `stale on branch master` and filed a false finding, also with `origin/HEAD` absent as on PAH.
+    // Risk protected: a fix that needs or writes `origin/HEAD`, or changes a branch, remote or tracking setting.
+    #[test]
+    fn master_default_stays_current_and_fast_forwards_without_origin_head() {
+        let r = master_repo("master");
+        let b = Fake::default();
+        let policy = git_policy(&r);
+        let o = pass(&r.tidy(&b, false));
+        assert_eq!(o.report["root"], "current", "{:?}", o.log);
+        assert!(!o.conditions.contains_key("stale"), "no false finding: {:?}", o.conditions);
+        r.upstream("b", "1");
+        std::fs::write(r.root.join("local.txt"), "mine").unwrap();
+        let o = pass(&r.tidy(&b, false));
+        assert_eq!(o.report["root"], "current", "{:?}", o.log);
+        assert_eq!(o.log, ["root fast-forwarded 1 commits to origin/master"]);
+        assert_eq!(r.head(), r.sh(&r.origin, &["rev-parse", "HEAD"]));
+        assert_eq!(std::fs::read_to_string(r.root.join("local.txt")).unwrap(), "mine");
+        assert_eq!(git_policy(&r), policy, "no ref name, config or stash write");
+        assert!(git(&r.root, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]).is_err(), "origin/HEAD stays absent");
+        // a recorded `origin/HEAD` left behind by a rename loses to what `origin` states now
+        r.sh(&r.root, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+        assert_eq!(pass(&r.tidy(&b, false)).report["root"], "current");
+    }
+
+    // Chain: tidy step 5 refusals on a `master` repository. Risk protected: following the origin default weakens a
+    // protection of the `main` case, or moves a root that a person left on another branch.
+    #[test]
+    fn master_default_keeps_every_root_refusal() {
+        let r = master_repo("master-refuse");
+        let b = Fake::default();
+        r.upstream("a", "2");
+        std::fs::write(r.root.join("a"), "edited").unwrap();
+        let before = r.head();
+        assert_eq!(pass(&r.tidy(&b, false)).report["root"], "stale overwrite conflict (behind 1)");
+        assert_eq!((r.head(), std::fs::read_to_string(r.root.join("a")).unwrap().as_str()), (before.clone(), "edited"), "local change kept");
+        assert_eq!(r.sh(&r.root, &["stash", "list"]), "", "never stashes");
+        r.sh(&r.root, &["checkout", "-q", "--", "a"]);
+        std::fs::write(r.root.join("c"), "local").unwrap();
+        r.sh(&r.root, &["add", "c"]);
+        r.sh(&r.root, &["commit", "-q", "-m", "local"]);
+        let local = r.head();
+        assert_eq!(pass(&r.tidy(&b, false)).report["root"], "stale diverged (behind 1)");
+        // a local `main` is another branch here: it is neither followed nor created
+        r.sh(&r.root, &["checkout", "-q", "-b", "main"]);
+        assert_eq!(pass(&r.tidy(&b, false)).report["root"], "stale on branch main (behind 1)");
+        r.sh(&r.root, &["checkout", "-q", "-b", "topic"]);
+        assert_eq!(pass(&r.tidy(&b, false)).report["root"], "stale on branch topic (behind 1)");
+        r.sh(&r.root, &["checkout", "-q", "--detach"]);
+        assert_eq!(pass(&r.tidy(&b, false)).report["root"], "stale detached HEAD (behind 1)");
+        r.sh(&r.root, &["checkout", "-q", "master"]);
+        std::fs::write(r.root.join(".git/MERGE_HEAD"), format!("{local}\n")).unwrap();
+        assert_eq!(pass(&r.tidy(&b, false)).report["root"], "stale merge in progress (behind 1)");
+        std::fs::remove_file(r.root.join(".git/MERGE_HEAD")).unwrap();
+        std::fs::write(r.root.join(".git/index.lock"), "").unwrap();
+        assert_eq!(pass(&r.tidy(&b, false)).report["outcome"], "skipped Git lock index.lock held");
+        std::fs::remove_file(r.root.join(".git/index.lock")).unwrap();
+        assert_eq!(r.head(), local, "no refusal moved the root");
+    }
+
+    // Chain: default resolution -> root step and branch step. Risk protected: guessing the default from the checked-out
+    // branch or the name `main`, and `branch -D` against a branch the remote never named as its default.
+    #[test]
+    fn unknown_default_refuses_and_never_reads_the_checkout() {
+        let r = master_repo("unknown");
+        let b = Fake::default();
+        b.create("T", "", &["taskq".into()]).unwrap();
+        // merged only into `origin/master`: without a verified default its tip counts as unmerged
+        r.sh(&r.root, &["branch", "--no-track", "taskq-1", "origin/master"]);
+        b.close(1).unwrap();
+        std::fs::write(r.root.join("c"), "local").unwrap();
+        r.sh(&r.root, &["add", "c"]);
+        r.sh(&r.root, &["commit", "-q", "-m", "local"]);
+        r.sh(&r.root, &["checkout", "-q", "--orphan", "topic"]);
+        r.sh(&r.root, &["commit", "-q", "-m", "topic"]);
+        r.sh(&r.origin, &["checkout", "-q", "--detach"]);
+        let head = r.head();
+        let o = pass(&r.tidy(&b, false));
+        assert_eq!(o.report["root"], "stale default branch unknown", "{:?}", o.lines);
+        assert!(o.conditions["stale"] == ["root stale default branch unknown"], "{:?}", o.conditions);
+        assert_eq!(o.log, ["#1 branch kept: not merged into the default branch: error: the branch 'taskq-1' is not fully merged", "root stale: default branch unknown"].map(String::from));
+        assert_eq!(r.head(), head);
+        assert_eq!(r.sh(&r.root, &["branch", "--list", "taskq-1"]), "taskq-1");
+        // an unreachable origin with no recorded default refuses the same way, here on a branch named like the default
+        r.sh(&r.root, &["checkout", "-q", "master"]);
+        r.sh(&r.root, &["remote", "set-url", "origin", r.base.join("gone").to_str().unwrap()]);
+        assert_eq!(pass(&r.tidy(&b, false)).report["root"], "stale default branch unknown");
+        // a recorded default keeps branch cleanup while unreachable; the root does not move on an unverified read
+        r.sh(&r.root, &["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master"]);
+        let o = pass(&r.tidy(&b, false));
+        assert_eq!(o.report["root"], "stale fetch failed", "{:?}", o.log);
+        assert_eq!(r.sh(&r.root, &["branch", "--list", "taskq-1"]), "", "{:?}", o.log);
+    }
+
+    // Chain: `taskq cleanup --dry-run` and step 4 on a `master` repository. Risk protected: a dry run that fetches or
+    // writes, and branch cleanup on a `master` repository that deletes unmerged work or a foreign worktree's branch.
+    #[test]
+    fn master_default_dry_run_and_branch_cleanup_keep_their_protections() {
+        let r = master_repo("master-dry");
+        let b = Fake::default();
+        for _ in 0..7 { b.create("T", "", &["taskq".into()]).unwrap(); }
+        // 5 merged into origin/master; 6 unmerged; 7 merged but checked out in a foreign worktree
+        r.sh(&r.root, &["branch", "taskq-5", "origin/master"]);
+        r.sh(&r.root, &["checkout", "-q", "-b", "taskq-6"]);
+        std::fs::write(r.root.join("u"), "unmerged").unwrap();
+        r.sh(&r.root, &["add", "u"]);
+        r.sh(&r.root, &["commit", "-q", "-m", "unmerged"]);
+        r.sh(&r.root, &["checkout", "-q", "master"]);
+        let foreign = r.base.join("foreign");
+        r.sh(&r.root, &["worktree", "add", "-q", "-b", "taskq-7", foreign.to_str().unwrap()]);
+        for n in [5, 6, 7] { b.close(n).unwrap(); }
+        r.upstream("b", "1");
+        r.sh(&r.root, &["fetch", "-q", "origin", "master"]);
+        r.upstream("c", "1");
+        std::fs::remove_file(r.root.join(".git/FETCH_HEAD")).unwrap();
+        let (state, policy, tracked) = (r.state(), git_policy(&r), r.sh(&r.root, &["rev-parse", "origin/master"]));
+        let o = Tidy { dry: true, ..r.tidy(&b, false) }.run(&mut |_| false, &|_| None);
+        assert_eq!(o.lines, ["#5 branch would be deleted", "#6 branch kept: not merged into origin/master", "root would fast-forward 1 commits to origin/master"]);
+        assert_eq!((r.state(), git_policy(&r), r.sh(&r.root, &["rev-parse", "origin/master"])), (state, policy, tracked), "a dry run changes nothing");
+        assert!(!r.root.join(".git/FETCH_HEAD").exists(), "a dry run does not fetch");
+        let o = pass(&r.tidy(&b, false));
+        let branch = |b: &str| r.sh(&r.root, &["branch", "--list", b]) != "";
+        assert!(!branch("taskq-5") && branch("taskq-6") && branch("taskq-7") && foreign.exists(), "{:?}", o.log);
+        assert!(o.log.contains(&"#6 branch kept: not merged into origin/master: error: the branch 'taskq-6' is not fully merged".into()), "{:?}", o.log);
+        assert_eq!(o.report["root"], "current", "{:?}", o.log);
+        assert_eq!(o.counts["root_moved"], 1);
     }
 
     // Chain: tidy steps 2 and 4 on a temp repo. Defect: reviewer worktrees and `taskq-*` branches of closed tasks
