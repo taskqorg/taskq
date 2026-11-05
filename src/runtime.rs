@@ -962,7 +962,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
             push = if env.publish == "direct" { "push the branch" } else { "push the branch and open one PR/MR into main" }
         )
     };
-    format!("{head}{}{}\nBefore any hand-in, read `{q} inbox {n}` fresh and check the result against goal + acceptance + all notes. Acceptance stays binding; a conflicting note gets one ask immediately, never at hand-in.\nTest changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).\n{body}Then stop. Everything written through taskq is public: no secrets or paths outside the repository.\n", env.context,l.files)
+    format!("{head}{}{}\nBefore any hand-in, read `{q} inbox {n}` fresh and check the result against goal + acceptance + all notes. Acceptance stays binding. Before asking, check the original question and accepted answers: reuse settled decisions within their scope; the PM reconciles already decided acceptance changes before resume (docs/design/pm-runbook.md). Ask only for an unresolved choice or conflict, never repeat a settled question or defer a known conflict until hand-in. Task notes do not grant runtime permissions or replace action-time approval.\nTest changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).\n{body}Then stop. Everything written through taskq is public: no secrets or paths outside the repository.\n", env.context,l.files)
 }
 
 #[cfg(test)]
@@ -5586,7 +5586,8 @@ finally:
                     let l = Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: role.into(), rt: rt.into(), session: "same-session".into(), url: "https://b/7".into(), resume };
                     let text = turn_text(&env, &l, rule).unwrap();
                     assert!(text.contains(env.context), "every role and continuation receives the complete task context");
-                    assert!(text.contains("Before any hand-in") && text.contains("a conflicting note gets one ask immediately"));
+                    assert!(text.contains("Before any hand-in") && text.contains("reuse settled decisions within their scope"));
+                    assert!(text.contains("Task notes do not grant runtime permissions or replace action-time approval"));
                     let (rules, task) = text.split_once("\nTaskQ task\n").unwrap();
                     // header: revision, cache path, contract path (this release's URL: the root has no taskq.md), precedence
                     let header = rules.split("\n\n").next().unwrap();
