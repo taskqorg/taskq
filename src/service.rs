@@ -1784,9 +1784,17 @@ impl<'a> Service<'a> {
         self.progress.retain(|key,_|self.kids.iter().any(|k|*key==(k.task,k.attempt,k.execution)));
     }
 
+    /// The live process of one execution: this service's child, else the worker telemetry of an earlier service run.
+    fn live_pid(&self,task:u64,attempt:u64,execution:u64)->Option<u32> {
+        self.kids.iter().find(|k|k.task==task && k.attempt==attempt && k.proc.id()>1 && crate::runtime::alive(k.proc.id())).map(|k|k.proc.id())
+            .or_else(||crate::telemetry::live_worker_pid(&self.cfg.install,Some(&self.cfg.root),task,attempt,execution))
+    }
+
     fn execution_statuses(&self)->Vec<crate::snapshot::ExecutionStatus> {
         let mut statuses:Vec<_>=self.observations.iter().map(|((task,_),x)| {
-            let (state,reason)=crate::snapshot::verdict(&self.signals(*task,x));
+            let (mut state,mut reason)=crate::snapshot::verdict(&self.signals(*task,x));
+            // A live worker process settles an unknown verdict in the one row status and the heartbeat both publish.
+            if state=="unknown" && self.live_pid(*task,x.attempt,x.id).is_some() {state="running";reason=crate::snapshot::LIVE_PROCESS.into();}
             crate::snapshot::ExecutionStatus {progress:self.progress.get(&(*task,x.attempt,x.id)).map(|p|p.1.clone()),task:*task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),reason}
         }).collect();
         if let Some(snapshot)=&self.snapshot {
@@ -1972,6 +1980,7 @@ impl<'a> Service<'a> {
         if r.is_err() { self.unready(); }
         self.observe_progress();
         let observations=self.execution_statuses();
+        let live_pids:BTreeMap<_,_>=observations.iter().filter_map(|x|self.live_pid(x.task,x.attempt,x.id).map(|pid|((x.task,x.id),pid))).collect();
         if let Some(snapshot) = &mut self.snapshot {
             for row in &mut snapshot.tasks {
                 row.executions.retain(|value|value["host"].as_str()!=Some(&self.cfg.me)
@@ -1983,16 +1992,8 @@ impl<'a> Service<'a> {
                         value["host"]=json!(self.cfg.me);value["observed"]=json!(snapshot.observed);
                     }
                     if value["host"].as_str()==Some(&self.cfg.me) && value["attempt"].as_u64()==row.task.attempt {
-                        let live_pid = self.kids.iter().find(|k| k.task == row.n && Some(k.attempt) == row.task.attempt && k.proc.id() > 1 && crate::runtime::alive(k.proc.id()))
-                            .map(|k| k.proc.id())
-                            .or_else(|| crate::telemetry::live_worker_pid(&self.cfg.install, Some(&self.cfg.root), row.n, row.task.attempt.unwrap_or(0), value["id"].as_u64().unwrap_or(0)));
-                        if let Some(pid) = live_pid {
-                            value["process_id"] = json!(pid);
-                            if value["state"] == "unknown" {
-                                value["state"] = json!("running");
-                                value["reason"] = json!("");
-                            }
-                        }
+                        // A host-local identity: the heartbeat row carries the same state without it.
+                        if let Some(pid)=live_pids.get(&(row.n,value["id"].as_u64().unwrap_or(0))) {value["process_id"]=json!(pid);}
                     }
                 }
                 if row.executions.iter().any(|x|x["host"].as_str()==Some(&self.cfg.me)) {

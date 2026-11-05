@@ -2797,6 +2797,34 @@ Open: none")).unwrap();
         assert!(!crate::runtime::link_ok(&urls[&("win".to_string(), 42)]));
     }
 
+    // Chain: §4 native observation -> local status row -> heartbeat row. Risk (#2427 A7): a live process reads running
+    // locally and unknown to every other reader; only the host-local process_id and observation times may differ.
+    #[test]
+    fn a_live_process_reads_the_same_in_status_and_heartbeat() {
+        struct Live(u32);
+        impl Proc for Live {
+            fn exited(&mut self)->Result<Option<i32>,String>{Ok(None)}
+            fn kill(&mut self)->Result<(),String>{Ok(())}
+            fn id(&self)->u32{self.0}
+        }
+        let b=Fake::default();let c=cfg("mac");
+        let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
+        let pid=std::process::id();
+        let mut s=Service::new(&b,&c,"test",Box::new(move |_|Ok(Box::new(Live(pid)))));
+        s.focus=vec!["all".into()];
+        s.pass().unwrap();s.pass().unwrap();
+        // A read failure leaves the verdict unknown while the process lives.
+        s.kids[0].unknown=Some("native read failed".into());
+        s.pass().unwrap();s.beat().unwrap();
+        let mut local=s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().json()["executions"].clone();
+        let mut published=crate::snapshot::read(&b,&cfg("win"),&json!({}),&[]).tasks.into_iter().find(|r|r.n==n).unwrap().json()["executions"].clone();
+        assert_eq!(local[0]["process_id"],pid,"the local row names its process");
+        assert_eq!(published[0].get("process_id"),None,"a host-local pid stays off the heartbeat");
+        assert_eq!(local[0]["state"],"running");
+        for row in [&mut local,&mut published] {for key in ["observed","process_id"] {row[0].as_object_mut().unwrap().remove(key);}row[0]["progress"]=Value::Null;}
+        assert_eq!(local,published);
+    }
+
     // Chain: native observation -> aggregate heartbeat -> remote read -> durable terminal after lost response.
     #[test]
     fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {

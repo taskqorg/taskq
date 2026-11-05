@@ -73,6 +73,8 @@ pub struct Child<'a> {
     pub stopping: bool,
 }
 
+/// A live worker process settles an unknown verdict; a published row always carries a reason.
+pub const LIVE_PROCESS: &str = "worker process observed";
 const STALE: &str = "termination unconfirmed; status missing or stale; restore owning service";
 
 /// The one execution verdict (§ 3 Recovery): state and a public reason of at most 240 characters.
@@ -546,7 +548,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
                         value["process_id"] = json!(pid);
                         if value["state"] == "unknown" {
                             value["state"] = json!("running");
-                            value["reason"] = json!("");
+                            value["reason"] = json!(LIVE_PROCESS);
                         }
                     }
                 }
