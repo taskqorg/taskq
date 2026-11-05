@@ -59,7 +59,7 @@ Use one outline family for actions, consistent 16 px optical size. Reuse the exi
 
 ### Task-state icons
 
-The owner accepts the mapping below and the paired theme colors on 2026-10-23, reusing the implementation's existing glyphs. It supersedes accidental symbols in editable drafts; it does not silently amend the frozen reference. Use one mapping for counters, filters, rows, details and Settings project summaries. Preserve labels/tooltips and accessible state names.
+The owner accepts the mapping below and the paired theme colors, reusing the implementation's existing glyphs. It supersedes accidental symbols in editable drafts; it does not silently amend the frozen reference. Use one mapping for counters, filters, rows, details and Settings project summaries. Preserve labels/tooltips and accessible state names.
 
 | Meaning | One icon | Accent |
 |---|---|---|

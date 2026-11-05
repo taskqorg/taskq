@@ -89,7 +89,7 @@ Workspace/restricted profiles deny those paths and broker access. Full on the sa
 
 ## P3 Runtime catalogue
 
-Documentation checked 2026-10-13; local help: Codex 0.159.3, Claude Code 2.1.296. Pin adapter evidence to version/OS. Help is not execution proof.
+Local help: Codex 0.159.3, Claude Code 2.1.296. Pin adapter evidence to version/OS. Help is not execution proof.
 
 ### Codex
 

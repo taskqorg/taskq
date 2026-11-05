@@ -3,7 +3,7 @@
 Experiment for [#1825](https://github.com/taskqorg/taskq/issues/1825): how Conversations shows what a task worker session does and how the owner writes back into it.
 Status: the owner chose option A, transcript tail with next-turn owner input (A6). Nothing here changes [taskq.md](../../taskq.md) or [ai-workspace.md](ai-workspace.md) D1–D8; the follow-up tasks below ship it.
 
-Probes ran on 2026-10-29 on one Windows 11 host with Claude Code 2.1.312 and codex-cli 0.162.1, against real sessions with small models and short prompts.
+Probes ran on one Windows 11 host with Claude Code 2.1.312 and codex-cli 0.162.1, against real sessions with small models and short prompts.
 Probe scripts stayed outside the repository; every number below is a measured value, not an estimate.
 
 ## A1. Capability matrix

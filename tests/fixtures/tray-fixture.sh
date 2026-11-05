@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fixture for `taskq tray` (docs/design/verification.md): three projects in DIR, then
+# Fixture for `taskq tray` (docs/design/menu.md): three projects in DIR, then
 #   TASKQ_INSTALL=DIR/install taskq tray --snapshot DIR/shots
 # alpha admits (long titles, ask, failed, a newer version to update to, history over the last day: 3 closes and
 # 3 failed in a day, the first and last of 12 bins not empty, Agents rows); beta is paused with a saved focus, has a service error and the

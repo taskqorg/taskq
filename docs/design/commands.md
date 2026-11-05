@@ -46,6 +46,8 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 | `taskq profile [guide\|export\|tasks\|board\|actions\|health\|migrate] [--since 24h]` | Local telemetry; no board; [detail](profiling.md#contract-detail) |
 | `taskq agents` | read-only login probe per startable runtime: [runtime login](capacity.md#runtime-login) |
 | `taskq accounts [--json]` / `taskq accounts enable\|disable <runtime> <label>` / `move <runtime> <label> <position>` / `add <runtime> <label>` / `fleet use\|avoid\|clear <runtime> <id>` | list every host's runtime accounts with usage; change this host's list, add one by device login, or set board-wide policy: [runtime accounts](capacity.md#runtime-accounts) |
+| `taskq rules size` / `taskq rules compact ROOT ROLE TASK ATTEMPT` / `taskq rules pm start\|compact` | `size` prints `Rules: <len> of <cap> bytes, headroom <n>`; project CI runs it, so a contract edit over the cap fails before merge. `compact` prints the role's compact rules for the runtime compact hook. `pm` prints the PM rules for the project hook; a worker or reviewer under that hook gets empty output, its rules come with its turn (§ 8). |
+| `taskq claim-issue [N] [--json]` | Shows, or adopts issue N as, the project's `create_claim_issue`; prints `#N create_claim_issue URL (source)` or `Error:` and `Next:` lines. A worker is refused: it cannot change the claim issue. Detail: [claim issue command](finding-tasks.md). |
 | `taskq selftest` / `taskq --version` | load config, fold built-in `tests/golden`, read the board; no writes / [binary version](host-service.md#contract-detail) |
 
 ### Outputs, op ids and receipts

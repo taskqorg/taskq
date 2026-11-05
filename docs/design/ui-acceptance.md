@@ -37,7 +37,7 @@ Builder completes the ledger per [F6](https://github.com/taskqorg/specq/blob/mai
 | Plans | four editable recipes, held creation, explicit start, dependencies and partial retry | UC-03/06/07, D06/D08/D14, G2/G5 |
 | Auto resources | shared host admission, optional caps, fresh load, wait reasons, effective readback | UC-04/12, D03, G3 |
 | Delivery | separate commit/push/PR/merge policy, candidate revision and checks, publication receipt | UC-14, D04, G4 |
-| Remote PM | project routing, opt-in watch, source-numbered answers, media and gateway recovery | UC-17, RM-A1–RM-A9 |
+| Remote PM | project routing, opt-in watch, source-numbered answers, media and gateway recovery | UC-17 |
 | Agents | probes, accounts, versions, disabled runtimes, effective policy/source | M9, P-A1–P-A10 |
 | Services | freshness, logs/folder, incidents + disclosure/consent, Resources | M-A10–M-A12 |
 | Emergency / recovery | named host, owned-process stop, durable hold, preserved work, selected fenced restart | E-A1–E-A9 |

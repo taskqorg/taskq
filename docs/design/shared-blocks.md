@@ -4,7 +4,7 @@ Accepted under [Product](../../taskq.md#product). A compact consumer is a child 
 
 ## B1 Authority and inheritance
 
-The [package index](README.md) and [implementation brief](implementation-brief.md) select the current reference and its editable sources. At adoption, record the TaskQ commit, source paths, asset/component version and hashes. Do not start from an older chat mock, historical menu or whichever implementation happens to be installed.
+The [package index](README.md) selects the current reference and its editable sources. At adoption, record the TaskQ commit, source paths, asset/component version and hashes. Do not start from an older chat mock, historical menu or whichever implementation happens to be installed.
 
 | Child block | Parent authority | Preserved interface |
 |---|---|---|

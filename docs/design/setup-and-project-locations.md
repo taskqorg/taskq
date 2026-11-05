@@ -1,6 +1,6 @@
 # Installation and project locations
 
-Accepted product target. Extends UC-01/08/11/12/17 and taskq.md §6/§8; does not claim a new installer or filesystem sandbox is shipped. Reuse [worker permissions](worker-permissions.md), [remote manager](remote-manager.md) and shared bootstrap. No second project registry.
+Accepted product target. Extends UC-01/08/11/12/17 and taskq.md §6/§8; does not claim a new installer or filesystem sandbox is shipped. Reuse [worker permissions](worker-permissions.md) and shared bootstrap. No second project registry.
 
 ## S1. One-click install, alternative entrances, one setup flow
 

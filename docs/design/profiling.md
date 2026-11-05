@@ -188,7 +188,7 @@ Actions:
 - Answer the open `ask` rows that are the PM's to answer.
 - Report in short Russian: anomalies only, plus one cadence line per host; `норм` when clean.
 
-Known baseline (2026-10-30, 1 h window), not news: `cleanup.git` `merge_base`/branch `exit` on almost every call (mac, win); `runtime.stop` `stop-unconfirmed` (mac, pds18); `gui.tcc_log` timeout about 8/h (mac); `reports.candidate` `exit`; win `runtime.version` and login timeouts; pds18 `publish` 3.6 % failed (1 of 28).
+Known baseline, not news: `cleanup.git` `merge_base`/branch `exit` on almost every call (mac, win); `runtime.stop` `stop-unconfirmed` (mac, pds18); `gui.tcc_log` timeout about 8/h (mac); `reports.candidate` `exit`; win `runtime.version` and login timeouts; pds18 `publish` 3.6 % failed (1 of 28).
 
 Limits: cadence counts the tasks created in the window that are still open, so a task created and closed in the window counts only as a close; CPU (ceiling 70 %) is not read and stays a manual check; the pass reads one install.
 
@@ -256,7 +256,7 @@ These are acceptance targets, not claims about the installed release. Shared mod
 - Telemetry queue payload stays within16MiB and a writer batch within16MiB; the installation's existing64MiB physical store bound includes migration overlap. Bound and report memory/CPU/flush costs on all three hosts; old/new stores do not receive separate allowances.
 - Verify missing permissions, network refusal/timeout, child exit/panic, store contention/full/corruption, collector death, export outage and crash recovery. Each yields a scoped outcome or visible uncertainty; emergency stop remains usable. Remote export outage does not stop local collection or task execution.
 - Required command receipts must distinguish received, applied, observed and superseded. Never acknowledge durable acceptance before commit; a receipt that cannot be persisted stays unknown and never fails or delays its command. Receipts cannot become a second source of task truth.
-- Readiness requires real installed Mac/Windows/FRA chains, current running process/client versions, actual spec precedence/freshness and context/compression evidence, plus an isolated controlled task through result/review. Keep production holds until owner release.
+- Readiness requires real installed Mac/Windows/Linux chains, current running process/client versions, actual spec precedence/freshness and context/compression evidence, plus an isolated controlled task through result/review. Keep production holds until owner release.
 
 ## Bounded external commands
 
@@ -286,7 +286,7 @@ The single installation-local `telemetry.log/diagnostic.json` control request is
 
 ## JS execution architecture
 
-Owner steering2026-10-17; accepted target, not yet qualified. Use the shared CoreQ module wrapper for ordinary synchronous logic/view methods. One definition wraps every method, including newly added ones; internal calls use the wrapped module. Normal mode aggregates calls/outcomes cheaply; selected diagnostics add bounded timing/detail. No build-time rewriting of product JS. Helpers local to a function stay plain inside the enclosing measured method; module-level functions are wrapped module methods.
+Owner steering: accepted target, not yet qualified. Use the shared CoreQ module wrapper for ordinary synchronous logic/view methods. One definition wraps every method, including newly added ones; internal calls use the wrapped module. Normal mode aggregates calls/outcomes cheaply; selected diagnostics add bounded timing/detail. No build-time rewriting of product JS. Helpers local to a function stay plain inside the enclosing measured method; module-level functions are wrapped module methods.
 
 Events, commands, native handoff, layout/render and asynchronous effects enter shared execution boundaries. Components own no detached promises or timers. An effect owner observes settlement, restores the initiating context for its synchronous result callback, and retains missing completion as unknown. Nested callbacks do not inherit an ambient context across unrelated async work. Render submission, JS execution/frame callbacks and native paint are separate observations; unavailable paint proof stays unknown. Module inventory and a new-method/event regression must detect bypasses. Preserve existing component APIs, permissions, content exclusion, control/receipt semantics and the one bounded writer. Optional metadata delivery failure marks collection unknown and notifies once through the native log/tooltip; it never disables command controls. Invalid page metadata still marks the interface untrusted. Required command receipts never block or fail commands; only a missing collector keeps the separate admission/emergency-Pause behavior. Native/browser and normal/detail cost proof is required before audit7 closes.
 

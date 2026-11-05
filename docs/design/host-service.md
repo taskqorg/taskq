@@ -229,7 +229,7 @@ Each task is one reviewable diff. Lines `Depends on` go into the task body as wr
    `Depends on #<task 2>`
 4. **Legacy mode and migration.** Apply the § 8 shared core and step 3 diff blocks. Legacy-mode detection, `handoff` reason, own unit removal with readback, host-wide admission hold until all legacy entries have verified exit, rollback floor. Chain check: legacy root with a live child admits nothing, keeps the child, then removes its unit and the host thread takes over.
    `Depends on #<task 3>`
-5. **Release and host qualification.** Release N; on mac, Windows and FRA record per host: legacy units gone, every root served by the host pid, no `gone` from migration, rollback drills within the qualified execution-protocol floor, plus refusal below that floor, on macOS, Windows and Linux using isolated units and children; verify drain, exit, unit removal order, restored config and update hold before any live rollout.
+5. **Release and host qualification.** Release N; on mac, Windows and Linux record per host: legacy units gone, every root served by the host pid, no `gone` from migration, rollback drills within the qualified execution-protocol floor, plus refusal below that floor, on macOS, Windows and Linux using isolated units and children; verify drain, exit, unit removal order, restored config and update hold before any live rollout.
    `Depends on #<task 4>`
 
 ## Open
@@ -424,7 +424,7 @@ Detail for taskq.md section 8 item 1 (#1388; on demand since #2311, [specq#118](
 
 ## Host tools
 
-Contract detail for taskq.md sections 4, 5 and 8 (#1856, owner decision 2026-10-29, [specq#98](https://github.com/taskqorg/specq/pull/98)). Each external tool taskq or its workers run on a host, its minimum version and the owner's fix. `src/tools.rs` holds the same table, its runtime rows in the runtime adapters; a new tool, flag or API use raises the minimum in the same change, and its tests use a fake of the oldest or a missing version.
+Contract detail for taskq.md sections 4, 5 and 8 (#1856, owner decision, [specq#98](https://github.com/taskqorg/specq/pull/98)). Each external tool taskq or its workers run on a host, its minimum version and the owner's fix. `src/tools.rs` holds the same table, its runtime rows in the runtime adapters; a new tool, flag or API use raises the minimum in the same change, and its tests use a fake of the oldest or a missing version.
 
 | Tool | Minimum | Needed for | Required when | Fix |
 |---|---|---|---|---|

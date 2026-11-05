@@ -307,7 +307,7 @@ Choose Custom → agent inspects the icon tools/current config → compare suppo
 
 ## UC-17. Plan and supervise through a remote chat agent
 
-Source: owner; FRA/Hermes with Codex workers. [Remote manager RM1–RM7](../design/remote-manager.md).
+Source: owner.
 
 - Open a project chat; discuss work and create an agreed held plan. Explicit start authorizes service execution.
 - Let the host admit workers under qualified Auto; inspect actual limits, pressure and waiting reasons.
@@ -316,7 +316,7 @@ Source: owner; FRA/Hermes with Codex workers. [Remote manager RM1–RM7](../desi
 - Send images/files; receive supported materials and durable board references.
 - After gateway loss, reconcile pending questions and results. Stop watching independently from pausing work.
 
-Result: a replaceable remote PM provides planning and owner control while TaskQ executes independently. Existing integration and remaining qualification are recorded in the [FRA audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/remote-manager-audit.md). Covers UC-02/03/07/09/10/12/14 without a second queue.
+Result: a replaceable remote PM provides planning and owner control while TaskQ executes independently. Covers UC-02/03/07/09/10/12/14 without a second queue.
 
 ## Proposals
 

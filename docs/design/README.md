@@ -9,15 +9,9 @@ Feature selection: [TaskQ product principles](../product-principles.md). Preserv
 
 App architecture: [selected foundation and migration](app-foundation.md) records Preact + Signals + Wouter, native data ownership and framework-free shared assets. Adoption is not runtime qualification.
 
-## Start here: implementation handoff
+## Start here
 
-Give the next agent this directory and [implementation brief](implementation-brief.md). Read the root contract first, then plan system and application work using the [ordered backlog](refactoring-backlog.md); the current batch order, development loop and owner decisions are in the [implementation plan](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/implementation-plan.md). No chat transcript or temporary visualization folder is required.
-
-The current visual reference is [workspace-prototype.html](../../tests/fixtures/design/workspace-prototype.html); its editable/generated-source relationship is defined in the brief. Keep the entire directory, including `assets/`, `shots/`, `evidence/`, JSON fixtures/configuration and component sources. Historical alternatives are labeled below and are not competing final designs.
-
-The package includes the remote PM scenario (UC-17), not only the desktop menu. The owner accepted all six shared workflow refinements and AI-assisted controls. Compatible shared rules: [specq 9f82cc6](https://github.com/taskqorg/specq/tree/9f82cc6). Use this revision or a compatible successor; an older copy may lack the accepted changes.
-
-2026-10-23 interface review: [handoff](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/review-handoff.md) maps owner remarks R01–R44 to [MP11–MP15, P-V1 and P-W1–P-W3](menu-product.md#dashboard-decisions-1573), [task-state icons and the revision contract](visual-style.md#task-state-icons), [AS5 sign-in](agent-settings.md#as5-version-and-sign-in) and [C3/C5](ai-workspace.md#native-dialogue-workspace-c1c9). Previews: [control panels](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/exploration/review-control-panels.html), [Settings routes](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/exploration/settings-review.html), [icons](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/exploration/icon-review.html); review-only simulations, not shipped behavior.
+Read the root contract first. The current visual reference is [workspace-prototype.html](../../tests/fixtures/design/workspace-prototype.html).
 
 [Shared blocks](shared-blocks.md): parent ownership, compact consumer variants and cross-product fidelity.
 
@@ -27,13 +21,9 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 
 [Reports in Conversations](reports-conversations.md): #1977 design checkpoint; merged sidebar, decision cards, five operator paths and six mockup screens. Approved design; implementation evidence and native qualification gaps are recorded in its review ledger.
 
-[Decision register](decision-register.md): remaining choices, numbered alternatives and recommended defaults. [Scenario review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/scenario-review.md): complete supplied-case coverage, current evidence and implementation gates.
-
-[System change map](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/system-change-map.md): required backend slices, full interface routes and remaining decisions.
+[Decision register](decision-register.md): remaining choices, numbered alternatives and recommended defaults.
 
 [Existing-agent entry](agent-entry.md): discoverable bootstrap, canonical reports, capability limits and owner-requested observation.
-
-[Comparative workflow review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/comparative-workflow-review.md): VibeCrew, Moshi, Conductor and cmux; evidence, recommendations and implementation gaps.
 
 [Live worker session stream](live-worker-stream.md): #1825 experiment; runtime capability matrix, transcript-tail prototype, limits and relay options.
 
@@ -41,10 +31,7 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 |---|---|
 | [App UI v2](ui-rules-v2.md) | Approved shared 38-check profile; TaskQ routes/values/filters and preservation map; upstream review pending |
 | [Menu UI rules](ui-rules.md) | Approved 28-check menu target and source-pinned baseline review |
-| [Remote manager](remote-manager.md) | Universal remote PM flow, project routing, observation, answers/media and RM-A1–A9 |
-| [FRA/Hermes audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/remote-manager-audit.md) | Inspected integration baseline and unqualified capabilities |
 | [Integrated workspace](../../tests/fixtures/design/workspace-prototype.html) | Earlier Workspace review; its stored AI conversations are superseded by TW4/TW5 |
-| [AI component](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/ai-conversations.html) | Conversation list, drafts, files, request states and recovery fixtures |
 | [Task decisions and plans](plans-and-decisions.md) | Ask-card answers (workspace placement: TW2), AI-led plans and explicit multi-repository gaps |
 | [Dynamic resources](dynamic-resources.md) | Accepted Auto default, optional caps, proposed tuning and migration |
 | [Shared resource controls](shared-resource-controls.md) | Accepted DashQ reuse of TaskQ resource UI and policy authority; v1 protocol fixtures; remote apply needs an authorized host adapter and fresh readback |
@@ -55,8 +42,6 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 | [Product decisions](menu-product.md) | Approved direction, scenario coverage and candidate boundaries |
 | [Emergency recovery](emergency-recovery.md) | Stop/interlock/reconciliation proposal and E checks |
 | [Host service](host-service.md) | Proposed one service process per host: taskq.md diff, migration, rollback, panic isolation, task split |
-| [Next variants](../../tests/fixtures/design/menu-next-variants.html) | Historical comparison; Workspace review selected |
-| [Editable fragment](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/final-prototype.html) | Earlier full candidate; integrated workspace takes precedence |
 | [Menu](menu.md) | M1–M12 behavior and M-A1–M-A21 acceptance |
 | [Tray and workspace placement](tray-workspace.md) | Approved TW1–TW8: one nav bar, panels then tasks in the menu, dialogue/reviews in the workspace, any-runtime AI requests, messages count, archive and permanent delete |
 | [AI requests](ai-workspace.md) | Visible-session AI requests (#1427), retro, add project and C7 boundary |
@@ -67,14 +52,10 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 | [TaskQ UI acceptance](operator-ui.md) | D-A1–D-A8 product checks; general D rules are upstream |
 | [Use cases](../use-cases/README.md) | UC-01–UC-17, intersections, open Q/P decisions |
 | [Adaptive rationale](adaptive-menu.md) | Stable controls, situational content, prioritization choices |
-| [Current implementation inventory](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/current-menu-audit.md) | Installed/source evidence and preserve/relocate matrix |
-| [Implementation brief](implementation-brief.md) | Reading order, unresolved contracts and delivery slices |
 | [Rendering contract](rendering-contract.md) | Native size, scroll ownership, physical bar grid and data parity |
 | [Implementation acceptance](ui-acceptance.md) | Complete feature ledger, native matrix and review gates |
 | [Report template](ui-acceptance-report.md) | Builder/reviewer evidence and owner decisions |
-| [4.1.9 audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/release-4.1.9-ui-audit.md) | Historical 4.1.9 source and native fixture findings; refresh against the implementation candidate |
 | [Deterministic fixtures](../../tests/fixtures/ui-acceptance-fixtures.json) | Expected histogram, height and pixel-grid outcomes |
-| [Verification](verification.md) | Candidate evidence, historical evidence and qualification gaps |
 | [README page plan](readme-plan.md) | Project page order, screenshot refresh and stale rule, use-case rows, tasks A–C |
 
 The editable candidate contains local simulation, not live service access. Detach models ownership inside the preview; native separate windows require implementation. AI attachments support local image preview and validation; no file bytes are sent. Rebuild the integrated fragment with `python3 docs/design/build-workspace-preview.py`; edit its source components, not the generated fragment.
@@ -84,28 +65,16 @@ The editable candidate contains local simulation, not live service access. Detac
 - [Board labels](board.md): names/colors and migration constraints.
 - [Incident reports](incidents.md): fault catalog, reporting, consent and operator states.
 - [Capacity](capacity.md): earlier limits/load-gate detail; current runtime authority is taskq.md.
-- [Contract audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/contract-audit.md): per-section verdicts and ordered edit tasks to compact taskq.md before injection.
-
-## Historical references
-
-`menu-prototype.html` and `icon-studies.html` document earlier iterations. Their tests qualify those models only. The wide summary and old phase-0/phase-4 assumptions do not override this package.
-`square-summary-reference.html` preserves the earlier accepted geometry experiment; its dynamic multi-digit shrinking is not production policy.
-Older board/research material may still need English translation; the current menu/AI handoff is English.
 
 ## Change routing
 
 General rules follow [shared-rule improvement](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ decision: taskq.md first, then its linked product specification, candidate and evidence.
 Preserve requirement IDs and current capabilities. Shipped and native proof follow [shared verification](https://github.com/taskqorg/specq/blob/main/engineering/verification.md).
 
-[Icon compatibility](custom-icon.md): Custom removal and saved-view fallback; [I1–I6](icon-summary.md) own the fixed Summary SVG. [Final menu review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/menu-final-review.md) records wording, hierarchy and icon corrections.
-
-[Refactoring backlog](refactoring-backlog.md) defines ordered workstreams, API boundaries, dependencies and acceptance for implementation tasks.
+[Icon compatibility](custom-icon.md): Custom removal and saved-view fallback; [I1–I6](icon-summary.md) own the fixed Summary SVG.
 
 [Installation and project locations](setup-and-project-locations.md): agent-led and agent-free setup, Projects folder, exact execution roots and S-A1–S-A8.
 
 - [Standalone agentq onboarding](standalone-onboarding.md): warning, detection, dismissal and setup-session recommendations; no runtime changes.
 - [Standalone telemetry](standalone-telemetry.md): local store and retention, export as the one data path, no send without serverq, agent analysis guide and gaps G1–G7; no runtime changes.
 
-- [Conversations #1580 candidate evidence](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/conversations-1580/report.md): native-only drafts/files, before/after fixtures, source pins and qualification gaps.
-
-- [Compact View #1730 evidence](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1730/report.md): filter grids, direct project switching, naming drafts and bounded Mac renderer evidence.
