@@ -6,6 +6,7 @@ macro_rules! log {
 }
 
 mod admission;
+mod draft_deps;
 mod check;
 mod cli;
 mod config;
@@ -279,6 +280,14 @@ pub(crate) fn respond(a: &Args, rs: &[Receipt], json: bool) -> Res<()> {
     } else { emit(rs, json) }
 }
 
+/// Keep a present empty dependency list: it is the explicit clear operation (§1).
+fn deps_command(b:&dyn board::Board,root:&Path,a:&Args,op:&Op,authorized:bool)->Res<Receipt> {
+    for (flag,values) in &a.flags {
+        if !["board","deps","op-id","revision","json"].contains(&flag.as_str()) || values.len()!=1 {return Err(format!("deps: unsupported or repeated --{flag}"));}
+    }
+    Ok(draft_deps::amend(b,root,a.num(1)?,a.need("board")?,a.one("deps").ok_or("--deps is required")?,op,authorized))
+}
+
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
@@ -324,6 +333,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             Ok(())
         }
         "add" | "finding" => add_cmd(c, cmd, a, &mut op),
+        "deps" => {
+            let authorized=["TASKQ_ATTEMPT","TASKQ_TASK","TASKQ_ROLE","TASKQ_SERVICE"].iter().all(|key|std::env::var_os(key).is_none());
+            emit(&[deps_command(b,root,a,&op,authorized)?],json)
+        }
         "gate" => emit(&[gate_task(b, root, a.num(1)?, &op)], json),
         "start" => emit(&start_tasks(b, root, &a.pos[1..], &op)?, json),
         "approve" => emit(&[dispatch::approve(b, root, a.num(1)?, a.one("sha"), &op, dispatch::agent())], json),

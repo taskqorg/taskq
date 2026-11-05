@@ -50,6 +50,14 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 | `taskq claim-issue [N] [--json]` | Shows, or adopts issue N as, the project's `create_claim_issue`; prints `#N create_claim_issue URL (source)` or `Error:` and `Next:` lines. A worker is refused: it cannot change the claim issue. Detail: [claim issue command](finding-tasks.md). |
 | `taskq selftest` / `taskq --version` | load config, fold built-in `tests/golden`, read the board; no writes / [binary version](host-service.md#contract-detail) |
 
+### Held dependency amendment
+
+`taskq deps N --board URL --deps LIST --op-id ID --revision R [--json]` is an owner/PM operation on the configured board. URL is the exact board URL from status (without an issue number). LIST is comma-separated `#N` or `owner/repo#N`; empty clears dependencies. Read `taskq inbox N` for R. A worker, reviewer or service environment refuses before writes. The target must be trusted, open, held, lack `taskq`, and have no accepted start in its history.
+
+Log entries `deps R`, `deps-write ID`, `deps-release ID` and `deps-done ID` keep held state. The accepted intent stores the original and replacement body plus the exact request on the board. It fences all other task mutations until completion. Only one native writer may edit; an interrupted writer retains its claim until a verified later boot proves its request tree exited. The service reconciles pending intents. Unknown body or write readback retains the fence; retry the identical command for discovery. A changed body refuses overwrite. Readback requires exact replacement body, held state and absence of admission labels before completion. No labels, title, placement or unrelated body bytes are changed. Dependencies use normal §1 open/unknown blocking after start.
+
+A repeated ID with the same board, task, revision and dependency list returns its durable first completion revision without another edit, including after start. Different payload refuses. Stale revision, started/closed/untrusted target and unauthorized caller refuse without writes. Concurrent intents have one board-order winner. Update all board hosts before use: older readers ignore the new fence entries.
+
 ### Outputs, op ids and receipts
 
 - Task writes: `#N <state>`; close adds one publication link/SHA line.

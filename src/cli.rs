@@ -22,6 +22,7 @@ pub(crate) const USAGE: &str = "taskq agents
  taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all] [--gate] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N [M..]
+ taskq deps N --board URL --deps LIST --op-id ID --revision R [--json]
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
  taskq answer N --text A | taskq answer N.K [M.K..] | taskq pick N.K --text R
  Human replies: answer, steer, requeue accept --text-stdin or --text-file PATH instead of --text; attach with --file PATH (repeat) or --files-from PATH (JSON array)
@@ -131,7 +132,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
             Some("accounts") => 5,
-            Some("unpin" | "service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "results" | "enroll" | "connection") => 2,
+            Some("unpin" | "deps" | "service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {

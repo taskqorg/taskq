@@ -96,14 +96,14 @@ pub fn current(b: &dyn Board, n: u64) -> Res<(board::Issue, Task, bool)> {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct RoutingWriter {
-    machine: String,
-    pid: u32,
-    started: String,
+pub(crate) struct RoutingWriter {
+    pub(crate) machine: String,
+    pub(crate) pid: u32,
+    pub(crate) started: String,
 }
 
 /// A crashed writer may leave an HTTP child; a later boot proves the entire request tree exited.
-fn routing_writer_exited(writer: &RoutingWriter, machine: &str) -> Res<bool> {
+pub(crate) fn routing_writer_exited(writer: &RoutingWriter, machine: &str) -> Res<bool> {
     if machine.is_empty() || writer.machine!=machine {return Err("routing writer belongs to another machine; waiting for its host reconciliation".into());}
     if writer.pid==0 || writer.started.is_empty() {return Err("routing writer native identity unknown".into());}
     if crate::platform::started_before_boot(&writer.started).unwrap_or(false) {return Ok(true);}

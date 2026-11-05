@@ -2109,6 +2109,11 @@ impl<'a> Service<'a> {
         // §5: an interrupted owner reroute remains fenced and finishes without a second owner request.
         let mut rerouted=false;
         for v in &views {
+            if v.projection.deps_intent.is_some() {
+                let receipt=crate::draft_deps::finish(self.board,v.issue.number,&Default::default());
+                if receipt.ok() {self.cache.remove(&v.issue.number);rerouted=true;}
+                else {self.log.push(receipt.text());}
+            }
             if v.projection.reroute.is_some() {
                 let receipt=crate::dispatch::finish_reroute(self.board,v.issue.number);
                 if receipt.ok() {self.cache.remove(&v.issue.number);rerouted=true;}

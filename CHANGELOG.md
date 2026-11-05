@@ -3,6 +3,12 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## Unreleased
+
+PMs can amend dependencies of held drafts through `taskq deps` (#2456).
+
+**Board**: `deps`, `deps-write`, `deps-release` and `deps-done` entries fence a held body amendment. Update every board host before using the command; older readers ignore these fences. Existing issues need no migration. New commands refuse started drafts and preserve labels and placement.
+
 ## v4.6.61
 
 Windows update restart no longer waits for a handed-in attempt with no observed process, so a host left on an older image exits and admits ready work (#2228, PR #2229). Conversation exports and peer transcript replies omit commands, tool result bodies and images (#2225, PR #2227). Full inventory and publication gates: [release handoff](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/release-2230.md).

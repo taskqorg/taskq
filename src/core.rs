@@ -280,6 +280,8 @@ pub struct Projection {
     pub routing_revision: u64,
     pub reroute: Option<(u64, String, String)>,
     pub routing_writer: Option<u64>,
+    pub deps_intent: Option<u64>,
+    pub deps_writer: Option<u64>,
     accepted: Vec<u64>,
     /// Accepted answers and steers in board order, across all attempts (§ 2).
     pub notes: Vec<u64>,
@@ -534,6 +536,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let (mut changes, mut queue) = (vec![], vec![]);
     let mut accepted_inputs=vec![];
     let (mut routing_revision, mut reroute, mut routing_writer) = (0, None, None);
+    let (mut deps_intent, mut deps_writer) = (None, None);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
     for e in log {
         if let Some(l) = parse(n, &e.body) {
@@ -541,6 +544,29 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             if l.op.is_some_and(|o| !ops.insert(o)) {
                 continue;
             }
+            // §1: board-order held-body fence. No state transition can race a pending edit.
+            if l.kind == "deps" {
+                if deps_intent.is_none() && t.state == State::Held && l.attempt.is_none() && l.op.is_some()
+                    && l.args.len()==1 && l.args[0].parse()==Ok(last)
+                    && !accepted.iter().any(|id| entries.iter().any(|e| e.id==*id && kind(n,&e.body)=="start")) {
+                    deps_intent=Some(e.id);accepted.push(e.id);last=e.id;
+                }
+                continue;
+            }
+            if matches!(l.kind,"deps-write"|"deps-release"|"deps-done") {
+                let arg=l.args.first().and_then(|v|v.parse::<u64>().ok());
+                let valid=l.attempt.is_none() && l.args.len()==1 && match l.kind {
+                    "deps-write" => deps_intent.is_some() && arg==deps_intent && deps_writer.is_none(),
+                    "deps-release" => deps_writer.is_some() && arg==deps_writer,
+                    _ => deps_intent.is_some() && arg==deps_intent && deps_writer.is_none(),
+                };
+                if valid {
+                    match l.kind {"deps-write"=>deps_writer=Some(e.id),"deps-release"=>deps_writer=None,_=>deps_intent=None}
+                    accepted.push(e.id);last=e.id;
+                }
+                continue;
+            }
+            if deps_intent.is_some() {continue;}
             // §5: serialize pin changes with admission in board order, including stale selections after completion.
             if l.kind == "reroute" && l.attempt.is_none() && l.args.len() == 2 && l.args[0] != l.args[1]
                 && l.args.iter().all(|rt| crate::runtime::CLI_RUNTIMES.contains(rt))
@@ -655,7 +681,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, revision:rev, routing_revision, reroute, routing_writer, accepted, notes, answers, executions, accepted_inputs, changes, queue }
+    Projection { task:t, revision:rev, routing_revision, reroute, routing_writer, deps_intent, deps_writer, accepted, notes, answers, executions, accepted_inputs, changes, queue }
 }
 
 /// The board-backed context repeated at every attempt/resume and before hand-in (§ 7).
