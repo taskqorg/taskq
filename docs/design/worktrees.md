@@ -1,6 +1,6 @@
 # Worktree tidy and root freshness
 
-Owner decision 2026-10-23 (W2 + P2): TaskQ owns `<root>/.worktrees` and the Git worktree registry of each root in `<install>/projects`. It tidies them once an hour, fast-forwards the root only on `main`, never resets, and only reports worktrees it does not own. [taskq.md § 4 step 2](../../taskq.md#4-service) links here; where this note differs, taskq.md wins.
+Owner decision 2026-10-23 (W2 + P2): TaskQ owns `<root>/.worktrees` and the Git worktree registry of each root in `<install>/projects`. It tidies them once an hour, fast-forwards the root only on the [origin default branch](#origin-default-branch), never resets, and only reports worktrees it does not own. [taskq.md § 4 step 2](../../taskq.md#4-service) links here; where this note differs, taskq.md wins.
 
 ## Why
 
@@ -25,6 +25,17 @@ Workers are not affected by a stale root: they branch from a fetched `origin/mai
 
 A reviewer that needs a checkout uses `.worktrees/review-<N>`; no other reviewer path.
 
+## Origin default branch
+
+The pass follows the branch that `origin` states as its default, so `main` stays the default of a `main` repository and `master` becomes the default of a `master` repository.
+
+1. `git ls-remote --symref origin HEAD` reads the default on each pass. The read writes nothing and is no fetch. `refs/remotes/origin/HEAD` need not exist, and the pass never creates it.
+2. A reachable `origin` that states no branch, such as a detached remote HEAD, leaves the default unknown.
+3. Only an unreachable `origin` falls back to the recorded `refs/remotes/origin/HEAD`. The real pass then reads `fetch failed` and leaves the root as it is.
+4. An unknown default refuses with `stale default branch unknown`. The checked-out branch is never a source of the default, and neither is the name `main`.
+
+The pass changes no branch name, remote, tracking configuration or `remote set-head` value.
+
 ## Tidy pass
 
 Each root runs one tidy on the first service pass after start, then at most once an hour, and on `taskq cleanup` (which keeps `--force`; [commands](#commands)). One root at a time; a root whose `.taskq` lock or Git lock is held skips the pass and says so. Git runs with `safe.directory` set to the root and to each directory under its `.worktrees` (never `*`, never a foreign entry), so a root Git calls dubious ownership (a Windows folder another account created) is still tidied; Git's own ownership check still refuses every other path.
@@ -32,8 +43,8 @@ Each root runs one tidy on the first service pass after start, then at most once
 1. `git worktree prune`: drops registry entries whose directory is gone. Locked entries stay (Git's own rule).
 2. Task class: remove a clean worktree when its task is closed, or, for `review-<N>`, when the task is no longer in `review`. A live or unknown execution on this host keeps it (existing § 7 rule). Dirty: keep and report. Submodules: clean means clean in the worktree and in every checked-out submodule (`git status --ignore-submodules=none`); a submodule with commits on no remote keeps the worktree, also under `--force`, because those commits live only in the worktree's Git dir. Git refuses to remove any worktree with submodules, so a clean one is removed with `--force` after a fresh clean read. Each kept line names its reason: locked, uncommitted changes (and the submodule), submodule commits on no remote, or Git's refusal. A task-class directory that is not in the registry (no `.git` file, so Git reads the root's status there) is no worktree: an empty one is removed once its task left that stage, a non-empty one is kept with `not a registered worktree`. [`taskq cleanup`](#commands) also prints why an open task's worktree stays: `task open (<state>)`, `task in review`, `running child on this host` or `task state unknown`.
 3. Unowned class: remove a clean worktree whose newest file and HEAD commit are older than 7 days. Its branch stays.
-4. Branches: delete a local `taskq-<N>` with no worktree when the task is closed. `git branch -D` only when the close receipt records a merge (`merged #P as SHA`) or the tip is an ancestor of `origin/main`; otherwise `git branch -d`, and a refusal keeps the branch and reports it. No other branch is deleted.
-5. Root: if HEAD is the branch `main`, run `git merge --ff-only origin/main` after the pass's `fetch`. Untracked or modified files that the merge does not touch stay as they are (the host's own `taskq.json` edits included). Divergence, a file the merge would overwrite, a detached HEAD, another branch or a Git operation in progress: no change, report `stale` with the reason and the behind count.
+4. Branches: delete a local `taskq-<N>` with no worktree when the task is closed. `git branch -D` only when the close receipt records a merge (`merged #P as SHA`) or the tip is an ancestor of `origin/<default>`; an unknown default has no such ancestor. Otherwise `git branch -d`, and a refusal keeps the branch and reports it. No other branch is deleted.
+5. Root: if HEAD is the default branch, run `git merge --ff-only origin/<default>` after the pass's `fetch` of that branch. Untracked or modified files that the merge does not touch stay as they are (the host's own `taskq.json` edits included). Divergence, a file the merge would overwrite, a detached HEAD, another branch, an unknown default or a Git operation in progress: no change, report `stale` with the reason and the behind count.
 
 Never: `reset`, `stash`, `checkout`, `clean`, `worktree remove --force` (only `taskq cleanup --force`, which saves a patch of the worktree and of each submodule to `.taskq/trash`, or a clean worktree with submodules as in step 2), deleting an unmerged branch, or touching a foreign entry.
 
@@ -52,13 +63,13 @@ The project log gets one line per removal, refusal and root move; a refusal line
 ## Commands
 
 - `taskq cleanup [--force]` runs the tidy pass of the current root now and prints one line per removal, refusal, kept task worktree and root move, else `nothing to clean`.
-- `taskq cleanup --dry-run [--force]` prints the same lines for what that pass would do (`would be removed`, `would be deleted`, `root would fast-forward N commits`) and changes nothing: no fetch (it reads the last fetched `origin/main`), prune, removal, branch delete, release write, root move or report. Kept lines read as in a real pass.
+- `taskq cleanup --dry-run [--force]` prints the same lines for what that pass would do (`would be removed`, `would be deleted`, `root would fast-forward N commits`) and changes nothing: no fetch (it reads the default as above and the last fetched `origin/<default>`), prune, removal, branch delete, release write, root move or report. Kept lines read as in a real pass.
 - `taskq cleanup --all [--dry-run] [--force]` runs that pass for each registered project of the host (`<install>/projects`), each after one header line `<project>: <root>`; a project whose config or board cannot be read prints its reason, and the next one runs.
 
 ## Acceptance
 
 - A closed task's clean worker and reviewer worktrees and its merged branch disappear within one hour on every host that has them; a dirty one stays and shows in health.
 - An unowned clean worktree older than 7 days is removed, its branch kept; `dev-build` and foreign entries are never touched.
-- A clean or unrelated-dirty root on `main` reaches `origin/main` within one hour; a diverged root, another branch or an overwrite conflict changes nothing and shows `stale <reason>`.
+- A clean or unrelated-dirty root on the default branch reaches `origin/<default>` within one hour, with or without `refs/remotes/origin/HEAD`; a diverged root, another branch, an unknown default or an overwrite conflict changes nothing and shows `stale <reason>`.
 - No command in the pass can lose uncommitted work or unmerged commits (tests on a temp repo cover each refusal).
 - macOS, Windows and Linux (FRA) roots behave the same.
