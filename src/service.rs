@@ -353,6 +353,31 @@ pub fn priority(i: &Issue) -> u8 {
     crate::display::priority(&i.labels)
 }
 
+/// One live daemon's readback this pass ([one sandbox per daemon](docs/design/worker-permissions.md#one-sandbox-per-daemon)).
+struct DaemonRead {
+    rt: String,
+    home: Option<std::path::PathBuf>,
+    fit: crate::runtime::daemon_sandbox::Fit,
+    /// New starts of `rt` take this home.
+    queue: bool,
+    /// This project's live, held or waiting jobs under this daemon.
+    tasks: BTreeSet<u64>,
+}
+
+impl DaemonRead {
+    /// The heartbeat line of a daemon that differs from these jobs' grant: public, so no path and no other project.
+    fn line(&self) -> Option<String> {
+        use crate::runtime::daemon_sandbox::Fit;
+        if self.tasks.is_empty() { return None; }
+        let (pid, reason) = match &self.fit {
+            Fit::Differs { pid, reason } => (Some(*pid), (*reason).to_string()),
+            Fit::Unknown(e) => (None, e.clone()),
+            Fit::None | Fit::Fits => return None,
+        };
+        Some(format!("daemon-sandbox {}", json!({"bin": crate::runtime::of(&self.rt).bin, "pid": pid, "reason": reason, "tasks": self.tasks})))
+    }
+}
+
 /// The host named in a `spawn` session (`<rt>:<session> <host>`).
 pub fn host_of(t: &Task) -> Option<&str> {
     t.session.as_deref()?.rsplit(' ').next()
@@ -797,6 +822,10 @@ pub struct Service<'a> {
     /// #1845: `platform::grants` of the last gui probe; a `missing` or `stale` one holds gui work.
     pub grants: BTreeMap<String, String>,
     pub full: BTreeSet<String>,
+    /// One sandbox per daemon: each daemon-owned runtime and its grant's Seatbelt profile (None: Full), macOS only.
+    pub seatbelt: BTreeMap<String, Option<String>>,
+    /// This pass's readback of each live daemon that `seatbelt` jobs here depend on.
+    daemon_reads: Vec<DaemonRead>,
     pub waits: BTreeMap<u64, String>,
     pub execution_waits: BTreeMap<u64, String>,
     pending_releases: BTreeSet<(u64, u64, u64)>,
@@ -1078,7 +1107,7 @@ fn record_unresolved_hold(cfg: &Config, task: u64, attempt: u64, execution: u64,
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), binary: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), dep_closed: None, label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), fleet: Default::default(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), unknown_pids: HashMap::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { progress_clock: |_| crate::runtime::now(), progress_budget: std::time::Duration::from_millis(50), last_spawn: None, queue: Default::default(), restart_since: None, headroom_error: None, progress: HashMap::new(), recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), binary: Default::default(), health: None, answered: None, started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), dep_closed: None, label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), ownership_waits: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), clis: BTreeMap::new(), accounts: BTreeMap::new(), fleet: Default::default(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), seatbelt: BTreeMap::new(), daemon_reads: vec![], waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), unknown_pids: HashMap::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1896,6 +1925,7 @@ impl<'a> Service<'a> {
             Err(cause) => format!("session #{} {} unknown: {cause}", k.task, k.attempt),
         })));
         lines.extend(self.execution_statuses().iter().map(|s|format!("execution {}",serde_json::to_string(s).unwrap())));
+        lines.extend(self.daemon_reads.iter().filter_map(DaemonRead::line));
         lines.push(format!("queue {}", serde_json::to_string(&self.queues()).unwrap()));
         lines.join("\n")
     }
@@ -1913,7 +1943,7 @@ impl<'a> Service<'a> {
     /// latest release the host doctor read, report collection and the last pass error, as the heartbeat `doctor` line.
     fn refresh_health(&mut self) {
         let latest = crate::health::cached_latest(&self.cfg.install);
-        let items = crate::health::board_items(self.board, &self.cfg.repo, self.cfg.board.name == "gitlab", &self.cfg.root, &self.cfg.install, &latest);
+        let items = crate::health::board_items(self.board, &self.cfg.repo, self.cfg.board.name == "gitlab", &self.cfg.root, &self.cfg.install, &self.cfg.codex, &latest);
         let at = self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now());
         let mut line = crate::health::line(at, &items);
         // #2246: a reports gap names its cause and reports on the heartbeat
@@ -2730,6 +2760,7 @@ impl<'a> Service<'a> {
         (self.requested, self.refused) = (vec![], None);
         if self.host.is_some() { self.sync_host(); }
         touched.extend(self.release_held());
+        self.read_daemons(views, &me);
         for v in views {
             let (n, t) = (v.issue.number, &v.projection.task);
             let (Some(a), Some(h)) = (t.attempt, host_of(t)) else { continue };
@@ -2738,7 +2769,8 @@ impl<'a> Service<'a> {
             }
             if let Some(i) = self.held.iter().position(|l| l.attempt == a) {
                 let rt = self.held[i].rt.clone();
-                if !self.gui_refused(&v.issue, &rt) && self.reserve(n, a, &rt) {
+                let (home, resume) = (self.launch_home(&self.held[i]), self.held[i].resume.is_some());
+                if !self.gui_refused(&v.issue, &rt) && !self.daemon_hold(n, &rt, home.as_deref(), resume) && self.reserve(n, a, &rt) {
                     let l = self.held.remove(i);
                     let log = self.seen_log(v)?;
                     self.launch(l, a, log)?;
@@ -2819,7 +2851,8 @@ impl<'a> Service<'a> {
             }
             let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
             let account = crate::runtime::accounts::of_log(&crate::runtime::log_path(&self.cfg.root,&l));
-            if accounts.error.is_some() || accounts.state.get(&l.rt).and_then(|m|m.get(&account)).is_some_and(|q|q.end() > now) || self.refused_access.contains_key(&l.rt) || self.limited.contains_key(&l.rt) || self.logged_out.contains(&l.rt) || self.gui_refused(&v.issue, &l.rt) || !self.reserve(n, a, &l.rt) {
+            let home = self.launch_home(&l);
+            if accounts.error.is_some() || accounts.state.get(&l.rt).and_then(|m|m.get(&account)).is_some_and(|q|q.end() > now) || self.refused_access.contains_key(&l.rt) || self.limited.contains_key(&l.rt) || self.logged_out.contains(&l.rt) || self.gui_refused(&v.issue, &l.rt) || self.daemon_hold(n, &l.rt, home.as_deref(), true) || !self.reserve(n, a, &l.rt) {
                 pending.insert((n, a)); // the inbox stays undelivered
                 continue;
             }
@@ -2901,7 +2934,7 @@ impl<'a> Service<'a> {
             if role == "worker" && label(&v.issue, "run-").is_none() && v.issue.labels.iter().filter(|l| l.starts_with("prefer-")).count() > 1 {
                 self.log.push(format!("#{n}: conflicting prefer-* labels; preference ignored"));
             }
-            let (rt, fallback) = match self.select_runtime(v) { Ok(rt) => rt, Err(r) => { decided.insert(n, r); continue; } };
+            let (rt, fallback) = match self.select_runtime(v) { Ok(rt) => rt, Err(r) => { self.daemon_waiter(n, &r.1); decided.insert(n, r); continue; } };
             let host_reason=match self.host_claim(v,&hosts,now) {Ok(reason)=>reason,Err(reason)=>{decided.insert(n,("host",reason));continue;}};
             let spread=match self.weighted_host(v,&hosts,now,last_primary.as_deref()) {Ok(r)=>r,Err(r)=>{decided.insert(n,("host",r));continue;}};
             let reasons:Vec<_>=host_reason.into_iter().chain(spread).chain(fallback).collect();
@@ -3258,8 +3291,75 @@ impl<'a> Service<'a> {
         if self.logged_out.contains(rt) { return Err(("login", format!("{rt}: not logged in"))); }
         if gui && !self.full.contains(rt) { return Err(("capability", format!("needs-gui: {rt} has no effective Full grant"))); }
         if self.cap.as_ref().is_ok_and(|c|c.limits.get(rt)==Some(&0)) {return Err(("capacity",format!("{rt} disabled (limit 0)")));}
+        // One sandbox per daemon: `capacity`, also for an unknown readback, so unpinned work takes the next runtime
+        if let Some(wait)=self.daemon_admission(rt) {return Err(("capacity",format!("{rt}: {wait}")));}
         let load=self.runtime_load(rt)?;
         if load.free>0 {Ok(rt.to_string())} else {Err(("capacity",format!("{rt} slots full")))}
+    }
+
+    /// One sandbox per daemon: reads each daemon that this project's live, held or claimable `seatbelt` jobs depend on.
+    /// An idle board spawns nothing.
+    fn read_daemons(&mut self, views: &[View], me: &str) {
+        use crate::runtime::accounts;
+        let (mut reads, now) = (vec![], self.board.now().unwrap_or_else(|_| accounts::now()));
+        let host = accounts::Host::read(&self.cfg.install);
+        let claimable = !self.focus.is_empty() && views.iter().any(|v| {
+            let t = &v.projection.task;
+            t.state == State::Ready || (t.state == State::Review && t.attempt.is_none() && t.publication.is_none())
+        });
+        for (rt, profile) in &self.seatbelt {
+            let mut homes: BTreeMap<Option<std::path::PathBuf>, BTreeSet<u64>> = BTreeMap::new();
+            for v in views {
+                let (n, t) = (v.issue.number, &v.projection.task);
+                let (Some(a), Some(h), Some((own, _))) = (t.attempt, host_of(t), rt_of(t)) else { continue };
+                if h != me || own != rt || !matches!(t.state, State::Doing | State::Review) { continue; }
+                let log = crate::runtime::attempt_log(&self.cfg.root, if t.state == State::Review { "reviewer" } else { "worker" }, n, a);
+                let tasks = homes.entry(accounts::log_home(rt, &log).or_else(|| accounts::default_home(rt))).or_default();
+                if self.kids.iter().any(|k| k.task == n && k.attempt == a) { tasks.insert(n); }
+            }
+            let active = claimable.then(|| host.active(rt, now).and_then(|l| accounts::home(rt, &l)).or_else(|| accounts::default_home(rt)));
+            if let Some(home) = &active { homes.entry(home.clone()).or_default(); }
+            for (home, tasks) in homes {
+                let fit = crate::runtime::daemon_sandbox::read(rt, home.as_deref(), profile.as_deref());
+                reads.push(DaemonRead { rt: rt.clone(), queue: active.as_ref() == Some(&home), home, fit, tasks });
+            }
+        }
+        self.daemon_reads = reads;
+    }
+
+    /// The home whose daemon runs this launch: its log's account, as `ClaudeTurn::start` reads it.
+    fn launch_home(&self, l: &Launch) -> Option<std::path::PathBuf> {
+        use crate::runtime::accounts;
+        accounts::log_home(&l.rt, &crate::runtime::log_path(&self.cfg.root, l)).or_else(|| accounts::default_home(&l.rt))
+    }
+
+    /// True when the held launch or resume of task `n` waits for its daemon this pass; the status row names `n`.
+    fn daemon_hold(&mut self, n: u64, rt: &str, home: Option<&std::path::Path>, resume: bool) -> bool {
+        use crate::runtime::daemon_sandbox as ds;
+        let (Some(profile), Some(read)) = (self.seatbelt.get(rt), self.daemon_reads.iter_mut().find(|r| r.rt == rt && r.home.as_deref() == home)) else { return false };
+        if ds::check(home, profile.as_deref(), resume, &read.fit).is_ok() { return false; }
+        read.tasks.insert(n);
+        if matches!(read.fit, ds::Fit::Differs { .. }) { ds::wait(home, profile.as_deref()); }
+        true
+    }
+
+    /// The wait of a new start of `rt`, on the home its next claim takes.
+    fn daemon_admission(&self, rt: &str) -> Option<String> {
+        let (profile, read) = (self.seatbelt.get(rt)?, self.daemon_reads.iter().find(|r| r.rt == rt && r.queue)?);
+        crate::runtime::daemon_sandbox::check(read.home.as_deref(), profile.as_deref(), false, &read.fit).err()
+    }
+
+    /// Task `n` selected no runtime. When its refusal names a daemon, it truly waits for that daemon: unpinned work
+    /// that found another runtime never gets here, so it never holds the daemon.
+    fn daemon_waiter(&mut self, n: u64, refusal: &str) {
+        use crate::runtime::daemon_sandbox as ds;
+        for read in self.daemon_reads.iter_mut().filter(|r| r.queue) {
+            let Some(profile) = self.seatbelt.get(&read.rt) else { continue };
+            let Err(wait) = ds::verdict(None, "", &read.fit, false) else { continue };
+            if !refusal.contains(&format!("{}: {wait}", read.rt)) { continue; }
+            read.tasks.insert(n);
+            if matches!(read.fit, ds::Fit::Differs { .. }) { ds::wait(read.home.as_deref(), profile.as_deref()); }
+        }
     }
 
     fn runtime_load(&self,rt:&str)->Result<crate::balance::Load,(&'static str,String)> {self.load(rt,true)}

@@ -75,7 +75,7 @@ type Store = BTreeMap<String, BTreeMap<String, Record>>;
 
 fn hex(bytes: &[u8]) -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() }
 
-fn sha256(bytes: &[u8]) -> String { hex(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref()) }
+pub(crate) fn sha256(bytes: &[u8]) -> String { hex(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref()) }
 
 /// The account `id`: the first 8 hex digits of SHA-256 over the lowercased email or account id.
 pub fn fingerprint(identity: &str) -> String { sha256(identity.trim().to_lowercase().as_bytes())[..8].to_string() }

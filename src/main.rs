@@ -75,7 +75,7 @@ mod ui_bundle;
 #[cfg(any(target_os = "macos", windows, test))]
 mod pending;
 
-use crate::cli::{Args, help};
+use crate::cli::{Args, help, pm_instructions};
 use crate::cli::connection::{connection_status, enroll_cmd};
 use crate::cli::handin::{ask_cmd, later_cmd, result_cmd};
 use crate::cli::host_cmd::{accounts_cli, balance_cli, doctor_cmd};
@@ -149,6 +149,7 @@ fn run(argv: &[String]) -> Res<()> {
             None => { print!("{}", profile::report(&platform::default_install())); Ok(()) }
             Some(v) => { print!("{}", profile::view(&platform::default_install(), v, a.one("since"))?); Ok(()) }
         },
+        "pm" => { print!("{}", pm_instructions(&a)?); Ok(()) }
         "rules" => match &a.pos[1..] {
             [phase, root, role, task, attempt] if phase == "compact" => {
                 let n = |s: &String| s.parse::<u64>().map_err(|_| format!("rules compact: {s} is not a number"));

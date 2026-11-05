@@ -1,11 +1,14 @@
 use super::*;
 
+/// Stock macOS and Linux ship only `python3`.
+fn python() -> PathBuf { which(if cfg!(windows) { "python" } else { "python3" }) }
+
 // §8/R9/R12: trait launch and resume retain literal input, host flags, daemon env and native scope.
 #[test]
 fn trait_launch_preserves_input_policy_environment_and_exit() {
-    let root = std::env::temp_dir().join(format!("taskq-launch-{}", uuid()));
+    let root = std::env::temp_dir().canonicalize().unwrap().join(format!("taskq-launch-{}", uuid()));
     std::fs::create_dir_all(root.join(".taskq")).unwrap();
-    let python = which("python");
+    let python = python();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-launch.py");
     let args = ["-s", "danger-full-access", "-m", "invented-model", "-c", "model_reasoning_effort=high"].map(String::from);
     let vars = vec![("AGENTQ_OPTIMIZATION".into(), "off".into()), ("INVENTED_BOARD_SECRET".into(), "invented-secret".into())];
@@ -62,7 +65,7 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
 // §8/R11: a background resume carries no new flags; raw stderr/exit stays available to TaskQ's refusal guard.
 #[test]
 fn background_trait_retains_launcher_output_and_saved_session() {
-    let root=std::env::temp_dir().join(format!("taskq-background-launch-{}",uuid()));
+    let root=std::env::temp_dir().canonicalize().unwrap().join(format!("taskq-background-launch-{}",uuid()));
     std::fs::create_dir_all(&root).unwrap();
     let session="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
     let home=root.join("home");
@@ -75,7 +78,7 @@ fn background_trait_retains_launcher_output_and_saved_session() {
     for resume in [false,true] {
         let record=root.join(format!("{resume}.json"));
         let mut request=Request::new(&root,root.join("launch.log"),"invented protected input reference","taskq");
-        request.command=vec![which("python").into(),Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-launch.py").into()];
+        request.command=vec![python().into(),Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-launch.py").into()];
         request.mode=Mode::Background;request.home=Some(home.clone());
         request.policy.approval=Approval::Deny;request.title=Some("invented title".into());
         request.settings_env=vec![("TASKQ_ATTEMPT".into(),"42".into()),("CARGO_BUILD_JOBS".into(),"2".into())];
@@ -110,7 +113,7 @@ fn trait_scope_retains_descendants_after_launcher_exit() {
     let tree=root.join("descendant");
     let request=|name:&str,tree:Option<&Path>| {
         let mut request=Request::new(&root,root.join(format!("{name}.log")),"invented input","taskq");
-        request.command=vec![which("python").into(),Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-launch.py").into()];
+        request.command=vec![python().into(),Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-launch.py").into()];
         request.env=vec![("TASKQ_FIXTURE_RT".into(),"codex".into()),("TASKQ_FIXTURE_RECORD".into(),root.join(format!("{name}.json")).into()),("TASKQ_FIXTURE_LINGER".into(),"1".into())];
         if let Some(tree)=tree {request.env.push(("TASKQ_FIXTURE_TREE".into(),tree.into()));}
         request

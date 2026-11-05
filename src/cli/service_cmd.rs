@@ -49,7 +49,7 @@ pub(crate) fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
     fs::write(app.join("Contents/Info.plist"), PLIST.replace("{id}", id)).ok()?;
     let resources=app.join("Contents/Resources");
     fs::create_dir_all(&resources).ok()?;
-    fs::write(resources.join("TaskQ.icns"),include_bytes!("../assets/TaskQ.icns")).ok()?;
+    fs::write(resources.join("TaskQ.icns"),include_bytes!("../../assets/TaskQ.icns")).ok()?;
     let tmp = bin.with_extension("tmp");
     fs::copy(exe, &tmp).and_then(|_| fs::rename(&tmp, &bin)).ok()?;
     let signed = match platform::codesign(platform::SIGNING_IDENTITY, &app, id) {

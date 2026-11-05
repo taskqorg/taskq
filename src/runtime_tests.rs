@@ -2905,3 +2905,20 @@ finally:
         std::fs::remove_dir_all(&root).ok();
     }
 
+    // Chain: § 8 Access, #2432 A1. Risk: the launch path reaches the shared daemon under another grant, or binds its input
+    // before it waits, so a held retry would submit a second binding of one launch.
+    #[test]
+    fn a_differing_daemon_starts_no_background_job() {
+        let root = rules_root("daemon-gate");
+        let env = Env { context: "", root: &root, exe: Path::new("taskq"), install: &root, permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
+        let l = Launch { files: String::new(), execution: Some(42), task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        let access = crate::policy::Effective { runtime: "claude".into(), requested: String::new(), grant: String::new(), mode: "workspace".into(), enforcement: String::new(),
+            profile: Some("(version 1)".into()), linux: false, windows: false, claude: None, codex: None, refused: None };
+        let log = root.join("T7-42.log");
+        daemon_sandbox::fake(Some(daemon_sandbox::Fit::Differs { pid: 77, reason: "daemon runs under another Seatbelt profile" }));
+        let refused = ClaudeTurn::start(&env, &l, &log, "brief", &access).err().expect("no job starts");
+        daemon_sandbox::fake(None);
+        assert_eq!((refused.class(), refused.to_string().as_str()), ("admission", "live daemon pid 77: daemon runs under another Seatbelt profile"));
+        assert!(!log.exists(), "no input is bound");
+        std::fs::remove_dir_all(&root).ok();
+    }

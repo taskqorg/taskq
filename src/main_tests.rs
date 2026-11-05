@@ -100,7 +100,8 @@ use crate::{board, core, data, dispatch, enrollment, host, platform, policy, pro
 use crate::linux_sandbox;
 use crate::Res;
 use crate::board::{Board, entries};
-use crate::cli::{Args, PM_COMMANDS, USAGE, help};
+use crate::cli::{Args, PM_COMMANDS, USAGE, help, pm_instructions};
+use crate::cli::status_cmd::status_prints_json;
 use crate::cli::host_cmd::{CapEdit, add_host, cap_changes, channel_cmd, dev_build_cmd, setup_items};
 #[cfg(unix)]
 use crate::cli::host_cmd::host_setup;
@@ -2630,6 +2631,16 @@ use std::time::{Duration, Instant, SystemTime};
         }
         assert!(text.contains("'taskq телеметрия': taskq profile watch --since 1h; procedure: ") && text.contains(profile::WATCH_DOC));
         assert_eq!(serde_json::from_str::<Value>(&help(true).unwrap()).unwrap(), catalog);
+        // Manager mode: exact on and off instructions, period and scope reach the timer prompt verbatim.
+        let args = |v: &[&str]| Args::parse(&v.iter().map(|w| w.to_string()).collect::<Vec<_>>()).unwrap();
+        let on = pm_instructions(&args(&["pm"])).unwrap();
+        assert!(on.contains("`interval` 180") && on.contains("Period: 3m. Prompt, verbatim: `Manager tick: run taskq pm --every 3m and do") && on.contains("`Manager on · 3m · all`") && !on.contains("{{"), "{on}");
+        let some = pm_instructions(&args(&["pm", "--every", "5m", "--project", "a", "--project", "b"])).unwrap();
+        assert!(some.contains("`interval` 300") && some.contains("run taskq pm --every 5m --project a --project b and do") && some.contains("`Manager on · 5m · a, b`"), "{some}");
+        let off = pm_instructions(&args(&["pm", "stop"])).unwrap();
+        assert!(on.contains("`pm_note_write` with `id` `manager-mode`") && off.contains("`pm_note_forget` with `id` `manager-mode`"));
+        assert!(off.contains("`loop_stop`") && off.contains("`Manager off`"));
+        assert!(pm_instructions(&args(&["pm", "--every", "0m"])).is_err() && pm_instructions(&args(&["pm", "--every", "90s"])).is_err() && pm_instructions(&args(&["pm", "go"])).is_err());
         assert!(USAGE.contains("--snapshot DIR"));
         assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|spillover|labelled|none] [--default-runtime claude|codex|antigravity]"));
         run(&["service".into(), "capacity".into(), "--help".into()]).unwrap();
@@ -2882,6 +2893,14 @@ use std::time::{Duration, Instant, SystemTime};
     }
 
     // Before: the tray's `status --json` got the all-project shape after 48 s and every control failed. After: one project.
+    #[test]
+    fn status_budget_warning_stays_out_of_json_stdout() {
+        let prints_json = |words: &[&str]| { let v: Vec<String> = words.iter().map(|s| s.to_string()).collect(); status_prints_json(&Args::parse(&v).unwrap()) };
+        assert!(prints_json(&["status", "--json"]));
+        assert!(prints_json(&["status", "--closed"]));
+        assert!(!prints_json(&["status"]), "text status keeps the warning first on stdout (R6)");
+    }
+
     #[test]
     fn status_json_inside_a_project_reads_only_that_project() {
         assert!(json_here_only(true,&[],true));

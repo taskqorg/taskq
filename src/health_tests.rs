@@ -489,3 +489,19 @@
         assert!(row["fix"].as_str().unwrap().starts_with("on mac: give its OS user write access to the agentq data folder"), "{row}");
         let _ = std::fs::remove_dir_all(&base);
     }
+
+    // Chain: Mac Codex launch -> `taskq doctor` codex-git -> heartbeat -> `--hosts` (#2449 A3). Risk: doctor read ok while
+    // Git in linked worktrees failed. Protection: a named launch is a gap with one fix, and `--hosts` names it.
+    #[test]
+    fn doctor_names_a_mac_codex_launch_without_git_metadata() {
+        assert_eq!(codex_git_item(None).status, "ok");
+        let gap = codex_git_item(Some("Mac codex legacy launch cannot write /p/.git".into()));
+        assert_eq!((gap.status, gap.text.as_str()), ("gap", "Mac codex legacy launch cannot write /p/.git"));
+        assert!(gap.fix.as_deref().unwrap().contains("--mode workspace"), "{:?}", gap.fix);
+        assert_eq!(line(7, &[gap]), "doctor 7 codex-git:gap");
+        let now = 10_000;
+        let h = Host { name: "mac".into(), version: "4.7.0".into(), updated: now - 10, doctor: Some("9900 codex-git:gap".into()), ..Default::default() };
+        let row = host_row(&h, "o/r", false, now, 120, None);
+        assert_eq!((row["state"].as_str(), row["gaps"][0].as_str()), (Some("gap"), Some("codex-git")), "{row}");
+        assert!(row["fix"].as_str().unwrap().contains("Git metadata"), "{row}");
+    }

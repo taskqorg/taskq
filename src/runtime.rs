@@ -21,6 +21,7 @@ use table::{ADAPTERS, OTHER};
 
 mod app_control;
 pub mod accounts;
+pub mod daemon_sandbox;
 pub mod headroom;
 pub mod usage;
 pub mod owner;
@@ -1950,6 +1951,8 @@ impl ClaudeTurn {
             if mode != permission_mode { return Err("Claude saved permission mode differs; a new attempt is required".into()); }
         }
         std::fs::create_dir_all(log.parent().ok_or("missing log directory")?).map_err(|e| e.to_string())?;
+        let daemon_home = accounts::log_home(&l.rt, log).or_else(|| accounts::default_home(&l.rt));
+        let _daemon = daemon_sandbox::enter(&l.rt, daemon_home.as_deref(), access.profile.as_deref(), l.resume.is_some()).map_err(|e| StartError::admission(&e))?;
         let (input, input_file, path) = claude_input(&root, text, Some(l))?;
         bind_input(log,l,&path,&input,serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}))?;
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),

@@ -6677,3 +6677,112 @@ Open: none";
             assert!(row(&other).get("missing_reviewer").is_none());
         }
     }
+
+    fn daemon_differs() -> crate::runtime::daemon_sandbox::Fit {
+        crate::runtime::daemon_sandbox::Fit::Differs { pid: 77, reason: "daemon runs under another Seatbelt profile" }
+    }
+
+    // Chain: § 4 selection, § 8 Access, #2432 A1 and A2. Risk: a job of another grant joins the live daemon, pinned work
+    // loses its reason, unpinned work stalls behind a daemon with free Codex beside it, or status never names the daemon.
+    #[test]
+    fn a_differing_daemon_holds_pinned_claude_work_and_unpinned_work_takes_another_runtime() {
+        use crate::runtime::daemon_sandbox as ds;
+        let b = Fake::default();
+        let mut c = cfg("mac");
+        c.limits = BTreeMap::from([("claude".to_string(), 2), ("codex".to_string(), 2)]);
+        c.auto_reroute = true;
+        let pinned = b.create("Pinned", "", &["taskq".into(), "run-claude".into()]).unwrap();
+        let free = b.create("Free", "", &["taskq".into()]).unwrap();
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        s.seatbelt.insert("claude".into(), Some("grant".into()));
+        ds::fake(Some(daemon_differs()));
+        s.pass().unwrap();
+        assert_eq!((task(&b, pinned).state, task(&b, pinned).attempt), (State::Ready, None), "no phantom attempt");
+        assert_eq!(task(&b, free).state, State::Doing);
+        assert!(b.comments(free).unwrap().iter().any(|c| c.body.starts_with("taskq: spawn worker codex:")), "unpinned took the next runtime");
+        let body = s.heartbeat_body();
+        let line = body.lines().find_map(|l| l.strip_prefix("daemon-sandbox ")).expect("A2: the heartbeat names the daemon");
+        assert_eq!(serde_json::from_str::<Value>(line).unwrap(), json!({"bin": "claude", "pid": 77, "reason": "daemon runs under another Seatbelt profile", "tasks": [pinned]}));
+        let claude = &s.balancing().runtimes["claude"];
+        assert_eq!((claude.code.as_str(), claude.reason.as_str()), ("capacity", "claude: live daemon pid 77: daemon runs under another Seatbelt profile"));
+        // Unverified holds too, and still leaves other runtimes usable (R12).
+        ds::fake(Some(ds::Fit::Unknown("daemon status unreadable".into())));
+        s.pass().unwrap();
+        assert_eq!(task(&b, pinned).state, State::Ready);
+        assert!(s.heartbeat_body().contains(r#"daemon-sandbox {"bin":"claude","pid":null,"reason":"daemon status unreadable""#));
+        // The daemon is gone: the pinned task starts and the row clears.
+        ds::fake(Some(ds::Fit::None));
+        s.pass().unwrap();
+        assert_eq!(task(&b, pinned).state, State::Doing);
+        assert!(!s.heartbeat_body().contains("daemon-sandbox"));
+        ds::fake(None);
+    }
+
+    // Chain: § 8 Access, #2432 A1. Risk: a held launch or a resume reaches the shared daemon under another grant, or
+    // waiting consumes the attempt, or a grant that waits never gets its turn.
+    #[test]
+    fn a_differing_daemon_keeps_held_launches_and_resumes_waiting() {
+        use crate::runtime::daemon_sandbox as ds;
+        let b = Fake::default();
+        let mut c = cfg("mac");
+        c.limits = BTreeMap::from([("claude".to_string(), 2)]);
+        let n = b.create("Held", "", &["taskq".into()]).unwrap();
+        let calls = Rc::new(RefCell::new(0));
+        let called = calls.clone();
+        let mut s = Service::new(&b, &c, "test", Box::new(move |_| {
+            *called.borrow_mut() += 1;
+            if *called.borrow() == 1 { Err(crate::runtime::StartError::admission("native inventory pending")) } else { Ok(Box::new(FakeProc(Rc::new(RefCell::new(None)))) as Box<dyn Proc>) }
+        }));
+        s.focus = vec!["all".into()];
+        s.seatbelt.insert("claude".into(), Some("grant".into()));
+        s.pass().unwrap();
+        assert_eq!((*calls.borrow(), s.held.len()), (1, 1), "setup holds the launch");
+        let a = task(&b, n).attempt;
+        ds::fake(Some(daemon_differs()));
+        s.pass().unwrap();
+        assert_eq!((*calls.borrow(), s.held.len(), task(&b, n).attempt, task(&b, n).retries), (1, 1, a, 0), "held: no launch, no new attempt");
+        assert!(s.heartbeat_body().contains(&format!(r#""tasks":[{n}]"#)), "A2 names the held job");
+        ds::fake(None);
+        s.pass().unwrap();
+        assert_eq!((*calls.borrow(), s.held.len(), s.kids.len()), (2, 0, 1), "the same launch continues");
+
+        // A resume waits with its inbox undelivered.
+        let b = Fake::default();
+        let n = b.create("Resume", "", &["taskq".into()]).unwrap();
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        s.seatbelt.insert("claude".into(), Some("grant".into()));
+        s.pass().unwrap();
+        let a = task(&b, n).attempt.unwrap();
+        b.comment(n, &core::entry("ask", &[], Some(a), "Which?\n1. x\n2. y ★")).unwrap();
+        *e.borrow()[0].1.borrow_mut() = Some(0);
+        s.pass().unwrap();
+        ds::fake(Some(daemon_differs()));
+        b.comment(n, &core::entry("answer", &["1"], None, "x")).unwrap();
+        s.pass().unwrap();
+        assert_eq!((task(&b, n).state, e.borrow().len()), (State::Doing, 1), "no job reaches the differing daemon");
+        ds::fake(None);
+        s.pass().unwrap();
+        assert_eq!(e.borrow().len(), 2, "the resume continues once the daemon fits");
+    }
+
+    // Chain: § 8 Access, #2432. Risk: new jobs of the fitting grant keep the daemon alive, so a waiting grant never runs.
+    #[test]
+    fn a_waiting_grant_holds_new_starts_of_the_fitting_one() {
+        use crate::runtime::daemon_sandbox as ds;
+        let b = Fake::default();
+        let mut c = cfg("mac");
+        c.limits = BTreeMap::from([("claude".to_string(), 2)]);
+        let n = b.create("New", "", &["taskq".into()]).unwrap();
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        s.seatbelt.insert("claude".into(), Some("grant".into()));
+        ds::fake(Some(ds::Fit::Fits));
+        ds::wait(crate::runtime::accounts::default_home("claude").as_deref(), Some("other grant"));
+        s.pass().unwrap();
+        assert_eq!((task(&b, n).state, e.borrow().len()), (State::Ready, 0));
+        assert_eq!(s.balancing().runtimes["claude"].reason, "claude: another grant waits for this daemon to drain");
+        assert!(!s.heartbeat_body().contains("daemon-sandbox"), "the daemon itself fits this project");
+        ds::fake(None);
+    }

@@ -135,6 +135,9 @@ fn sb(p: &Path) -> String {
     format!("\"{}\"", p.display().to_string().replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// Reserved lookup names identify a profile without filesystem objects or changes to file access.
+const IDENTITY_ROOT: &str = "com.taskq.seatbelt";
+
 /// Seatbelt profile: everything allowed except writes to `<install>` (policy store, token, releases), to `PATH`
 /// directories (the service runs `claude`/`codex` from there unwrapped), to Codex config (`.codex/*.toml` can widen
 /// Codex's own sandbox) and, when `writable` is given, outside it. Paths are canonical: Seatbelt matches real paths
@@ -161,7 +164,17 @@ pub fn profile(install: &Path, writable: Option<&[PathBuf]>, home: &Path) -> Str
     }
     s += "(deny file-write* (regex #\"/\\.gemini/(config/hooks\\.json|antigravity-cli/settings\\.json)$\"))\n";
     s += "(deny file-write* (regex #\"/\\.codex/(taskq-accounts/[^/]+/)?[^/]*\\.toml$\"))\n";
+    // Lookup markers need no filesystem objects or path resolution.
+    let h = crate::runtime::usage::sha256(s.as_bytes());
+    s += &format!("(allow mach-lookup (global-name \"{IDENTITY_ROOT}.{h}.allow\"))\n(deny mach-lookup (global-name \"{IDENTITY_ROOT}.{h}.deny\"))\n");
     s
+}
+
+/// Lookup names a process under `profile` alone may and may not query ([one sandbox per daemon](docs/design/worker-permissions.md#one-sandbox-per-daemon)).
+pub fn identity(profile: &str) -> Option<(String, String)> {
+    let (_, tail) = profile.rsplit_once(IDENTITY_ROOT)?;
+    let h = tail.strip_prefix('.')?.get(..64).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    Some((format!("{IDENTITY_ROOT}.{h}.allow"), format!("{IDENTITY_ROOT}.{h}.deny")))
 }
 
 /// Writable paths of a preset: runtime homes, OS temp, devices and user build caches; Workspace adds the root,
@@ -172,6 +185,37 @@ fn writable(mode: &str, h: &Host) -> Vec<PathBuf> {
     w.extend(["/private/tmp", "/private/var/folders", "/dev"].map(PathBuf::from));
     w.push(if mode == "workspace" { h.root.to_path_buf() } else { h.root.join(".taskq") });
     w
+}
+
+/// What Git in a linked worktree writes under the common dir. config, hooks and info are absent on purpose.
+const GIT_WRITES: [&str; 7] = ["objects", "refs", "logs", "worktrees", "packed-refs", "packed-refs.lock", "packed-refs.new"];
+
+/// The writable Git paths of `<root>/.git`, only when it is a real directory and none of them is a link: Codex resolves
+/// a writable root, so a link a worker plants in an earlier turn would open its target.
+fn git_roots(root: &Path) -> Option<Vec<PathBuf>> {
+    let g = canon(root).join(".git");
+    let unlinked = |p: &Path| std::fs::symlink_metadata(p).map_or(true, |m| !m.is_symlink());
+    let roots: Vec<PathBuf> = GIT_WRITES.iter().map(|n| g.join(n)).collect();
+    (std::fs::symlink_metadata(&g).is_ok_and(|m| m.is_dir()) && roots.iter().all(|p| unlinked(p))).then_some(roots)
+}
+
+/// `codex-git` (#2449): why this Mac Codex launch cannot write the project's Git metadata; `None` when it can, or when
+/// no such launch runs: other OS, a refused launch, Full, taskq's own legacy profile or a root without `.git`.
+pub fn git_metadata_gap(e: &Effective, h: &Host) -> Option<String> {
+    let a = crate::runtime::of(&e.runtime);
+    if h.os != "macos" || !a.has(Cap::SandboxArgs) || !a.has(Cap::Cli) || e.refused.is_some() || e.mode == "full" || (e.mode == "legacy" && e.profile.is_some()) {
+        return None;
+    }
+    let g = canon(h.root).join(".git");
+    std::fs::symlink_metadata(&g).ok()?;
+    let rooted = e.mode == "workspace" || e.codex.as_ref().is_some_and(|c| c.iter().any(|x| x.starts_with("sandbox_workspace_write.writable_roots=")));
+    (git_roots(h.root).is_none() || !rooted).then(|| format!("Mac {} {} launch cannot write {}; Git fails in its linked worktrees", e.runtime, e.mode, g.display()))
+}
+
+/// [`git_metadata_gap`] of every launch of this project whose CLI is installed.
+pub fn git_metadata_gaps(install: &Path, root: &Path, codex: &[String]) -> Option<String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    report(install, root, "", codex).iter().filter(|e| crate::runtime::missing_cli(&e.runtime).is_none()).find_map(|e| git_metadata_gap(e, &Host::here(install, root, &home)))
 }
 
 /// The effective access of `rt` in this project (§ 8 Access). A project grant replaces the host default for its root.
@@ -216,6 +260,15 @@ pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_m
                     e.refused = Some("codex arguments or root may widen its sandbox to the policy store".into());
                 }
                 e.enforcement = format!("codex sandbox {s}, policy store not writable");
+                // #2449: its workspace-write keeps `<cwd>/.git` read-only; deeper writable roots reopen only what Git in a
+                // linked worktree writes. config, hooks and info stay closed: the service's own git runs them unsandboxed.
+                // ponytail: check-then-launch races a worker of this project; no outer Seatbelt can nest around Codex.
+                if let Some(roots) = git_roots(h.root).filter(|_| s == "workspace-write" && ok) {
+                    let mut args = codex.to_vec();
+                    args.extend(["-c".into(), format!("sandbox_workspace_write.writable_roots={}", json!(roots.iter().map(|g| g.to_string_lossy()).collect::<Vec<_>>()))]);
+                    e.codex = Some(args);
+                    e.enforcement = format!("codex sandbox {s} plus Git metadata of {}, policy store not writable", h.root.display());
+                }
             } else {
                 e.enforcement = "taskq seatbelt, policy store not writable".into();
                 e.profile = Some(profile(h.install, None, h.home));

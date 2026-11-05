@@ -179,12 +179,15 @@ pub(crate) fn status_all(a: &Args) -> Res<()> {
 }
 
 /// `status`: the rate-limit warning, then closed history, the JSON snapshot or the text report.
+/// JSON stdout stays one document: a budget warning goes to stderr there.
+pub(crate) fn status_prints_json(a: &Args) -> bool { a.flags.contains_key("json") || a.flags.contains_key("closed") }
+
 pub(crate) fn status_cmd(c: &Ctx, a: &Args) -> Res<()> {
     let (b, cfg) = (c.board.as_ref(), &c.cfg);
     // R6: a board rate-limit pause the local service reports comes first, also when this read fails
     let local = dot(&cfg.root).join("status.json");
     if let Some(w) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).as_ref().and_then(requests::warning) {
-        println!("{w}");
+        if status_prints_json(a) { eprintln!("{w}"); } else { println!("{w}"); }
     }
     if a.flags.contains_key("closed") {
         let page = a.one("page").map_or(Ok(1), |p| p.parse::<u32>().map_err(|_| "bad --page"))?;

@@ -457,6 +457,8 @@ pub struct Host {
     pub selected: Option<String>,
     /// Heartbeat `queue {json}` (#2255): every project of the host service; none from older hosts.
     pub queue: Option<crate::host::Queues>,
+    /// Heartbeat `daemon-sandbox {json}` (#2432): each daemon that differs from the grant of this project's jobs.
+    pub daemon_sandbox: Vec<Value>,
     /// The project ttl this row was read with: the heartbeat's liveness.
     pub ttl: i64,
 }
@@ -646,6 +648,7 @@ pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
         accounts: h.body.lines().filter_map(|l| l.strip_prefix("account ")).map(str::to_string).collect(),
         selected: h.body.lines().find_map(|l| l.strip_prefix("selected ")).map(str::to_string),
         queue: h.body.lines().find_map(|l| l.strip_prefix("queue ")).filter(|_| h.trusted).and_then(|j| serde_json::from_str(j).ok()),
+        daemon_sandbox: h.body.lines().filter_map(|l| l.strip_prefix("daemon-sandbox ")).filter(|_| h.trusted).filter_map(|j| serde_json::from_str(j).ok()).collect(),
         ttl,
     }
 }
@@ -1078,6 +1081,16 @@ impl Snapshot {
                 } else if q["restart"].as_i64().is_some_and(|r| r >= STALL_AFTER) {
                     anomalies.push(format!("- host {} {name} · restart pending {} · {doctor}", h.name, age(q["restart"].as_i64().unwrap_or(0))));
                 }
+            }
+            for d in &h.daemon_sandbox {
+                let bin = cell(&compact(d["bin"].as_str().unwrap_or("runtime"), 40));
+                let tasks = d["tasks"].as_array().into_iter().flatten().map(|n| format!("#{n}")).collect::<Vec<_>>().join(", ");
+                let reason = cell(&compact(d["reason"].as_str().unwrap_or("no reason reported"), 160));
+                let next = format!("Next: jobs wait until the daemon exits; run `{bin} daemon status` on {}", h.name);
+                anomalies.push(match d["pid"].as_u64() {
+                    Some(pid) => format!("- host {} · live {bin} daemon pid {pid} sandbox differs from the grant of {tasks}: {reason} · {next}", h.name),
+                    None => format!("- host {} · {bin} daemon sandbox unknown for {tasks}: {reason} · {next}", h.name),
+                });
             }
         }
         if let Some(d) = decide_unknown { anomalies.push(format!("- {} · Next: rerun `taskq status` after the next service pass", d.trim_end())); }

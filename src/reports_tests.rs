@@ -461,3 +461,42 @@
         Ok(json!({"reports":selected,"more":rows.len()>start.saturating_add(crate::board::CLOSED_PAGE),"next":next,"page":page}))
     }
     fn list(b:&crate::board::Fake,page:usize)->Res<Value> {list_before(b,page,None)}
+
+    // R1/R6, #2439: task-list lag plus a newer task must not strand an accepted SHA until a full scan.
+    // Existing decision guards stay intact; this checks discovery through the collector and Decide.
+    #[test] fn incremental_lag_reconciles_accepted_report_before_full_scan() {
+        for restart in [false,true] {
+            let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);
+            b.advance(LIST_LAG+1);cache.collect(&b); // settled initial row and full-scan clock
+            b.advance(1);b.raw(n,&format!("taskq: report-accept {sha}"),true,false);
+            let accepted=b.now().unwrap();
+            b.advance(61);let newer=b.create("Newer task","",&["taskq".into()]).unwrap();
+            // A lagging list contains the newer task but omits the decision update entirely.
+            let list=vec![b.issue(newer).unwrap()];b.state.borrow_mut().stale_list=Some(list);
+            cache.collect(&b);
+            assert_eq!(cache.value["reports"][0]["decision"],"none");
+            assert_eq!(decide(&cache.value,b.now().unwrap())["rows"][0]["n"],n);
+            if restart {cache=Cache::retaining(cache.value.clone());}
+            b.advance(LIST_LAG);cache.collect(&b);
+            assert!(b.now().unwrap()-accepted<FULL_SCAN);
+            assert!(cache.value["reports"].as_array().unwrap().is_empty(),"accepted report stranded by incremental cursor (restart={restart})");
+            assert!(decide(&cache.value,b.now().unwrap())["rows"].as_array().unwrap().is_empty());
+            assert_eq!(cache.value["history"][0]["sha"],sha);
+            assert_eq!(cache.value["history"][0]["decision"],"accepted");
+        }
+    }
+
+    // R1/R12: caches from before the incremental overlap must heal even after the decision left the window.
+    #[test] fn pre_overlap_cache_rebuilds_an_already_stranded_accept() {
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);
+        b.advance(LIST_LAG+1);cache.collect(&b);
+        b.raw(n,&format!("taskq: report-accept {sha}"),true,false);
+        let writes=b.state.borrow().comments.len();b.advance(601);
+        let mut stale=cache.value.clone();stale["verified"]=json!(b.now().unwrap());
+        stale.as_object_mut().unwrap().remove("incremental_overlap");
+        let mut restarted=Cache::retaining(stale);restarted.collect(&b);
+        assert!(decide(&restarted.value,b.now().unwrap())["rows"].as_array().unwrap().is_empty());
+        assert!(restarted.value["reports"].as_array().unwrap().is_empty());
+        assert_eq!(restarted.value["history"][0]["decision"],"accepted");
+        assert_eq!(b.state.borrow().comments.len(),writes,"healing never replays decisions");
+    }

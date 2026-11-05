@@ -621,3 +621,21 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap_err();
         assert!(text.ends_with(" (reason: forbidden)"), "{text}");
     }
+
+    // Chain: R6 Anomalies, #2432 A2. Risk: a live daemon with another project's sandbox holds jobs and status never says
+    // so, or an untrusted heartbeat invents one, or a stale heartbeat keeps naming a daemon that has gone.
+    #[test]
+    fn a_daemon_that_differs_from_a_jobs_grant_is_an_anomaly() {
+        let at = 10_000;
+        let beat = |name: &str, age: i64, trusted: bool, line: &str| board::Issue { title: format!("taskq host {name}"), body: format!("version 4\n{line}"), updated: at - age, trusted, ..Default::default() };
+        let differs = r#"daemon-sandbox {"bin":"claude","pid":77,"reason":"daemon runs under another Seatbelt profile","tasks":[5,6]}"#;
+        let unknown = r#"daemon-sandbox {"bin":"claude","pid":null,"reason":"daemon status unreadable","tasks":[7]}"#;
+        let cfg = crate::tests::cfg();
+        let snap = from_views("board", &crate::board::Fake::default(), &cfg, at, &[], &[
+            beat("mac", 10, true, differs), beat("next", 10, true, unknown), beat("forged", 10, false, differs), beat("old", cfg.ttl + 60, true, differs),
+        ]);
+        let text = snap.text(&cfg, &json!({})).unwrap();
+        assert!(text.contains("- host mac · live claude daemon pid 77 sandbox differs from the grant of #5, #6: daemon runs under another Seatbelt profile · Next: jobs wait until the daemon exits; run `claude daemon status` on mac"), "{text}");
+        assert!(text.contains("- host next · claude daemon sandbox unknown for #7: daemon status unreadable · Next:"), "{text}");
+        assert!(!text.contains("- host forged · live") && !text.contains("- host old · live"), "{text}");
+    }

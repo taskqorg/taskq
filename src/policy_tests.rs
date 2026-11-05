@@ -190,3 +190,144 @@
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"revision\": 1}\n");
         let _ = std::fs::remove_dir_all(&t);
     }
+
+    #[cfg(unix)]
+    fn git_project(name: &str) -> PathBuf {
+        let t = canon(Path::new(env!("CARGO_MANIFEST_DIR"))).join("target").join(format!("codex-git-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(t.join("root/.git")).unwrap();
+        std::fs::create_dir_all(t.join("install")).unwrap();
+        t
+    }
+
+    // Chain: #2449 A2 and A3, § 8 Access -> Mac legacy Codex arguments -> `taskq doctor` codex-git. Risk: Codex keeps
+    // `<cwd>/.git` read-only, so Git fails in linked worktrees, and a wider root or a planted link would open config,
+    // hooks, another project or `<install>`. Protection: only named real Git paths are added; a launch without them is named.
+    #[cfg(unix)]
+    #[test]
+    fn mac_legacy_codex_adds_only_the_own_git_dir_and_doctor_names_a_launch_without_it() {
+        let t = git_project("args");
+        let (root, install) = (t.join("root"), t.join("install"));
+        let h = host("macos", &install, &root);
+        let ws = ["-s".to_string(), "workspace-write".into()];
+        let git = root.join(".git");
+        let e = resolve(&Ok(Policy::default()), &h, "codex", "", &ws);
+        let added = format!("sandbox_workspace_write.writable_roots={}", json!(GIT_WRITES.map(|n| git.join(n).to_string_lossy().into_owned())));
+        assert_eq!(e.codex.as_deref().unwrap(), ["-s", "workspace-write", "-c", added.as_str()], "exactly the Git paths");
+        assert!(GIT_WRITES.iter().all(|n| !["config", "hooks", "info"].contains(n)), "the service runs these unsandboxed");
+        assert_eq!(e.grant, "none (taskq.json is a request)", "still no grant");
+        assert_eq!(git_metadata_gap(&e, &h), None);
+
+        let refused = resolve(&Ok(Policy::default()), &h, "codex", "", &["-s".into(), "workspace-write".into(), "-c".into(), "sandbox_workspace_write.writable_roots=[\"/\"]".into()]);
+        assert!(refused.refused.is_some() && refused.codex.is_none(), "a requested root stays refused");
+        assert!(resolve(&Ok(Policy::default()), &host("linux", &install, &root), "codex", "", &ws).codex.is_none(), "macOS only");
+
+        let ro = resolve(&Ok(Policy::default()), &h, "codex", "", &["-s".into(), "read-only".into()]);
+        assert!(ro.codex.is_none(), "read-only stays read-only");
+        assert!(git_metadata_gap(&ro, &h).unwrap().contains("Mac codex legacy launch cannot write"));
+        let grant = |mode| resolve(&Ok(Policy { revision: 1, grants: vec![g("codex", mode, None)] }), &h, "codex", "", &ws);
+        assert_eq!(git_metadata_gap(&grant("workspace"), &h), None);
+        assert_eq!(git_metadata_gap(&grant("full"), &h), None);
+        assert!(git_metadata_gap(&grant("restricted"), &h).is_some());
+        assert_eq!(git_metadata_gap(&resolve(&Ok(Policy::default()), &h, "claude", "dontAsk", &[]), &h), None, "Codex only");
+
+        // a pointer or a planted link never becomes a root, and the launch is named
+        std::fs::create_dir_all(git.join("logs")).unwrap();
+        std::fs::remove_dir(git.join("logs")).unwrap();
+        std::os::unix::fs::symlink(&install, git.join("refs")).unwrap();
+        let planted = resolve(&Ok(Policy::default()), &h, "codex", "", &ws);
+        assert!(planted.codex.is_none() && git_metadata_gap(&planted, &h).is_some());
+        std::fs::remove_file(git.join("refs")).unwrap();
+        std::fs::remove_dir(&git).unwrap();
+        std::os::unix::fs::symlink(&install, &git).unwrap();
+        let linked = resolve(&Ok(Policy::default()), &h, "codex", "", &ws);
+        assert!(linked.codex.is_none() && git_metadata_gap(&linked, &h).is_some());
+        assert!(git_metadata_gap(&grant("workspace"), &h).is_some());
+        std::fs::remove_file(&git).unwrap();
+        std::fs::write(&git, "gitdir: elsewhere\n").unwrap();
+        let pointer = resolve(&Ok(Policy::default()), &h, "codex", "", &ws);
+        assert!(pointer.codex.is_none() && git_metadata_gap(&pointer, &h).is_some());
+        std::fs::remove_file(&git).unwrap();
+        assert_eq!(git_metadata_gap(&resolve(&Ok(Policy::default()), &h, "codex", "", &ws), &h), None, "no Git here, nothing to write");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    // Chain: #2449 A1 and A2, real Git under both Mac sandboxes. Risk: index.lock and FETCH_HEAD fail in a linked
+    // worktree, or the fix also opens another project's `.git` or `<install>`. Protection: fetch, commit, rebase and push
+    // pass under legacy Codex arguments and the Workspace profile; both other paths stay refused.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_codex_runs_git_in_a_linked_worktree_and_stays_out_of_other_git_dirs() {
+        use std::process::Command;
+        let probe = Command::new("sandbox-exec").args(["-p", "(version 1)(allow default)", "/usr/bin/true"]).output().unwrap();
+        if !probe.status.success() {
+            use std::io::Write;
+            writeln!(std::io::stderr(), "sandbox-blocked: mac_codex_runs_git_in_a_linked_worktree: {}", String::from_utf8_lossy(&probe.stderr)).unwrap();
+            return;
+        }
+        let t = git_project("real");
+        let (install, other) = (t.join("install"), t.join("other"));
+        std::fs::create_dir_all(other.join(".git")).unwrap();
+        let home = t.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        // a push target the sandboxes may write: the OS temp dir, like the network for a real remote
+        let temp = PathBuf::from("/private/tmp").join(format!("codex-git-{}", std::process::id()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let git = |dir: &Path, args: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        // the service launches Codex in the root; Codex masks the gitdir of a pointer `.git` in its cwd
+        let script = "cd .worktrees/w && git fetch origin && echo w >> f && git add f && git commit -qm w && git rebase -q origin/main && git push -q origin HEAD:refs/heads/$B && git pack-refs --all && git worktree add -q -b x$B ../x \
+            && ! touch \"$O/.git/x\" 2>/dev/null && ! touch \"$I/x\" 2>/dev/null";
+        let prepare = |branch: &str| -> PathBuf {
+            let root = t.join(format!("root-{branch}"));
+            std::fs::create_dir_all(&root).unwrap();
+            let origin = temp.join(format!("{branch}.git"));
+            git(&temp, &["init", "-q", "--bare", origin.to_str().unwrap()]);
+            git(&root, &["init", "-q", "-b", "main"]);
+            std::fs::write(root.join("f"), "1\n").unwrap();
+            git(&root, &["add", "f"]);
+            git(&root, &["commit", "-qm", "one"]);
+            git(&root, &["remote", "add", "origin", origin.to_str().unwrap()]);
+            git(&root, &["push", "-q", "origin", "main"]);
+            git(&root, &["config", "user.name", "t"]);
+            git(&root, &["config", "user.email", "t@t"]);
+            git(&root, &["worktree", "add", "-q", "-b", branch, ".worktrees/w"]);
+            std::fs::write(root.join("g"), "2\n").unwrap();
+            git(&root, &["add", "g"]);
+            git(&root, &["commit", "-qm", "two"]);
+            git(&root, &["push", "-q", "origin", "main"]);
+            root
+        };
+        let run = |c: &mut Command, root: &Path, branch: &str| {
+            let o = c.arg("/bin/sh").arg("-c").arg(script).current_dir(root).env("GIT_CONFIG_GLOBAL", "/dev/null").env("B", branch).env("R", root).env("O", &other).env("I", &install).output().unwrap();
+            assert!(o.status.success(), "{branch}: {}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+            assert!(!other.join(".git/x").exists() && !install.join("x").exists());
+            git(root, &["fetch", "-q", "origin"]);
+            git(root, &["merge-base", "--is-ancestor", "origin/main", &format!("origin/{branch}")]);
+        };
+
+        let root = prepare("workspace");
+        let h = Host { os: "macos", install: &install, root: &root, home: &home };
+        let profile = resolve(&Ok(Policy { revision: 1, grants: vec![g("codex", "workspace", None)] }), &h, "codex", "", &["-s".into(), "workspace-write".into()]).profile.unwrap();
+        run(Command::new("sandbox-exec").args(["-p", &profile]), &root, "workspace");
+
+        let root = prepare("legacy");
+        let h = Host { os: "macos", install: &install, root: &root, home: &home };
+        let args = resolve(&Ok(Policy::default()), &h, "codex", "", &["-s".into(), "workspace-write".into()]).codex.unwrap();
+        let codex = Command::new("codex").arg("--version").output();
+        if codex.is_ok_and(|o| o.status.success()) {
+            let mut c = Command::new("codex");
+            c.args(["sandbox", "-c", "sandbox_mode=workspace-write", "-c", &args[3], "--"]);
+            run(&mut c, &root, "legacy");
+            let closed = "! echo x >> .git/config && ! touch .git/hooks/post-commit && ! touch .git/info/attributes";
+            let o = Command::new("codex").args(["sandbox", "-c", "sandbox_mode=workspace-write", "-c", &args[3], "--", "/bin/sh", "-c", closed]).current_dir(&root).output().unwrap();
+            assert!(o.status.success(), "config, hooks and info stay closed: {}", String::from_utf8_lossy(&o.stderr));
+        } else {
+            use std::io::Write;
+            writeln!(std::io::stderr(), "no codex CLI: legacy half of mac_codex_runs_git_in_a_linked_worktree not run").unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&t);
+        let _ = std::fs::remove_dir_all(&temp);
+    }

@@ -7,6 +7,8 @@ pub(super) fn request(env: &Env, l: &Launch, log: &Path, text: &str, access: &cr
     let mut request = Request::new(env.root, log, text, "taskq");
     request.command = std::iter::once(base.get_program()).chain(base.get_args()).map(Into::into).collect();
     request.env = spec(env, l, env.root.into(), vec![]).env;
+    // AgentQ leaves its launcher marker to a TaskQ launch: without it, only a service that inherited one marks its workers.
+    request.env.push(("AGENTQ_LAUNCHER".into(), "taskq".into()));
     request.home = accounts::log_home(&l.rt, log);
     request.install = agentq_runtime::optimization::install_root();
     let intent = request.env.iter().rev().find(|(key,_)|key=="AGENTQ_OPTIMIZATION").map(|(_,value)|value.clone()).or_else(||std::env::var_os("AGENTQ_OPTIMIZATION"));
