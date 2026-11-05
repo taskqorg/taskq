@@ -62,6 +62,8 @@ struct Record {
     windows: Vec<Window>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     unreadable: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unreadable_at: Option<i64>,
     unknown: Option<String>,
 }
 
@@ -338,7 +340,7 @@ impl View {
 
     /// A partial poll cannot establish aggregate headroom, locally or on a host sharing this account.
     pub(crate) fn incomplete(&self, rt: &str, label: &str, now: i64) -> bool {
-        if self.store.get(rt).and_then(|a| a.get(label)).is_some_and(|r| fresh(r.at, None, now) && !r.unreadable.is_empty()) { return true; }
+        if self.store.get(rt).and_then(|a| a.get(label)).is_some_and(|r| !r.unreadable.is_empty() && fresh(r.unreadable_at.unwrap_or(r.at), None, now)) { return true; }
         let Some(id) = self.id(rt, label) else { return false };
         self.fleet(now).is_some_and(|f| f.rows.iter().filter_map(|l| Row::parse(l)).any(|r|
             r.rt == rt && r.id.as_deref() == Some(id) && matches!(r.usage, Usage::Unknown(reason) if reason.starts_with("quota unreadable "))))
@@ -370,9 +372,14 @@ impl View {
         if !enabled { return vec![row(Usage::Unknown("disabled".into()))]; }
         let Some(r) = record else { return vec![row(Usage::Unknown("not polled".into()))] };
         if !fresh(r.at, None, now) { return vec![row(Usage::Unknown("poll stale".into()))]; }
-        if let Some(reason) = &r.unknown { return vec![row(Usage::Unknown(reason.clone()))]; }
-        r.windows.iter().map(|w| row(Usage::Window { window: w.clone(), at: r.at }))
-            .chain(r.unreadable.iter().map(|reason| row(Usage::Unknown(format!("quota unreadable {reason}"))))).collect()
+        let mut lines: Vec<_> = match &r.unknown {
+            Some(reason) => vec![row(Usage::Unknown(reason.clone()))],
+            None => r.windows.iter().map(|w| row(Usage::Window { window: w.clone(), at: r.at })).collect(),
+        };
+        if fresh(r.unreadable_at.unwrap_or(r.at), None, now) {
+            lines.extend(r.unreadable.iter().map(|reason| row(Usage::Unknown(format!("quota unreadable {reason}")))));
+        }
+        lines
     }
 
     /// The `account-policy` heartbeat lines: `ids` lists the fingerprints of a runtime's listed homes.
@@ -411,7 +418,15 @@ pub fn poll_with(install: &Path, now: i64, mut fetch: impl FnMut(&str, &str) -> 
             crate::platform::log(&format!("account usage {rt} {label}: unknown {reason}"));
         }
         let id = poll.id.clone().or_else(|| old.and_then(|o| o.id.clone()));
-        store.entry(rt.clone()).or_default().insert(label.clone(), Record { id, at: now, windows: poll.windows.clone(), unreadable: poll.unreadable.clone(), unknown: poll.unknown.clone() });
+        let mut record = Record { id, at: now, windows: poll.windows.clone(), unreadable: poll.unreadable.clone(),
+            unreadable_at: (!poll.unreadable.is_empty()).then_some(now), unknown: poll.unknown.clone() };
+        if poll.unknown.is_some() && poll.unreadable.is_empty() {
+            if let Some(old) = old.filter(|o| o.id == record.id && !o.unreadable.is_empty()) {
+                record.unreadable = old.unreadable.clone();
+                record.unreadable_at = Some(old.unreadable_at.unwrap_or(old.at));
+            }
+        }
+        store.entry(rt.clone()).or_default().insert(label.clone(), record);
     }
     // an account dropped from the list leaves no row; a disabled one keeps its id
     store.retain(|rt, a| { a.retain(|label, _| list(rt).iter().any(|e| e.label == *label)); !a.is_empty() });
@@ -1003,6 +1018,39 @@ mod tests {
             save(&Poll::failed(reason));
             assert_eq!(View::read(&d).lines("claude", "default", true, now), [Row { rt: "claude".into(), label: "default".into(), id: parsed.id.clone(), usage: Usage::Unknown(reason.into()) }.line()]);
         }
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    // Chain: R12: transport failures cannot turn a previous partial poll into healthy aggregate headroom.
+    #[test]
+    fn claude_failed_polls_preserve_incomplete_origin_until_expiry() {
+        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
+        let d = dir("claude-failed-partial");
+        let mut response = native["response"].clone();
+        response["limits"][1].as_object_mut().unwrap().remove("percent");
+        let partial = oauth_windows(&response).unwrap();
+        poll_with(&d, now, |rt, _| if rt == "claude" { partial.clone() } else { Poll::failed("no login") }).unwrap();
+        for (index, reason) in ["network failed", "call refused 401", "token expired", "usage shape changed"].iter().enumerate() {
+            let at = now + 120 + index as i64;
+            poll_with(&d, at, |rt, _| Poll::failed(if rt == "claude" { reason } else { "no login" })).unwrap();
+            assert_eq!(View::read(&d).remaining("claude", "default", at), None, "{reason} cannot restore partial headroom");
+            assert_eq!(super::super::headroom::remaining(&d, "claude", at).unwrap(), None);
+            let lines = View::read(&d).lines("claude", "default", true, at);
+            assert_eq!(lines.len(), 2, "whole-response failure keeps the still-fresh window unknown for fleet readers");
+            assert!(lines.iter().any(|l| l.ends_with(reason)));
+            assert!(lines.iter().any(|l| l.contains("unknown quota unreadable limits[1] seven_day_fable")));
+        }
+        let log = d.join("turn.jsonl");
+        std::fs::write(&log, "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"rateLimitType\":\"five_hour\",\"utilization\":0.25}}\n").unwrap();
+        let at = now + TTL + 1;
+        super::super::headroom::observe(&d, "claude", &log, at).unwrap();
+        assert_eq!(View::read(&d).remaining("claude", "default", at), Some(75), "failures do not renew the original incomplete observation's expiry");
+        assert_eq!(super::super::headroom::remaining(&d, "claude", at).unwrap(), Some(0.75));
+        assert_eq!(View::read(&d).lines("claude", "default", true, at).len(), 1, "expired per-window unknowns stop travelling to the fleet");
+        let complete = oauth_windows(&native["response"]).unwrap();
+        poll_with(&d, at + 1, |rt, _| if rt == "claude" { complete.clone() } else { Poll::failed("no login") }).unwrap();
+        assert_eq!(View::read(&d).remaining("claude", "default", at + 1), Some(57), "a complete poll recovers all quotas");
         std::fs::remove_dir_all(d).unwrap();
     }
 

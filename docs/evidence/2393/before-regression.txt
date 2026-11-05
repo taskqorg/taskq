@@ -10,3 +10,12 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1073 filtered ou
 
 The earlier setup attempt stopped before parser execution because esbuild was absent; it is not defect reproduction evidence.
 Full local build logs are retained in the worktree scratch directory, not published.
+
+Recovery regression before correction:
+Candidate: 31910f17fd82a7a145a39106d1671d9b4e04be97 with the new recovery assertion only.
+Command: cargo test --locked --bin taskq claude_failed_polls_preserve_incomplete_origin_until_expiry -- --nocapture
+Outcome: FAIL (nonzero exit).
+assertion `left == right` failed: network failed cannot restore partial headroom
+  left: Some(57)
+ right: None
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1076 filtered out; finished in 0.04s
