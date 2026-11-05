@@ -7133,6 +7133,7 @@ mod tests {
         let some = pm_instructions(&args(&["pm", "--every", "5m", "--project", "a", "--project", "b"])).unwrap();
         assert!(some.contains("`interval` 300") && some.contains("run taskq pm --every 5m --project a --project b and do") && some.contains("`Manager on · 5m · a, b`"), "{some}");
         let off = pm_instructions(&args(&["pm", "stop"])).unwrap();
+        assert!(on.contains("`pm_note_write` with `id` `manager-mode`") && off.contains("`pm_note_forget` with `id` `manager-mode`"));
         assert!(off.contains("`loop_stop`") && off.contains("`Manager off`"));
         assert!(pm_instructions(&args(&["pm", "--every", "0m"])).is_err() && pm_instructions(&args(&["pm", "--every", "90s"])).is_err() && pm_instructions(&args(&["pm", "go"])).is_err());
         assert!(USAGE.contains("--snapshot DIR"));
