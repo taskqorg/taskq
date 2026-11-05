@@ -20,10 +20,6 @@ Linked from `taskq.md` [§ 9](../../taskq.md#9-config-and-cutover); this text bi
 - `deploy` `[env, ..]`: environments in deploy order, e.g. `["dev", "live"]`; absent, closed tasks get no deploy line or `deploy-waiting` label and `taskq deployed` refuses (§ 2 Deploy).
 - `recipes` `{name: {"version": V, "tasks": [{"title", "goal", "acceptance": [..], "scope", "deps": [earlier 1-based index..], "gate", "type", "runtime", "priority", "host"}]}}` (§ 7).
 
-### Six-copy migration
-
-- [Six-copy migration](host-service.md#six-copy-configuration-migration) compares inputs before writes; conflicts/unknowns hold launches. Keep originals, unknown keys and ownership; replacement resumes idempotently.
-
 ### Publication cutover and contract cutover procedure
 
 Publication cutover: keep results, stop old services/children, set public GitHub queues/required `merge_group` CI, upgrade hosts, resume.
