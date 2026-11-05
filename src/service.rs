@@ -1925,7 +1925,7 @@ impl<'a> Service<'a> {
     /// latest release the host doctor read, report collection and the last pass error, as the heartbeat `doctor` line.
     fn refresh_health(&mut self) {
         let latest = crate::health::cached_latest(&self.cfg.install);
-        let items = crate::health::board_items(self.board, &self.cfg.repo, self.cfg.board.name == "gitlab", &self.cfg.root, &self.cfg.install, &latest);
+        let items = crate::health::board_items(self.board, &self.cfg.repo, self.cfg.board.name == "gitlab", &self.cfg.root, &self.cfg.install, &self.cfg.codex, &latest);
         let at = self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now());
         let mut line = crate::health::line(at, &items);
         // #2246: a reports gap names its cause and reports on the heartbeat

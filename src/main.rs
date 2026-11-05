@@ -2935,7 +2935,7 @@ fn doctor_cmd(a: &Args) -> Res<()> {
         let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install));
         if !hosts {
             let items = match &board {
-                Ok(b) => health::board_items(b.as_ref(), &cfg.repo, gitlab, &cfg.root, &cfg.install, &latest),
+                Ok(b) => health::board_items(b.as_ref(), &cfg.repo, gitlab, &cfg.root, &cfg.install, &cfg.codex, &latest),
                 Err(e) => health::unopened(&cfg.repo, gitlab, e),
             };
             out.extend(health::lines(&cfg.repo, &items));
