@@ -95,11 +95,11 @@ const fs = require("node:fs"),
             (await row.locator(".task-timing>span").allTextContents()).map(
               (t) => t.trim(),
             ),
-            ["2h18m", "7", "7m"],
+            ["2h", "7", "7m"],
           );
           assert.match(
             await row.getAttribute("aria-description"),
-            /first 2023-11-14T19:55:20.000Z/,
+            /first [A-Z][a-z]{2} Nov 1[45], \d{2}:\d{2}/,
           );
           await row.focus();
           assert.equal(

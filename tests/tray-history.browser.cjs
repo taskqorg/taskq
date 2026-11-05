@@ -140,10 +140,9 @@ const base = {
                 detail,
               );
             assert(
-              (detail.includes("[") &&
-                detail.includes(")") &&
-                detail.includes("UTC")) ||
-                detail.includes("Asia/"),
+              /^\[[A-Z][a-z]{2} [A-Z][a-z]{2} \d{2}, \d{2}:\d{2}, .*\)/.test(
+                detail,
+              ),
               detail,
             );
             const newQuantity =
