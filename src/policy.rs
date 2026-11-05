@@ -134,6 +134,9 @@ fn sb(p: &Path) -> String {
     format!("\"{}\"", p.display().to_string().replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// Root-owned: the identity rules of a Seatbelt profile grant no write the user could perform.
+const IDENTITY_ROOT: &str = "/private/var/empty/taskq-seatbelt";
+
 /// Seatbelt profile: everything allowed except writes to `<install>` (policy store, token, releases), to `PATH`
 /// directories (the service runs `claude`/`codex` from there unwrapped), to Codex config (`.codex/*.toml` can widen
 /// Codex's own sandbox) and, when `writable` is given, outside it. Paths are canonical: Seatbelt matches real paths
@@ -160,7 +163,17 @@ pub fn profile(install: &Path, writable: Option<&[PathBuf]>, home: &Path) -> Str
     }
     s += "(deny file-write* (regex #\"/\\.gemini/(config/hooks\\.json|antigravity-cli/settings\\.json)$\"))\n";
     s += "(deny file-write* (regex #\"/\\.codex/(taskq-accounts/[^/]+/)?[^/]*\\.toml$\"))\n";
+    // Last, so they read back from the live process: its grant's identity, under a root-owned path that grants nothing.
+    let h = crate::runtime::usage::sha256(s.as_bytes());
+    s += &format!("(allow file-write* (literal \"{IDENTITY_ROOT}/{h}/allow\"))\n(deny file-write* (literal \"{IDENTITY_ROOT}/{h}/deny\"))\n");
     s
+}
+
+/// The paths a process under `profile` alone may and may not write ([one sandbox per daemon](docs/design/worker-permissions.md#one-sandbox-per-daemon)).
+pub fn identity(profile: &str) -> Option<(PathBuf, PathBuf)> {
+    let (_, tail) = profile.rsplit_once(IDENTITY_ROOT)?;
+    let h = tail.strip_prefix('/')?.get(..64).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    Some((PathBuf::from(format!("{IDENTITY_ROOT}/{h}/allow")), PathBuf::from(format!("{IDENTITY_ROOT}/{h}/deny"))))
 }
 
 /// Writable paths of a preset: runtime homes, OS temp, devices and user build caches; Workspace adds the root,

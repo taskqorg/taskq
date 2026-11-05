@@ -11,6 +11,7 @@ use agentq_runtime::agent::NativeSpec;
 
 mod app_control;
 pub mod accounts;
+pub mod daemon_sandbox;
 pub mod headroom;
 pub mod usage;
 pub mod owner;
@@ -1984,6 +1985,8 @@ impl ClaudeTurn {
             if mode != permission_mode { return Err("Claude saved permission mode differs; a new attempt is required".into()); }
         }
         std::fs::create_dir_all(log.parent().ok_or("missing log directory")?).map_err(|e| e.to_string())?;
+        let daemon_home = accounts::log_home(&l.rt, log).or_else(|| accounts::default_home(&l.rt));
+        let _daemon = daemon_sandbox::enter(&l.rt, daemon_home.as_deref(), access.profile.as_deref(), l.resume.is_some()).map_err(|e| StartError::admission(&e))?;
         let mut c = executable(which("claude"), access, env)?;
         let (input, input_file, path) = claude_input(&root, text, Some(l))?;
         bind_input(log,l,&path,&input,serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}))?;
@@ -5766,6 +5769,24 @@ finally:
         assert!(!build_open("codex", &crate::policy::Effective { windows: true, ..full.clone() }, &env), "taskq Windows sandbox");
         assert!(!build_open("codex", &crate::policy::Effective { linux: true, ..full }, &env), "taskq Linux sandbox");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // Chain: § 8 Access, #2432 A1. Risk: the launch path reaches the shared daemon under another grant, or binds its input
+    // before it waits, so a held retry would submit a second binding of one launch.
+    #[test]
+    fn a_differing_daemon_starts_no_background_job() {
+        let root = rules_root("daemon-gate");
+        let env = Env { context: "", root: &root, exe: Path::new("taskq"), install: &root, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let l = Launch { files: String::new(), execution: Some(42), task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        let access = crate::policy::Effective { runtime: "claude".into(), requested: String::new(), grant: String::new(), mode: "workspace".into(), enforcement: String::new(),
+            profile: Some("(version 1)".into()), linux: false, windows: false, claude: None, codex: None, refused: None };
+        let log = root.join("T7-42.log");
+        daemon_sandbox::fake(Some(daemon_sandbox::Fit::Differs { pid: 77, reason: "daemon runs under another Seatbelt profile" }));
+        let refused = ClaudeTurn::start(&env, &l, &log, "brief", &access).err().expect("no job starts");
+        daemon_sandbox::fake(None);
+        assert_eq!((refused.class(), refused.to_string().as_str()), ("admission", "live daemon pid 77: daemon runs under another Seatbelt profile"));
+        assert!(!log.exists(), "no input is bound");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     // Chain: § 8 rule delivery to a PM session, #1219. Risk: the PM hook gets other rules than a worker at the same pin,
