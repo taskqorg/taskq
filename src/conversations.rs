@@ -896,6 +896,48 @@ mod tests {
         m["source_revision"]=json!(70);assert_eq!(dialogue(&f.0,&m)["state"],"unknown");m["source_revision"]=json!(71);m["conversation"]=json!("task:https://other.example/issues/7");assert_eq!(dialogue(&f.0,&m)["state"],"unknown");m["root"]=json!(f.0.join("unregistered"));assert_eq!(dialogue(&f.0,&m)["state"],"unknown");assert_eq!(fs::read_to_string(path).unwrap(),source);
     }
 
+    // A3/A4: >8 MiB full closed history must serve metadata, board pages and the exact native worker without HTTP.
+    #[test]
+    fn large_closed_history_keeps_metadata_pages_and_worker_reads() {
+        let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"o/r"}"#).unwrap();
+        fs::write(f.0.join("projects"),format!("{}\n",root.display())).unwrap();
+        fs::write(f.0.join("token"),"invented-test-token").unwrap();fs::write(f.0.join("host.json"),"{}").unwrap();
+        let host=crate::host::Policy::read(&f.0).unwrap().me;
+        let board="https://github.com/o/r/issues";let session="invented-large-history";
+        let comment=|id,body:String|json!({"id":id,"body":body,"author_association":"OWNER","user":{"login":"invented"},"created_at":"2026-10-01T00:00:00Z","updated_at":"2026-10-01T00:00:00Z"});
+        let mut comments=vec![comment(71,format!("taskq: spawn worker antigravity:{session} {host}"))];
+        for id in 72..232 {comments.push(comment(id,format!("taskq: steer\nInvented retained note {id}: {}","x".repeat(60*1024))));}
+        comments.push(comment(232,format!("taskq: result {} attempt 71\nChanged: invented result","a".repeat(40))));
+        comments.push(comment(233,"taskq: close\nChanged: invented result".into()));
+        let calls=std::rc::Rc::new(std::cell::Cell::new(0));let seen=calls.clone();
+        let b=crate::board::replying(&crate::board::BOARDS[0],move|method,url|{
+            assert_eq!(method,"GET","history reads must never send input or write the board");seen.set(seen.get()+1);
+            if url.ends_with("/issues/7") {Ok(json!({"number":7,"title":"Invented large task","body":"Invented brief","labels":[{"name":"taskq"}],"state":"closed","state_reason":"completed","author_association":"OWNER","closed_at":"2026-10-01T00:00:00Z"}))}
+            else {assert!(url.ends_with("/issues/7/comments?per_page=100"));Ok(json!(comments))}
+        });
+        let source=crate::reports::selected(&root,&*b,7,false,None).unwrap();let row=&source["tasks"][0];let revision=row["revision"].as_u64().unwrap();
+        assert!(row["history"].to_string().len()>8*1024*1024);assert_eq!(row["history"].as_array().unwrap().len(),163,"all accepted entries survive the full fold");
+        assert_eq!(calls.get(),2);let cold=b.requests().ops;
+        let status=json!({"pid":std::process::id(),"issues":board,"tasks_age_seconds":0,"complete":true,"tasks":[]});
+        let status_path=root.join(".taskq/status.json");fs::write(&status_path,status.to_string()).unwrap();
+        let log=crate::runtime::attempt_log(&root,"worker",7,71);
+        fs::write(&log,format!("{}\n{}\n",json!({"event":"init","conversationId":session,"conversation_id":session}),json!({"event":"result","result":{"conversation_id":session,"status":"SUCCESS","response":"Invented native response"}}))).unwrap();
+        let mut m=json!({"conversation":format!("task:{board}/7"),"root":root,"revision":revision,"source_revision":revision,"attempt":71,"closed":true,"before":row["history"].as_array().unwrap().len()});
+        for _ in 0..2 {
+            let metadata=task_body(&f.0,&m).unwrap();assert_eq!(metadata["tasks"][0]["history_source_count"],163);assert_eq!(metadata["tasks"][0]["brief"],"Invented brief");
+            let page=history_page(&f.0,&m).unwrap();assert_eq!(page["total"],163);assert!(page["start"].as_u64().unwrap()>0);assert_eq!(page["rows"].as_array().unwrap().last().unwrap(),&row["history"][m["before"].as_u64().unwrap() as usize-1]);
+            let mut native=m.clone();native.as_object_mut().unwrap().remove("before");
+            let worker=worker_read(&f.0,&native).unwrap();assert_eq!(worker["activity"],"ended");assert!(worker["items"].as_array().unwrap().iter().any(|r|r["text"]=="Invented native response"));
+            native["attempt"]=json!(999);assert!(worker_read(&f.0,&native).unwrap_err().contains("No recorded worker"));
+            crate::reports::selected(&root,&*b,7,false,Some(revision)).unwrap();assert_eq!(calls.get(),2,"warm reads must not revalidate board HTTP");assert_eq!(b.requests().ops,cold);
+            m["before"]=page["start"].clone();
+        }
+        m["conversation"]=json!("task:https://other.example/issues/7");assert!(history_page(&f.0,&m).is_err());
+        assert_eq!(fs::read_to_string(status_path).unwrap(),status.to_string(),"paging preserves the service projection");
+        println!("LARGE_CLOSED_COST projection_bytes={} history_rows=163 cold_http={} warm_http=0 warm_304=0 warm_billed=0 (adapter fixture)",source.to_string().len(),calls.get());
+    }
+
     #[test]
     fn conversation_1929_reply_refusal_keeps_editable_input() {
         fn never(_: &Path,_: &crate::setup::Request)->Res<std::process::Command> {panic!("no native dispatch")}
