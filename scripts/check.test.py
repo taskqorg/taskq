@@ -5,7 +5,8 @@ import runpy
 check = runpy.run_path(str(Path(__file__).with_name('check.py')))
 select, names = check['selection'], check['runtime_names']
 for paths, expected in [([], 'full'), (['README.md'], 'docs'), (['AGENTS.md'], 'full'),
-                        (['taskq.md'], 'full'), (['docs/design/answer-card.md'], 'web'),
+                        (['taskq.md'], 'full'), (['docs/design/product-contract.md'], 'full'),
+                        (['docs/design/product-contract.md', 'README.md'], 'full'), (['docs/design/answer-card.md'], 'web'),
                         (['src/tray.html', 'tests/tray-action.test.cjs'], 'web'),
                         (['src/core.rs', 'README.md'], 'full'), (['Cargo.lock'], 'full'),
                         (['tests/fixtures/status-snapshot.json'], 'full'),
@@ -92,6 +93,26 @@ diff = '-    // Chain: § 2 x\n+    // Chain: § 2 y\n-assert!(a, "R1 b");\n+ass
 assert findings(doc(spec), doc(spec), diff)['tests'] == ['§2'], findings(doc(spec), doc(spec), diff)
 assert uncovered({'R1': '', '§2': '', '§2.1': ''}, '// Chain: § 2 table, R1') == ['§2.1']
 print('PASS rule IDs, typo fixes and the gate on synthetic contracts')
+
+# Chain: Product, #2377 compaction moved Product text to its detail page -> gate and lane. Defect: the page sat outside
+# RULE_DOCS, so an edit there listed no ID while the same edit in the root listed Product, and it ran the docs lane.
+# Risk kept: a decided Product rule changes or disappears, in either file, unless the task names Product.
+product = check['PRODUCT_DOC']
+assert product in check['RULE_DOCS']
+assert 'twelve destinations' in ids['Product'] and 'product contract' in ids['Product'], ids['Product']
+root_text, page = '## Product\nsee page\n## 1. Tasks\nt\n', '# P\n\n## Contract detail\n\n- twelve destinations\n'
+split = lambda r, p: {'taskq.md': r, 'docs/design/menu.md': '', product: p}
+assert check['doc_rules'](split(root_text, page))['Product'] == '## Product see page # P ## Contract detail - twelve destinations'
+listed = {'changed': ['Product'], 'removed': [], 'tests': []}
+for before, after in [(split(root_text, page), split(root_text, page.replace('twelve', 'nine'))),  # page edit
+                      (split(root_text, page), split(root_text.replace('see page', 'see other'), page)),  # root edit
+                      (split(root_text, page), split(root_text, '')),  # page deleted
+                      (split(root_text, page), split(root_text, page + '## Later\n\n- new rule\n')),  # new heading stays Product
+                      (split('## Product\n- twelve destinations\n', ''), split(root_text, page))]:  # the move itself
+    assert findings(before, after, '') == listed, after
+    assert unnamed(listed, 'Fix a typo.') == ['Product (changed)'] and unnamed(listed, 'edits Product') == []
+assert findings(split(root_text, page), split(root_text, page), '') == none
+print('PASS Product detail page stays under the rule gate and full lane')
 
 # #1826 R13: the owner named "section 7" and its exact subsection. Preserve ID boundaries and require both;
 # accepting the ordinary spelling must not approve another section, table row or unnamed change.

@@ -3,7 +3,7 @@
 taskq queues agent work on GitHub/GitLab boards, which hold every task state (R1); one host service runs workers/reviewers; the owner decides through a PM. Principles bind first; sections put rules before detail; linked `Contract detail` binds like this file. **v4**: Rust in `src/`. [Alpha][menu].
 ## Principles (R1–R13)
 ### Change rule
-Rule changes name their R-numbers, edit this file with code and list amended R-numbers in the result. Keep changed rules' numbers; number new rules next. Conflicting rules elsewhere are defects. No history, dates or decision logs.
+Rule changes name their R-numbers, edit this file with code and list amended R-numbers in the result. Keep changed rules' numbers; number new rules next. Rules elsewhere conflicting with this file are defects. No history, dates or decision logs.
 ### R1. The board's own objects are the only state
 Trusted comments are truth; labels and the summary (§2) project them. A closed task still takes `deployed` entries (§2). Public: labels, issue text, `taskq:` comments, summary, heartbeats (§4); no issue machine block. Restart rebuilds caches; no local task DB/queue.
 Non-task state: minimal native recovery identity (§3); [DashQ](docs/design/enrollment.md#contract-detail); owner requests, tray AI history and agentq preferences (§4); incidents/profiles; host policy/migration backup; emergency hold; local external-consumer slot identities (§3); [operator grants/receipts](docs/design/shared-resource-controls.md#host-adapter). Fresh `status.json` checks per-root pid; `<install>/service` checks native host identity/generation (§4). [Chat](docs/design/ai-workspace.md).
@@ -165,7 +165,7 @@ Owner weights, quota headroom and host spread: [contract detail](docs/design/cap
 ### Profiling
 Coreq always records actions; owned methods: bounded opt-in detail. UI/board/agent work; local store, optional sync. Follow [shared profiling](https://github.com/taskqorg/specq/blob/main/engineering/profiling.md); [detail][pf] owns coverage and qualification, recovery proof, selftest capture and limits.
 ### Board request records
-A running service records unrecorded board request counts to telemetry every 4 minutes and at clean end, preserving `taskq profile`'s hour across restart. Clean stop/restart/update handover loses none; any other end (kill, crash, OS signal, power loss) loses at most the last 5 minutes. Record each count once, with no board request; `requests 1h:` and heartbeat counts stay hourly ([budget](docs/budget-1032.md#counting-format)).
+A running service records unrecorded board request counts to telemetry every 4 minutes and at clean end, preserving `taskq profile`'s hour across restart. Clean stop/restart/update handover loses none; any other end (kill, crash, OS signal, power loss) loses at most the last 5 minutes. Record each count once, with no board request; `requests 1h:` log and heartbeat counts stay hourly ([budget](docs/budget-1032.md#counting-format)).
 ### Host link
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
