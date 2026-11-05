@@ -3274,8 +3274,9 @@ impl<'a> Service<'a> {
         if core::executions(n, &before).iter().any(|x| x.release.is_none()) { return Ok(None); }
         let routing=core::project(n,&before,false);
         if routing.reroute.is_some() {return Ok(None);}
+        // Placement audits also invalidate cached labels; an unpin never changes an already claimed attempt.
         // Read labels after the routing revision: a completed reroute invalidates a stale runtime selection.
-        if routing.routing_revision!=0 {
+        if routing.routing_revision!=0 || before.iter().any(|e|!e.edited&&e.body.starts_with("taskq: host-unpin\n")) {
             let fresh=self.board.issue(n)?;
             if fresh.labels.iter().filter(|l|!l.starts_with("q-")).collect::<BTreeSet<_>>() != v.issue.labels.iter().filter(|l|!l.starts_with("q-")).collect::<BTreeSet<_>>() || !fresh.open {self.cache.remove(&n);return Ok(None);}
         }
@@ -4100,6 +4101,49 @@ Problem: pick one
             assert!(restored.entry().held.is_empty(), "another host's new attempt cannot retain the old reservation");
             assert_eq!(task(&b, n).role.as_deref(), Some(if result { "reviewer" } else { "worker" }));
         }
+    }
+
+    // Chain: §5/R12 audit read -> fresh placement -> claim. Risk: a stale pinned view launches after unpin.
+    #[test]
+    fn host_unpin_discards_cached_placement_before_admission() {
+        let b=Fake::default();let c=cfg("mac");
+        let n=b.create("T","",&[TASK_LABEL.into(),"host-mac".into()]).unwrap();
+        let v=views(&b,&mut Default::default(),&mut Default::default(),300).unwrap().0.remove(0);
+        let rev=core::revision(n,&entries(&b,n).unwrap());
+        assert!(crate::dispatch::unpin(&b,n,"mac",&crate::dispatch::Op{id:Some("invented-ready-unpin".into()),revision:Some(rev)},false).ok());
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|panic!("cached placement cannot launch")));
+        s.claim(&v,"worker",&c.default_runtime,"").unwrap();
+        assert_eq!(task(&b,n).state,State::Ready);
+        assert!(s.kids.is_empty());
+    }
+
+    // Chain: §5/R2 host unpin -> service pass. Risk: a placement edit stops or replaces the live executor.
+    #[test]
+    fn host_unpin_keeps_the_running_executor_and_lease() {
+        struct Kept;
+        impl Proc for Kept {
+            fn exited(&mut self)->Result<Option<i32>,String>{Ok(None)}
+            fn kill(&mut self)->Result<(),String>{panic!("host unpin must never stop active execution")}
+            fn id(&self)->u32{424242}
+        }
+        let b=Fake::default();
+        let n=b.create("T","",&[TASK_LABEL.into(),"host-mac".into()]).unwrap();
+        let c=cfg("mac");
+        let starts=Rc::new(std::cell::Cell::new(0));
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|{starts.set(starts.get()+1);Ok(Box::new(Kept))}));
+        s.focus=vec!["all".into()];s.pass().unwrap();
+        let attempt=s.kids[0].attempt;
+        let execution=s.kids[0].execution;
+        let session=task(&b,n).session;
+        let rev=core::revision(n,&entries(&b,n).unwrap());
+        let r=crate::dispatch::unpin(&b,n,"mac",&crate::dispatch::Op{id:Some("invented-live-unpin".into()),revision:Some(rev)},false);
+        assert!(r.ok(),"{}",r.reason);
+        s.pass().unwrap();
+        assert_eq!(starts.get(),1);assert_eq!(s.kids.len(),1);
+        assert_eq!((s.kids[0].attempt,s.kids[0].execution,s.kids[0].proc.id()),(attempt,execution,424242));
+        assert_eq!(task(&b,n).session,session);
+        assert!(s.entry().held.iter().any(|(task,id,_)|*task==n&&*id==attempt));
+        assert!(!b.issue(n).unwrap().labels.contains(&"host-mac".into()));
     }
 
     // Chain: requeue -> stop request -> uncertain exit -> occupied slot -> confirmed exit -> replacement.

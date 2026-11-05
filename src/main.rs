@@ -84,6 +84,7 @@ use std::time::{Duration, Instant, SystemTime};
 pub type Res<T> = Result<T, String>;
 
 const USAGE: &str = "taskq agents
+ taskq unpin N --host H --revision R --op-id ID [--json]
  taskq reroute --from <runtime> --to <runtime> [--json]
  taskq accounts [--json] | taskq accounts enable|disable|move <runtime> <label> [<position>] | taskq accounts add <runtime> <label> | taskq accounts fleet use|avoid|clear <runtime> <id>
  taskq labels
@@ -202,7 +203,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
             Some("accounts") => 5,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
+            Some("unpin" | "service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -2093,6 +2094,11 @@ fn cap_changes(old: &service::Capacity, new: &service::Capacity) -> String {
 /// § 9: a task added on a `claim` `labelled` host keeps that host unless `--host` names one.
 fn add_host(given: Option<&str>, cfg: &Config) -> Option<String> {
     given.map(String::from).or_else(|| (cfg.claim == host::ClaimMode::Labelled).then(|| cfg.me.clone()))
+}
+
+/// §5 creation output distinguishes caller intent from admission policy without changing §9 defaults.
+fn add_placement(a: &Args, new: &NewTask) -> Value {
+    json!({"host":new.host,"host_source":if a.one("host").is_some(){"requested"}else if new.host.is_some(){"host default (claim labelled)"}else{"unpinned"},"runtime":new.runtime,"runtime_source":if new.runtime.is_some(){"requested"}else{"admission default"}})
 }
 
 /// § 9: a labelled host keeps its own host on every board; a board this host does not serve refuses the add,
@@ -4076,6 +4082,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             };
             println!("{value}"); Ok(())
         }
+        "unpin" => {
+            if a.flags.iter().any(|(k,v)| !["host","revision","op-id","json"].contains(&k.as_str()) || v.len()!=1) {return Err("unpin accepts --host, --revision, --op-id and --json once each".into());}
+            emit(&[dispatch::unpin(b,a.num(1)?,a.need("host")?,&op,dispatch::agent()).wake(root)],json)
+        }
         "reroute" => {
             if dispatch::agent() { return Err("only the owner or PM can reroute strict task pins".into()); }
             emit(&reroute(b, root, a.need("from")?, a.need("to")?)?, json)
@@ -4153,7 +4163,9 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             }
             let r = add_task(b, root, &c.raw, &new, &op).map_err(|e| serve_hint(e, cfg))?;
             let r = if r.ok() && a.flags.contains_key("gate") { gate_task(b, root, r.task, &op) } else { r };
-            emit(&[r], json)
+            let placement=add_placement(a,&new);
+            if json {let mut value:Value=serde_json::from_str(&r.json()).map_err(|e|e.to_string())?;value["placement"]=placement;println!("{value}");if r.ok(){Ok(())}else{Err(String::new())}}
+            else {let ok=r.ok();emit(&[r],false)?;if ok {println!("Placement: {placement}");}Ok(())}
         }
         "gate" => emit(&[gate_task(b, root, a.num(1)?, &op)], json),
         "start" => emit(&start_tasks(b, root, &a.pos[1..], &op)?, json),
@@ -4978,6 +4990,23 @@ mod tests {
             rollback_after: 600,
             external: false,
             host_setup: None,
+        }
+    }
+
+    // §5/A3: visible defaults must never be reported as a caller placement request.
+    #[test]
+    fn add_placement_explains_defaults_and_requested_pins() {
+        for (args,host,source,runtime) in [
+            (vec!["add","T"],Some("mac"),"host default (claim labelled)",None),
+            (vec!["add","T"],None,"unpinned",None),
+            (vec!["add","T","--host","win","--runtime","codex"],Some("win"),"requested",Some("codex")),
+        ] {
+            let a=Args::parse(&args.into_iter().map(String::from).collect::<Vec<_>>()).unwrap();
+            let t=NewTask{host:host.map(String::from),runtime:runtime.map(String::from),..Default::default()};
+            let p=add_placement(&a,&t);
+            assert_eq!(p["host_source"],source);
+            assert_eq!(p["runtime_source"],if runtime.is_some(){"requested"}else{"admission default"});
+            assert_eq!(p["host"],json!(host));assert_eq!(p["runtime"],json!(runtime));
         }
     }
 
