@@ -1372,7 +1372,7 @@ g", &["taskq".into()]).unwrap();
         assert!(act(&b,&root,n,"answer",&["2"],"",&op("raced",newer)).ok());
         assert_eq!(count(),written);
         let context=core::task_context(n,&b.issue(n).unwrap().body,&log);
-        for text in ["A1. no loss","old x","old y","new x","new y","ask once immediately","Before hand-in"] {assert!(context.contains(text),"{text}");}
+        for text in ["A1. no loss","old x","old y","new x","new y","reuse settled decisions within their scope","Before hand-in"] {assert!(context.contains(text),"{text}");}
         let v:serde_json::Value=serde_json::from_str(&r.json()).unwrap();
         assert_eq!((v["task"].as_u64(),v["op_id"].as_str()),(Some(n),Some("raced")));
         let third = b.comment(n,&entry("ask",&[],Some(a),"Problem: Third
