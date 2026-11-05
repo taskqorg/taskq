@@ -1422,8 +1422,170 @@ fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_l
     }
 }
 
+mod ipc;
+mod shots;
+mod state;
+mod tick;
+mod window;
+mod workspace_events;
+
+/// Everything one tray process keeps between events: its surfaces, what each last showed, and its queues.
+struct TrayState {
+    /// M15: the host lock, held for this tray's life; Restart frees it first.
+    lock:Option<fs::File>,
+    install:PathBuf,
+    snapshot:Option<PathBuf>,
+    routes:Vec<String>,
+    opacity_shots:bool,
+    agentq_shots:bool,
+    views_shots:bool,
+    conversation_shots:bool,
+    settings:Settings,
+    proxy:tao::event_loop::EventLoopProxy<Ev>,
+    queues:Queues,
+    ui:Option<(Window,WebView)>,
+    workspace:Option<(Window,WebView)>,
+    workspace_web:Option<WebCalls>,
+    detached:std::collections::BTreeMap<String,(Window,WebView,WebCalls)>,
+    /// #1819: each detached window keeps the signature it last received, never the menu's
+    detached_shown:std::collections::BTreeMap<String,String>,
+    workspace_handoff:bool,
+    workspace_open:Value,
+    focused_workspace:String,
+    workspace_checkpoints:std::collections::BTreeMap<String,Value>,
+    workspace_checkpoint_errors:std::collections::BTreeSet<String>,
+    settings_window:Option<(Window,WebView)>,
+    settings_web:Option<WebCalls>,
+    settings_open:Value,
+    settings_shown:String,
+    views_window:Option<(Window,WebView)>,
+    views_web:Option<WebCalls>,
+    views_shown:String,
+    tray:Option<TrayIcon>,
+    shown:String,
+    icon_sig:String,
+    dark:bool,
+    workspace_shown:String,
+    geometry_dirty:bool,
+    hidden_at:Instant,
+    shown_at:Instant,
+    anchor:Option<Rect>,
+    step:usize,
+    /// snapshot pages wider than their window (#1073): `tray --snapshot` fails naming them
+    overflow:Vec<String>,
+    capture_errors:Vec<String>,
+    checkpoint_complete:bool,
+    adding:Value,
+    add_generation:u64,
+    moved:bool,
+    asked:bool,
+    bursts:notify::Bursts,
+    shot_wait:Option<Ev>,
+    /// #2365: a snapshot shows the embedded copy unless a proof asks for the store.
+    ui_store:Option<crate::ui_bundle::Store>,
+    next_ui_check:Instant,
+    ui_checking:bool,
+    web:WebCalls,
+    /// #1819: the owner's in-flight writes, and the projects of the last tick they are matched against
+    sync:crate::pending::Pending,
+    seen_projects:Value,
+    work_item:MenuItem,
+    /// M15: `Quitting` or `Restarting` while the drain-stop runs
+    quitting:Option<&'static str>,
+}
+
+/// The bounded queues that keep native work off the window event loop; each reports back as one event.
+struct Queues {
+    focus_actions:ActionQueue,
+    capacity_actions:ActionQueue,
+    answer_actions:ActionQueue,
+    resources_actions:ActionQueue,
+    history_reads:ActionQueue,
+    add_actions:AddOwner,
+    report_actions:ActionQueue,
+    conversation_actions:ActionQueue,
+}
+
+impl Queues {
+    fn start(install:&PathBuf,proxy:&tao::event_loop::EventLoopProxy<Ev>)->Result<Self,String> {
+        let replies=proxy.clone();
+        let focus_actions=ActionQueue::start(install.clone(),&["pause","resume","focus"],true,queued_focus,move |root,id,result| {
+            let mut reply=result.unwrap_or_else(|error|json!({"text":error}));reply["root"]=json!(root);reply["id"]=json!(id);
+            let _=coreq::telemetry::capture::operation("tray.focus.report",||replies.send_event(Ev::Answer(json!({"focus_receipt":reply}))),|_|"ui-closed");
+        })?;
+        let replies=proxy.clone();
+        let capacity_actions=ActionQueue::start(install.clone(),&["capacity","restart","stop","uninstall","recovery-read","recovery-apply"],true,capacity,move |root,id,result| {
+            let mut reply=result.unwrap_or_else(|error|json!({"state":"unknown","reason":error}));reply["root"]=json!(root);reply["id"]=json!(id);
+            let _=coreq::telemetry::capture::operation("tray.capacity.report",||replies.send_event(Ev::Answer(json!({"capmsg":reply}))),|_|"ui-closed");
+        })?;
+        let replies=proxy.clone();
+        let answer_actions=ActionQueue::start(install.clone(),&["answer"],true,queued_answer,move |root,id,result| {
+            let receipt=answer_reply(root,id,result);
+            let _=coreq::telemetry::capture::operation("tray.answer.report",||replies.send_event(Ev::Answer(receipt)),|_|"ui-closed");
+        })?;
+        let replies=proxy.clone();
+        let resources_actions=ActionQueue::start(install.clone(),&["resources"],false,queued_resources,move |_root,_id,result| {
+            let receipt=resources_reply(result);
+            let _=coreq::telemetry::capture::operation("tray.resources.report",||replies.send_event(Ev::Answer(receipt)),|_|"ui-closed");
+        })?;
+        let replies=proxy.clone();
+        let history_reads=ActionQueue::start(install.clone(),&["completed"],true,queued_history,move |root,id,result| {
+            let mut page=result.unwrap_or_else(|reason|json!({"tasks":[],"more":false,"reason":reason}));page["root"]=json!(root);page["id"]=json!(id);
+            let _=coreq::telemetry::capture::operation("tray.history.report",||replies.send_event(Ev::Answer(json!({"completed":page}))),|_|"ui-closed");
+        })?;
+        let add_actions=AddOwner::start(install.clone(),proxy.clone())?;
+        let replies=proxy.clone();
+        let report_actions=ActionQueue::start(install.clone(),&["reports"],true,queued_reports,move |root,id,result| {
+            let mut receipt=result.unwrap_or_else(|reason|json!({"reason":reason}));receipt["root"]=json!(root);receipt["id"]=json!(id);
+            let _=coreq::telemetry::capture::operation("tray.reports.report",||replies.send_event(Ev::Answer(json!({"reportReceipt":receipt}))),|_|"ui-closed");
+        })?;
+        // #1929 A6: the existing bounded queue keeps native holder probes off the window event loop.
+        let replies=proxy.clone();
+        let conversation_actions=ActionQueue::start(install.clone(),&["conversation-action"],false,
+            |install,_,m|Ok(crate::conversations::act(install,m,&roots(install))),move |surface,id,result|{
+                let receipt=result.unwrap_or_else(|reason|json!({"id":id,"state":"unknown","reason":reason}));
+                let _=coreq::telemetry::capture::operation("tray.conversation.report",||replies.send_event(Ev::Conversation(surface.to_string_lossy().into(),receipt)),|_|"ui-closed");
+            })?;
+        Ok(Queues{focus_actions,capacity_actions,answer_actions,resources_actions,history_reads,add_actions,report_actions,conversation_actions})
+    }
+}
+
+/// Sends one state to the menu page unless its interface already failed.
+fn push_state(proxy:&tao::event_loop::EventLoopProxy<Ev>,web:&mut WebCalls,ui:&Option<(Window,WebView)>,st:&Value) {
+    if let Some((_, wv)) = ui {
+        if !web.failed {web_eval(wv,&format!("taskq.receive({st})"),"tray.web.receive",proxy,web);}
+    }
+}
+
+/// M15: the app menu and activation policy; a snapshot stays an accessory out of the Dock.
+#[cfg(target_os = "macos")]
+fn macos_app(event_loop:&mut tao::event_loop::EventLoop<Ev>,snapshot:&Option<PathBuf>)->Result<(),String> {
+    // M15: TaskQ is always a regular app (Dock, Cmd+Tab); a snapshot stays an accessory out of the Dock.
+    // AppKit menu accelerators enable native text editing.
+    use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+    event_loop.set_activation_policy(if snapshot.is_none() { ActivationPolicy::Regular } else { ActivationPolicy::Accessory });
+    // a snapshot never takes the owner's focus (taskq.md R12)
+    event_loop.set_activate_ignoring_other_apps(snapshot.is_none());
+    if snapshot.is_none() {
+        use tray_icon::menu::{AboutMetadata, Submenu, accelerator::Accelerator};
+        let about = AboutMetadata { name: Some("TaskQ".into()), version: Some(crate::platform::VERSION.into()), ..Default::default() };
+        let restart = MenuItem::with_id("restart", "Restart TaskQ", true, None);
+        let quit = MenuItem::with_id("quit", "Quit TaskQ", true, "CmdOrCtrl+Q".parse::<Accelerator>().ok());
+        let app = Submenu::with_items("TaskQ", true, &[&PredefinedMenuItem::about(Some("About TaskQ"), Some(about)), &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::hide(Some("Hide TaskQ")), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator(),
+            &MenuItem::with_id("conversations-reload", "Reload Conversations safely", true, "CmdOrCtrl+R".parse::<Accelerator>().ok()), &MenuItem::with_id("conversations-back", "Conversations safe view", true, None), &MenuItem::with_id("conversations-close", "Close Conversations", true, "CmdOrCtrl+W".parse::<Accelerator>().ok()), &restart, &quit]).map_err(|e| e.to_string())?;
+        let edit = Submenu::with_items("Edit", true, &[&PredefinedMenuItem::undo(None), &PredefinedMenuItem::redo(None), &PredefinedMenuItem::separator(),
+            &PredefinedMenuItem::cut(None), &PredefinedMenuItem::copy(None), &PredefinedMenuItem::paste(None), &PredefinedMenuItem::select_all(None)]).map_err(|e| e.to_string())?;
+        let menu = Menu::with_items(&[&app, &edit]).map_err(|e| e.to_string())?;
+        menu.init_for_nsapp();
+        // ponytail: the app menu lives as long as the process
+        std::mem::forget(menu);
+    }
+    Ok(())
+}
+
 pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, raise: bool) -> Result<(), String> {
-    let mut lock = if snapshot.is_none() { host_lock() } else { None };
+    let lock = if snapshot.is_none() { host_lock() } else { None };
     if snapshot.is_none() && (lock.is_none() || !alone(&install)) {
         if raise { let _ = fs::write(raise_request(), ""); return Ok(()); }
         return Err("taskq tray already runs on this host".into());
@@ -1456,33 +1618,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="conversations-checkpoint"||r=="reports-conversations"||r=="results-conversations"||r=="health-conversation"||r=="errors-conversations");
     if conversation_shots && routes.len()>1 {return Err("route conversations renders the workspace alone; run it without other routes".into());}
     if snapshot.is_some()&&routes.iter().any(|r|r=="reports")&&routes.len()>1 {return Err("route reports renders its menu cases alone".into());}
-    let mut settings = Settings::load(&install);
+    let settings = Settings::load(&install);
     #[allow(unused_mut)]
     let mut event_loop = EventLoopBuilder::<Ev>::with_user_event().build();
     #[cfg(target_os = "macos")]
-    {
-        // M15: TaskQ is always a regular app (Dock, Cmd+Tab); a snapshot stays an accessory out of the Dock.
-        // AppKit menu accelerators enable native text editing.
-        use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
-        event_loop.set_activation_policy(if snapshot.is_none() { ActivationPolicy::Regular } else { ActivationPolicy::Accessory });
-        // a snapshot never takes the owner's focus (taskq.md R12)
-        event_loop.set_activate_ignoring_other_apps(snapshot.is_none());
-        if snapshot.is_none() {
-            use tray_icon::menu::{AboutMetadata, Submenu, accelerator::Accelerator};
-            let about = AboutMetadata { name: Some("TaskQ".into()), version: Some(crate::platform::VERSION.into()), ..Default::default() };
-            let restart = MenuItem::with_id("restart", "Restart TaskQ", true, None);
-            let quit = MenuItem::with_id("quit", "Quit TaskQ", true, "CmdOrCtrl+Q".parse::<Accelerator>().ok());
-            let app = Submenu::with_items("TaskQ", true, &[&PredefinedMenuItem::about(Some("About TaskQ"), Some(about)), &PredefinedMenuItem::separator(),
-                &PredefinedMenuItem::hide(Some("Hide TaskQ")), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator(),
-                &MenuItem::with_id("conversations-reload", "Reload Conversations safely", true, "CmdOrCtrl+R".parse::<Accelerator>().ok()), &MenuItem::with_id("conversations-back", "Conversations safe view", true, None), &MenuItem::with_id("conversations-close", "Close Conversations", true, "CmdOrCtrl+W".parse::<Accelerator>().ok()), &restart, &quit]).map_err(|e| e.to_string())?;
-            let edit = Submenu::with_items("Edit", true, &[&PredefinedMenuItem::undo(None), &PredefinedMenuItem::redo(None), &PredefinedMenuItem::separator(),
-                &PredefinedMenuItem::cut(None), &PredefinedMenuItem::copy(None), &PredefinedMenuItem::paste(None), &PredefinedMenuItem::select_all(None)]).map_err(|e| e.to_string())?;
-            let menu = Menu::with_items(&[&app, &edit]).map_err(|e| e.to_string())?;
-            menu.init_for_nsapp();
-            // ponytail: the app menu lives as long as the process
-            std::mem::forget(menu);
-        }
-    }
+    macos_app(&mut event_loop,&snapshot)?;
     let proxy = event_loop.create_proxy();
     TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
         if let TrayIconEvent::Click { rect, button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
@@ -1501,1112 +1641,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         std::thread::sleep(Duration::from_secs(2));
     });
     let proxy = event_loop.create_proxy();
-    let replies=proxy.clone();
-    let focus_actions=ActionQueue::start(install.clone(),&["pause","resume","focus"],true,queued_focus,move |root,id,result| {
-        let mut reply=result.unwrap_or_else(|error|json!({"text":error}));reply["root"]=json!(root);reply["id"]=json!(id);
-        let _=coreq::telemetry::capture::operation("tray.focus.report",||replies.send_event(Ev::Answer(json!({"focus_receipt":reply}))),|_|"ui-closed");
-    })?;
-    let replies=proxy.clone();
-    let capacity_actions=ActionQueue::start(install.clone(),&["capacity","restart","stop","uninstall","recovery-read","recovery-apply"],true,capacity,move |root,id,result| {
-        let mut reply=result.unwrap_or_else(|error|json!({"state":"unknown","reason":error}));reply["root"]=json!(root);reply["id"]=json!(id);
-        let _=coreq::telemetry::capture::operation("tray.capacity.report",||replies.send_event(Ev::Answer(json!({"capmsg":reply}))),|_|"ui-closed");
-    })?;
-    let replies=proxy.clone();
-    let answer_actions=ActionQueue::start(install.clone(),&["answer"],true,queued_answer,move |root,id,result| {
-        let receipt=answer_reply(root,id,result);
-        let _=coreq::telemetry::capture::operation("tray.answer.report",||replies.send_event(Ev::Answer(receipt)),|_|"ui-closed");
-    })?;
-    let replies=proxy.clone();
-    let resources_actions=ActionQueue::start(install.clone(),&["resources"],false,queued_resources,move |_root,_id,result| {
-        let receipt=resources_reply(result);
-        let _=coreq::telemetry::capture::operation("tray.resources.report",||replies.send_event(Ev::Answer(receipt)),|_|"ui-closed");
-    })?;
-    let replies=proxy.clone();
-    let history_reads=ActionQueue::start(install.clone(),&["completed"],true,queued_history,move |root,id,result| {
-        let mut page=result.unwrap_or_else(|reason|json!({"tasks":[],"more":false,"reason":reason}));page["root"]=json!(root);page["id"]=json!(id);
-        let _=coreq::telemetry::capture::operation("tray.history.report",||replies.send_event(Ev::Answer(json!({"completed":page}))),|_|"ui-closed");
-    })?;
-    let add_actions=AddOwner::start(install.clone(),proxy.clone())?;
-    let replies=proxy.clone();
-    let report_actions=ActionQueue::start(install.clone(),&["reports"],true,queued_reports,move |root,id,result| {
-        let mut receipt=result.unwrap_or_else(|reason|json!({"reason":reason}));receipt["root"]=json!(root);receipt["id"]=json!(id);
-        let _=coreq::telemetry::capture::operation("tray.reports.report",||replies.send_event(Ev::Answer(json!({"reportReceipt":receipt}))),|_|"ui-closed");
-    })?;
-    // #1929 A6: the existing bounded queue keeps native holder probes off the window event loop.
-    let replies=proxy.clone();
-    let conversation_actions=ActionQueue::start(install.clone(),&["conversation-action"],false,
-        |install,_,m|Ok(crate::conversations::act(install,m,&roots(install))),move |surface,id,result|{
-            let receipt=result.unwrap_or_else(|reason|json!({"id":id,"state":"unknown","reason":reason}));
-            let _=coreq::telemetry::capture::operation("tray.conversation.report",||replies.send_event(Ev::Conversation(surface.to_string_lossy().into(),receipt)),|_|"ui-closed");
-        })?;
-    let mut ui: Option<(Window, WebView)> = None;
-    let mut workspace: Option<(Window, WebView)> = None;
-    let mut workspace_web: Option<WebCalls> = None;
-    let mut detached:std::collections::BTreeMap<String,(Window,WebView,WebCalls)>=Default::default();
-    // #1819: each detached window keeps the signature it last received, never the menu's
-    let mut detached_shown:std::collections::BTreeMap<String,String>=Default::default();
-    let mut workspace_handoff=false;
-    let mut workspace_open=Value::Null;
-    let mut focused_workspace=String::from("main");
-    let mut workspace_checkpoints:std::collections::BTreeMap<String,Value>=Default::default();
-    let mut workspace_checkpoint_errors:std::collections::BTreeSet<String>=Default::default();
-    let mut settings_window: Option<(Window, WebView)> = None;
-    let mut settings_web: Option<WebCalls> = None;
-    let mut settings_open=Value::Null;
-    let mut settings_shown=String::new();
-    let mut views_window: Option<(Window, WebView)> = None;
-    let mut views_web: Option<WebCalls> = None;
-    let mut views_shown=String::new();
-    let mut tray: Option<TrayIcon> = None;
-    let (mut shown, mut icon_sig, mut dark) = (String::new(), String::new(), true);
-    let mut workspace_shown=String::new();
-    let mut geometry_dirty=false;
-    let mut hidden_at = Instant::now() - Duration::from_secs(1);
-    let mut shown_at = hidden_at;
-    let mut anchor: Option<Rect> = None;
-    let mut step = 0usize;
-    // snapshot pages wider than their window (#1073): `tray --snapshot` fails naming them
-    let mut overflow: Vec<String> = Vec::new();
-    let mut capture_errors:Vec<String>=Vec::new();
-    let mut checkpoint_complete=false;
-    let mut adding = Value::Null;
-    let mut add_generation=0u64;
-    let mut moved = false;
-    let mut asked = false;
-    let mut bursts = notify::Bursts::new();
-    let mut shot_wait=None;
-    // #2365: a snapshot shows the embedded copy unless a proof asks for the store.
-    let mut ui_store=(snapshot.is_none()||crate::ui_bundle::snapshot_uses_store()).then(||crate::ui_bundle::Store::open(&install));
-    let (mut next_ui_check,mut ui_checking)=(Instant::now(),false);
-    let mut web=WebCalls::new();
-    // #1819: the owner's in-flight writes, and the projects of the last tick they are matched against
-    let mut sync=crate::pending::Pending::default();
-    let mut seen_projects=Value::Null;
-    // M15: `Quitting` or `Restarting` while the drain-stop runs
-    let (work_item, mut quitting) = (MenuItem::new("No active work", false, None), None::<&str>);
-    event_loop.run(move |event, target, flow| {
-        let _ = &lock;
-        crate::telemetry::diagnostic::poll(&install);
-        if matches!(event,Event::UserEvent(Ev::Tick)) {TICK_QUEUED.store(false,std::sync::atomic::Ordering::Relaxed);}
-        *flow = ControlFlow::Wait;
-        let native=match &event {
-            Event::WindowEvent{event:WindowEvent::Resized(_),..}=>Some("tray.window.resize"),
-            Event::WindowEvent{event:WindowEvent::Moved(_),..}=>Some("tray.window.move"),
-            Event::WindowEvent{event:WindowEvent::Focused(_),..}=>Some("tray.window.focus"),
-            Event::WindowEvent{event:WindowEvent::ThemeChanged(_),..}=>Some("tray.window.theme"),
-            Event::WindowEvent{event:WindowEvent::Destroyed,..}=>Some("tray.window.destroy"),
-            Event::WindowEvent{event:WindowEvent::CloseRequested,..}=>Some("tray.window.close"),
-            Event::RedrawRequested(_)=>Some("tray.window.redraw-request"),_=>None,
-        };
-        // #1548: a fit after each tick render resizes the window; unchanged native events fold per window.
-        if let Some(name)=native {let _=coreq::telemetry::capture::poll(name,0,||Ok::<_,&str>(()),|_|"observed");}
-
-        if let Event::WindowEvent{window_id,event:WindowEvent::Focused(true),..}=&event {
-            if workspace.as_ref().is_some_and(|(w,_)|w.id()==*window_id){focused_workspace="main".into();}
-            else if let Some((id,_))=detached.iter().find(|(_, (w,_,_))|w.id()==*window_id){focused_workspace=id.clone();}
-        }
-        if snapshot.is_none() {
-            if let Event::WindowEvent{window_id,event:WindowEvent::Moved(_)|WindowEvent::Resized(_),..}=&event {
-                if let Some((window,_))=&workspace && window.id()==*window_id && let Some(value)=ConversationGeometry::capture(window) {
-                    if settings.conversation_geometry.as_ref()!=Some(&value){settings.conversation_geometry=Some(value);geometry_dirty=true;}
-                }
-            }
-            if geometry_dirty && matches!(&event,Event::UserEvent(Ev::Tick|Ev::WorkspaceClose)|Event::WindowEvent{event:WindowEvent::CloseRequested,..}) {
-                geometry_dirty=false;
-                if !settings.save(&install) || Settings::load(&install).conversation_geometry!=settings.conversation_geometry {
-                    if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){web_eval(wv,"taskq.receive({workspaceError:'Window geometry save failed; previous saved position may be retained'})","tray.web.notice",&proxy,calls);}
-                }
-            }
-        }
-        web.expire(Instant::now());
-        if let Some(calls)=&mut workspace_web {
-            calls.expire(Instant::now());
-            if calls.failed && !calls.notified {
-                calls.notified=true;
-                if let Some((_,wv))=&workspace {web_eval(wv,"window.taskqWebFault('native')","tray.web.notice",&proxy,calls);}
-            }
-        }
-        if !web.pending.contains_key(&0)&&let Some((_,wv))=&ui&&let Some(selection)=crate::telemetry::diagnostic::take_web_selection(){
-            web_eval(wv,&format!("taskq.receive({})",json!({"diagnose":selection})),"tray.web.diagnose",&proxy,&mut web);
-        }
-        if web.failed && !web.notified {
-            web.notified=true;
-            if let Some(t)=&tray {let _=t.set_tooltip(Some("TaskQ: interface outcomes unknown; check results before retry"));}
-            if snapshot.is_none() && let Some((_,wv))=&ui {web_eval(wv,"window.taskqWebFault('native')","tray.web.notice",&proxy,&mut web);}
-        }
-        if web.failed && snapshot.is_some() && web.pending.is_empty() {crate::platform::exit(1);}
-        let push = |web: &mut WebCalls, ui: &Option<(Window, WebView)>, st: &Value| {
-            if let Some((_, wv)) = ui {
-                if !web.failed {web_eval(wv,&format!("taskq.receive({st})"),"tray.web.receive",&proxy,web);}
-            }
-        };
-        match event {
-            Event::UserEvent(Ev::WorkspaceClose)=>{if focused_workspace=="main" {if let Some((w,_))=&workspace {w.set_visible(false);}}else if let Some((w,_,_))=detached.get(&focused_workspace){w.set_visible(false);}}
-            Event::UserEvent(Ev::Page(surface,generation,body))=>{
-                let current=match surface {PageSurface::Menu=>Some(&web),PageSurface::Settings=>settings_web.as_ref(),PageSurface::Views=>views_web.as_ref()};
-                if current.is_none_or(|calls|calls.generation!=generation) {return;}
-                let _=proxy.send_event(match surface {PageSurface::Menu=>Ev::Ipc(body),PageSurface::Settings=>Ev::Settings(body),PageSurface::Views=>Ev::Views(body)});
-            }
-            Event::UserEvent(Ev::BundleChecked(checked))=>{
-                if let Some(store)=&mut ui_store {store.apply(checked);}
-                ui_checking=false;
-                shown.clear();workspace_shown.clear();settings_shown.clear();views_shown.clear();detached_shown.clear();
-            }
-            // Same recreation as Reload; the checkpoint and the ready handoff carry the reader across.
-            Event::UserEvent(Ev::AdoptPage(surface))=>{
-                if workspace_checkpoint_errors.contains(&surface) {return;}
-                let bundle=crate::ui_bundle::active();
-                let (mut failure,mut retired)=(None,None);
-                match surface.as_str() {
-                    MENU_SURFACE=>if let Some((window,view))=&mut ui {
-                        web.background=true;shown.clear();
-                        if let Err(error)=recreate_workspace(window,view,&mut web,false,|window,reader|surface_view(window,proxy.clone(),&bundle.tray,"",PageSurface::Menu,reader)) {failure=Some(error);retired=Some(&mut web);}
-                    },
-                    SETTINGS_SURFACE=>if let (Some((window,view)),Some(calls))=(&mut settings_window,&mut settings_web) {
-                        calls.background=true;settings_shown.clear();
-                        if let Err(error)=recreate_workspace(window,view,calls,false,|window,reader|surface_view(window,proxy.clone(),&bundle.tray,"window.taskqSurface='settings';",PageSurface::Settings,reader)) {failure=Some(error);retired=Some(calls);}
-                    },
-                    VIEWS_SURFACE=>if let (Some((window,view)),Some(calls))=(&mut views_window,&mut views_web) {
-                        calls.background=true;views_shown.clear();
-                        if let Err(error)=recreate_workspace(window,view,calls,false,|window,reader|surface_view(window,proxy.clone(),&bundle.tray,"window.taskqSurface='views';",PageSurface::Views,reader)) {failure=Some(error);retired=Some(calls);}
-                    },
-                    "main"=>if let (Some((window,view)),Some(calls))=(&mut workspace,&mut workspace_web) {
-                        calls.background=true;workspace_shown.clear();
-                        let safe=calls.safe;
-                        if let Err(error)=recreate_workspace(window,view,calls,safe,|window,reader|workspace_view(window,proxy.clone(),"main".into(),reader)) {failure=Some(error);retired=Some(calls);}
-                    },
-                    id=>if let Some((window,view,calls))=detached.get_mut(id) {
-                        calls.background=true;detached_shown.remove(id);
-                        let safe=calls.safe;
-                        if let Err(error)=recreate_workspace(window,view,calls,safe,|window,reader|workspace_view(window,proxy.clone(),surface.clone(),reader)) {failure=Some(error);retired=Some(calls);}
-                    },
-                }
-                // The old page stays; it is not asked again until a newer bundle, and Reload remains its way out.
-                if let (Some(error),Some(calls))=(failure,retired) {calls.log(format_args!("interface bundle not adopted: {error}"));calls.bundle=bundle.version.clone();}
-            }
-            Event::UserEvent(Ev::RecoverWorkspace(surface,safe))=>{
-                let surface=if surface.is_empty(){focused_workspace.clone()}else{surface};
-                if workspace_checkpoint_errors.contains(&surface){eprintln!("taskq tray: Conversations recovery checkpoint exceeds 32 MiB; reader retained, reload refused");if let Some(tray)=&tray {let _=tray.set_tooltip(Some("Conversations recovery unknown: checkpoint exceeds 32 MiB; reader retained"));}return;}
-                if surface!="main" {
-                    if let Some((window,view,calls))=detached.get_mut(&surface){
-                        match recreate_workspace(window,view,calls,safe,|window,reader|workspace_view(window,proxy.clone(),surface.clone(),reader)){
-                            Ok(())=>{window.set_visible(true);window.set_focus();}
-                            Err(reason)=>eprintln!("taskq tray: detached Conversations reload unavailable: {reason}"),
-                        }
-                    }
-                    return;
-                }
-                if let (Some((window,view)),Some(calls))=(&mut workspace,&mut workspace_web) {
-                    match recreate_workspace(window,view,calls,safe,|window,reader|workspace_view(window,proxy.clone(),"main".into(),reader)) {
-                        Ok(())=>{workspace_shown.clear();if safe {workspace_open=json!({"page":"conversations","thread":"recovery"});}window.set_visible(true);window.set_focus();}
-                        Err(reason)=>{eprintln!("taskq tray: Conversations reload unavailable: {reason}; existing window retained");}
-                    }
-                }
-            }
-            Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if detached.values().any(|(w,_,_)|w.id()==window_id)=>{if let Some((w,_,_))=detached.values().find(|(w,_,_)|w.id()==window_id){w.set_visible(false);}}
-            Event::WindowEvent {window_id,..} if detached.values().any(|(w,_,_)|w.id()==window_id)=>{}
-            Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if workspace.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {
-                if let (Some((w,wv)),Some(calls))=(&workspace,&mut workspace_web) {w.set_visible(false);web_eval(wv,"taskq.receive({workerPanelClosed:true})","tray.web.receive",&proxy,calls);}
-            }
-            Event::WindowEvent {window_id,..} if workspace.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
-            Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if settings_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {
-                if let Some((w,_))=&settings_window {w.set_visible(false);}
-            }
-            Event::WindowEvent {window_id,..} if settings_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
-            Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if views_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {
-                if let Some((w,_))=&views_window {w.set_visible(false);}
-            }
-            Event::WindowEvent {window_id,..} if views_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
-            Event::NewEvents(StartCause::Init) => {
-                let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(true).with_resizable(false).with_always_on_top(settings.pin.top)
-                    .with_visible(snapshot.is_some()).with_inner_size(if routes.iter().any(|r|r.starts_with("health-")) {if conversation_shots {LogicalSize::new(1100.0,900.0)} else {LogicalSize::new(420.0,900.0)}} else if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots && routes.iter().any(|r|r!="conversations") {LogicalSize::new(1280.0,760.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
-                // ordinary snapshots render off-screen; opacity evidence must remain visible and unoccluded (R12)
-                let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots||opacity_shots{40.0}else{-20000.0}, if agentq_shots||opacity_shots{40.0}else{-20000.0})).with_always_on_top(opacity_shots).with_focused(false) } else { b };
-                #[cfg(windows)]
-                let b = tao::platform::windows::WindowBuilderExtWindows::with_skip_taskbar(b, !settings.pin.pinned);
-                let p = proxy.clone();
-                let built = b.build(target).map_err(|e| e.to_string()).and_then(|w| {
-                    let bundle=crate::ui_bundle::active();
-                    surface_view(&w,p,if conversation_shots {&bundle.workspace} else {&bundle.tray},if views_shots {"window.taskqSurface='views';"} else {""},PageSurface::Menu,&web).map(|v| (w, v))
-                });
-                match built {
-                    Ok(x) => {
-                        if let Err(error)=native_titlebar(&x.0) {eprintln!("taskq tray: titlebar unchanged: {error}");}
-                        if !views_shots && !conversation_shots && (settings.opacity_mode=="background" || settings.opacity<100) && let Err(error)=window_opacity(&x.0,settings.native_opacity()) {
-                            settings.opacity_error=Some(format!("Menu opacity unavailable: {error}; Off shown"));
-                            settings.opacity=100;
-                            settings.opacity_mode="whole".into();
-                            if let Err(error)=window_opacity(&x.0,100) {settings.opacity_error=Some(format!("Menu opacity unknown: {error}"));}
-                        }
-                        dark = is_dark(&x.0);
-                        ui = Some(x);
-                    }
-                    Err(e) => {
-                        eprintln!("taskq tray: {e}");
-                        *flow = ControlFlow::Exit;
-                        return;
-                    }
-                }
-                if snapshot.is_some() {
-                    return;
-                }
-                // macOS needs a running event loop before the icon exists
-                // M15: Open, Restart TaskQ and Quit TaskQ in the tray menu (right click), naming the work they wait for
-                let menu = Menu::with_items(&[&work_item, &PredefinedMenuItem::separator(), &MenuItem::with_id("open", "Open", true, None),
-                    &MenuItem::with_id("conversations-reload", "Reload Conversations safely", true, None), &MenuItem::with_id("conversations-back", "Conversations safe view", true, None), &MenuItem::with_id("conversations-close", "Close Conversations", true, None), &MenuItem::with_id("restart", "Restart TaskQ", true, None), &MenuItem::with_id("quit", "Quit TaskQ", true, None)]);
-                match TrayIconBuilder::new().with_icon(rgba_icon(&compact(false, dark, 2.0))).with_tooltip("taskq").with_menu_on_left_click(false)
-                    .with_menu(Box::new(menu.unwrap_or_default())).build() {
-                    Ok(t) => tray = Some(t),
-                    Err(e) => {
-                        eprintln!("taskq tray: {e}");
-                        *flow = ControlFlow::Exit;
-                    }
-                }
-                let p = proxy.clone();
-                notify::watch(move |id| {
-                    let _ = p.send_event(Ev::Note(id));
-                });
-                // a pinned window survives a tray restart at its last position; off-screen: at the tray icon (M13)
-                if let (Some((w, _)), true) = (&ui, settings.pin.pinned) {
-                    let saved = w.available_monitors().find(|m| key(m) == settings.pin.display).zip(settings.pin.pos.get(&settings.pin.display))
-                        .filter(|(m, p)| on_screen(**p, (m.position().x, m.position().y, m.size().width as i32, m.size().height as i32)));
-                    match (saved, tray.as_ref().and_then(TrayIcon::rect)) {
-                        (Some((_, p)), _) => w.set_outer_position(PhysicalPosition::new(p.0, p.1)),
-                        (None, Some(r)) => { settings.pin.attached_edge = place(w, r, &mut settings.pin).into(); },
-                        _ => {}
-                    }
-                    w.set_visible(true);
-                }
-            }
-            Event::WindowEvent { window_id,event: WindowEvent::Moved(p), .. } if snapshot.is_none()&&ui.as_ref().is_some_and(|(w,_)|w.id()==window_id&&(settings.pin.pinned||native_header_drag(w))) => {
-                let Some((w, _)) = &ui else { return };
-                if !settings.pin.pinned {settings.pin.pinned=true;#[cfg(windows)] {use tao::platform::windows::WindowExtWindows;w.set_skip_taskbar(false);}settings.save(&install);let _=proxy.send_event(Ev::Sync);}
-                let Some(m) = w.current_monitor() else { return };
-                let s = w.outer_size();
-                let c = if cfg!(target_os = "macos") { clamp((p.x, p.y), (s.width as i32, s.height as i32), work_area(&m)) } else { (p.x, p.y) };
-                if c != (p.x, p.y) {
-                    w.set_outer_position(PhysicalPosition::new(c.0, c.1));
-                }
-                settings.pin.display = key(&m);
-                settings.pin.pos.insert(settings.pin.display.clone(), c);
-                moved = true;
-            }
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => { if let Some((w,_))=&ui { w.set_visible(false); } }
-            Event::WindowEvent { event: WindowEvent::Focused(false), .. } if snapshot.is_none() && !settings.pin.pinned => {
-                if let Some((w, _)) = &ui {
-                    if blur_refocuses(shown_at.elapsed(),std::mem::take(&mut workspace_handoff)) {
-                        w.set_focus();
-                        return;
-                    }
-                    w.set_visible(false);
-                    hidden_at = Instant::now();
-                }
-            }
-            Event::WindowEvent { event: WindowEvent::ThemeChanged(_), .. } => {
-                if let Some((w, _)) = &ui {
-                    dark = is_dark(w);
-                    icon_sig.clear();
-                    shown.clear();
-                }
-            }
-            Event::UserEvent(Ev::Tick) if snapshot.is_none() => {
-                // #1297: the 2 s refresh folds steady successful work into 15-minute aggregates.
-                let _repeating = tracing::info_span!("tray.refresh", coreq_repeating = true).entered();
-                // another version became current: exit, a service starts the current one (§ 4)
-                // a removed install (a test's temp folder) has no current version: its tray exits too (M15)
-                if !alone(&install) || crate::platform::tool(&install).current().as_deref() != Some(crate::platform::VERSION) {
-                    *flow = ControlFlow::Exit;
-                    return;
-                }
-                // M15: Quit ends the tray once the service has stopped; no heartbeat stays behind. Restart then frees the
-                // host lock and starts a new tray, whose Open starts a new service generation.
-                if let Some(phase) = quitting && crate::host::service_status(&install)["state"] != "running" {
-                    let _ = fs::remove_file(install.join("tray"));
-                    if phase == "Restarting" {
-                        drop(lock.take());
-                        if let Err(e) = relaunch(&install) { eprintln!("taskq tray: Restart could not start TaskQ: {e}"); }
-                    }
-                    *flow = ControlFlow::Exit;
-                    return;
-                }
-                if fs::remove_file(raise_request()).is_ok() { let _ = proxy.send_event(Ev::Raise); }
-                let _ = fs::write(install.join("tray"), std::process::id().to_string());
-                // a drag sends many moves: save the last one per tick
-                if std::mem::take(&mut moved) {
-                    settings.save(&install);
-                }
-                let st = state(&install, &settings, dark, None, &adding, &mut sync);
-                seen_projects=st["projects"].clone();
-                // #1819, #2352: while any window is visible and focused the service polls the board every 15 s (M8)
-                let front=|w:&Window|w.is_visible() && w.is_focused();
-                let visible=|o:&Option<(Window,WebView)>|o.as_ref().is_some_and(|(w,_)|front(w));
-                if visible(&ui) || visible(&workspace) || visible(&settings_window) || visible(&views_window) || detached.values().any(|(w,_,_)|front(w)) {
-                    crate::paths::touch(&install.join("menu-open"));
-                }
-                // #2365 A3/A5: faults retire a bundle, a clean start proves it, and each page moves when it holds nothing in flight.
-                if let Some(store)=&mut ui_store {
-                    let mut pages:Vec<&mut WebCalls>=vec![&mut web];
-                    pages.extend(workspace_web.as_mut());pages.extend(settings_web.as_mut());pages.extend(views_web.as_mut());pages.extend(detached.values_mut().map(|(_,_,calls)|calls));
-                    for calls in &mut pages {
-                        let Some(reason)=calls.start_fault.take() else {continue};
-                        let bundle=calls.bundle.clone();
-                        if bundle!=crate::ui_bundle::embedded().version {
-                            eprintln!("taskq tray: interface bundle {bundle} failed to start ({reason})");
-                            store.fail(&bundle,&format!("failed to start ({reason})"));
-                            let _=fs::remove_file(install.join("tray.fault"));
-                            icon_sig.clear();
-                        }
-                    }
-                    let active=crate::ui_bundle::active();
-                    if store.on_trial() && pages.iter().any(|calls|calls.bundle==active.version&&!calls.failed&&calls.booted.is_some_and(|at|at.elapsed()>=START_PROOF)) {store.commit();}
-                    let now=Instant::now();
-                    // A page with a user on it decides for itself; the receive hook declines while an edit is open.
-                    let offer=|view:&WebView,calls:&mut WebCalls,surface:&str,eligible:bool|{
-                        if calls.bundle==active.version {return;}
-                        if calls.failed {let _=proxy.send_event(Ev::AdoptPage(surface.into()));return;}
-                        if !eligible||!calls.idle()||calls.offered.is_some_and(|at|now.saturating_duration_since(at)<ADOPT_RETRY) {return;}
-                        calls.offered=Some(now);
-                        web_eval(view,"taskq.receive({bundleAdopt:true})","tray.web.receive",&proxy,calls);
-                    };
-                    if let Some((window,view))=&ui {offer(view,&mut web,MENU_SURFACE,!window.is_visible()||settings.pin.pinned);}
-                    if let (Some((window,view)),Some(calls))=(&settings_window,&mut settings_web) {offer(view,calls,SETTINGS_SURFACE,!window.is_visible());}
-                    if let (Some((window,view)),Some(calls))=(&views_window,&mut views_web) {offer(view,calls,VIEWS_SURFACE,!window.is_visible());}
-                    if let (Some((_,view)),Some(calls))=(&workspace,&mut workspace_web) {offer(view,calls,"main",true);}
-                    for (id,(_,view,calls)) in detached.iter_mut() {offer(view,calls,id,true);}
-                    if crate::ui_bundle::follows_channel() && !ui_checking && now>=next_ui_check {
-                        ui_checking=true;next_ui_check=now+UI_CHECK_EVERY;
-                        let (check,p)=(store.check(),proxy.clone());
-                        std::thread::spawn(move ||{let _=p.send_event(Ev::BundleChecked(check.run(&crate::ui_bundle::fetch)));});
-                    }
-                }
-                if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));}
-                notes(&install, &mut settings, &st, &mut asked, &mut bursts);
-                work_item.set_text(quit_label(&st, quitting));
-                let mut comparable=st.clone();comparable.as_object_mut().expect("tray snapshot object").remove("now");
-                let sig=comparable.to_string();
-                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
-                    if sig!=workspace_shown && !calls.failed && calls.idle() {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&st)),TICK,&proxy,calls);}
-                }
-                if let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) {
-                    if sig!=settings_shown && !calls.failed && calls.idle() {settings_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
-                }
-                if let (Some((_,wv)),Some(calls))=(&views_window,&mut views_web) {
-                    if sig!=views_shown && !calls.failed && calls.idle() {views_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
-                }
-                detached_shown.retain(|id,_|detached.contains_key(id));
-                for (id,(_,wv,calls)) in detached.iter_mut(){if take_due(detached_shown.entry(id.clone()).or_default(),&sig,!calls.failed && calls.idle()){web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&st)),TICK,&proxy,calls);}}
-                if sig != shown && web.idle() {
-                    shown = sig;
-                    if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,&mut web);}
-                }
-            }
-            Event::UserEvent(ev @ (Ev::Quit | Ev::Restart)) if snapshot.is_none() && quitting.is_none() => {
-                // M15: Restart drain-stops exactly as Quit does
-                quitting = Some(if matches!(ev, Ev::Restart) { "Restarting" } else { "Quitting" });
-                let (install, p) = (install.clone(), proxy.clone());
-                std::thread::spawn(move || if let Err(e) = crate::lifecycle::quit(&install) {
-                    eprintln!("taskq tray: Quit refused: {e}");
-                    let _ = p.send_event(Ev::QuitFailed(e));
-                });
-            }
-            Event::UserEvent(Ev::QuitFailed(e)) => {
-                let what = if quitting == Some("Restarting") { "Restart" } else { "Quit" };
-                quitting = None;
-                work_item.set_text(format!("{what} refused; see tray.log"));
-                if let Some(t) = &tray { let _ = t.set_tooltip(Some(format!("TaskQ: {what} refused: {e}").chars().take(160).collect::<String>())); }
-            }
-            Event::UserEvent(Ev::Raise) | Event::Reopen { .. } if snapshot.is_none() => {
-                let Some((w, _)) = &ui else { return };
-                if !settings.pin.pinned && let Some(r) = tray.as_ref().and_then(TrayIcon::rect) { settings.pin.attached_edge = place(w, r, &mut settings.pin).into(); }
-                w.set_visible(true);
-                w.set_focus();
-                shown_at = Instant::now();
-            }
-            Event::UserEvent(Ev::Click(rect)) => {
-                workspace_handoff=false;
-                let Some((w, _)) = &ui else { return };
-                anchor = Some(rect);
-                // pinned: the click raises the window, never closes it (M13)
-                if settings.pin.pinned {
-                    w.set_visible(true);
-                    w.set_focus();
-                    return;
-                }
-                // a click on the icon while open first blurs the popover: that click only closes it
-                if w.is_visible() || hidden_at.elapsed() < Duration::from_millis(300) {
-                    w.set_visible(false);
-                    return;
-                }
-                settings.pin.attached_edge = place(w, rect, &mut settings.pin).into();
-                w.set_visible(true);
-                w.set_focus();
-                shown_at = Instant::now();
-            }
-            Event::UserEvent(Ev::Answer(receipt)) => {
-                let packet=if receipt["answerReceipt"].is_object() && sync.receipt(&receipt) {
-                    let snapshot=state(&install,&settings,dark,None,&adding,&mut sync);
-                    seen_projects=snapshot["projects"].clone();
-                    let _=proxy.send_event(Ev::Sync);
-                    json!({"updates":[snapshot,receipt]})
-                } else {receipt.clone()};
-                let cap=capmsg_refresh(&receipt,&mut shown,&mut workspace_shown,&mut settings_shown);
-                if cap {let _=proxy.send_event(Ev::Sync);}
-                push(&mut web,&ui,&packet);
-                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
-                if cap && let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) && !calls.failed {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
-                // #1819: a detached conversation sees the answer it may show too.
-                if receipt["answerReceipt"].is_object()||receipt["reportReceipt"].is_object() {for (_,wv,calls) in detached.values_mut() {if !calls.failed {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}}}
-            },
-            // #1918: a store change rebuilds the one snapshot at once: every window, the icon and notifications read it
-            Event::UserEvent(Ev::Sync) => {let _=proxy.send_event(Ev::Tick);},
-            // a notification click opens the menu (or raises the pinned window) on that card (M14)
-            Event::UserEvent(Ev::Note(id)) => {
-                let Ok(id) = serde_json::from_str::<Value>(&id) else { return };
-                let Some((w, _)) = &ui else { return };
-                if !settings.pin.pinned && let Some(r) = anchor.or_else(|| tray.as_ref().and_then(TrayIcon::rect)) {
-                    settings.pin.attached_edge = place(w, r, &mut settings.pin).into();
-                }
-                w.set_visible(true);
-                w.set_focus();
-                if id["root"].is_string() {
-                    push(&mut web,&ui, &json!({"open": {"root": id["root"], "n": id["n"], "kind": id["k"], "title": id["t"], "event":id["e"]}}));
-                }
-            }
-            Event::UserEvent(Ev::Evaluated(generation,id,result)) => {
-                if web.generation!=generation {return;}
-                web.finish(id,result);
-                if web.pending.is_empty() && let Some(next)=shot_wait.take() {let _=proxy.send_event(next);}
-            }
-            Event::UserEvent(Ev::Dialogue(surface,mut receipt)) => {
-                let current=if surface=="main" {workspace_web.as_ref()}else{detached.get(&surface).map(|(_,_,c)|c)};
-                if current.is_none_or(|c|receipt["readerGeneration"].as_u64()!=Some(c.generation)){return;}
-                task_body_receipt(&sync,&mut receipt);
-                let script=format!("taskq.receive({})",json!({"dialogueReceipt":receipt}));
-                if surface=="main" {if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}}
-                else if let Some((_,wv,calls))=detached.get_mut(&surface) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
-            }
-            Event::UserEvent(Ev::Conversation(surface,receipt)) => {
-                let script=format!("taskq.receive({})",json!({"conversationReceipt":receipt}));
-                if surface=="main" {if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}}
-                else if let Some((_,wv,calls))=detached.get_mut(&surface) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
-                shown.clear();workspace_shown.clear();detached_shown.clear();
-            }
-            Event::UserEvent(Ev::WorkspaceEvaluated(generation,surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {if calls.generation==generation {calls.finish(id,result);}}}else if surface==SETTINGS_SURFACE {if let Some(calls)=&mut settings_web {if calls.generation==generation {calls.finish(id,result);}}}else if surface==VIEWS_SURFACE {if let Some(calls)=&mut views_web {if calls.generation==generation {calls.finish(id,result);}}}else if let Some((_,_,calls))=detached.get_mut(&surface){if calls.generation==generation {calls.finish(id,result);}}}
-            Event::UserEvent(Ev::Workspace(surface,message)) => {
-                let Ok(input)=serde_json::from_str::<Value>(&message) else {return};
-                let current=if surface=="main" {workspace_web.as_ref()}else{detached.get(&surface).map(|(_,_,c)|c)};
-                if current.is_none_or(|c|input["readerGeneration"].as_u64()!=Some(c.generation)){return;}
-                if input["a"]=="workspace-origin" && surface=="main" && input["origin"]["surface"]=="settings" {
-                    // TW1: Settings keeps its DOM, route, scroll and focus while the shared review is open.
-                    if let Some((window,_))=&settings_window {window.set_visible(true);window.set_focus();if let Some((window,_))=&workspace {window.set_visible(false);}}
-                    return;
-                }
-                if input["a"]=="conversation-window" {
-                    let id=input["conversation"].as_str().unwrap_or("");
-                    if !crate::resources::id(id){return;}
-                    let action=input["windowAction"].as_str().or_else(||input["action"].as_str()).unwrap_or("");
-                    if action=="raise" {if let Some((window,_,calls))=detached.get(id){if calls.failed {let _=proxy.send_event(Ev::RecoverWorkspace(id.into(),false));}else{window.set_visible(true);window.set_focus();}}return;}
-                    if action=="detach" && surface=="main" && !detached.contains_key(id) {
-                        let saved=crate::conversations::summary(&install);
-                        let valid=saved["items"].as_array().is_some_and(|rows|rows.iter().any(|c|c["id"]==id&&c["revision"]==input["revision"]));
-                        if !valid {return;}
-                        let p=proxy.clone();let source=id.to_string();let mut reader=WebCalls::new();reader.workspace=true;reader.surface=source.clone();
-                        let built=WindowBuilder::new().with_title("TaskQ Conversations").with_decorations(true).with_inner_size(LogicalSize::new(640.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window|{
-                            workspace_view(&window,p,source,&reader).map(|wv|(window,wv))
-                        });
-                        match built {
-                            Ok((window,wv))=>{window.set_visible(true);window.set_focus();detached.insert(id.into(),(window,wv,reader));}
-                            Err(_)=>{if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){let r=json!({"conversationReceipt":{"id":input["id"],"state":"unknown","reason":"Detached window unavailable; main retains ownership"}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}return;}
-                        }
-                    }else if action=="return" && surface==id {detached.remove(id);workspace_checkpoints.remove(id);if let Some((window,_))=&workspace{window.set_visible(true);window.set_focus();}}
-                    else {return;}
-                    if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){
-                        let owner=json!({"workspaceOwner":{"id":"main","detached":detached.keys().collect::<Vec<_>>()}});
-                        web_eval(wv,&format!("taskq.receive({owner})"),"tray.web.receive",&proxy,calls);
-                        if action=="return" {web_eval(wv,&format!("taskq.receive({});taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync)),json!({"open":{"page":"conversations"}})),"tray.web.receive",&proxy,calls);let select=json!({"workspaceOwner":{"id":"main","select":id,"detached":detached.keys().collect::<Vec<_>>()}});web_eval(wv,&format!("taskq.receive({select})"),"tray.web.receive",&proxy,calls);}
-                        else {let r=json!({"conversationReceipt":{"id":input["id"],"state":"accepted","snapshot":crate::conversations::summary(&install)}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
-                    }
-                    return;
-                }
-                let detached_ids:Vec<String>=detached.keys().cloned().collect();
-                let (w,wv,calls)=if surface=="main" {let (Some((w,wv)),Some(calls))=(&workspace,&mut workspace_web) else{return};(w,wv,calls)}else{let Some((w,wv,calls))=detached.get_mut(&surface) else{return};(&*w,&*wv,calls)};
-                let Ok(m)=serde_json::from_str::<Value>(&message) else {calls.fault("invalid-ipc");return};
-                if m["a"]=="web-error" {calls.errors(&m);return;}
-                if m["a"]=="web-observation" {calls.metadata(&m["row"]);return;}
-                if m["a"]=="route-error" {calls.route(&m);return;}
-                let context=match m["context"].as_str(){Some(text)=>match coreq::telemetry::capture::TraceContext::decode(text){Ok(context)=>Some(context),Err(_)=>{calls.fault("invalid-web-context");return;}},None=>None};
-                let _continuation=context.as_ref().map(|context|context.span().entered());
-                if m["a"]=="workspace-recovered" {if !calls.pending.contains_key(&0){calls.recovery_ready=true;}return;}
-                if m["a"]=="workspace-checkpoint" {
-                    match workspace_checkpoint(calls,&mut workspace_checkpoints,&surface,&m["value"]) {
-                        Ok(true)=>{workspace_checkpoint_errors.remove(&surface);}
-                        Ok(false)=>{}
-                        Err(reason)=>{workspace_checkpoint_errors.insert(surface.clone());web_eval(wv,&format!("taskq.receive({})",json!({"workspaceLocalError":reason})),"tray.web.receive",&proxy,calls);}
-                    }
-                    return;
-                }
-                if m["a"]=="workspace-reload" {let _=proxy.send_event(if m["adopt"]==true {Ev::AdoptPage(surface.clone())} else {Ev::RecoverWorkspace(surface.clone(),m["safe"]==true)});return;}
-                if m["a"]=="update"||m["a"]=="ui-check" {next_ui_check=Instant::now();}
-                if m["a"]=="ui-check" {return;}
-                if m["a"]=="hide" {w.set_visible(false);return;}
-                if calls.failed {return;}
-                match m["a"].as_str() {
-                    Some("reports")=>{let result=if m["local"].is_object(){answer_local(&install,m["local_key"].as_str().unwrap_or(""),&m["local"])}else{Ok(())}.and_then(|_|{let mut request=m.clone();request.as_object_mut().map(|v|{v.remove("local");v.remove("local_key");});report_actions.submit(&request)});if let Err(reason)=result {web_eval(wv,&format!("taskq.receive({})",json!({"reportReceipt":{"id":m["id"],"root":m["root"],"reason":reason}})),"tray.web.receive",&proxy,calls);}}
-                    Some("sync-retry") => {
-                        if let Some(request)=sync.retry(m["root"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or("")) {let _=send_answer(&answer_actions,&mut sync,&request,&seen_projects,&proxy);}
-                    }
-                    Some("ready") | Some("refresh") => {
-                        let _=proxy.send_event(Ev::Sync);
-                        calls.finish(0,"ok");
-                        let mut messages=vec![workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))];
-                        if m["a"]=="ready" && let Some(value)=workspace_checkpoints.get(&surface) {messages.push(json!({"workspaceRecovery":value}));}
-                        if surface=="main" && !workspace_open.is_null() && !workspace_open["page"].is_null(){messages.push(json!({"open":workspace_open.take()}));}
-                        let own=if surface=="main" {json!({"id":"main","detached":detached_ids})}else{json!({"id":surface,"conversation":surface,"detached":[]})};
-                        messages.push(json!({"workspacePin":w.is_always_on_top(),"workspaceMaximized":w.is_maximized()}));
-                        if surface!="main" && m["a"]=="ready" {messages.push(json!({"open":{"page":"conversations","thread":if calls.safe {json!("recovery")} else {Value::Null}}}));}
-                        messages.push(json!({"workspaceOwner":own}));
-                        if m["a"]=="ready" {messages.push(json!({"workspaceRecoveryReady":true}));}
-                        // One evaluation: a failed restore cannot acknowledge or replace its previous checkpoint.
-                        let script=messages.iter().map(|v|format!("taskq.receive({v})")).collect::<Vec<_>>().join(";");
-                        web_eval(wv,&script,"tray.web.receive",&proxy,calls);
-                    }
-                    Some("task-pin")=>{let st=state(&install,&settings,dark,None,&adding,&mut sync);let receipt=match task_pin(&mut settings,&install,&st,&m){Ok(dashboard)=>{push(&mut web,&ui,&json!({"dashboard":dashboard}));json!({"dashboard":dashboard})},Err(reason)=>json!({"taskPinError":reason})};web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
-                    Some("hide") => w.set_visible(false),
-                    Some("workspace-window")=>{
-                        match m["action"].as_str().unwrap_or("") {
-                            "pin"=>{let pin=!w.is_always_on_top();w.set_always_on_top(pin);if surface=="main" {if let Ok(mut p)=requests_file_checked(&install){p["workspace_pin"]=json!(pin);let _=crate::platform::write_atomic(&install.join("tray-requests.json"),&p.to_string());}}web_eval(wv,&format!("taskq.receive({})",json!({"workspacePin":pin})),"tray.web.receive",&proxy,calls);}
-                            "drag"=>{let _=w.drag_window();}
-                            "enlarge"=>{let enlarged=!w.is_maximized();w.set_maximized(enlarged);web_eval(wv,&format!("taskq.receive({})",json!({"workspaceMaximized":enlarged})),"tray.web.receive",&proxy,calls);},
-                            "size"=>{if let (Some(width),Some(height))=(m["width"].as_f64(),m["height"].as_f64()){if width.is_finite()&&height.is_finite(){let area=w.current_monitor().map(|m|work_area(&m));let scale=w.scale_factor();let max_w=area.map_or(2000.0,|(_,_,w,_)|f64::from(w)/scale).max(320.0);let max_h=area.map_or(1600.0,|(_,_,_,h)|f64::from(h)/scale).max(240.0);w.set_inner_size(LogicalSize::new(width.clamp(320.0,max_w),height.clamp(240.0,max_h)));}}}
-                            _=>{}
-                        }
-                    }
-                    Some("conversation-navigation") if m["sidebar"].is_object()=>{let receipt=crate::conversations::sidebar(&install,&m);web_eval(wv,&format!("taskq.receive({})",json!({"conversationSidebarReceipt":receipt})),"tray.web.receive",&proxy,calls);}
-                    Some("conversation-navigation")=>{let error=if surface=="main" {crate::conversations::navigation(&install,&m["navigation"]).err()}else{None};web_eval(wv,&format!("taskq.receive({})",json!({"conversationNavigationError":error})),"tray.web.receive",&proxy,calls);}
-                    Some("conversation-action")=>{
-                        let id=m["conversation"].as_str().unwrap_or("");
-                        // CS5: local archive/restore may organize a detached chat; draft edits stay with its owner.
-                        let allowed=matches!(m["action"].as_str(),Some("archive"|"restore"))||if surface=="main" {!detached_ids.iter().any(|s|s==id)}else{surface==id};
-                        if allowed&&matches!(m["action"].as_str(),Some("reply"|"reply-check"|"watch"|"unwatch")) {
-                            let mut request=m.clone();request["root"]=json!(surface);
-                            if let Err(reason)=conversation_actions.submit(&request){web_eval(wv,&format!("taskq.receive({})",json!({"conversationReceipt":{"id":m["id"],"state":"rejected","reason":reason}})),"tray.web.receive",&proxy,calls);}return;
-                        }
-                        let receipt=if allowed {crate::conversations::act(&install,&m,&roots(&install))}else{json!({"id":m["id"],"state":"unknown","reason":"Draft ownership moved; edit only in its owner window"})};
-                        web_eval(wv,&format!("taskq.receive({})",json!({"conversationReceipt":receipt})),"tray.web.receive",&proxy,calls);
-                        shown.clear();workspace_shown.clear();detached_shown.clear();
-                    }
-                    Some("conversation-dialogue")=>{
-                        if !w.is_visible() && m["conversation"].as_str().is_some_and(|id|id.starts_with("task:")) {
-                            let receipt=json!({"id":m["id"],"conversation":m["conversation"],"action":m["action"],"state":"accepted","value":{"ended":true,"items":[]}});
-                            web_eval(wv,&format!("taskq.receive({})",json!({"dialogueReceipt":receipt})),"tray.web.receive",&proxy,calls);return;
-                        }
-                        // Reads only, off the event loop: the D3 holder probe starts the runtime CLI.
-                        let (p,install,surface,m)=(proxy.clone(),install.clone(),surface.clone(),m.clone());
-                        std::thread::spawn(move||{let mut receipt=crate::conversations::dialogue(&install,&m);receipt["readerGeneration"]=m["readerGeneration"].clone();let _=coreq::telemetry::capture::operation("tray.dialogue.report",||p.send_event(Ev::Dialogue(surface,receipt)),|_|"ui-closed");});
-                    }
-                    Some("message-action") => {
-                        let ps:Vec<Value>=roots(&install).iter().map(|r|project(&install,r)).collect();
-                        let keys:Vec<String>=m["keys"].as_array().into_iter().flatten().filter_map(|v|v.as_str().map(String::from)).collect();
-                        let mut receipt=crate::messages::act(&install,&ps,m["action"].as_str().unwrap_or(""),&keys);receipt["id"]=m["id"].clone();
-                        web_eval(wv,&format!("taskq.receive({})",json!({"messageReceipt":receipt})),"tray.web.receive",&proxy,calls);
-                        web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);
-                        push(&mut web,&ui,&state(&install,&settings,dark,None,&adding,&mut sync));
-                    }
-                    Some("workspace-set") => {
-                        let reason=save_workspace_navigation(&mut settings,&install,&m["navigation"]);
-                        web_eval(wv,&format!("taskq.receive({})",json!({"viewStateError":reason})),"tray.web.receive",&proxy,calls);
-                    }
-                    Some("answer-local") => {
-                        let result=answer_local(&install,m["key"].as_str().unwrap_or(""),&m["local"]);
-                        web_eval(wv,&format!("taskq.receive({})",json!({"workspaceLocalError":result.err()})),"tray.web.receive",&proxy,calls);
-                    }
-                    Some("reply-file") => {
-                        let result=crate::reply_files::store_file(&install,&m);
-                        let receipt=match result{Ok(file)=>json!({"id":m["id"],"state":"accepted","file":file}),Err(e)=>{tracing::info!(coreq_refusal=crate::reply_files::refusal_kind(&e));json!({"id":m["id"],"state":"rejected","kind":"storage","reason":e})}};
-                        web_eval(wv,&format!("taskq.receive({})",json!({"replyFileReceipt":receipt})),"tray.web.receive",&proxy,calls);
-                    }
-                    Some("answer") => {
-                        let key=format!("{}#{}",m["board"].as_str().unwrap_or(""),m["op"]["task"]);
-                        let result=if m["local"].is_object(){answer_local(&install,&key,&m["local"])}else{Ok(())}.and_then(|_|send_answer(&answer_actions,&mut sync,&answer_request(&m),&seen_projects,&proxy));
-                        if let Err(error)=result {let r=json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"failed","reason":error,"next":"Nothing reached the board; send again"}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
-                    }
-                    Some("open") => {if let Some(url)=m["url"].as_str().filter(|u|openable(u)){open(url);}}
-                    Some(a) if matches!(a,"ai-send"|"ai-draft"|"ai-clear") => {
-                        let result=ai(&install,a,&m);
-                        let receipt=if a=="ai-send" {json!({"aiReceipt":{"id":m["id"],"state":if result.is_ok(){"accepted"}else{"unknown"},"reason":result.err().unwrap_or_else(||"Request saved; native launch is separate".into())}})}else{json!({"workspaceLocalError":result.err()})};
-                        web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);
-                        if a=="ai-send" {web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);}
-                    }
-                    // Workspace reviews use the same queues, native picker and receipt adapters as the tray.
-                    Some(a) if workspace_operation(a) => {if let Some(message)=workspace_forward(&m) {let _=proxy.send_event(Ev::Ipc(message));}}
-                    _ => calls.fault("unsupported-workspace-action"),
-                }
-            }
-            // R22: Settings is one undecorated window over the tray page; window chrome stays here and every other
-            // action takes the menu's path, so the Window page still configures the menu.
-            Event::UserEvent(Ev::Settings(message)) => {
-                let (Some((sw,swv)),Some(calls))=(&settings_window,&mut settings_web) else {return};
-                let Ok(m)=serde_json::from_str::<Value>(&message) else {calls.fault("invalid-ipc");return};
-                if m["a"]=="web-error" {calls.errors(&m);return;}
-                if m["a"]=="web-observation" {calls.metadata(&m["row"]);return;}
-                if calls.failed {return;}
-                let chrome=|w:&Window|json!({"settingsWindow":{"top":w.is_always_on_top(),"maximized":w.is_maximized()}});
-                match m["a"].as_str().unwrap_or("") {
-                    "bundle-reload" => {let _=proxy.send_event(Ev::AdoptPage(SETTINGS_SURFACE.into()));}
-                    "ready" => {
-                        calls.finish(0,"ok");
-                        web_eval(swv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);
-                        web_eval(swv,&format!("taskq.receive({})",chrome(sw)),"tray.web.receive",&proxy,calls);
-                        if !settings_open.is_null() {web_eval(swv,&format!("taskq.receive({})",json!({"settingsOpen":settings_open.take()})),"tray.web.receive",&proxy,calls);}
-                    }
-                    "hide" => sw.set_visible(false),
-                    "drag" => {let _=sw.drag_window();}
-                    "settings-top" => {
-                        let top=!sw.is_always_on_top();sw.set_always_on_top(top);
-                        if let Ok(mut r)=requests_file_checked(&install){r["settings_top"]=json!(top);let _=crate::platform::write_atomic(&install.join("tray-requests.json"),&r.to_string());}
-                        web_eval(swv,&format!("taskq.receive({})",chrome(sw)),"tray.web.receive",&proxy,calls);
-                    }
-                    "settings-enlarge" => {sw.set_maximized(!sw.is_maximized());web_eval(swv,&format!("taskq.receive({})",chrome(sw)),"tray.web.receive",&proxy,calls);}
-                    "resize" => {if let (Some(width),Some(height))=(m["w"].as_f64(),m["h"].as_f64()){if width.is_finite()&&height.is_finite(){let area=sw.current_monitor().map(|m|work_area(&m));let scale=sw.scale_factor();let max_w=area.map_or(2000.0,|(_,_,w,_)|f64::from(w)/scale).max(320.0);let max_h=area.map_or(1600.0,|(_,_,_,h)|f64::from(h)/scale).max(240.0);sw.set_inner_size(LogicalSize::new(width.clamp(320.0,max_w),height.clamp(240.0,max_h)));}}}
-                    // the menu's own geometry and navigation are not this window's
-                    "size" | "resize-end" | "overflow" | "pin" => {}
-                    "set" if m.get("navigation").is_some() => {}
-                    _ => {let _=proxy.send_event(Ev::Ipc(message));}
-                }
-            }
-            // P-W4: the View window edits the menu's dashboard model; the menu stays its only writer to tray.json.
-            Event::UserEvent(Ev::Views(message)) => {
-                let (Some((vw,vwv)),Some(calls))=(&views_window,&mut views_web) else {return};
-                let Ok(m)=serde_json::from_str::<Value>(&message) else {calls.fault("invalid-ipc");return};
-                if m["a"]=="web-error" {calls.errors(&m);return;}
-                if m["a"]=="web-observation" {calls.metadata(&m["row"]);return;}
-                if calls.failed {return;}
-                match m["a"].as_str().unwrap_or("") {
-                    "bundle-reload" => {let _=proxy.send_event(Ev::AdoptPage(VIEWS_SURFACE.into()));}
-                    "ready" => {
-                        calls.finish(0,"ok");
-                        let st=state(&install,&settings,dark,None,&adding,&mut sync);
-                        web_eval(vwv,&format!("taskq.receive({st})"),"tray.web.receive",&proxy,calls);
-                        if st["navigation"]["dashboard"].is_object() {web_eval(vwv,&format!("taskq.receive({})",json!({"dashboard":st["navigation"]["dashboard"],"initial":true})),"tray.web.receive",&proxy,calls);}
-                    }
-                    "hide" => vw.set_visible(false),
-                    "drag" => {let _=vw.drag_window();}
-                    "workspace" | "task-pin" => {let _=proxy.send_event(Ev::Ipc(message));}
-                    "views-dashboard" if m["dashboard"].is_object() && m["dashboard"].to_string().len()<=65536 => push(&mut web,&ui,&json!({"dashboard":m["dashboard"]})),
-                    // ponytail: the View window owns no other action; add arms when it gains one
-                    _ => {}
-                }
-            }
-            Event::UserEvent(Ev::Ipc(m)) => {
-                let Ok(m) = serde_json::from_str::<Value>(&m) else {web.fault("invalid-ipc");return;};
-                if m["a"]=="bundle-reload" {let _=proxy.send_event(Ev::AdoptPage(MENU_SURFACE.into()));return;}
-                if m["a"]=="ui-check" {next_ui_check=Instant::now();return;}
-                if m["a"]=="update" {next_ui_check=Instant::now();}
-                let Some((w, _)) = &ui else { return };
-                if m["a"]=="web-error" {web.errors(&m);return;}
-                if m["a"]=="web-observation" {
-                    if web.metadata(&m["row"])&&let Some(tray)=&tray {
-                        let _=tray.set_tooltip(Some("TaskQ: activity history incomplete; check each command confirmation"));
-                    }
-                    return;
-                }
-                let context=match m["context"].as_str(){Some(text)=>match coreq::telemetry::capture::TraceContext::decode(text){Ok(context)=>Some(context),Err(_)=>{web.fault("invalid-web-context");return;}},None=>None};
-                let _continuation=context.as_ref().map(|context|context.span().entered());
-                if web.failed {return;}
-                macro_rules! reply {
-                    ($value:expr) => {{
-                        let value=$value;
-                        push(&mut web,&ui,value);
-                        if value["projects"].is_array() || ["capmsg","focus_receipt","action_error","resources_receipt","aiError","agentqError","answerReceipt"].iter().any(|key|value.get(*key).is_some()) {
-                            if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({value})"),"tray.web.receive",&proxy,calls);}
-                            if let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) && !calls.failed {web_eval(wv,&format!("taskq.receive({value})"),"tray.web.receive",&proxy,calls);}
-                        }
-                    }};
-                }
-                match m["a"].as_str().unwrap_or("") {
-                    "workspace" if snapshot.is_none() => {
-                        workspace_open=m["open"].clone();
-                        if workspace_web.as_ref().is_some_and(|c|c.failed) {let _=proxy.send_event(Ev::RecoverWorkspace("main".into(),false));return;}
-                        // #1699: the header entry (it names a thread) opens the main workspace, never a detached conversation
-                        if workspace_open["page"]=="conversations" && workspace_open["thread"].is_null() && workspace_open["task"].is_null() {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
-                        if workspace.is_none() {
-                            let p=proxy.clone();let mut reader=WebCalls::new();reader.workspace=true;
-                            let built=conversations_window(target,w,settings.conversation_geometry.as_ref(),requests_file(&install)["workspace_pin"]==true).and_then(|window| {
-                                workspace_view(&window,p,"main".into(),&reader).map(|wv|(window,wv))
-                            });
-                            match built {
-                                Ok(window)=>{workspace=Some(window);workspace_web=Some(reader);}
-                                Err(error)=>{reply!(&json!({"workspaceError":format!("Workspace unavailable: {error}")}));return;}
-                            }
-                        }
-                        if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
-                            if !calls.pending.contains_key(&0) && !workspace_open.is_null() && !workspace_open["page"].is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
-                        }
-                        workspace_handoff=w.is_visible() && !settings.pin.pinned;
-                        if let Some((window,_))=&workspace {window.set_visible(true);window.set_focus();}
-                        reply!(&json!({"workspaceError":Value::Null}));
-                    }
-                    "settings-open" if snapshot.is_none() => {
-                        settings_open=if m["page"].is_string() {json!({"page":m["page"]})} else {Value::Null};
-                        if settings_window.is_none() {
-                            let p=proxy.clone();
-                            let mut calls=WebCalls::new();calls.workspace=true;calls.surface=SETTINGS_SURFACE.into();
-                            let built=WindowBuilder::new().with_title("TaskQ Settings").with_decorations(true).with_always_on_top(requests_file(&install)["settings_top"]==true).with_inner_size(LogicalSize::new(420.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
-                                surface_view(&window,p,&crate::ui_bundle::active().tray,"window.taskqSurface='settings';",PageSurface::Settings,&calls).map(|wv|(window,wv))
-                            });
-                            match built {
-                                Ok(window)=>{settings_window=Some(window);settings_web=Some(calls);settings_shown.clear();}
-                                Err(error)=>{reply!(&json!({"workspaceError":format!("Settings unavailable: {error}")}));return;}
-                            }
-                        }
-                        if let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) && !calls.pending.contains_key(&0) && !settings_open.is_null() {web_eval(wv,&format!("taskq.receive({})",json!({"settingsOpen":settings_open.take()})),"tray.web.receive",&proxy,calls);}
-                        workspace_handoff=w.is_visible() && !settings.pin.pinned;
-                        if let Some((window,_))=&settings_window {window.set_visible(true);window.set_focus();}
-                        reply!(&json!({"workspaceError":Value::Null}));
-                    }
-                    "views-open" if snapshot.is_none() => {
-                        if views_window.is_none() {
-                            let p=proxy.clone();
-                            let mut calls=WebCalls::new();calls.workspace=true;calls.surface=VIEWS_SURFACE.into();
-                            let built=WindowBuilder::new().with_title("TaskQ View").with_decorations(true).with_inner_size(LogicalSize::new(480.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
-                                surface_view(&window,p,&crate::ui_bundle::active().tray,"window.taskqSurface='views';",PageSurface::Views,&calls).map(|wv|(window,wv))
-                            });
-                            match built {
-                                Ok(window)=>{views_window=Some(window);views_web=Some(calls);views_shown.clear();}
-                                Err(error)=>{reply!(&json!({"workspaceError":format!("View window unavailable: {error}")}));return;}
-                            }
-                        }
-                        workspace_handoff=w.is_visible() && !settings.pin.pinned;
-                        if let Some((window,_))=&views_window {window.set_visible(true);window.set_focus();}
-                        reply!(&json!({"workspaceError":Value::Null}));
-                    }
-                    "answer" if snapshot.is_none() && crate::snapshot::CONTROLS.iter().any(|c| m["op"]["action"]==c.0) => {
-                        if let Err(error)=send_answer(&answer_actions,&mut sync,&answer_request(&m),&seen_projects,&proxy){reply!(&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"failed","reason":error,"next":"Nothing reached the board; send again"}}));}
-                    }
-                    "sync-retry" if snapshot.is_none() => {
-                        if let Some(request)=sync.retry(m["root"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or("")) {let _=send_answer(&answer_actions,&mut sync,&request,&seen_projects,&proxy);}
-                    }
-                    "snapshot-checkpoint" if snapshot.is_some() && routes.iter().any(|r|r=="conversations-checkpoint") && m["state"]=="passed" => {checkpoint_complete=true;println!("PASS native Conversations checkpoint: {}",m["value"]);}
-                    "overflow" if snapshot.is_some() => overflow.push(format!("{} by {} px", m["shot"].as_str().unwrap_or("?"), m["x"])),
-                    "ready" => {
-                        let _=proxy.send_event(Ev::Sync);
-                        web.finish(0,"ok");
-                        if snapshot.is_some() {
-                            let _ = proxy.send_event(Ev::Shot);
-                            return;
-                        }
-                        // M3.26: restore navigation and native window controls before the first fit escapes.
-                        reply!(&json!({"updates":[state(&install,&settings,dark,None,&adding,&mut sync),{"settingsWindow":true,"viewsWindow":true}]}));
-                    }
-                    "size" | "resize" => {
-                        let Some((width, height)) = m["w"].as_f64().zip(m["h"].as_f64()).filter(|(w, h)| w.is_finite() && h.is_finite()) else { return };
-                        let Some(scale) = m["d"].as_f64().filter(|k| k.is_finite() && (0.5..=8.0).contains(k)) else { return };
-                        let (max_w, max_h) = w.current_monitor().or_else(|| w.primary_monitor()).map_or((1920.0, 800.0), |monitor| {
-                            let area = work_area(&monitor);
-                            (f64::from(area.2) / scale, f64::from(area.3) / scale)
-                        });
-                        let outer=w.outer_size();let inner=client_size(w);
-                        let frame=(outer.width.saturating_sub(inner.width),outer.height.saturating_sub(inner.height));
-                        let max_w=(max_w-f64::from(frame.0)/scale).max(240.0);let max_h=(max_h-f64::from(frame.1)/scale).max(120.0);
-                        let size = (width.max(240.0).min(max_w), height.max(120.0).min(max_h));
-                        let measurement = json!({"w": size.0, "h": if m["a"] == "resize" { size.1 } else { height.max(120.0) }, "d": scale, "g": m["g"]});
-                        let (width, height) = popover_size(&measurement, max_h * scale / w.scale_factor(), w.scale_factor());
-                        let old_size = w.outer_size();
-                        let old_position = w.outer_position().ok();
-                        w.set_inner_size(PhysicalSize::new(width.min((max_w * scale) as u32), height));
-                        if m["a"] == "size" && settings.pin.size_anchor != "fixed" {
-                            if let (Some(p), Some(monitor)) = (old_position, w.current_monitor()) {
-                                let p = anchored_position((p.x,p.y),old_size.height as i32,((width+frame.0) as i32,(height+frame.1) as i32),work_area(&monitor),if settings.pin.size_anchor=="auto" { &settings.pin.auto_anchor } else { &settings.pin.size_anchor });
-                                w.set_outer_position(PhysicalPosition::new(p.0,p.1));
-                            }
-                        }
-                        if m["a"] == "resize" {
-                            settings.pin.size = Some(size);
-                            moved = true;
-                        }
-                        // pinned: the window stays where it was put; a move then keeps it in the work area
-                        if m["a"] == "size" && settings.pin.size_anchor == "fixed" && let (Some(r), false) = (anchor, settings.pin.pinned) {
-                            settings.pin.attached_edge = place(w, r, &mut settings.pin).into();
-                        }
-                    }
-                    "size-anchor" => {
-                        settings.pin.size_anchor = if let Some(value)=m["value"].as_str().filter(|v| ["auto","top","bottom","fixed"].contains(v)) {value.into()} else {return};
-                        if settings.pin.size_anchor == "fixed" { let size=client_size(w).to_logical::<f64>(w.scale_factor()); settings.pin.size=Some((size.width,size.height)); }
-                        settings.save(&install);
-                        reply!(&state(&install,&settings,dark,None,&adding,&mut sync));
-                    }
-                    "resize-end" => { settings.save(&install); }
-                    "hide" => w.set_visible(false),
-                    "top" => {
-                        settings.pin.top = !settings.pin.top;
-                        w.set_always_on_top(settings.pin.top);
-                        settings.save(&install);
-                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
-                    }
-                    "pin" | "drag" => {
-                        settings.pin.pinned = m["a"]=="drag" || !settings.pin.pinned;
-                        #[cfg(windows)]
-                        { use tao::platform::windows::WindowExtWindows; w.set_skip_taskbar(!settings.pin.pinned); }
-                        if let (true, Ok(p), Some(m)) = (settings.pin.pinned, w.outer_position(), w.current_monitor()) {
-                            settings.pin.display = key(&m);
-                            settings.pin.pos.insert(settings.pin.display.clone(), (p.x, p.y));
-                        }
-                        // unpin: back to the popover at the tray icon
-                        if let (false, Some(r)) = (settings.pin.pinned, anchor.or_else(|| tray.as_ref().and_then(TrayIcon::rect))) {
-                            settings.pin.attached_edge = place(w, r, &mut settings.pin).into();
-                        }
-                        settings.save(&install);
-                        w.set_focus();
-                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
-                        if m["a"]=="drag" { let _=w.drag_window(); }
-                    }
-                    "completed" => {
-                        let page=if snapshot.is_some() {Some(json!({"tasks":[],"more":false,"reason":"snapshot: no board read"}))} else {history_reads.submit(&m).err().map(|reason|json!({"tasks":[],"more":false,"reason":reason}))};
-                        if let Some(mut page)=page {page["root"]=m["root"].clone();page["id"]=m["id"].clone();reply!(&json!({"completed":page}));}
-                    }
-                    "reports" => {
-                        if let Err(reason)=report_actions.submit(&m) {reply!(&json!({"reportReceipt":{"id":m["id"],"root":m["root"],"reason":reason}}));}
-                    }
-                    "resources" => {
-                        let id=format!("resources-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_nanos()));
-                        let request=json!({"a":"resources","root":install,"id":id});
-                        if let Err(error)=resources_actions.submit(&request) {reply!(&json!({"resources_receipt":{"state":"rejected","reason":error}}));}
-                    }
-                    "open" => {
-                        if let Some(u) = m["url"].as_str().filter(|u| openable(u)) {
-                            open(u);
-                        }
-                    }
-                    "notification-state" => {
-                        let previous=settings.notify.clone();
-                        let reason=if !notify::inbox_set(&mut settings.notify,&m) {Some("Notification update rejected: invalid event identities")}
-                            else if !settings.save(&install) {settings.notify=previous;Some("Notification state was not saved; previous state retained")}
-                            else {None};
-                        reply!(&state(&install,&settings,dark,None,&adding,&mut sync));
-                        reply!(&json!({"notificationReceipt":{"reason":reason}}));
-                    }
-                    "notify" => {
-                        if notify::set(&mut settings.notify, &m) {
-                            settings.save(&install);
-                            notes(&install, &mut settings, &Value::Null, &mut asked, &mut bursts);
-                        }
-                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
-                    }
-                    "notify-test" if snapshot.is_none() => {
-                        if let Some(k) = m["kind"].as_str().filter(|k| notify::KINDS.contains(k)) {
-                            notify::post(&notify::sample(&settings.notify, k, now()));
-                        }
-                    }
-                    "task-pin" => {
-                        let st=state(&install,&settings,dark,None,&adding,&mut sync);
-                        let receipt=match task_pin(&mut settings,&install,&st,&m){Ok(dashboard)=>json!({"dashboard":dashboard}),Err(reason)=>json!({"viewStateError":reason})};
-                        reply!(&receipt);
-                    }
-                    "notify-os" => notify::open_settings(),
-                    "set" => {
-                        if let Err(error)=appearance_input(&m) {
-                            settings.opacity_error=Some(error);
-                            reply!(&state(&install,&settings,dark,None,&adding,&mut sync));return;
-                        }
-                        let appearance=["opacity","opacity_mode","background_opacity"].iter().any(|key|m.get(*key).is_some());
-                        let previous=settings.clone();
-                        settings.set(&m);
-                        if appearance {
-                            settings.opacity_error=match window_opacity(w,settings.native_opacity()) {
-                                Ok(())=>None,
-                                Err(error)=>{
-                                    settings=previous;
-                                    let rollback=window_opacity(w,settings.native_opacity()).err().map(|e|format!("; restore unknown: {e}")).unwrap_or_default();
-                                    Some(format!("Menu opacity was not applied: {error}{rollback}"))
-                                }
-                            };
-                        }
-                        let saved = (m.get("navigation").is_none() || settings.navigation == m["navigation"]) && settings.save(&install);
-                        if !saved && appearance {settings.opacity_error=Some("Opacity save failed; restart may restore the previous value".into());}
-                        if m.get("navigation").is_some() {
-                            let readback=saved&&crate::data::json(&install.join("tray.json")).ok().flatten().is_some_and(|v|v["navigation"]==settings.navigation);
-                            let error=if !readback {Some("tray.json: save/readback failed; view state persistence unknown")}else{None};
-                            if error.is_none() {if let (Some((_,wv)),Some(calls))=(&views_window,&mut views_web) && !calls.failed && !calls.pending.contains_key(&0) && m["navigation"]["dashboard"].is_object() {web_eval(wv,&format!("taskq.receive({})",json!({"dashboard":m["navigation"]["dashboard"]})),"tray.web.receive",&proxy,calls);}}
-                            push(&mut web, &ui, &json!({"viewStateError":error}));
-                            return;
-                        }
-                let st = state(&install, &settings, dark, None, &adding, &mut sync);
-                        refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));
-                        reply!(&st);
-                    }
-                    // `Edit limits` after the page's confirm: the same write as `service capacity` (§ 5), this host only
-                    "capacity" | "restart" | "stop" | "uninstall" | "recovery-read" | "recovery-apply" => {
-                        let root = m["root"].as_str().unwrap_or("");
-                        if snapshot.is_some() && m["a"]=="recovery-read" {
-                            let mut reply:Value=serde_json::from_str(include_str!("../tests/fixtures/recovery-review.json")).expect("invented recovery fixture");
-                            reply["root"]=m["root"].clone();reply["id"]=m["id"].clone();
-                            reply!(&json!({"capmsg":reply}));
-                        } else if let Err(error)=capacity_actions.submit(&m) {
-                            reply!(&json!({"capmsg": {"root": root, "id": m["id"], "state":"rejected","reason":error}}));
-                        }
-                    }
-                    // Add project (§ 4): the folder comes only from the OS picker, never from the page
-                    "add" if adding.is_null() => {
-                        add_generation=add_generation.wrapping_add(1);
-                        let generation=add_generation;
-                        adding = json!({"state": "picking", "generation":generation});
-                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
-                        if let Err(error)=add_actions.submit(generation,None) {adding=json!({"state":"add failed","reason":error});reply!(&state(&install,&settings,dark,None,&adding,&mut sync));}
-                    }
-                    "agentq-setup" | "agentq-dismiss" if snapshot.is_none() => {
-                        let error=crate::agentq::action(&install,m["a"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or(""),m["runtime"].as_str().unwrap_or("")).err();
-                        reply!(&json!({"agentqError":error}));
-                        reply!(&state(&install,&settings,dark,None,&adding,&mut sync));
-                    }
-                    "agentq-check" => {reply!(&state(&install,&settings,dark,None,&adding,&mut sync));}
-                    "add-cancel" if adding["state"]=="picking" => {
-                        add_generation=add_generation.wrapping_add(1);
-                        adding = json!({"state":"picking dismissed","generation":add_generation});
-                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
-                    }
-                    "add-cancel" if adding["state"]=="installing" => {
-                        add_generation=add_generation.wrapping_add(1);
-                        adding = json!({"state":"installing dismissed","generation":add_generation});
-                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
-                    }
-                    "add-cancel" => {adding=Value::Null;reply!(&state(&install,&settings,dark,None,&adding,&mut sync));}
-                    "add-install" if m["generation"].is_u64() && m["generation"]==adding["generation"] && adding["kind"] == "taskq" && adding["state"] == "picked" => {
-                        adding["state"] = json!("installing");
-                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
-                        let generation=adding["generation"].as_u64().unwrap_or(0);
-                        if let Err(error)=add_actions.submit(generation,Some(adding.clone())) {adding["state"]=json!("install failed");adding["reason"]=json!(error);reply!(&state(&install,&settings,dark,None,&adding,&mut sync));}
-                    }
-                    "add-setup" if m["generation"].is_u64() && m["generation"]==adding["generation"] && matches!(adding["kind"].as_str(), Some("new" | "plain")) => {
-                        if let Err(reason) = crate::setup::submit(&install, crate::runtime::OWNER, None, &[adding["path"].as_str().unwrap_or_default().to_string()]) {reply!(&json!({"aiError":reason}));}
-                        adding = Value::Null;
-                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
-                    }
-                    "add-install" | "add-setup" => reply!(&json!({"aiError":"Setup selection changed or was already submitted; read the current selection before confirming."})),
-                    a => {
-                        // only a registered project (§ 4): the page never names a path of its own
-                        let root = m["root"].as_str().unwrap_or("");
-                        if roots(&install).iter().any(|r| r == root) {
-                            let result=if matches!(a,"pause"|"resume"|"focus") {
-                                focus_actions.submit(&m)
-                            } else {act(a,Path::new(root),m["label"].as_str()).map(|_|())};
-                            if let Err(error) = result {
-                                let key=if matches!(a,"pause"|"resume"|"focus") {"focus_receipt"} else {"action_error"};
-                                reply!(&json!({key:{"root":root,"id":m["id"],"text":error}}));
-                            }
-                        } else if matches!(a,"pause"|"resume"|"focus") {
-                            reply!(&json!({"focus_receipt":{"root":root,"id":m["id"],"text":"Project is no longer registered; command not submitted"}}));
-                        }
-                    }
-                }
-            }
-            Event::UserEvent(Ev::Added(generation,v)) => {
-                if matches!(adding["state"].as_str(),Some("picking dismissed"|"installing dismissed"))&&add_generation==generation.wrapping_add(1) {adding=Value::Null;push(&mut web,&ui,&state(&install,&settings,dark,None,&adding,&mut sync));return;}
-                if !apply_added(&mut adding,add_generation,generation,v) {return;}
-                push(&mut web,&ui, &state(&install, &settings, dark, None, &adding, &mut sync));
-                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({})",workspace_snapshot(&state(&install,&settings,dark,None,&adding,&mut sync))),"tray.web.receive",&proxy,calls);}
-                if !adding.is_null() && let Some((w,_))=&workspace {
-                    w.set_visible(true);
-                    w.set_focus();
-                }
-            }
-            Event::UserEvent(Ev::Shot | Ev::Shot2) if web.failed => {}
-            // snapshot mode: per step push a state, wait for layout, capture, next
-            Event::UserEvent(Ev::Shot) => {
-                let dir = snapshot.clone().unwrap_or_default();
-                let steps = shots(&install, &routes);
-                if step == 0 {
-                    let _ = fs::create_dir_all(&dir);
-                }
-                if step==0 && agentq_shots {
-                    let warning=routes.iter().find_map(|r|agentq_fixture(r)).is_some_and(|f|f["warning"]==true);
-                    let empty=summary(&[],day(now()));
-                    for (name,full) in [("icon",false),("summary",true)] {
-                        let image=full.then(||draw(&empty,true,1.0,2.0).ok()).flatten().unwrap_or_else(||compact(false,true,2.0));
-                        fs::write(dir.join(format!("agentq-{name}.png")),agentq_mark(image,warning).png()).expect("write fixture icon");
-                    }
-                }
-                if step == 0 && (routes.is_empty() || routes.iter().any(|r| r == "icon")) {
-                    let ps: Vec<Value> = roots(&install).iter().map(|r| project(&install, r)).collect();
-                    let s = summary(&ps, settings.range(now()));
-                    // this Mac's menu-bar height and backing scale (A5); the names record them
-                    let (k, dpr) = (menu_bar_scale(), backing_scale());
-                    let size = format!("{}pt@{dpr}x", 22.0 * k);
-                    for (theme, d) in [("dark", true), ("light", false)] {
-                        for (mode, run) in [("run", true), ("pause", false)] {
-                            for n in [16u32,32,64,128,256,512,1024] {
-                                let _=fs::write(dir.join(format!("app-compact-{mode}-{theme}-{n}.png")),compact(run,d,n as f32/22.0).png());
-                            }
-                            let s = Summary { run, ..s.clone() };
-                            let _ = fs::write(dir.join(format!("icon-compact-{mode}-{theme}-{size}.png")), compact(run, d, k * dpr).png());
-                            for name in ["summary"] {
-                                if let Ok(img) = draw(&s, d, k, dpr) {
-                                    let _ = fs::write(dir.join(format!("icon-{name}-{mode}-{theme}-{size}.png")), img.png());
-                                }
-                            }
-                        }
-                    }
-                }
-                let Some((theme, page, font, script)) = steps.get(step).cloned() else {
-                    if !web.pending.is_empty() {
-                        shot_wait=Some(Ev::Shot);return;
-                    }
-                    println!("snapshots in {}", dir.display());
-                    if !overflow.is_empty() {
-                        eprintln!("horizontal overflow: {}", overflow.join(", "));
-                        crate::platform::exit(1);
-                    }
-                    if !capture_errors.is_empty(){eprintln!("native capture unavailable: {}",capture_errors.join("; "));crate::platform::exit(1);}
-                    *flow = ControlFlow::Exit;
-                    return;
-                };
-                let mut s = settings.clone();
-                s.font = font;
-                if opacity_shots {
-                    let (_,mode,value)=OPACITY_SHOTS.iter().find(|(js,_,_)|*js==script).expect("opacity snapshot");
-                    s.opacity_mode=(*mode).into();
-                    if *mode=="whole" {s.opacity=*value;} else {s.background_opacity=*value;}
-                    if let Some((w,_))=&ui {
-                        if let Err(error)=window_opacity(w,s.native_opacity()) {capture_errors.push(error);}
-                    }
-                }
-                let st=state(&install, &s, theme == "dark", Some((theme, &page)), &Value::Null, &mut crate::pending::Pending::default());
-                // the Conversations and question fixtures merge invented tasks into the real pushed state (palette, font, theme)
-                checkpoint_complete=false;
-                let merged=conversation_shots||ANSWERS.iter().any(|(_, s)| *s==script)||REPORT_SHOTS.iter().any(|(_,s)|*s==script);
-                if merged {if let Some((_, wv))=&ui {web_eval(wv,&format!("{script}({st})"),"tray.web.fixture",&proxy,&mut web);}}
-                else {push(&mut web,&ui,&st);}
-                if let (Some((_, wv)), false) = (&ui, script.is_empty() || merged) {
-                    web_eval(wv,script,"tray.web.fixture",&proxy,&mut web);
-                }
-                let p = proxy.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_millis(800));
-                    let _ = p.send_event(Ev::Shot2);
-                });
-            }
-            Event::UserEvent(Ev::Shot2) => {
-                let Some((window, wv)) = &ui else { return };
-                let dir = snapshot.clone().unwrap_or_default();
-                let p = proxy.clone();
-                let name = format!("popover-{}.png", shot_name(&install, &routes, step));
-                if !web.pending.is_empty() {
-                    shot_wait=Some(Ev::Shot2);return;
-                }
-                // the workspace page has no menu to measure
-                if routes.iter().any(|r|r=="conversations-checkpoint") && !checkpoint_complete {capture_errors.push(format!("{name}: native checkpoint did not complete"));}
-                if !conversation_shots {web_eval(wv,&format!("taskq.measure({})",json!(&name)),"tray.web.measure",&proxy,&mut web);}
-                #[cfg(windows)]
-                if opacity_shots {capture_errors.push(format!("{name}: native composition capture is unavailable on this snapshot adapter"));}
-                #[cfg(target_os="macos")]
-                if (agentq_shots||opacity_shots) && let Err(error)=capture_screen(window,&dir.join(format!("screen-{name}"))){capture_errors.push(format!("{name}: {error}"));}
-                step += 1;
-                capture(wv, dir.join(name), move || {
-                    let _ = p.send_event(Ev::Shot);
-                });
-            }
-            _ => {}
-        }
-    })
+    let queues=Queues::start(&install,&proxy)?;
+    let mut state=TrayState::new(lock,install,snapshot,routes,settings,proxy,queues,[opacity_shots,agentq_shots,views_shots,conversation_shots]);
+    event_loop.run(move |event,target,flow| state.handle(event,target,flow))
 }
 
 /// Physical inner size for a `size` message in CSS px; `max` is logical. The page renders at its own pixel ratio `d`:
