@@ -1173,14 +1173,18 @@ finally:
         t.running = || Err("probe timed out".into());
         assert_eq!(t.exited(), Err("probe timed out".into()), "failed app query cannot become an exit");
         for windows in [false, true] {
-            assert!(app_presence("unreadable", windows).is_err());
-            assert_eq!(app_presence("", windows), Ok(false));
+            assert!(app_presence(b"unreadable", windows).is_err());
+            assert_eq!(app_presence(b"", windows), Ok(false));
         }
-        assert_eq!(app_presence("ASN:0x0-0x12-\"Codex\":\n", false), Ok(true));
-        assert_eq!(app_presence("\"Codex.exe\",\"42\",\"OpenAI.Codex_1\"\n", true), Ok(true));
-        assert_eq!(app_presence("\"other.exe\",\"43\",\"Other\"\n", true), Ok(false));
-        assert!(app_presence("\"other.exe\",\"unknown\",\"Other\"\n", true).is_err());
-        assert!(app_presence("ASN:0xbad:", false).is_err());
+        assert_eq!(app_presence(b"ASN:0x0-0x12-\"Codex\":\n", false), Ok(true));
+        assert_eq!(app_presence(b"\"Codex.exe\",\"42\",\"OpenAI.Codex_1\"\n", true), Ok(true));
+        assert_eq!(app_presence(b"\"other.exe\",\"43\",\"Other\"\n", true), Ok(false));
+        assert!(app_presence(b"\"other.exe\",\"unknown\",\"Other\"\n", true).is_err());
+        assert!(app_presence(b"ASN:0xbad:", false).is_err());
+        assert_eq!(app_presence(b"\"other-\x82.exe\",\"43\",\"Other\"\n\"Codex.exe\",\"42\",\"OpenAI.Codex_1\"\n",true),Ok(true));
+        assert_eq!(app_presence(b"\"other-\x82.exe\",\"43\",\"Other\"\n",true),Ok(false));
+        assert!(app_presence(b"\"other-\x82.exe\",\"unknown\",\"Other\"\n",true).is_err());
+        assert!(app_presence(b"ASN:0x0-0x12-\"\xff\":\n",false).is_err());
         std::fs::remove_file(p).unwrap();
     }
 

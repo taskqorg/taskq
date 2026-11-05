@@ -142,25 +142,35 @@ fn trait_scope_retains_descendants_after_launcher_exit() {
 #[ignore = "paid native qualification; TASKQ_NATIVE_RUNTIME and TASKQ_NATIVE_INSTALL require owner approval"]
 fn native_trait_start_resume_and_transcript() {
     let rt=std::env::var("TASKQ_NATIVE_RUNTIME").expect("TASKQ_NATIVE_RUNTIME");
-    assert!(RuntimeId::parse(&rt).is_some() && of(&rt).has(Cap::Cli));
+    assert!(RuntimeId::parse(&rt).is_some());
     let install=PathBuf::from(std::env::var_os("TASKQ_NATIVE_INSTALL").expect("TASKQ_NATIVE_INSTALL"));
     let host=crate::host::Policy::read_for_hostname(&install,crate::config::hostname).unwrap();
     assert!(host.cap.limits.get(&rt).is_none_or(|limit|*limit>0),"disabled runtime is not probe authority");
-    let root=Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root=std::env::var_os("TASKQ_NATIVE_ROOT").map(PathBuf::from).unwrap_or_else(||PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    let root=root.as_path();
     let exe=std::env::current_exe().unwrap();
     let authority=Env{context:"",root,exe:&exe,install:&install,permission_mode:&host.permission_mode,codex:&host.codex,delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
-    let access=access(&authority,&rt).unwrap();
+    access(&authority,&rt).unwrap();
     let evidence=std::env::temp_dir().join(format!("taskq-native-qualification-2427-{}",uuid()));
     let fixture=evidence.join("install");std::fs::create_dir_all(&fixture).unwrap();
+    println!("evidence={}",evidence.display());
     let env=Env{install:&fixture,..authority};
     let log=evidence.join("native.log");File::create(&log).unwrap();
     let mut session=String::from("-");let mut rows=vec![];
     for resume in [false,true] {
+        let access=access(&authority,&rt).unwrap();
         let canary=format!("TaskQ-Qualification-2427-{}",uuid());
         let text=format!("This is an approved non-task TaskQ Qualification probe. Reply with exactly {canary}. Do no work, edit no files, run no commands and make no taskq or board writes. Read this turn's input file if the launcher refers to it; use no other tools.");
         let l=Launch{files:String::new(),execution:None,task:0,title:"TaskQ Qualification 2427".into(),attempt:0,role:"operator".into(),rt:rt.clone(),session:session.clone(),url:String::new(),resume:resume.then(||text.clone())};
+        std::fs::write(evidence.join(format!("input-{resume}.json")),serde_json::to_vec_pretty(&serde_json::json!({"runtime":rt,"resume":resume,"session":session,"input":text,"access":access.json()})).unwrap()).unwrap();
         let pos=std::fs::metadata(&log).unwrap().len();
-        let mut proc:Box<dyn Proc>=if of(&rt).has(Cap::Background) {
+        let mut proc:Box<dyn Proc>=if of(&rt).has(Cap::AppTurn) {
+            assert!(app_running().unwrap(),"the existing signed-in app must be running");
+            let mut turn=AppTurn{root:root.canonicalize().unwrap(),history:AppHistory::default(),hand:None,log:log.clone(),text:text.clone(),_input:None,binding:None,thread:session.clone(),done:0,rollout:None,running:app_running,control:app_cancel,cancelled:false,queue_error:None,accepted:false};
+            if resume {turn.queue().unwrap();}
+            else {turn.hand=Some(start(&env,&l,&log,HANDSHAKE,&access).unwrap());}
+            Box::new(turn)
+        } else if of(&rt).has(Cap::Background) {
             Box::new(ClaudeTurn::start(&env,&l,&log,&text,&access).unwrap())
         } else {
             let child=start(&env,&l,&log,&text,&access).unwrap();let native=child.native_identity().ok();
@@ -176,11 +186,13 @@ fn native_trait_start_resume_and_transcript() {
             if std::time::Instant::now()>=until {let cleanup=stop(proc.as_mut());panic!("native qualification timed out; cleanup={cleanup:?}; evidence={}",evidence.display());}
             std::thread::sleep(std::time::Duration::from_millis(200));
         };
-        assert!(proc.accepted().unwrap(),"native input must be accepted independently of exit");
+        let accepted=proc.accepted();
+        std::fs::write(evidence.join(format!("exit-{resume}.json")),serde_json::to_vec_pretty(&serde_json::json!({"exit":exit,"accepted":accepted,"session":native_session(&rt,&log)})).unwrap()).unwrap();
+        assert!(accepted.unwrap(),"native input must be accepted independently of exit");
         let id=native_session(&rt,&log).expect("native session receipt");
         if resume {assert_eq!(id,session,"resume cannot create a replacement session");}
         session=id;
-        let native=owner::transcript(&rt,&session).unwrap();
+        let (_,native)=worker_transcript(&rt,&session,&log).unwrap();
         assert!(std::fs::read_to_string(&native).unwrap().contains(&canary),"native transcript must contain this turn's fresh canary");
         let page=crate::dialogue::worker_transcript(&format!("{rt}:{session}"),&log,None,None).unwrap();
         assert!(page["items"].as_array().unwrap().iter().any(|item|item["role"]=="assistant" && item["text"].as_str().is_some_and(|text|text.contains(&canary))),"TaskQ transcript must show the same native reply");

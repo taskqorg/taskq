@@ -2427,12 +2427,14 @@ fn app_running() -> Result<bool, String> {
         c.args(["find", "bundleID=com.openai.codex"]);
     }
     let out = coreq::process::output("runtime.app-presence", &mut c, observation_left(std::time::Duration::from_secs(10))).map_err(|e| format!("Codex app presence unknown: {e}"))?;
-    let text = std::str::from_utf8(&out.stdout).map_err(|_| "Codex app presence returned invalid UTF-8")?;
-    app_presence(text, cfg!(windows))
+    app_presence(&out.stdout, cfg!(windows))
     }, |_| "readback")
 }
 
-fn app_presence(text: &str, windows: bool) -> Result<bool, String> {
+fn app_presence(output: &[u8], windows: bool) -> Result<bool, String> {
+    // Without a console tasklist uses an OEM code page; its CSV syntax, PID and package prefix are ASCII.
+    let text = if windows { std::borrow::Cow::Owned(output.iter().map(|b| char::from(*b)).collect::<String>()) }
+        else { std::borrow::Cow::Borrowed(std::str::from_utf8(output).map_err(|_| "Codex app presence returned invalid UTF-8")?) };
     if text.trim().is_empty() { return Ok(false); }
     if windows {
         let mut found = false;
