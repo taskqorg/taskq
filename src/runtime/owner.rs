@@ -284,6 +284,9 @@ pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
 #[derive(Default)]
 struct TranscriptPaths { home:PathBuf, dirs:Vec<(PathBuf,std::time::SystemTime)>, paths:std::collections::BTreeMap<String,(PathBuf,bool)> }
 static TRANSCRIPT_PATHS:std::sync::Mutex<Vec<TranscriptPaths>>=std::sync::Mutex::new(Vec::new());
+// A directory change in the clock tick of its last change keeps the stamp (NTFS: seen on 26 of 100 immediate changes).
+// Only a stamp this much older than the scan start proves that a later change will show; 2 s is the coarsest tick (FAT).
+pub(crate) const STAMP_SETTLE:std::time::Duration=std::time::Duration::from_secs(2);
 
 pub(crate) fn codex_transcript_in(home: &Path, session: &str) -> Res<PathBuf> {
     crate::profile::source_read(||codex_path(home,session))
@@ -298,7 +301,7 @@ fn codex_path(home:&Path,session:&str)->Res<PathBuf> {
     let reuse=true;
     #[cfg(test)] let reuse=!crate::profile::SOURCE_BASELINE.get();
     if reuse && let Some((path,true))=&prior && !cache.dirs.is_empty() && cache.dirs.iter().all(|(p,at)|{crate::profile::source_count("path_directory_checks",1);fs::metadata(p).and_then(|m|m.modified()).ok().as_ref()==Some(at)}) {crate::profile::source_count("path_cache_hits",1);return Ok(path.clone());}
-    let suffix = format!("-{session}.jsonl");
+    let suffix = format!("-{session}.jsonl");let started=std::time::SystemTime::now();
     let (mut found, mut dirs, mut seen,mut stamps) = (vec![], vec![(home.join("sessions"), 0)], 0,vec![]);
     while let Some((dir, depth)) = dirs.pop() {
         crate::profile::source_count("path_directories_scanned",1);
@@ -322,7 +325,9 @@ fn codex_path(home:&Path,session:&str)->Res<PathBuf> {
     // Directory stamps detect tree changes, not transcript integrity; AgentQ still verifies the file every read.
     // shortcut: cache at most 4096 directories / 64 sessions per account; larger trees keep the bounded full scan.
     // Invalidate other sessions' scan proof while retaining their accepted path fences.
-    if stamps.len()<=4096 {if cache.dirs!=stamps {for (_,verified) in cache.paths.values_mut(){*verified=false;}}cache.dirs=stamps;if cache.paths.len()>=64&&!cache.paths.contains_key(session){cache.paths.pop_first();}cache.paths.insert(session.into(),(path.clone(),true));}
+    // A stamp not yet settled (or ahead of this clock) keeps the path fence but proves nothing: the next read scans again.
+    let settled=stamps.iter().all(|(_,at)|started.duration_since(*at).is_ok_and(|age|age>=STAMP_SETTLE));
+    if stamps.len()<=4096 {if cache.dirs!=stamps {for (_,verified) in cache.paths.values_mut(){*verified=false;}}cache.dirs=stamps;if cache.paths.len()>=64&&!cache.paths.contains_key(session){cache.paths.pop_first();}cache.paths.insert(session.into(),(path.clone(),settled));}
     Ok(path)
 }
 
@@ -469,11 +474,12 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // A5: a warm directory memo avoids entry scans, but tree changes still reveal ambiguity and lost paths refuse.
+    // A5: a warm directory memo avoids entry scans once its stamps settle, but tree changes still reveal ambiguity and lost paths refuse.
     #[test]
     fn codex_path_memo_revalidates_tree_and_never_substitutes_lost_source() {
         let root=std::env::temp_dir().join(format!("taskq-source-paths-{}",super::super::uuid()));
         let dir=root.join("sessions/2026/11/05");fs::create_dir_all(&dir).unwrap();let session=super::super::uuid();let file=format!("rollout-invented-{session}.jsonl");let path=dir.join(&file);fs::write(&path,"invented").unwrap();
+        std::thread::sleep(STAMP_SETTLE+std::time::Duration::from_millis(100));
         assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);
         assert_eq!(crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().get("path_cache_hits").copied()),Some(1));
         let duplicate=root.join("sessions/2026/11/06");fs::create_dir_all(&duplicate).unwrap();fs::write(duplicate.join(&file),"invented").unwrap();
@@ -483,6 +489,35 @@ mod tests {
         let other=super::super::uuid();fs::write(duplicate.join(format!("rollout-invented-{other}.jsonl")),"invented").unwrap();
         codex_transcript_in(&root,&other).unwrap();
         assert!(codex_transcript_in(&root,&session).unwrap_err().contains("lost"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Puts a directory back on an exact stamp, as a change within one filesystem clock tick leaves it.
+    fn restore_stamp(dir:&Path,at:std::time::SystemTime){
+        #[cfg(windows)] let handle={use std::os::windows::fs::OpenOptionsExt;fs::OpenOptions::new().access_mode(0x100).custom_flags(0x0200_0000).open(dir).unwrap()};// FILE_WRITE_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS
+        #[cfg(not(windows))] let handle=fs::File::open(dir).unwrap();
+        handle.set_modified(at).unwrap();assert_eq!(fs::metadata(dir).unwrap().modified().unwrap(),at,"fixture must keep the stamp unchanged");
+    }
+
+    // #2415 R12: a tree change in the clock tick of a just-recorded stamp keeps that stamp, so a fresh stamp proves nothing.
+    // Forcing the collision makes the Windows race deterministic: unfixed, the memo returned Ok for the duplicate.
+    #[test]
+    fn colliding_directory_stamps_never_hide_a_duplicate_or_replace_a_source() {
+        let root=std::env::temp_dir().join(format!("taskq-source-collision-{}",super::super::uuid()));
+        let month=root.join("sessions/2026/11");let dir=month.join("05");fs::create_dir_all(&dir).unwrap();
+        let session=super::super::uuid();let file=format!("rollout-invented-{session}.jsonl");let path=dir.join(&file);fs::write(&path,"invented").unwrap();
+        assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);
+        assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);
+        assert_eq!(crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().get("path_cache_hits").copied()),None,"a fresh stamp is no scan proof");
+        let stamp=fs::metadata(&month).unwrap().modified().unwrap();
+        let duplicate=month.join("06");fs::create_dir_all(&duplicate).unwrap();fs::write(duplicate.join(&file),"invented").unwrap();restore_stamp(&month,stamp);
+        assert!(codex_transcript_in(&root,&session).unwrap_err().contains("multiple"),"duplicate stays unknown under colliding stamps");
+        // Removing the duplicate keeps the accepted source; a replacement after losing it never substitutes.
+        fs::remove_dir_all(&duplicate).unwrap();restore_stamp(&month,stamp);
+        assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);
+        fs::remove_file(&path).unwrap();let moved=month.join("07");fs::create_dir_all(&moved).unwrap();fs::write(moved.join(&file),"invented").unwrap();restore_stamp(&month,stamp);
+        assert!(codex_transcript_in(&root,&session).unwrap_err().contains("lost"),"a replaced source stays refused");
+        assert!(codex_transcript_in(&root,&super::super::uuid()).unwrap_err().contains("unavailable"),"a missing source stays unknown");
         fs::remove_dir_all(root).unwrap();
     }
 

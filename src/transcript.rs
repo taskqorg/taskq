@@ -493,6 +493,7 @@ mod tests {
             let path=sessions.join(format!("rollout-invented-{session}.jsonl"));
             let row=json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"invented ".repeat(128)}]}}).to_string()+"\n";
             fs::write(&path,row.repeat(count)).unwrap();for n in 0..1000 {fs::write(sessions.join(format!("irrelevant-{n}")),"").unwrap();}
+            std::thread::sleep(crate::runtime::owner::STAMP_SETTLE+std::time::Duration::from_millis(100));
             for baseline in [true,false] {
                 crate::profile::SOURCE_BASELINE.set(baseline);
                 let resolve=std::time::Instant::now();assert_eq!(crate::runtime::owner::codex_transcript_in(&dir,&session).unwrap(),path);
