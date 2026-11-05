@@ -29,4 +29,31 @@ unavailable, so their precise ordering remains unknown (R12).
 
 ## Verification
 
-Pending before/after run. No owner rule or existing guarding assertion changes.
+Checkpoint commit: `4ee0fff1` (behavior unchanged).
+
+`cargo test --locked --bin taskq incremental_lag_reconciles -- --nocapture`
+failed before the fix: `accepted report stranded by incremental cursor (restart=false)`.
+The initial attempt could not build without esbuild; `npm ci` supplied the locked
+build dependencies before this failure was observed.
+
+The fix overlaps the existing task-labelled read by `LIST_LAG + 1`, preserving
+full-scan cadence and conditional-request URL reuse when the board is unchanged.
+A disposable `incremental_overlap` version marker makes older caches rebuild
+once: otherwise a missed decision older than the retained verified time minus
+five minutes could remain undiscoverable even after restart. No decision write,
+host policy, lifecycle rule or existing guarding assertion changes.
+
+Refresh interpretation: reports.md requires incremental collection on ordinary
+passes, and the collector schedules every `min(3 * poll, ttl / 2)` seconds.
+Under the existing five-minute board-lag assumption, discovery now takes the
+first completed due collection after list/comment lag clears, rather than the
+thirty-minute full scan. Service-pass scheduling and board-read duration still
+apply; stalled or failed reads remain unknown. The regression removes the accept
+at 362 simulated seconds, before the full scan, including restart. It separately
+checks an old cache already 601 seconds past the missed decision and verifies
+that repair writes no comments. This is collector/model evidence, not an installed
+service qualification (R12).
+
+Final checks are recorded in the task result. The reports module retains its
+SHA/trust/edit, pagination, late-comment, missing-source and idempotent-write
+protections; no existing assertions were weakened.

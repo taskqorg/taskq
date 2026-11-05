@@ -148,7 +148,8 @@ impl Cache {
         // A restart resumes the stored cursor; rows keep their read proof, so only issues that moved re-read comments.
         // #2087: a cache written without the list-lag overlap may have missed an update for good; list it once in full.
         // #2091: rows read before a settled proof was required may hold a lagging comment read for good; same once-only relist.
-        let verified=value["verified"].as_i64().filter(|_|value["overlap"]==LIST_LAG&&value["settle"]==LIST_LAG);
+        // #2439: older task-list cursors may already have skipped a decision; rebuild once.
+        let verified=value["verified"].as_i64().filter(|_|value["overlap"]==LIST_LAG&&value["settle"]==LIST_LAG&&value["incremental_overlap"]==LIST_LAG);
         Self{entries,value,verified,full:None,cursor:None}
     }
     pub fn collect(&mut self,b:&dyn Board) {
@@ -156,7 +157,8 @@ impl Cache {
             // Start before paging: updates racing a later page must remain inside the next overlap.
             let verified=b.now()?;
             let full=self.cursor.is_none() || self.full.is_none_or(|t|verified-t>=FULL_SCAN||t>verified);
-            let since=self.verified.map(|v|if full {self.full.unwrap_or(v).min(v)-LIST_LAG-1} else {self.cursor.unwrap_or(v-1).min(v-1)});
+            // R1/R6: task-labelled lists lag too. A newer task must not advance past an omitted decision.
+            let since=self.verified.map(|v|if full {self.full.unwrap_or(v).min(v)-LIST_LAG-1} else {self.cursor.unwrap_or(v-1).min(v-1)-LIST_LAG-1});
             let issues=coreq::telemetry::capture::operation("reports.collect.list",|| -> Res<Vec<(Issue,i64)>> {
                 if let Some(since)=since {
                     let issues=if full {b.issues(Some(since))?} else {b.tasks(since)?};
@@ -218,7 +220,7 @@ impl Cache {
             let mut rows:Vec<Value>=self.entries.values().filter_map(|(at,proof,r)|r.clone().map(|mut r|{r["updated"]=json!(at);r["proof"]=json!(proof);r})).collect();
             rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
             let visible:Vec<_>=rows.iter().filter(|r|r["visible"]==true).collect();let archived:Vec<_>=rows.iter().filter(|r|r["visible"]!=true).collect();
-            Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now(),"verified":self.verified,"overlap":LIST_LAG,"settle":LIST_LAG}))
+            Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now(),"verified":self.verified,"overlap":LIST_LAG,"settle":LIST_LAG,"incremental_overlap":LIST_LAG}))
         },|_|"board-read");
         match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(shown("collect",&reason.to_string(),brief(&reason.to_string())));}}
     }
@@ -890,6 +892,21 @@ mod tests {
             assert_eq!(cache.value["history"][0]["sha"],sha);
             assert_eq!(cache.value["history"][0]["decision"],"accepted");
         }
+    }
+
+    // R1/R12: caches from before the incremental overlap must heal even after the decision left the window.
+    #[test] fn pre_overlap_cache_rebuilds_an_already_stranded_accept() {
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);
+        b.advance(LIST_LAG+1);cache.collect(&b);
+        b.raw(n,&format!("taskq: report-accept {sha}"),true,false);
+        let writes=b.state.borrow().comments.len();b.advance(601);
+        let mut stale=cache.value.clone();stale["verified"]=json!(b.now().unwrap());
+        stale.as_object_mut().unwrap().remove("incremental_overlap");
+        let mut restarted=Cache::retaining(stale);restarted.collect(&b);
+        assert!(decide(&restarted.value,b.now().unwrap())["rows"].as_array().unwrap().is_empty());
+        assert!(restarted.value["reports"].as_array().unwrap().is_empty());
+        assert_eq!(restarted.value["history"][0]["decision"],"accepted");
+        assert_eq!(b.state.borrow().comments.len(),writes,"healing never replays decisions");
     }
 
     // #2091 A2: a comment read soon after an accept can lag it; the cache then held the report at the issue's current update
