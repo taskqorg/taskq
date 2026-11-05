@@ -1,218 +1,561 @@
-use serde_json::{Value,json};
-use std::{fs,process::Command,time::{Duration,SystemTime,UNIX_EPOCH}};
+use serde_json::{Value, json};
+use std::{
+    fs,
+    process::Command,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 // H-A1/H-A5: actual status/list CLI -> same native observation from any cwd; generation fences project caches.
 #[test]
 fn service_status_observes_exact_owner_without_project_cwd() {
-    let stamp=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let base=std::env::temp_dir().join(format!("taskq-host-observation-{}-{stamp}",std::process::id()));
-    let install=base.join("install");let root=base.join("project");let outside=base.join("unrelated");
-    for dir in [&install,&outside,&root.join(".taskq")] {fs::create_dir_all(dir).unwrap();}
-    fs::write(root.join("taskq.json"),json!({"repo":"fixture/project"}).to_string()).unwrap();
-    fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-    let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
-    let now=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let mut record=json!({"schema":1,"pid":native.pid,"started":native.started,"instance":"run-a","at":now,"version":"fixture"});
-    fs::write(install.join("service"),record.to_string()).unwrap();
-    fs::write(root.join(".taskq/status.json"),json!({"pid":native.pid,"host_instance":"run-a","at":now,"complete":false}).to_string()).unwrap();
-    let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
-    let command=|cwd:&std::path::Path,args:&[&str]| {
-        let began=std::time::Instant::now();
-        let output=match coreq::process::output("test.host-status",Command::new(env!("CARGO_BIN_EXE_taskq"))
-            .args(args).current_dir(cwd).env("TASKQ_INSTALL",&install).env_remove("TASKQ_ROOT")
-            .env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT")
-            .env("TASKQ_INCIDENT_REPORTS","off"),budget) {
-            Ok(out)=>{eprintln!("host observation {args:?}: elapsed={:?}",began.elapsed());out},
-            Err(error)=>panic!("host observation {args:?}: {error}; elapsed={:?}, budget={budget:?}",began.elapsed()),
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let base = std::env::temp_dir().join(format!(
+        "taskq-host-observation-{}-{stamp}",
+        std::process::id()
+    ));
+    let install = base.join("install");
+    let root = base.join("project");
+    let outside = base.join("unrelated");
+    for dir in [&install, &outside, &root.join(".taskq")] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    fs::write(
+        root.join("taskq.json"),
+        json!({"repo":"fixture/project"}).to_string(),
+    )
+    .unwrap();
+    fs::write(install.join("projects"), format!("{}\n", root.display())).unwrap();
+    let native = coreq::process::identity(std::process::id())
+        .unwrap()
+        .unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut record = json!({"schema":1,"pid":native.pid,"started":native.started,"instance":"run-a","at":now,"version":"fixture"});
+    fs::write(install.join("service"), record.to_string()).unwrap();
+    fs::write(
+        root.join(".taskq/status.json"),
+        json!({"pid":native.pid,"host_instance":"run-a","at":now,"complete":false}).to_string(),
+    )
+    .unwrap();
+    let budget = Duration::from_secs(if cfg!(windows) { 60 } else { 10 });
+    let command = |cwd: &std::path::Path, args: &[&str]| {
+        let began = std::time::Instant::now();
+        let output = match coreq::process::output(
+            "test.host-status",
+            Command::new(env!("CARGO_BIN_EXE_taskq"))
+                .args(args)
+                .current_dir(cwd)
+                .env("TASKQ_INSTALL", &install)
+                .env_remove("TASKQ_ROOT")
+                .env_remove("TASKQ_ATTEMPT")
+                .env_remove("TASKQ_TASK")
+                .env_remove("COREQ_TRACE_CONTEXT")
+                .env("TASKQ_INCIDENT_REPORTS", "off"),
+            budget,
+        ) {
+            Ok(out) => {
+                eprintln!("host observation {args:?}: elapsed={:?}", began.elapsed());
+                out
+            }
+            Err(error) => panic!(
+                "host observation {args:?}: {error}; elapsed={:?}, budget={budget:?}",
+                began.elapsed()
+            ),
         };
-        assert!(output.status.success());output
+        assert!(output.status.success());
+        output
     };
-    let run=|cwd:&std::path::Path,args:&[&str]|serde_json::from_slice::<Value>(&command(cwd,args).stdout).unwrap();
-    for cwd in [&install,&root,&outside] {
-        for verb in ["status","list"] {
-            let report=run(cwd,&["service",verb,"--json"]);
-            assert_eq!(report["service"]["state"],"running");assert_eq!(report["service"]["instance"],"run-a");
-            assert_eq!(report["projects"].as_array().unwrap().len(),1);
-            assert_eq!(report["projects"][0]["root"],root.to_str().unwrap());assert_eq!(report["projects"][0]["host_binding"],"current");
+    let run = |cwd: &std::path::Path, args: &[&str]| {
+        serde_json::from_slice::<Value>(&command(cwd, args).stdout).unwrap()
+    };
+    for cwd in [&install, &root, &outside] {
+        for verb in ["status", "list"] {
+            let report = run(cwd, &["service", verb, "--json"]);
+            assert_eq!(report["service"]["state"], "running");
+            assert_eq!(report["service"]["instance"], "run-a");
+            assert_eq!(report["projects"].as_array().unwrap().len(), 1);
+            assert_eq!(report["projects"][0]["root"], root.to_str().unwrap());
+            assert_eq!(report["projects"][0]["host_binding"], "current");
         }
     }
-    record["instance"]=json!("run-b");fs::write(install.join("service"),record.to_string()).unwrap();
-    let report=run(&outside,&["service","status","--json"]);
-    assert_eq!(report["service"]["instance"],"run-b");assert_eq!(report["projects"][0]["host_binding"],"other","same PID cannot confirm another host generation");
-    for cache in [json!({"pid":native.pid}),json!({"pid":0,"host_instance":"run-b"}),json!({"pid":native.pid,"host_instance":"bad generation"})] {
-        fs::write(root.join(".taskq/status.json"),cache.to_string()).unwrap();
-        assert_eq!(run(&outside,&["service","status","--json"])["projects"][0]["host_binding"],"unknown");
+    record["instance"] = json!("run-b");
+    fs::write(install.join("service"), record.to_string()).unwrap();
+    let report = run(&outside, &["service", "status", "--json"]);
+    assert_eq!(report["service"]["instance"], "run-b");
+    assert_eq!(
+        report["projects"][0]["host_binding"], "other",
+        "same PID cannot confirm another host generation"
+    );
+    for cache in [
+        json!({"pid":native.pid}),
+        json!({"pid":0,"host_instance":"run-b"}),
+        json!({"pid":native.pid,"host_instance":"bad generation"}),
+    ] {
+        fs::write(root.join(".taskq/status.json"), cache.to_string()).unwrap();
+        assert_eq!(
+            run(&outside, &["service", "status", "--json"])["projects"][0]["host_binding"],
+            "unknown"
+        );
     }
-    fs::write(root.join(".taskq/status.json"),json!({"pid":native.pid,"host_instance":"run-b","incident_notice":true}).to_string()).unwrap();
-    fs::write(root.join("taskq.json"),json!({"repo":"fixture/project","incident_reports":false}).to_string()).unwrap();
-    let text=String::from_utf8(command(&outside,&["service","status"]).stdout).unwrap();
-    assert!(text.contains("Service: running (host, pid"));assert!(text.contains("Project owner: current"));
-    assert!(text.contains("Incident reports: notice"),"status lost its retained disclosure: {text}");
-    fs::write(root.join(".taskq/status.json"),"{").unwrap();
-    let report=run(&outside,&["service","status","--json"]);
-    assert_eq!(report["service"]["state"],"running");assert!(report["projects"][0]["error"].is_string());
-    assert_eq!(fs::read_to_string(root.join(".taskq/status.json")).unwrap(),"{");
-    fs::write(install.join("projects"),"relative\n").unwrap();
-    let report=run(&outside,&["service","status","--json"]);
-    assert_eq!(report["service"]["state"],"running");assert!(report["projects"].as_array().unwrap().is_empty());assert!(report["registry_error"].is_string());
-    record["schema"]=json!(2);let unknown=record.to_string();fs::write(install.join("service"),&unknown).unwrap();
-    assert_eq!(run(&outside,&["service","status","--json"])["service"]["state"],"unknown");
-    assert_eq!(fs::read_to_string(install.join("service")).unwrap(),unknown);
+    fs::write(
+        root.join(".taskq/status.json"),
+        json!({"pid":native.pid,"host_instance":"run-b","incident_notice":true}).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        root.join("taskq.json"),
+        json!({"repo":"fixture/project","incident_reports":false}).to_string(),
+    )
+    .unwrap();
+    let text = String::from_utf8(command(&outside, &["service", "status"]).stdout).unwrap();
+    assert!(text.contains("Service: running (host, pid"));
+    assert!(text.contains("Project owner: current"));
+    assert!(
+        text.contains("Incident reports: notice"),
+        "status lost its retained disclosure: {text}"
+    );
+    fs::write(root.join(".taskq/status.json"), "{").unwrap();
+    let report = run(&outside, &["service", "status", "--json"]);
+    assert_eq!(report["service"]["state"], "running");
+    assert!(report["projects"][0]["error"].is_string());
+    assert_eq!(
+        fs::read_to_string(root.join(".taskq/status.json")).unwrap(),
+        "{"
+    );
+    fs::write(install.join("projects"), "relative\n").unwrap();
+    let report = run(&outside, &["service", "status", "--json"]);
+    assert_eq!(report["service"]["state"], "running");
+    assert!(report["projects"].as_array().unwrap().is_empty());
+    assert!(report["registry_error"].is_string());
+    record["schema"] = json!(2);
+    let unknown = record.to_string();
+    fs::write(install.join("service"), &unknown).unwrap();
+    assert_eq!(
+        run(&outside, &["service", "status", "--json"])["service"]["state"],
+        "unknown"
+    );
+    assert_eq!(
+        fs::read_to_string(install.join("service")).unwrap(),
+        unknown
+    );
     fs::remove_dir_all(base).unwrap();
 }
 
 // H-A2: actual CLI -> authoritative host edit/readback; project caps and private owner fields stay intact.
 #[test]
 fn capacity_command_changes_host_policy_not_project_settings() {
-    let stamp=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let base=std::env::temp_dir().join(format!("taskq-host-policy-{}-{stamp}",std::process::id()));
-    let root=base.join("project");
-    let install=base.join("install");fs::create_dir_all(root.join(".taskq")).unwrap();fs::create_dir(&install).unwrap();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let base =
+        std::env::temp_dir().join(format!("taskq-host-policy-{}-{stamp}", std::process::id()));
+    let root = base.join("project");
+    let install = base.join("install");
+    fs::create_dir_all(root.join(".taskq")).unwrap();
+    fs::create_dir(&install).unwrap();
     let project=json!({"repo":"fixture/project","limits":{"codex":1},"admission":{"mode":"auto"},"owner_field":"preserve"}).to_string();
-    fs::write(root.join("taskq.json"),&project).unwrap();
+    fs::write(root.join("taskq.json"), &project).unwrap();
     fs::write(install.join("host.json"),json!({"limits":{"codex":2},"codex":["-s","workspace-write"],"permission_mode":"dontAsk","owner_field":"host-private"}).to_string()).unwrap();
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(install.join("host.json"),fs::Permissions::from_mode(0o600)).unwrap();
+        fs::set_permissions(install.join("host.json"), fs::Permissions::from_mode(0o600)).unwrap();
     }
-    let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
+    let budget = Duration::from_secs(if cfg!(windows) { 60 } else { 10 });
     // Keep this observation future for the entire bounded CLI startup, including a loaded Windows host.
-    let at=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()+budget.as_secs()+1;
-    let host=json!({"limits":{"codex":3},"load_gate":{"enabled":true,"cpu_max":90,"memory_min":10},"admission":{"mode":"auto","max":null}});
+    let at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + budget.as_secs()
+        + 1;
+    let host = json!({"limits":{"codex":3},"load_gate":{"enabled":true,"cpu_max":90,"memory_min":10},"admission":{"mode":"auto","max":null}});
     // Include the explicit host policy alongside the project-effective snapshot; no running service or board.
-    let mut capacity=host.clone();capacity["host_policy"]=host;capacity["limits"]["codex"]=json!(1);
-    fs::write(root.join(".taskq/status.json"),json!({"host":"fixture-host","at":at,"capacity":capacity}).to_string()).unwrap();
-    fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-    let run_in=|cwd:&std::path::Path,args:&[&str]|{let began=std::time::Instant::now();match coreq::process::output("test.host-policy",Command::new(env!("CARGO_BIN_EXE_taskq"))
-        .args(args)
-        .env("TASKQ_INSTALL",&install).env_remove("TASKQ_ROOT").env("TASKQ_HOST","fixture-host")
-        .env("TASKQ_INCIDENT_REPORTS","off").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK")
-        .env_remove("COREQ_TRACE_CONTEXT").current_dir(cwd),budget) {
-            Ok(out)|Err(coreq::process::Failure::Exit(out))=>out,
-            Err(error)=>panic!("{args:?}: {error}; elapsed={:?}, budget={budget:?}",began.elapsed()),
-        }};
-    let run=|args:&[&str]|run_in(&root,args);
-    let rootless=run_in(&install,&["service","capacity"]);
-    assert!(rootless.status.success(),"host policy command required a project cwd: {}",String::from_utf8_lossy(&rootless.stderr));
-    assert!(String::from_utf8_lossy(&rootless.stdout).contains("no fresh capacity status"),"future status was treated as current");
-    let (status_path,policy_path,mut readback)=(root.join(".taskq/status.json"),install.join("host.json"),capacity);
-    let observer_install=install.clone();
-    let publisher=std::thread::spawn(move|| {
-        let until=std::time::Instant::now()+Duration::from_secs(8);
-        while std::time::Instant::now()<until {
-            let saved:Value=fs::read(&policy_path).ok().and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
-            if saved["limits"]["codex"]==3 {
+    let mut capacity = host.clone();
+    capacity["host_policy"] = host;
+    capacity["limits"]["codex"] = json!(1);
+    fs::write(
+        root.join(".taskq/status.json"),
+        json!({"host":"fixture-host","at":at,"capacity":capacity}).to_string(),
+    )
+    .unwrap();
+    fs::write(install.join("projects"), format!("{}\n", root.display())).unwrap();
+    let run_in = |cwd: &std::path::Path, args: &[&str]| {
+        let began = std::time::Instant::now();
+        match coreq::process::output(
+            "test.host-policy",
+            Command::new(env!("CARGO_BIN_EXE_taskq"))
+                .args(args)
+                .env("TASKQ_INSTALL", &install)
+                .env_remove("TASKQ_ROOT")
+                .env("TASKQ_HOST", "fixture-host")
+                .env("TASKQ_INCIDENT_REPORTS", "off")
+                .env_remove("TASKQ_ATTEMPT")
+                .env_remove("TASKQ_TASK")
+                .env_remove("COREQ_TRACE_CONTEXT")
+                .current_dir(cwd),
+            budget,
+        ) {
+            Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
+            Err(error) => panic!(
+                "{args:?}: {error}; elapsed={:?}, budget={budget:?}",
+                began.elapsed()
+            ),
+        }
+    };
+    let run = |args: &[&str]| run_in(&root, args);
+    let rootless = run_in(&install, &["service", "capacity"]);
+    assert!(
+        rootless.status.success(),
+        "host policy command required a project cwd: {}",
+        String::from_utf8_lossy(&rootless.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&rootless.stdout).contains("no fresh capacity status"),
+        "future status was treated as current"
+    );
+    let (status_path, policy_path, mut readback) = (
+        root.join(".taskq/status.json"),
+        install.join("host.json"),
+        capacity,
+    );
+    let observer_install = install.clone();
+    let publisher = std::thread::spawn(move || {
+        let until = std::time::Instant::now() + Duration::from_secs(8);
+        while std::time::Instant::now() < until {
+            let saved: Value = fs::read(&policy_path)
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or(Value::Null);
+            if saved["limits"]["codex"] == 3 {
                 use tracing_subscriber::prelude::*;
-                let receipt=coreq::telemetry::capture::CommandReceipt::decode(saved["_taskq_capacity_command"]["receipt"].as_str().unwrap()).unwrap();
-                let store=std::sync::Arc::new(coreq::telemetry::Store::open(&observer_install.join("telemetry.log/universal.sqlite3")).unwrap());
-                let capture=coreq::telemetry::capture::Capture::new(store.clone(),"taskq","fixture-observer").unwrap();
-                tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()),|| {
-                    receipt.checkpoint("applied").unwrap();receipt.checkpoint("observed").unwrap();
-                });
-                capture.flush().unwrap();drop(capture);drop(store);
-                readback["host_policy"]["limits"]["codex"]=json!(3);
-                readback["host_command"]=json!(receipt.event_id("observed").unwrap());
-                let at=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                fs::write(status_path,json!({"host":"fixture-host","at":at,"capacity":readback}).to_string()).unwrap();
+                let receipt = coreq::telemetry::capture::CommandReceipt::decode(
+                    saved["_taskq_capacity_command"]["receipt"]
+                        .as_str()
+                        .unwrap(),
+                )
+                .unwrap();
+                let store = std::sync::Arc::new(
+                    coreq::telemetry::Store::open(
+                        &observer_install.join("telemetry.log/universal.sqlite3"),
+                    )
+                    .unwrap(),
+                );
+                let capture = coreq::telemetry::capture::Capture::new(
+                    store.clone(),
+                    "taskq",
+                    "fixture-observer",
+                )
+                .unwrap();
+                tracing::subscriber::with_default(
+                    tracing_subscriber::registry().with(capture.clone()),
+                    || {
+                        receipt.checkpoint("applied").unwrap();
+                        receipt.checkpoint("observed").unwrap();
+                    },
+                );
+                capture.flush().unwrap();
+                drop(capture);
+                drop(store);
+                readback["host_policy"]["limits"]["codex"] = json!(3);
+                readback["host_command"] = json!(receipt.event_id("observed").unwrap());
+                let at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                fs::write(
+                    status_path,
+                    json!({"host":"fixture-host","at":at,"capacity":readback}).to_string(),
+                )
+                .unwrap();
                 return;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
         panic!("host-policy fixture did not observe the saved edit");
     });
-    let output=run_in(&install,&["service","capacity","--host","fixture-host","--codex","3"]);
+    let output = run_in(
+        &install,
+        &[
+            "service",
+            "capacity",
+            "--host",
+            "fixture-host",
+            "--codex",
+            "3",
+        ],
+    );
     publisher.join().unwrap();
-    let after=fs::read_to_string(root.join("taskq.json")).unwrap();
-    let saved:Value=serde_json::from_str(&fs::read_to_string(install.join("host.json")).unwrap()).unwrap();
-    assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("Applied"),"host policy readback was confused with the narrowing project cap");
-    assert_eq!(saved["limits"]["codex"],3,"CLI edited a different policy than the host service reads");
-    assert!(saved["_taskq_capacity_command"]["receipt"].is_string(),"equal values were reported Applied without an exact retained command binding");
-    assert_eq!(after,project,"host edit changed narrowing project settings");
-    assert_eq!(saved["codex"],json!(["-s","workspace-write"]));assert_eq!(saved["owner_field"],"host-private");
-    let read=run(&["service","capacity"]);assert!(read.status.success());
-    assert!(String::from_utf8_lossy(&read.stdout).contains("Codex ?/3"),"host settings readback used the project's ceiling: {}",String::from_utf8_lossy(&read.stdout));
-    #[cfg(unix)] {
+    let after = fs::read_to_string(root.join("taskq.json")).unwrap();
+    let saved: Value =
+        serde_json::from_str(&fs::read_to_string(install.join("host.json")).unwrap()).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("Applied"),
+        "host policy readback was confused with the narrowing project cap"
+    );
+    assert_eq!(
+        saved["limits"]["codex"], 3,
+        "CLI edited a different policy than the host service reads"
+    );
+    assert!(
+        saved["_taskq_capacity_command"]["receipt"].is_string(),
+        "equal values were reported Applied without an exact retained command binding"
+    );
+    assert_eq!(
+        after, project,
+        "host edit changed narrowing project settings"
+    );
+    assert_eq!(saved["codex"], json!(["-s", "workspace-write"]));
+    assert_eq!(saved["owner_field"], "host-private");
+    let read = run(&["service", "capacity"]);
+    assert!(read.status.success());
+    assert!(
+        String::from_utf8_lossy(&read.stdout).contains("Codex ?/3"),
+        "host settings readback used the project's ceiling: {}",
+        String::from_utf8_lossy(&read.stdout)
+    );
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
-        assert_eq!(fs::metadata(install.join("host.json")).unwrap().permissions().mode()&0o777,0o600);
+        assert_eq!(
+            fs::metadata(install.join("host.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
     }
-    let valid=fs::read(install.join("host.json")).unwrap();
-    let mut worker=Command::new(env!("CARGO_BIN_EXE_taskq"));
-    worker.args(["service","capacity","--host","fixture-host","--codex","4"])
-        .env("TASKQ_INSTALL",&install).env("TASKQ_HOST","fixture-host").env_remove("TASKQ_ROOT").env("TASKQ_ATTEMPT","1")
-        .env("TASKQ_INCIDENT_REPORTS","off").env_remove("COREQ_TRACE_CONTEXT").current_dir(&install);
-    let denied=coreq::process::output("test.host-policy-worker",&mut worker,Duration::from_secs(10));
-    let Err(coreq::process::Failure::Exit(denied))=denied else {panic!("worker policy write was not refused");};
+    let valid = fs::read(install.join("host.json")).unwrap();
+    let mut worker = Command::new(env!("CARGO_BIN_EXE_taskq"));
+    worker
+        .args([
+            "service",
+            "capacity",
+            "--host",
+            "fixture-host",
+            "--codex",
+            "4",
+        ])
+        .env("TASKQ_INSTALL", &install)
+        .env("TASKQ_HOST", "fixture-host")
+        .env_remove("TASKQ_ROOT")
+        .env("TASKQ_ATTEMPT", "1")
+        .env("TASKQ_INCIDENT_REPORTS", "off")
+        .env_remove("COREQ_TRACE_CONTEXT")
+        .current_dir(&install);
+    let denied = coreq::process::output(
+        "test.host-policy-worker",
+        &mut worker,
+        Duration::from_secs(10),
+    );
+    let Err(coreq::process::Failure::Exit(denied)) = denied else {
+        panic!("worker policy write was not refused");
+    };
     assert!(String::from_utf8_lossy(&denied.stderr).contains("a worker cannot change host policy"));
-    assert_eq!(fs::read(install.join("host.json")).unwrap(),valid);
+    assert_eq!(fs::read(install.join("host.json")).unwrap(), valid);
 
-    for args in [vec!["service","capacity","--host","other-host","--codex","4"],
-        vec!["service","capacity","--host","fixture-host","--mode","fixed"]] {
+    for args in [
+        vec![
+            "service",
+            "capacity",
+            "--host",
+            "other-host",
+            "--codex",
+            "4",
+        ],
+        vec![
+            "service",
+            "capacity",
+            "--host",
+            "fixture-host",
+            "--mode",
+            "fixed",
+        ],
+    ] {
         assert!(!run(&args).status.success());
-        assert_eq!(fs::read(install.join("host.json")).unwrap(),valid);
-        assert_eq!(fs::read_to_string(root.join("taskq.json")).unwrap(),project);
+        assert_eq!(fs::read(install.join("host.json")).unwrap(), valid);
+        assert_eq!(
+            fs::read_to_string(root.join("taskq.json")).unwrap(),
+            project
+        );
     }
-    fs::write(install.join("host.json.pending"),"retained interruption").unwrap();
-    assert!(!run(&["service","capacity","--host","fixture-host","--codex","4"]).status.success());
-    assert_eq!(fs::read_to_string(install.join("host.json.pending")).unwrap(),"retained interruption");
-    assert_eq!(fs::read(install.join("host.json")).unwrap(),valid);
+    fs::write(install.join("host.json.pending"), "retained interruption").unwrap();
+    assert!(
+        !run(&[
+            "service",
+            "capacity",
+            "--host",
+            "fixture-host",
+            "--codex",
+            "4"
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(
+        fs::read_to_string(install.join("host.json.pending")).unwrap(),
+        "retained interruption"
+    );
+    assert_eq!(fs::read(install.join("host.json")).unwrap(), valid);
     fs::remove_file(install.join("host.json.pending")).unwrap();
-    fs::write(install.join("host.json"),"{").unwrap();
+    fs::write(install.join("host.json"), "{").unwrap();
     // § 4 owner session: retro only writes a request, so host policy (even unreadable) never gates it
-    let retro=run(&["retro"]);
-    assert!(retro.status.success(),"{}",String::from_utf8_lossy(&retro.stderr));
-    assert_eq!(fs::read_dir(install.join("setup")).unwrap().filter(|e|e.as_ref().unwrap().path().extension().is_some_and(|x|x=="json")).count(),1);
-    assert!(!run(&["service","capacity","--host","fixture-host","--codex","4"]).status.success());
-    assert_eq!(fs::read_to_string(install.join("host.json")).unwrap(),"{");
-    assert_eq!(fs::read_to_string(root.join("taskq.json")).unwrap(),project);
+    let retro = run(&["retro"]);
+    assert!(
+        retro.status.success(),
+        "{}",
+        String::from_utf8_lossy(&retro.stderr)
+    );
+    assert_eq!(
+        fs::read_dir(install.join("setup"))
+            .unwrap()
+            .filter(|e| e
+                .as_ref()
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|x| x == "json"))
+            .count(),
+        1
+    );
+    assert!(
+        !run(&[
+            "service",
+            "capacity",
+            "--host",
+            "fixture-host",
+            "--codex",
+            "4"
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(fs::read_to_string(install.join("host.json")).unwrap(), "{");
+    assert_eq!(
+        fs::read_to_string(root.join("taskq.json")).unwrap(),
+        project
+    );
     fs::remove_dir_all(&base).unwrap();
 }
 
 // H-A1: a registered project cannot start a project scheduler beside the already live host owner.
 #[test]
 fn project_run_waits_for_the_host_owner() {
-    let stamp=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let root=std::env::temp_dir().join(format!("taskq-host-entry-{}-{stamp}",std::process::id()));
-    let (project,install)=(root.join("project"),root.join("install"));
-    fs::create_dir_all(&project).unwrap();fs::create_dir_all(&install).unwrap();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("taskq-host-entry-{}-{stamp}", std::process::id()));
+    let (project, install) = (root.join("project"), root.join("install"));
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&install).unwrap();
     // An unrelated ancestor project must not choose the installed service's scope.
-    fs::write(root.join("taskq.json"),json!({"repo":"fixture/unregistered-ancestor"}).to_string()).unwrap();
-    fs::write(project.join("taskq.json"),json!({"repo":"fixture/project"}).to_string()).unwrap();
-    fs::write(install.join("projects"),format!("{}\n",project.display())).unwrap();
-    fs::write(install.join("service"),std::process::id().to_string()).unwrap();
-    for cwd in [&project,&install] {
-        let log=root.join("entry.log");
-        let native_trace=root.join("native-read.log");
+    fs::write(
+        root.join("taskq.json"),
+        json!({"repo":"fixture/unregistered-ancestor"}).to_string(),
+    )
+    .unwrap();
+    fs::write(
+        project.join("taskq.json"),
+        json!({"repo":"fixture/project"}).to_string(),
+    )
+    .unwrap();
+    fs::write(install.join("projects"), format!("{}\n", project.display())).unwrap();
+    fs::write(install.join("service"), std::process::id().to_string()).unwrap();
+    for cwd in [&project, &install] {
+        let log = root.join("entry.log");
+        let native_trace = root.join("native-read.log");
         fs::write(&native_trace, "").unwrap();
-        let mut child=Command::new(env!("CARGO_BIN_EXE_taskq")).args(["service","run"])
-            .env("TASKQ_INSTALL",&install).env_remove("TASKQ_ROOT").env_remove("TASKQ_ATTEMPT")
-            .env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT").env("TASKQ_INCIDENT_REPORTS","off")
-            .env("COREQ_TELEMETRY_STORE_TRACE","1").env("TASKQ_NATIVE_READ_TRACE",&native_trace)
-            .current_dir(cwd).stdout(std::process::Stdio::null()).stderr(fs::File::create(&log).unwrap()).spawn().unwrap();
-        let began=std::time::Instant::now();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_taskq"))
+            .args(["service", "run"])
+            .env("TASKQ_INSTALL", &install)
+            .env_remove("TASKQ_ROOT")
+            .env_remove("TASKQ_ATTEMPT")
+            .env_remove("TASKQ_TASK")
+            .env_remove("COREQ_TRACE_CONTEXT")
+            .env("TASKQ_INCIDENT_REPORTS", "off")
+            .env("COREQ_TELEMETRY_STORE_TRACE", "1")
+            .env("TASKQ_NATIVE_READ_TRACE", &native_trace)
+            .current_dir(cwd)
+            .stdout(std::process::Stdio::null())
+            .stderr(fs::File::create(&log).unwrap())
+            .spawn()
+            .unwrap();
+        let began = std::time::Instant::now();
         // Windows native ownership discovery shares this bounded fixture budget.
-        let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
-        let until=began+budget;
-        let observed=loop {
-            let text=fs::read_to_string(&log).unwrap();
-            if text.lines().any(|line|line.contains("host service")&&line.contains("waiting")) {break true;}
-            if child.try_wait().unwrap().is_some()||std::time::Instant::now()>=until {break false;}
+        let budget = Duration::from_secs(if cfg!(windows) { 60 } else { 10 });
+        let until = began + budget;
+        let observed = loop {
+            let text = fs::read_to_string(&log).unwrap();
+            if text
+                .lines()
+                .any(|line| line.contains("host service") && line.contains("waiting"))
+            {
+                break true;
+            }
+            if child.try_wait().unwrap().is_some() || std::time::Instant::now() >= until {
+                break false;
+            }
             std::thread::sleep(Duration::from_millis(10));
         };
-        eprintln!("host owner wait: cwd={}, observed={observed}, elapsed={:?}, budget={budget:?}",cwd.display(),began.elapsed());
-        let exit=child.try_wait().unwrap();
-        if exit.is_none() {child.kill().unwrap();child.wait().unwrap();}
-        let text=fs::read_to_string(&log).unwrap();
+        eprintln!(
+            "host owner wait: cwd={}, observed={observed}, elapsed={:?}, budget={budget:?}",
+            cwd.display(),
+            began.elapsed()
+        );
+        let exit = child.try_wait().unwrap();
+        if exit.is_none() {
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        let text = fs::read_to_string(&log).unwrap();
         if !observed {
-            let native_trace=fs::read_to_string(&native_trace).unwrap_or_else(|e|format!("native trace unavailable: {e}"));
-            let telemetry=coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3"))
-                .and_then(|reader|reader.export(0,0,256)).map(|page|page["events"].as_array().unwrap().iter().map(|row| {
-                    let event=&row["observation"];json!([event["operation"],event["kind"],event["outcome"],event["error"]])
-                }).collect::<Vec<_>>());
-            panic!("{} host owner wait unobserved; elapsed={:?}, native_exit={exit:?}, fixture={} (retained), committed_phases={telemetry:?}: {text}\n{native_trace}",cwd.display(),began.elapsed(),root.display());
+            let native_trace = fs::read_to_string(&native_trace)
+                .unwrap_or_else(|e| format!("native trace unavailable: {e}"));
+            let telemetry =
+                coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3"))
+                    .and_then(|reader| reader.export(0, 0, 256))
+                    .map(|page| {
+                        page["events"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .map(|row| {
+                                let event = &row["observation"];
+                                json!([
+                                    event["operation"],
+                                    event["kind"],
+                                    event["outcome"],
+                                    event["error"]
+                                ])
+                            })
+                            .collect::<Vec<_>>()
+                    });
+            panic!(
+                "{} host owner wait unobserved; elapsed={:?}, native_exit={exit:?}, fixture={} (retained), committed_phases={telemetry:?}: {text}\n{native_trace}",
+                cwd.display(),
+                began.elapsed(),
+                root.display()
+            );
         }
         assert!(!project.join(".taskq/status.json").exists());
-        assert_eq!(fs::read_to_string(install.join("service")).unwrap(),std::process::id().to_string());
+        assert_eq!(
+            fs::read_to_string(install.join("service")).unwrap(),
+            std::process::id().to_string()
+        );
     }
     fs::remove_dir_all(root).unwrap();
 }
@@ -222,76 +565,193 @@ fn project_run_waits_for_the_host_owner() {
 #[test]
 fn external_slot_cli_reconciles_without_a_task_or_scheduler() {
     use crate::Bounded;
-    let stamp=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let dir=std::env::temp_dir().join(format!("taskq-slot-cli-{}-{stamp}",std::process::id()));fs::create_dir_all(&dir).unwrap();
-    let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
-    let now=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("taskq-slot-cli-{}-{stamp}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let native = coreq::process::identity(std::process::id())
+        .unwrap()
+        .unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     fs::write(dir.join("service"),json!({"schema":1,"pid":native.pid,"started":native.started,"instance":"fixture-slots","at":now,"version":"fixture","slots_protocol":1}).to_string()).unwrap();
-    let run=|args:&[&str],worker:bool| {
-        let mut cmd=Command::new(env!("CARGO_BIN_EXE_taskq"));cmd.args(args).current_dir(&dir).env("TASKQ_INSTALL",&dir)
-            .env_remove("TASKQ_ROOT").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT").env("TASKQ_INCIDENT_REPORTS","off");
-        if worker {cmd.env("TASKQ_ATTEMPT","1");}cmd.bounded()
+    let run = |args: &[&str], worker: bool| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_taskq"));
+        cmd.args(args)
+            .current_dir(&dir)
+            .env("TASKQ_INSTALL", &dir)
+            .env_remove("TASKQ_ROOT")
+            .env_remove("TASKQ_ATTEMPT")
+            .env_remove("TASKQ_TASK")
+            .env_remove("COREQ_TRACE_CONTEXT")
+            .env("TASKQ_INCIDENT_REPORTS", "off");
+        if worker {
+            cmd.env("TASKQ_ATTEMPT", "1");
+        }
+        cmd.bounded()
     };
-    let out=run(&["service","slots","--identity",&native.pid.to_string(),"--json"],false);assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));
-    let identity:Value=serde_json::from_slice(&out.stdout).unwrap();assert_eq!(identity["pid"],native.pid);assert_eq!(identity["started"],native.started);assert!(identity["boot"].as_i64().unwrap()>0);
-    let mut request=json!({"binding":{"schema":"taskq.slots/1","caller":"pilotq","op_id":"fixture-turn","root":dir,"runtime":"codex","pid":native.pid,"started":native.started,"boot":identity["boot"],"expires_at":now+300},"key":"a".repeat(64)});
-    let call=|action:&str,value:&Value,worker|run(&["service","slots","--action",action,"--request",&value.to_string(),"--json"],worker);
+    let out = run(
+        &[
+            "service",
+            "slots",
+            "--identity",
+            &native.pid.to_string(),
+            "--json",
+        ],
+        false,
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let identity: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(identity["pid"], native.pid);
+    assert_eq!(identity["started"], native.started);
+    assert!(identity["boot"].as_i64().unwrap() > 0);
+    let mut request = json!({"binding":{"schema":"taskq.slots/1","caller":"pilotq","op_id":"fixture-turn","root":dir,"runtime":"codex","pid":native.pid,"started":native.started,"boot":identity["boot"],"expires_at":now+300},"key":"a".repeat(64)});
+    let call = |action: &str, value: &Value, worker| {
+        run(
+            &[
+                "service",
+                "slots",
+                "--action",
+                action,
+                "--request",
+                &value.to_string(),
+                "--json",
+            ],
+            worker,
+        )
+    };
     for _ in 0..2 {
-        let out=call("reserve",&request,false);assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));
-        let value:Value=serde_json::from_slice(&out.stdout).unwrap();assert_eq!(value["state"],"unknown");assert_eq!(value["stored_state"],"queued");assert_eq!(value["occupied"],false);
-        assert!(!String::from_utf8_lossy(&out.stdout).contains(&"a".repeat(64)),"release key leaked");
+        let out = call("reserve", &request, false);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["state"], "unknown");
+        assert_eq!(value["stored_state"], "queued");
+        assert_eq!(value["occupied"], false);
+        assert!(
+            !String::from_utf8_lossy(&out.stdout).contains(&"a".repeat(64)),
+            "release key leaked"
+        );
     }
-    let path=dir.join("resource-state/state.json");let state:Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();assert_eq!(state["ops"].as_object().unwrap().len(),1);
-    request["key"]=json!("b".repeat(64));let out=call("release",&request,false);assert!(!out.status.success());assert!(String::from_utf8_lossy(&out.stderr).contains("release key"));
-    assert_eq!(serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),state);
-    request["key"]=json!("a".repeat(64));let out=call("release",&request,true);assert!(!out.status.success());assert!(String::from_utf8_lossy(&out.stderr).contains("a worker cannot"));
-    assert_eq!(serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),state);
-    let out=call("release",&request,false);assert!(out.status.success());let value:Value=serde_json::from_slice(&out.stdout).unwrap();assert_eq!(value["stored_state"],"cancelling");
-    assert!(!dir.join("host.json").exists());assert!(!dir.join("projects").exists());assert!(!dir.join(".taskq").exists());
+    let path = dir.join("resource-state/state.json");
+    let state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(state["ops"].as_object().unwrap().len(), 1);
+    request["key"] = json!("b".repeat(64));
+    let out = call("release", &request, false);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("release key"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
+        state
+    );
+    request["key"] = json!("a".repeat(64));
+    let out = call("release", &request, true);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("a worker cannot"));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap(),
+        state
+    );
+    let out = call("release", &request, false);
+    assert!(out.status.success());
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["stored_state"], "cancelling");
+    assert!(!dir.join("host.json").exists());
+    assert!(!dir.join("projects").exists());
+    assert!(!dir.join(".taskq").exists());
     fs::remove_dir_all(dir).unwrap();
 }
 
 // #2189 A2/A4/A7, §4 Balancing: actual owner CLI writes weights only; invalid/worker requests have no effects.
 #[test]
 fn weighted_balance_cli_preserves_host_policy() {
-    let root=std::env::temp_dir().join(format!("taskq-weighted-cli-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+    let root = std::env::temp_dir().join(format!(
+        "taskq-weighted-cli-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("host.json"),json!({"limits":{"claude":4,"codex":2},"owner_field":"preserve","permission_mode":"dontAsk"}).to_string()).unwrap();
-    let run=|args:&[&str],worker:bool| {
-        let mut cmd=Command::new(env!("CARGO_BIN_EXE_taskq"));
-        cmd.args(args).current_dir(&root).env("TASKQ_INSTALL",&root).env("TASKQ_HOST","fixture")
-            .env_remove("TASKQ_ROOT").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK")
-            .env_remove("COREQ_TRACE_CONTEXT").env_remove("CODEX_THREAD_ID").env_remove("CODEX_SESSION_ID").env_remove("CLAUDE_CODE_SESSION_ID");
-        if worker {cmd.env("TASKQ_ATTEMPT","123").env("TASKQ_TASK","2189");}
-        match coreq::process::output("test.weighted-balance",&mut cmd,Duration::from_secs(if cfg!(windows){60}else{10})) {
-            Ok(out)|Err(coreq::process::Failure::Exit(out))=>out,
-            Err(e)=>panic!("balance CLI: {e}"),
+    let run = |args: &[&str], worker: bool| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_taskq"));
+        cmd.args(args)
+            .current_dir(&root)
+            .env("TASKQ_INSTALL", &root)
+            .env("TASKQ_HOST", "fixture")
+            .env_remove("TASKQ_ROOT")
+            .env_remove("TASKQ_ATTEMPT")
+            .env_remove("TASKQ_TASK")
+            .env_remove("COREQ_TRACE_CONTEXT")
+            .env_remove("CODEX_THREAD_ID")
+            .env_remove("CODEX_SESSION_ID")
+            .env_remove("CLAUDE_CODE_SESSION_ID");
+        if worker {
+            cmd.env("TASKQ_ATTEMPT", "123").env("TASKQ_TASK", "2189");
+        }
+        match coreq::process::output(
+            "test.weighted-balance",
+            &mut cmd,
+            Duration::from_secs(if cfg!(windows) { 60 } else { 10 }),
+        ) {
+            Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
+            Err(e) => panic!("balance CLI: {e}"),
         }
     };
-    let output=run(&["balance","claude=2","codex=1"],false);
-    assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+    let output = run(&["balance", "claude=2", "codex=1"], false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(String::from_utf8_lossy(&output.stdout).contains("Saved runtime weights on fixture"));
-    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
-    assert_eq!(saved["weights"],json!({"claude":2,"codex":1}));
-    assert_eq!(saved["limits"],json!({"claude":4,"codex":2}));
-    assert_eq!(saved["owner_field"],"preserve");assert_eq!(saved["permission_mode"],"dontAsk");
-    let text=run(&["balance"],false);assert!(text.status.success());
+    let saved: Value = serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"], json!({"claude":2,"codex":1}));
+    assert_eq!(saved["limits"], json!({"claude":4,"codex":2}));
+    assert_eq!(saved["owner_field"], "preserve");
+    assert_eq!(saved["permission_mode"], "dontAsk");
+    let text = run(&["balance"], false);
+    assert!(text.status.success());
     assert!(String::from_utf8_lossy(&text.stdout).contains("\"claude\":2"));
-    let original=fs::read(root.join("host.json")).unwrap();
-    for args in [vec!["balance","claude=1000001"],vec!["balance","codex=-1"],vec!["balance","unknown=1"],vec!["balance","codex=1.5"],vec!["balance","codex=1","codex=2"],vec!["balance","--clear","codex=1"]] {
-        assert!(!run(&args,false).status.success(),"{args:?}");
-        assert_eq!(fs::read(root.join("host.json")).unwrap(),original);
+    let original = fs::read(root.join("host.json")).unwrap();
+    for args in [
+        vec!["balance", "claude=1000001"],
+        vec!["balance", "codex=-1"],
+        vec!["balance", "unknown=1"],
+        vec!["balance", "codex=1.5"],
+        vec!["balance", "codex=1", "codex=2"],
+        vec!["balance", "--clear", "codex=1"],
+    ] {
+        assert!(!run(&args, false).status.success(), "{args:?}");
+        assert_eq!(fs::read(root.join("host.json")).unwrap(), original);
     }
-    assert!(!run(&["balance","claude=3"],true).status.success());
-    assert_eq!(fs::read(root.join("host.json")).unwrap(),original);
-    assert!(run(&["balance","codex=3"],false).status.success());
-    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
-    assert_eq!(saved["weights"],json!({"codex":3}),"replace, not merge");
-    assert!(run(&["balance","claude=0"],false).status.success(),"weight 0 saves");
-    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
-    assert_eq!(saved["weights"],json!({"claude":0}));
-    assert!(run(&["balance","--clear"],false).status.success());
-    let saved:Value=serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
-    assert_eq!(saved["weights"],json!({}));assert_eq!(saved["limits"],json!({"claude":4,"codex":2}));
+    assert!(!run(&["balance", "claude=3"], true).status.success());
+    assert_eq!(fs::read(root.join("host.json")).unwrap(), original);
+    assert!(run(&["balance", "codex=3"], false).status.success());
+    let saved: Value = serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"], json!({"codex":3}), "replace, not merge");
+    assert!(
+        run(&["balance", "claude=0"], false).status.success(),
+        "weight 0 saves"
+    );
+    let saved: Value = serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"], json!({"claude":0}));
+    assert!(run(&["balance", "--clear"], false).status.success());
+    let saved: Value = serde_json::from_slice(&fs::read(root.join("host.json")).unwrap()).unwrap();
+    assert_eq!(saved["weights"], json!({}));
+    assert_eq!(saved["limits"], json!({"claude":4,"codex":2}));
     fs::remove_dir_all(root).unwrap();
 }

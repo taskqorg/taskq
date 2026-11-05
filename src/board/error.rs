@@ -67,7 +67,13 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn new(reason: Reason, text: impl Into<String>) -> Self { Self { reason, status: None, text: text.into() } }
+    pub fn new(reason: Reason, text: impl Into<String>) -> Self {
+        Self {
+            reason,
+            status: None,
+            text: text.into(),
+        }
+    }
 
     /// An HTTP error reply. `text` holds the reply body, the one place a board says why beyond its status.
     pub fn http(status: u16, text: impl Into<String>) -> Self {
@@ -82,18 +88,33 @@ impl Error {
             400..=499 => Reason::Refused,
             _ => Reason::Server,
         };
-        Self { reason, status: Some(status), text }
+        Self {
+            reason,
+            status: Some(status),
+            text,
+        }
     }
 
     /// A curl child that never gave a reply.
     pub fn curl(failure: coreq::process::Failure) -> Self {
-        let reason = if matches!(failure, coreq::process::Failure::Timeout) { Reason::Timeout } else { Reason::Network };
+        let reason = if matches!(failure, coreq::process::Failure::Timeout) {
+            Reason::Timeout
+        } else {
+            Reason::Network
+        };
         Self::new(reason, format!("curl: {failure}"))
     }
 
     /// A curl exit that is not 0; exit 28 is curl's own operation timeout.
     pub fn curl_exit(code: Option<i32>, text: impl Into<String>) -> Self {
-        Self::new(if code == Some(28) { Reason::Timeout } else { Reason::Network }, text)
+        Self::new(
+            if code == Some(28) {
+                Reason::Timeout
+            } else {
+                Reason::Network
+            },
+            text,
+        )
     }
 
     /// The same failure with its text changed, for a caller that names what it was doing.
@@ -102,9 +123,15 @@ impl Error {
         self
     }
 
-    pub fn reason(&self) -> Reason { self.reason }
-    pub fn status(&self) -> Option<u16> { self.status }
-    pub fn text(&self) -> &str { &self.text }
+    pub fn reason(&self) -> Reason {
+        self.reason
+    }
+    pub fn status(&self) -> Option<u16> {
+        self.status
+    }
+    pub fn text(&self) -> &str {
+        &self.text
+    }
 
     /// The telemetry class of this failure.
     pub fn class(&self) -> &'static str {
@@ -120,21 +147,29 @@ impl Error {
 }
 
 impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(&self.text) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text)
+    }
 }
 
 impl std::error::Error for Error {}
 
 impl From<String> for Error {
-    fn from(text: String) -> Self { Self::new(Reason::Other, text) }
+    fn from(text: String) -> Self {
+        Self::new(Reason::Other, text)
+    }
 }
 
 impl From<&str> for Error {
-    fn from(text: &str) -> Self { Self::new(Reason::Other, text) }
+    fn from(text: &str) -> Self {
+        Self::new(Reason::Other, text)
+    }
 }
 
 impl From<Error> for String {
-    fn from(e: Error) -> Self { e.text }
+    fn from(e: Error) -> Self {
+        e.text
+    }
 }
 
 #[cfg(test)]
