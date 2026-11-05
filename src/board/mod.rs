@@ -607,6 +607,8 @@ fn label_matches(v: &Value, name: &str, color: &str, description: &str) -> bool 
 pub struct Kind {
     /// This board records whether closure completed the task (§ 1).
     pub closed_reason: bool,
+    /// This board sends the core budget on every reply, so a read without it is a client defect (R6).
+    pub core_budget: bool,
     /// `board` in `taskq.json`.
     pub name: &'static str,
     /// The user name field of the CLI's `api user`.

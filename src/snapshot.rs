@@ -1063,7 +1063,7 @@ impl Snapshot {
         for h in &self.hosts {
             let fresh = live(self.observed - h.updated, cfg.ttl);
             if !fresh { anomalies.push(format!("- host {} · heartbeat stale {} · {doctor}", h.name, age(self.observed - h.updated))); continue; }
-            if h.focus.as_deref() == Some("unknown") { anomalies.push(format!("- host {} · focus unknown: it admits nothing · {doctor}", h.name)); }
+            if h.focus.as_deref() == Some("unknown") && h.balancing["mode"] != crate::host::ClaimMode::None.name() { anomalies.push(format!("- host {} · focus unknown: it admits nothing · {doctor}", h.name)); }
             let rts: Vec<&String> = h.balancing["weights"].as_object().into_iter().flat_map(|w| w.keys()).collect();
             for (kind, key, what) in [("running", "running", "running count"), ("headroom", "headroom", "quota headroom")] {
                 let missing: Vec<&str> = rts.iter().filter(|rt| { let l = &h.balancing["runtimes"][rt.as_str()]["load"]; l[key].is_null() && (key != "headroom" || l["headroom_reason"].is_null()) }).map(|rt| rt.as_str()).collect();
@@ -1272,6 +1272,35 @@ mod tests {
     fn host(age: i64) -> board::Issue {
         let row = r#"execution {"task":1,"attempt":5,"id":7,"through":7,"state":"running","reason":"turn running"}"#;
         board::Issue { number: 9, title: "taskq host win".into(), body: format!("version 4\n{row}"), updated: 1000 - age, trusted: true, ..Default::default() }
+    }
+
+    // Chain: R6 Anomalies, § 4 Filter. Defect: a manager-only host claims no task, so its focus gates nothing, yet an
+    // unread focus printed an anomaly the PM could not act on. Risk: a host that claims tasks, or one whose claim mode
+    // is unread, admits nothing without a row.
+    #[test]
+    fn focus_unknown_is_an_anomaly_only_on_a_host_that_may_claim_tasks() {
+        let at = 10_000;
+        let beat = |name: &str, body: String| board::Issue { title: format!("taskq host {name}"), body, updated: at - 10, trusted: true, ..Default::default() };
+        // The published schema 1 heartbeat shape: Balancing::read refuses a partial line, and an unread mode keeps the row.
+        let runtime = r#"{"code":"unknown","reason":"see host diagnostics","full":false,"disabled":false,"quota":[]}"#;
+        let mode = |claim: &str, focus: &str| format!("version 4\nbalancing {{\"schema\":1,\"mode\":\"{claim}\",\"default_runtime\":\"claude\",\"allowed_runtimes\":null,\"auto_reroute\":false,\"has\":[],\"focus\":null,\"routing\":[],\"runtimes\":{{\"antigravity\":{runtime},\"claude\":{runtime},\"codex\":{runtime},\"codex-app\":{runtime}}}}}\nfocus {focus}");
+        let cfg = crate::tests::cfg();
+        let snap = from_views("board", &crate::board::Fake::default(), &cfg, at, &[], &[
+            beat("manager", mode("none", "unknown")),
+            beat("primary", mode("any", "unknown")),
+            beat("spill", mode("spillover", "unknown")),
+            beat("pinned", mode("labelled", "unknown")),
+            beat("legacy", "version 3\nfocus unknown".into()),
+            beat("idle", mode("any", "off")),
+            beat("unread", "version 4\nbalancing {\"mode\":\"none\"}\nfocus unknown".into()),
+        ]);
+        let text = snap.text(&cfg, &json!({})).unwrap();
+        for name in ["primary", "spill", "pinned", "legacy", "unread"] {
+            assert!(text.contains(&format!("- host {name} · focus unknown: it admits nothing")), "{name}: {text}");
+        }
+        for name in ["manager", "idle"] {
+            assert!(!text.contains(&format!("- host {name} · focus")), "{name}: {text}");
+        }
     }
 
     // O1/R1/R12: retain accepted board stages, including missing dates; ignored entries cannot invent a step.
