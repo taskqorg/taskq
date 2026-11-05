@@ -77,4 +77,3 @@ Preserve requirement IDs and current capabilities. Shipped and native proof foll
 
 - [Standalone agentq onboarding](standalone-onboarding.md): warning, detection, dismissal and setup-session recommendations; no runtime changes.
 - [Standalone telemetry](standalone-telemetry.md): local store and retention, export as the one data path, no send without serverq, agent analysis guide and gaps G1–G7; no runtime changes.
-
