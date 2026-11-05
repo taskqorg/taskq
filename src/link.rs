@@ -13,7 +13,9 @@ type Res<T> = Result<T, String>;
 pub const SEND: &str = "/link/v1/send";
 pub const RECV: &str = "/link/v1/recv";
 /// Principle 6: a host that does not answer within this reads unknown.
-pub const WAIT: Duration = Duration::from_secs(5);
+pub const WAIT: Duration = Duration::from_secs(15);
+/// Curl's limit on one relay send.
+const SEND_WAIT: u64 = 5;
 /// dashq#234 A1: a relay body is base64 of at most 256 KiB.
 const BODY: usize = 256 * 1024;
 /// The page JSON that still fits a sealed base64 body with its reply envelope.
@@ -330,7 +332,7 @@ fn refused(call: &str, code: u16, v: &Value) -> String {
 
 impl Relay for Dash {
     fn send(&mut self, to: &str, id: &str, body: &str) -> Res<()> {
-        match self.post(SEND, &send_request(to, id, body), WAIT.as_secs())? {
+        match self.post(SEND, &send_request(to, id, body), SEND_WAIT)? {
             (200..=299, _) => Ok(()),
             (code, v) => Err(refused("send", code, &v)),
         }
@@ -352,6 +354,10 @@ fn spool(install: &Path) -> PathBuf { install.join("link") }
 /// The viewer side: asks `peer` for one page and waits [`WAIT`] for its sealed reply, which this host's listener
 /// leaves in the spool. No answer, a refused reply or an unreadable one is unknown, never an empty page.
 pub fn ask(install: &Path, key: &Key, peer: &Peer, read: &Read, relay: &mut dyn Relay) -> Res<Value> {
+    ask_within(install, key, peer, read, relay, WAIT)
+}
+
+fn ask_within(install: &Path, key: &Key, peer: &Peer, read: &Read, relay: &mut dyn Relay, limit: Duration) -> Res<Value> {
     let mut id = [0u8; 16];
     SystemRandom::new().fill(&mut id).map_err(|_| "host link: randomness unavailable")?;
     let id = hex(&id);
@@ -376,7 +382,7 @@ pub fn ask(install: &Path, key: &Key, peer: &Peer, read: &Read, relay: &mut dyn 
                     _ => Err(format!("{} on {}", v["reason"].as_str().unwrap_or("worker read unknown"), peer.host)),
                 };
             }
-            if began.elapsed() >= WAIT { return Err(format!("host {} did not answer within {} s", peer.host, WAIT.as_secs())) }
+            if began.elapsed() >= limit { return Err(format!("host {} did not answer within {} s", peer.host, limit.as_secs())) }
             std::thread::sleep(Duration::from_millis(50));
         }
     })();
@@ -581,6 +587,39 @@ mod tests {
         assert_eq!(fit(small.clone(), true), small);
     }
 
+    // A healthy peer's reply took about 3 s and 11% took over 5 s in Mac telemetry: a reply after 5 s still reads as its page.
+    #[test]
+    fn a_reply_slower_than_five_seconds_still_reads_as_its_page() {
+        let dir = std::env::temp_dir().join(format!("taskq-link-{}", crate::runtime::uuid()));
+        let (viewer_install, worker_install) = (dir.join("mac"), dir.join("win"));
+        let (vk, wk) = (key(&viewer_install).unwrap(), key(&worker_install).unwrap());
+        let (vid, wid) = ("aa".repeat(32), "bb".repeat(32));
+        let relay = Fake::default();
+        let viewer = Peer { host: "mac".into(), installation: vid.clone(), key: vk.public };
+        let worker = Peer { host: "win".into(), installation: wid.clone(), key: wk.public };
+        let read = Read { board: "https://example.org/o/r/issues".into(), task: 7, attempt: 71, before: None, after: None };
+        let (w_relay, v_relay) = (relay.on(&wid), relay.on(&vid));
+        let (wi, vi, wkey, vkey) = (worker_install.clone(), viewer_install.clone(), Key::from(wk.secret), Key::from(vk.secret));
+        let t = std::thread::spawn(move || {
+            let (mut w, mut v) = (w_relay, v_relay);
+            let until = Instant::now() + Duration::from_secs(7);
+            while Instant::now() < until {
+                for m in w.recv().unwrap() {
+                    handle(&wi, &wkey, &m, |_| vec![viewer.clone()], &mut w.clone(), |_| {
+                        std::thread::sleep(Duration::from_millis(5500));
+                        Ok(json!({"items": [{"at": 0, "i": 0, "role": "assistant", "text": "slow line"}], "start": 0, "end": 1, "size": 1}))
+                    }).unwrap();
+                }
+                for m in v.recv().unwrap() { handle(&vi, &vkey, &m, |_| vec![], &mut v.clone(), |_| Err("viewer serves nothing".into())).unwrap(); }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let page = ask(&viewer_install, &vk, &worker, &read, &mut relay.on(&vid));
+        t.join().unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!(page.unwrap()["items"][0]["text"], "slow line");
+    }
+
     /// dashq#234 in memory: per-installation queues; `from` is the authenticated sender.
     #[derive(Clone, Default)]
     struct Fake(std::sync::Arc<std::sync::Mutex<Vec<(String, Value)>>>, String);
@@ -601,7 +640,7 @@ mod tests {
 
     // A1-A3 against a fake relay: the viewer's read reaches the worker host, which serves only a live peer of its
     // board and only the named request; the sealed reply reaches the viewer through its listener. A silent or
-    // refusing host reads unknown within WAIT, never an empty page.
+    // refusing host reads unknown within the wait, never an empty page.
     #[test]
     fn a_read_crosses_the_fake_relay_sealed_and_fenced() {
         let dir = std::env::temp_dir().join(format!("taskq-link-{}", crate::runtime::uuid()));
@@ -616,7 +655,7 @@ mod tests {
             let (wi, vi, wkey, vkey) = (worker_install.clone(), viewer_install.clone(), Key::from(wk.secret), Key::from(vk.secret));
             std::thread::spawn(move || {
                 let (mut w, mut v) = (relay.on(&"bb".repeat(32)), relay.on(&"aa".repeat(32)));
-                let until = Instant::now() + WAIT + Duration::from_secs(1);
+                let until = Instant::now() + Duration::from_secs(3);
                 while Instant::now() < until {
                     for m in w.recv().unwrap() {
                         if answer {
@@ -643,8 +682,8 @@ mod tests {
         let served = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
         let t = pump(relay.clone(), served.clone(), vec![Peer { key: stranger.public, ..viewer_peer.clone() }], true);
         let began = Instant::now();
-        let e = ask(&viewer_install, &vk, &worker_peer, &read, &mut relay.on(&vid)).unwrap_err();
-        assert!(e.contains("did not answer within 5 s") && began.elapsed() >= WAIT, "A3: {e}");
+        let e = ask_within(&viewer_install, &vk, &worker_peer, &read, &mut relay.on(&vid), Duration::from_secs(1)).unwrap_err();
+        assert!(e.contains("did not answer within 1 s") && began.elapsed() >= Duration::from_secs(1), "A3: {e}");
         assert!(served.lock().unwrap().is_empty(), "principle 2");
         t.join().unwrap();
 
