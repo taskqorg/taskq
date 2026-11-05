@@ -455,6 +455,10 @@ def run_lint(command, timeout=None):
         raise subprocess.CalledProcessError(done.returncode, command)
 
 
+def rust_sources(paths):
+    return [p for p in paths if p.endswith('.rs') and not p.startswith('tests/fixtures/')]
+
+
 def changes(base):
     args = ['git', 'diff', '--name-only', '-z', base, '--']
     changed = subprocess.check_output(args, cwd=ROOT).decode().split('\0')
@@ -549,6 +553,11 @@ def main():
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])
+            if os.environ.get('RUNNER_OS') in (None, 'Linux'):
+                run(['rustup', 'component', 'add', 'rustfmt', '--toolchain', 'stable'])
+                # src/ reaches the crate only through generated instrumentation, so cargo fmt never sees it.
+                run(['rustfmt', '+stable', '--check', *rust_sources(tracked)])
+                run(['npm', 'run', '-s', 'format:check'])
             # npm ci removes the documented no-save browser instrument dependency.
             if os.environ.get('RUNNER_OS') is None and any(p.startswith('tests/') and p.endswith('.browser.cjs') for p in paths):
                 run(['npm', 'install', '--no-save', '--package-lock=false', '--ignore-scripts', '--no-audit', '--no-fund', 'playwright@1.64.1'])
