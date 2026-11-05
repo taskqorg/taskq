@@ -3461,8 +3461,9 @@ impl<'a> Service<'a> {
         if core::executions(n, &before).iter().any(|x| x.release.is_none()) { return Ok(None); }
         let routing=core::project(n,&before,false);
         if routing.reroute.is_some() {return Ok(None);}
+        // Placement audits also invalidate cached labels; an unpin never changes an already claimed attempt.
         // Read labels after the routing revision: a completed reroute invalidates a stale runtime selection.
-        if routing.routing_revision!=0 {
+        if routing.routing_revision!=0 || before.iter().any(|e|!e.edited&&e.body.starts_with("taskq: host-unpin\n")) {
             let fresh=self.board.issue(n)?;
             if fresh.labels.iter().filter(|l|!l.starts_with("q-")).collect::<BTreeSet<_>>() != v.issue.labels.iter().filter(|l|!l.starts_with("q-")).collect::<BTreeSet<_>>() || !fresh.open {self.cache.remove(&n);return Ok(None);}
         }

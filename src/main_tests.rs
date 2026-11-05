@@ -95,6 +95,8 @@
     }
 
     use super::*;
+    use crate::cli::host_cmd::doctor_hosts_board_json;
+    use crate::cli::task_cmd::add_placement;
 use crate::{board, core, data, dispatch, enrollment, host, platform, policy, profile, reply_files, reports, runtime, service, snapshot, telemetry};
 #[cfg(target_os = "linux")]
 use crate::linux_sandbox;
@@ -3085,4 +3087,46 @@ delivery auto-merge r0: merged #7 as x".to_string(),
         // #1939: Linux CI saw a store file appear during removal (DirectoryNotEmpty); retry it the same way.
         for left in (0..50).rev() {match fs::remove_dir_all(&dir) {Err(e) if left>0&&(e.raw_os_error()==Some(32)||e.kind()==std::io::ErrorKind::DirectoryNotEmpty)=>std::thread::sleep(Duration::from_millis(100)),other=>{other.unwrap();break}}}
         result
+    }
+
+    // Chain: § 6 fresh request -> refusal -> JSON (#2450). Risk: cached healthy rows hide a failed refresh.
+    // Keep the published result and age, alongside the exact refusal that prevented a fresh check (R12).
+    #[test]
+    fn doctor_fresh_json_keeps_request_failure_beside_published_result() {
+        use super::*;
+        let b = board::replying_to(&board::github::KIND, |method, _, _| {
+            assert_eq!(method, "PATCH");
+            Err("HTTP 403 request refused".into())
+        });
+        let host = snapshot::Host { name: "mac".into(), version: "4.6.87".into(), updated: 9990,
+            doctor: Some("9990 ok".into()), ..Default::default() };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let at = health::Scope { repo: "o/r", gitlab: false, ttl: 300, now: 10_000 };
+        let pace = health::Pace { wait: 300, poll: 20, elapsed: &|| 0, sleep: &|_| panic!("failed request must not wait") };
+        let request = board::Issue { number: 42, title: health::REQUEST_TITLE.into(), trusted: true, ..Default::default() };
+        health::ask(b.as_ref(), &[request], vec![host], &at, &pace, &mut |e| { tx.send((0, e)).unwrap(); });
+        drop(tx);
+        let mut gathered = vec![health::Gathered::new("o/r")];
+        health::gather(&rx, std::time::Instant::now() + std::time::Duration::from_secs(1), &mut gathered, &mut |_| {});
+        let out = doctor_hosts_board_json(&gathered[0], None, &Ok(vec![]));
+        assert_eq!(out["hosts"][0]["state"], "ok", "retain the published check");
+        assert_eq!(out["hosts"][0]["age"], "<1m");
+        assert_eq!(out["notes"], json!(["request not posted: HTTP 403 request refused"]), "fresh request failure must reach JSON");
+    }
+
+    // §5/A3: visible defaults must never be reported as a caller placement request.
+    #[test]
+    fn add_placement_explains_defaults_and_requested_pins() {
+        for (args,host,source,runtime) in [
+            (vec!["add","T"],Some("mac"),"host default (claim labelled)",None),
+            (vec!["add","T"],None,"unpinned",None),
+            (vec!["add","T","--host","win","--runtime","codex"],Some("win"),"requested",Some("codex")),
+        ] {
+            let a=Args::parse(&args.into_iter().map(String::from).collect::<Vec<_>>()).unwrap();
+            let t=NewTask{host:host.map(String::from),runtime:runtime.map(String::from),..Default::default()};
+            let p=add_placement(&a,&t);
+            assert_eq!(p["host_source"],source);
+            assert_eq!(p["runtime_source"],if runtime.is_some(){"requested"}else{"admission default"});
+            assert_eq!(p["host"],json!(host));assert_eq!(p["runtime"],json!(runtime));
+        }
     }

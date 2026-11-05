@@ -3,7 +3,7 @@
 use crate::runtime::Cap;
 use crate::{admission, balance, board, check, data, dispatch, doctor, health, host, labels, lifecycle, platform, pm, policy, resources, runtime, service, setup, snapshot, tools};
 use crate::runtime::accounts;
-use crate::{Res, emit};
+use crate::{Res, emit, requests};
 use crate::cli::Args;
 use crate::cli::text::one_line;
 use crate::config::{TTL, check_load, ctx, hostname, load};
@@ -13,7 +13,7 @@ use crate::wake::poke;
 use serde_json::{Value, json};
 use std::fs;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 /// One owner edit of a host's capacity: runtime limits and load gate fields; `None` keeps a field.
@@ -383,106 +383,155 @@ pub(crate) fn channel_cmd(a: &Args) -> Res<()> {
     Ok(())
 }
 
-/// `taskq doctor [--dry-run] [--hosts] [--json]` ([host doctor](docs/design/host-service.md#host-doctor)): without
-/// `--hosts`, one cleanup pass now (#2060), the host-setup gap (#2078) and the health checks of every registered board
-/// (#2194); with `--hosts`, per board one table of every host's published health and one of the running workers, read
-/// from the board alone. `--json` prints the same rows.
+/// `taskq doctor [--dry-run] [--hosts [--fresh]] [--json]` ([host doctor](docs/design/host-service.md#host-doctor)):
+/// without `--hosts`, one cleanup pass now (#2060), the host-setup gap (#2078) and the health checks of every registered
+/// board (#2194); with `--hosts`, [`doctor_hosts`]. `--json` prints the same rows.
 pub(crate) fn doctor_cmd(a: &Args) -> Res<()> {
-    if a.pos.len() != 1 || a.flags.keys().any(|k| !["dry-run", "hosts", "json"].contains(&k.as_str())) {
-        return Err("usage: taskq doctor [--dry-run] [--hosts] [--json]".into());
-    }
-    let (hosts, json_out) = (a.flags.contains_key("hosts"), a.flags.contains_key("json"));
+    let usage = "usage: taskq doctor [--dry-run] [--hosts [--fresh]] [--json]";
+    if a.pos.len() != 1 || a.flags.keys().any(|k| !["dry-run", "hosts", "fresh", "json"].contains(&k.as_str())) { return Err(usage.into()); }
+    let (hosts, fresh, json_out) = (a.flags.contains_key("hosts"), a.flags.contains_key("fresh"), a.flags.contains_key("json"));
+    if fresh && !hosts { return Err(usage.into()); }
     let install = platform::default_install();
-    let (mut out, mut cleanup) = (vec![], Value::Null);
-    if !hosts {
-        let lines = doctor::cli(&install, a.flags.contains_key("dry-run"));
-        cleanup = json!(lines);
-        out.extend(lines);
-        // #2078: a project's missing one-time host setup is a host gap the doctor names too
-        if let Some(cfg) = find_root().ok().and_then(|r| load(&r).ok()).map(|(c, _)| c) {
-            if let Some(cmd) = cfg.host_setup.as_deref().filter(|c| !check::host_setup_done(&cfg.root, c)) {
-                out.extend(check::lines(&[check::host_setup_item(&cfg.root, cmd, false)]));
-            }
-        }
-    }
     // every registered project of this host, else this project; one row set per board
     let roots = host::projects(&install).ok().filter(|r| !r.is_empty()).or_else(|| find_root().ok().map(|r| vec![r])).unwrap_or_default();
-    let latest = if hosts { Err("not read".into()) } else { platform::latest_release(&install) };
-    let (mut seen, mut boards) = (std::collections::BTreeSet::new(), vec![]);
-    // #2246: `--hosts` reads every board first, asks all hosts at once and waits once for the whole run
-    let mut opened: Vec<(Config, Box<dyn board::Board>, snapshot::Snapshot)> = vec![];
-    let (mut host_rows, mut worker_rows) = (vec![], vec![]);
-    let unread = |repo: &str, e: &str| json!({"board": repo, "host": "-", "version": "-", "state": "unknown", "gaps": [], "reason": format!("board unread: {e}"),
-        "fix": "check the board token and network on this host, then `taskq doctor --hosts` again"});
+    if hosts { doctor_hosts(roots, fresh, json_out); return Ok(()); }
+    let (mut out, mut boards) = (doctor::cli(&install, a.flags.contains_key("dry-run")), vec![]);
+    let cleanup = json!(out);
+    // #2078: a project's missing one-time host setup is a host gap the doctor names too
+    if let Some(cfg) = find_root().ok().and_then(|r| load(&r).ok()).map(|(c, _)| c) {
+        if let Some(cmd) = cfg.host_setup.as_deref().filter(|c| !check::host_setup_done(&cfg.root, c)) {
+            out.extend(check::lines(&[check::host_setup_item(&cfg.root, cmd, false)]));
+        }
+    }
+    let latest = platform::latest_release(&install);
+    let mut seen = std::collections::BTreeSet::new();
     for root in roots {
         let (cfg, raw) = match load(&root) {
             Ok(v) => v,
             Err(e) => {
-                if hosts { host_rows.push(unread(&project_name(&root), &e)); } else { out.push(format!("project {}: unknown: {e}", project_name(&root))); }
+                out.push(format!("project {}: unknown: {e}", project_name(&root)));
                 boards.push(json!({"project": project_name(&root), "error": e}));
                 continue;
             }
         };
         if !seen.insert(cfg.repo.clone()) { continue; }
         let gitlab = cfg.board.name == "gitlab";
-        let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install));
-        if !hosts {
-            let items = match &board {
-                Ok(b) => health::board_items(b.as_ref(), &cfg.repo, gitlab, &cfg.root, &cfg.install, &cfg.codex, &latest),
-                Err(e) => health::unopened(&cfg.repo, gitlab, e.text()),
-            };
-            out.extend(health::lines(&cfg.repo, &items));
-            boards.push(json!({"board": cfg.repo, "items": items.iter().map(check::Item::json).collect::<Vec<_>>()}));
-            continue;
-        }
-        let b = match board {
-            Ok(b) => b,
-            Err(e) => {
-                host_rows.push(unread(&cfg.repo, e.text()));
-                boards.push(json!({"board": cfg.repo, "error": e.text(), "hosts": [], "workers": []}));
-                continue;
-            }
+        let items = match cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install)) {
+            Ok(b) => health::board_items(b.as_ref(), &cfg.repo, gitlab, &cfg.root, &cfg.install, &cfg.codex, &latest),
+            Err(e) => health::unopened(&cfg.repo, gitlab, e.text()),
         };
-        let s = snapshot::read(b.as_ref(), &cfg, &raw, &[]);
-        if let Some(e) = &s.reason {
-            host_rows.push(unread(&cfg.repo, e));
-            boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
-            continue;
-        }
-        opened.push((cfg, b, s));
-    }
-    if hosts {
-        let ttl = opened.iter().map(|(c, ..)| c.ttl).max().unwrap_or(TTL);
-        let lists: Vec<Vec<snapshot::Host>> = opened.iter_mut().map(|(_, _, s)| std::mem::take(&mut s.hosts)).collect();
-        let mut asks: Vec<health::Ask> = opened.iter().zip(lists).map(|((cfg, b, s), mut list)| {
-            let asked = health::request(b.as_ref(), &mut list, s.observed, cfg.ttl);
-            health::Ask::new(b.as_ref(), list, asked, b.now().unwrap_or(s.observed), cfg.ttl)
-        }).collect();
-        if !json_out { eprintln!("doctor: asked every host of {} board(s) to run its health checks (up to {}s in all)", asks.len(), health::ASK_WAIT); }
-        health::collect(&mut asks, ttl, health::ASK_WAIT, health::ASK_POLL, &|t| std::thread::sleep(std::time::Duration::from_secs(t)));
-        let answered: Vec<(Vec<snapshot::Host>, health::Asked)> = asks.into_iter().map(|a| (a.hosts, a.asked)).collect();
-        for ((cfg, b, s), (list, asked)) in opened.iter_mut().zip(answered) {
-            s.hosts = list;
-            let now = b.now().unwrap_or(s.observed + asked.waited as i64);
-            let tag = |mut v: Value| { v["board"] = json!(cfg.repo); v };
-            let rows: Vec<Value> = s.hosts.iter().map(|h| tag(health::host_row(h, &cfg.repo, cfg.board.name == "gitlab", now, cfg.ttl, Some(&asked)))).collect();
-            let workers: Vec<Value> = health::worker_rows(s, cfg.ttl).into_iter().map(tag).collect();
-            if rows.is_empty() { host_rows.push(json!({"board": cfg.repo, "host": "-", "version": "-", "state": "unknown", "gaps": [], "reason": "no host heartbeat", "fix": "install a host service for this board: `taskq service install` in its project"})); }
-            host_rows.extend(rows.iter().cloned());
-            worker_rows.extend(workers.iter().cloned());
-            boards.push(json!({"board": cfg.repo, "hosts": rows, "workers": workers}));
-        }
-        out.extend(health::hosts_lines(&host_rows, &worker_rows));
+        out.extend(health::lines(&cfg.repo, &items));
+        boards.push(json!({"board": cfg.repo, "items": items.iter().map(check::Item::json).collect::<Vec<_>>()}));
     }
     if json_out {
-        let mut v = json!({"boards": boards});
-        if !hosts { v["cleanup"] = cleanup; }
-        println!("{v}");
+        println!("{}", json!({"boards": boards, "cleanup": cleanup}));
     } else {
         if boards.is_empty() { out.push("doctor: no project registered on this host".into()); }
         for l in out { println!("{l}"); }
     }
     Ok(())
+}
+
+/// One board of `taskq doctor --hosts`, on its own thread with its own board client: the host list, then the published
+/// view or, with `fresh`, the request and its answers.
+fn doctor_board_hosts(cfg: &Config, raw: &Value, fresh: bool, wait: u64, start: std::time::Instant, emit: &mut dyn FnMut(health::Event)) {
+    let opened = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install));
+    let read = opened.and_then(|b| { let issues = b.issues(None)?; let now = b.now()?; Ok((b, issues, now)) });
+    let (b, issues, now) = match read { Ok(v) => v, Err(e) => return emit(health::Event::Failed(e.text().to_string())) };
+    emit(health::Event::Listed);
+    let elapsed = || start.elapsed().as_secs();
+    let sleep = |t| std::thread::sleep(std::time::Duration::from_secs(t));
+    let pace = health::Pace { wait, poll: health::ASK_POLL, elapsed: &elapsed, sleep: &sleep };
+    // board time at the run's start: `now` was read after it
+    let at = health::Scope { repo: &cfg.repo, gitlab: cfg.board.name == "gitlab", ttl: cfg.ttl, now: now - elapsed() as i64 };
+    let hosts = health::listed(&issues, now, cfg.ttl);
+    if fresh { health::ask(b.as_ref(), &issues, hosts, &at, &pace, emit); } else { health::published(b.as_ref(), hosts, &at, &pace, emit); }
+}
+
+/// `taskq doctor --hosts [--fresh]`: per board in parallel, every host's last published result with its age and one
+/// worker table (#2246, #2450). With `--fresh`, the board request asks every host to run its checks and each row prints
+/// as it answers. The run ends by its stated deadline whatever a board request does: a thread still blocked then ends
+/// with the process. The board requests of this process go to stderr, or `requests` with `--json`.
+fn doctor_hosts(roots: Vec<PathBuf>, fresh: bool, json_out: bool) {
+    let start = std::time::Instant::now();
+    let stated = if fresh { health::ASK_WAIT } else { health::READ_WAIT };
+    let wait = stated - health::EXIT_MARGIN;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (mut seen, mut gathered, mut unloaded) = (std::collections::BTreeSet::new(), vec![], vec![]);
+    for root in roots {
+        let (cfg, raw) = match load(&root) {
+            Ok(v) => v,
+            Err(e) => { unloaded.push((project_name(&root), e)); continue; }
+        };
+        if !seen.insert(cfg.repo.clone()) { continue; }
+        let i = gathered.len();
+        gathered.push(health::Gathered::new(&cfg.repo));
+        let shared = std::sync::Arc::new((cfg, raw));
+        let (one, sent) = (shared.clone(), tx.clone());
+        std::thread::spawn(move || {
+            let (cfg, raw) = &*one;
+            doctor_board_hosts(cfg, raw, fresh, wait, start, &mut |e| { let _ = sent.send((i, e)); });
+        });
+        let sent = tx.clone();
+        std::thread::spawn(move || {
+            let (cfg, raw) = &*shared;
+            let event = match cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install)) {
+                Err(e) => health::Event::WorkersFailed(e.text().to_string()),
+                Ok(b) => {
+                    let s = snapshot::read(b.as_ref(), cfg, raw, &[]);
+                    match &s.reason {
+                        Some(e) => health::Event::WorkersFailed(e.clone()),
+                        None => health::Event::Workers(health::worker_rows(&s, cfg.ttl)),
+                    }
+                }
+            };
+            let _ = sent.send((i, event));
+        });
+    }
+    drop(tx);
+    let stream = fresh && !json_out;
+    if stream {
+        eprintln!("doctor: asking every host of {} board(s) to run its health checks; each prints as it answers, ending within {stated}s", gathered.len());
+        println!("{}", health::host_header());
+    }
+    health::gather(&rx, start + std::time::Duration::from_secs(wait), &mut gathered, &mut |row| if stream { println!("{}", health::host_line(row)); });
+    let unread = |repo: &str, e: &str| json!({"board": repo, "host": "-", "version": "-", "state": "unknown", "gaps": [], "reason": format!("board unread: {e}"),
+        "fix": "check the board token and network on this host, then `taskq doctor --hosts` again"});
+    let (mut host_rows, mut worker_rows, mut boards, mut workers_unread) = (vec![], vec![], vec![], vec![]);
+    for (project, e) in &unloaded {
+        host_rows.push(unread(project, e));
+        boards.push(json!({"project": project, "error": e}));
+    }
+    for mut g in gathered {
+        let late = format!("not read within {stated}s");
+        let error = g.failed.clone().or_else(|| (!g.listed).then(|| late.clone()));
+        if let Some(e) = &error { host_rows.push(unread(&g.repo, e)); }
+        else if g.rows.is_empty() { host_rows.push(json!({"board": g.repo, "host": "-", "version": "-", "state": "unknown", "gaps": [], "reason": "no host heartbeat", "fix": "install a host service for this board: `taskq service install` in its project"})); }
+        host_rows.extend(g.rows.iter().cloned());
+        let workers = g.workers.take().unwrap_or(Err(late));
+        if let Err(e) = &workers { workers_unread.push(format!("workers of {}: unknown: {e}", g.repo)); }
+        let v = doctor_hosts_board_json(&g, error.as_ref(), &workers);
+        if !json_out { for n in &g.notes { eprintln!("doctor: {}: {n}", g.repo); } }
+        worker_rows.extend(workers.unwrap_or_default());
+        boards.push(v);
+    }
+    let ops = requests::totals();
+    if json_out {
+        println!("{}", json!({"boards": boards, "requests": ops}));
+        return;
+    }
+    if boards.is_empty() { println!("doctor: no project registered on this host"); return; }
+    if stream { println!(); }
+    for l in health::hosts_lines(&host_rows, &worker_rows, &workers_unread) { println!("{l}"); }
+    eprintln!("doctor: {} seconds, {}", start.elapsed().as_secs(), requests::summary(&ops, " board requests"));
+    if !fresh { eprintln!("doctor: published results; `taskq doctor --hosts --fresh` asks every host to run its checks now (up to {}s)", health::ASK_WAIT); }
+}
+
+pub(crate) fn doctor_hosts_board_json(g: &health::Gathered, error: Option<&String>, workers: &Res<Vec<Value>>) -> Value {
+    let mut v = json!({"board": g.repo, "hosts": g.rows, "workers": workers.as_ref().map_or(vec![], Clone::clone), "notes": g.notes});
+    if let Some(e) = error { v["error"] = json!(e); }
+    if let Err(e) = workers { v["workers_error"] = json!(e); }
+    v
 }
 
 /// § 6 Shared project bootstrap (#2078): run the project's `host_setup` once per host, outside any worker sandbox, and

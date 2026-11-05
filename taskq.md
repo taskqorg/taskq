@@ -17,7 +17,7 @@ One coherent outcome is one task, any diff size, with ≤ 1 live attempt (worker
 - **Reviewer** `R<N>`: a child of the service, spawned on demand for a result. Checks the exact candidate, then `close`, `requeue` with fixes, or `ask`. No resident supervisor session.
 - **Owner session**: a new visible session the service opens for a person (setup, tray AI request, `retro`; § 4), then owned by its runtime; any may act as PM. Authority per [shared approval boundaries](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#approval-boundaries); task-state writes use TaskQ commands. Session name `<work|review|setup> #<N> <title[:40]>`: Claude `--name`; Codex first input line.
 ### R4. Comments move the queue
-Each task-changing command appends one `taskq:` comment, projects labels and pokes the local service. Services poll the board every `poll` seconds. No sender session, timer or PM chat is on the critical path.
+Each task-changing command appends one `taskq:` comment, projects labels and pokes the local service; placement-only audits use §5 intent/completion receipts without changing the fold. Services poll the board every `poll` seconds. No sender session, timer or PM chat is on the critical path.
 ### R5. Completion is written to the task
 Result SHA, checks, questions and blockers go to the issue: `result`, `ask`, `requeue` or `later`; evidence follows [specq verification][vf].
 ### R6. Human report
@@ -171,6 +171,7 @@ A running service records unrecorded board request counts to telemetry every 4 m
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
 Owner-only `taskq reroute --from <rt> --to <rt>` changes strict pins only on open ready tasks without unresolved execution, never a live attempt or host policy, under a board routing fence and one exclusive writer claim; reports only readback; unknown keeps the fence: [detail](docs/design/commands.md#runtime-reroute).
+`taskq unpin N --host H --revision R --op-id ID` clears only the named host label for future admission; owner/PM only, preserving active execution and all other placement (§5 [detail](docs/design/commands.md#host-unpin)). Add output names requested placement versus host defaults (R2/R9/R12).
 Command syntax and effect, op ids, revisions, receipts, task-write acknowledgements and other formats: [commands][cm].
 `taskq pm [--every 3m] [--project P..]` and `taskq pm stop` read nothing and print the exact instructions a session follows to turn manager mode on or off: standing prompt, recurring timer and each tick's steps. TaskQ owns the text; a surface (PilotQ, Claude Code) only runs it, and every tick reads it afresh. Tick rules follow the [PM runbook](docs/design/pm-runbook.md).
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each; a compact one links its full diagnostic in `.taskq/cli-errors.log`, else keeps raw output (R12).
@@ -187,7 +188,8 @@ Target, not in force: [setup and project locations](docs/design/setup-and-projec
 Setup is one agent conversation per project: resolve name and exact folder; first inspect files, config, Git roots, remotes and visibility (`gh repo view`; never ask again). Preserve originals, dirty work, unknown config keys and ownership.
 Show the exact account, repository, visibility and every external effect (creation, labels, access, § 4 incident disclosure); apply only after the owner confirms that list. New repositories default to PRIVATE. Then verify a queue read and write; hand off to the PM. The tray's Add project holds this conversation in the menu (§ 4).
 One-time host setup (`host_setup` in `taskq.json`, e.g. shared git hooks) runs in `service install`, outside the worker sandbox, never by a worker; until it succeeds, `service check`, `service status` and `taskq doctor` show a `host-setup` gap.
-`taskq doctor` checks each board's token scopes, installed vs latest release, report rows and last service error, one fix per gap; `doctor --hosts [--json]` asks every host through the board; no answer, stale or old reads unknown with reason ([host doctor](docs/design/host-service.md#health-checks-2194)).
+`taskq doctor` checks each board's token scopes, installed vs latest release, report rows and last service error, one fix per gap ([host doctor](docs/design/host-service.md#health-checks-2194)).
+`doctor --hosts [--json]` prints each host's last published result and age within 30 s, no wait; `--fresh` asks every host through the board, prints each as it answers, ends by 300 s and reads at most one heartbeat per board per poll; no answer, stale or old reads unknown with reason.
 ## 7. Worker, reviewer, publication
 Worker brief: task, attempt, branch, commands, contract path (release URL if absent), folders (§ 8), CI wait (rule 7), stages (§ 2). Task grants only these commit/publication steps ([approval](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#approval-boundaries)). Rules:
 1. Read contract/issue; [prepare](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#prepare-the-task). Conflict (R13), ambiguous/untestable Acceptance or R2 split: ask with options before code.

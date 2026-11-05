@@ -545,7 +545,22 @@ pub(crate) fn add_cmd(c: &Ctx, cmd: &str, a: &Args, op: &mut Op) -> Res<()> {
     }
     let r = add_task(b, root, &c.raw, &new, op).map_err(|e| serve_hint(e, cfg))?;
     let r = if r.ok() && a.flags.contains_key("gate") { gate_task(b, root, r.task, op) } else { r };
-    respond(a, &[r], json)
+    let placement = add_placement(a, &new);
+    if json {
+        let mut value: Value = serde_json::from_str(&r.json()).map_err(|e| e.to_string())?;
+        value["placement"] = placement;
+        println!("{value}");
+        return if r.ok() { Ok(()) } else { Err(String::new()) };
+    }
+    let ok = r.ok();
+    respond(a, &[r], false)?;
+    if ok { println!("Placement: {placement}"); }
+    Ok(())
+}
+
+/// §5 creation output distinguishes caller intent from admission policy without changing §9 defaults.
+pub(crate) fn add_placement(a: &Args, new: &NewTask) -> Value {
+    json!({"host":new.host,"host_source":if a.one("host").is_some(){"requested"}else if new.host.is_some(){"host default (claim labelled)"}else{"unpinned"},"runtime":new.runtime,"runtime_source":if new.runtime.is_some(){"requested"}else{"admission default"}})
 }
 
 /// `issue`: reads one issue, or writes one comment or label.

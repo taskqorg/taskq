@@ -308,6 +308,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             };
             println!("{value}"); Ok(())
         }
+        "unpin" => {
+            if a.flags.iter().any(|(k,v)| !["host","revision","op-id","json"].contains(&k.as_str()) || v.len()!=1) {return Err("unpin accepts --host, --revision, --op-id and --json once each".into());}
+            emit(&[dispatch::unpin(b,a.num(1)?,a.need("host")?,&op,dispatch::agent()).wake(root)],json)
+        }
         "reroute" => {
             if dispatch::agent() { return Err("only the owner or PM can reroute strict task pins".into()); }
             emit(&reroute(b, root, a.need("from")?, a.need("to")?)?, json)

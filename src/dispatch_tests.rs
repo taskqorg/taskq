@@ -566,3 +566,40 @@ g", &["taskq".into()]).unwrap();
         }
     }
 
+    // §5/R2: host removal must not replace active ownership; stale/worker/replay paths must never mutate it.
+    #[test]
+    fn host_unpin_preserves_ready_and_active_attempts_and_fences_writes() {
+        use crate::board::{Board, Fake};
+        for active in [false,true] {
+            let b=Fake::default();
+            let n=b.create("T","unchanged body",&["taskq".into(),"host-invented".into(),"run-codex".into(),"code".into()]).unwrap();
+            if active {
+                let attempt=b.comment(n,"taskq: spawn worker codex:invented-session invented").unwrap();
+                b.comment(n,&format!("taskq: accepted {attempt} attempt {attempt}\nop-id: accept-{attempt}")).unwrap();
+            }
+            let log=super::entries(&b,n).unwrap();
+            let rev=crate::core::revision(n,&log);
+            let op=super::Op{id:Some("invented-unpin".into()),revision:Some(rev)};
+            let before=super::current(&b,n).unwrap();
+            let count=b.comments(n).unwrap().len();
+            assert_eq!(super::unpin(&b,n,"invented",&op,true).outcome,"rejected");
+            assert_eq!(super::unpin(&b,n,"invented",&super::Op{revision:Some(rev+1),..op.clone()},false).outcome,"stale");
+            assert_eq!(b.comments(n).unwrap().len(),count,"refusals write nothing");
+            assert!(super::unpin(&b,n,"invented",&op,false).ok());
+            let (got,task,_)=super::current(&b,n).unwrap();
+            assert_eq!(got.body,before.0.body);
+            assert_eq!(got.labels,vec!["taskq","run-codex","code"]);
+            assert_eq!(serde_json::to_value(task).unwrap(),serde_json::to_value(before.1).unwrap());
+            let count=b.comments(n).unwrap().len();
+            assert!(super::unpin(&b,n,"invented",&op,false).ok());
+            assert_eq!(b.comments(n).unwrap().len(),count,"repeat writes nothing");
+            assert_eq!(super::unpin(&b,n,"other",&op,false).outcome,"rejected");
+            assert_eq!(b.comments(n).unwrap().len(),count);
+            let fresh=super::Op{id:Some("incomplete".into()),revision:Some(rev)};
+            let input=format!("taskq: host-unpin\n{}\nhost-unpin-op: incomplete",serde_json::json!({"task":n,"url":b.url(n),"host":"invented","revision":rev}));
+            b.comment(n,&input).unwrap();
+            let count=b.comments(n).unwrap().len();
+            assert_eq!(super::unpin(&b,n,"invented",&fresh,false).outcome,"unknown");
+            assert_eq!(b.comments(n).unwrap().len(),count,"interrupted intent never replays");
+        }
+    }

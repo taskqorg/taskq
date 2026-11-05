@@ -114,7 +114,7 @@
         assert_eq!(parse("9900"), None);
         let tag = |mut v: Value, b: &str| { v["board"] = json!(b); v };
         let lines = hosts_lines(&[tag(gone, "o/r"), tag(gap, "o/r"), tag(gl, "g/p")],
-            &[json!({"board": "g/p", "host": "win", "task": 7, "attempt": 42, "runtime": "claude", "alive": true, "stalled": false, "reason": null, "account": "ok (account work)"})]);
+            &[json!({"board": "g/p", "host": "win", "task": 7, "attempt": 42, "runtime": "claude", "alive": true, "stalled": false, "reason": null, "account": "ok (account work)"})], &[]);
         assert!(lines[0].starts_with("board") && lines[0].contains("host"), "one host table with a board column: {lines:#?}");
         assert!(lines.iter().any(|l| l.starts_with("o/r") && l.contains("mac") && l.contains("not writing")), "{lines:#?}");
         assert!(lines.iter().any(|l| l.starts_with("g/p") && l.contains("pds")), "{lines:#?}");
@@ -124,76 +124,171 @@
         handover.selected = Some("4.6.62 waits #7 attempt 42".into());
         let row = host_row(&handover, "o/r", false, now, 120, None);
         assert_eq!((row["version"].as_str(), row["running_selected"].as_str()), (Some("4.6.61"), Some("4.6.61 (selected 4.6.62 waits #7 attempt 42)")));
-        let lines = hosts_lines(&[tag(row, "o/r"), tag(host_row(&host("lin", now - 10, "4.6.62", Some("9900 ok")), "o/r", false, now, 120, None), "o/r")], &[]);
+        let lines = hosts_lines(&[tag(row, "o/r"), tag(host_row(&host("lin", now - 10, "4.6.62", Some("9900 ok")), "o/r", false, now, 120, None), "o/r")], &[], &[]);
         assert!(lines.iter().any(|l| l.starts_with("o/r") && l.contains(" win ") && l.contains("4.6.61 (selected 4.6.62 waits #7 attempt 42)")), "{lines:#?}");
         assert!(lines.iter().any(|l| l.starts_with("o/r") && l.contains(" lin ") && l.contains("4.6.62") && !l.contains("selected")), "{lines:#?}");
     }
 
-    // Chain: `taskq doctor --hosts` request issue -> service pass -> heartbeat `doctor-answer` (#2194 A2, #2246 A1).
-    // Risk: a lagging issue list showed a live host stale, every board waited 300s in turn (14 boards: 70 minutes),
-    // and a silent host read `busy or unreachable`. Protection: a listed-stale heartbeat is read fresh before the
-    // request; one wait covers every board and stops once all answer; a silent live host names its stuck service.
+    /// A `--fresh` or published run of one board on a virtual clock: `tick` runs at each sleep, like a host's pass.
+    fn fresh_run(b: &crate::board::Fake, hosts: Vec<Host>, wait: u64, tick: &dyn Fn(u64)) -> (Vec<(Value, bool)>, u64, u64) {
+        use crate::board::Board;
+        let clock = std::cell::Cell::new(0);
+        let (elapsed, sleep) = (|| clock.get(), |t: u64| { clock.set(clock.get() + t); b.advance(t as i64); tick(clock.get()); });
+        let pace = Pace { wait, poll: 20, elapsed: &elapsed, sleep: &sleep };
+        let at = Scope { repo: "o/r", gitlab: false, ttl: 120, now: b.now().unwrap() };
+        let issues = b.issues(None).unwrap();
+        let before = b.state.borrow().reads;
+        let mut events = vec![];
+        ask(b, &issues, hosts, &at, &pace, &mut |e| if let Event::Row(row, done) = e { events.push((row, done)); });
+        (events, clock.get(), (b.state.borrow().reads - before) as u64)
+    }
+
+    // Chain: § 6 `doctor --hosts --fresh` -> request issue -> service pass -> heartbeat `doctor-answer` (#2194 A2, #2246
+    // A1, #2450 A2, A3). Risk: each poll read every unanswered heartbeat of 13 boards while the quota was near its limit,
+    // the answers printed only at the end, and a silent host read `busy or unreachable`. Protection: at most one heartbeat
+    // read per poll in turn, an answer settles its host at once, a silent live host names its stuck service and the run
+    // stops at its wait.
     #[test]
-    fn doctor_hosts_requests_every_board_at_once_and_reads_a_silent_host_unknown() {
+    fn doctor_fresh_reads_one_heartbeat_per_poll_and_settles_each_answer() {
         use crate::board::{Board, Fake};
-        let (b, c) = (Fake::default(), Fake::default());
+        let b = Fake::default();
         b.advance(10_000);
-        c.advance(10_000);
-        let beat = |b: &Fake, name: &str, body: &str| b.create(&format!("taskq host {name}"), body, &[crate::service::HOST_LABEL.into()]).unwrap();
-        let (win, lin) = (beat(&b, "win", "version 4.6.61\ndoctor 9990 ok"), beat(&b, "lin", "version 4.6.61\ndoctor 9990 ok"));
-        let mac = beat(&b, "mac", "version 4.6.61\ndoctor 9990 ok");
-        beat(&b, "old", "version 4.6.50");
-        let pds = beat(&c, "pds", "version 4.6.61\ndoctor 9990 ok");
-        let ttl = 120;
-        let read = |b: &Fake| b.issues(None).unwrap().iter().filter(|i| crate::service::is_host(i)).map(|i| crate::snapshot::host(i, b.now().unwrap(), ttl)).collect::<Vec<_>>();
-        let mut hosts = read(&b);
-        // the list lags: mac reads two hours old there while its heartbeat is fresh
-        hosts.iter_mut().find(|h| h.name == "mac").unwrap().updated = 1_000;
-        let mut gone = read(&c);
+        let beat = |name: &str, body: &str| b.create(&format!("taskq host {name}"), body, &[crate::service::HOST_LABEL.into()]).unwrap();
+        let (win, _lin, mac) = (beat("win", "version 4.6.61\ndoctor 9990 ok"), beat("lin", "version 4.6.61\ndoctor 9990 ok"), beat("mac", "version 4.6.61\ndoctor 9990 ok"));
+        beat("old", "version 4.6.50");
         let now = b.now().unwrap();
-        let asked = request(&b, &mut hosts, now, ttl);
-        assert!(hosts.iter().find(|h| h.name == "mac").unwrap().updated > 1_000, "a listed-stale heartbeat is read fresh");
-        let other = request(&c, &mut gone, now, ttl);
-        let id = asked.id.clone().unwrap();
-        let mut asks = vec![Ask::new(&b, hosts, asked, now, ttl), Ask::new(&c, gone, other, now, ttl)];
-        // win, mac and pds answer on their next pass; lin never answers
-        let slept = std::cell::Cell::new(0);
+        let hosts = listed(&b.issues(None).unwrap(), now, 120);
+        assert_eq!(hosts.len(), 4);
+        // win and mac answer on their next pass; lin stays silent, and every heartbeat keeps writing
         let answer = |_| {
-            slept.set(slept.get() + 1);
-            let id = request_of(&b.issues(None).unwrap()).expect("request on the board");
+            let id = request_of(&b.issues(None).unwrap()).expect("the request is on the board before any wait");
             b.edit(win, &format!("version 4.6.61\ndoctor {now} token-pulls:gap\n{}", answer_line(&id))).unwrap();
             b.edit(mac, &format!("version 4.6.61\ndoctor {now} ok\n{}", answer_line(&id))).unwrap();
-            let id = request_of(&c.issues(None).unwrap()).expect("request on the second board");
-            c.edit(pds, &format!("version 4.6.61\ndoctor {now} ok\n{}", answer_line(&id))).unwrap();
+            b.edit(_lin, "version 4.6.61\ndoctor 9990 ok").unwrap();
         };
-        collect(&mut asks, ttl, 60, 20, &answer);
-        assert_eq!((asks[0].asked.waited, asks[1].asked.waited, slept.get()), (60, 60, 3), "one wait for both boards, full for the silent host");
+        let (events, waited, reads) = fresh_run(&b, hosts, 100, &answer);
+        assert_eq!(waited, 100, "a silent live host holds the run to its wait, no longer");
+        assert!(reads <= waited / 20, "at most one heartbeat read per poll: {reads} reads in {waited}s");
+        let last = |name: &str| events.iter().rev().find(|(r, _)| r["host"] == name).unwrap().clone();
+        let settled_at = |name: &str| events.iter().position(|(r, d)| r["host"] == name && *d).unwrap();
+        assert!(settled_at("old") < settled_at("win"), "a host that cannot answer prints before any wait");
+        assert_eq!((last("win").0["state"].as_str(), &last("win").0["gaps"], last("win").1), (Some("gap"), &json!(["token-pulls"]), true), "the answer's fresh result");
+        assert_eq!(last("mac").0["state"], "ok");
+        assert!(settled_at("mac") < settled_at("lin"), "an answer prints before the run ends");
+        let silent = last("lin").0;
+        assert_eq!((silent["state"].as_str(), silent["reason"].as_str()), (Some("unknown"), Some("live heartbeat, no answer to the request within 100s: its service has not run a pass since")));
+        assert_eq!(silent["last"], "ok", "the last published result stays visible");
+        assert_eq!(last("old").0["reason"], "version 4.6.50 runs no health checks");
         let requests: Vec<_> = b.issues(None).unwrap().into_iter().filter(|i| i.title == REQUEST_TITLE).collect();
         assert_eq!(requests.len(), 1);
         assert!(!crate::service::is_host(&requests[0]), "an old host's heartbeat parser ignores the request");
-        assert_eq!(request_of(&requests), Some(id.clone()));
-        let rows: Vec<Value> = asks[0].hosts.iter().map(|h| host_row(h, "o/r", false, now + 60, ttl, Some(&asks[0].asked))).collect();
-        let row = |name: &str| rows.iter().find(|r| r["host"] == name).unwrap().clone();
-        assert_eq!((row("win")["state"].as_str(), &row("win")["gaps"]), (Some("gap"), &json!(["token-pulls"])), "the answer's fresh result");
-        assert_eq!(row("mac")["state"], "ok", "a host the list showed stale answers");
-        assert_eq!((row("lin")["state"].as_str(), row("lin")["reason"].as_str()), (Some("unknown"), Some("live heartbeat, no answer to the request within 60s: its service has not run a pass since")));
-        assert_eq!(row("old")["reason"], "version 4.6.50 runs no health checks");
-        assert_eq!(host_row(&asks[1].hosts[0], "g/p", true, now + 60, ttl, Some(&asks[1].asked))["state"], "ok");
-        // the next request edits the same issue and stops waiting once every live host answered
-        b.edit(lin, &format!("version 4.6.61\ndoctor {now} ok")).unwrap();
-        let mut hosts = read(&b);
-        let again = request(&b, &mut hosts, b.now().unwrap(), ttl);
-        let mut asks = vec![Ask::new(&b, hosts, again, b.now().unwrap(), ttl)];
-        let all = |_| {
-            let id = request_of(&b.issues(None).unwrap()).unwrap();
-            for n in [win, lin, mac] { b.edit(n, &format!("version 4.6.61\ndoctor {now} ok\n{}", answer_line(&id))).unwrap(); }
-        };
-        collect(&mut asks, ttl, 300, 20, &all);
-        assert_eq!(asks[0].asked.waited, 20, "no wait once all answered");
+        let first = request_of(&requests).unwrap();
+        // the next run edits the same issue, is a new request and stops once all answered
+        let (win_only, now) = (listed(&b.issues(None).unwrap(), b.now().unwrap(), 120).into_iter().filter(|h| h.name == "win").collect::<Vec<_>>(), b.now().unwrap());
+        let again = |_| { let id = request_of(&b.issues(None).unwrap()).unwrap(); b.edit(win, &format!("version 4.6.61\ndoctor {now} ok\n{}", answer_line(&id))).unwrap(); };
+        let (_, waited, _) = fresh_run(&b, win_only, 300, &again);
+        assert_eq!(waited, 20, "no wait once all answered");
         assert_eq!(b.issues(None).unwrap().iter().filter(|i| i.title == REQUEST_TITLE).count(), 1, "one reused request issue");
-        assert_ne!(asks[0].asked.id.as_ref().unwrap(), &id, "every run is a new request");
-        let mut none = vec![Host { name: "gone".into(), issue: 9999, updated: 1_000, doctor: Some("900 ok".into()), ..Default::default() }];
-        assert!(request(&b, &mut none, now, ttl).id.is_err(), "no live host: no request");
+        assert_ne!(request_of(&b.issues(None).unwrap()).unwrap(), first, "every run is a new request");
+    }
+
+    // Chain: § 6 `doctor --hosts --fresh` -> list lag (#2246 A1, #2450 A3). Risk: a lagging list showed a live host stale
+    // and it read `not writing`, or every stale heartbeat was read at once before the first poll. Protection: a list with
+    // no live host costs one read at once, the first heartbeat read live posts the request and answers; a dead board gets
+    // no request and its hosts read stale from a fresh read.
+    #[test]
+    fn doctor_fresh_reads_listed_stale_hosts_in_turn_before_the_request() {
+        use crate::board::{Board, Fake};
+        let b = Fake::default();
+        b.advance(10_000);
+        let beat = |name: &str, body: &str| b.create(&format!("taskq host {name}"), body, &[crate::service::HOST_LABEL.into()]).unwrap();
+        let (mac, pds) = (beat("mac", "version 4.6.61\ndoctor 9990 ok"), beat("pds", "version 4.6.61\ndoctor 9990 ok"));
+        let now = b.now().unwrap();
+        // the list lags: both read two hours old there while mac's heartbeat is fresh; pds really stopped
+        let mut hosts = listed(&b.issues(None).unwrap(), now, 120);
+        for h in &mut hosts { h.updated = 1_000; }
+        b.state.borrow_mut().issues.iter_mut().find(|i| i.number == pds).unwrap().updated = 1_000;
+        let answer = |_| {
+            let Some(id) = request_of(&b.issues(None).unwrap()) else { return };
+            b.edit(mac, &format!("version 4.6.61\ndoctor {now} ok\n{}", answer_line(&id))).unwrap();
+        };
+        let (events, _, reads) = fresh_run(&b, hosts, 100, &answer);
+        let last = |name: &str| events.iter().rev().find(|(r, _)| r["host"] == name).unwrap().0.clone();
+        assert_eq!(last("mac")["state"], "ok", "a host the list showed stale answers");
+        assert!(last("pds")["reason"].as_str().unwrap().contains("read fresh; its service is not writing"), "{}", last("pds"));
+        assert_eq!(reads, 3, "one at once, one per poll until both settled");
+        // a board with only dead hosts: no write, no wait past their reads
+        let dead = Fake::default();
+        dead.advance(10_000);
+        let gone = dead.create("taskq host gone", "version 4.6.61\ndoctor 900 ok", &[crate::service::HOST_LABEL.into()]).unwrap();
+        dead.state.borrow_mut().issues.iter_mut().find(|i| i.number == gone).unwrap().updated = 1_000;
+        let hosts = listed(&dead.issues(None).unwrap(), dead.now().unwrap(), 120);
+        let (events, waited, reads) = fresh_run(&dead, hosts, 100, &|_| {});
+        assert_eq!((waited, reads), (0, 1), "one read at once and no sleep");
+        assert!(events.last().unwrap().0["reason"].as_str().unwrap().contains("not writing"));
+        assert_eq!(request_of(&dead.issues(None).unwrap()), None, "no live host: no request");
+    }
+
+    // Chain: § 6 `doctor --hosts` published result and age (#2450 A1). Risk: the default run waited up to 300s for
+    // answers while a manager needed the result now; a stale list read `not writing`. Protection: the default posts no
+    // request and never sleeps, every host shows its published result and age, and a stale listed heartbeat is read
+    // fresh once; a stale host keeps its last result visible beside the unknown state.
+    #[test]
+    fn doctor_hosts_prints_published_results_with_age_without_a_request_or_sleep() {
+        use crate::board::{Board, Fake};
+        let b = Fake::default();
+        b.advance(10_000);
+        let beat = |name: &str, body: &str| b.create(&format!("taskq host {name}"), body, &[crate::service::HOST_LABEL.into()]).unwrap();
+        let now = b.now().unwrap();
+        beat("win", &format!("version 4.6.61\ndoctor {} token-pulls:gap", now - 600));
+        beat("mac", &format!("version 4.6.61\ndoctor {} ok", now - 7200));
+        let gone = beat("gone", &format!("version 4.6.61\ndoctor {} ok", now - 90_000));
+        b.state.borrow_mut().issues.iter_mut().find(|i| i.number == gone).unwrap().updated = now - 90_000;
+        let issues = b.issues(None).unwrap();
+        let hosts = listed(&issues, now, 120);
+        let sleep = |_: u64| panic!("the published view never sleeps");
+        let elapsed = || 0;
+        let pace = Pace { wait: 25, poll: 20, elapsed: &elapsed, sleep: &sleep };
+        let at = Scope { repo: "o/r", gitlab: false, ttl: 120, now };
+        let before = b.state.borrow().reads;
+        let mut rows = std::collections::BTreeMap::new();
+        published(&b, hosts, &at, &pace, &mut |e| if let Event::Row(row, _) = e { rows.insert(row["host"].as_str().unwrap().to_string(), row); });
+        assert_eq!(b.state.borrow().reads - before, 1, "only the listed-stale heartbeat is read");
+        assert_eq!(request_of(&b.issues(None).unwrap()), None, "no request");
+        assert_eq!((rows["win"]["state"].as_str(), rows["win"]["age"].as_str()), (Some("gap"), Some("10m")));
+        assert_eq!((rows["mac"]["state"].as_str(), rows["mac"]["age"].as_str()), (Some("ok"), Some("2h")));
+        assert_eq!((rows["gone"]["state"].as_str(), rows["gone"]["age"].as_str(), rows["gone"]["last"].as_str()), (Some("unknown"), Some("1d"), Some("ok")));
+        let rows: Vec<Value> = rows.into_values().map(|mut r| { r["board"] = json!("o/r"); r }).collect();
+        let lines = hosts_lines(&rows, &[], &[]);
+        assert!(lines[0].contains("age"), "{lines:#?}");
+        assert!(lines.iter().any(|l| l.contains(" mac ") && l.contains(" 2h ")), "{lines:#?}");
+        assert!(lines.iter().any(|l| l.contains("gone") && l.contains("not writing") && l.contains("last result: ok")), "{lines:#?}");
+    }
+
+    // Chain: § 6 `doctor --hosts` deadline (#2450 A1, A2). Risk: a paused or hung board request held the run past its
+    // stated wait with nothing printed. Protection: the gather ends at the deadline with what each board said; a settled
+    // row reaches the printer as it arrives, a host's newer row replaces the older one, a silent board stays unread and
+    // unread workers never read `no running worker`.
+    #[test]
+    fn doctor_hosts_gather_ends_at_the_deadline_with_a_hung_board() {
+        use std::time::{Duration, Instant};
+        let (tx, rx) = std::sync::mpsc::channel();
+        let row = |host: &str, state: &str| json!({"host": host, "state": state, "gaps": [], "reason": null});
+        tx.send((0, Event::Listed)).unwrap();
+        tx.send((0, Event::Row(row("win", "unknown"), false))).unwrap();
+        tx.send((0, Event::Row(row("win", "ok"), true))).unwrap();
+        let mut boards = vec![Gathered::new("o/r"), Gathered::new("g/hung")];
+        let mut printed = vec![];
+        let began = Instant::now();
+        // `tx` stays open: the second board's thread is blocked in a request
+        gather(&rx, began + Duration::from_millis(100), &mut boards, &mut |r| printed.push(r["host"].as_str().unwrap().to_string()));
+        assert!(began.elapsed() < Duration::from_secs(5), "the deadline ends the run");
+        assert_eq!(printed, ["win"]);
+        assert_eq!((boards[0].rows.len(), boards[0].rows[0]["state"].as_str(), boards[0].rows[0]["board"].as_str()), (1, Some("ok"), Some("o/r")));
+        assert!(!boards[1].listed && boards[1].workers.is_none());
+        let lines = hosts_lines(&boards[0].rows, &[], &["workers of g/hung: unknown: not read within 30s".into()]);
+        assert!(lines.iter().any(|l| l.contains("workers of g/hung: unknown")) && !lines.iter().any(|l| l == "no running worker"), "{lines:#?}");
+        drop(tx);
     }
 
     // Chain: § 4 heartbeat lease, execution observation and account lines -> `taskq doctor --hosts` workers (#2194
@@ -236,7 +331,7 @@
         assert_eq!(get(6)["account"], "unknown: no fresh claude account facts", "no account line and no output: unknown, never ok");
         assert_eq!((&get(7)["alive"], &get(7)["account"]), (&json!(true), &json!("ok (runtime output fresh)")));
         assert_eq!(get(8)["account"], "unknown: host heartbeat 15m ago", "a stale heartbeat's account line is no evidence");
-        let lines = hosts_lines(&[], &w);
+        let lines = hosts_lines(&[], &w, &[]);
         assert!(lines.iter().any(|l| l.contains("#3") && l.contains("unknown: owning host heartbeat stale")), "{lines:#?}");
     }
 

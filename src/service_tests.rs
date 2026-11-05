@@ -6786,3 +6786,46 @@ Open: none";
         assert!(!s.heartbeat_body().contains("daemon-sandbox"), "the daemon itself fits this project");
         ds::fake(None);
     }
+
+    // Chain: §5/R12 audit read -> fresh placement -> claim. Risk: a stale pinned view launches after unpin.
+    #[test]
+    fn host_unpin_discards_cached_placement_before_admission() {
+        let b=Fake::default();let c=cfg("mac");
+        let n=b.create("T","",&[TASK_LABEL.into(),"host-mac".into()]).unwrap();
+        let v=views(&b,&mut Default::default(),&mut Default::default(),300).unwrap().0.remove(0);
+        let rev=core::revision(n,&entries(&b,n).unwrap());
+        assert!(crate::dispatch::unpin(&b,n,"mac",&crate::dispatch::Op{id:Some("invented-ready-unpin".into()),revision:Some(rev)},false).ok());
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|panic!("cached placement cannot launch")));
+        s.claim(&v,"worker",c.default_runtime.name(),"").unwrap();
+        assert_eq!(task(&b,n).state,State::Ready);
+        assert!(s.kids.is_empty());
+    }
+
+    // Chain: §5/R2 host unpin -> service pass. Risk: a placement edit stops or replaces the live executor.
+    #[test]
+    fn host_unpin_keeps_the_running_executor_and_lease() {
+        struct Kept;
+        impl Proc for Kept {
+            fn exited(&mut self)->Result<Option<i32>,String>{Ok(None)}
+            fn kill(&mut self)->Result<(),String>{panic!("host unpin must never stop active execution")}
+            fn id(&self)->u32{424242}
+        }
+        let b=Fake::default();
+        let n=b.create("T","",&[TASK_LABEL.into(),"host-mac".into()]).unwrap();
+        let c=cfg("mac");
+        let starts=Rc::new(std::cell::Cell::new(0));
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|{starts.set(starts.get()+1);Ok(Box::new(Kept))}));
+        s.focus=vec!["all".into()];s.pass().unwrap();
+        let attempt=s.kids[0].attempt;
+        let execution=s.kids[0].execution;
+        let session=task(&b,n).session;
+        let rev=core::revision(n,&entries(&b,n).unwrap());
+        let r=crate::dispatch::unpin(&b,n,"mac",&crate::dispatch::Op{id:Some("invented-live-unpin".into()),revision:Some(rev)},false);
+        assert!(r.ok(),"{}",r.reason);
+        s.pass().unwrap();
+        assert_eq!(starts.get(),1);assert_eq!(s.kids.len(),1);
+        assert_eq!((s.kids[0].attempt,s.kids[0].execution,s.kids[0].proc.id()),(attempt,execution,424242));
+        assert_eq!(task(&b,n).session,session);
+        assert!(s.entry().held.iter().any(|(task,id,_)|*task==n&&*id==attempt));
+        assert!(!b.issue(n).unwrap().labels.contains(&"host-mac".into()));
+    }
