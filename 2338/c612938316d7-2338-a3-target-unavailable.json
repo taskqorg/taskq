@@ -1,0 +1,53 @@
+{
+  "at": 1793836985,
+  "task": {
+    "n": 9,
+    "state": "waiting",
+    "revision": 6645451026,
+    "attempt": null,
+    "role": null,
+    "blocked": [
+      {
+        "ref": "#25",
+        "url": "https://github.com/taskqorg/assetq/issues/25",
+        "reason": "open"
+      }
+    ],
+    "deps": [
+      25
+    ],
+    "heartbeat": {
+      "host": null,
+      "attempt": null,
+      "source": "board host heartbeat",
+      "observed": null,
+      "age_s": null,
+      "freshness": "not applicable",
+      "reason": "no live attempt",
+      "ttl_s": 300,
+      "progress": {
+        "source": "not applicable",
+        "status": "not applicable",
+        "reason": "no live attempt"
+      },
+      "as_of": 1793836966,
+      "warning": null,
+      "input_pending": false,
+      "executor": {
+        "state": "not applicable",
+        "reason": "no live attempt",
+        "observed": null,
+        "source": "board task projection"
+      }
+    }
+  },
+  "ui": "TaskQ Home assetq#9 Blocked; thread not opened; no private transcript read",
+  "authorized_target": {
+    "task": 9,
+    "project": "assetq",
+    "attempt": 6644687529,
+    "host": "win"
+  },
+  "a3": "unknown; authorized target no longer live; no substitution",
+  "close": "forbidden without PASS"
+}
