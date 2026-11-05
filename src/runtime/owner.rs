@@ -115,9 +115,13 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     let agent = match super::agent(&r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let input = read_brief(&path);
     use coreq::process::Failure;
-    let out = match agent.background_launch(c, &spec, &input, std::time::Duration::from_secs(30)) {
-        Err(e) => return Launched::NoStart(format!("Claude launch: {e}")),
-        Ok(out) => out,
+    let home = super::accounts::default_home(&r.runtime);
+    let out = {
+        let _daemon = match super::daemon_sandbox::enter(&r.runtime, home.as_deref(), access.profile.as_deref(), false) { Ok(gate) => gate, Err(e) => return Launched::NoStart(format!("{ACCESS} {e}")) };
+        match agent.background_launch(c, &spec, &input, std::time::Duration::from_secs(30)) {
+            Err(e) => return Launched::NoStart(format!("Claude launch: {e}")),
+            Ok(out) => out,
+        }
     };
     let out = match out {
         Ok(out) | Err(Failure::Exit(out)) => out,

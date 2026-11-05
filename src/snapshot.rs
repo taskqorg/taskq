@@ -456,6 +456,8 @@ pub struct Host {
     pub selected: Option<String>,
     /// Heartbeat `queue {json}` (#2255): every project of the host service; none from older hosts.
     pub queue: Option<crate::host::Queues>,
+    /// Heartbeat `daemon-sandbox {json}` (#2432): each daemon that differs from the grant of this project's jobs.
+    pub daemon_sandbox: Vec<Value>,
     /// The project ttl this row was read with: the heartbeat's liveness.
     pub ttl: i64,
 }
@@ -643,6 +645,7 @@ pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
         accounts: h.body.lines().filter_map(|l| l.strip_prefix("account ")).map(str::to_string).collect(),
         selected: h.body.lines().find_map(|l| l.strip_prefix("selected ")).map(str::to_string),
         queue: h.body.lines().find_map(|l| l.strip_prefix("queue ")).filter(|_| h.trusted).and_then(|j| serde_json::from_str(j).ok()),
+        daemon_sandbox: h.body.lines().filter_map(|l| l.strip_prefix("daemon-sandbox ")).filter(|_| h.trusted).filter_map(|j| serde_json::from_str(j).ok()).collect(),
         ttl,
     }
 }
@@ -1077,6 +1080,16 @@ impl Snapshot {
                     anomalies.push(format!("- host {} {name} · restart pending {} · {doctor}", h.name, age(q["restart"].as_i64().unwrap_or(0))));
                 }
             }
+            for d in &h.daemon_sandbox {
+                let bin = cell(&compact(d["bin"].as_str().unwrap_or("runtime"), 40));
+                let tasks = d["tasks"].as_array().into_iter().flatten().map(|n| format!("#{n}")).collect::<Vec<_>>().join(", ");
+                let reason = cell(&compact(d["reason"].as_str().unwrap_or("no reason reported"), 160));
+                let next = format!("Next: jobs wait until the daemon exits; run `{bin} daemon status` on {}", h.name);
+                anomalies.push(match d["pid"].as_u64() {
+                    Some(pid) => format!("- host {} · live {bin} daemon pid {pid} sandbox differs from the grant of {tasks}: {reason} · {next}", h.name),
+                    None => format!("- host {} · {bin} daemon sandbox unknown for {tasks}: {reason} · {next}", h.name),
+                });
+            }
         }
         if let Some(d) = decide_unknown { anomalies.push(format!("- {} · Next: rerun `taskq status` after the next service pass", d.trim_end())); }
         let stamp=|v:&Value|v.as_i64().filter(|at|*at>0).map(crate::board::stamp).unwrap_or("unknown".into());
@@ -1272,6 +1285,24 @@ mod tests {
     fn host(age: i64) -> board::Issue {
         let row = r#"execution {"task":1,"attempt":5,"id":7,"through":7,"state":"running","reason":"turn running"}"#;
         board::Issue { number: 9, title: "taskq host win".into(), body: format!("version 4\n{row}"), updated: 1000 - age, trusted: true, ..Default::default() }
+    }
+
+    // Chain: R6 Anomalies, #2432 A2. Risk: a live daemon with another project's sandbox holds jobs and status never says
+    // so, or an untrusted heartbeat invents one, or a stale heartbeat keeps naming a daemon that has gone.
+    #[test]
+    fn a_daemon_that_differs_from_a_jobs_grant_is_an_anomaly() {
+        let at = 10_000;
+        let beat = |name: &str, age: i64, trusted: bool, line: &str| board::Issue { title: format!("taskq host {name}"), body: format!("version 4\n{line}"), updated: at - age, trusted, ..Default::default() };
+        let differs = r#"daemon-sandbox {"bin":"claude","pid":77,"reason":"daemon runs under another Seatbelt profile","tasks":[5,6]}"#;
+        let unknown = r#"daemon-sandbox {"bin":"claude","pid":null,"reason":"daemon status unreadable","tasks":[7]}"#;
+        let cfg = crate::tests::cfg();
+        let snap = from_views("board", &crate::board::Fake::default(), &cfg, at, &[], &[
+            beat("mac", 10, true, differs), beat("next", 10, true, unknown), beat("forged", 10, false, differs), beat("old", cfg.ttl + 60, true, differs),
+        ]);
+        let text = snap.text(&cfg, &json!({})).unwrap();
+        assert!(text.contains("- host mac · live claude daemon pid 77 sandbox differs from the grant of #5, #6: daemon runs under another Seatbelt profile · Next: jobs wait until the daemon exits; run `claude daemon status` on mac"), "{text}");
+        assert!(text.contains("- host next · claude daemon sandbox unknown for #7: daemon status unreadable · Next:"), "{text}");
+        assert!(!text.contains("- host forged · live") && !text.contains("- host old · live"), "{text}");
     }
 
     // Chain: R6 Anomalies, § 4 Filter. Defect: a manager-only host claims no task, so its focus gates nothing, yet an

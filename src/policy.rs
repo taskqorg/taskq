@@ -134,6 +134,9 @@ fn sb(p: &Path) -> String {
     format!("\"{}\"", p.display().to_string().replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// Reserved lookup names identify a profile without filesystem objects or changes to file access.
+const IDENTITY_ROOT: &str = "com.taskq.seatbelt";
+
 /// Seatbelt profile: everything allowed except writes to `<install>` (policy store, token, releases), to `PATH`
 /// directories (the service runs `claude`/`codex` from there unwrapped), to Codex config (`.codex/*.toml` can widen
 /// Codex's own sandbox) and, when `writable` is given, outside it. Paths are canonical: Seatbelt matches real paths
@@ -160,7 +163,17 @@ pub fn profile(install: &Path, writable: Option<&[PathBuf]>, home: &Path) -> Str
     }
     s += "(deny file-write* (regex #\"/\\.gemini/(config/hooks\\.json|antigravity-cli/settings\\.json)$\"))\n";
     s += "(deny file-write* (regex #\"/\\.codex/(taskq-accounts/[^/]+/)?[^/]*\\.toml$\"))\n";
+    // Lookup markers need no filesystem objects or path resolution.
+    let h = crate::runtime::usage::sha256(s.as_bytes());
+    s += &format!("(allow mach-lookup (global-name \"{IDENTITY_ROOT}.{h}.allow\"))\n(deny mach-lookup (global-name \"{IDENTITY_ROOT}.{h}.deny\"))\n");
     s
+}
+
+/// Lookup names a process under `profile` alone may and may not query ([one sandbox per daemon](docs/design/worker-permissions.md#one-sandbox-per-daemon)).
+pub fn identity(profile: &str) -> Option<(String, String)> {
+    let (_, tail) = profile.rsplit_once(IDENTITY_ROOT)?;
+    let h = tail.strip_prefix('.')?.get(..64).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    Some((format!("{IDENTITY_ROOT}.{h}.allow"), format!("{IDENTITY_ROOT}.{h}.deny")))
 }
 
 /// Writable paths of a preset: runtime homes, OS temp, devices and user build caches; Workspace adds the root,

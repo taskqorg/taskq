@@ -1526,6 +1526,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             if let Some(r) = runtime::missing_cli(rt) { s.refused_access.entry(rt.to_string()).or_insert(r); }
         }
         s.full = access.iter().filter(|e| e.mode == "full" && e.refused.is_none()).map(|e| e.runtime.clone()).collect();
+        // One sandbox per daemon: the grant of each daemon-owned runtime, whose live daemon this pass reads back
+        s.seatbelt = access.iter().filter(|e| cfg!(target_os = "macos") && e.refused.is_none() && runtime::of(&e.runtime).has("background")).map(|e| (e.runtime.clone(), e.profile.clone())).collect();
         if s.gui_checked.is_none_or(|t: Instant| t.elapsed().as_secs() >= 300) {
             s.gui_checked = Some(Instant::now());
             s.gui_probe = platform::gui_probe();
