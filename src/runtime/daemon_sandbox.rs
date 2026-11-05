@@ -31,7 +31,7 @@ pub enum Fit {
 /// Native readback of a live process's sandbox.
 pub trait Seatbelt {
     fn confined(&self, pid: u32) -> Result<bool, String>;
-    fn may_write(&self, pid: u32, path: &Path) -> Result<bool, String>;
+    fn may_read(&self, pid: u32, path: &Path) -> Result<bool, String>;
 }
 
 struct Native;
@@ -44,9 +44,9 @@ impl Seatbelt for Native {
         { let _ = pid; Err("sandbox readback exists only on macOS".into()) }
     }
 
-    fn may_write(&self, pid: u32, path: &Path) -> Result<bool, String> {
+    fn may_read(&self, pid: u32, path: &Path) -> Result<bool, String> {
         #[cfg(target_os = "macos")]
-        { mac::may_write(pid, path) }
+        { mac::may_read(pid, path) }
         #[cfg(not(target_os = "macos"))]
         { let _ = (pid, path); Err("sandbox readback exists only on macOS".into()) }
     }
@@ -71,8 +71,8 @@ mod mac {
         }
     }
 
-    pub fn may_write(pid: u32, path: &Path) -> Result<bool, String> {
-        let op = CString::new("file-write-data").map_err(|_| "invalid sandbox operation")?;
+    pub fn may_read(pid: u32, path: &Path) -> Result<bool, String> {
+        let op = CString::new("file-read-data").map_err(|_| "invalid sandbox operation")?;
         let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| "invalid sandbox path")?;
         match unsafe { sandbox_check(pid as i32, op.as_ptr(), 1 | SANDBOX_CHECK_NO_REPORT, path.as_ptr()) } {
             0 => Ok(true),
@@ -98,7 +98,7 @@ pub fn fit(daemon: Result<Option<u32>, String>, profile: Option<&str>, s: &dyn S
         };
     };
     let Some((allow, deny)) = crate::policy::identity(profile) else { return Fit::Unknown("job profile has no identity".into()) };
-    match (s.may_write(pid, &allow), s.may_write(pid, &deny)) {
+    match (s.may_read(pid, &allow), s.may_read(pid, &deny)) {
         (Ok(true), Ok(false)) => Fit::Fits,
         (Ok(_), Ok(_)) => match s.confined(pid) {
             Ok(false) => differs("daemon runs unconfined, job has a Seatbelt grant"),
@@ -207,11 +207,11 @@ mod tests {
     use std::cell::RefCell;
 
     /// A daemon that holds the Seatbelt profile of the job that started it. It evaluates a taskq profile by its rules:
-    /// the last matching rule wins, unmatched writes are allowed.
+    /// denies take precedence over allows, unmatched operations are allowed.
     #[derive(Default)]
     struct Sim(RefCell<Option<(u32, Option<String>)>>);
 
-    fn writes(profile: Option<&str>, path: &str) -> bool {
+    fn permits(profile: Option<&str>, operation: &str, path: &str) -> bool {
         let Some(profile) = profile else { return true };
         let under = |p: &str| path == p || path.strip_prefix(p).is_some_and(|r| r.starts_with(['/', '\\']));
         let quoted = |rule: &str, kind: &str| -> Vec<String> {
@@ -226,14 +226,13 @@ mod tests {
         };
         let mut allowed = true;
         for rule in profile.lines() {
-            if rule.starts_with("(deny file-write* (require-not") {
+            let Some(rule) = rule.strip_prefix(&format!("(deny {operation} ")) else { continue };
+            if rule.starts_with("(require-not") {
                 if !quoted(rule, "subpath").iter().any(|p| under(p)) { allowed = false; }
-            } else if rule.starts_with("(deny file-write* (subpath") {
+            } else if rule.starts_with("(subpath") {
                 if quoted(rule, "subpath").iter().any(|p| under(p)) { allowed = false; }
-            } else if rule.starts_with("(deny file-write* (literal") {
+            } else if rule.starts_with("(literal") {
                 if quoted(rule, "literal").iter().any(|p| p == path) { allowed = false; }
-            } else if rule.starts_with("(allow file-write* (literal") && quoted(rule, "literal").iter().any(|p| p == path) {
-                allowed = true;
             }
         }
         allowed
@@ -243,8 +242,8 @@ mod tests {
         fn confined(&self, _: u32) -> Result<bool, String> {
             Ok(self.0.borrow().as_ref().is_some_and(|d| d.1.is_some()))
         }
-        fn may_write(&self, _: u32, path: &Path) -> Result<bool, String> {
-            Ok(writes(self.0.borrow().as_ref().and_then(|d| d.1.as_deref()), &path.display().to_string()))
+        fn may_read(&self, _: u32, path: &Path) -> Result<bool, String> {
+            Ok(permits(self.0.borrow().as_ref().and_then(|d| d.1.as_deref()), "file-read*", &path.display().to_string()))
         }
     }
 
@@ -264,7 +263,8 @@ mod tests {
     struct Projects { granted: PathBuf, ungranted: PathBuf, granted_access: Effective, ungranted_access: Effective, dir: PathBuf }
 
     fn projects() -> Projects {
-        let dir = std::env::temp_dir().join(format!("taskq-daemon-sandbox-{}-{:?}", std::process::id(), std::thread::current().id()));
+        // OS temp is shared writable space on macOS, so it cannot model separate project write limits.
+        let dir = std::env::current_dir().unwrap().join(".taskq").join(format!("daemon-sandbox-{}-{:?}", std::process::id(), std::thread::current().id()));
         let (install, home, granted, ungranted) = (dir.join("install"), dir.join("home"), dir.join("granted"), dir.join("ungranted"));
         for d in [&install, &home, &granted, &ungranted] { std::fs::create_dir_all(d).unwrap(); }
         let (granted, ungranted) = (granted.canonicalize().unwrap(), ungranted.canonicalize().unwrap());
@@ -283,14 +283,14 @@ mod tests {
         let (g_root, u_root) = (p.granted.display().to_string(), p.ungranted.display().to_string());
         assert_ne!(g, u);
         // The defect this gate closes: under the other project's profile each job has the wrong limits.
-        assert!(!writes(Some(g), &u_root), "the ungranted project would lose its worktree writes");
-        assert!(writes(Some(u), &g_root) && writes(Some(u), &u_root), "the granted project would run without its limits");
+        assert!(!permits(Some(g), "file-write*", &u_root), "the ungranted project would lose its worktree writes");
+        assert!(permits(Some(u), "file-write*", &g_root) && permits(Some(u), "file-write*", &u_root), "the granted project would run without its limits");
 
         // The granted project starts the daemon.
         let sim = Sim::default();
         let limits = sim.launch(Some(g)).unwrap();
         assert_eq!(limits.as_deref(), Some(g));
-        assert!(writes(limits.as_deref(), &g_root) && !writes(limits.as_deref(), &u_root));
+        assert!(permits(limits.as_deref(), "file-write*", &g_root) && !permits(limits.as_deref(), "file-write*", &u_root));
         assert_eq!(sim.launch(Some(g)).unwrap().as_deref(), Some(g), "the same grant shares its daemon");
         assert_eq!(sim.launch(Some(u)).unwrap_err(), "live daemon pid 4242: daemon runs under another Seatbelt profile");
         assert_eq!(sim.0.borrow().as_ref().unwrap().1.as_deref(), Some(g), "a refused job starts nothing");
@@ -298,7 +298,7 @@ mod tests {
 
         // The ungranted project starts it next: both orders hold.
         let limits = sim.launch(Some(u)).unwrap();
-        assert!(writes(limits.as_deref(), &u_root));
+        assert!(permits(limits.as_deref(), "file-write*", &u_root));
         assert!(sim.launch(Some(g)).unwrap_err().contains("another Seatbelt profile"), "the granted job never runs under the wider profile");
         std::fs::remove_dir_all(&p.dir).ok();
     }
@@ -325,7 +325,7 @@ mod tests {
         struct Broken;
         impl Seatbelt for Broken {
             fn confined(&self, _: u32) -> Result<bool, String> { Err("daemon sandbox readback failed".into()) }
-            fn may_write(&self, _: u32, _: &Path) -> Result<bool, String> { Err("daemon sandbox readback failed".into()) }
+            fn may_read(&self, _: u32, _: &Path) -> Result<bool, String> { Err("daemon sandbox readback failed".into()) }
         }
         let p = projects();
         let g = p.granted_access.profile.as_deref();
@@ -384,32 +384,40 @@ mod tests {
             writeln!(std::io::stderr(), "sandbox-blocked: native_readback_reads_a_real_seatbelt: Operation not permitted").unwrap();
             return;
         }
-        let dir = std::env::temp_dir().join(format!("taskq-daemon-native-{}", std::process::id()));
-        let (install, a_root, b_root) = (dir.join("install"), dir.join("a"), dir.join("b"));
-        for d in [&install, &a_root, &b_root] { std::fs::create_dir_all(d).unwrap(); }
-        let a = policy::profile(&install, Some(&[a_root.clone()]), &dir);
-        let b = policy::profile(&install, Some(&[b_root.clone()]), &dir);
+        assert!(probe.status.success(), "sandbox-exec probe failed: {probe:?}");
+        let p = projects();
+        let (a, b) = (p.granted_access.profile.as_deref().unwrap(), p.ungranted_access.profile.as_deref().unwrap());
         assert_ne!(a, b);
-        let mut daemon = Command::new("sandbox-exec").args(["-p", &a, "/bin/sleep", "30"]).spawn().unwrap();
-        let pid = daemon.id();
-        let begun = Instant::now();
-        while Native.confined(pid) != Ok(true) && begun.elapsed() < Duration::from_secs(5) { std::thread::sleep(Duration::from_millis(50)); }
-        assert_eq!(Native.confined(pid), Ok(true));
-        assert_eq!(fit(Ok(Some(pid)), Some(&a), &Native), Fit::Fits);
-        assert_eq!(fit(Ok(Some(pid)), Some(&b), &Native), Fit::Differs { pid, reason: "daemon runs under another Seatbelt profile" });
-        assert!(matches!(fit(Ok(Some(pid)), None, &Native), Fit::Differs { .. }), "a Full job does not fit");
-        daemon.kill().ok();
-        daemon.wait().ok();
+        for (own, other) in [(a, b), (b, a)] {
+            let mut daemon = Command::new("sandbox-exec").args(["-p", own, "/bin/sleep", "30"]).spawn().unwrap();
+            let pid = daemon.id();
+            let begun = Instant::now();
+            while Native.confined(pid) != Ok(true) && begun.elapsed() < Duration::from_secs(5) { std::thread::sleep(Duration::from_millis(50)); }
+            let confined = Native.confined(pid);
+            let fits = fit(Ok(Some(pid)), Some(own), &Native);
+            let differs = fit(Ok(Some(pid)), Some(other), &Native);
+            let full = fit(Ok(Some(pid)), None, &Native);
+            daemon.kill().ok();
+            daemon.wait().ok();
+            assert_eq!(confined, Ok(true));
+            assert_eq!(fits, Fit::Fits);
+            assert_eq!(differs, Fit::Differs { pid, reason: "daemon runs under another Seatbelt profile" });
+            assert!(matches!(full, Fit::Differs { .. }), "a Full job does not fit");
+        }
         let mut plain = Command::new("/bin/sleep").arg("30").spawn().unwrap();
-        assert_eq!(fit(Ok(Some(plain.id())), None, &Native), Fit::Fits, "Full fits an unconfined process");
-        assert!(matches!(fit(Ok(Some(plain.id())), Some(&a), &Native), Fit::Differs { reason: "daemon runs unconfined, job has a Seatbelt grant", .. }));
+        let full = fit(Ok(Some(plain.id())), None, &Native);
+        let differs = fit(Ok(Some(plain.id())), Some(a), &Native);
         plain.kill().ok();
         plain.wait().ok();
+        assert_eq!(full, Fit::Fits, "Full fits an unconfined process");
+        assert!(matches!(differs, Fit::Differs { reason: "daemon runs unconfined, job has a Seatbelt grant", .. }));
         let touch = |profile: &str, path: &Path| Command::new("sandbox-exec").args(["-p", profile, "/usr/bin/touch"]).arg(path).status().unwrap().success();
-        assert!(touch(&a, &a_root.join("own")), "own worktree stays writable");
-        assert!(!touch(&b, &a_root.join("other")), "another project's worktree is closed");
-        let (allow, _) = policy::identity(&a).unwrap();
-        assert!(!touch(&a, &allow), "the marker rule grants nothing");
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(touch(a, &p.granted.join("own")), "own worktree stays writable");
+        assert!(!touch(a, &p.ungranted.join("other")), "another project's worktree is closed");
+        assert!(touch(b, &p.ungranted.join("own")), "the ungranted project keeps its legacy worktree writes");
+        assert!(touch(b, &p.granted.join("legacy")), "the granted job must not inherit these wider limits");
+        let (allow, _) = policy::identity(a).unwrap();
+        assert!(!touch(a, &allow), "the marker rule grants nothing");
+        std::fs::remove_dir_all(&p.dir).ok();
     }
 }
