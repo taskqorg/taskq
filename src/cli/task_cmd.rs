@@ -242,7 +242,7 @@ pub(crate) fn start_task(b: &dyn Board, root: &Path, n: u64, op: &Op) -> Res<Rec
 }
 
 pub(crate) fn create_claim_issue(b: &dyn Board, raw: &Value, op: &Op) -> Result<u64, Receipt> {
-    let read = |reason: String| Receipt {
+    let read = |reason: crate::board::Error| Receipt {
         outcome: "unknown", next: "Retry the identical add with the same --op-id for read-only discovery.".into(),
         ..Receipt::rejected(0, op, reason)
     };
@@ -290,7 +290,7 @@ pub(crate) fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str
         outcome: "unknown", next: "Retry the identical add with the same --op-id for read-only discovery.".into(),
         ..Receipt::rejected(n, op, reason)
     };
-    let read = |e| unknown(0, e);
+    let read = |e: crate::board::Error| unknown(0, e.to_string());
     let claim_issue = create_claim_issue(b, raw, op)?;
     let request = json!({"actor": b.me().map_err(read)?, "title": title, "body": body, "labels": labels, "later_text": later_text}).to_string();
     let hash: String = ring::digest::digest(&ring::digest::SHA256, request.as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
@@ -298,7 +298,7 @@ pub(crate) fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str
     let claim = format!("{header}\nrequest-sha256: {hash}");
     // GitLab keeps a title and description without surrounding whitespace, dropping the newline that ends `add` bodies (#1914)
     let same = |stored: &str, sent: &str| stored.trim() == sent.trim();
-    let first = || -> Res<Option<board::Comment>> {
+    let first = || -> board::Result<Option<board::Comment>> {
         Ok(b.comments(claim_issue)?.into_iter().filter(|c| c.trusted && !c.edited && c.body.lines().next() == Some(header.as_str())).min_by_key(|c| c.id))
     };
     let discover = || -> Result<Receipt, Receipt> {
@@ -336,7 +336,7 @@ pub(crate) fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str
         return Err(discover().unwrap_or_else(|r| r));
     }
     let n = b.create(title, body, labels).map_err(read)?;
-    let issue = b.issue(n).map_err(|e| unknown(n, e))?;
+    let issue = b.issue(n).map_err(|e| unknown(n, e.to_string()))?;
     if !issue.trusted || !same(&issue.title, title) || !same(&issue.body, body) || issue.labels.len() != labels.len() || labels.iter().any(|l| !issue.labels.contains(l)) {
         return Err(unknown(n, "create readback does not match the request".into()));
     }

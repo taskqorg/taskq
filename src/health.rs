@@ -40,7 +40,7 @@ fn grant(name: &str, gitlab: bool) -> &'static str {
 /// GitLab `access` (#2246): the token's own scopes and state (`GET /personal_access_tokens/self`) and the token user's
 /// project role (`GET /projects/:id` permissions), one probe per permission of [`TOKEN`]. Any unread fact is unknown
 /// with its cause, never ok.
-pub fn gitlab_access(token: &Result<Value, String>, project: &Result<Value, String>) -> Vec<(&'static str, Probe)> {
+pub fn gitlab_access(token: &crate::board::Result<Value>, project: &crate::board::Result<Value>) -> Vec<(&'static str, Probe)> {
     let level = project.as_ref().map(|p| ["project_access", "group_access"].iter().filter_map(|k| p["permissions"][k]["access_level"].as_u64()).max().unwrap_or(0));
     GITLAB.iter().map(|(name, scopes, min, _)| (*name, match token {
         Err(e) => Probe::Unknown(format!("token scopes unread: {e}")),
@@ -90,12 +90,6 @@ pub fn cached_latest(install: &Path) -> Result<String, String> {
     }
 }
 
-/// The HTTP status a board error names (`... HTTP 403 ...`).
-pub fn http_status(e: &str) -> Option<u16> {
-    let i = e.find("HTTP ")?;
-    e[i + 5..].get(..3)?.parse().ok()
-}
-
 /// The first line of an error, bounded.
 fn short(e: &str) -> String {
     e.lines().next().unwrap_or_default().chars().take(160).collect()
@@ -138,7 +132,7 @@ pub fn reports_detail(cached: &Value) -> Option<String> {
         return Some(if reason.contains("stale") { "stale" } else if reason.contains("not collected") { "uncollected" } else { "incomplete" }.into());
     }
     let failed = unreadable(cached);
-    let status = |r: &&Value| r["reason"].as_str().and_then(http_status);
+    let status = |r: &&Value| r["status"].as_u64();
     let cause = if failed.is_empty() { return None }
         else if failed.iter().any(|r| matches!(status(r), Some(401 | 403))) { "denied" }
         else if failed.iter().all(|r| r["missing"] == true || status(r) == Some(404)) { "missing" } else { "unreadable" };
@@ -474,7 +468,7 @@ pub fn request(b: &dyn crate::board::Board, hosts: &mut [Host], now: i64, ttl: i
             None => b.create(REQUEST_TITLE, &request_body(&id), &[crate::service::HOST_LABEL.into()]).map(|_| ()),
         }
     });
-    match posted { Ok(()) => Asked { id: Ok(id), waited: 0 }, Err(e) => Asked { id: Err(format!("request not posted: {}", short(&e))), waited: 0 } }
+    match posted { Ok(()) => Asked { id: Ok(id), waited: 0 }, Err(e) => Asked { id: Err(format!("request not posted: {}", short(e.text()))), waited: 0 } }
 }
 
 /// One board of a `--hosts` run: its board, hosts, request and the hosts still to answer.

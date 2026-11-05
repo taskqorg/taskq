@@ -956,10 +956,10 @@ use std::time::{Duration, Instant, SystemTime};
             race: Cell<bool>,
         }
         impl Board for Writes {
-            fn issues(&self, since: Option<i64>) -> Res<Vec<board::Issue>> { Ok(self.b.issues(since)?.into_iter().filter(|i| !self.hide_issue.get() || i.number == 1).collect()) }
-            fn issue(&self, n: u64) -> Res<board::Issue> { self.b.issue(n) }
-            fn comments(&self, n: u64) -> Res<Vec<board::Comment>> { self.b.comments(n) }
-            fn comment(&self, n: u64, body: &str) -> Res<u64> {
+            fn issues(&self, since: Option<i64>) -> board::Result<Vec<board::Issue>> { Ok(self.b.issues(since)?.into_iter().filter(|i| !self.hide_issue.get() || i.number == 1).collect()) }
+            fn issue(&self, n: u64) -> board::Result<board::Issue> { self.b.issue(n) }
+            fn comments(&self, n: u64) -> board::Result<Vec<board::Comment>> { self.b.comments(n) }
+            fn comment(&self, n: u64, body: &str) -> board::Result<u64> {
                 if self.race.replace(false) {
                     let op = Op { id: Some("lost.1".into()), ..Default::default() };
                     claimed_create(&self.b, &json!({"create_claim_issue": 1}), "T", "G\nop-id: lost.1\n", &["q-held".into()], "", &op).unwrap();
@@ -967,16 +967,16 @@ use std::time::{Duration, Instant, SystemTime};
                 let id = self.b.comment(n, body)?;
                 if self.lose_claim.replace(false) { Err("claim POST response lost".into()) } else { Ok(id) }
             }
-            fn create(&self, title: &str, body: &str, labels: &[String]) -> Res<u64> {
+            fn create(&self, title: &str, body: &str, labels: &[String]) -> board::Result<u64> {
                 let n = self.b.create(title, body, labels)?;
                 if self.lose_create.replace(false) { Err("create POST response lost".into()) } else { Ok(n) }
             }
-            fn me(&self) -> Res<String> { self.b.me() }
-            fn edit_comment(&self, n: u64, id: u64, body: &str) -> Res<()> { self.b.edit_comment(n, id, body) }
-            fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Res<()> { self.b.labels(n, add, remove) }
-            fn edit(&self, n: u64, body: &str) -> Res<()> { self.b.edit(n, body) }
-            fn close(&self, n: u64) -> Res<()> { self.b.close(n) }
-            fn now(&self) -> Res<i64> { self.b.now() }
+            fn me(&self) -> board::Result<String> { self.b.me() }
+            fn edit_comment(&self, n: u64, id: u64, body: &str) -> board::Result<()> { self.b.edit_comment(n, id, body) }
+            fn labels(&self, n: u64, add: &[String], remove: &[String]) -> board::Result<()> { self.b.labels(n, add, remove) }
+            fn edit(&self, n: u64, body: &str) -> board::Result<()> { self.b.edit(n, body) }
+            fn close(&self, n: u64) -> board::Result<()> { self.b.close(n) }
+            fn now(&self) -> board::Result<i64> { self.b.now() }
             fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> board::Publish { self.b.publish(n, sha, mode, title, task_line) }
             fn url(&self, n: u64) -> String { self.b.url(n) }
             fn summaries(&self) -> bool { self.b.summaries() }
@@ -1174,7 +1174,7 @@ use std::time::{Duration, Instant, SystemTime};
     // into review-pr silently, a review-pr result publishes unapproved or on a stale approval, or the receipt omits the policy.
     #[test]
     fn review_pr_publishes_only_the_approved_sha_and_names_the_policy() {
-        let preset = |v: Value| delivery(&v).map(|(p, r)| format!("{} {p} {r}", p.mode()));
+        let preset = |v: Value| delivery(&v).map_err(String::from).map(|(p, r)| format!("{} {p} {r}", p.mode()));
         assert_eq!(preset(json!({})).unwrap(), "pr auto-merge 0");
         assert_eq!(preset(json!({"publish": "pr"})).unwrap(), "pr auto-merge 0", "no silent pr to review-pr");
         assert_eq!(preset(json!({"publish": "direct"})).unwrap(), "direct direct 0");

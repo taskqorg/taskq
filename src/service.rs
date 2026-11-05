@@ -333,7 +333,7 @@ pub fn host_name(i: &Issue) -> Option<&str> {
 }
 
 /// `who` is an assignee; an issue listed without assignees (github.com, § 4 budget) costs one `issue(n)` read.
-pub fn assigned(board: &dyn Board, i: &Issue, who: &str) -> Result<bool, String> {
+pub fn assigned(board: &dyn Board, i: &Issue, who: &str) -> crate::board::Result<bool> {
     Ok(i.assignees.iter().any(|a| a == who) || i.assignees.is_empty() && board.issue(i.number)?.assignees.iter().any(|a| a == who))
 }
 
@@ -369,9 +369,9 @@ pub fn project(board: &dyn Board, issue: &Issue, t: &Task) -> Result<(), String>
     let stale: Vec<String> = issue.labels.iter().filter(|l| l.starts_with("q-") && **l != want).cloned().collect();
     if t.state == State::Closed {
         board.labels(issue.number, &[], &stale)?;
-        board.close(issue.number)
+        board.close(issue.number).map_err(String::from)
     } else if !stale.is_empty() || !issue.labels.contains(&want) {
-        board.labels(issue.number, &[want], &stale)
+        board.labels(issue.number, &[want], &stale).map_err(String::from)
     } else {
         Ok(())
     }
@@ -538,12 +538,12 @@ const SETTLE: i64 = 30;
 pub type CommentCache = HashMap<u64, (i64, i64, Vec<Comment>)>;
 
 /// Fold every open task (heartbeat issues and untrusted authors excluded).
-pub fn views(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache, ttl: i64) -> Result<(Vec<View>, Vec<Issue>), String> {
+pub fn views(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache, ttl: i64) -> crate::board::Result<(Vec<View>, Vec<Issue>)> {
     views_asked(board, cache, deps, ttl).map(|(views, hosts, _)| (views, hosts))
 }
 
 /// [`views`] and the open `taskq doctor --hosts` request id ([`crate::health::request_of`], #2194).
-pub fn views_asked(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache, ttl: i64) -> Result<(Vec<View>, Vec<Issue>, Option<String>), String> {
+pub fn views_asked(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache, ttl: i64) -> crate::board::Result<(Vec<View>, Vec<Issue>, Option<String>)> {
     let mut issues = board.issues(None)?;
     // #2083 § 3: a kept heartbeat is never newer than the board; one fresh when listed and past `ttl` now may have been
     // written since, so it relists before a lease reads it stale. One already stale when listed relists no more.
@@ -1248,7 +1248,7 @@ impl<'a> Service<'a> {
     /// follows an owner's preset switch without a restart (#1942). An invalid preset keeps the last one, logged once.
     pub fn reread_project(&mut self) -> Result<Value, String> {
         let v = crate::config::project_value(&self.cfg.root)?;
-        match crate::config::delivery(&v) {
+        match crate::config::delivery(&v).map_err(String::from) {
             Ok(d) => {
                 if d != (self.cfg.delivery, self.cfg.delivery_revision) {
                     log!("delivery {} r{} (was {} r{})", d.0, d.1, self.cfg.delivery, self.cfg.delivery_revision);
@@ -1706,7 +1706,7 @@ impl<'a> Service<'a> {
     fn post(&mut self, n: u64, body: String) -> Result<u64, String> {
         self.log.push(format!("#{n} {}", body.lines().next().unwrap_or_default()));
         self.cache.remove(&n);
-        self.board.comment(n, &body)
+        self.board.comment(n, &body).map_err(String::from)
     }
 
     /// #1594 the signals this host holds for one of its executions.
@@ -3243,9 +3243,9 @@ impl<'a> Service<'a> {
         if let Some(r) = self.refused_access.get(rt) { return Err(("access", format!("{rt}: {r}"))); }
         let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
         if let Some(e) = &accounts.error { return Err(("unknown", format!("account availability unknown: {e}"))); }
-        if accounts.off(rt,self.board.now().map_err(|e| ("unknown",e))?) {return Err(("capability",format!("{rt}: {}",accounts.off_reason(rt))));}
-        if accounts.active(rt, self.board.now().map_err(|e| ("unknown",e))?).is_none() {
-            if let Some(hold) = accounts.hold(rt, self.board.now().map_err(|e| ("unknown",e))?) {
+        if accounts.off(rt,self.board.now().map_err(|e| ("unknown",e.to_string()))?) {return Err(("capability",format!("{rt}: {}",accounts.off_reason(rt))));}
+        if accounts.active(rt, self.board.now().map_err(|e| ("unknown",e.to_string()))?).is_none() {
+            if let Some(hold) = accounts.hold(rt, self.board.now().map_err(|e| ("unknown",e.to_string()))?) {
                 return Err(("usage-limit",format!("{rt}: {} {}; account quotas {}", if hold.1 {"until"} else {"probe"},crate::board::stamp(hold.0),accounts.heartbeat(self.board.now().unwrap_or(0)).join("; "))));
             }
         }
@@ -3278,7 +3278,7 @@ impl<'a> Service<'a> {
             free=match (&self.cap,hold || h.policy.is_err()) {(Ok(c),false)=>free.min(h.remaining(&self.cfg.root,rt,c)),_=>0};
         }
         let headroom=if self.cfg.weights.is_empty() {None}else {
-            let h=self.board.now().map_err(|e|("unknown",e)).and_then(|now|crate::runtime::headroom::remaining(&self.cfg.install,rt,now).map_err(|e|("unknown",e)));
+            let h=self.board.now().map_err(|e|("unknown",e.to_string())).and_then(|now|crate::runtime::headroom::remaining(&self.cfg.install,rt,now).map_err(|e|("unknown",e)));
             match h {Ok(h)=>h,Err(e) if strict=>return Err(e),Err(_)=>None}
         };
         Ok(crate::balance::Load {running:running as u64,free:free as u64,headroom})
@@ -3325,7 +3325,7 @@ impl<'a> Service<'a> {
     /// The view's log while nothing this pass wrote the task (every write drops its cache entry), else a fresh read:
     /// a claim or launch never rereads what `views` just read (#1359).
     fn seen_log(&self, v: &View) -> Result<Vec<core::Entry>, String> {
-        if self.cache.contains_key(&v.issue.number) { Ok(v.log.clone()) } else { crate::board::entries(self.board, v.issue.number) }
+        if self.cache.contains_key(&v.issue.number) { Ok(v.log.clone()) } else { crate::board::entries(self.board, v.issue.number).map_err(String::from) }
     }
 
     /// Post `spawn`, re-read, start the child only if `fold` accepted this spawn (§ 3 claim).

@@ -275,7 +275,7 @@
     }
 
     fn snap(repo: &str) -> Snapshot {
-        Snapshot { source: "host", observed: 1_700_000_000, reason: None, board: json!({"kind": "github", "host": "github.com", "repo": repo}), tasks: vec![], hosts: vec![] }
+        Snapshot { source: "host", observed: 1_700_000_000, reason: None, reason_code: None, board: json!({"kind": "github", "host": "github.com", "repo": repo}), tasks: vec![], hosts: vec![] }
     }
 
     // Chain: service pass -> tick -> sender thread on a slow DashQ. Risk: a slow network delaying the pass that

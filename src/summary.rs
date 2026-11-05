@@ -89,8 +89,8 @@ pub fn write(b: &dyn Board, n: u64, body: &str, comments: &[Comment], log: &[Ent
 pub fn put(b: &dyn Board, n: u64, comments: &[Comment], want: &str) -> Res<bool> {
     match find(comments) {
         Some(c) if same(&c.body, want) => Ok(false),
-        Some(c) => b.edit_comment(n, c.id, want).map(|_| true),
-        None => b.comment(n, want).map(|_| true),
+        Some(c) => b.edit_comment(n, c.id, want).map(|_| true).map_err(String::from),
+        None => b.comment(n, want).map(|_| true).map_err(String::from),
     }
 }
 

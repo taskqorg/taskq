@@ -66,7 +66,7 @@
             api.transport = Some(Box::new(move |_, _, _| Ok(super::super::Reply {status:200, headers:vec![], operation:"read",
                 body:json!({"errors":[{"type":kind,"message":"invented refusal"}]}).to_string()})));
             let board = GitHub {api, rules:Default::default(), open:Default::default(), heartbeat:Default::default(),evidence:Default::default(),ci:Default::default()};
-            assert!(board.open_issues().unwrap_err().starts_with(expected));
+            assert!(board.open_issues().unwrap_err().text().starts_with(expected));
         }
     }
 
@@ -127,7 +127,7 @@
         assert_eq!(first.as_deref(), Ok("first"));
         assert_eq!(second.as_deref(), Ok("second"));
         assert!(joined.is_ok(), "replacement credential was not observed on the wire");
-        assert_eq!(missing.as_deref(), Some(TOKEN_ERROR));
+        assert_eq!(missing.as_ref().map(Error::text), Some(TOKEN_ERROR));
     }
 
     // Chain: host credential -> service board and worker environment. Risk: login fallback or mismatched errors.
@@ -139,7 +139,7 @@
         for contents in [None, Some(" \n")] {
             if let Some(contents) = contents { std::fs::write(dir.join("token"), contents).unwrap(); }
             let service = KIND.open("github.com", "o/r", None, &tool).err().unwrap();
-            assert_eq!(service, TOKEN_ERROR);
+            assert_eq!(service.text(), TOKEN_ERROR);
             assert_eq!(KIND.worker_env(&tool, "github.com").unwrap_err(), service);
         }
         std::fs::write(dir.join("token"), "existing-owner-token\n").unwrap();
@@ -148,6 +148,6 @@
         assert!(KIND.open("github.com", "o/r", None, &tool).is_ok());
         std::fs::remove_file(dir.join("token")).unwrap();
         std::fs::create_dir(dir.join("token")).unwrap();
-        assert_eq!(KIND.worker_env(&tool, "github.com").unwrap_err(), TOKEN_ERROR);
+        assert_eq!(KIND.worker_env(&tool, "github.com").unwrap_err().text(), TOKEN_ERROR);
         std::fs::remove_dir_all(dir).unwrap();
     }

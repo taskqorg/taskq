@@ -525,14 +525,14 @@ fn record(r: crate::telemetry::Sample) {
 }
 
 /// One board operation of `kind`; `failed` is its error text (only its class is kept).
-pub fn board(kind: &'static str, took: std::time::Duration, failed: Option<&str>, remaining: Option<u64>) {
+pub fn board(kind: &'static str, took: std::time::Duration, failed: Option<&'static str>, remaining: Option<u64>) {
     board_as(kind, took, if failed.is_some() { "failed" } else { "ok" }, failed, remaining)
 }
 
 /// `outcome` `ok`, `retried` or `ask` (not in `Failed %`) or `failed`; `err` keeps the class of a non-ok call.
-pub fn board_as(kind: &'static str, took: std::time::Duration, outcome: &'static str, err: Option<&str>, remaining: Option<u64>) {
+pub fn board_as(kind: &'static str, took: std::time::Duration, outcome: &'static str, err: Option<&'static str>, remaining: Option<u64>) {
     record(crate::telemetry::Sample::Board(BoardOp { op: kind.into(), us: took.as_micros().min(u64::MAX as u128) as u64,
-        outcome: outcome.into(), error: err.map_or("none", error).into(), remaining, at_ms: now_ms() }));
+        outcome: outcome.into(), error: err.unwrap_or("none").into(), remaining, at_ms: now_ms() }));
 }
 
 /// One queue transition of `task` caused by log `entry`; `rt`/`host` of the attempt on either side.

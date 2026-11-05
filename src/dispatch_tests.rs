@@ -136,7 +136,7 @@
             assert!(act(&b, Path::new(""), n, kind, &[], &text, &op).ok());
             assert_eq!(b.comments(n).unwrap().len(), raw.len(), "retry cannot duplicate parts or the command");
             b.edit_comment(n, raw[before].id, "changed part").unwrap();
-            assert!(entries(&b, n).unwrap_err().contains("reply"), "corruption is unknown, never a partial delivery");
+            assert!(entries(&b, n).unwrap_err().text().contains("reply"), "corruption is unknown, never a partial delivery");
         }
     }
 

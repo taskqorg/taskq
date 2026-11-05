@@ -17,7 +17,7 @@
         let install = std::env::temp_dir().join(format!("taskq-gitlab-missing-{}", std::process::id()));
         std::fs::create_dir_all(&install).unwrap();
         let tool = coreq::Tool { install: install.clone(), ..coreq::Tool::new("taskqgitlabmissingtest", "TaskQ", "fixture/unused", "1.2.3") };
-        let e = token(&tool, "gitlab.example").unwrap_err();
+        let e = token(&tool, "gitlab.example").unwrap_err().to_string();
         assert!(e.starts_with(&format!("no GitLab token: no {} and `glab` cannot run (", install.join("gitlab-token").display())), "{e}");
         assert!(e.ends_with("\nNext: write a GitLab access token for gitlab.example to that file, or install glab and log in to gitlab.example"), "{e}");
         std::fs::remove_dir_all(install).unwrap();

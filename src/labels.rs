@@ -116,12 +116,12 @@ pub fn validate(labels: &[String]) -> Result<()> {
     ] {
         let mut found: Vec<_> = labels.iter().map(|l| canonical(l)).filter(|l| values.contains(l)).collect();
         found.sort(); found.dedup();
-        if found.len() > 1 { return Err(format!("conflicting {group} labels: {}", found.join(", "))); }
+        if found.len() > 1 { return Err(format!("conflicting {group} labels: {}", found.join(", ")).into()); }
     }
     for prefix in ["run-", "host-"] {
         let mut found: Vec<_> = labels.iter().filter(|l| l.starts_with(prefix)).collect();
         found.sort(); found.dedup();
-        if found.len() > 1 { return Err(format!("conflicting {prefix} labels: {found:?}")); }
+        if found.len() > 1 { return Err(format!("conflicting {prefix} labels: {found:?}").into()); }
     }
     Ok(())
 }

@@ -514,6 +514,8 @@ pub struct Snapshot {
     pub observed: i64,
     /// Why the snapshot is incomplete; `None`: complete.
     pub reason: Option<String>,
+    /// The [`board::Reason::code`] of a failed board read.
+    pub reason_code: Option<&'static str>,
     pub board: Value,
     pub tasks: Vec<Row>,
     pub hosts: Vec<Host>,
@@ -605,7 +607,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         later: (v.projection.task.state == State::Later).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: later")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
     let hosts = hosts.iter().map(|h| host(h, observed, cfg.ttl as i64)).collect();
-    Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
+    Snapshot { source, observed, reason: None, reason_code: None, board: identity(b, cfg), tasks, hosts }
 }
 
 /// #2288: open task numbers `#N` in a held `body` that has no `Depends on` line (§ 1); a local `#N` only, never `repo#N`.
@@ -702,7 +704,7 @@ pub fn read(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Snapsh
 
 /// [`read`] with comments already fetched (#2291: `taskq status` reads them in parallel).
 pub fn read_cached(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String], mut comments: service::CommentCache) -> Snapshot {
-    let mut attempt = || -> Res<Snapshot> {
+    let mut attempt = || -> board::Result<Snapshot> {
         let (mut views, hosts) = service::views(b, &mut comments, &mut HashMap::new(), cfg.ttl)?;
         views.retain(|v| in_scope(&v.issue, only));
         if let Some(who) = raw["assignee"].as_str() {
@@ -713,7 +715,7 @@ pub fn read_cached(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String], mu
         }
         Ok(from_views("board", b, cfg, b.now()?, &views, &hosts))
     };
-    attempt().unwrap_or_else(|e| Snapshot { source: "board", observed: b.now().unwrap_or(0), reason: Some(e), board: identity(b, cfg), tasks: vec![], hosts: vec![] })
+    attempt().unwrap_or_else(|e| Snapshot { source: "board", observed: b.now().unwrap_or(0), reason: Some(e.to_string()), reason_code: Some(e.reason().code()), board: identity(b, cfg), tasks: vec![], hosts: vec![] })
 }
 
 /// A PM's scope (§ 5 `--only`): no labels means every task.
@@ -962,7 +964,7 @@ impl Snapshot {
     /// `status --json` (§ 5).
     pub fn json(&self) -> Value {
         let caps: &[&str] = if self.source == "host" { &HOST_CAPS } else { &BOARD_CAPS };
-        json!({"schema": SCHEMA, "source": self.source, "observed": self.observed, "complete": self.reason.is_none(), "reason": self.reason,
+        json!({"schema": SCHEMA, "source": self.source, "observed": self.observed, "complete": self.reason.is_none(), "reason": self.reason, "reason_code": self.reason_code,
             "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "vocabulary": vocabulary(), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
             "hosts": self.hosts.iter().map(|h| {
                 let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
@@ -992,7 +994,7 @@ impl Snapshot {
     /// [`Self::text_with`] plus anomaly rows the caller read outside the snapshot (deploy, board quota; R6 A3).
     pub fn text_extra(&self, cfg: &Config, raw: &Value, decide: Option<&Value>, extra: Vec<String>) -> Res<String> {
         if let Some(r) = &self.reason {
-            return Err(r.clone());
+            return Err(self.reason_code.map_or_else(|| r.clone(), |code| format!("{r} (reason: {code})")));
         }
         let base = self.board["url"].as_str().unwrap_or_default();
         let project = cfg.root.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();

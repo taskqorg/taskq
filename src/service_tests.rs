@@ -927,7 +927,7 @@ Problem: pick one
         let (f, head) = (forwards.clone(), sha.clone());
         b.state.borrow_mut().publisher = Some(crate::board::replying(&crate::board::github::KIND, move |method, url| {
             Ok(if url.contains("/compare/main...") { json!({"status": if *f.borrow() == 0 { "ahead" } else { "identical" }}) }
-                else if url.ends_with("/rules/branches/main") { return Err("HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature.".into()) }
+                else if url.ends_with("/rules/branches/main") { return Err(crate::board::Error::http(403, "HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature.")) }
                 else if url.contains("/pulls?head=o:taskq-1&base=main&state=open") { json!([{"number": 37, "head": {"sha": head}, "html_url": "https://github.com/o/r/pull/37"}]) }
                 else if url.contains("/check-runs") { json!({"check_runs": [{"name": "ci", "status": "completed", "conclusion": "success"}]}) }
                 else if url.ends_with("/status") { json!({"total_count": 0}) }
@@ -1006,7 +1006,7 @@ Problem: pick one
         b.state.borrow_mut().publish = "queue-foreign".into();
         b.state.borrow_mut().publisher = Some(crate::board::replying_to(&crate::board::github::KIND, move |method, url, body| {
             if let Some(rest) = url.strip_prefix("https://api.github.com/repos/o/r") {
-                return if rest.starts_with("/compare/") { Err(format!("GET {url}: HTTP 404 Not Found")) }
+                return if rest.starts_with("/compare/") { Err(crate::board::Error::http(404, format!("GET {url}: HTTP 404 Not Found"))) }
                     else if rest.starts_with(&format!("/issues/{n}/comments")) {
                         Ok(json!([result.clone(), publish.clone()].iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "author_association": "OWNER",
                             "created_at": "2026-10-30T00:00:00Z", "updated_at": "2026-10-30T00:00:00Z", "user": {"login": "owner"}})).collect::<Vec<_>>()))

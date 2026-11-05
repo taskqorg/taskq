@@ -5,7 +5,10 @@ use crate::core::Entry;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 
-pub type Result<T> = std::result::Result<T, String>;
+mod error;
+pub use error::{Error, Reason};
+
+pub type Result<T> = std::result::Result<T, Error>;
 /// Closed tasks per Completed page; each costs one comment read (§ 4 budget).
 pub const CLOSED_PAGE: usize = 10;
 
@@ -101,7 +104,7 @@ pub trait Board {
     /// Issue `n` of another repository on this board's host, for `Depends on <repo>#N` (§ 1); a bare name is under
     /// this board's owner.
     fn foreign(&self, repo: &str, _n: u64) -> Result<Issue> {
-        Err(format!("{repo}: other repositories unsupported on this board"))
+        Err(format!("{repo}: other repositories unsupported on this board").into())
     }
     fn foreign_url(&self, repo: &str, n: u64) -> String {
         format!("{repo}#{n}")
@@ -114,7 +117,7 @@ pub trait Board {
     fn forget(&self) {}
     /// § 8 item 1 dev install: Ok only when `sha`'s `merge_group` CI passed; pending, failed or unknown is Err.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    fn merge_ci_green(&self, sha: &str) -> Result<()> { Err(format!("merge_group CI unknown on {sha}")) }
+    fn merge_ci_green(&self, sha: &str) -> Result<()> { Err(format!("merge_group CI unknown on {sha}").into()) }
     /// #1935 `selftest`: why publication route `mode` cannot finish on this repository's plan; None when no gap is found.
     fn delivery_gap(&self, _mode: &str) -> Result<Option<String>> { Ok(None) }
     /// § 2 visual evidence: stores the image file `path` for task `n` on the board and returns its absolute https URL.
@@ -126,7 +129,7 @@ pub trait Board {
     /// source; `--file` then uploads the page inside a zip, which downloads.
     fn html_downloads(&self) -> bool { true }
     /// The bytes behind an image URL this board serves, read with the board token: the load check and the app's copy.
-    fn file(&self, url: &str) -> Result<Vec<u8>> { Err(format!("image unknown: {url} is not served by this board")) }
+    fn file(&self, url: &str) -> Result<Vec<u8>> { Err(format!("image unknown: {url} is not served by this board").into()) }
     /// § 2 visual evidence (#1844): true when `![name](url)` of an uploaded video plays inline in a comment; else a link.
     fn video_inline(&self) -> bool { false }
     /// § 6 setup check `pr-route`: whether `main` can merge a PR result (§ 7); unknown where unsupported.
@@ -214,7 +217,7 @@ pub fn issue_write(board: &dyn Board, n: u64, write: IssueWrite, op_id: Option<&
             let mine = |cs: &[Comment]| op_id.and_then(|id| cs.iter().find(|c| c.trusted && !c.edited && c.body.trim_end().lines().last() == Some(&format!("op-id: {id}"))).cloned());
             if op_id.is_some() {
                 match board.comments(n).map(|cs| mine(&cs)) {
-                    Err(e) => return receipt("rejected", value, &e, &format!("Read taskq issue {n}, then retry.")),
+                    Err(e) => return receipt("rejected", value, e.text(), &format!("Read taskq issue {n}, then retry.")),
                     Ok(Some(c)) if c.body.trim_end() == body => return receipt("accepted", json!(c.id), "", ""),
                     Ok(Some(c)) => return receipt("rejected", json!(c.id), &format!("op id already names comment {} with other text", c.id), "Use a new --op-id."),
                     Ok(None) => {}
@@ -227,7 +230,7 @@ pub fn issue_write(board: &dyn Board, n: u64, write: IssueWrite, op_id: Option<&
             });
             match (sent, found) {
                 (_, Ok(Some(c))) => receipt("accepted", json!(c.id), "", ""),
-                (Err(e), _) | (Ok(_), Err(e)) => receipt("unknown", value, &e, &retry),
+                (Err(e), _) | (Ok(_), Err(e)) => receipt("unknown", value, e.text(), &retry),
                 (Ok(id), Ok(None)) => receipt("unknown", json!(id), &format!("comment {id} not read back"), &retry),
             }
         }
@@ -240,14 +243,14 @@ pub fn issue_write(board: &dyn Board, n: u64, write: IssueWrite, op_id: Option<&
             }
             let present = || board.issue(n).map(|i| i.labels.iter().any(|l| l == label));
             match present() {
-                Err(e) => return receipt("rejected", value, &e, &format!("Read taskq issue {n}, then retry.")),
+                Err(e) => return receipt("rejected", value, e.text(), &format!("Read taskq issue {n}, then retry.")),
                 Ok(true) => return receipt("accepted", value, "", ""),
                 Ok(false) => {}
             }
             let sent = board.labels(n, &[label.to_string()], &[]);
             match (sent, present()) {
                 (_, Ok(true)) => receipt("accepted", value, "", ""),
-                (Err(e), _) | (_, Err(e)) => receipt("unknown", value, &e, &retry),
+                (Err(e), _) | (_, Err(e)) => receipt("unknown", value, e.text(), &retry),
                 (Ok(()), Ok(false)) => receipt("unknown", value, &format!("label {label} not read back"), &retry),
             }
         }
@@ -276,7 +279,7 @@ pub fn claim_issue(board: &dyn Board, configured: Option<u64>, adopt: Option<u64
     let receipt = |outcome: &str, n: Option<u64>, source: &str, reason: &str, next: &str|
         json!({"issue": n, "url": n.map(|n| board.url(n)), "source": source, "outcome": outcome, "reason": reason, "next": next});
     let check = |n: u64, source: &str| match board.issue(n) {
-        Err(e) => receipt("rejected", Some(n), source, &e, "Retry taskq claim-issue."),
+        Err(e) => receipt("rejected", Some(n), source, e.text(), "Retry taskq claim-issue."),
         Ok(i) => match claim_issue_refusal(&i) {
             Some(why) => receipt("rejected", Some(n), source, &format!("#{n} cannot hold create claims: {why}"), "Pass an issue by a trusted author that is not a task, or omit N."),
             None => receipt("accepted", Some(n), source, "", ""),
@@ -289,7 +292,7 @@ pub fn claim_issue(board: &dyn Board, configured: Option<u64>, adopt: Option<u64
         (None, Some(a)) => check(a, "adopted"),
         (None, None) => {
             let found = match board.issues(Some(0)) {
-                Err(e) => return receipt("rejected", None, "found", &e, "Retry taskq claim-issue."),
+                Err(e) => return receipt("rejected", None, "found", e.text(), "Retry taskq claim-issue."),
                 Ok(list) => list.into_iter().filter(|i| i.title == CLAIM_TITLE && claim_issue_refusal(i).is_none()).map(|i| i.number).collect::<Vec<_>>(),
             };
             if found.len() > 1 {
@@ -299,11 +302,11 @@ pub fn claim_issue(board: &dyn Board, configured: Option<u64>, adopt: Option<u64
             if let Some(&n) = found.first() { return check(n, "found"); }
             let retry = "Retry taskq claim-issue: it finds the created issue by its title.";
             match board.create(CLAIM_TITLE, CLAIM_BODY, &[]) {
-                Err(e) => receipt("unknown", None, "created", &e, retry),
+                Err(e) => receipt("unknown", None, "created", e.text(), retry),
                 Ok(n) => match board.issue(n) {
                     Ok(i) if i.title == CLAIM_TITLE && claim_issue_refusal(&i).is_none() => receipt("accepted", Some(n), "created", "", ""),
                     Ok(_) => receipt("unknown", Some(n), "created", &format!("#{n} not read back as a claim issue"), retry),
-                    Err(e) => receipt("unknown", Some(n), "created", &e, retry),
+                    Err(e) => receipt("unknown", Some(n), "created", e.text(), retry),
                 },
             }
         }
@@ -319,7 +322,7 @@ impl Profiled {
     fn op<T>(&self, kind: &'static str, f: impl FnOnce(&dyn Board) -> Result<T>) -> Result<T> {
         let began = std::time::Instant::now();
         let r = f(&*self.0);
-        crate::profile::board(kind, began.elapsed(), r.as_ref().err().map(String::as_str), self.0.requests().remaining);
+        crate::profile::board(kind, began.elapsed(), r.as_ref().err().map(Error::class), self.0.requests().remaining);
         r
     }
 }
@@ -355,7 +358,7 @@ impl Board for Profiled {
         let began = std::time::Instant::now();
         let p = self.0.publish(n, sha, mode, title, task_line);
         let (outcome, err) = p.outcome();
-        crate::profile::board_as("publish", began.elapsed(), outcome, err, self.0.requests().remaining);
+        crate::profile::board_as("publish", began.elapsed(), outcome, err.map(crate::profile::class), self.0.requests().remaining);
         p
     }
     fn defer_publication(&self, mode: &str) -> bool { self.0.defer_publication(mode) }
@@ -365,7 +368,7 @@ impl Board for Profiled {
         let began = std::time::Instant::now();
         let p = self.0.resume_publication(n, sha, mode, title, task_line, root, enqueued);
         let (outcome, err) = p.outcome();
-        crate::profile::board_as("publish", began.elapsed(), outcome, err, self.0.requests().remaining);
+        crate::profile::board_as("publish", began.elapsed(), outcome, err.map(crate::profile::class), self.0.requests().remaining);
         p
     }
     fn url(&self, n: u64) -> String { self.0.url(n) }
@@ -381,7 +384,7 @@ impl Board for Profiled {
     fn file(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.file(url)) }
     fn video_inline(&self) -> bool { self.0.video_inline() }
     fn html_downloads(&self) -> bool { self.0.html_downloads() }
-    fn pr_route(&self) -> crate::check::Probe { self.op("read", |b| Ok(b.pr_route())).unwrap_or_else(crate::check::Probe::Unknown) }
+    fn pr_route(&self) -> crate::check::Probe { self.op("read", |b| Ok(b.pr_route())).unwrap_or_else(|e| crate::check::Probe::Unknown(e.into())) }
     fn access(&self) -> Vec<(&'static str, crate::check::Probe)> { self.op("read", |b| Ok(b.access())).unwrap_or_default() }
 }
 
@@ -438,7 +441,7 @@ impl Reply {
     fn json(&self) -> Result<Value> {
         serde_json::from_str(&self.body).map_err(|e| {
             crate::incident::detect("adapter.bad_json", concat!(file!(), ":", line!()), "none", &[self.operation], &["http:2xx"]);
-            format!("bad JSON from board: {e}")
+            Error::new(Reason::Invalid, format!("bad JSON from board: {e}"))
         })
     }
     fn next(&self) -> Option<String> {
@@ -464,14 +467,14 @@ impl HttpFiles {
     }
     fn path(&self,name:&str)->std::path::PathBuf{self.0.join(name)}
     fn response(&self)->Result<Vec<u8>> {
-        match std::fs::read(self.path("response")){Ok(bytes)=>Ok(bytes),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(vec![]),Err(e)=>Err(format!("board HTTP response: {e}"))}
+        match std::fs::read(self.path("response")){Ok(bytes)=>Ok(bytes),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(vec![]),Err(e)=>Err(format!("board HTTP response: {e}").into())}
     }
     fn body(&self,body:&Value)->Result<()> {
         use std::io::Write;
         let mut options=std::fs::OpenOptions::new();options.create_new(true).write(true);
         #[cfg(unix)] {use std::os::unix::fs::OpenOptionsExt;options.mode(0o600);}
         let mut file=options.open(self.path("request")).map_err(|e|e.to_string())?;
-        file.write_all(body.to_string().as_bytes()).map_err(|e|e.to_string())
+        file.write_all(body.to_string().as_bytes()).map_err(|e|Error::from(e.to_string()))
     }
 }
 impl Drop for HttpFiles {fn drop(&mut self){for name in ["request","response"]{let _=std::fs::remove_file(self.path(name));}let _=std::fs::remove_dir(&self.0);}}
@@ -492,9 +495,9 @@ fn curl(method: &str, url: &str, auth: &str, body: Option<&Value>, etag: Option<
         files.body(b)?;
         cfg += &format!("header = \"Content-Type: application/json\"\ndata-binary = {}\n", quote(&format!("@{}",files.path("request").display())));
     }
-    let out = crate::http::with_config("board.http", &["-K", "-"], &cfg, std::time::Duration::from_secs(65)).map_err(|e| format!("curl: {e}"))?;
+    let out = crate::http::with_config("board.http", &["-K", "-"], &cfg, std::time::Duration::from_secs(65)).map_err(Error::curl)?;
     if !out.status.success() {
-        return Err(format!("curl {method} {url}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        return Err(Error::curl_exit(out.status.code(), format!("curl {method} {url}: {}", String::from_utf8_lossy(&out.stderr).trim())));
     }
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
     text.push_str(&String::from_utf8(files.response()?).map_err(|e|format!("board HTTP response: {e}"))?);
@@ -556,7 +559,7 @@ fn s(v: &Value, k: &str) -> String {
 fn dep_reply(v: Value, num: &str, n: u64, open: &str) -> Result<Value> {
     match (v[num].as_u64(), v["state"].as_str()) {
         (Some(m), Some(st)) if m == n && (st == open || st == "closed") => Ok(v),
-        _ => Err(format!("malformed reply for issue {n}")),
+        _ => Err(format!("malformed reply for issue {n}").into()),
     }
 }
 
@@ -567,7 +570,7 @@ fn names(v: &Value, k: &str) -> Vec<String> {
 fn verify_assignment(board: &dyn Board, n: u64, add: &[String], remove: &[String]) -> Result<()> {
     let issue = board.issue(n)?;
     if add.iter().any(|l| !issue.labels.contains(l)) || remove.iter().any(|l| issue.labels.contains(l)) {
-        return Err(format!("#{n}: label assignment readback differs; issue may already exist/changes may be partial; inspect before retry"));
+        return Err(format!("#{n}: label assignment readback differs; issue may already exist/changes may be partial; inspect before retry").into());
     }
     Ok(())
 }
@@ -606,13 +609,13 @@ pub struct Kind {
 pub const BOARDS: [&Kind; 2] = [&github::KIND, &gitlab::KIND];
 
 pub fn kind(name: &str) -> Result<&'static Kind> {
-    BOARDS.into_iter().find(|k| k.name == name).ok_or(format!("unknown board {name}; expected {}", BOARDS.map(|k| k.name).join("|")))
+    BOARDS.into_iter().find(|k| k.name == name).ok_or_else(|| format!("unknown board {name}; expected {}", BOARDS.map(|k| k.name).join("|")).into())
 }
 
 fn label_schema(schema: Option<&str>) -> Result<Option<bool>> {
     match schema {
         None => Ok(None), Some("canonical") => Ok(Some(true)), Some("legacy") => Ok(Some(false)),
-        Some(s) => Err(format!("unknown label_schema {s}; expected canonical|legacy")),
+        Some(s) => Err(format!("unknown label_schema {s}; expected canonical|legacy").into()),
     }
 }
 
@@ -798,12 +801,12 @@ impl Api {
     fn send(&self, method: &str, url: &str, body: Option<Value>, op: &str) -> Result<Reply> {
         let url = self.absolute(url);
         if !url.starts_with(&format!("{}/", self.root)) {
-            return Err(format!("refused: {url} is outside the board API"));
+            return Err(Error::new(Reason::OutsideApi, format!("refused: {url} is outside the board API")));
         }
         self.refresh()?;
-        if let Some(reason) = &self.credentials.borrow().budget.borrow().unknown { return Err(format!("board requests held: {reason}")); }
+        if let Some(reason) = &self.credentials.borrow().budget.borrow().unknown { return Err(Error::new(Reason::Held, format!("board requests held: {reason}"))); }
         if let Some(reset) = self.paused() {
-            return Err(format!("{method} {url}: {}", crate::requests::paused_text(reset)));
+            return Err(Error::new(Reason::RateLimited, format!("{method} {url}: {}", crate::requests::paused_text(reset))));
         }
         let pace = self.credentials.borrow().budget.borrow().pace(*self.clock.borrow());
         if let Some(wait) = pace { std::thread::sleep(wait); }
@@ -821,19 +824,18 @@ impl Api {
             let r = match &self.transport { Some(transport) => transport(method, &url, body), None => curl(method, &url, &self.credentials.borrow().auth, body.as_ref(), etag.as_deref()) };
             #[cfg(not(test))]
             let r = curl(method, &url, &self.credentials.borrow().auth, body.as_ref(), etag.as_deref());
-            let r=r.map_err(|message|(crate::profile::class(&message),message))?;
+            let r=r?;
             if let Some(t) = r.header("date").and_then(http_date) {
                 *self.clock.borrow_mut() = t;
             }
             // GitHub GraphQL refuses an exhausted budget with a RATE_LIMIT or RATE_LIMITED error, over HTTP 200 or 403 (#1356)
             let limited = url.ends_with("/graphql") && ["\"RATE_LIMIT\"", "\"RATE_LIMITED\""].iter().any(|t| r.body.contains(t));
             let status = if limited { 403 } else { r.status };
-            let class=match status {400..=499=>"http4xx",500..=599=>"http5xx",_=>"other"};
             let paused = self.credentials.borrow().budget.borrow_mut().observe(status, limited, |n| r.header(n).map(String::from), *self.clock.borrow(), std::time::Instant::now());
             if let Some(reset) = paused {
                 // ponytail: the install's processes compare against their own wall clock, not the board's
                 if let Some(f) = &self.credentials.borrow().pause { let _ = std::fs::write(f, (wall() + reset - *self.clock.borrow()).to_string()); }
-                return Err((class,format!("{method} {url}: HTTP {status} {}", crate::requests::paused_text(reset))));
+                return Err(Error::http(status, format!("{method} {url}: HTTP {status} {}", crate::requests::paused_text(reset))));
             }
             if r.status == 304 && etag.is_some() {
                 if let Some((_, cached)) = self.etags.borrow().get(&url) {
@@ -860,10 +862,10 @@ impl Api {
             if !(200..300).contains(&r.status) {
                 // one log line: a multi-line error body folds into it (§ 4)
                 let body = r.body.split_whitespace().collect::<Vec<_>>().join(" ");
-                return Err((class,format!("{method} {url}: HTTP {} {}", r.status, body.chars().take(300).collect::<String>())));
+                return Err(Error::http(r.status, format!("{method} {url}: HTTP {} {}", r.status, body.chars().take(300).collect::<String>())));
             }
             Ok(r)
-        },|error|error.0).map_err(|(_,message)|message)
+        },Error::class)
     }
 
     /// The full path of `repo` in a `Depends on <repo>#N` (§ 1); a bare name is under this board's owner. `sep` ends the
@@ -880,10 +882,10 @@ impl Api {
     /// rules as [`Api::send`]; any HTTP error fails. The test transport sees a multipart POST as `{"file": <name>}`.
     fn raw(&self, url: &str, form: Option<&std::path::Path>) -> Result<Vec<u8>> {
         let url = if url.starts_with("https://") { url.to_string() } else { format!("{}{url}", self.base) };
-        if !url.starts_with(&format!("{}/", self.root)) { return Err(format!("refused: {url} is outside the board API")); }
+        if !url.starts_with(&format!("{}/", self.root)) { return Err(Error::new(Reason::OutsideApi, format!("refused: {url} is outside the board API"))); }
         self.refresh()?;
-        if let Some(reason) = &self.credentials.borrow().budget.borrow().unknown { return Err(format!("board requests held: {reason}")); }
-        if let Some(reset) = self.paused() { return Err(format!("{url}: {}", crate::requests::paused_text(reset))); }
+        if let Some(reason) = &self.credentials.borrow().budget.borrow().unknown { return Err(Error::new(Reason::Held, format!("board requests held: {reason}"))); }
+        if let Some(reset) = self.paused() { return Err(Error::new(Reason::RateLimited, format!("{url}: {}", crate::requests::paused_text(reset)))); }
         let method = if form.is_some() { "POST" } else { "GET" };
         let op = self.op(method, &url);
         self.credentials.borrow().budget.borrow_mut().count(op.clone());
@@ -897,8 +899,8 @@ impl Api {
         let files=HttpFiles::new()?;
         cfg+=&format!("output = {}\n",quote(&files.path("response").to_string_lossy()));
         if let Some(f) = form { cfg += &format!("form = {}\n", quote(&format!("file=@{}", f.display()))); }
-        let out = crate::http::with_config("board.http", &["-K", "-"], &cfg, std::time::Duration::from_secs(125)).map_err(|e| format!("curl: {e}"))?;
-        if !out.status.success() { return Err(format!("curl {method} {url}: {}", String::from_utf8_lossy(&out.stderr).trim())); }
+        let out = crate::http::with_config("board.http", &["-K", "-"], &cfg, std::time::Duration::from_secs(125)).map_err(Error::curl)?;
+        if !out.status.success() { return Err(Error::curl_exit(out.status.code(), format!("curl {method} {url}: {}", String::from_utf8_lossy(&out.stderr).trim()))); }
         files.response()
     }
 
@@ -992,7 +994,7 @@ impl Api {
         for name in names {
             if let Some((color, desc)) = crate::labels::definition(name) {
                 if !readback.iter().any(|v| label_matches(v, name, color, &desc)) {
-                    return Err(format!("label {name}: readback differs; retry catalog"));
+                    return Err(format!("label {name}: readback differs; retry catalog").into());
                 }
             }
         }
@@ -1013,8 +1015,8 @@ impl Api {
 fn outcome(r: Result<Publish>) -> Publish {
     match r {
         Ok(p) => p,
-        Err(e) if e.contains("HTTP 405") || e.contains("HTTP 409") || e.contains("HTTP 422") => Publish::Failed(e),
-        Err(e) => Publish::Pending(e),
+        Err(e) if matches!(e.status(), Some(405 | 409 | 422)) => Publish::Failed(e.into()),
+        Err(e) => Publish::Pending(e.into()),
     }
 }
 

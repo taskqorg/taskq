@@ -10,6 +10,7 @@
     "observed": {"type": "integer"},
     "complete": {"type": "boolean"},
     "reason": {"type": ["string", "null"]},
+    "reason_code": {"enum": ["unauthorized", "forbidden", "not-found", "refused", "rate-limited", "plan-gap", "merge-conflict", "already-queued", "server", "timeout", "network", "invalid", "held", "outside-api", "other", null]},
     "board": {"type": "object"},
     "totals": {
       "type": "object",

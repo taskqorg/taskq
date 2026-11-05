@@ -429,7 +429,7 @@ pub(crate) fn doctor_cmd(a: &Args) -> Res<()> {
         if !hosts {
             let items = match &board {
                 Ok(b) => health::board_items(b.as_ref(), &cfg.repo, gitlab, &cfg.root, &cfg.install, &latest),
-                Err(e) => health::unopened(&cfg.repo, gitlab, e),
+                Err(e) => health::unopened(&cfg.repo, gitlab, e.text()),
             };
             out.extend(health::lines(&cfg.repo, &items));
             boards.push(json!({"board": cfg.repo, "items": items.iter().map(check::Item::json).collect::<Vec<_>>()}));
@@ -438,8 +438,8 @@ pub(crate) fn doctor_cmd(a: &Args) -> Res<()> {
         let b = match board {
             Ok(b) => b,
             Err(e) => {
-                host_rows.push(unread(&cfg.repo, &e));
-                boards.push(json!({"board": cfg.repo, "error": e, "hosts": [], "workers": []}));
+                host_rows.push(unread(&cfg.repo, e.text()));
+                boards.push(json!({"board": cfg.repo, "error": e.text(), "hosts": [], "workers": []}));
                 continue;
             }
         };
@@ -556,7 +556,7 @@ pub(crate) fn setup_check_cmd(root: &Path, json_out: bool) -> Res<()> {
     let (open, route) = match cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install)) {
         Ok(b) => (b.issues(None).ok().map(|v| v.into_iter().filter(service::is_task).map(|i| (i.number, i.labels)).collect()),
             (cfg.delivery.mode() == "pr").then(|| b.pr_route())),
-        Err(e) => (None, Some(check::Probe::Unknown(e))),
+        Err(e) => (None, Some(check::Probe::Unknown(e.into()))),
     };
     let items = setup_items(&cfg, &limits, delivery, &runtime::agents(&cfg.install), &access, open, route);
     if json_out { println!("{}", check::json(&project_name(&cfg.root), &items)); } else { for l in check::lines(&items) { println!("{l}"); } }

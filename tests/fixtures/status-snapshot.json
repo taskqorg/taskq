@@ -4,6 +4,7 @@
   "observed": 102,
   "complete": true,
   "reason": null,
+  "reason_code": null,
   "board": {
     "kind": "github",
     "host": "",

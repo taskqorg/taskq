@@ -59,16 +59,30 @@ pub(crate) fn load_value(root: &Path, v: Value) -> Res<(Config, Value)> {
 }
 
 /// § 6 setup check: `load`, except that `publish` disagreeing with `delivery` is the `delivery` item, not an error.
+pub(crate) enum DeliveryError {
+    /// `publish` names another mode than `delivery.preset`: the setup check reports it as its `delivery` item.
+    Disagrees(String),
+    Invalid(String),
+}
+
+impl From<DeliveryError> for String {
+    fn from(e: DeliveryError) -> Self {
+        match e {
+            DeliveryError::Disagrees(text) | DeliveryError::Invalid(text) => text,
+        }
+    }
+}
+
 pub(crate) fn check_load(root: &Path) -> Res<(Config, Value, Result<Delivery, String>)> {
     let v = project_value(root)?;
     match delivery(&v) {
         Ok((preset, _)) => load_value(root, v).map(|(c, raw)| (c, raw, Ok(preset))),
-        Err(e) if e.contains(" disagrees with ") => {
+        Err(DeliveryError::Disagrees(e)) => {
             let mut lenient = v;
             if let Some(o) = lenient.as_object_mut() { o.remove("publish"); }
             load_value(root, lenient).map(|(c, raw)| (c, raw, Err(e)))
         }
-        Err(e) => Err(e),
+        Err(DeliveryError::Invalid(e)) => Err(e),
     }
 }
 
@@ -140,24 +154,24 @@ impl std::fmt::Display for Delivery {
 
 /// § 7 delivery: `(preset, revision)`. Absent, `publish` names the preset at revision 0; a preset never changes by
 /// itself, so `publish: pr` stays `auto-merge`.
-pub(crate) fn delivery(v: &Value) -> Res<(Delivery, u64)> {
+pub(crate) fn delivery(v: &Value) -> Result<(Delivery, u64), DeliveryError> {
     let publish = v["publish"].as_str();
     if v["delivery"].is_null() {
         return Ok((if publish == Some("direct") { Delivery::Direct } else { Delivery::AutoMerge }, 0));
     }
     let d = &v["delivery"];
-    let revision = d["revision"].as_u64().ok_or("taskq.json: delivery.revision must be a whole number")?;
+    let revision = d["revision"].as_u64().ok_or_else(|| DeliveryError::Invalid("taskq.json: delivery.revision must be a whole number".into()))?;
     let preset = d["preset"].as_str().unwrap_or_default();
     let parsed = match preset {
         "auto-merge" => Delivery::AutoMerge,
         "review-pr" => Delivery::ReviewPr,
         "direct" => Delivery::Direct,
         // ponytail: B3 pending-handoff states come first; until then these presets cannot finish a task
-        "local" | "push-branch" => return Err(format!("taskq.json: delivery.preset {preset} is not available yet: a result needs a published SHA")),
-        _ => return Err(format!("taskq.json: delivery.preset {preset:?}: use auto-merge, review-pr or direct")),
+        "local" | "push-branch" => return Err(DeliveryError::Invalid(format!("taskq.json: delivery.preset {preset} is not available yet: a result needs a published SHA"))),
+        _ => return Err(DeliveryError::Invalid(format!("taskq.json: delivery.preset {preset:?}: use auto-merge, review-pr or direct"))),
     };
     if publish.is_some_and(|p| p != parsed.mode()) {
-        return Err(format!("taskq.json: publish {} disagrees with delivery.preset {preset}", publish.unwrap_or_default()));
+        return Err(DeliveryError::Disagrees(format!("taskq.json: publish {} disagrees with delivery.preset {preset}", publish.unwrap_or_default())));
     }
     Ok((parsed, revision))
 }

@@ -266,7 +266,7 @@ pub(crate) fn upload_attachments(b: &dyn board::Board, n: u64, paths: &[String])
             let dir = std::env::temp_dir().join(format!("taskq-file-{}", runtime::uuid()));
             let zip = dir.join(format!("{name}.zip"));
             let up = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&zip, &sent)).map_err(|e| format!("--file {p}: {e}"))
-                .and_then(|_| b.upload_attachment(n, &zip));
+                .and_then(|_| b.upload_attachment(n, &zip).map_err(String::from));
             let _ = std::fs::remove_dir_all(&dir);
             up?
         } else { b.upload_attachment(n, Path::new(p))? };

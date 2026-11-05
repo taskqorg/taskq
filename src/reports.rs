@@ -1,5 +1,5 @@
 //! §7 Reports: a separate projection of closed board objects. Never a queue state or local store (R1).
-use crate::{board::{Board, Comment, Issue}, core::Entry, Res};
+use crate::{board::{self, Board, Comment, Issue}, core::Entry, Res};
 use serde::Deserialize;
 use serde_json::{Value,json};
 use std::path::Path;
@@ -95,12 +95,12 @@ impl Cache {
         Self{entries,value,verified,full:None,cursor:None}
     }
     pub fn collect(&mut self,b:&dyn Board) {
-        let result=coreq::telemetry::capture::operation("reports.collect",|| -> Res<Value> {
+        let result=coreq::telemetry::capture::operation("reports.collect",|| -> board::Result<Value> {
             // Start before paging: updates racing a later page must remain inside the next overlap.
             let verified=b.now()?;
             let full=self.cursor.is_none() || self.full.is_none_or(|t|verified-t>=FULL_SCAN||t>verified);
             let since=self.verified.map(|v|if full {self.full.unwrap_or(v).min(v)-LIST_LAG-1} else {self.cursor.unwrap_or(v-1).min(v-1)});
-            let issues=coreq::telemetry::capture::operation("reports.collect.list",|| -> Res<Vec<(Issue,i64)>> {
+            let issues=coreq::telemetry::capture::operation("reports.collect.list",|| -> board::Result<Vec<(Issue,i64)>> {
                 if let Some(since)=since {
                     let issues=if full {b.issues(Some(since))?} else {b.tasks(since)?};
                     return Ok(issues.into_iter().map(|i|{let closed=i.closed.or_else(||self.entries.get(&i.number).and_then(|(_,_,r)|r.as_ref()).and_then(|r|r["closed"].as_i64())).unwrap_or(i.updated);(i,closed)}).collect());
@@ -125,24 +125,25 @@ impl Cache {
                 } else {
                     match coreq::telemetry::capture::operation("reports.collect.comments",||b.comments(i.number),|_|"board-read") {
                         Ok(comments)=>project(&i,closed,&comments,b.url(i.number)),
-                        Err(e)=>{errors.push(format!("#{}: {}",i.number,shown(&format!("#{} comments",i.number),&e.to_string(),brief(&e.to_string()))));if let Some((_,_,row))=old {next.insert(i.number,(-1,0,row.clone()));}continue;}
+                        Err(e)=>{errors.push(format!("#{}: {}",i.number,shown(&format!("#{} comments",i.number),e.text(),brief(&e))));if let Some((_,_,row))=old {next.insert(i.number,(-1,0,row.clone()));}continue;}
                     }
                 };
                 let row=row.map(|mut row| {
                     if row["kind"]=="report" {
                         let source=old.and_then(|(_,_,r)|r.as_ref()).filter(|r|r["sha"]==row["sha"] && (r["body"].is_string()||r["missing"]==true));
-                        let content=match source {Some(r) if r["missing"]==true=>Err(r["reason"].as_str().unwrap_or_default().to_string()),Some(r)=>Ok((r["body"].clone(),r["tasks"].clone())),None=>{
-                            coreq::telemetry::capture::operation("reports.collect.source",|| -> Res<(Value,Value)> {
+                        let content=match source {Some(r) if r["missing"]==true=>Err(board::Error::http(404,r["reason"].as_str().unwrap_or_default())),Some(r)=>Ok((r["body"].clone(),r["tasks"].clone())),None=>{
+                            coreq::telemetry::capture::operation("reports.collect.source",|| -> board::Result<(Value,Value)> {
                                 let body=b.source(&format!("docs/research/{}.md",i.number),row["sha"].as_str().ok_or("report SHA missing")?)?.replace("\r\n","\n");
                                 let tasks=proposals(&body)?;
                                 for t in &tasks {crate::cli::task_cmd::task_body(b,&t.task(i.number),&crate::Op::default())?;}
                                 Ok((json!(body),json!(tasks)))
                             },|_|"report-source")
                         }};
-                        match content {Ok((body,tasks))=>{row["body"]=body;row["tasks"]=tasks;},Err(reason)=>{
+                        match content {Ok((body,tasks))=>{row["body"]=body;row["tasks"]=tasks;},Err(e)=>{
                             // #1968: a 404 at an immutable SHA never heals; settle it instead of re-reading every pass.
-                            if reason.contains("HTTP 404") {row["missing"]=json!(true);}
-                            row["reason"]=json!(shown(&format!("#{} source",i.number),&reason,source_reason(&reason)))}}
+                            if e.status()==Some(404) {row["missing"]=json!(true);}
+                            row["status"]=json!(e.status());
+                            row["reason"]=json!(shown(&format!("#{} source",i.number),e.text(),source_reason(&e)))}}
                     }row
                 });
                 // #2193: one unreadable report keeps its row and reason; the list stays complete, but the cursor
@@ -163,7 +164,7 @@ impl Cache {
             let visible:Vec<_>=rows.iter().filter(|r|r["visible"]==true).collect();let archived:Vec<_>=rows.iter().filter(|r|r["visible"]!=true).collect();
             Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now(),"verified":self.verified,"overlap":LIST_LAG,"settle":LIST_LAG}))
         },|_|"board-read");
-        match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(shown("collect",&reason.to_string(),brief(&reason.to_string())));}}
+        match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(shown("collect",reason.text(),brief(&reason)));}}
     }
 }
 
@@ -237,7 +238,7 @@ fn reader(root:std::path::PathBuf)->std::io::Result<std::sync::mpsc::Sender<(Cac
         let mut board:Option<Box<dyn Board>>=None;
         for (mut cache,tx) in jobs {
             if board.is_none() {
-                match crate::config::load(&root).and_then(|(cfg,raw)|cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(&cfg.install))) {
+                match crate::config::load(&root).and_then(|(cfg,raw)|cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(&cfg.install)).map_err(String::from)) {
                     Ok(b)=>board=Some(b),Err(reason)=>{cache.value["complete"]=json!(false);cache.value["reason"]=json!(reason);}
                 }
             }
@@ -405,21 +406,17 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
 
 /// #2193: the row reason for a failed report source read. A board reply body (JSON) never reaches Conversations or
 /// the menu; the service log keeps the full text. Own validation messages are already short and stay.
-fn source_reason(e:&str)->String {
-    match http_status(e).as_deref() {
-        Some("404")=>"Report source unavailable at the result SHA (HTTP 404)".into(),
-        Some("403") if !e.to_ascii_lowercase().contains("rate limit")=>"Report source unreadable: board token lacks Contents read permission (HTTP 403)".into(),
+fn source_reason(e:&board::Error)->String {
+    match e.status() {
+        Some(404)=>"Report source unavailable at the result SHA (HTTP 404)".into(),
+        Some(403) if e.reason()!=board::Reason::RateLimited=>"Report source unreadable: board token lacks Contents read permission (HTTP 403)".into(),
         _=>brief(e),
     }
 }
 
 /// A board error without its reply body; the caller logs the full text.
-fn brief(e:&str)->String {
-    match http_status(e) {Some(status)=>format!("Board read failed (HTTP {status}); details in the service log"),None=>e.to_string()}
-}
-
-fn http_status(e:&str)->Option<String> {
-    let at=e.find("HTTP ")?;Some(e[at+5..].chars().take_while(char::is_ascii_digit).collect())
+fn brief(e:&board::Error)->String {
+    match e.status() {Some(status)=>format!("Board read failed (HTTP {status}); details in the service log"),None=>e.to_string()}
 }
 
 /// Shortens a board error for the projection and logs the full text when it differs.

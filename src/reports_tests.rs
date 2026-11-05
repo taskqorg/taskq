@@ -256,7 +256,7 @@
         let other=b.create("Plain task","",&["taskq".into()]).unwrap();let spawn=b.raw(other,"taskq: spawn worker invented:session host",true,false);
         b.raw(other,&format!("taskq: result {} attempt {spawn}","c".repeat(40)),true,false);b.raw(other,"taskq: close",true,false);b.close(other).unwrap();
         let body=r#"GET /repos/o/r/contents/docs/research/1.md?ref=x: HTTP 403 {"message":"Resource not accessible by personal access token","documentation_url":"https://docs.github.com/rest","status":"403"}"#;
-        b.state.borrow_mut().source_error=Some(body.into());
+        b.state.borrow_mut().source_error=Some(board::Error::http(403,body));
         let mut cache=Cache::default();cache.collect(&b);
         assert_eq!(cache.value["complete"],true,"{}",cache.value["reason"]);assert!(cache.value["reason"].is_null());
         assert!(cache.verified.is_none(),"the cursor holds so the read retries");
@@ -268,9 +268,9 @@
         b.state.borrow_mut().source_error=None;b.advance(2);cache.collect(&b);
         let row=cache.value["reports"].as_array().unwrap().iter().find(|r|r["n"]==n).unwrap().clone();
         assert!(row["reason"].is_null()&&row["body"].is_string()&&row["sha"]==sha.as_str());assert!(cache.verified.is_some());
-        assert_eq!(source_reason("GET x: HTTP 502 <html>bad gateway</html>"),"Board read failed (HTTP 502); details in the service log");
-        assert_eq!(source_reason("report missing Question heading"),"report missing Question heading");
-        assert_eq!(source_reason("GET x: HTTP 403 {\"message\":\"API rate limit exceeded\"}"),"Board read failed (HTTP 403); details in the service log");
+        assert_eq!(source_reason(&board::Error::http(502,"GET x: HTTP 502 <html>bad gateway</html>")),"Board read failed (HTTP 502); details in the service log");
+        assert_eq!(source_reason(&board::Error::from("report missing Question heading")),"report missing Question heading");
+        assert_eq!(source_reason(&board::Error::http(403,"GET x: HTTP 403 {\"message\":\"API rate limit exceeded\"}")),"Board read failed (HTTP 403); details in the service log");
     }
 
     #[test] fn close_event_invalidates_collection_before_the_next_due_pass() {

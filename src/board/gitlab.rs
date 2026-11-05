@@ -1,7 +1,7 @@
 //! GitLab issues (taskq.md § 1, § 2, § 7): REST v4 on gitlab.com or a self-managed host, `glab` login.
 
 use super::github::Open;
-use super::{Api, Board, image_name, Comment, Issue, Kind, Publish, Result, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
+use super::{Api, Board, Error, Reason, image_name, Comment, Issue, Kind, Publish, Result, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 
@@ -20,7 +20,7 @@ pub const KIND: Kind = Kind {
 
 /// coreq's lookup (§ 9): env, `<install>/gitlab-token`, then `glab`. Reaching `glab` means no env token and no file.
 fn token(tool: &coreq::Tool, host: &str) -> Result<String> {
-    tool.token(true, host).map_err(|e| missing(&tool.install.join("gitlab-token"), host, &e))
+    tool.token(true, host).map_err(|e| missing(&tool.install.join("gitlab-token"), host, &e).into())
 }
 
 /// Names what to provide when neither the file nor `glab` gave a token (#1894); other errors pass unchanged.
@@ -97,8 +97,8 @@ impl GitLab {
             Some("success") => Ok(None),
             Some(st @ ("failed" | "canceled")) => Ok(Some(Publish::Failed(format!("CI {st} on {sha}{}", link(p))))),
             Some(st) if RUNNING.contains(&st) => Ok(Some(self.running(&format!("CI on {sha}"), p))),
-            Some(st) => Err(format!("CI {st} on {sha}")),
-            None => Err(format!("no CI on {sha}")),
+            Some(st) => Err(format!("CI {st} on {sha}").into()),
+            None => Err(format!("no CI on {sha}").into()),
         }
     }
 
@@ -175,7 +175,7 @@ impl GitLab {
         let body = if mode == "pr" { json!({ "sha": sha, "squash": true, "squash_commit_message": format!("{title}\n\n{task_line}") }) } else { json!({ "sha": sha }) };
         let merged = match self.api.call("PUT", &format!("/merge_requests/{iid}/merge"), Some(body)) {
             // 422 'Branch cannot be merged' also answers a merge sent while GitLab rechecks: only a settled blocker fails (#1687)
-            Err(e) if e.contains("HTTP 422") => return Ok(match self.merge_status(iid)? {
+            Err(e) if e.status() == Some(422) => return Ok(match self.merge_status(iid)? {
                 Status::Blocked(why) => Publish::Failed(format!("!{iid} cannot be merged: {why}: {e}")),
                 Status::Running(p) => self.running(&format!("!{iid} pipeline"), &p),
                 _ => Publish::Pending(format!("!{iid} merge refused while GitLab checks mergeability: {e}")),
@@ -195,7 +195,7 @@ impl GitLab {
             let target = if mode == "direct" { sha } else { merged.as_ref().and_then(|v| v["squash_commit_sha"].as_str()).unwrap_or("") };
             self.publication_ancestry(target, mode);
         }
-        if back["state"] == "merged" { Ok(Publish::Done(format!("merged !{iid}"))) } else { Err(format!("!{iid} not merged yet")) }
+        if back["state"] == "merged" { Ok(Publish::Done(format!("merged !{iid}"))) } else { Err(format!("!{iid} not merged yet").into()) }
     }
 }
 
@@ -437,10 +437,10 @@ impl Board for GitLab {
         std::fs::create_dir_all(&dir).map_err(|e| format!("image: {e}"))?;
         let name = format!("{}-{}", &id[..8], image_name(path));
         let file = dir.join(&name);
-        let sent = std::fs::copy(path, &file).map_err(|e| format!("image {}: {e}", path.display()))
+        let sent = std::fs::copy(path, &file).map_err(|e| Error::from(format!("image {}: {e}", path.display())))
             .and_then(|_| self.api.raw("/uploads", Some(&file)));
         let _ = std::fs::remove_dir_all(&dir);
-        let mut reply: Value = serde_json::from_slice(&sent?).map_err(|e| format!("bad JSON from board: {e}"))?;
+        let mut reply: Value = serde_json::from_slice(&sent?).map_err(|e| Error::new(Reason::Invalid, format!("bad JSON from board: {e}")))?;
         if reply["id"].is_null() {
             let list = self.api.call("GET", "/uploads?per_page=20", None)?.json()?;
             reply["id"] = list.as_array().into_iter().flatten().find(|u| u["filename"] == name.as_str()).map(|u| u["id"].clone()).unwrap_or_default();

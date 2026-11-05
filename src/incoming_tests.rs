@@ -69,7 +69,7 @@
         let bad=board.create("bad","",&["taskq".into()]).unwrap();
         let flaky=board.create("flaky","",&["taskq".into()]).unwrap();
         board.state.borrow_mut().admissions.insert(bad,Ok(Some((0,100))));
-        board.state.borrow_mut().admissions.insert(flaky,Err("HTTP 502".into()));
+        board.state.borrow_mut().admissions.insert(flaky,Err(crate::board::Error::http(502, "HTTP 502")));
         let mut h=History::default();
         h.refresh(&board,200);
         assert!(h.failed.contains_key(&bad));assert!(!h.pending.contains_key(&bad));

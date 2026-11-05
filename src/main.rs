@@ -457,3 +457,6 @@ fn application() {
 #[cfg(test)]
 #[path = "main_tests.rs"]
 pub(crate) mod tests;
+#[cfg(test)]
+#[path = "serde_shape_tests.rs"]
+mod serde_shape_tests;

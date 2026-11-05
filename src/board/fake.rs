@@ -71,7 +71,7 @@ pub struct FakeState {
     /// Immutable repository text for the Reports source adapter (path, SHA, body).
     pub report_sources: Vec<(String,String,String)>,
     /// Every report source read fails with this board error (#2193).
-    pub source_error: Option<String>,
+    pub source_error: Option<Error>,
     pub report_closed: std::collections::BTreeMap<u64,i64>,
     /// A real adapter that answers `publish` calls instead of the `publish` string above (#1939).
     pub publisher: Option<Box<dyn Board>>,
@@ -84,7 +84,7 @@ impl FakeState {
         self.clock
     }
     fn get(&mut self, n: u64) -> Result<&mut Issue> {
-        self.issues.iter_mut().find(|i| i.number == n).ok_or(format!("no issue #{n}"))
+        self.issues.iter_mut().find(|i| i.number == n).ok_or_else(|| format!("no issue #{n}").into())
     }
 }
 
@@ -124,7 +124,7 @@ impl Board for Fake {
     }
     fn source(&self,path:&str,sha:&str)->Result<String> {
         if let Some(e)=&self.state.borrow().source_error {return Err(e.clone());}
-        self.state.borrow().report_sources.iter().find(|(p,s,_)|p==path&&s==sha).map(|(_,_,b)|b.clone()).ok_or("report source unavailable: HTTP 404".into())
+        self.state.borrow().report_sources.iter().find(|(p,s,_)|p==path&&s==sha).map(|(_,_,b)|b.clone()).ok_or(Error::http(404, "report source unavailable: HTTP 404"))
     }
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
@@ -169,7 +169,7 @@ impl Board for Fake {
     fn foreign(&self, repo: &str, n: u64) -> Result<Issue> {
         let mut st = self.state.borrow_mut();
         st.reads += 1;
-        st.foreign.iter().find(|(r, i)| r == repo && i.number == n).map(|x| x.1.clone()).ok_or(format!("HTTP 404 {repo}#{n}"))
+        st.foreign.iter().find(|(r, i)| r == repo && i.number == n).map(|x| x.1.clone()).ok_or(Error::http(404, format!("HTTP 404 {repo}#{n}")))
     }
     fn foreign_url(&self, repo: &str, n: u64) -> String {
         format!("https://board/{repo}/{n}")

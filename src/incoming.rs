@@ -33,10 +33,10 @@ impl Reader {
             while let Ok(())=requests.recv() {
                 let value=match &board {
                     Ok(board)=>{
-                        match board.now() {Ok(now)=>history.refresh(board.as_ref(),now),Err(reason)=>history.missing=vec![reason]}
+                        match board.now() {Ok(now)=>history.refresh(board.as_ref(),now),Err(reason)=>history.missing=vec![reason.to_string()]}
                         history.json(&board.url(0))
                     },
-                    Err(reason)=>{history.missing=vec![reason.clone()];history.json(&identity)},
+                    Err(reason)=>{history.missing=vec![reason.to_string()];history.json(&identity)},
                 };
                 if responses.send(value).is_err() {break;}
             }

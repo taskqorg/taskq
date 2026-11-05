@@ -444,16 +444,16 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
     let body=core::with_fields(entry(kind,args,attempt,&text),op.id.as_deref(),op.revision);
     let id = match if human { board::reply::post(b, n, &body) } else { b.comment(n, &body) } {
         Ok(id) => id,
-        Err(e) => return unknown(e),
+        Err(e) => return unknown(e.to_string()),
     };
     // re-read: report what the board holds (R12); a concurrent writer may have won the same revision
     let comments = match b.comments(n) {
         Ok(c) => c,
-        Err(e) => return unknown(e),
+        Err(e) => return unknown(e.to_string()),
     };
     let log = match board::reply::log(n, &comments) {
         Ok(l) => l,
-        Err(e) => return unknown(e),
+        Err(e) => return unknown(e.to_string()),
     };
     let mut log: Vec<Entry> = log.into_iter().filter(|e| !e.edited).collect();
     log.sort_by_key(|e| e.id);
@@ -465,7 +465,7 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
         let stored = if human { b.comments(n).ok().and_then(|cs| cs.into_iter().find(|c| c.id == id)).map(|c| c.body) } else { Some(body.clone()) };
         let Some(stored) = stored else { return unknown(format!("comment {id} not read back for stale-write cleanup")); };
         if let Err(e) = b.edit_comment(n, id, &format!("{stored}\n\nignored: another write won")) {
-            return unknown(e);
+            return unknown(e.to_string());
         }
         log[i].edited = true;
         if kind == "answer" && attempt.is_none() {

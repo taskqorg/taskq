@@ -148,7 +148,7 @@
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { heartbeat: Value::Null, worker: None, workers: vec![], conversation: None, brief: String::new(), n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
             execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], timing:Value::Null, stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
-        let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
+        let snap = Snapshot { source: "board", observed: 0, reason: None, reason_code: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("| ") && l.contains("stuck")).collect::<Vec<_>>(), ["| [#1 T](u1) | owner · stuck 2h | answer the Owner row |"], "{text}");
         let rows = snap.json()["tasks"].clone();
@@ -169,7 +169,7 @@
         let row = Row { n: 1, title: "T".into(), url: "u1".into(), task, accepted: true, session_url: Some(cause.into()), ..Default::default() };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
-        let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row], hosts: vec![] };
+        let snap = Snapshot { source: "board", observed: 0, reason: None, reason_code: None, board: json!({"url": "b"}), tasks: vec![row], hosts: vec![] };
         let text = snap.text(&cfg, &json!({})).unwrap();
         let line = text.lines().find(|l| l.contains("Remote Control URL")).unwrap_or_else(|| panic!("{text}"));
         assert!(line.contains(r"unknown: failed \| x \[open\](https://evil.example)") && !line.contains("[open]"), "{line}");
@@ -180,7 +180,7 @@
     fn hosts_line_marks_heartbeat_older_than_ttl_stale() {
         let ttl = crate::tests::cfg().ttl;
         let host = |name: &str, updated| Host { name: name.into(), version: "1.0".into(), updated, ..Default::default() };
-        let snap = Snapshot { source: "board", observed: 10_000, reason: None, board: json!({"url": "b"}), tasks: vec![],
+        let snap = Snapshot { source: "board", observed: 10_000, reason: None, reason_code: None, board: json!({"url": "b"}), tasks: vec![],
             hosts: vec![host("mac", 10_000 - ttl), host("win", 10_000 - ttl - 1)] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
@@ -197,7 +197,7 @@
         let h = super::host(&i, 1000, 300);
         assert_eq!(h.limits, ["codex 2026-01-01T00:00:00Z"]);
         assert_eq!(h.account_policy, ["unmet codex abcd1234"]);
-        let snap = Snapshot { source: "board", observed: 1000, reason: None, board: json!({"url": "b"}), tasks: vec![], hosts: vec![h] };
+        let snap = Snapshot { source: "board", observed: 1000, reason: None, reason_code: None, board: json!({"url": "b"}), tasks: vec![], hosts: vec![h] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert!(text.contains("account-policy unmet codex abcd1234") && !text.contains("window") && !text.contains("no login"), "{text}");
     }
@@ -316,7 +316,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         let at = crate::board::iso("2026-11-05T09:00:00Z").unwrap();
         let row = |n, until: Option<&str>| Row { n, title: format!("T{n}"), url: format!("u{n}"), later: Some("Reason: 168 qualified hours".into()),
             task: Task { state: State::Later, until: until.map(str::to_string), ..Default::default() }, ..Default::default() };
-        let snap = Snapshot { source: "board", observed: at, reason: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
+        let snap = Snapshot { source: "board", observed: at, reason: None, reason_code: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
             tasks: vec![row(1, Some("2026-11-05T09:00:00Z")), row(2, None)] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert!(text.contains(&format!("| [#1 T1](u1) | owner until {}: 168 qualified hours | `taskq requeue 1` |\n| [#2 T2](u2) | owner | `taskq requeue 2` |", local_time(at))), "{text}");
@@ -335,7 +335,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         let at = crate::board::iso("2026-11-05T09:00:00Z").unwrap();
         let row = |n, state, stage| Row { n, title: format!("T{n}"), url: format!("u{n}"), stage,
             task: Task { state, stages: if stage.is_some() { vec!["A1".into()] } else { vec![] }, ..Default::default() }, ..Default::default() };
-        let snap = Snapshot { source: "board", observed: at, reason: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
+        let snap = Snapshot { source: "board", observed: at, reason: None, reason_code: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
             tasks: vec![row(1, State::Later, Some((2, 4))), row(2, State::Ready, Some((3, 4))), row(3, State::Ready, None)] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert!(text.contains("| [#1 T1](u1) · stage 2/4 | owner |") && text.contains("| [#2 T2](u2) · stage 3/4 | no host decision |"), "{text}");
@@ -352,7 +352,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         let now = 200_000;
         let row = |n, state, labels: &[&str], ago: i64| Row { n, title: format!("T{n}"), labels: labels.iter().map(|l| l.to_string()).collect(), url: format!("https://github.com/o/r/issues/{n}"),
             task: Task { state, ..Default::default() }, since: Some(now - ago), stuck: (state == State::Ask).then_some(ago), ..Default::default() };
-        let snap = Snapshot { source: "board", observed: now, reason: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![], tasks: vec![
+        let snap = Snapshot { source: "board", observed: now, reason: None, reason_code: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![], tasks: vec![
             row(3, State::Ready, &["p1"], 300), row(5, State::Ready, &[], 7200), row(7, State::Doing, &[], 60), row(8, State::Ready, &["p0"], 30),
             row(9, State::Ask, &[], 9000), row(2, State::Held, &[], 90_000), row(4, State::Later, &[], 600)] };
         // the `from_views` key: priority, then number
@@ -411,7 +411,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         // status text and row JSON: owner text only in the row, raw reason kept in --json
         let raw = cases[11].0;
         let row = Row { heartbeat: Value::Null, worker: None, workers: vec![], conversation: None, brief: String::new(), n: 1, title: "T".into(), url: "u1".into(), task: Task { state: State::Doing, ..Default::default() }, execution_wait: Some(raw.into()), ..Default::default() };
-        let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row], hosts: vec![] };
+        let snap = Snapshot { source: "board", observed: 0, reason: None, reason_code: None, board: json!({"url": "b"}), tasks: vec![row], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert!(text.contains("| doing · Run state unknown; see service log |") && !text.contains("termination") && !text.contains("execution 3"), "{text}");
         let j = &snap.json()["tasks"][0];
@@ -515,7 +515,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         unknown.heartbeat["executor"]=executor(&unknown.task,&unknown.executions,false,now,cfg.ttl);refresh_heartbeat(&mut unknown.heartbeat,now,true);
         let mut question=Row{n:9,title:"Owner question".into(),url:"q9".into(),task:Task{state:State::Ask,card:Some("Problem: owner choice\n1. keep ★\n2. change".into()),..Default::default()},stuck:Some(9000),..Default::default()};
         question.heartbeat=Value::Null;
-        let mut snap=Snapshot{source:"board",observed:now,reason:None,board:json!({"url":"https://github.com/invented/project/issues"}),hosts:vec![],
+        let mut snap=Snapshot{source:"board",observed:now,reason:None,reason_code:None,board:json!({"url":"https://github.com/invented/project/issues"}),hosts:vec![],
             tasks:vec![row(1,Some(10),quiet.clone(),false),row(2,Some(cfg.ttl+1),quiet.clone(),false),row(3,None,error.clone(),false),row(4,Some(10),error,false),row(5,Some(10),overdue,false),unknown,row(7,Some(10),Value::Null,true),row(8,Some(10),stale,false),question]};
         snap.tasks[5].task.state=State::Review;
         let decide=json!({"complete":true,"rows":[{"n":20,"title":"Completed result","url":"r20","verdict":"confirmed","age_s":600,"recommendation":"Discuss result"}]});
@@ -611,3 +611,14 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         v.comments.clear();assert!(read(v).is_null(),"issue creation is not conversation activity");
     }
 
+    // Chain: A5 board failure -> status. Risk: an unread board reports only text, so a reader must match words to learn why.
+    #[test]
+    fn an_unread_board_reports_its_reason_code() {
+        let b = crate::board::replying(&crate::board::github::KIND, |_, url| Err(board::Error::http(403, format!("GET {url}: HTTP 403 denied"))));
+        let snap = read(&*b, &crate::tests::cfg(), &Value::Null, &[]);
+        let wire = snap.json();
+        assert_eq!((wire["complete"].clone(), wire["reason_code"].clone()), (json!(false), json!("forbidden")));
+        assert!(wire["reason"].as_str().unwrap().contains("HTTP 403 denied"), "{wire}");
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap_err();
+        assert!(text.ends_with(" (reason: forbidden)"), "{text}");
+    }

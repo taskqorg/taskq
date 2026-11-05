@@ -119,7 +119,7 @@
         let beat = |name: &str, updated, service: Option<&str>| Host { name: name.into(), updated, service: service.map(String::from), ..Default::default() };
         let row = |n, state, session: Option<&str>, labels: &[&str]| Row { n, labels: labels.iter().map(|l| l.to_string()).collect(),
             task: Task { state, attempt: session.map(|_| n), session: session.map(String::from), ..Default::default() }, ..Default::default() };
-        let base = || Snapshot { source: "host", observed: 1000, reason: None, board: json!({"kind": "github", "host": "github.com", "repo": "o/r"}),
+        let base = || Snapshot { source: "host", observed: 1000, reason: None, reason_code: None, board: json!({"kind": "github", "host": "github.com", "repo": "o/r"}),
             tasks: vec![row(1, State::Doing, Some("claude:x mac"), &[]), row(2, State::Ready, None, &["host-mac"]),
                 row(3, State::Waiting, None, &["host-win"]), row(4, State::Review, Some("codex:y win"), &[]), row(5, State::Ready, None, &[])],
             // mac online, win offline (heartbeat older than ttl), fra partial (no service line), wsl unknown (no heartbeat)
@@ -160,7 +160,7 @@
         tasks.push(row(20, State::Waiting, decided("dependency", "#1 open", None)));
         tasks.extend(ADMISSION_UNKNOWN.iter().enumerate().map(|(i, r)| row(30 + i as u64, State::Ready, decided("unknown", r, (i > 0).then_some("mac")))));
         tasks.push(row(40, State::Doing, None));
-        let snap = Snapshot { source: "host", observed: 1000, reason: None, board: json!({"kind": "github", "host": "github.com", "repo": "o/r"}), tasks, hosts: vec![] };
+        let snap = Snapshot { source: "host", observed: 1000, reason: None, reason_code: None, board: json!({"kind": "github", "host": "github.com", "repo": "o/r"}), tasks, hosts: vec![] };
         let local = Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null, progress: BTreeMap::new() };
         let scope = [BoardScope::new("github", "github.com", "o/r").unwrap()];
         let o = project(&snap, &"a".repeat(64), &scope, &local).unwrap();
@@ -219,7 +219,7 @@
     fn local() -> Local { Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null, progress: BTreeMap::new() } }
 
     fn snap(repo: &str) -> Snapshot {
-        Snapshot { source: "host", observed: 1_700_000_000, reason: None, board: json!({"kind": "github", "host": "github.com", "repo": repo}), tasks: vec![], hosts: vec![] }
+        Snapshot { source: "host", observed: 1_700_000_000, reason: None, reason_code: None, board: json!({"kind": "github", "host": "github.com", "repo": repo}), tasks: vec![], hosts: vec![] }
     }
 
     // Chain: enrolled board scope -> service pass of each project -> delivery thread. Risk: another project's board

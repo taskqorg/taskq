@@ -98,8 +98,8 @@ pub fn label(b: &dyn Board, i: &Issue, log: &[Entry], d: Option<&Deploy>) -> Res
     let want = d.is_some_and(|d| waiting(i.number, log, d));
     let has = i.labels.iter().any(|l| l == LABEL);
     match (want, has) {
-        (true, false) => b.labels(i.number, &[LABEL.to_string()], &[]),
-        (false, true) => b.labels(i.number, &[], &[LABEL.to_string()]),
+        (true, false) => b.labels(i.number, &[LABEL.to_string()], &[]).map_err(String::from),
+        (false, true) => b.labels(i.number, &[], &[LABEL.to_string()]).map_err(String::from),
         _ => Ok(()),
     }
 }
@@ -162,7 +162,7 @@ fn one(b: &dyn Board, d: &Deploy, n: u64, version: &str, env: &str, host: Option
     let row = |outcome: &str, comment: Option<u64>, reason: &str| json!({"issue": n, "url": b.url(n), "outcome": outcome, "comment": comment, "reason": reason, "op_id": op});
     let issue = match b.issue(n) {
         Ok(i) => i,
-        Err(e) => return row("unknown", None, &e),
+        Err(e) => return row("unknown", None, e.text()),
     };
     if issue.open || !crate::service::is_task(&issue) {
         return row("skipped", None, if issue.open { "task is open" } else { "not a taskq task" });
@@ -171,7 +171,7 @@ fn one(b: &dyn Board, d: &Deploy, n: u64, version: &str, env: &str, host: Option
     let mine = |log: &[Entry]| log.iter().find(|e| !e.edited && core::op_id(n, &e.body) == Some(op.as_str())).map(|e| e.id);
     let (comments, log) = match read(b) {
         Ok(x) => x,
-        Err(e) => return row("unknown", None, &e),
+        Err(e) => return row("unknown", None, e.text()),
     };
     let (outcome, id, comments, log) = match mine(&log) {
         Some(id) => ("repeat", id, comments, log),

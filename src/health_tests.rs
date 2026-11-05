@@ -12,7 +12,6 @@
         assert!(c.fix.as_deref().unwrap().contains("Contents: Read"), "{:?}", c.fix);
         assert!(items.iter().filter(|i| i.id != "token-contents").all(|i| i.status == "ok"));
         assert_eq!(line(7, &items), "doctor 7 token-contents:gap");
-        assert_eq!(http_status("GET /commits?per_page=1: HTTP 403 Resource not accessible"), Some(403));
         assert!(token_items("o/r", false, &[]).iter().all(|i| i.status == "unknown"), "an unsupported board is unknown, never ok");
     }
 
@@ -30,7 +29,7 @@
         let low = gitlab_access(&Ok(json!({"active": true, "scopes": ["api"]})), &Ok(json!({"permissions": {"project_access": {"access_level": 20}}})));
         assert_eq!(low[2].1, Probe::Gap("project role 20 below 30".into()));
         assert!(matches!(gitlab_access(&Ok(json!({"active": false, "scopes": ["api"]})), &dev)[0].1, Probe::Gap(_)));
-        assert!(gitlab_access(&Err("HTTP 401".into()), &dev).iter().all(|(_, p)| matches!(p, Probe::Unknown(_))), "unread scopes: unknown, never ok");
+        assert!(gitlab_access(&Err(crate::board::Error::http(401, "HTTP 401")), &dev).iter().all(|(_, p)| matches!(p, Probe::Unknown(_))), "unread scopes: unknown, never ok");
         let items = token_items("g/p", true, &read);
         assert_eq!(items[0].fix.as_deref(), Some("owner: give the GitLab board token scope api and role Reporter or higher on g/p"));
         assert!(!items.iter().filter_map(|i| i.fix.as_deref()).any(|f| f.contains("fine-grained")), "no GitHub fix on GitLab");
@@ -66,16 +65,16 @@
     fn doctor_reports_name_missing_reports_and_skip_decided_ones() {
         let ok = reports_item(&json!({"complete": true, "reports": [{"kind": "report", "n": 4, "reason": null}],
             "history": [{"kind": "task", "n": 5, "reason": "No accepted hand-in recorded; result details unknown"},
-                {"kind": "report", "n": 6, "visible": false, "missing": true, "reason": "#6 source: HTTP 404"}]}), false);
+                {"kind": "report", "n": 6, "visible": false, "missing": true, "status": 404, "reason": "#6 source: HTTP 404"}]}), false);
         assert_eq!(ok.status, "ok", "a decided report with a gone source needs nothing");
         let rows = json!({"complete": true, "reports": [{"kind": "report", "n": 4, "reason": null}],
-            "history": [{"kind": "report", "n": 7, "visible": true, "reason": "#7 source: GET /contents/x: HTTP 403 Resource not accessible"},
-                {"kind": "report", "n": 8, "missing": true, "reason": "#8 source: HTTP 404"}]});
+            "history": [{"kind": "report", "n": 7, "visible": true, "status": 403, "reason": "#7 source: GET /contents/x: HTTP 403 Resource not accessible"},
+                {"kind": "report", "n": 8, "missing": true, "status": 404, "reason": "#8 source: HTTP 404"}]});
         assert_eq!(reports_detail(&rows).as_deref(), Some("denied #7 #8"));
         let bad = reports_item(&rows, false);
         assert_eq!((bad.status, bad.text.as_str()), ("gap", "2 undecided report(s) unreadable (denied: #7 #8), first: #7 source: GET /contents/x: HTTP 403 Resource not accessible"));
         assert_eq!(bad.fix.as_deref(), Some("reports #7 #8 unreadable (HTTP 401/403): owner: give the board token of this host Contents: Read"));
-        let many: Vec<Value> = (1..=7).map(|n| json!({"kind": "report", "n": n, "missing": true, "reason": "source: HTTP 404"})).collect();
+        let many: Vec<Value> = (1..=7).map(|n| json!({"kind": "report", "n": n, "missing": true, "status": 404, "reason": "source: HTTP 404"})).collect();
         let gone = json!({"complete": true, "reports": many});
         assert_eq!(reports_detail(&gone).as_deref(), Some("missing #1 #2 #3 #4 #5 +2"));
         assert_eq!(reports_detail(&json!({"complete": false, "reason": "Reports not collected yet"})).as_deref(), Some("uncollected"));
@@ -211,7 +210,7 @@
         let beat = |executor: &str, progress: &str, warning: Option<&str>| json!({"freshness": "fresh", "executor": {"state": executor, "reason": "observed"},
             "progress": {"status": progress}, "warning": warning});
         let idle = Row { n: 9, task: crate::core::Task { state: State::Ready, ..Default::default() }, ..Default::default() };
-        let s = Snapshot { source: "board", observed: now, reason: None, board: Value::Null, hosts: vec![
+        let s = Snapshot { source: "board", observed: now, reason: None, reason_code: None, board: Value::Null, hosts: vec![
             Host { name: "win".into(), updated: now - 5, logins: vec!["codex".into()], limits: vec!["claude until 2026-11-02T10:00:00Z".into()], ..Default::default() },
             Host { name: "lin".into(), updated: now - 5, accounts: vec!["claude work on active".into(), "codex home on".into()], ..Default::default() },
             Host { name: "fra".into(), updated: now - 5, ..Default::default() },

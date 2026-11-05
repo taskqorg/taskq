@@ -74,7 +74,7 @@
         let joined = server.join();
         phase("http.joined");
         assert!(joined.is_ok(), "HTTP fixture failed; runtime install={installed:?}, through request={:?}, client error={:?}", began.elapsed(), result.as_ref().err());
-        assert!(result.err().unwrap().contains("HTTP 503"));
+        assert!(result.err().unwrap().text().contains("HTTP 503"));
         assert!(crate::profile::tests::take_report().contains("http5xx:1"));
         phase("capture.qualify");
         let health = coreq::telemetry::capture::qualify().unwrap();
@@ -120,14 +120,14 @@
             seen.borrow_mut().push(format!("{method} {url} {}", body.as_ref().map(|b| b.to_string()).unwrap_or_default()));
             let path = url.strip_prefix("https://api.github.com/repos/o/r").unwrap_or(url);
             match (method, path) {
-                ("GET", "/git/ref/taskq/evidence") => Err("HTTP 404 Not Found".into()),
+                ("GET", "/git/ref/taskq/evidence") => Err(Error::http(404, "HTTP 404 Not Found")),
                 ("POST", "/git/blobs") => { *stored.borrow_mut() = body.as_ref().map(|b| s(b, "content")).unwrap_or_default(); reply(json!({"sha": "b1"}), method) }
                 ("POST", "/git/trees") => reply(json!({"sha": "t1"}), method),
                 ("POST", "/git/commits") => reply(json!({"sha": sha}), method),
                 ("POST", "/git/refs") => reply(json!({}), method),
                 ("GET", p) if p.starts_with("/contents/7/") => reply(json!({"sha": "b1"}), method),
                 ("GET", "/git/blobs/b1") => reply(json!({"content": stored.borrow().clone()}), method),
-                _ => Err(format!("unexpected {method} {url}")),
+                _ => Err(format!("unexpected {method} {url}").into()),
             }
         }));
         let links = crate::cli::text::upload_attachments(github.as_ref(), 7, &paths).unwrap();
@@ -155,7 +155,7 @@
                     reply(json!({"id": 5, "url": format!("/uploads/cef859da/{name}")}), method)
                 }
                 ("GET", "/uploads/5") => Ok(Reply { status: 200, headers: vec![], body: "PK\x03\x04 zip body".into(), operation: "read" }),
-                _ => Err(format!("unexpected {method} {url}")),
+                _ => Err(format!("unexpected {method} {url}").into()),
             }
         }));
         let links = crate::cli::text::upload_attachments(gitlab.as_ref(), 7, &paths).unwrap();
@@ -413,7 +413,7 @@
                 let initial = *comparisons.borrow() == 1;
                 if !initial {
                     assert!(url.ends_with(if direct { &result } else { &merged }), "ancestry must use the published SHA");
-                    if ancestry.is_none() { return Err("HTTP 503".into()); }
+                    if ancestry.is_none() { return Err(Error::http(503, "HTTP 503")); }
                 }
                 let on_main = !initial && ancestry == Some(true);
                 if kind.name == "github" { json!({"status": if on_main { "identical" } else { "ahead" }}) }
@@ -452,15 +452,15 @@
                 assert_eq!(method, "GET", "the check only reads");
                 let value = if url.ends_with("/rules/branches/main") {
                     match scenario {
-                        "403" => return Err("GET /rules/branches/main: HTTP 403 Upgrade to GitHub Pro".into()),
-                        "503" => return Err("GET /rules/branches/main: HTTP 503".into()),
+                        "403" => return Err(Error::http(403, "GET /rules/branches/main: HTTP 403 Upgrade to GitHub Pro")),
+                        "503" => return Err(Error::http(503, "GET /rules/branches/main: HTTP 503")),
                         "queue" => json!([{"type": "merge_queue"}]),
                         "strict" => json!([{"type": "required_status_checks", "ruleset_id": 1, "parameters": {"strict_required_status_checks_policy": true}}]),
                         _ => json!([]),
                     }
                 } else if url.ends_with("/repos/o/r") { match scenario { "public" => json!({"private": false}), "other" => json!({}), _ => json!({"private": true}) } }
                 else if url.ends_with("/rulesets/1") { json!({"current_user_can_bypass": "never"}) }
-                else if url.ends_with("/branches/main/protection") { return Err("HTTP 404".into()) }
+                else if url.ends_with("/branches/main/protection") { return Err(Error::http(404, "HTTP 404")) }
                 else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
@@ -483,10 +483,10 @@
             let h = http(&github::KIND, None, Box::new(move |method, url, body| {
                 if method == "POST" {
                     assert_eq!(body, Some(json!({})), "a write probe sends nothing it could create");
-                    return Err(format!("POST {url}: HTTP 422 Validation Failed"));
+                    return Err(Error::http(422, format!("POST {url}: HTTP 422 Validation Failed")));
                 }
                 if url.contains("/commits?per_page=1") && scenario != "ok" {
-                    return Err(format!("GET /commits?per_page=1: HTTP {scenario} Resource not accessible by personal access token"));
+                    return Err(Error::http(scenario.parse().unwrap(), format!("GET /commits?per_page=1: HTTP {scenario} Resource not accessible by personal access token")));
                 }
                 assert!(url.contains("/issues?labels=taskq&per_page=1") || url.contains("/pulls?per_page=1") || url.contains("/commits?per_page=1"), "unexpected {url}");
                 Ok(Reply { status: 200, headers: vec![], body: "[]".into(), operation: operation(method) })
@@ -502,7 +502,7 @@
         let h = http(&github::KIND, None, Box::new(move |method, url, _| {
             if method == "POST" {
                 seen.borrow_mut().push(url.rsplit('/').next().unwrap_or_default().to_string());
-                return Err(format!("POST {url}: HTTP 403 Resource not accessible by personal access token"));
+                return Err(Error::http(403, format!("POST {url}: HTTP 403 Resource not accessible by personal access token")));
             }
             Ok(Reply { status: 200, headers: vec![], body: "[]".into(), operation: operation(method) })
         }));
@@ -723,7 +723,7 @@
                         else { json!([{"filename": "README.md"}, {"filename": "src/service.rs"}]) };
                     json!({"status": if !merge.is_empty() && url.ends_with(&merge) { "identical" } else { "diverged" }, "merge_base_commit": {"sha": base}, "files": files})
                 }
-                    else if url.ends_with("/rules/branches/main") { *ruled.borrow_mut() += 1; if scenario == "rules-unknown" { return Err("HTTP 403".into()); } recorded(if scenario == "public" { "rules-none" } else { "rules-merge-queue" }) }
+                    else if url.ends_with("/rules/branches/main") { *ruled.borrow_mut() += 1; if scenario == "rules-unknown" { return Err(Error::http(403, "HTTP 403")); } recorded(if scenario == "public" { "rules-none" } else { "rules-merge-queue" }) }
                     else if url.ends_with("/repos/o/r") { assert_eq!(scenario, "public"); recorded("repo-public") }
                     else if url.contains("/pulls?") { pulls.clone() }
                     else if url.ends_with("/graphql") {
@@ -945,7 +945,7 @@
             let result = h.cancel_publication(1, &head);
             assert_eq!(result.is_ok(), scenario == "queued", "{scenario}: {result:?}");
             assert_eq!(*removed.borrow(), scenario == "queued", "{scenario}");
-            if let Err(e) = result { assert!(e.contains("o/x#1590"), "{scenario}: the blocker names the PR: {e}"); }
+            if let Err(e) = result { assert!(e.text().contains("o/x#1590"), "{scenario}: the blocker names the PR: {e}"); }
         }
     }
 
@@ -1276,7 +1276,7 @@ exit 0
                         }
                         else if url.ends_with("/rulesets/1") { json!({"current_user_can_bypass": guard.trim_start_matches("ruleset:")}) }
                         else if url.ends_with("/branches/main/protection") {
-                            if !guard.starts_with("classic:") { return Err("HTTP 403 Resource not accessible by personal access token".into()) }
+                            if !guard.starts_with("classic:") { return Err(Error::http(403, "HTTP 403 Resource not accessible by personal access token")) }
                             json!({"required_status_checks": {"strict": true}, "enforce_admins": {"enabled": guard == "classic:enforced"}})
                         }
                         else if url.ends_with("/projects/o%2Fr") { json!({"merge_method": if enforced { "ff" } else { "merge" }, "autoclose_referenced_issues": false}) }
@@ -1286,7 +1286,7 @@ exit 0
                         else if url.contains("/pulls?") { json!([{"number": 7, "head": {"sha": result}}]) }
                         else if url.contains("/merge_requests?") { json!([{"iid": 7, "sha": result}]) }
                         else if url.ends_with("/merge_requests/7") { json!({"detailed_merge_status": "mergeable"}) }
-                        else if url.ends_with("/merge") && moved { return Err("HTTP 405 Head branch is out of date".into()) }
+                        else if url.ends_with("/merge") && moved { return Err(Error::http(405, "HTTP 405 Head branch is out of date")) }
                         else { panic!("unexpected {method} {url}") };
                     Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
                 }));
@@ -1336,7 +1336,7 @@ exit 0
                     else if url.contains("/merge_requests?") { json!([{"iid": 7, "sha": result}]) }
                     else if url.ends_with("/merge") {
                         *captured.borrow_mut() += 1;
-                        if let Some(e) = &refusal { return Err(e.clone()) }
+                        if let Some(e) = &refusal { return Err(Error::http(422, e.clone())) }
                         *merged.borrow_mut() = true;
                         json!({"squash_commit_sha": "b".repeat(40)})
                     }
@@ -1499,7 +1499,7 @@ exit 0
         for fail in [false, true] {
             crate::incident::tests::take_detected();
             let mut h = (github::KIND.api)("github.com", "o/r", "fake");
-            h.transport = Some(Box::new(move |_, _, _| if fail { Err("HTTP 503 malformed response".into()) }
+            h.transport = Some(Box::new(move |_, _, _| if fail { Err(Error::http(503, "HTTP 503 malformed response")) }
                 else { Ok(Reply { status: 200, headers: vec![], body: "private invalid JSON".into(), operation: "read" }) }));
             assert!(h.call("GET", "/issues", None).and_then(|r| r.json()).is_err());
             assert_eq!(crate::incident::tests::take_detected(), if fail { vec![] } else { vec!["adapter.bad_json"] });
@@ -1531,7 +1531,7 @@ exit 0
         for (kind, body) in [(&github::KIND, "{}"), (&github::KIND, r#"{"number":37,"state":"closed"}"#), (&github::KIND, r#"{"number":36,"state":"gone"}"#),
             (&gitlab::KIND, "{}"), (&gitlab::KIND, r#"{"iid":36}"#), (&gitlab::KIND, r#"{"iid":36,"state":"open"}"#)] {
             let b = http(kind, Some(true), Box::new(move |_, _, _| Ok(Reply { status: 200, headers: vec![], body: body.into(), operation: "read" })));
-            assert_eq!(b.foreign("dashq", 36).unwrap_err(), "malformed reply for issue 36", "{body}");
+            assert_eq!(b.foreign("dashq", 36).unwrap_err().text(), "malformed reply for issue 36", "{body}");
         }
     }
 
@@ -1546,7 +1546,7 @@ exit 0
                 headers: if limited { vec![("retry-after".into(), "60".into())] } else { vec![] } })));
             assert_eq!(api.call("POST", "https://api.github.com/graphql", None).is_ok(), status < 300 && !limited);
             if limited {
-                assert!(api.call("POST", "https://api.github.com/graphql", None).err().unwrap().contains("paused until"));
+                assert!(api.call("POST", "https://api.github.com/graphql", None).err().unwrap().text().contains("paused until"));
                 assert_eq!(api.credentials.borrow().budget.borrow().total(), 1);
             }
         }
@@ -1572,8 +1572,8 @@ exit 0
                 Ok(Reply { status, body: BODY.into(), operation: "read", headers: vec![] })
             }));
             let first = api.call("POST", "https://api.github.com/graphql", None).err().unwrap();
-            assert!(first.contains("HTTP 403 rate limit: board requests paused until"), "{status}: {first}");
-            assert!(api.call("POST", "https://api.github.com/graphql", None).err().unwrap().contains("paused until"));
+            assert!(first.text().contains("HTTP 403 rate limit: board requests paused until"), "{status}: {first}");
+            assert!(api.call("POST", "https://api.github.com/graphql", None).err().unwrap().text().contains("paused until"));
             assert!(api.credentials.borrow().budget.borrow().paused_until().is_some());
             assert_eq!(*sent.borrow(), 1, "{status}: no GraphQL request is sent while paused");
         }
@@ -1596,9 +1596,9 @@ exit 0
             }));
             api
         };
-        assert!(process(429).call("GET", "/issues", None).err().unwrap().contains("paused until"));
+        assert!(process(429).call("GET", "/issues", None).err().unwrap().text().contains("paused until"));
         let other = process(200);
-        assert!(other.call("GET", "/issues", None).err().unwrap().contains("paused until"));
+        assert!(other.call("GET", "/issues", None).err().unwrap().text().contains("paused until"));
         assert!(other.credentials.borrow().budget.borrow().paused_until().is_some(), "service status shows the install's pause");
         assert_eq!(*sent.borrow(), 1, "no process of the install sends while paused");
         let mut elsewhere = process(200);
@@ -1618,9 +1618,9 @@ exit 0
                     status: 200, headers: vec![], body: body.into(), operation: "read",
                 })));
                 let expected = Some("invalid board list: expected array");
-                assert_eq!(board.issues(Some(0)).err().as_deref(), expected, "{} issue list: {body}", kind.name);
-                assert_eq!(board.comments(1).err().as_deref(), expected, "{} comments: {body}", kind.name);
-                assert_eq!(board.canonical_labels().err().as_deref(), expected, "{} catalog: {body}", kind.name);
+                assert_eq!(board.issues(Some(0)).err().as_ref().map(Error::text), expected, "{} issue list: {body}", kind.name);
+                assert_eq!(board.comments(1).err().as_ref().map(Error::text), expected, "{} comments: {body}", kind.name);
+                assert_eq!(board.canonical_labels().err().as_ref().map(Error::text), expected, "{} catalog: {body}", kind.name);
             }
         }
     }
@@ -1638,7 +1638,7 @@ exit 0
             else { assert_eq!(method, "PATCH"); }
             assert_eq!(body.as_ref().unwrap()["color"].as_str().unwrap().starts_with('#'), kind.name == "gitlab");
             *count.borrow_mut() += 1;
-            if fail && *count.borrow() == 2 { return Err("HTTP 403 denied".into()); }
+            if fail && *count.borrow() == 2 { return Err(Error::http(403, "HTTP 403 denied")); }
             let mut v = body.unwrap();
             if mismatch { v["color"] = json!("000000"); }
             let mut all = data.borrow_mut();
@@ -1681,18 +1681,18 @@ exit 0
         for kind in BOARDS {
             let names = vec!["q-doing".into(), "q-ask".into()];
             let (h, _, writes) = label_board(kind, true, false);
-            assert!(h.ensure_labels(&names).unwrap_err().contains("403"));
+            assert!(h.ensure_labels(&names).unwrap_err().text().contains("403"));
             h.ensure_labels(&names).unwrap();
             assert_eq!(*writes.borrow(), 3, "safe retry only writes missing label");
             let (h, _, _) = label_board(kind, false, true);
-            assert!(h.ensure_labels(&names).unwrap_err().contains("readback differs"));
+            assert!(h.ensure_labels(&names).unwrap_err().text().contains("readback differs"));
             let (h, catalog, writes) = label_board(kind, false, false);
             catalog.borrow_mut().push(json!({"name":"q-waiting"}));
             assert!(!h.canonical_labels().unwrap());
             assert_eq!(h.state_label("waiting").unwrap(), "q-waiting");
-            assert!(h.ensure_labels(&names).unwrap_err().contains("all-host gate"));
+            assert!(h.ensure_labels(&names).unwrap_err().text().contains("all-host gate"));
             assert_eq!(*writes.borrow(), 0);
-            let h = http(kind, Some(true), Box::new(|_, url, _| Err(format!("unexpected {url}"))));
+            let h = http(kind, Some(true), Box::new(|_, url, _| Err(format!("unexpected {url}").into())));
             assert_eq!(h.state_label("waiting").unwrap(), "q-blocked");
             assert!(label_schema(Some("typo")).is_err());
         }
@@ -1715,11 +1715,11 @@ exit 0
                 let headers = vec![date, ("X-RateLimit-Remaining".into(), "0".into()), ("X-RateLimit-Reset".into(), reset.clone())];
                 Ok(Reply { status: 403, headers, body: "{\"message\": \"API rate limit exceeded\"}".into(), operation: "update" })
             }));
-            assert!(h.edit(6, "beat").unwrap_err().ends_with("HTTP 500 <html> <p>down</p> </html>"));
+            assert!(h.edit(6, "beat").unwrap_err().text().ends_with("HTTP 500 <html> <p>down</p> </html>"));
             let first = h.edit(5, "beat").unwrap_err();
-            assert!(first.contains("HTTP 403 rate limit: board requests paused until 2026-10-14T04:41:00Z"), "{first}");
+            assert!(first.text().contains("HTTP 403 rate limit: board requests paused until 2026-10-14T04:41:00Z"), "{first}");
             let again = h.edit(5, "beat").unwrap_err();
-            assert!(again.ends_with("rate limit: board requests paused until 2026-10-14T04:41:00Z"), "{again}");
+            assert!(again.text().ends_with("rate limit: board requests paused until 2026-10-14T04:41:00Z"), "{again}");
             assert_eq!(*sent.borrow(), 2, "nothing is sent while paused");
             let b = h.requests();
             assert_eq!((b.total(), b.remaining, b.paused_until()), (2, Some(0), iso("2026-10-14T04:41:00Z")));
@@ -1744,8 +1744,8 @@ exit 0
             let a = make("invented-host-budget-token", 429);
             let b = make("invented-host-budget-token", 200);
             let different = make("invented-other-budget-token", 200);
-            assert!(a.call("GET", "/issues", None).err().unwrap().contains("paused"));
-            assert!(b.call("GET", "/issues", None).err().unwrap().contains("paused"));
+            assert!(a.call("GET", "/issues", None).err().unwrap().text().contains("paused"));
+            assert!(b.call("GET", "/issues", None).err().unwrap().text().contains("paused"));
             assert_eq!(*sent.borrow(), 1); assert_eq!(b.credentials.borrow().budget.borrow().total(), 1);
             assert!(different.call("GET", "/issues", None).is_ok()); assert_eq!(*sent.borrow(), 2);
         }).join().unwrap();
@@ -1811,8 +1811,8 @@ exit 0
         assert_eq!(h.requests().ops.get("POST graphql"), Some(&6), "a forgotten list is read in full");
         h.forget();
         *limited.borrow_mut() = true;
-        assert!(h.issues(None).unwrap_err().contains("HTTP 403 rate limit: board requests paused until"));
-        assert!(h.issues(None).unwrap_err().contains("paused"));
+        assert!(h.issues(None).unwrap_err().text().contains("HTTP 403 rate limit: board requests paused until"));
+        assert!(h.issues(None).unwrap_err().text().contains("paused"));
         assert_eq!(h.requests().total(), 12, "nothing is sent while paused");
     }
 
@@ -2119,7 +2119,7 @@ exit 0
     fn token_goes_only_to_the_board_api() {
         let h = (github::KIND.api)("github.com", "o/r", "t");
         for url in ["https://evil.example/x", "https://api.github.com.evil.example/x"] {
-            assert!(h.call("GET", url, None).err().is_some_and(|e| e.starts_with("refused")), "{url}");
+            assert!(h.call("GET", url, None).err().is_some_and(|e| e.text().starts_with("refused")), "{url}");
         }
     }
 
