@@ -7,6 +7,7 @@ macro_rules! log {
 
 use runtime::accounts;
 mod admission;
+mod draft_deps;
 mod check;
 #[cfg(any(target_os="macos",windows,test))]
 mod agentq;
@@ -91,6 +92,7 @@ const USAGE: &str = "taskq agents
  taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--rules IDs|all] [--gate] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N [M..]
+ taskq deps N --board URL --deps LIST --op-id ID --revision R [--json]
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
  taskq answer N --text A | taskq answer N.K [M.K..] | taskq pick N.K --text R
  Human replies: answer, steer, requeue accept --text-stdin or --text-file PATH instead of --text; attach with --file PATH (repeat) or --files-from PATH (JSON array)
@@ -203,7 +205,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
             Some("accounts") => 5,
-            Some("unpin" | "service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
+            Some("unpin" | "deps" | "service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -4097,6 +4099,14 @@ fn status_all(a: &Args) -> Res<()> {
     Ok(())
 }
 
+/// Keep a present empty dependency list: it is the explicit clear operation (§1).
+fn deps_command(b:&dyn Board,root:&Path,a:&Args,op:&Op,authorized:bool)->Res<Receipt> {
+    for (flag,values) in &a.flags {
+        if !["board","deps","op-id","revision","json"].contains(&flag.as_str()) || values.len()!=1 {return Err(format!("deps: unsupported or repeated --{flag}"));}
+    }
+    Ok(draft_deps::amend(b,root,a.num(1)?,a.need("board")?,a.one("deps").ok_or("--deps is required")?,op,authorized))
+}
+
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
@@ -4215,6 +4225,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let placement=add_placement(a,&new);
             if json {let mut value:Value=serde_json::from_str(&r.json()).map_err(|e|e.to_string())?;value["placement"]=placement;println!("{value}");if r.ok(){Ok(())}else{Err(String::new())}}
             else {let ok=r.ok();emit(&[r],false)?;if ok {println!("Placement: {placement}");}Ok(())}
+        }
+        "deps" => {
+            let authorized=["TASKQ_ATTEMPT","TASKQ_TASK","TASKQ_ROLE","TASKQ_SERVICE"].iter().all(|key|std::env::var_os(key).is_none());
+            emit(&[deps_command(b,root,a,&op,authorized)?],json)
         }
         "gate" => emit(&[gate_task(b, root, a.num(1)?, &op)], json),
         "start" => emit(&start_tasks(b, root, &a.pos[1..], &op)?, json),

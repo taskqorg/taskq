@@ -2,6 +2,7 @@
   "schema": 1,
   "contract": "https://github.com/taskqorg/taskq/blob/main/taskq.md",
   "commands": [
+    {"name": "deps", "use": "taskq deps N --board URL --deps LIST --op-id ID --revision R [--json]", "purpose": "Amend never-started held draft dependencies; empty LIST clears them. Read inbox for the revision and retry identical requests."},
     {"name": "status", "use": "taskq status [--project P..] [--only L,..] [--json] [--timing]", "purpose": "The one manager view of every project: rows by who acts (Owner, PM with Decide and Held and stuck, Anomalies, Running with actor, Ready with why not started), each with one next action; act on these rows only."},
     {"name": "wait", "use": "taskq wait [--window MIN] [--only L,..]", "purpose": "Block until a task moves to ask, review with options, closed or failed; prints the move or tick."},
     {"name": "pm", "use": "taskq pm [--every 3m] [--project P..] | taskq pm stop", "purpose": "Print the exact instructions that turn manager mode on or off in this session: standing prompt, recurring timer, what each tick does. Run it when the person asks, then follow its output exactly."},
