@@ -1476,10 +1476,6 @@ fn maintenance_once(last:&mut String,text:&str)->bool {
     changed
 }
 
-/// Compare all copies before any write. The durable plan is a configuration backup, never task state (R1).
-#[cfg(test)]
-pub fn migrate(install: &Path, roots: &[PathBuf]) -> Res<()> {migrate_for_hostname(install,roots,&crate::hostname())}
-
 fn migrate_for_hostname(install:&Path,roots:&[PathBuf],hostname:&str)->Res<()> {
     crate::resources::try_locked(install,||migrate_locked(install,roots,hostname))
 }

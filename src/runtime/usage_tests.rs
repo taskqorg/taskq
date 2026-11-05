@@ -1,5 +1,5 @@
     use super::*;
-    use crate::runtime::accounts::{Host, claim, of_log, mark, record_limit};
+    use crate::runtime::accounts::{Host, claim, of_log, mark};
 
     const NOW: i64 = 1_800_000_000;
 
@@ -809,4 +809,8 @@ for line in sys.stdin:
                 }
             }
         }
+    }
+    /// A usage limit with no named window, as a runtime reports it.
+    fn record_limit(install: &Path, rt: &str, label: &str, at: i64, until: Option<i64>) -> Result<(), String> {
+        crate::runtime::accounts::record_windows(install, rt, label, at, &[("unknown".into(),until)])
     }

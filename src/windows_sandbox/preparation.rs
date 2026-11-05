@@ -215,24 +215,6 @@ pub(super) fn remove_fixture(base: &Path) -> Result<(), String> {
     fs::remove_dir_all(&base).map_err(|e| e.to_string())
 }
 
-/// Removes a fixture on drop, so a test that panics between `apply` and its own cleanup leaves no denials in temp.
-#[cfg(test)]
-pub struct Fixture(PathBuf);
-#[cfg(test)]
-impl Drop for Fixture { fn drop(&mut self) { let _ = remove_fixture(&self.0); } }
-
-#[cfg(test)]
-pub fn prepared_fixture(base: &Path) -> Fixture {
-    let fixture = Fixture(base.to_owned());
-    let (root, install, home, temp) = (base.join("workspace"), base.join("install"), base.join("home"), base.join("temp"));
-    let state = install.join("windows-native/state");
-    for path in [root.join(".codex"), state.clone(), home.clone(), temp.clone()] { fs::create_dir_all(path).unwrap(); }
-    fs::write(root.join("data.txt"), "fixture data").unwrap();
-    fs::write(home.join("config.toml"), "# invented fixture configuration\n").unwrap();
-    Preparation::begin(&root, &install, &home, &state, &temp, &[]).unwrap().apply().unwrap();
-    fixture
-}
-
 #[cfg(test)]
 #[path = "preparation_tests.rs"]
-mod tests;
+pub(crate) mod tests;

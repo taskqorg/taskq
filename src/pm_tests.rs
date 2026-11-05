@@ -120,7 +120,7 @@
     // interest (tracing-core), so capture missed it on Windows CI; a warm-up call registers PM callsites first.
     #[test]
     fn captured_exchange_never_exports_owner_text() {
-        crate::with_test_capture(|store,_| {
+        crate::tests::with_test_capture(|store,_| {
             let warm=Fixture::new();exchange(&warm.install,&warm.active,&mut Dash{requests:vec![],posts:vec![],at:warm.now,offline:false,cut:None},warm.now).unwrap();
             let t=Fixture::new();let mut dash=Dash{requests:vec![t.r.clone()],posts:vec![],at:t.now,offline:false,cut:None};
             let capture=tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().unwrap().clone());

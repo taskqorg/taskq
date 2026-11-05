@@ -313,7 +313,7 @@ Problem: pick one
             let remote=crate::snapshot::from_views("board",&b,&c,b.now().unwrap(),&views,&hosts);
             assert_eq!(remote.tasks.iter().find(|r|r.n==n).unwrap().json()["stuck"],true,"the PM's board read agrees with local status");
             assert_eq!(task(&b,n).attempt,Some(a));assert_eq!(task(&b,n).session.as_deref(),Some("codex:original-thread mac"));
-            assert_eq!(core::delivered(n,&entries(&b,n).unwrap(),a),Some(a));
+            assert_eq!(core::project(n,&entries(&b,n).unwrap(),false).delivered(a),Some(a));
             assert_eq!(core::executions(n,&entries(&b,n).unwrap()).iter().find(|e|e.id==x).unwrap().release,Some(core::Release::Exit));
         }
         assert_eq!(s.log.iter().filter(|l|l.starts_with(&format!("#{n} event stuck doing "))).count(),1,"one actionable stuck episode, no renewed-lease silence or repeated alert");
@@ -361,12 +361,12 @@ Problem: pick one
                 assert_eq!(*calls.borrow(),2,"no-start retry is bounded");
                 assert_eq!(task(&b,n).state,State::Ask);
                 assert!(task(&b,n).card.unwrap().contains("close that thread in Codex"));
-                assert_eq!(core::delivered(n,&entries(&b,n).unwrap(),a),Some(a));
+                assert_eq!(core::project(n,&entries(&b,n).unwrap(),false).delivered(a),Some(a));
             } else if case!="active" {
                 s.pass().unwrap();assert_eq!(*calls.borrow(),1,"unknown submission must never replay");
                 assert!(s.execution_waits[&n].contains("inspect the pending input in Codex"));
-                assert_eq!(core::delivered(n,&entries(&b,n).unwrap(),a),Some(a));
-            } else {assert!(core::delivered(n,&entries(&b,n).unwrap(),a).unwrap()>=input);}
+                assert_eq!(core::project(n,&entries(&b,n).unwrap(),false).delivered(a),Some(a));
+            } else {assert!(core::project(n,&entries(&b,n).unwrap(),false).delivered(a).unwrap()>=input);}
             assert_eq!(std::fs::read_to_string(&dirty).unwrap(),"keep dirty work");
             drop(s);std::fs::remove_dir_all(c.root).unwrap();
         }
@@ -392,7 +392,7 @@ Problem: pick one
                 }));
                 let result = s.pass();
                 if count + 1 < core::GONE_MAX { assert!(result.unwrap_err().contains("input retained")); } else { result.unwrap(); }
-                assert_eq!(core::delivered(n,&entries(&b,n).unwrap(),a),Some(a));
+                assert_eq!(core::project(n,&entries(&b,n).unwrap(),false).delivered(a),Some(a));
                 assert_eq!(task(&b,n).attempt,Some(a));
             }
             if refused == 2 {
@@ -413,7 +413,7 @@ Problem: pick one
             // #1834: the input's marker names the delivered steer as the owner's, for the live worker view.
             let inbox = crate::runtime::turn_inbox(&calls.borrow().last().unwrap().0).unwrap();
             assert_eq!(inbox[0], serde_json::json!({"kind":"steer","text":"retained user input"}));
-            assert!(core::delivered(n,&entries(&b,n).unwrap(),a).unwrap() >= cursor);
+            assert!(core::project(n,&entries(&b,n).unwrap(),false).delivered(a).unwrap() >= cursor);
             let execution = recovered.kids[0].execution;
             assert_eq!(calls.borrow().last().unwrap().1,execution,"adapter receives the exact continuation intent");
             recovered.pass().unwrap();
@@ -444,7 +444,7 @@ Problem: pick one
         }));
         s.focus=vec!["all".into()]; s.pass().unwrap(); let a=task(&b,n).attempt.unwrap();
         assert_eq!(s.delivered(a),0,"a created handle is not acceptance");
-        assert_eq!(core::delivered(n,&entries(&b,n).unwrap(),a),None);
+        assert_eq!(core::project(n,&entries(&b,n).unwrap(),false).delivered(a),None);
         b.comment(n,&core::entry("ask",&[],Some(a),"Which?\n1. Continue ★")).unwrap();
         accepted.set(true); exit.set(true); b.state.borrow_mut().fail_comments=1;
         s.pass().unwrap();
@@ -634,7 +634,7 @@ Problem: pick one
             assert!(retained.starts_with("old diagnostic\n") && retained.ends_with(&terminal));
             use std::io::Write;
             writer.write_all(b"still open diagnostic\n").unwrap();
-            crate::profile::append_line(&path, newest).unwrap();
+            crate::profile::tests::append_line(&path, newest).unwrap();
             assert!(crate::profile::selftest(&root, "o/r", &vec![], 300).unwrap().contains("no overdue"));
             assert!(!crate::profile::report(&root).contains("collection stopped"));
             drop(writer);
@@ -1690,8 +1690,8 @@ Open: none")).unwrap();
             crate::resume(&dir).unwrap();
         } else {
             let mut seen = None;
-            let link = crate::wake_context(&dir.join(".taskq/poke"), &mut seen).unwrap().unwrap();
-            assert!(crate::wake_context(&dir.join(".taskq/poke"), &mut seen).unwrap().is_none());
+            let link = crate::tests::wake_context(&dir.join(".taskq/poke"), &mut seen).unwrap().unwrap();
+            assert!(crate::tests::wake_context(&dir.join(".taskq/poke"), &mut seen).unwrap().is_none());
             let _wakeup = link.span().entered();
             let mut c = cfg("fixture"); (c.root, c.install) = (dir.clone(), dir.join("i"));
             let b = Fake::default(); let n = b.create("Wake fixture", "", &["taskq".into()]).unwrap();
@@ -1706,7 +1706,7 @@ Open: none")).unwrap();
     // Risk: a poke received during work becomes the sleep baseline, delaying Resume by another poll.
     #[test]
     fn resume_during_pass_wakes_the_next_admission_check() {
-        crate::with_test_capture(|_, _| {
+        crate::tests::with_test_capture(|_, _| {
             let dir = std::env::temp_dir().join(format!("qr-wake-{}", std::process::id()));
             std::fs::create_dir_all(dir.join(".taskq")).unwrap();
             let mut c = cfg("fixture");
@@ -2421,7 +2421,7 @@ Open: none")).unwrap();
             (None, "not installed", ErrorKind::Other, false), (Some("fake"), "not logged in", ErrorKind::Other, false),
             (Some("fake"), "unknown", ErrorKind::Other, false), (Some("fake"), "logged in", ErrorKind::OutOfMemory, false),
             (Some("fake"), "logged in", ErrorKind::PermissionDenied, false)] {
-            crate::incident::take_detected();
+            crate::incident::tests::take_detected();
             let b = Fake::default();
             let n = b.create("task", "", &[TASK_LABEL.into()]).unwrap();
             let c = cfg("local");
@@ -2431,7 +2431,7 @@ Open: none")).unwrap();
             s.claim(&v, "worker", "claude", "").unwrap();
             assert_eq!(task(&b, n).state, State::Ready);
             assert!(b.comments(n).unwrap().last().unwrap().body.contains("start failed: private failure text"));
-            assert_eq!(crate::incident::take_detected(), if reports { vec!["dispatch.start"] } else { vec![] });
+            assert_eq!(crate::incident::tests::take_detected(), if reports { vec!["dispatch.start"] } else { vec![] });
         }
     }
 
@@ -2499,7 +2499,7 @@ Open: none")).unwrap();
     #[test]
     fn incident_heartbeats_flag_only_leases_newer_than_the_attempt() {
         for (lease, age, expected) in [("replaced", 0, false), ("current", 0, false), ("lost", 0, true), ("lost", 301, false)] {
-            crate::incident::take_detected();
+            crate::incident::tests::take_detected();
             let b = Fake::default();
             let n = b.create("task", "", &[TASK_LABEL.into()]).unwrap();
             let replaced = b.comment(n, "taskq: spawn worker claude:a other").unwrap();
@@ -2513,7 +2513,7 @@ Open: none")).unwrap();
             let c = cfg("local");
             let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
             s.pass().unwrap();
-            assert_eq!(crate::incident::take_detected(), if expected { vec!["invariant.double_attempt"] } else { vec![] }, "{lease} lease, age {age}");
+            assert_eq!(crate::incident::tests::take_detected(), if expected { vec!["invariant.double_attempt"] } else { vec![] }, "{lease} lease, age {age}");
         }
     }
 
@@ -2521,7 +2521,7 @@ Open: none")).unwrap();
     #[test]
     fn incident_rejected_child_excludes_replaced_accepted_child() {
         for rejected in [false, true] {
-            crate::incident::take_detected();
+            crate::incident::tests::take_detected();
             let b = Fake::default();
             let n = b.create("task", "", &[TASK_LABEL.into()]).unwrap();
             let accepted = b.comment(n, "taskq: spawn worker claude:first local").unwrap();
@@ -2534,7 +2534,7 @@ Open: none")).unwrap();
             s.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution: if rejected { lost } else { accepted }, task: n, attempt: if rejected { lost } else { accepted }, rt: "claude".into(), proc: Box::new(FakeProc(flag.clone())) });
             s.pass().unwrap();
             assert_eq!(*flag.borrow(), Some(-9));
-            assert_eq!(crate::incident::take_detected(), if rejected { vec!["invariant.double_attempt"] } else { vec![] });
+            assert_eq!(crate::incident::tests::take_detected(), if rejected { vec!["invariant.double_attempt"] } else { vec![] });
         }
     }
 
@@ -2542,7 +2542,7 @@ Open: none")).unwrap();
     #[test]
     fn incident_claim_missing_readback_excludes_normal_contention() {
         for missing in [false, true] {
-            crate::incident::take_detected();
+            crate::incident::tests::take_detected();
             let b = Fake::default();
             let n = b.create("task", "", &[TASK_LABEL.into()]).unwrap();
             let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
@@ -2552,7 +2552,7 @@ Open: none")).unwrap();
             let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
             s.claim(&v, "worker", "claude", "").unwrap();
             assert!(s.kids.is_empty());
-            assert_eq!(crate::incident::take_detected(), if missing { vec!["adapter.read_after_write"] } else { vec![] });
+            assert_eq!(crate::incident::tests::take_detected(), if missing { vec!["adapter.read_after_write"] } else { vec![] });
         }
     }
 
@@ -2560,7 +2560,7 @@ Open: none")).unwrap();
     // `later` vs `waiting`) rewrite its label every pass; one relabel reported as a loop.
     #[test]
     fn label_fix_backs_off_when_another_fold_reverts_it() {
-        crate::incident::take_detected();
+        crate::incident::tests::take_detected();
         let b = Fake::default();
         let n = b.create("task", "", &[TASK_LABEL.into(), "q-doing".into()]).unwrap();
         let c = cfg("local");
@@ -2572,15 +2572,15 @@ Open: none")).unwrap();
             b.labels(n, &["q-doing".into()], &["q-ready".into()]).unwrap();
             s.pass().unwrap();
             assert_eq!(has("q-ready"), pass == 1 || pass == 61, "pass {pass}");
-            assert_eq!(crate::incident::take_detected(), if pass == 2 { vec!["invariant.label_loop"] } else { vec![] }, "pass {pass}");
+            assert_eq!(crate::incident::tests::take_detected(), if pass == 2 { vec!["invariant.label_loop"] } else { vec![] }, "pass {pass}");
         }
         s.pass().unwrap(); // no fix breaks the streak
         b.labels(n, &["q-doing".into()], &["q-ready".into()]).unwrap();
         s.pass().unwrap();
-        assert!(has("q-ready") && crate::incident::take_detected().is_empty());
+        assert!(has("q-ready") && crate::incident::tests::take_detected().is_empty());
         b.labels(n, &["q-ask".into()], &["q-ready".into()]).unwrap();
         s.pass().unwrap(); // different fix also breaks the streak
-        assert!(has("q-ready") && crate::incident::take_detected().is_empty());
+        assert!(has("q-ready") && crate::incident::tests::take_detected().is_empty());
     }
 
     // Chain: incident label loop (#1873). Risk: another host's normal spawn lands its comment seconds before its label
@@ -2588,7 +2588,7 @@ Open: none")).unwrap();
     // files a loop for a task that moves on normally (2026-10-29: #1813, #1840).
     #[test]
     fn label_fix_after_another_hosts_spawn_is_no_loop() {
-        crate::incident::take_detected();
+        crate::incident::tests::take_detected();
         let b = Fake::default();
         let n = b.create("task", "", &[TASK_LABEL.into(), "q-ready".into()]).unwrap();
         b.comment(n, "taskq: spawn worker claude:peer win").unwrap();
@@ -2604,7 +2604,7 @@ Open: none")).unwrap();
         s.pass().unwrap(); // a read while the peer moves the same way shows both labels
         b.labels(n, &[], &["q-ready".into()]).unwrap();
         s.pass().unwrap();
-        assert!(crate::incident::take_detected().is_empty());
+        assert!(crate::incident::tests::take_detected().is_empty());
         assert!(s.label_fixes.is_empty());
     }
 
@@ -3165,11 +3165,11 @@ Open: none")).unwrap();
         assert!(b.comments(n).unwrap().iter().any(|c| c.body.starts_with(&format!("taskq: gone attempt {a}"))));
         assert_eq!(task(&b, n).attempt, None);
         assert!(!s.heartbeat_body().lines().any(|l| l == format!("#{n} {a}")));
-        let repaired = crate::profile::read_log(&dir).unwrap();
+        let repaired = crate::profile::tests::read_log(&dir).unwrap();
         assert!(repaired.contains("\"outcome\":\"failed\",\"error\":\"exit\""), "{repaired}");
         assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).unwrap().contains("no overdue"));
         s.pass().unwrap();
-        assert_eq!(crate::profile::read_log(&dir).unwrap(), repaired, "repair is idempotent");
+        assert_eq!(crate::profile::tests::read_log(&dir).unwrap(), repaired, "repair is idempotent");
 
         drop(_guard);drop(_capture);std::fs::remove_dir_all(dir).unwrap();
     }
@@ -3206,9 +3206,9 @@ Open: none")).unwrap();
             s.focus.clear();
             s.pass().unwrap();
             assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).unwrap().contains("no overdue"), "ended attempt must have committed terminal evidence");
-            let repaired = crate::profile::read_log(&dir).unwrap();
+            let repaired = crate::profile::tests::read_log(&dir).unwrap();
             s.pass().unwrap();
-            assert_eq!(crate::profile::read_log(&dir).unwrap(), repaired);
+            assert_eq!(crate::profile::tests::read_log(&dir).unwrap(), repaired);
             assert!(!b.comments(n).unwrap().iter().any(|c| c.body.starts_with("taskq: gone")));
             drop(_guard);drop(_capture);std::fs::remove_dir_all(dir).unwrap();
         }
@@ -3241,10 +3241,10 @@ Open: none")).unwrap();
         s.pass().unwrap();
         assert_eq!(reads() - before, 2, "a repair confirms the cached row with a fresh read");
         crate::profile::selftest(&dir, &c.repo, &vec![], 300).expect("closed attempt repaired");
-        let repaired = crate::profile::read_log(&dir).unwrap();
+        let repaired = crate::profile::tests::read_log(&dir).unwrap();
         s.pass().unwrap();
         assert_eq!(reads() - before, 2);
-        assert_eq!(crate::profile::read_log(&dir).unwrap(), repaired, "repair is not repeated from the cache");
+        assert_eq!(crate::profile::tests::read_log(&dir).unwrap(), repaired, "repair is not repeated from the cache");
         drop(_guard);drop(_capture);std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -3308,13 +3308,13 @@ Open: none")).unwrap();
                 if evidence == "unreadable-comments" { b.state.borrow_mut().fail_comment_reads = 1; }
                 // Prepare the legacy fixture before collection; this case proves ownership, not import contention.
                 crate::profile::prune(&dir).unwrap();
-                let history = crate::profile::read_log(&dir).unwrap();
+                let history = crate::profile::tests::read_log(&dir).unwrap();
                 let (_capture,_guard)=crate::profile::tests::collecting(&dir);
                 assert!(crate::profile::selftest(&dir, project, &vec![], 300).unwrap().contains("WARN"));
                 let mut s = service(&b, &c, Default::default());
                 s.focus.clear();
                 s.pass().unwrap();
-                let repaired = crate::profile::read_log(&dir).unwrap();
+                let repaired = crate::profile::tests::read_log(&dir).unwrap();
                 assert!(repaired.starts_with(&history), "original history must survive");
                 assert!(std::fs::read_to_string(&path).unwrap().starts_with(&original), "original archive text must survive unchanged");
                 if evidence == "local" {
@@ -3325,7 +3325,7 @@ Open: none")).unwrap();
                     assert_eq!(record["outcome"], if closed { "ok" } else { "cancelled" });
                     assert!(record["us"].is_null() && record["calls"].is_null() && record["tokens"].is_null());
                     s.pass().unwrap();
-                    assert_eq!(crate::profile::read_log(&dir).unwrap(), repaired, "idempotent repair");
+                    assert_eq!(crate::profile::tests::read_log(&dir).unwrap(), repaired, "idempotent repair");
                 } else {
                     assert_eq!(repaired, history, "{closed}: {evidence} must stay unknown");
                     assert!(crate::profile::selftest(&dir, project, &vec![], 300).unwrap().contains("WARN"));
@@ -4118,7 +4118,7 @@ Open: none";
             let flag = Rc::new(RefCell::new(None));
             seen.borrow_mut().push((l.task, flag.clone()));
             // the runtime adapter's start line (spawn_inner) before the native output: the account a new start takes
-            let account = crate::runtime::accounts::Host::read(&inst).pick("claude", clock.now().unwrap()).unwrap();
+            let account = crate::runtime::accounts::Host::read(&inst).active("claude", clock.now().unwrap()).unwrap();
             let limit = format!("{{\"type\":\"assistant\",\"apiError\":\"usage_limit_reached\",\"quotaLimits\":{{\"status\":\"rejected\",\"resetsAt\":{reset}}}}}\n");
             let log = crate::runtime::log_path(&r, l);
             std::fs::create_dir_all(log.parent().unwrap()).unwrap();
@@ -5815,12 +5815,12 @@ Open: none";
         c.limits.insert("claude".into(), 1);
         let mut s = service(&b, &c, Default::default());
         s.pass().unwrap();
-        let _ = crate::profile::take_moves();
+        let _ = crate::profile::tests::take_moves();
         let ax = task(&b, x).attempt.unwrap();
         let card = "Done: ran the checks\nProblem: the rule gate does not name §4\n1. Name it - + passes; - edit ★\n2. Drop it - + small; - loses\nTo answer: taskq answer 1.1";
         b.comment(x, &core::entry("ask", &[], Some(ax), card)).unwrap();
         s.pass().unwrap();
-        let (records, report) = crate::profile::take_moves();
+        let (records, report) = crate::profile::tests::take_moves();
         let r: Vec<serde_json::Value> = records.lines().map(|l| serde_json::from_str(l.strip_prefix("taskq-transition ").unwrap()).unwrap()).collect();
         let ask: Vec<_> = r.iter().filter(|v| v["to"] == "ask").collect();
         assert_eq!(ask.len(), 1, "{records}");
@@ -5847,7 +5847,7 @@ Open: none";
         let e: Exits = Default::default();
         let mut s = service(&b, &c, e.clone());
         s.pass().unwrap();
-        let _ = crate::profile::take_moves();
+        let _ = crate::profile::tests::take_moves();
         let ax = task(&b, x).attempt.unwrap();
         // another host claims y: its service records that move, not this one
         b.comment(y, &core::entry("spawn", &["worker", "codex:s", "win"], None, "")).unwrap();
@@ -5861,7 +5861,7 @@ Open: none";
         s.pass().unwrap();
         let created = |id: u64| b.state.borrow().comments.iter().find(|(_, c)| c.id == id).unwrap().1.created;
         let ids: Vec<u64> = core::changes(x, &entries(&b, x).unwrap()).iter().map(|e| e.0).collect();
-        let (records, report) = crate::profile::take_moves();
+        let (records, report) = crate::profile::tests::take_moves();
         let r: Vec<serde_json::Value> = records.lines().map(|l| serde_json::from_str(l.strip_prefix("taskq-transition ").unwrap()).unwrap()).collect();
         let row = |v: &serde_json::Value| (v["task"].as_u64().unwrap(), v["from"].as_str().unwrap().to_string(), v["to"].as_str().unwrap().to_string(), v["prev_s"].as_u64(), v["host"].as_str().map(String::from));
         let mac = Some("mac".to_string());
@@ -5875,12 +5875,12 @@ Open: none";
         assert!(report.contains("| doing | review | claude | 1 |") && report.contains("| ready | doing | claude |"), "{report}");
         // the next pass and a restarted service record none of them again
         s.pass().unwrap();
-        let again = crate::profile::take_moves().0;
+        let again = crate::profile::tests::take_moves().0;
         assert!(!again.contains("\"to\":\"review\""), "{again}");
         let mut restarted = service(&b, &c, Default::default());
         restarted.pass().unwrap();
         restarted.pass().unwrap();
-        assert!(!crate::profile::take_moves().0.contains("\"to\":\"review\""));
+        assert!(!crate::profile::tests::take_moves().0.contains("\"to\":\"review\""));
     }
 
     // Chain: #1344 ready -> doing -> review -> deferred publish -> merge queue -> close, replayed by a pass. Risk: review
@@ -5894,7 +5894,7 @@ Open: none";
         let e: Exits = Default::default();
         let mut s = service(&b, &c, e.clone());
         s.pass().unwrap();
-        let _ = crate::profile::take_moves();
+        let _ = crate::profile::tests::take_moves();
         let aw = task(&b, x).attempt.unwrap();
         b.comment(x, &core::entry("result", &["0123456789abcdef0123456789abcdef01234567"], Some(aw), "ok")).unwrap();
         let ar = b.comment(x, &core::entry("spawn", &["reviewer", "codex:r", "mac"], None, "")).unwrap();
@@ -5903,7 +5903,7 @@ Open: none";
         b.comment(x, &core::entry("close", &[], None, "merged")).unwrap();
         *e.borrow()[0].1.borrow_mut() = Some(0);
         s.pass().unwrap();
-        let (records, report) = crate::profile::take_moves();
+        let (records, report) = crate::profile::tests::take_moves();
         let r: Vec<serde_json::Value> = records.lines().map(|l| serde_json::from_str(l.strip_prefix("taskq-transition ").unwrap()).unwrap()).collect();
         let row = |v: &serde_json::Value| format!("{} {} {} {} {}", v["from"].as_str().unwrap(), v["to"].as_str().unwrap(),
             v["rt"].as_str().unwrap_or("-"), v["host"].as_str().unwrap_or("-"), v["prev_s"].is_u64());

@@ -201,7 +201,7 @@
     // Chain: native delivery -> exact JS outcome or unknown -> bounded safe shared observations.
     #[test]
     fn web_execution_requires_acknowledgment_and_bounds_error_reports() {
-        crate::with_test_capture(|store,_| {
+        crate::tests::with_test_capture(|store,_| {
             let now=Instant::now();
             let mut calls=WebCalls::new();calls.finish(0,"ok");
             for (name,result) in [("tray.web.success","ok"),("tray.web.exception","script-error"),("tray.web.malformed","invalid-ack")] {
@@ -340,7 +340,7 @@
     // Chain: bounded UI submission -> owned worker -> same-trace receipt -> stale registration refusal.
     #[test]
     fn queued_focus_actions_keep_context_and_refuse_overflow_without_blocking() {
-        crate::with_test_capture(|store,dir| {
+        crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");let install=dir.join("install");
             fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(&install).unwrap();
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
@@ -396,7 +396,7 @@
     // Risk: the stamp reaches the strict capacity payload and every valid Apply reads "Unsupported host capacity payload".
     #[test]
     fn workspace_capacity_apply_drops_reader_stamp_and_keeps_strict_payload() {
-        crate::with_test_capture(|_store,dir| {
+        crate::tests::with_test_capture(|_store,dir| {
             let root=dir.join("project");let install=dir.join("install");
             fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(install.join("resources")).unwrap();
             fs::write(root.join("taskq.json"),"{\"repo\":\"fixture/project\"}").unwrap();
@@ -442,7 +442,7 @@
     // H-A2: a blocked host-policy write cannot delay the independent restrictive Pause command.
     #[test]
     fn blocked_capacity_does_not_block_pause() {
-        crate::with_test_capture(|_store,dir| {
+        crate::tests::with_test_capture(|_store,dir| {
             let root=dir.join("project");let install=dir.join("install");
             fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(install.join("resources")).unwrap();
             fs::write(root.join("taskq.json"),"{\"repo\":\"fixture/project\"}").unwrap();
@@ -478,7 +478,7 @@
 
     #[test]
     fn blocked_answer_does_not_block_pause() {
-        crate::with_test_capture(|_store,dir| {
+        crate::tests::with_test_capture(|_store,dir| {
             let root=dir.join("project");let install=dir.join("install");
             fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(&install).unwrap();
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
@@ -499,7 +499,7 @@
     // a different payload under a pending op id is still refused.
     #[test]
     fn answer_resend_keeps_its_pending_correlation() {
-        crate::with_test_capture(|_store,dir| {
+        crate::tests::with_test_capture(|_store,dir| {
           // § 5: 30 KiB crosses this queue's old 20 KiB cap; file/storage checks cover the larger boundaries.
           for op in [json!({"id":"ws.1","task":7,"revision":20,"choice":2}),json!({"id":"ws.1","task":7,"revision":20,"text":"word 🦀\n".repeat(3_000)})] {
             let root=dir.join("project");let install=dir.join("install");
@@ -533,7 +533,7 @@
     // Chain: native Resume -> shared command -> failure receipt; retries keep the selected focus.
     #[test]
     fn action_failures_reach_the_tray_caller() {
-        crate::with_test_capture(|store, _| {
+        crate::tests::with_test_capture(|store, _| {
             let root=std::env::temp_dir().join(format!("taskq-action-receipt-{}",std::process::id()));
             fs::create_dir_all(crate::dot(&root)).unwrap();
             fs::write(crate::dot(&root).join("focus"),"off").unwrap();
@@ -820,7 +820,7 @@
         assert!(answer_args(&install, &m).is_ok(), "§ 5: owner requeue accepts multiple lines");
         // #1506 published controls: the DashQ fixture argv and state table are what the tray dispatches and offers.
         let f: Value = serde_json::from_str(include_str!("../tests/fixtures/task-controls.json")).unwrap();
-        assert_eq!(f["version"], crate::snapshot::CONTROLS_VERSION);
+        assert_eq!(f["version"], "taskq.task-controls/1");
         let table: Vec<Value> = crate::snapshot::CONTROLS.iter().map(|(a, c, t, s)| json!([a, c, t, s])).collect();
         let fixture: Vec<Value> = f["controls"].as_array().unwrap().iter().map(|c| json!([c["action"], c["command"], c["text"], c["states"]])).collect();
         assert_eq!(table, fixture);
@@ -1635,7 +1635,7 @@
     // A caught effect panic is visible and cannot silently reopen native admission.
     #[test]
     fn add_outcomes_capture_failures_and_hold_unknown_ownership() {
-        crate::with_test_capture(|store,_| {
+        crate::tests::with_test_capture(|store,_| {
             for state in ["picked","cancelled","pick failed","install failed"] {
                 let (value,owner)=add_outcome("tray.add.fixture",||json!({"state":state}));
                 assert_eq!(value["state"],state);assert_eq!(owner,ADD_IDLE);
@@ -1819,4 +1819,13 @@
 
         fs::remove_dir_all(dir).unwrap();
     }
-
+    /// #1548 fixture: one steady tray tick's own rows (push, its JS render summary, the fit resize); the host hour test owns the gate.
+    pub(crate) fn steady_tick() -> impl FnMut() {
+        let mut calls=WebCalls::new();calls.pending.clear();
+        move || {
+            let id=calls.begin(TICK,Instant::now()).expect("tick push");calls.finish(id,"ok");
+            let render=json!({"operation":"js.ui.render.tick","kind":"method.aggregate","started_ms":crate::profile::now_ms().unwrap(),"counts":{"calls":1,"finished":1,"failed":0,"unknown":0},"outcome":"ok","error":"none"});
+            assert!(!calls.metadata(&render)&&!calls.failed);
+            let _=coreq::telemetry::capture::poll("tray.window.resize",0,||Ok::<_,&str>(()),|_|"observed");
+        }
+    }

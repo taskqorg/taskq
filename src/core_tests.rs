@@ -13,7 +13,7 @@
             (17,"taskq: accepted 10 attempt 10\nop-id: accept-10",false,Some(10),Some(Release::Exit)),
         ] {
             log.push(Entry {id,body:body.into(),edited});
-            assert_eq!(delivered(7,&log,10),delivered_cursor,"entry {id}");
+            assert_eq!(project(7,&log,false).delivered(10),delivered_cursor,"entry {id}");
             assert_eq!(executions(7,&log)[0].release,release,"entry {id}");
             assert_eq!(revision(7,&log),10);
             let mut reversed=log.clone(); reversed.reverse();
@@ -26,7 +26,7 @@
             Entry {id:21,body:"taskq: accepted 19 attempt 10".into(),edited:false},
             Entry {id:22,body:"taskq: released 19 exit attempt 10".into(),edited:false},
         ]);
-        assert_eq!(delivered(7,&log,10),Some(10),"no-start cannot later become acceptance");
+        assert_eq!(project(7,&log,false).delivered(10),Some(10),"no-start cannot later become acceptance");
         assert_eq!(executions(7,&log)[1].release,Some(Release::NoStart));
         log.extend([
             Entry {id:23,body:"taskq: executing 18 attempt 10\nop-id: retry".into(),edited:false},
@@ -36,7 +36,7 @@
         ]);
         assert_eq!(executions(7,&log).len(),3);
         assert_eq!(executions(7,&log)[2].release,None,"accepted input cannot be declared never started");
-        assert_eq!(delivered(7,&log,10),Some(18));
+        assert_eq!(project(7,&log,false).delivered(10),Some(18));
         log.extend([
             Entry {id:27,body:"taskq: requeue".into(),edited:false},
             Entry {id:28,body:"taskq: released 23 exit attempt 10".into(),edited:false},
@@ -44,7 +44,7 @@
             Entry {id:30,body:"taskq: accepted 23 attempt 10".into(),edited:false},
             Entry {id:31,body:"taskq: released 29 exit attempt 10".into(),edited:false},
         ]);
-        assert_eq!(delivered(7,&log,29),None,"old evidence cannot accept a replacement");
+        assert_eq!(project(7,&log,false).delivered(29),None,"old evidence cannot accept a replacement");
         assert_eq!(executions(7,&log).last().unwrap().release,None);
     }
 

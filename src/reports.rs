@@ -463,24 +463,6 @@ pub fn decide(value:&Value,now:i64)->Value {
 fn identity_sha(sha:&str)->bool {sha.len()==40&&sha.bytes().all(|b|b.is_ascii_hexdigit())}
 fn identity(sha:&str)->bool {identity_sha(sha)||sha.strip_prefix("close-").is_some_and(|id|!id.is_empty()&&id.bytes().all(|b|b.is_ascii_digit()))}
 
-#[cfg(test)]
-pub fn list_before(b:&dyn Board,page:usize,before:Option<(i64,u64)>)->Res<Value> {
-    let mut rows=Vec::new();
-    for (i,closed) in b.research_tasks()? {
-        if let Some(row)=project(&i,closed,&b.comments(i.number)?,b.url(i.number)) {
-            let position=(row["closed"].as_i64().unwrap_or(0),row["n"].as_u64().unwrap_or(0));
-            if row["visible"]==true&&before.is_none_or(|b|position<b) {rows.push(row);}
-        }
-    }
-    rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
-    let start=if before.is_some(){0}else{page.saturating_sub(1).saturating_mul(crate::board::CLOSED_PAGE)};
-    let selected:Vec<_>=rows.iter().skip(start).take(crate::board::CLOSED_PAGE).collect();
-    let next=selected.last().map(|r|format!("{}:{}",r["closed"],r["n"]));
-    Ok(json!({"reports":selected,"more":rows.len()>start.saturating_add(crate::board::CLOSED_PAGE),"next":next,"page":page}))
-}
-#[cfg(test)]
-fn list(b:&dyn Board,page:usize)->Res<Value> {list_before(b,page,None)}
-
 fn current(b:&dyn Board,n:u64,sha:&str)->Res<Value> {
     if !identity(sha) {return Err("result identity invalid".into());}
     let i=b.issue(n)?;
@@ -502,9 +484,6 @@ fn mark_until(b:&dyn Board,n:u64,sha:&str,kind:&str,made:&[u64],until:Option<&st
     current(b,n,sha)
 }
 
-pub fn act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<Value> {
-    act_with_reason(b,root,raw,n,sha,action,"",None)
-}
 /// `until`: a report Later's revisit time (#1979).
 pub fn act_with_reason(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reason:&str,until:Option<&str>)->Res<Value> {
     if action=="open" {return cached_open(root,n,sha);}
@@ -530,8 +509,7 @@ fn successor(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reaso
     Ok(json!({"report":row,"successor":receipt.task,"successor_url":(receipt.task>0).then(||b.url(receipt.task)),"receipt":receipt,"reason":(receipt.outcome!="accepted").then(||receipt.reason.clone())}))
 }
 
-pub(crate) fn owner_act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<Value> {owner_act_until(b,root,raw,n,sha,action,None)}
-fn owner_act_until(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,until:Option<&str>)->Res<Value> {
+pub(crate) fn owner_act_until(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,until:Option<&str>)->Res<Value> {
     if !["open","read","accept","later","drop","make"].contains(&action) {return Err("result action must be open, read, accept, followup, reopen, later, drop or make".into());}
     if until.is_some()&&action!="later" {return Err("--until sets a report Later's revisit date".into());}
     let prior=current(b,n,sha)?;

@@ -2120,7 +2120,7 @@
     // Chain: initialization refusal -> original error and durable command failure, before any setting write.
     #[test]
     fn focus_initialization_failures_keep_required_receipts() {
-        crate::with_test_capture(|store,dir| {
+        crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");fs::create_dir(&root).unwrap();
             fs::write(dot(&root),"preserve this obstacle").unwrap();
             assert!(set_focus(&root,"all",None).unwrap_err().contains("failure receipt"));
@@ -2183,7 +2183,7 @@
     // Chain: § 4 pause and resume focus. Risk: resume widens focus to all.
     #[test]
     fn focus_commands_do_not_mutate_while_another_command_or_reader_owns_the_signal() {
-        crate::with_test_capture(|_, _| {
+        crate::tests::with_test_capture(|_, _| {
             let root=std::env::temp_dir().join(format!("taskq-focus-lock-{}",std::process::id()));
             fs::create_dir_all(dot(&root)).unwrap();
             let d=dot(&root);
@@ -2233,7 +2233,7 @@
     // Chain: repeated Pause -> Resume preserves the owner's saved scope.
     #[test]
     fn resume_restores_the_saved_focus_and_never_defaults_to_all() {
-        crate::with_test_capture(|_, _| {
+        crate::tests::with_test_capture(|_, _| {
             let root = std::env::temp_dir().join(format!("taskq-resume-{}", std::process::id()));
             let _ = fs::remove_dir_all(&root);
             fs::create_dir_all(dot(&root)).unwrap();
@@ -2957,7 +2957,8 @@
         b.comment(2,&format!("taskq: result {} attempt {job}","b".repeat(40))).unwrap();
         fs::create_dir_all(dot(&local)).unwrap();
         fs::write(runtime::attempt_log(&local,"worker",2,job),"{\"type\":\"thread.started\",\"session_id\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\",\"runtime\":\"claude-bg\"}\n{\"type\":\"system\",\"sessionId\":\"3aae983f-ee51-4fa1-af25-7252766bec4b\"}\n").unwrap();
-        let (rt,id,owner,attempt) = closed_worker(&b,2,None).unwrap();
+        let value = reports::selected(&local,&b,2,false,None).unwrap();
+        let (rt,id,owner,attempt) = reports::worker(&value,None).unwrap();
         assert_eq!((owner.as_str(),attempt),("mac",job));
         assert_eq!(closed_session(&local,&rt,&id,2,attempt).unwrap(),"3aae983f-ee51-4fa1-af25-7252766bec4b");
         b.state.borrow_mut().issues[0].trusted=false;
@@ -3040,4 +3041,46 @@ delivery auto-merge r0: merged #7 as x".to_string(),
         let close = |n: u64| page["tasks"].as_array().unwrap().iter().find(|t| t["n"] == n).unwrap()["close"].clone();
         assert_eq!([close(ns[0]), close(ns[1]), close(ns[2]), close(bare)],
             [json!(format!("replaced by #{succ} (held)")), json!("delivered, 3 items unverified"), json!("no change"), json!("closed on the board")]);
+    }
+    fn project_config(root:&Path)->Res<(Config,Value)> {
+        project_config_value(root, project_value(root)?)
+    }
+    pub(crate) fn wake_context(path: &Path, seen: &mut Option<String>) -> Res<Option<coreq::telemetry::capture::TraceContext>> {
+        wake_read(path, seen, || Ok(())).map(|(link, ())| link)
+    }
+    /// Test reader of a [`zip_one`] archive: the one file's name and bytes, after checking its CRC and the end record.
+    pub(crate) fn unzip_one(zip: &[u8]) -> (String, Vec<u8>) {
+        let u16_at = |i: usize| u16::from_le_bytes([zip[i], zip[i + 1]]) as usize;
+        let u32_at = |i: usize| u32::from_le_bytes(zip[i..i + 4].try_into().unwrap());
+        assert_eq!((u32_at(0), u16_at(8)), (0x0403_4b50, 8), "local header, deflate");
+        let (packed, name_len) = (u32_at(18) as usize, u16_at(26));
+        let name = String::from_utf8(zip[30..30 + name_len].to_vec()).unwrap();
+        let mut data = vec![];
+        std::io::Read::read_to_end(&mut flate2::read::DeflateDecoder::new(&zip[30 + name_len..30 + name_len + packed]), &mut data).unwrap();
+        let mut crc = flate2::Crc::new();
+        crc.update(&data);
+        assert_eq!((crc.sum(), u32_at(22) as usize), (u32_at(14), data.len()), "CRC and size");
+        let end = zip.len() - 22;
+        assert_eq!((u32_at(end), u16_at(end + 10), u32_at(end + 16) as usize), (0x0605_4b50, 1, 30 + name_len + packed), "end record");
+        assert_eq!(u32_at(30 + name_len + packed), 0x0201_4b50, "central entry");
+        (name, data)
+    }
+    fn report(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Res<String> {
+        snapshot::read(b, cfg, raw, only).text(cfg, raw)
+    }
+    pub(crate) fn with_test_capture<T>(run: impl FnOnce(&coreq::telemetry::Store, &Path) -> T) -> T {
+        use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+        use tracing_subscriber::prelude::*;
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir=std::env::temp_dir().join(format!("taskq-command-test-{}-{}",std::process::id(),NEXT.fetch_add(1,Ordering::Relaxed)));
+        fs::create_dir_all(&dir).unwrap();
+        let store=Arc::new(coreq::telemetry::Store::open(&dir.join("db")).unwrap());
+        let capture=coreq::telemetry::capture::Capture::new(store.clone(),"taskq","fixture").unwrap();
+        let result=tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()),||run(&store, &dir));
+        telemetry::settle(Duration::from_secs(30));capture.flush().unwrap();
+        drop(capture);drop(store);
+        // #1640: Windows can keep a just-closed store file busy (os error 32) for a moment; a lasting hold still fails.
+        // #1939: Linux CI saw a store file appear during removal (DirectoryNotEmpty); retry it the same way.
+        for left in (0..50).rev() {match fs::remove_dir_all(&dir) {Err(e) if left>0&&(e.raw_os_error()==Some(32)||e.kind()==std::io::ErrorKind::DirectoryNotEmpty)=>std::thread::sleep(Duration::from_millis(100)),other=>{other.unwrap();break}}}
+        result
     }

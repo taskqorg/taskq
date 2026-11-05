@@ -51,10 +51,10 @@
     #[test] fn conversations_1977_decisions_keep_history_and_creation_fences() {
         let (b,claim,n,sha)=board();let raw=json!({"create_claim_issue":claim});
         let root=std::env::temp_dir().join(format!("taskq-1977-{}",crate::runtime::uuid()));std::fs::create_dir_all(crate::dot(&root)).unwrap();
-        let accepted=owner_act(&b,&root,&raw,n,&sha,"accept").unwrap();
+        let accepted=owner_act_until(&b,&root,&raw,n,&sha,"accept",None).unwrap();
         assert_eq!(accepted["report"]["decision"],"accepted");assert_eq!(accepted["report"]["read"],true);
-        let count=b.comments(n).unwrap().len();owner_act(&b,&root,&raw,n,&sha,"accept").unwrap();assert_eq!(b.comments(n).unwrap().len(),count);
-        assert_eq!(owner_act(&b,&root,&raw,n,&sha,"make").unwrap()["report"]["decision"],"accepted");
+        let count=b.comments(n).unwrap().len();owner_act_until(&b,&root,&raw,n,&sha,"accept",None).unwrap();assert_eq!(b.comments(n).unwrap().len(),count);
+        assert_eq!(owner_act_until(&b,&root,&raw,n,&sha,"make",None).unwrap()["report"]["decision"],"accepted");
         let corrected=successor(&b,&root,&raw,n,&sha,"reopen","Keep the original receipt").unwrap();
         let child=corrected["successor"].as_u64().unwrap();assert!(b.issue(child).unwrap().labels.contains(&"q-held".into()));assert!(!b.issue(n).unwrap().open);
         let mut cache=Cache::default();cache.collect(&b);assert!(cache.value["reports"].as_array().unwrap().is_empty());
@@ -62,7 +62,7 @@
         std::fs::write(crate::dot(&root).join("reports.json"),cache.value.to_string()).unwrap();
         assert!(cached_open(&root,n,&sha).unwrap()["report"]["body"].is_string());
         let (other,oc,on,os)=board();mark(&other,on,&os,"making",&[]).unwrap();
-        let pending=owner_act(&other,&root,&json!({"create_claim_issue":oc}),on,&os,"accept").unwrap();
+        let pending=owner_act_until(&other,&root,&json!({"create_claim_issue":oc}),on,&os,"accept",None).unwrap();
         assert!(pending["reason"].is_string());assert_eq!(pending["report"]["pending_decision"],"make");
         other.raw(on,&format!("taskq: report-accept {os}"),true,false);
         assert_eq!(current(&other,on,&os).unwrap()["pending_decision"],"make","a raced acknowledgement cannot win against a make reservation");
@@ -82,8 +82,8 @@
         let row=current(&b,n,&sha).unwrap();assert_eq!(row["kind"],"task");assert!(row["body"].as_str().unwrap().contains("Checks: replay"));
         for (trusted,edited,s) in [(false,false,sha.clone()),(true,true,sha.clone()),(true,false,"b".repeat(40))] {b.raw(n,&format!("taskq: result-read {s}"),trusted,edited);}
         assert_eq!(current(&b,n,&sha).unwrap()["read"],false);
-        assert_eq!(owner_act(&b,&root,&raw,n,&sha,"read").unwrap()["report"]["decision"],"none");
-        assert_eq!(owner_act(&b,&root,&raw,n,&sha,"accept").unwrap()["report"]["decision"],"accepted");
+        assert_eq!(owner_act_until(&b,&root,&raw,n,&sha,"read",None).unwrap()["report"]["decision"],"none");
+        assert_eq!(owner_act_until(&b,&root,&raw,n,&sha,"accept",None).unwrap()["report"]["decision"],"accepted");
         let opened=successor(&b,&root,&raw,n,&sha,"reopen","Preserve the retry receipt").unwrap();
         assert!(opened["reason"].is_null(),"{opened}");let child=opened["successor"].as_u64().unwrap();
         let issue=b.issue(child).unwrap();assert!(issue.body.contains("Reason: Preserve the retry receipt"));assert!(issue.body.contains(&format!("Depends on #{n}")));
@@ -317,21 +317,21 @@
     #[test] fn report_actions_keep_unknowns_and_create_held_drafts_once() {
         let (b,claim,n,sha)=board();let raw=json!({"create_claim_issue":claim});
         let root=std::env::temp_dir().join(format!("taskq-reports-{}",crate::runtime::uuid()));std::fs::create_dir_all(&root).unwrap();
-        let run=|action|owner_act(&b,&root,&raw,n,&sha,action).unwrap();
+        let run=|action|owner_act_until(&b,&root,&raw,n,&sha,action,None).unwrap();
         assert_eq!(list(&b,1).unwrap()["reports"][0]["read"],false);
-        assert!(owner_act(&b,&root,&raw,n,&"b".repeat(40),"drop").is_err());
+        assert!(owner_act_until(&b,&root,&raw,n,&"b".repeat(40),"drop",None).is_err());
         let opened=run("open");assert_eq!(opened["report"]["read"],true);assert_eq!(opened["report"]["tasks"].as_array().unwrap().len(),2);
         let count=b.comments(n).unwrap().len();run("open");assert_eq!(b.comments(n).unwrap().len(),count,"repeat open is read-only");
         // #1979: a Later without a future revisit date is no decision and writes nothing.
         let count=b.comments(n).unwrap().len();let now=b.now().unwrap();
-        assert!(owner_act(&b,&root,&raw,n,&sha,"later").unwrap_err().contains("--until"));
+        assert!(owner_act_until(&b,&root,&raw,n,&sha,"later",None).unwrap_err().contains("--until"));
         assert!(owner_act_until(&b,&root,&raw,n,&sha,"later",Some(&crate::board::stamp(now))).unwrap_err().contains("future"));
         assert!(owner_act_until(&b,&root,&raw,n,&sha,"drop",Some(&crate::board::stamp(now+60))).is_err(),"--until only with Later");
         assert_eq!(b.comments(n).unwrap().len(),count);
         let until=crate::board::stamp(now+3600);
         assert_eq!(owner_act_until(&b,&root,&raw,n,&sha,"later",Some(&until)).unwrap()["report"]["later_until"],until.as_str());
         assert_eq!(list(&b,1).unwrap()["reports"][0]["closed"],45);
-        let missing=owner_act(&b,&root,&json!({}),n,&sha,"make").unwrap();assert!(missing["reason"].as_str().unwrap().contains("create_claim_issue"));
+        let missing=owner_act_until(&b,&root,&json!({}),n,&sha,"make",None).unwrap();assert!(missing["reason"].as_str().unwrap().contains("create_claim_issue"));
         assert_eq!(list(&b,1).unwrap()["reports"].as_array().unwrap().len(),1);
         let result=run("make");let made=result["report"]["tasks_made"].as_array().unwrap();assert_eq!(made.len(),2);
         for child in made {
@@ -389,10 +389,10 @@
             let (b,_,n,sha)=board();let count=b.comments(n).unwrap().len();
             // a root without taskq.json: the missing key cannot be settled and written back
             let root=std::env::temp_dir().join(format!("taskq-reports-{}",crate::runtime::uuid()));
-            let result=owner_act(&b,&root,&invalid,n,&sha,"make").unwrap();
+            let result=owner_act_until(&b,&root,&invalid,n,&sha,"make",None).unwrap();
             assert_eq!(result["receipt"]["outcome"],"rejected");
             assert_eq!(b.comments(n).unwrap().len(),count,"known refusal writes no make-intent");
-            assert_eq!(owner_act(&b,Path::new("."),&invalid,n,&sha,"drop").unwrap()["report"]["decision"],"drop");
+            assert_eq!(owner_act_until(&b,Path::new("."),&invalid,n,&sha,"drop",None).unwrap()["report"]["decision"],"drop");
         }
     }
 
@@ -400,17 +400,17 @@
         let (b,claim,n,sha)=board();let root=std::env::temp_dir().join(format!("taskq-reports-{}",crate::runtime::uuid()));std::fs::create_dir_all(&root).unwrap();
         let raw=json!({"create_claim_issue":claim});
         let source=b.state.borrow_mut().report_sources.pop().unwrap();
-        assert!(owner_act(&b,&root,&raw,n,&sha,"open").is_err());assert_eq!(list(&b,1).unwrap()["reports"][0]["read"],false);
+        assert!(owner_act_until(&b,&root,&raw,n,&sha,"open",None).is_err());assert_eq!(list(&b,1).unwrap()["reports"][0]["read"],false);
         b.state.borrow_mut().report_sources.push(source);
         mark(&b,n,&sha,"making",&[]).unwrap();
         b.state.borrow_mut().lose_comment_response=true;
-        let lost=owner_act(&b,&root,&raw,n,&sha,"make").unwrap();assert_eq!(lost["receipt"]["outcome"],"unknown");
-        let retry=owner_act(&b,&root,&raw,n,&sha,"make").unwrap();assert_eq!(retry["receipt"]["outcome"],"unknown");
+        let lost=owner_act_until(&b,&root,&raw,n,&sha,"make",None).unwrap();assert_eq!(lost["receipt"]["outcome"],"unknown");
+        let retry=owner_act_until(&b,&root,&raw,n,&sha,"make",None).unwrap();assert_eq!(retry["receipt"]["outcome"],"unknown");
         assert_eq!(b.state.borrow().issues.len(),2,"an uncertain create claim never permits another create POST");
         assert_eq!(list(&b,1).unwrap()["reports"][0]["pending_decision"],"make");
-        let blocked=owner_act(&b,&root,&raw,n,&sha,"drop").unwrap();assert!(blocked["reason"].is_string());assert_eq!(list(&b,1).unwrap()["reports"].as_array().unwrap().len(),1);
+        let blocked=owner_act_until(&b,&root,&raw,n,&sha,"drop",None).unwrap();assert!(blocked["reason"].is_string());assert_eq!(list(&b,1).unwrap()["reports"].as_array().unwrap().len(),1);
         let (other,_,on,os)=board();other.state.borrow_mut().lose_comment_response=true;
-        assert!(owner_act(&other,&root,&raw,on,&os,"drop").is_err());assert!(list(&other,1).unwrap()["reports"].as_array().unwrap().is_empty(),"refresh reconciles the committed drop");
+        assert!(owner_act_until(&other,&root,&raw,on,&os,"drop",None).is_err());assert!(list(&other,1).unwrap()["reports"].as_array().unwrap().is_empty(),"refresh reconciles the committed drop");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -426,9 +426,9 @@
         for (k,t) in tasks.iter().enumerate() {let r=crate::add_task(&b,&root,&raw,&t.task(n),&crate::Op{id:Some(format!("report.{n}.{sha}.{}",k+1)),revision:None}).unwrap();assert!(r.ok());made.push(r.task);}
         b.state.borrow_mut().fail_comments=1;
         let failed=finish(&b,n,&sha,&prior,&made);assert!(failed["reason"].is_string());assert_eq!(failed["receipts"],json!(made));assert_eq!(failed["report"]["visible"],true);
-        let count=b.state.borrow().issues.len();let retried=owner_act(&b,&root,&raw,n,&sha,"make").unwrap();assert_eq!(retried["report"]["tasks_made"],json!(made));assert_eq!(b.state.borrow().issues.len(),count);
+        let count=b.state.borrow().issues.len();let retried=owner_act_until(&b,&root,&raw,n,&sha,"make",None).unwrap();assert_eq!(retried["report"]["tasks_made"],json!(made));assert_eq!(b.state.borrow().issues.len(),count);
         let (other,_,on,os)=board();other.raw(on,&format!("taskq: report-drop {os}"),true,false);
-        let result=owner_act(&other,&root,&raw,on,&os,"make").unwrap();assert_eq!(result["report"]["decision"],"drop");assert_eq!(other.state.borrow().issues.len(),2,"Drop first prevents creation");
+        let result=owner_act_until(&other,&root,&raw,on,&os,"make",None).unwrap();assert_eq!(result["report"]["decision"],"drop");assert_eq!(other.state.borrow().issues.len(),2,"Drop first prevents creation");
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -446,3 +446,18 @@
         let mut seen:Vec<_>=rows.iter().filter_map(|r|r["n"].as_u64()).filter(|n|*n!=dropped).chain(rest["reports"].as_array().unwrap().iter().filter_map(|r|r["n"].as_u64())).collect();
         seen.sort();expected.sort();assert_eq!(seen,expected);
     }
+    fn list_before(b:&crate::board::Fake,page:usize,before:Option<(i64,u64)>)->Res<Value> {
+        let mut rows=Vec::new();
+        for (i,closed) in b.research_tasks()? {
+            if let Some(row)=project(&i,closed,&b.comments(i.number)?,b.url(i.number)) {
+                let position=(row["closed"].as_i64().unwrap_or(0),row["n"].as_u64().unwrap_or(0));
+                if row["visible"]==true&&before.is_none_or(|b|position<b) {rows.push(row);}
+            }
+        }
+        rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
+        let start=if before.is_some(){0}else{page.saturating_sub(1).saturating_mul(crate::board::CLOSED_PAGE)};
+        let selected:Vec<_>=rows.iter().skip(start).take(crate::board::CLOSED_PAGE).collect();
+        let next=selected.last().map(|r|format!("{}:{}",r["closed"],r["n"]));
+        Ok(json!({"reports":selected,"more":rows.len()>start.saturating_add(crate::board::CLOSED_PAGE),"next":next,"page":page}))
+    }
+    fn list(b:&crate::board::Fake,page:usize)->Res<Value> {list_before(b,page,None)}

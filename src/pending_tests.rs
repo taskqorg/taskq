@@ -105,3 +105,10 @@
         assert_eq!(shown(&p, &before), Value::Null);
         assert!(p.observe(projects("doing", 25, &["tray.close.7.25.close"]).as_array().unwrap(), Instant::now()), "the close step's op id confirms the cancellation");
     }
+    impl Pending {
+        /// The store as test evidence: one entry per operation, without ages.
+        pub fn json(&self) -> Value {
+            json!(self.ops.iter().map(|o| json!({"root": o.root, "id": o.id, "task": o.task, "phase": o.phase, "reason": o.reason,
+                "state": o.state, "confirmed": o.seen.is_some()})).collect::<Vec<_>>())
+        }
+    }

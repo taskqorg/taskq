@@ -196,3 +196,6 @@
         }
         assert!(!CSP.contains("http"), "the policy names no remote source");
     }
+    pub(crate) fn reset_for_test() {
+        *shared_write() = Shared::default();
+    }

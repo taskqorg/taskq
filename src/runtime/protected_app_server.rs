@@ -1,4 +1,5 @@
 //! R8/R9: one protected native app-server launch on an existing external slot, never a grant authority.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 use crate::{Res, policy, resources, runtime};
 use serde::Deserialize;
 use serde_json::{Value, json};

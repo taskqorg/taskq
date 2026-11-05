@@ -336,7 +336,7 @@
             let (first,simulated)=(crate::profile::now_ms().unwrap(),crate::profile::now_ms().unwrap()/window*window);
             // The tray module builds only on macOS and Windows; Linux hosts run no tray, so their hour has no tick rows.
             #[cfg(any(target_os = "macos", windows))]
-            let mut tray=crate::tray::steady_tick();
+            let mut tray=crate::tray::tests::steady_tick();
             #[cfg(not(any(target_os = "macos", windows)))]
             let mut tray=||();
             tracing::dispatcher::with_default(&dispatch,|| for tick in 0..1800 {
@@ -1277,3 +1277,5 @@
         assert!(registry.error.is_some() && registry.roots.len() == 1, "a vanished registry keeps the last roots and reads unknown");
         fs::remove_dir_all(install).unwrap();
     }
+    /// Compare all copies before any write. The durable plan is a configuration backup, never task state (R1).
+    pub fn migrate(install: &Path, roots: &[PathBuf]) -> Res<()> {migrate_for_hostname(install,roots,&crate::hostname())}

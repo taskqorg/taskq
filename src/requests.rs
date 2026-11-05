@@ -401,8 +401,5 @@ pub(crate) fn sources_samples(samples:&[crate::telemetry::Sample], now_ms: u64) 
 }
 
 #[cfg(test)]
-pub fn sources(text:&str,now_ms:u64)->String {sources_samples(&crate::telemetry::Sample::archive(text),now_ms)}
-
-#[cfg(test)]
 #[path = "requests_tests.rs"]
-mod tests;
+pub(crate) mod tests;

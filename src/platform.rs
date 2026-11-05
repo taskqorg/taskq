@@ -633,6 +633,7 @@ fn channel_update(install:&Path,fetch:&dyn Fn(&str,&Path)->Result<(),String>)->R
 /// § 8 item 1 dev install: the SHA to start now. None on `live`, without a request (#2311: on demand only), while a
 /// build runs, or for the installed or an already started SHA (a started SHA never restarts, so a failed build is not
 /// retried); `ci` is read only after that. `main` is the newest main SHA, so one build coalesces every merge before it.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn dev_next(channel:&str,requested:bool,main:Option<&str>,installed:Option<&str>,started:Option<&str>,building:bool,ci:&mut dyn FnMut(&str)->Result<(),String>)->Option<String> {
     let sha=main.filter(|m|channel=="dev"&&requested&&!building&&Some(*m)!=installed&&Some(*m)!=started)?;
     ci(sha).ok().map(|_|sha.to_string())
@@ -640,6 +641,7 @@ pub fn dev_next(channel:&str,requested:bool,main:Option<&str>,installed:Option<&
 
 /// § 8 item 1 dev install gate: repo and channel only; the script comes from the fetched SHA (`dev_spawn`), so a
 /// root checked out before the script existed still installs (#1406).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn dev_enabled(repo:&str,install:&Path)->bool { repo==RELEASE_REPO&&channel(install)==Ok("dev") }
 
 /// The demand file of the dev install (#2311): `taskq service dev-build` writes it; a build start clears it.

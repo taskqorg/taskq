@@ -1434,17 +1434,6 @@ fn web_script(script: &str) -> String {
     format!("(()=>{{try{{(0,eval)({});return 'ok';}}catch(_){{try{{window.taskqWebFault('evaluation');}}catch(_){{}}return 'script-error';}}}})()",json!(script))
 }
 const TICK: &str = "tray.web.tick";
-/// #1548 fixture: one steady tray tick's own rows (push, its JS render summary, the fit resize); the host hour test owns the gate.
-#[cfg(test)]
-pub(crate) fn steady_tick() -> impl FnMut() {
-    let mut calls=WebCalls::new();calls.pending.clear();
-    move || {
-        let id=calls.begin(TICK,Instant::now()).expect("tick push");calls.finish(id,"ok");
-        let render=json!({"operation":"js.ui.render.tick","kind":"method.aggregate","started_ms":crate::profile::now_ms().unwrap(),"counts":{"calls":1,"finished":1,"failed":0,"unknown":0},"outcome":"ok","error":"none"});
-        assert!(!calls.metadata(&render)&&!calls.failed);
-        let _=coreq::telemetry::capture::poll("tray.window.resize",0,||Ok::<_,&str>(()),|_|"observed");
-    }
-}
 fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_loop::EventLoopProxy<Ev>, calls: &mut WebCalls) {
     if calls.pending.contains_key(&0) {
         // #2365: a page booting behind a live window gets everything from its ready snapshot.
@@ -3465,4 +3454,4 @@ fn capture(wv: &WebView, path: PathBuf, done: impl Fn() + 'static) {
 
 #[cfg(test)]
 #[path = "tray_tests.rs"]
-mod tests;
+pub(crate) mod tests;

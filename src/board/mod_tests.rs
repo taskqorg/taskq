@@ -28,7 +28,7 @@
         let _runtime = coreq::telemetry::capture::Runtime::install(&dir.join("db"), "fixtureq", "1").unwrap();
         phase("capture.ready");
         let installed = began.elapsed();
-        crate::profile::take_report();
+        crate::profile::tests::take_report();
         // The HTTP deadline starts after collector setup, which has its own outer bound.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -75,7 +75,7 @@
         phase("http.joined");
         assert!(joined.is_ok(), "HTTP fixture failed; runtime install={installed:?}, through request={:?}, client error={:?}", began.elapsed(), result.as_ref().err());
         assert!(result.err().unwrap().contains("HTTP 503"));
-        assert!(crate::profile::take_report().contains("http5xx:1"));
+        assert!(crate::profile::tests::take_report().contains("http5xx:1"));
         phase("capture.qualify");
         let health = coreq::telemetry::capture::qualify().unwrap();
         phase("capture.qualified");
@@ -138,7 +138,7 @@
         let packed = base64::engine::general_purpose::STANDARD.decode(blob.borrow().as_str()).unwrap();
         let digest: String = ring::digest::digest(&ring::digest::SHA256, &packed).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(links, [format!("[⬇ site.html.zip](https://github.com/o/r/raw/{sha}/7/{digest}-site.html.zip)")]);
-        assert_eq!(crate::unzip_one(&packed), ("site.html".to_string(), std::fs::read(&html).unwrap()));
+        assert_eq!(crate::tests::unzip_one(&packed), ("site.html".to_string(), std::fs::read(&html).unwrap()));
         let calls = calls.borrow();
         assert!(calls.iter().any(|c| c.starts_with("POST https://api.github.com/repos/o/r/git/refs ") && c.contains(r#""ref":"refs/taskq/evidence""#)), "{calls:?}");
         assert!(!calls.iter().any(|c| c.contains("heads")), "no branch: default clones skip the file; {calls:?}");
@@ -375,17 +375,15 @@
             let sha="a".repeat(40);
             let b=http(kind,Some(true),Box::new(move|method,url,_| {
                 assert_eq!(method,"GET");
-                let value=if url.contains("/members/all/") {json!({"access_level":20})} else if url.contains("/contents/")||url.contains("/repository/files/") {
+                let value=if url.contains("/members/all/") {json!({"access_level":20})} else {
+                    assert!(url.contains("/contents/")||url.contains("/repository/files/"));
                     assert!(url.ends_with(&format!("?ref={}","a".repeat(40))));assert!(url.contains("docs%2Fresearch%2F12.md"));
                     json!({"encoding":"base64","content":STANDARD.encode("# Question\nInvented source")})
-                }else {
-                    assert!(url.contains("state=closed&labels=taskq,"));
-                    json!([{"number":12,"iid":12,"title":"Invented research","state":"closed","closed_at":"2026-10-01T01:00:00Z","updated_at":"2026-10-29T01:00:00Z","labels":["taskq","research"]}])
                 };
                 Ok(Reply {status:200,headers:vec![],body:value.to_string(),operation:operation(method)})
             }));
             assert_eq!(b.source("docs/research/12.md",&sha).unwrap(),"# Question\nInvented source");
-            let rows=b.research_tasks().unwrap();assert_eq!(rows.len(),1,"deduplicate research plus report discovery");assert_eq!(rows[0].1,iso("2026-10-01T01:00:00Z").unwrap());
+            
         }
     }
     /// A recorded GitHub response; tests/fixtures/github-merge-queue/README.md says how to re-record.
@@ -519,12 +517,12 @@
         for kind in BOARDS {
             for mode in ["direct", "pr"] {
                 for ancestry in [Some(true), Some(false), None] {
-                    crate::incident::take_detected();
+                    crate::incident::tests::take_detected();
                     let (h, calls) = publication_board(kind, mode, true, Some(true), ancestry);
                     let out = if mode == "direct" { h.publish(1, &"a".repeat(40), mode, "title", "Task: fake") }
                         else { h.resume_publication(1, &"a".repeat(40), "pr", "title", "Task: fake", std::path::Path::new("unused"), false) };
                     assert!(matches!(out, Publish::Done(_)));
-                    assert_eq!(crate::incident::take_detected(), if ancestry == Some(false) { vec!["publication.not_on_main"] } else { vec![] });
+                    assert_eq!(crate::incident::tests::take_detected(), if ancestry == Some(false) { vec!["publication.not_on_main"] } else { vec![] });
                     assert_eq!(calls.borrow().iter().filter(|(method, _)| method != "GET").count(), 1);
                 }
             }
@@ -1484,10 +1482,10 @@ exit 0
     fn incident_publication_readback_requires_two_negative_reads() {
         for kind in BOARDS {
             for second in [Some(false), Some(true), None] {
-                crate::incident::take_detected();
+                crate::incident::tests::take_detected();
                 let (h, calls) = publication_board(kind, "pr", false, second, Some(true));
                 assert!(matches!(h.resume_publication(1, &"a".repeat(40), "pr", "title", "Task: fake", std::path::Path::new("unused"), false), Publish::Pending(_)), "reporting preserves first read outcome");
-                assert_eq!(crate::incident::take_detected(), if second == Some(false) { vec!["publication.readback"] } else { vec![] });
+                assert_eq!(crate::incident::tests::take_detected(), if second == Some(false) { vec!["publication.readback"] } else { vec![] });
                 let readback = calls.borrow().iter().skip_while(|(m, _)| m == "GET").filter(|(m, u)| m == "GET" && (u.ends_with("/pulls/7") || u.ends_with("/merge_requests/7"))).count();
                 assert_eq!(readback, 2);
                 assert_eq!(calls.borrow().iter().filter(|(method, _)| method != "GET").count(), 1);
@@ -1499,12 +1497,12 @@ exit 0
     #[test]
     fn incident_bad_json_is_only_a_successful_response() {
         for fail in [false, true] {
-            crate::incident::take_detected();
+            crate::incident::tests::take_detected();
             let mut h = (github::KIND.api)("github.com", "o/r", "fake");
             h.transport = Some(Box::new(move |_, _, _| if fail { Err("HTTP 503 malformed response".into()) }
                 else { Ok(Reply { status: 200, headers: vec![], body: "private invalid JSON".into(), operation: "read" }) }));
             assert!(h.call("GET", "/issues", None).and_then(|r| r.json()).is_err());
-            assert_eq!(crate::incident::take_detected(), if fail { vec![] } else { vec!["adapter.bad_json"] });
+            assert_eq!(crate::incident::tests::take_detected(), if fail { vec![] } else { vec!["adapter.bad_json"] });
         }
     }
 
@@ -1540,7 +1538,7 @@ exit 0
     // Chain: A3 forge response -> profile report. Risk: HTTP/GraphQL failures count as successes or pauses send again.
     #[test]
     fn forge_outcomes_reach_profile_report() {
-        crate::profile::take_report();
+        crate::profile::tests::take_report();
         for (status, body, limited) in [(200, "{}", false), (204, "", false), (404, "private response", false),
             (503, "private response HTTP 404", false), (200, "{\"errors\":[{\"type\":\"RATE_LIMITED\"}]}", true)] {
             let mut api = (github::KIND.api)("github.com", "o/r", "private token");
@@ -1552,7 +1550,7 @@ exit 0
                 assert_eq!(api.credentials.borrow().budget.borrow().total(), 1);
             }
         }
-        let report = crate::profile::take_report();
+        let report = crate::profile::tests::take_report();
         assert!(report.contains("| forge.call | 5 |"), "{report}");
         assert!(report.contains("| 2/3 | 60.00 |"), "{report}");
         assert!(report.contains("http4xx:2, http5xx:1"), "{report}");

@@ -77,12 +77,12 @@
     fn order_disable_failover_and_exhausted_hold() {
         let none = host(&[], &[]);
         assert_eq!(none.list("codex"), default_list(), "no list: one default account");
-        assert_eq!((none.pick("codex", 0), none.spare("codex", 0)), (Some("default".into()), None), "a lone account never fails over");
+        assert_eq!((none.active("codex", 0), none.spare("codex", 0)), (Some("default".into()), None), "a lone account never fails over");
 
         let h = host(&[("codex", &[("default", true), ("work", true), ("spare", true)])], &[]);
-        assert_eq!(h.pick("codex", 0).as_deref(), Some("default"), "list order is priority");
+        assert_eq!(h.active("codex", 0).as_deref(), Some("default"), "list order is priority");
         let h = host(&[("codex", &[("default", false), ("work", true), ("spare", true)])], &[]);
-        assert_eq!(h.pick("codex", 0).as_deref(), Some("work"), "a disabled account takes no start");
+        assert_eq!(h.active("codex", 0).as_deref(), Some("work"), "a disabled account takes no start");
 
         let h = host(&[("codex", &[("default", true), ("work", true), ("spare", false)])], &[("codex", "default", 100, None)]);
         assert_eq!(h.spare("codex", 200).as_deref(), Some("work"), "a limit moves to the next enabled account");
@@ -92,10 +92,10 @@
         let h = host(&[("codex", &[("default", true), ("work", true), ("spare", false)])], &[("codex", "default", 100, Some(9000)), ("codex", "work", 150, None)]);
         assert_eq!(h.spare("codex", 200), None, "every enabled account limited: no spare");
         assert_eq!(h.hold("codex", 200), Some((150 + PROBE, false)), "the hold ends at the earliest enabled limit end");
-        assert_eq!(h.pick("codex", 200), None, "an exhausted account cannot start");
+        assert_eq!(h.active("codex", 200), None, "an exhausted account cannot start");
         assert!(!h.off("codex", 0));
         let h = host(&[("claude", &[("default", false)])], &[]);
-        assert!(h.off("claude", 0) && h.pick("claude", 0).is_none(), "all disabled: the runtime admits nothing");
+        assert!(h.off("claude", 0) && h.active("claude", 0).is_none(), "all disabled: the runtime admits nothing");
         assert!(!h.off("codex-app", 0) && h.spare("codex-app", 0).is_none(), "codex-app has no accounts");
     }
 
@@ -190,4 +190,11 @@
         assert_eq!(active_in(&install, "codex", &base), work_home, "limit on default activates work home");
         assert_eq!(active_in(&install, "codex", &work_home), work_home, "already-resolved account home is not nested");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    /// A usage limit with no named window, as a runtime reports it.
+    fn record_limit(install: &Path, rt: &str, label: &str, at: i64, until: Option<i64>) -> Result<(), String> {
+        crate::runtime::accounts::record_windows(install, rt, label, at, &[("unknown".into(),until)])
+    }
+    impl Host {
+        pub fn limit_end(&self, rt: &str, label: &str) -> Option<i64> { self.limit(rt, label).map(Limit::end) }
     }

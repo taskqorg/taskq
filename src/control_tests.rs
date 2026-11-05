@@ -11,7 +11,7 @@
     // Chain: local command -> service snapshot -> replacement -> fresh observer; no effect replay.
     #[test]
     fn service_observes_original_command_and_supersession_idempotently() {
-        crate::with_test_capture(|store,dir| {
+        crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");fs::create_dir_all(dot(&root)).unwrap();
             assert_eq!(snapshot(&root,&mut None).unwrap()["state"],"untracked");
             crate::set_focus(&root,"area-private",Some("private owner words")).unwrap();
@@ -47,7 +47,7 @@
     // Chain: interruption or partial mutation -> explicit unknown/failed -> new command replaces without replay.
     #[test]
     fn interrupted_and_failed_commands_never_acknowledge_an_equal_focus() {
-        crate::with_test_capture(|store,dir| {
+        crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");fs::create_dir_all(dot(&root)).unwrap();
             crate::set_focus(&root,"all",None).unwrap();
             let interrupted={
@@ -76,7 +76,7 @@
     // Chain: corrupt/mismatched tracking -> refusal before Resume -> safe Pause retains evidence.
     #[test]
     fn bad_tracking_is_preserved_and_never_blocks_safe_restriction() {
-        crate::with_test_capture(|store,dir| {
+        crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");fs::create_dir_all(dot(&root)).unwrap();
             crate::set_focus(&root,"all",None).unwrap();
             let path=dot(&root).join("focus.command");let valid=fs::read_to_string(&path).unwrap();
@@ -112,7 +112,7 @@
     // Chain: validated crash residue -> phase-aware metadata recovery -> same observation, never an effect replay.
     #[test]
     fn staged_writes_reconcile_without_replacing_current_with_unapplied_intent() {
-        crate::with_test_capture(|store,dir| {
+        crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");fs::create_dir_all(dot(&root)).unwrap();
             crate::set_focus(&root,"all",None).unwrap();
             let path=dot(&root).join("focus.command");let stage=dot(&root).join("focus.command.pending");
@@ -195,7 +195,7 @@
     #[test]
     fn killed_command_leaves_unknown_state_without_replaying_effects() {
         use std::{io::{BufRead,BufReader},process::{Command,Stdio},time::Duration};
-        crate::with_test_capture(|store,dir| {
+        crate::tests::with_test_capture(|store,dir| {
             for phase in ["prepared","changed"] {
                 let root=dir.join(phase);fs::create_dir_all(dot(&root)).unwrap();
                 crate::set_focus(&root,"area-before",None).unwrap();

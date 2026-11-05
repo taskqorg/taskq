@@ -123,7 +123,7 @@
     // #2305: the store write lock is held until the first flush misses its deadline, as one slow Windows append did.
     #[test]
     fn short_dependency_outputs_are_bounded_and_preserve_nonzero_receipts() {
-        crate::with_test_capture(|store,dir| {
+        crate::tests::with_test_capture(|store,dir| {
             let write=fs::OpenOptions::new().write(true).open(dir.join("db.write.lock")).unwrap();write.lock().unwrap();
             let mut write=Some(write);
             let fixture=|mode:&str| {
@@ -462,15 +462,15 @@
     // Chain: incident update.smoke. Risk: download failures reported as smoke failures.
     #[test]
     fn incident_smoke_detection_excludes_download_and_security_failures() {
-        crate::incident::take_detected();
+        crate::incident::tests::take_detected();
         let smoke = Err("4.2.0 selftest failed: private diagnostic".into());
         assert_eq!(update_result(smoke.clone()), smoke);
-        assert_eq!(crate::incident::take_detected(), ["update.smoke"]);
+        assert_eq!(crate::incident::tests::take_detected(), ["update.smoke"]);
         for e in ["download failed", "sha256 not in SHA256SUMS", "curl: timeout"] {
             let failure = Err(e.into());
             assert_eq!(update_result(failure.clone()), failure);
         }
-        assert!(crate::incident::take_detected().is_empty());
+        assert!(crate::incident::tests::take_detected().is_empty());
     }
 
     // Chain: § 3 load gate readings. Risk: load read wrong or missing on this OS.
@@ -722,7 +722,7 @@
         sweep(&install, &shim);
         assert!(install.join("releases/4.0.1").exists() && install.join("releases/4.0.5").exists());
         assert_eq!(fs::read_to_string(root.join(".taskq/status.json")).unwrap(), "{\"version\": \"4.0");
-        crate::with_test_capture(|store,_| {
+        crate::tests::with_test_capture(|store,_| {
             fs::write(root.join(".taskq/status.json"),r#"{"version":"4.0.5"}"#).unwrap();
             fs::write(install.join("projects"),b"\xff").unwrap();
             fs::create_dir_all(install.join("releases/4.0.2")).unwrap();sweep(&install,&shim);

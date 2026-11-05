@@ -315,3 +315,5 @@
     }
 
     fn t_running() -> Turn { Turn { input: "owner".into(), state: "dispatching".into(), at: 1, ..Turn::default() } }
+    /// D2/D3 Send: `send_op` without an op id; a refusal is its reason.
+    fn send(install: &Path, id: &str, input: &str, native: &Native) -> Res<()> { send_op(install,id,input,None,native).map_err(|e|e.reason) }

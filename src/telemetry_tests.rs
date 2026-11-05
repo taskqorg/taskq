@@ -180,17 +180,17 @@
             insert(&tx,stage.unwrap_or(line),received).unwrap();
         }tx.commit().unwrap();}
         checkpoint(&archive).unwrap();drop(archive);
-        let expected=crate::profile::legacy_reports(&report_input(&d).unwrap(),now).unwrap();
+        let expected=crate::profile::tests::legacy_reports(&report_input(&d).unwrap(),now).unwrap();
         let path=d.join("telemetry.log/universal.sqlite3");drop(coreq::telemetry::Store::open(&path).unwrap());
         let inject=Connection::open(&path).unwrap();
         inject.execute_batch("CREATE TABLE imports(source TEXT PRIMARY KEY,cursor TEXT NOT NULL,receipt TEXT NOT NULL); CREATE TRIGGER refuse_second BEFORE UPDATE ON imports BEGIN SELECT RAISE(ABORT,'injected second batch failure'); END").unwrap();
         assert!(migrate(&d).unwrap_err().contains("injected second batch failure"));
-        assert_eq!(crate::profile::legacy_reports(&report_input(&d).unwrap(),now).unwrap(),expected,"partly committed import double-counted history");
+        assert_eq!(crate::profile::tests::legacy_reports(&report_input(&d).unwrap(),now).unwrap(),expected,"partly committed import double-counted history");
         let cursor=coreq::telemetry::Reader::open(&path).unwrap().import_cursor("taskq.legacy").unwrap().unwrap();
         assert!(cursor.ends_with(".0.1024"));
         inject.execute_batch("DROP TRIGGER refuse_second").unwrap();drop(inject);
         assert_eq!(migrate(&d).unwrap(),76);assert_eq!(migrate(&d).unwrap(),0);
-        assert_eq!(crate::profile::legacy_reports(&report_input(&d).unwrap(),now).unwrap(),expected);
+        assert_eq!(crate::profile::tests::legacy_reports(&report_input(&d).unwrap(),now).unwrap(),expected);
         let exported=export(&d,None).unwrap();let rows=exported.lines().map(|s|serde_json::from_str::<serde_json::Value>(s).unwrap()).collect::<Vec<_>>();
         assert_eq!(rows.len(),1101);assert_eq!(rows[0]["sources"]["legacy"]["samples"],0);
         assert!(rows[1..].iter().all(|r|r["received_ms"]==received));

@@ -863,7 +863,6 @@ pub fn vocabulary() -> Value {
 
 /// Published task controls `taskq.task-controls/1` (docs/design/task-controls.md): action, CLI command, fixed reason,
 /// states that offer it. Close is never a control: it stays a board operation.
-pub const CONTROLS_VERSION: &str = "taskq.task-controls/1";
 const LIVE: &[&str] = &["ready", "waiting", "doing", "review", "ask"];
 pub const CONTROLS: [(&str, &str, &str, &[&str]); 4] = [
     ("start", "start", "", &["held"]),

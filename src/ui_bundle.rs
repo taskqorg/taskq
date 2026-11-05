@@ -422,10 +422,5 @@ fn refused_text(version: &str, reason: &str, using: &str) -> String {
 }
 
 #[cfg(test)]
-pub(crate) fn reset_for_test() {
-    *shared_write() = Shared::default();
-}
-
-#[cfg(test)]
 #[path = "ui_bundle_tests.rs"]
 mod tests;

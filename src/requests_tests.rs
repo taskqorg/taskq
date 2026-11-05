@@ -260,3 +260,4 @@
         let s = json!({"host": "mac", "requests": b.json(0, None, &BTreeMap::new())});
         assert_eq!(warning(&s).unwrap(), "Board budget low: 500/5000 graphql until unknown (mac); top here: none");
     }
+    pub(crate) fn sources(text:&str,now_ms:u64)->String {sources_samples(&crate::telemetry::Sample::archive(text),now_ms)}

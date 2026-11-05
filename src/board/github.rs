@@ -831,15 +831,6 @@ impl Board for GitHub {
         Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(|v| (parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0))).collect())
     }
 
-    fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> {
-        let mut rows = std::collections::BTreeMap::new();
-        for label in ["research", "docs"] {
-            for v in self.api.all(&format!("/issues?state=closed&labels=taskq,{label}&per_page=100"))? {
-                if v.get("pull_request").is_none() { let i=parse_issue(&v); rows.insert(i.number, (i, iso(&s(&v,"closed_at")).unwrap_or(0))); }
-            }
-        }
-        Ok(rows.into_values().collect())
-    }
 
     fn source(&self, path: &str, sha: &str) -> Result<String> {
         use base64::{Engine, engine::general_purpose::STANDARD};

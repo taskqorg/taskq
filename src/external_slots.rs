@@ -78,6 +78,7 @@ pub(crate) fn exchange(install:&Path,action:&str,value:&Value)->Res<Value> {
 }
 
 /// Protected launch consumes an already admitted slot; possession of its key grants no filesystem access.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn reserved(install:&Path,s:&resources::State,value:&Value,runtime:&str)->Res<String> {
     let r:Request=serde_json::from_value(value.clone()).map_err(|_|"invalid local slot request")?;
     validate(&r.binding)?;

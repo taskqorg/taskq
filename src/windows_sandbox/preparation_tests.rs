@@ -94,3 +94,17 @@
         fs::remove_file(&wal).unwrap();
         fs::remove_dir_all(&base).unwrap();
     }
+    /// Removes a fixture on drop, so a test that panics between `apply` and its own cleanup leaves no denials in temp.
+    pub(crate) struct Fixture(PathBuf);
+    impl Drop for Fixture { fn drop(&mut self) { let _ = remove_fixture(&self.0); } }
+
+    pub(crate) fn prepared_fixture(base: &Path) -> Fixture {
+        let fixture = Fixture(base.to_owned());
+        let (root, install, home, temp) = (base.join("workspace"), base.join("install"), base.join("home"), base.join("temp"));
+        let state = install.join("windows-native/state");
+        for path in [root.join(".codex"), state.clone(), home.clone(), temp.clone()] { fs::create_dir_all(path).unwrap(); }
+        fs::write(root.join("data.txt"), "fixture data").unwrap();
+        fs::write(home.join("config.toml"), "# invented fixture configuration\n").unwrap();
+        Preparation::begin(&root, &install, &home, &state, &temp, &[]).unwrap().apply().unwrap();
+        fixture
+    }

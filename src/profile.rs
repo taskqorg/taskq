@@ -26,18 +26,6 @@ thread_local!(static OBSERVED: std::cell::RefCell<String> = const { std::cell::R
 thread_local!(pub(crate) static STAGED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
 #[cfg(test)]
 thread_local!(static MOVED: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) });
-/// Transition records of this thread and their report section.
-#[cfg(test)]
-pub fn take_moves() -> (String, String) {
-    let text = MOVED.with(|v| std::mem::take(&mut *v.borrow_mut()));
-    let report = render_system(&text).1;
-    (text, report)
-}
-#[cfg(test)]
-pub fn take_report() -> String {
-    OBSERVED.with(|v| render(&std::mem::take(&mut *v.borrow_mut())).unwrap())
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Record {
@@ -664,17 +652,6 @@ pub fn append_error(e: &std::io::Error) -> String {
     }
 }
 
-#[cfg(test)]
-fn append(_path:&Path,r:&Record)->std::io::Result<()> {
-    crate::telemetry::record(crate::telemetry::Sample::Operation(r.clone()))
-}
-
-/// Historical compatibility input used by the regression fixtures, never by a live producer.
-#[cfg(test)]
-pub fn append_line(_path: &Path, line: &str) -> std::io::Result<()> {
-    crate::telemetry::observe(line).map_err(std::io::Error::other)
-}
-
 struct Stats { op: &'static str, times: Vec<u64>, errors: std::collections::BTreeMap<String, usize> }
 impl Stats {
     fn percentile(&self, p: usize) -> u64 { self.times[(self.times.len() * p).div_ceil(100) - 1] }
@@ -719,8 +696,6 @@ impl Summary {
         let [mut history,mut archive,mut live]=std::mem::take(&mut self.ordered);history.append(&mut archive);history.append(&mut live);self.ordered[0]=history;
     }
     fn samples(&self)->&[Sample] {&self.ordered[0]}
-    #[cfg(test)]
-    fn fixture(text:&str)->Self {let mut summary=Self::new();for sample in Sample::archive(text) {summary.push(0,sample);}summary.finish();summary}
 }
 
 fn render_summary(summary:&Summary) -> Result<String, &'static str> {
@@ -747,12 +722,6 @@ fn render_summary(summary:&Summary) -> Result<String, &'static str> {
         }
     }
     Ok(out)
-}
-
-/// Committed universal observations and the read-only historical archive.
-#[cfg(test)]
-pub(crate) fn read_log(install: &Path) -> Result<String, String> {
-    crate::telemetry::report_input(install)
 }
 
 /// Service-owned pruning uses the same writer boundary as profiling and legacy log rotation.
@@ -825,12 +794,6 @@ pub(crate) fn legacy_value(line: &str) -> Result<serde_json::Value, String> {
     sample.canonical()
 }
 
-#[cfg(test)]
-pub(crate) fn legacy_reports(text: &str, now: u64) -> Result<Vec<String>,String> {
-    let exported=export(text,None);let (board,moves)=render_system(text);
-    Ok(vec![render(text)?,render_stages(text)?,board,moves,exported.clone(),render_tasks(&exported)?,render_board(&exported)?,defects(text,&vec![],None,now,300)?.0,crate::requests::sources(text,now)])
-}
-
 /// § 5 `taskq profile export`: a header naming window and sample count, then one JSON line per retained observation at or after `since_ms`.
 struct Projection {header:Header,rows:[Vec<Row>;3],selected:Option<&'static str>}
 impl Projection {
@@ -848,27 +811,6 @@ impl Projection {
         }
     }
     fn finish(self)->(Header,Vec<Row>) {(self.header,self.rows.into_iter().flatten().collect())}
-}
-
-#[cfg(test)]
-fn report_rows(samples:&[Sample],since_ms:Option<u64>)->(Header,Vec<Row>) {
-    let mut projection=Projection::new(since_ms,None);for sample in samples {projection.push(0,sample.clone());}projection.finish()
-}
-
-#[cfg(test)]
-fn export(text:&str,since_ms:Option<u64>)->String {
-    let (h,rows)=report_rows(&Sample::archive(text),since_ms);
-    let mut out = serde_json::to_string(&h).unwrap() + "\n";
-    for r in rows { out += &(serde_json::to_string(&r).unwrap() + "\n"); }
-    out
-}
-
-#[cfg(test)]
-fn read_export(export: &str) -> Result<(Header, Vec<Row>), &'static str> {
-    let mut lines = export.lines();
-    let h: Header = lines.next().and_then(|l| serde_json::from_str(l).ok()).filter(|h: &Header| h.schema == EXPORT && h.columns == COLUMNS).ok_or("export header unreadable")?;
-    let rows = lines.map(|l| serde_json::from_str(l).map_err(|_| "export row unreadable")).collect::<Result<Vec<Row>, _>>()?;
-    Ok((h, rows))
 }
 
 fn window(h: &Header) -> String {
@@ -1171,21 +1113,6 @@ pub fn view(install: &Path, name: &str, since: Option<&str>) -> Result<String, S
         _ => Err(format!("unknown profile view: {name} (guide, export, tasks, board, actions, health or watch)")),
     }
 }
-
-#[cfg(test)]
-fn render(text:&str)->Result<String,&'static str> {render_summary(&Summary::fixture(text))}
-#[cfg(test)]
-fn render_stages(text:&str)->Result<String,&'static str> {render_stages_samples(&Sample::archive(text))}
-#[cfg(test)]
-fn render_system(text:&str)->(String,String) {render_system_summary(&Summary::fixture(text))}
-#[cfg(test)]
-fn unresolved(text:&str)->Result<Vec<Stage>,String> {unresolved_samples(&Sample::archive(text))}
-#[cfg(test)]
-fn defects(text:&str,live:&Live,project:Option<&str>,now:u64,ttl:u64)->Result<(String,usize),String> {defects_samples(&Sample::archive(text),live,project,now,ttl)}
-#[cfg(test)]
-fn render_tasks(text:&str)->Result<String,&'static str> {let (h,rows)=read_export(text)?;render_tasks_rows(&h,&rows)}
-#[cfg(test)]
-fn render_board(text:&str)->Result<String,&'static str> {let (h,rows)=read_export(text)?;render_board_rows(&h,&rows)}
 
 #[cfg(test)]
 #[path = "profile_tests.rs"]

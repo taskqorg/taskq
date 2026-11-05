@@ -338,16 +338,6 @@ pub fn claude_key(p: &Path) -> String { crate::platform::plain_path(p).display()
 /// The owner step for an untrusted folder that works while other Claude sessions run (#1555): Claude saves its own trust.
 pub fn trust_step(folder: &str) -> String { format!("Next: run `claude` in {folder} and accept its trust prompt; other Claude sessions keep running") }
 
-/// `service install` (#1555): the new root's trust, read only; nothing when trusted or Claude has no config here.
-pub fn trust_gap(home: &Path, root: &Path) -> Vec<String> {
-    let key = claude_key(root);
-    match trust_state(home, root) {
-        Ok(None | Some(true)) => vec![],
-        Ok(Some(false)) => vec![format!("Trust: {key} not trusted; Claude workers cannot start here"), trust_step(&key)],
-        Err(e) => vec![format!("Trust: {key} unknown (Claude config unreadable: {e})")],
-    }
-}
-
 /// Whether this host has a claude binary a worker launch would find (#2417).
 pub fn claude_installed() -> bool { super::which("claude").is_absolute() }
 

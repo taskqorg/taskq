@@ -204,7 +204,7 @@
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("taskq.json"), r#"{"board": "gitlab", "repo": "o/r"}"#).unwrap();
         let config = || -> Value { serde_json::from_str(&std::fs::read_to_string(root.join("taskq.json")).unwrap()).unwrap() };
-        let made = crate::reports::owner_act(b.as_ref(), &root, &config(), 540, &sha, "make").unwrap();
+        let made = crate::reports::owner_act_until(b.as_ref(), &root, &config(), 540, &sha, "make",None).unwrap();
         assert_eq!(made["report"]["decision"], "made", "{made}");
         assert_eq!(config()["create_claim_issue"], 541, "the claim issue is written to taskq.json and read back");
         assert_eq!(config()["repo"], "o/r", "other keys stay");
@@ -219,7 +219,7 @@
         assert!(b.comments(540).unwrap().iter().any(|c| c.body == format!("taskq: report-made {sha}\n[542]")));
         // a retry, with the written key or without it, creates nothing
         for raw in [config(), json!({"board": "gitlab", "repo": "o/r"})] {
-            let again = crate::reports::owner_act(b.as_ref(), &root, &raw, 540, &sha, "make").unwrap();
+            let again = crate::reports::owner_act_until(b.as_ref(), &root, &raw, 540, &sha, "make",None).unwrap();
             assert_eq!(again["report"]["tasks_made"], json!([542]));
             assert_eq!(issues.borrow().len(), 3);
         }

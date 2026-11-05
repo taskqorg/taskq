@@ -1041,10 +1041,10 @@ finally:
             assert!(!error.reportable, "{kind:?}");
             assert_eq!(error.to_string(), "claude: unchanged diagnostic");
             let expected=match kind {ErrorKind::PermissionDenied=>"permission",ErrorKind::TimedOut=>"timeout",ErrorKind::InvalidInput=>"invalid",_=>"other"};
-            crate::profile::take_report();
+            crate::profile::tests::take_report();
             let result=crate::profile::measure_classified("spawn",||Err::<(),_>(error),StartError::class).unwrap_err();
             assert_eq!(result.to_string(),"claude: unchanged diagnostic");
-            assert!(crate::profile::take_report().contains(&format!("{expected}:1")));
+            assert!(crate::profile::tests::take_report().contains(&format!("{expected}:1")));
         }
         assert!(StartError::io(Error::other("internal launch fault"), None).reportable);
     }

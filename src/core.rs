@@ -319,10 +319,6 @@ impl Projection {
 
 pub fn executions(n: u64, entries: &[Entry]) -> Vec<Execution> { project(n, entries, false).executions }
 
-pub fn delivered(n: u64, entries: &[Entry], attempt: u64) -> Option<u64> {
-    project(n, entries, false).delivered(attempt)
-}
-
 struct Line<'a> {
     kind: &'a str,
     args: Vec<&'a str>,

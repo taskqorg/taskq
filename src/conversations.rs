@@ -191,9 +191,6 @@ fn task(install:&Path,id:&str,text:&str,files:&[File])->Res<String> {
     }
     Ok(task)
 }
-#[cfg(test)]
-pub(crate) fn snapshot(install:&Path)->Value { snapshot_inner(install,true) }
-
 /// C2/Q-A5: summary identities never transport saved bodies of unrelated threads.
 pub(crate) fn summary(install:&Path)->Value { snapshot_inner(install,false) }
 

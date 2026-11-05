@@ -175,3 +175,9 @@ fn first_real_panic_reports_once_without_changing_panic_output_or_exit() {
     assert!(!r.to_string().contains("fixture panic"));
     fs::remove_dir_all(root).unwrap();
 }
+    pub(crate) fn take_detected() -> Vec<String> { DETECTED.with(|v| std::mem::take(&mut *v.borrow_mut())) }
+    fn report(tool: &coreq::Tool, root: &Path, setting: Option<bool>, f: &Fault, net: Option<&mut dyn Transport>) -> Outcome {
+        if coreq::incident::disabled(tool, setting) { return coreq::incident::report(tool, root, setting, f, None); }
+        if !safe(f) { return unsafe_outcome(f); }
+        coreq::incident::report(tool, root, setting, f, net)
+    }

@@ -194,10 +194,6 @@ fn pending_error(install: &Path) -> Option<String> {
     }
 }
 
-pub fn record_limit(install: &Path, rt: &str, label: &str, at: i64, until: Option<i64>) -> Result<(), String> {
-    record_windows(install, rt, label, at, &[("unknown".into(),until)])
-}
-
 /// Atomically reserve a due probe. No second project may probe this account during the bounded interval.
 /// A resume supplies its original label; a new launch selects the best-ranked available enabled account.
 pub fn claim(install: &Path, rt: &str, label: Option<&str>, now: i64, owner: &Path) -> Result<String, String> {
@@ -273,13 +269,9 @@ impl Host {
     }
 
     /// A selected account can still start: enabled, past its limit, not avoided. Ranking may have moved past it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn usable(&self, rt: &str, label: &str, now: i64) -> bool {
         self.error.is_none() && self.list(rt).iter().any(|e| e.enabled && e.label == label) && self.free(rt, label, now) && !self.usage.avoided(rt, label, now)
-    }
-
-    /// The account a new start takes: the active one, else the first enabled one; None when all are disabled.
-    pub fn pick(&self, rt: &str, now: i64) -> Option<String> {
-        self.active(rt, now)
     }
 
     /// A runtime with more than one account: failover and its hold apply; one account keeps the plain § 4 hold.
@@ -303,9 +295,6 @@ impl Host {
     pub fn off_reason(&self, rt: &str) -> &'static str {
         if self.list(rt).iter().all(|e| !e.enabled) { "every account disabled on this host" } else { "every account disabled or avoided on this host" }
     }
-
-    #[cfg(test)]
-    pub fn limit_end(&self, rt: &str, label: &str) -> Option<i64> { self.limit(rt, label).map(Limit::end) }
 
     /// Heartbeat lines of the listed runtimes: labels and state only, never an email, path or token.
     pub fn heartbeat(&self, now: i64) -> Vec<String> {

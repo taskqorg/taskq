@@ -82,12 +82,6 @@ fn launched(install: &Path, id: &str) -> Res<Request> {
     Ok(r)
 }
 
-/// D2/D3 Send: refuse while a turn runs (`working`) or a native holder has the session; otherwise persist the immutable
-/// input before the service dispatches it. The draft stays with the workspace either way.
-pub fn send(install: &Path, id: &str, input: &str, native: &Native) -> Res<()> {
-    send_op(install,id,input,None,native).map_err(|e|e.reason)
-}
-
 pub fn accepted(install:&Path,id:&str,op:&str,input:&str)->Res<bool> {
     let r=launched(install,id)?;
     let saved=turn(install,id)?;

@@ -566,4 +566,52 @@ not an event
 ","list at 1.00% stays under the 1% flag: {board}");
         assert!(board_watch(&[]).contains("unknown"));
     }
-
+    /// Transition records of this thread and their report section.
+    pub(crate) fn take_moves() -> (String, String) {
+        let text = MOVED.with(|v| std::mem::take(&mut *v.borrow_mut()));
+        let report = render_system(&text).1;
+        (text, report)
+    }
+    pub(crate) fn take_report() -> String {
+        OBSERVED.with(|v| render(&std::mem::take(&mut *v.borrow_mut())).unwrap())
+    }
+    fn append(_path:&Path,r:&Record)->std::io::Result<()> {
+        crate::telemetry::record(crate::telemetry::Sample::Operation(r.clone()))
+    }
+    /// Historical compatibility input used by the regression fixtures, never by a live producer.
+    pub(crate) fn append_line(_path: &Path, line: &str) -> std::io::Result<()> {
+        crate::telemetry::observe(line).map_err(std::io::Error::other)
+    }
+    impl Summary {
+        fn fixture(text:&str)->Self {let mut summary=Self::new();for sample in Sample::archive(text) {summary.push(0,sample);}summary.finish();summary}
+    }
+    /// Committed universal observations and the read-only historical archive.
+    pub(crate) fn read_log(install: &Path) -> Result<String, String> {
+        crate::telemetry::report_input(install)
+    }
+    pub(crate) fn legacy_reports(text: &str, now: u64) -> Result<Vec<String>,String> {
+        let exported=export(text,None);let (board,moves)=render_system(text);
+        Ok(vec![render(text)?,render_stages(text)?,board,moves,exported.clone(),render_tasks(&exported)?,render_board(&exported)?,defects(text,&vec![],None,now,300)?.0,crate::requests::tests::sources(text,now)])
+    }
+    fn report_rows(samples:&[Sample],since_ms:Option<u64>)->(Header,Vec<Row>) {
+        let mut projection=Projection::new(since_ms,None);for sample in samples {projection.push(0,sample.clone());}projection.finish()
+    }
+    fn export(text:&str,since_ms:Option<u64>)->String {
+        let (h,rows)=report_rows(&Sample::archive(text),since_ms);
+        let mut out = serde_json::to_string(&h).unwrap() + "\n";
+        for r in rows { out += &(serde_json::to_string(&r).unwrap() + "\n"); }
+        out
+    }
+    fn read_export(export: &str) -> Result<(Header, Vec<Row>), &'static str> {
+        let mut lines = export.lines();
+        let h: Header = lines.next().and_then(|l| serde_json::from_str(l).ok()).filter(|h: &Header| h.schema == EXPORT && h.columns == COLUMNS).ok_or("export header unreadable")?;
+        let rows = lines.map(|l| serde_json::from_str(l).map_err(|_| "export row unreadable")).collect::<Result<Vec<Row>, _>>()?;
+        Ok((h, rows))
+    }
+    fn render(text:&str)->Result<String,&'static str> {render_summary(&Summary::fixture(text))}
+    fn render_stages(text:&str)->Result<String,&'static str> {render_stages_samples(&Sample::archive(text))}
+    fn render_system(text:&str)->(String,String) {render_system_summary(&Summary::fixture(text))}
+    fn unresolved(text:&str)->Result<Vec<Stage>,String> {unresolved_samples(&Sample::archive(text))}
+    fn defects(text:&str,live:&Live,project:Option<&str>,now:u64,ttl:u64)->Result<(String,usize),String> {defects_samples(&Sample::archive(text),live,project,now,ttl)}
+    fn render_tasks(text:&str)->Result<String,&'static str> {let (h,rows)=read_export(text)?;render_tasks_rows(&h,&rows)}
+    fn render_board(text:&str)->Result<String,&'static str> {let (h,rows)=read_export(text)?;render_board_rows(&h,&rows)}

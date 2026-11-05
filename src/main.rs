@@ -320,11 +320,6 @@ fn project_value(root: &Path) -> Res<Value> {
     serde_json::from_str(&fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?).map_err(|e| format!("{}: {e}", p.display()))
 }
 
-#[cfg(test)]
-fn project_config(root:&Path)->Res<(Config,Value)> {
-    project_config_value(root, project_value(root)?)
-}
-
 fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
     let str_or = |k: &str, d: &str| v[k].as_str().unwrap_or(d).to_string();
     let secs = |k: &str, d: u64| v[k].as_u64().unwrap_or(d);
@@ -469,11 +464,6 @@ fn wake_read<T>(path: &Path, seen: &mut Option<String>, read: impl FnOnce() -> R
     let state = read()?;
     *seen = Some(text);
     Ok((link, state))
-}
-
-#[cfg(test)]
-fn wake_context(path: &Path, seen: &mut Option<String>) -> Res<Option<coreq::telemetry::capture::TraceContext>> {
-    wake_read(path, seen, || Ok(())).map(|(link, ())| link)
 }
 
 fn change_focus<T>(root: &Path, restrictive: bool, initialize: bool, change: impl FnOnce(&Path) -> Res<T>) -> Res<(T,String)> {
@@ -834,25 +824,6 @@ fn zip_one(name: &str, data: &[u8]) -> Res<Vec<u8>> {
     Ok([local, central, end].concat())
 }
 
-/// Test reader of a [`zip_one`] archive: the one file's name and bytes, after checking its CRC and the end record.
-#[cfg(test)]
-fn unzip_one(zip: &[u8]) -> (String, Vec<u8>) {
-    let u16_at = |i: usize| u16::from_le_bytes([zip[i], zip[i + 1]]) as usize;
-    let u32_at = |i: usize| u32::from_le_bytes(zip[i..i + 4].try_into().unwrap());
-    assert_eq!((u32_at(0), u16_at(8)), (0x0403_4b50, 8), "local header, deflate");
-    let (packed, name_len) = (u32_at(18) as usize, u16_at(26));
-    let name = String::from_utf8(zip[30..30 + name_len].to_vec()).unwrap();
-    let mut data = vec![];
-    std::io::Read::read_to_end(&mut flate2::read::DeflateDecoder::new(&zip[30 + name_len..30 + name_len + packed]), &mut data).unwrap();
-    let mut crc = flate2::Crc::new();
-    crc.update(&data);
-    assert_eq!((crc.sum(), u32_at(22) as usize), (u32_at(14), data.len()), "CRC and size");
-    let end = zip.len() - 22;
-    assert_eq!((u32_at(end), u16_at(end + 10), u32_at(end + 16) as usize), (0x0605_4b50, 1, 30 + name_len + packed), "end record");
-    assert_eq!(u32_at(30 + name_len + packed), 0x0201_4b50, "central entry");
-    (name, data)
-}
-
 /// The Evidence links `--file` will add, with a placeholder URL: the card checks them before any upload.
 fn file_stubs(b: &dyn board::Board, paths: &[String]) -> Res<Vec<String>> {
     Ok(attachment_files(paths, !b.html_downloads())?.into_iter().map(|l| format!("[{l}](https://board.invalid/file)")).collect())
@@ -1042,11 +1013,6 @@ pub fn compact(s: &str, max: usize) -> String {
 
 pub use display::age;
 
-#[cfg(test)]
-fn report(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Res<String> {
-    snapshot::read(b, cfg, raw, only).text(cfg, raw)
-}
-
 fn inbox(b: &dyn Board, root: &Path, n: u64) -> Res<String> {
     let issue = b.issue(n)?;
     let comments = b.comments(n)?;
@@ -1140,19 +1106,6 @@ fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {
     let i = b.issue(n)?;
     if i.number != n || !service::is_task(&i) { return Err("Pinned issue is not the requested trusted task".into()); }
     Ok(json!({"schema":1,"source":"board","more":false,"tasks":[closed_row(b,&i,i.closed,gitlab)]}))
-}
-
-/// Read only: use the last accepted worker's native identity, only on its recorded host.
-/// The last recorded worker of a closed task: runtime, board session id, owning host, attempt.
-fn closed_worker(b: &dyn Board, n: u64, wanted: Option<u64>) -> Res<(String, String, String, u64)> {
-    let i = b.issue(n)?;
-    if i.number != n || i.open || !service::is_task(&i) { return Err("Transcript requires a closed trusted task; refresh the project".into()); }
-    let log = entries(b,n)?;
-    let projection = core::project(n,&log,false);
-    let t = projection.changes.iter().rev().map(|(_,_,t)|t).find(|t| t.role.as_deref()==Some("worker") && t.session.is_some() && wanted.is_none_or(|a|t.attempt==Some(a))).ok_or("No recorded worker transcript for this attempt")?;
-    let (native,owner) = t.session.as_deref().unwrap_or_default().rsplit_once(' ').ok_or("Worker identity unavailable")?;
-    let (runtime,session) = native.split_once(':').ok_or("Worker session unavailable")?;
-    Ok((runtime.into(),session.into(),owner.into(),t.attempt.ok_or("Worker attempt unavailable")?))
 }
 
 /// The native session of `n`'s closed worker on this host: the board holds a job id for a remote-control launch, the
@@ -4417,24 +4370,6 @@ fn application() {
     }
 }
 
-#[cfg(test)]
-fn with_test_capture<T>(run: impl FnOnce(&coreq::telemetry::Store, &Path) -> T) -> T {
-    use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
-    use tracing_subscriber::prelude::*;
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir=std::env::temp_dir().join(format!("taskq-command-test-{}-{}",std::process::id(),NEXT.fetch_add(1,Ordering::Relaxed)));
-    fs::create_dir_all(&dir).unwrap();
-    let store=Arc::new(coreq::telemetry::Store::open(&dir.join("db")).unwrap());
-    let capture=coreq::telemetry::capture::Capture::new(store.clone(),"taskq","fixture").unwrap();
-    let result=tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()),||run(&store, &dir));
-    telemetry::settle(Duration::from_secs(30));capture.flush().unwrap();
-    drop(capture);drop(store);
-    // #1640: Windows can keep a just-closed store file busy (os error 32) for a moment; a lasting hold still fails.
-    // #1939: Linux CI saw a store file appear during removal (DirectoryNotEmpty); retry it the same way.
-    for left in (0..50).rev() {match fs::remove_dir_all(&dir) {Err(e) if left>0&&(e.raw_os_error()==Some(32)||e.kind()==std::io::ErrorKind::DirectoryNotEmpty)=>std::thread::sleep(Duration::from_millis(100)),other=>{other.unwrap();break}}}
-    result
-}
-
 /// `taskq connection status` telemetry line (docs/design/standalone-telemetry.md#status-a5); unknown stays unknown.
 fn telemetry_line(active: &Value, report: Option<&Value>) -> String {
     if !telemetry_sync::granted(active) { return format!("off (grant lacks {}; taskq enroll <url> --telemetry)", telemetry_sync::SCHEMA) }
@@ -4450,4 +4385,4 @@ fn telemetry_line(active: &Value, report: Option<&Value>) -> String {
 
 #[cfg(test)]
 #[path = "main_tests.rs"]
-mod tests;
+pub(crate) mod tests;

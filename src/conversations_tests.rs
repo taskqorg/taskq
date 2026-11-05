@@ -594,4 +594,4 @@
         let mut old=preferences(&f.0).unwrap();old.as_object_mut().unwrap().remove("conversation_sidebar");old.as_object_mut().unwrap().remove("conversation_updated");persist(&f.0,&old).unwrap();
         assert!(snapshot(&f.0)["items"][0]["updated"].is_null(),"historical drafts have unknown activity, not poll time");
     }
-
+    pub(crate) fn snapshot(install:&Path)->Value { snapshot_inner(install,true) }

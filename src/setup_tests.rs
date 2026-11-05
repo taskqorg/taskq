@@ -1,5 +1,5 @@
     use super::*;
-    use crate::runtime::owner::{claude_key, codex_thread, trust, trust_gap, trust_step};
+    use crate::runtime::owner::{claude_key, codex_thread, trust, trust_state, trust_step};
 
     fn ok(_: &Path, _: &Request) -> Launched { Launched::Job { job: "abcd1234".into(), session: None, url: None } }
     fn unknown(_: &Path, _: &Request) -> Launched { Launched::Unknown("timeout".into()) }
@@ -194,13 +194,13 @@
     fn install_reports_an_untrusted_root_and_honours_a_trusted_parent() {
         let home = tmp();
         let root = Path::new("/srv/p/new");
-        assert!(trust_gap(&home, root).is_empty(), "no Claude config: Claude is not used here");
+        assert_eq!(trust_state(&home, root), Ok(None), "no Claude config: Claude is not used here");
         fs::write(home.join(".claude.json"), r#"{"projects": {"/srv/q": {"hasTrustDialogAccepted": true}}}"#).unwrap();
-        assert_eq!(trust_gap(&home, root), ["Trust: /srv/p/new not trusted; Claude workers cannot start here".to_string(), trust_step("/srv/p/new")]);
+        assert_eq!(trust_state(&home, root), Ok(Some(false)), "another folder's trust does not cover the root");
         fs::write(home.join(".claude.json"), r#"{"projects": {"/srv/p": {"hasTrustDialogAccepted": true}}}"#).unwrap();
-        assert!(trust_gap(&home, root).is_empty(), "a trusted parent covers the root");
+        assert_eq!(trust_state(&home, root), Ok(Some(true)), "a trusted parent covers the root");
         fs::write(home.join(".claude.json"), "{").unwrap();
-        assert!(trust_gap(&home, root)[0].contains("unknown"), "unreadable config is unknown, never trusted");
+        assert!(trust_state(&home, root).is_err(), "unreadable config is unknown, never trusted");
     }
 
     // Risk (#1858): `service install` passes the canonical `\\?\C:\` root; its `//?/C:/` key missed Claude's `C:/` trust.
@@ -211,9 +211,9 @@
         fs::write(home.join(".claude.json"), r#"{"projects": {"C:/Users/a/p": {"hasTrustDialogAccepted": true}, "D:/w": {"hasTrustDialogAccepted": true}}}"#).unwrap();
         assert_eq!(claude_key(Path::new(r"\\?\C:\Users\a\p")), "C:/Users/a/p");
         assert_eq!(claude_key(Path::new(r"\\?\UNC\srv\share\p")), "//srv/share/p");
-        assert!(trust_gap(&home, Path::new(r"\\?\C:\Users\a\p")).is_empty(), "a trusted verbatim root reads trusted");
-        assert!(trust_gap(&home, Path::new(r"\\?\D:\w\child")).is_empty(), "a trusted parent of a verbatim root covers it");
-        assert_eq!(trust_gap(&home, Path::new(r"\\?\C:\Users\a\q"))[0], "Trust: C:/Users/a/q not trusted; Claude workers cannot start here");
+        assert_eq!(trust_state(&home, Path::new(r"\\?\C:\Users\a\p")), Ok(Some(true)), "a trusted verbatim root reads trusted");
+        assert_eq!(trust_state(&home, Path::new(r"\\?\D:\w\child")), Ok(Some(true)), "a trusted parent of a verbatim root covers it");
+        assert_eq!(trust_state(&home, Path::new(r"\\?\C:\Users\a\q")), Ok(Some(false)), "an untrusted verbatim root reads untrusted");
     }
     fn states(i: &Path) -> Vec<String> { all(i).unwrap().0.into_iter().map(|r| r.state).collect() }
 

@@ -34,9 +34,6 @@ fn closed_pipe(msg: &str) -> bool {
 thread_local!(static ACTIVE: Cell<bool> = const { Cell::new(false) });
 #[cfg(test)]
 thread_local!(static DETECTED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
-#[cfg(test)]
-pub fn take_detected() -> Vec<String> { DETECTED.with(|v| std::mem::take(&mut *v.borrow_mut())) }
-
 fn version(s: &str) -> bool {
     s.len() <= 64 && s.split_once('-').map_or(s, |p| p.0).split('.').count() == 3
         && s.split_once('-').map_or(s, |p| p.0).split('.').all(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
@@ -218,12 +215,5 @@ pub fn line(v: &Value) -> String {
 }
 
 #[cfg(test)]
-fn report(tool: &coreq::Tool, root: &Path, setting: Option<bool>, f: &Fault, net: Option<&mut dyn Transport>) -> Outcome {
-    if coreq::incident::disabled(tool, setting) { return coreq::incident::report(tool, root, setting, f, None); }
-    if !safe(f) { return unsafe_outcome(f); }
-    coreq::incident::report(tool, root, setting, f, net)
-}
-
-#[cfg(test)]
 #[path = "incident_tests.rs"]
-mod tests;
+pub(crate) mod tests;

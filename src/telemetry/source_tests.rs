@@ -123,7 +123,7 @@
         {let mut read=archive.prepare("SELECT retained_ms,line FROM records ORDER BY seq").unwrap();let rows=read.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).unwrap();
         for row in rows {let (received,line)=row.unwrap();expected.update(format!("{received} {} {}\n",line.split_once(' ').unwrap().0,canonical(&line).unwrap()).as_bytes());text.push_str(&line);text.push('\n');count+=1;}}
         let legacy:Option<String>=archive.query_row("SELECT text FROM legacy WHERE id=1",[],|r|r.get(0)).optional().unwrap();
-        let at=now() as u64;let reports=crate::profile::legacy_reports(&text,at).unwrap();
+        let at=now() as u64;let reports=crate::profile::tests::legacy_reports(&text,at).unwrap();
         assert_eq!(import(&mut archive,&target,&dir).unwrap(),count);let cursor=target.import_cursor(SOURCE).unwrap();let identity=state(&archive).unwrap().namespace;
         drop(archive);let mut archive=super::super::open(&dir).unwrap();assert_eq!(import(&mut archive,&target,&dir).unwrap(),0);assert_eq!(state(&archive).unwrap().namespace,identity);assert_eq!(target.import_cursor(SOURCE).unwrap(),cursor);
         let mut actual=ring::digest::Context::new(&ring::digest::SHA256);let mut restored=String::new();let mut after=0;let mut retained=0;
@@ -132,7 +132,7 @@
         }after=page["next"].as_i64().unwrap();if page["more"]==false {break;}}
         let digest=|value:ring::digest::Digest|value.as_ref().iter().map(|byte|format!("{byte:02x}")).collect::<String>();
         let expected=digest(expected.finish());let actual=digest(actual.finish());assert_eq!(expected,actual);assert_eq!(retained,count);assert_eq!(target.storage().unwrap()["pruned_count"],0);
-        let indexed=super::super::semantic::read(&coreq::telemetry::Reader::open(&common).unwrap(),super::super::semantic::KINDS,"").unwrap();assert_eq!(crate::profile::legacy_reports(&indexed,at).unwrap(),reports);assert_eq!(crate::profile::legacy_reports(&restored,at).unwrap(),reports);
+        let indexed=super::super::semantic::read(&coreq::telemetry::Reader::open(&common).unwrap(),super::super::semantic::KINDS,"").unwrap();assert_eq!(crate::profile::tests::legacy_reports(&indexed,at).unwrap(),reports);assert_eq!(crate::profile::tests::legacy_reports(&restored,at).unwrap(),reports);
         let mut preserved=ring::digest::Context::new(&ring::digest::SHA256);let mut found=0;let mut after=0;
         loop {let page=target.export(0,after,1024).unwrap();for row in page["events"].as_array().unwrap() {if original_ids.contains(row["id"].as_str().unwrap()) {preserved.update((row.to_string()+"\n").as_bytes());found+=1;}}after=page["next"].as_i64().unwrap();if page["more"]==false {break;}}
         assert_eq!(found,original_ids.len());assert_eq!(preserved.finish().as_ref(),original_hash.as_ref());

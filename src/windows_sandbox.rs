@@ -69,7 +69,7 @@ pub fn ready(root: &Path, install: &Path) -> Result<(), String> {
 pub fn remove_denied_fixture(base: &Path) -> Result<(), String> { preparation::remove_fixture(base) }
 
 #[cfg(test)]
-pub use preparation::prepared_fixture;
+pub(crate) use preparation::tests::prepared_fixture;
 
 fn restricted() -> Result<bool, String> {
     use std::ffi::c_void;
