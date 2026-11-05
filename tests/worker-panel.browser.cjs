@@ -82,10 +82,10 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    let m=await take();
    assert.deepEqual([m.attempt,m.root,m.session,m.host],[81,'fixture-alpha',undefined,undefined],'A2: the browser names the attempt, never a session or host');
    assert.match(await panel.innerText(),/Worker 81.*codex/);
-   await page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:thread,action:'transcript',state:'unknown',reason:'host other-host did not answer within 5 s'});
+   await page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:thread,action:'transcript',state:'unknown',reason:'host other-host did not answer within 15 s'});
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('did not answer'));
    const text=await panel.innerText();
-   assert.match(text,/Worker 81 unavailable: host other-host did not answer within 5 s/);
+   assert.match(text,/Worker 81 unavailable: host other-host did not answer within 15 s/);
    assert.doesNotMatch(text,/No messages|Reading session/,'A3: unknown is never shown as an empty session');
    m=await take();
    await page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:thread,action:'transcript',state:'accepted',value:{items:[{at:0,i:0,role:'assistant',text:'Remote worker line'}],start:0,end:10,size:10}});
