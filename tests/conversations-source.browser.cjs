@@ -8,7 +8,9 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
  });
  await page.getByText('Saved reading position is no longer in the transcript. Choose Latest to open the current source.',{exact:true}).waitFor();
  assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-dialogue'&&m.action==='transcript').length),1,'source loss cannot issue an automatic tail read');
- assert.equal(await page.locator('.dialogue-item').count(),0);assert.equal(await page.locator('[data-c-field=text]').inputValue(),'Independent draft');
+ assert.equal(await page.locator('.dialogue-transcript .dialogue-item').count(),0,'a missing native source stays empty until explicit Latest');
+ const original=page.locator('article[data-reading-key="owner-request:owner"]');assert.equal(await original.count(),1,'the independently identified original request remains readable');assert.match(await original.innerText(),/Original request/);assert.equal(await original.locator('.copy-block').count(),1);assert.equal(await original.locator('.block-details').count(),1);
+ assert.equal(await page.locator('[data-c-field=text]').inputValue(),'Independent draft');
  await page.locator('[data-c=latest]').click();await page.getByText('Current source text',{exact:true}).waitFor();
  assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='transcript').length),2);assert.equal(await page.locator('[data-c=latest]').count(),0);
  // #2176 A5/A2: the capability line names status, format, version and native state; a result body opens only on request and sends nothing.
