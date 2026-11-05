@@ -1,6 +1,6 @@
 //! Health checks (#2194, [host service](../docs/design/host-service.md#health-checks-2194)): per board the token
 //! permissions taskq needs, installed vs latest release, report collection, the last service error and what a worker
-//! launch needs on the host (Claude trust of the root, agentq hooks and data folder; #2300), each with one fix; the
+//! launch needs on the host (Claude trust of the root, agentq hooks and data folder, Mac Codex Git metadata; #2300, #2449), each with one fix; the
 //! heartbeat `doctor` line that publishes them; the board request that asks every host to run them now and the
 //! heartbeat `doctor-answer` line that answers it; and the `taskq doctor --hosts` host and worker rows. Nothing here
 //! prints a token, a path or a raw response body into a heartbeat or the request.
@@ -61,7 +61,7 @@ pub fn gitlab_access(token: &Result<Value, String>, project: &Result<Value, Stri
 }
 
 /// Every check id; a heartbeat `doctor` line carries only these.
-pub const IDS: [&str; 9] = ["token-issues", "token-contents", "token-pulls", "version", "reports", "service-error", "claude-trust", "agentq-hook", "agentq-data"];
+pub const IDS: [&str; 10] = ["token-issues", "token-contents", "token-pulls", "version", "reports", "service-error", "claude-trust", "agentq-hook", "agentq-data", "codex-git"];
 
 /// Title of the one open board issue that carries the `taskq doctor --hosts` request. It is labelled `taskq-host` but is
 /// no heartbeat (`service::is_host`), so hosts without health checks ignore it.
@@ -213,6 +213,14 @@ pub fn trust_item(home: &Path, root: &Path, claude: bool) -> Item {
     }
 }
 
+/// `codex-git` (#2449): a Mac Codex launch can write the project's Git metadata; `gap` is why it cannot.
+pub fn codex_git_item(gap: Option<String>) -> Item {
+    match gap {
+        None => Item::ok("codex-git", "no Mac Codex launch lacks the writable Git metadata root"),
+        Some(why) => Item::gap("codex-git", why, "`taskq service permissions --runtime codex --mode workspace --scope project`, on a root whose `.git` is a real directory"),
+    }
+}
+
 fn no_claude() -> Item { Item::ok("claude-trust", "no claude binary on this host") }
 
 /// The agentq executable name of this platform.
@@ -357,7 +365,7 @@ fn hook_files(home: Option<&Path>) -> Vec<std::path::PathBuf> {
 }
 
 /// All checks of one board; `latest` is the latest release read once per run.
-pub fn board_items(b: &dyn crate::board::Board, repo: &str, gitlab: bool, root: &Path, install: &Path, latest: &Result<String, String>) -> Vec<Item> {
+pub fn board_items(b: &dyn crate::board::Board, repo: &str, gitlab: bool, root: &Path, install: &Path, codex: &[String], latest: &Result<String, String>) -> Vec<Item> {
     let mut items = token_items(repo, gitlab, &b.access());
     let installed = crate::platform::tool(install).current().unwrap_or_else(|| crate::platform::VERSION.into());
     items.push(version_item(&installed, latest));
@@ -372,6 +380,7 @@ pub fn board_items(b: &dyn crate::board::Board, repo: &str, gitlab: bool, root: 
         None if !claude => no_claude(),
         None => Item::unknown("claude-trust", "no home folder (HOME, USERPROFILE) to read the Claude config from", "run `taskq service install` as the OS user that runs Claude"),
     });
+    items.push(codex_git_item(crate::policy::git_metadata_gaps(install, root, codex)));
     match crate::platform::agentq_root() {
         Ok(a) => {
             items.push(hook_item(&a, &hook_files(home.as_deref())));
@@ -521,6 +530,7 @@ pub fn fix(id: &str, status: &str, repo: &str, host: &str, gitlab: bool, reports
             // #2300: the heartbeat carries no paths; the host's own `taskq doctor` names the folder or hook
             _ if status == "unknown" && matches!(id, "claude-trust" | "agentq-hook" | "agentq-data") => format!("run `taskq doctor` on {host}: it names why the check failed"),
             "claude-trust" => format!("on {host}: run `claude` in the project root and accept its trust prompt (`taskq doctor` names the folder)"),
+            "codex-git" => format!("run `taskq doctor` on {host} and the grant it names: a Mac Codex launch cannot write its project's Git metadata"),
             "agentq-hook" => format!("run `taskq doctor` on {host} and the agentq command it names: its client hooks differ from the current agentq release"),
             "agentq-data" => format!("on {host}: give its OS user write access to the agentq data folder (`taskq doctor` names it)"),
             _ => format!("run `taskq doctor` on {host} and fix the named service error"),
@@ -905,6 +915,22 @@ mod tests {
         assert_eq!((row["state"].as_str(), row["gaps"][0].as_str()), (Some("gap"), Some("claude-trust")), "{row}");
         assert!(row["fix"].as_str().unwrap().contains("accept its trust prompt"), "{row}");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // Chain: Mac Codex launch -> `taskq doctor` codex-git -> heartbeat -> `--hosts` (#2449 A3). Risk: doctor read ok while
+    // Git in linked worktrees failed. Protection: a named launch is a gap with one fix, and `--hosts` names it.
+    #[test]
+    fn doctor_names_a_mac_codex_launch_without_git_metadata() {
+        assert_eq!(codex_git_item(None).status, "ok");
+        let gap = codex_git_item(Some("Mac codex legacy launch cannot write /p/.git".into()));
+        assert_eq!((gap.status, gap.text.as_str()), ("gap", "Mac codex legacy launch cannot write /p/.git"));
+        assert!(gap.fix.as_deref().unwrap().contains("--mode workspace"), "{:?}", gap.fix);
+        assert_eq!(line(7, &[gap]), "doctor 7 codex-git:gap");
+        let now = 10_000;
+        let h = Host { name: "mac".into(), version: "4.7.0".into(), updated: now - 10, doctor: Some("9900 codex-git:gap".into()), ..Default::default() };
+        let row = host_row(&h, "o/r", false, now, 120, None);
+        assert_eq!((row["state"].as_str(), row["gaps"][0].as_str()), (Some("gap"), Some("codex-git")), "{row}");
+        assert!(row["fix"].as_str().unwrap().contains("Git metadata"), "{row}");
     }
 
     // Chain: Claude config left on a host -> `taskq doctor` claude-trust -> heartbeat (#2417 A1). Risk: a Linux service
