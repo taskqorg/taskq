@@ -9,7 +9,7 @@ pub(crate) fn now()->i64 {std::time::SystemTime::now().duration_since(std::time:
 /// The per-source lock coalesces concurrent metadata/history/worker reads, without serializing other sources.
 #[derive(Default)]
 pub(crate) struct Selected {
-    entries:std::sync::Mutex<std::collections::VecDeque<(String,std::sync::Arc<std::sync::Mutex<Option<(std::time::Instant,Res<Value>)>>>)>>,
+    entries:std::sync::Mutex<std::collections::VecDeque<(String,std::sync::Arc<std::sync::Mutex<Option<(std::time::Instant,u64,Option<u64>,Res<Value>)>>>)>>,
 }
 impl Selected {
     pub(crate) fn read(&self,key:String,revision:Option<u64>,now:std::time::Instant,load:impl FnOnce()->Res<Value>)->Res<Value> {
@@ -24,14 +24,13 @@ impl Selected {
             entries.push_back((key,source.clone()));source
         };
         let mut entry=source.lock().map_err(|_|"Selected history source unavailable")?;
-        if let Some((at,value))=&*entry {
-            let ttl=if value.is_ok(){60}else{2};
-            if now.checked_duration_since(*at).is_some_and(|age|age<std::time::Duration::from_secs(ttl))
-                &&value.as_ref().map_or(true,|v|revision.is_none_or(|r|v["tasks"][0]["revision"].as_u64()==Some(r))) {return value.clone();}
+        if let Some((at,ttl,observed,value))=&*entry {
+            if now.checked_duration_since(*at).is_some_and(|age|age<std::time::Duration::from_secs(*ttl))
+                &&revision.is_none_or(|wanted|observed.map_or(value.is_err(),|actual|wanted==actual)) {return value.clone();}
         }
-        let value=load();
-        // Eight sources / 8 MiB, matching the reader's transient body budget. An oversized cold read stays uncached.
-        if value.as_ref().map_or(true,|v|v["tasks"][0]["state"]=="closed"&&v.to_string().len()<=1024*1024) {*entry=Some((now,value.clone()));}
+        let mut value=load();let ttl=if value.is_ok(){60}else{2};let observed=value.as_ref().ok().and_then(|v|v["tasks"][0]["revision"].as_u64());
+        if value.as_ref().is_ok_and(|v|v["tasks"][0]["state"]=="closed"&&v.to_string().len()>8*1024*1024) {value=Err("Selected history exceeds the 8 MiB source ceiling; open its board or retry after 60 seconds".into());}
+        if value.as_ref().map_or(true,|v|v["tasks"][0]["state"]=="closed") {*entry=Some((now,ttl,observed,value.clone()));}
         else {*entry=None;}
         value
     }
@@ -55,6 +54,19 @@ pub(crate) fn worker(value:&Value,wanted:Option<u64>)->Res<(String,String,String
 #[cfg(test)]
 mod selected_tests {
     use super::*;
+    // A4: large full folds must not silently bypass reuse, and source exhaustion must remain explicit/coalesced.
+    #[test]
+    fn selected_large_histories_reuse_or_refuse_without_uncached_board_reads() {
+        let cache=Selected::default();let now=std::time::Instant::now();
+        let value=json!({"tasks":[{"revision":71,"state":"closed","history":[{"text":"invented ".repeat(256*1024)}]}]});
+        assert!(value.to_string().len()>1024*1024);
+        assert_eq!(cache.read("large".into(),None,now,||Ok(value.clone())).unwrap(),value);
+        assert_eq!(cache.read("large".into(),Some(71),now,||panic!("large warm page repeated board HTTP")).unwrap(),value);
+        let oversized=json!({"tasks":[{"revision":72,"state":"closed","history":[{"text":"x".repeat(8*1024*1024)}]}]});
+        assert!(cache.read("oversized".into(),None,now,||Ok(oversized)).unwrap_err().contains("8 MiB"));
+        assert!(cache.read("oversized".into(),Some(72),now+std::time::Duration::from_secs(59),||panic!("source ceiling repeatedly revalidated HTTP")).is_err());
+        assert_eq!(cache.read("oversized".into(),Some(71),now+std::time::Duration::from_secs(59),||Ok(value.clone())).unwrap(),value,"a changed revision invalidates even a source-ceiling refusal");
+    }
     // A4: concurrent selected metadata/history/native pages share a full folded source, never a last-page fold.
     #[test]
     fn selected_read_coalesces_and_revalidates_revision_ttl_and_failures() {

@@ -8,6 +8,28 @@ function instance(){return conversations.create({window:{crypto:require('node:cr
 const owner={id:'owner',revision:2,title:'Retained',root:'fixture',text:'Independent unsent draft',caret:[2,4],files:[{id:'file',name:'draft.txt'}],sent:{root:'fixture',runtime:'claude',text:'Immutable submitted text',files:[{id:'sent',name:'sent.txt',hash:'a'.repeat(64)}]}};
 const initial={projects:[],conversations:{items:[owner],complete:true,catalog_epoch:2,navigation:{selected:'owner',list:'recent'}}};
 for(const [name,check]of [
+ ['#2366 receipt-tail targets and paragraph anchors do not query the older source for a missing event',()=>{
+  const p={root:'fixture',issues:'https://example.org/issues'},thread='task:'+p.issues+'/7';
+  const tail={question:{text:'Invented question'},answered:{revision:83,text:'Invented answer',source:{id:83,question:71}}};
+  for(const position of [{target:{kind:'event',id:'83'},y:0},{target:{kind:'question',revision:71},y:0},...['event:7:83','report:event:7:83:0','answer:7:83','report:answer:7:83:1','report:question:7:71:2'].map(key=>({key,y:-3}))]){
+   const api=instance(),sent=[];globalThis.ipc={postMessage:text=>sent.push(JSON.parse(text))};api.place(thread,position);
+   const task={n:7,revision:83,state:'doing',history_count:101,history_source_revision:70,history_lazy:true,history_tail:[tail]};
+   api.history(p,task,()=>[],true);const request=sent.find(m=>m.action==='history');assert(request);
+   assert.equal(request.event,undefined,JSON.stringify(position));assert.equal(request.question,undefined,JSON.stringify(position));assert.equal(request.before,100);
+   api.receive({dialogueReceipt:{...request,state:'accepted',value:{revision:70,start:99,next:100,rows:[],complete:true}}});
+   assert(!JSON.stringify(api.history(p,task,()=>[],true)).includes('Recorded questions changed'),'the prefix receipt cannot invalidate a target already in the confirmed tail');
+   assert.deepEqual(api.recovery().context.positions[thread],position,'the exact tail/paragraph position remains saved');
+  }
+  const api=instance(),sent=[];globalThis.ipc={postMessage:text=>sent.push(JSON.parse(text))};api.place(thread,{target:{kind:'event',id:'42'},y:0});api.history(p,{n:7,revision:83,history_count:101,history_source_revision:70,history_lazy:true,history_tail:[tail]},()=>[],true);assert.equal(sent[0].event,42,'an older exact target still reads its own source');
+ }],
+ ['#2366 original PM requests keep the common Copy/time/Details shell when native text happens to match',()=>{
+  const api=instance(),sent=[];globalThis.ipc={postMessage:text=>sent.push(JSON.parse(text))};const c={...structuredClone(owner),request:{created:1700000000000,session:'invented-session'}};
+  api.open(c);const request=sent.find(m=>m.action==='transcript');assert(request);
+  api.receive({dialogueReceipt:{...request,state:'accepted',value:{start:0,end:100,size:100,generation:'invented',items:[{role:'user',text:c.sent.text,at:0,i:0,updated:1700000000001}]}}});
+  const nodes=v=>Array.isArray(v)?v.flatMap(nodes):v?.props?[v,...nodes(v.props.children)]:[];
+  const original=nodes(api.transcript(c)).find(v=>v.props['data-reading-key']==='owner-request:owner');assert(original,'equal text is not an established native/request identity');
+  assert.equal(original.type,'article');assert(nodes(original).some(v=>v.props.class==='copy-block'));assert(nodes(original).some(v=>v.props.class==='block-details'));assert.match(JSON.stringify(original),/2023-11-14T22:13:20.000Z/);
+ }],
  ['#2159 leaving a hidden or loading board source retains its exact anchor',()=>{
   const thread='result:fixture/2022@'+'a'.repeat(40),position={key:'report:full:6',y:-7};let visible=true;
   const reader={parentElement:{dataset:{threadId:thread}},checkVisibility:()=>visible,querySelector:()=>null,querySelectorAll:()=>[],getBoundingClientRect:()=>({top:0}),scrollTop:0};

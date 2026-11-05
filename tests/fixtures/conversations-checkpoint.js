@@ -29,8 +29,9 @@ function taskqConversationsCheckpoint(state){
     const spacer=document.createElement('div');spacer.style.height='120px';record.previousElementSibling.prepend(spacer);record.querySelector('.block-details').open=true;
     requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
      const drift=paragraph.getBoundingClientRect().top-reader.getBoundingClientRect().top-y;
-     const value={drift,selection:getSelection().toString()===text,focus:document.activeElement===focus};
-     if(Math.abs(drift)>2||!value.selection||!value.focus)fail('anchor/focus/selection drift '+drift);
+     const sidebar=document.querySelector('.conversation-rows').getBoundingClientRect(),timingVisible=[...document.querySelectorAll('.task-timing>span')].every(n=>{const range=document.createRange();range.selectNodeContents(n);return [...range.getClientRects()].every(r=>r.left>=sidebar.left-1&&r.right<=sidebar.right+1);});
+     const value={drift,selection:getSelection().toString()===text,focus:document.activeElement===focus,timingVisible};
+     if(Math.abs(drift)>2||!value.selection||!value.focus||!timingVisible)fail('anchor/focus/selection/timing '+JSON.stringify(value));
      else post(JSON.stringify({a:'snapshot-checkpoint',state:'passed',value}));
     })));
    });

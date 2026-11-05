@@ -20,6 +20,13 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
   assert(await row.locator('[data-icon="rotate-cw"]').count());assert(await row.locator('[data-icon="openai"]').count());assert(await row.locator('[data-icon="github"]').count());
   if(surface==='tray'&&width===620&&font===16){const height=await row.locator('.tqp-task-head').evaluate(e=>Math.max(...[...e.children].map(n=>n.getBoundingClientRect().height)));assert(geometry.headHeight<=height+1,'normal row metadata remains one line: '+JSON.stringify({geometry,height}));}
   if(out&&font===16){await page.evaluate(()=>document.activeElement.blur());await page.mouse.move(0,0);await page.waitForTimeout(300);await page.screenshot({path:out+'/'+surface+'-timing-'+width+'.png'});}
+  if(surface==='workspace'&&width===1100){
+   await page.getByRole('separator',{name:'Sidebar width'}).focus();await page.keyboard.press('Home');
+   await page.evaluate(project=>{project.tasks[0].timing={};taskq.receive({projects:[project]});},structuredClone(project));
+   await page.waitForFunction(()=>document.querySelector('.task-timing')?.textContent.includes('Unknown'));
+   const clipped=await row.evaluate(e=>{const viewport=e.closest('.conversation-rows').getBoundingClientRect();return [...e.querySelectorAll('.task-timing>span')].some(n=>{const range=document.createRange();range.selectNodeContents(n);return [...range.getClientRects()].some(r=>r.left<viewport.left-1||r.right>viewport.right+1);});});
+   assert.equal(clipped,false,'Unknown timing must wrap inside the minimum sidebar, not clip at its divider');
+  }
   assert.deepEqual(errors,[]);await page.close();
  }
  console.log('PASS numbers-only timing in Home and Conversations, 14/16/18/20 px, normal/narrow widths, icons, focus and full-width title');
