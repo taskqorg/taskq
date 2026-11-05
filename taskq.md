@@ -17,7 +17,7 @@ One coherent outcome is one task, any diff size, with ≤ 1 live attempt (worker
 - **Reviewer** `R<N>`: a child of the service, spawned on demand for a result. Checks the exact candidate, then `close`, `requeue` with fixes, or `ask`. No resident supervisor session.
 - **Owner session**: a new visible session the service opens for a person (setup, tray AI request, `retro`; § 4), then owned by its runtime; any may act as PM. Authority per [shared approval boundaries](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#approval-boundaries); task-state writes use TaskQ commands. Session name `<work|review|setup> #<N> <title[:40]>`: Claude `--name`; Codex first input line.
 ### R4. Comments move the queue
-Each task-changing command appends one `taskq:` comment, projects labels and pokes the local service. Services poll the board every `poll` seconds. No sender session, timer or PM chat is on the critical path.
+Each task-changing command appends one `taskq:` comment, projects labels and pokes the local service; placement-only audits use §5 intent/completion receipts without changing the fold. Services poll the board every `poll` seconds. No sender session, timer or PM chat is on the critical path.
 ### R5. Completion is written to the task
 Result SHA, checks, questions and blockers go to the issue: `result`, `ask`, `requeue` or `later`; evidence follows [specq verification][vf].
 ### R6. Human report
@@ -171,6 +171,7 @@ A running service records unrecorded board request counts to telemetry every 4 m
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
 Owner-only `taskq reroute --from <rt> --to <rt>` changes strict pins only on open ready tasks without unresolved execution, never a live attempt or host policy, under a board routing fence and one exclusive writer claim; reports only readback; unknown keeps the fence: [detail](docs/design/commands.md#runtime-reroute).
+`taskq unpin N --host H --revision R --op-id ID` clears only the named host label for future admission; owner/PM only, preserving active execution and all other placement (§5 [detail](docs/design/commands.md#host-unpin)). Add output names requested placement versus host defaults (R2/R9/R12).
 Command syntax and effect, op ids, revisions, receipts, task-write acknowledgements and other formats: [commands][cm].
 `taskq pm [--every 3m] [--project P..]` and `taskq pm stop` read nothing and print the exact instructions a session follows to turn manager mode on or off: standing prompt, recurring timer and each tick's steps. TaskQ owns the text; a surface (PilotQ, Claude Code) only runs it, and every tick reads it afresh. Tick rules follow the [PM runbook](docs/design/pm-runbook.md).
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each; a compact one links its full diagnostic in `.taskq/cli-errors.log`, else keeps raw output (R12).

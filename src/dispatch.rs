@@ -9,6 +9,56 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// §5 host placement is independent of execution ownership. Audit comments never fold as transitions.
+pub fn unpin(b: &dyn Board, n: u64, host: &str, op: &Op, child: bool) -> Receipt {
+    let submitted=std::cell::Cell::new(false);
+    let run = || -> Res<Receipt> {
+        if child { return Err("only the owner or PM can clear host placement".into()); }
+        let id=op.id.as_deref().filter(|s|!s.is_empty()&&!s.contains(char::is_whitespace)).ok_or("unpin requires --op-id")?;
+        let rev=op.revision.ok_or("unpin requires --revision")?;
+        if n==0 || host.is_empty() || host.starts_with("host-") || host.contains(',') || host.contains(char::is_whitespace) {return Err("unpin needs one task and the exact host name without host-".into());}
+        let key=format!("host-unpin-op: {id}");
+        let input=format!("taskq: host-unpin\n{}\n{key}",json!({"task":n,"url":b.url(n),"host":host,"revision":rev}));
+        let comments=b.comments(n)?;
+        let prior=comments.iter().filter(|c|c.trusted&&!c.edited&&c.body.lines().last()==Some(key.as_str())).min_by_key(|c|c.id);
+        if let Some(prior)=prior {
+            if prior.body!=input {return Err("unpin operation ID already names different input".into());}
+            let done=format!("taskq: host-unpinned {}",prior.id);
+            if let Some(state)=comments.iter().filter(|c|c.trusted&&!c.edited).find_map(|c| c.body.strip_prefix(&format!("{done}\n")).and_then(|s|serde_json::from_str::<State>(s).ok())) {
+                return Ok(Receipt {reason:"host pin cleared; active attempt preserved".into(),..Receipt::accepted(n,op,state,rev)});
+            }
+            return Ok(Receipt::new(n,op,"unknown","unpin intent exists without completion; removal will not be replayed","Read the task before issuing a new operation."));
+        }
+        let (issue,task,_)=current(b,n)?;
+        let log=entries(b,n)?;
+        if core::revision(n,&log)!=rev {return Ok(Receipt::new(n,op,"stale","task revision changed; no placement changed","Read taskq inbox and retry with its revision."));}
+        if !issue.open || !issue.trusted || !issue.labels.iter().any(|l|l==service::TASK_LABEL) {return Err("unpin requires an open trusted TaskQ task".into());}
+        let label=format!("host-{host}");
+        if !issue.labels.contains(&label) {return Err("named host pin is absent; no placement changed".into());}
+        submitted.set(true);
+        let intent=b.comment(n,&input)?;
+        let unknown=|reason: &str|Receipt::new(n,op,"unknown",reason,"Read the task; retry only with the same operation ID.");
+        let fresh=b.comments(n)?;
+        if fresh.iter().filter(|c|c.trusted&&!c.edited&&c.body.lines().last()==Some(key.as_str())).min_by_key(|c|c.id).map(|c|c.id)!=Some(intent) {
+            return Ok(unknown("another writer owns this unpin intent"));
+        }
+        if core::revision(n,&entries(b,n)?)!=rev {return Ok(unknown("task changed after unpin intent; no label write"));}
+        // Removal is scoped to one exact label; never replace the issue label set or touch execution state.
+        if b.labels(n,&[],std::slice::from_ref(&label)).is_err() {return Ok(unknown("host removal outcome unknown"));}
+        let (got,after,_)=current(b,n)?;
+        let mut expected=issue.labels.clone();expected.retain(|l|l!=&label);expected.sort();
+        let mut actual=got.labels.clone();actual.sort();
+        if expected!=actual || got.body!=issue.body || serde_json::to_value(&after).map_err(|e|e.to_string())?!=serde_json::to_value(&task).map_err(|e|e.to_string())? || entries(b,n)?.iter().filter(|e|e.id!=intent).map(|e|(&e.id,&e.body)).collect::<Vec<_>>()!=log.iter().map(|e|(&e.id,&e.body)).collect::<Vec<_>>() {
+            return Ok(unknown("placement or attempt readback changed; inspect task"));
+        }
+        let done=format!("taskq: host-unpinned {intent}\n{}",serde_json::to_string(&task.state).map_err(|e|e.to_string())?);
+        let receipt=b.comment(n,&done)?;
+        if !b.comments(n)?.iter().any(|c|c.id==receipt&&c.trusted&&!c.edited&&c.body==done) {return Ok(unknown("unpin receipt readback unknown"));}
+        Ok(Receipt {reason:"host pin cleared; active attempt preserved".into(),..Receipt::accepted(n,op,task.state,rev)})
+    };
+    run().unwrap_or_else(|e|if submitted.get(){Receipt::new(n,op,"unknown",e,"Read the task; retry only with the same operation ID.")}else{Receipt::rejected(n,op,e)})
+}
+
 /// Whether a `Depends on` issue of `body` or the worker park's blocker in `log` is not done (§ 1, § 2); an unreadable
 /// one counts as not done.
 pub fn deps_open(b: &dyn Board, n: u64, body: &str, log: &[Entry]) -> bool {
@@ -901,6 +951,44 @@ pub fn recover(b: &dyn Board, root: &Path, rows: &[Row]) -> Vec<Receipt> {
 
 #[cfg(test)]
 mod tests {
+    // §5/R2: host removal must not replace active ownership; stale/worker/replay paths must never mutate it.
+    #[test]
+    fn host_unpin_preserves_ready_and_active_attempts_and_fences_writes() {
+        use crate::board::{Board, Fake};
+        for active in [false,true] {
+            let b=Fake::default();
+            let n=b.create("T","unchanged body",&["taskq".into(),"host-invented".into(),"run-codex".into(),"code".into()]).unwrap();
+            if active {
+                let attempt=b.comment(n,"taskq: spawn worker codex:invented-session invented").unwrap();
+                b.comment(n,&format!("taskq: accepted {attempt} attempt {attempt}\nop-id: accept-{attempt}")).unwrap();
+            }
+            let log=super::entries(&b,n).unwrap();
+            let rev=crate::core::revision(n,&log);
+            let op=super::Op{id:Some("invented-unpin".into()),revision:Some(rev)};
+            let before=super::current(&b,n).unwrap();
+            let count=b.comments(n).unwrap().len();
+            assert_eq!(super::unpin(&b,n,"invented",&op,true).outcome,"rejected");
+            assert_eq!(super::unpin(&b,n,"invented",&super::Op{revision:Some(rev+1),..op.clone()},false).outcome,"stale");
+            assert_eq!(b.comments(n).unwrap().len(),count,"refusals write nothing");
+            assert!(super::unpin(&b,n,"invented",&op,false).ok());
+            let (got,task,_)=super::current(&b,n).unwrap();
+            assert_eq!(got.body,before.0.body);
+            assert_eq!(got.labels,vec!["taskq","run-codex","code"]);
+            assert_eq!(serde_json::to_value(task).unwrap(),serde_json::to_value(before.1).unwrap());
+            let count=b.comments(n).unwrap().len();
+            assert!(super::unpin(&b,n,"invented",&op,false).ok());
+            assert_eq!(b.comments(n).unwrap().len(),count,"repeat writes nothing");
+            assert_eq!(super::unpin(&b,n,"other",&op,false).outcome,"rejected");
+            assert_eq!(b.comments(n).unwrap().len(),count);
+            let fresh=super::Op{id:Some("incomplete".into()),revision:Some(rev)};
+            let input=format!("taskq: host-unpin\n{}\nhost-unpin-op: incomplete",serde_json::json!({"task":n,"url":b.url(n),"host":"invented","revision":rev}));
+            b.comment(n,&input).unwrap();
+            let count=b.comments(n).unwrap().len();
+            assert_eq!(super::unpin(&b,n,"invented",&fresh,false).outcome,"unknown");
+            assert_eq!(b.comments(n).unwrap().len(),count,"interrupted intent never replays");
+        }
+    }
+
     use super::*;
     use crate::board::Fake;
 

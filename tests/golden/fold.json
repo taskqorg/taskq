@@ -1,4 +1,9 @@
 [
+  {"name": "host placement audits preserve an active attempt", "entries": [
+   {"id": 10, "body": "taskq: spawn worker codex:s1 invented"},
+   {"id": 11, "body": "taskq: host-unpin\nhost-unpin-op: invented"},
+   {"id": 12, "body": "taskq: host-unpinned 11"}
+  ], "expect": {"state": "doing", "attempt": 10, "role": "worker", "session": "codex:s1 invented"}},
   {"name": "new task is ready", "entries": [], "expect": {"state": "ready"}},
   {"name": "open dependency waits", "deps_open": true, "entries": [], "expect": {"state": "waiting"}},
   {"name": "plain comments and unknown kinds are ignored", "entries": [
