@@ -20,6 +20,8 @@ unsafe extern "system" {
     fn Thread32Next(snapshot:Handle,entry:*mut Thread)->i32;
     fn OpenThread(access:u32,inherit:i32,tid:u32)->Handle;
     fn GetProcessIdOfThread(thread:Handle)->u32;
+    fn GetExitCodeProcess(process:Handle,code:*mut u32)->i32;
+    fn TerminateProcess(process:isize,code:u32)->i32;
     fn ResumeThread(thread:Handle)->u32;
     fn GetCurrentProcessId()->u32;
     fn Process32FirstW(snapshot:Handle,entry:*mut ProcessEntry)->i32;
@@ -55,6 +57,19 @@ const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE:u32=0x2000;
 #[repr(C)]
 #[derive(Default)]
 struct Accounting {user:i64,kernel:i64,period_user:i64,period_kernel:i64,faults:u32,total:u32,active:u32,terminated:u32}
+
+fn new_job()->Result<(String,OwnedHandle),StartError> {
+    let key=format!("job-kill:{}",super::uuid());let wide=name(&key)?;
+    let raw=unsafe {CreateJobObjectW(std::ptr::null_mut(),wide.as_ptr())};
+    let error=io::Error::last_os_error();let collision=error.raw_os_error()==Some(183);
+    let job=owned(raw,error)?;
+    if collision {return Err("native job identity already exists; no process started".into());}
+    let limits=ExtendedLimits {flags:JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,..ExtendedLimits::default()};
+    if unsafe {SetInformationJobObject(job.as_raw_handle(),9,&limits,std::mem::size_of::<ExtendedLimits>() as u32)}==0 {
+        return Err(format!("native job kill-on-close unavailable; no process started: {}",io::Error::last_os_error()).into());
+    }
+    Ok((key,job))
+}
 
 fn name(scope:&str)->Result<Vec<u16>,String> {
     let (key,_)=crate::data::job_scope(scope).ok_or("native job identity invalid")?;
@@ -198,53 +213,57 @@ pub fn normal_scheduling()->Result<Option<String>,String> {raise_scheduling(unsa
 
 pub struct Execution {
     members:std::collections::BTreeMap<u32,OwnedHandle>,
+    launcher:Option<OwnedHandle>,
     child:Option<Child>,native:Option<coreq::process::Identity>,key:String,job:Option<OwnedHandle>,
     assigned:bool,scope_known:bool,terminal:Option<i32>,fault:Option<String>,cancelled:bool,
 }
 impl Execution {
-    pub fn spawn(command:&mut Command)->Result<Self,StartError> {
-        let key=format!("job-kill:{}",super::uuid());let wide=name(&key)?;
-        let raw=unsafe {CreateJobObjectW(std::ptr::null_mut(),wide.as_ptr())};
-        let error=io::Error::last_os_error();let collision=error.raw_os_error()==Some(183);
-        let job=owned(raw,error)?;
-        if collision {return Err("native job identity already exists; no process started".into());}
-        // #2266: once the last handle closes (service and launcher both gone) Windows ends every member, so a vanished name proves exit.
-        let limits=ExtendedLimits {flags:JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,..ExtendedLimits::default()};
-        if unsafe {SetInformationJobObject(job.as_raw_handle(),9,&limits,std::mem::size_of::<ExtendedLimits>() as u32)}==0 {
-            return Err(format!("native job kill-on-close unavailable; no process started: {}",io::Error::last_os_error()).into());
-        }
-        // Assignment precedes all user code. No breakaway flag is set.
-        let child=command.creation_flags(0x08000004).spawn().map_err(|e|StartError::io(e,None))?;
-        let observed=coreq::process::identity(child.id());
-        let native=observed.as_ref().ok().and_then(Clone::clone);
-        let mut execution=Self {members:std::collections::BTreeMap::new(),child:Some(child),native,key,job:Some(job),assigned:false,scope_known:true,terminal:None,fault:None,cancelled:false};
-        let prepared=(|| {
-            if execution.native.is_none() {return Err(format!("suspended native identity unavailable: {observed:?}"));}
-            if unsafe {AssignProcessToJobObject(execution.job.as_ref().unwrap().as_raw_handle(),execution.child.as_ref().unwrap().as_raw_handle())}==0 {return Err(io::Error::last_os_error().to_string());}
-            execution.assigned=true;
-            // Kernel association keeps the object alive, but only an open handle preserves its name.
-            let mut remote=std::ptr::null_mut();
-            if unsafe {DuplicateHandle(GetCurrentProcess(),execution.job.as_ref().unwrap().as_raw_handle(),execution.child.as_ref().unwrap().as_raw_handle(),&mut remote,4|8,0,0)}==0 {return Err(io::Error::last_os_error().to_string());}
-            resume(execution.child.as_ref().unwrap())
-        })();
-        match prepared {
-            Ok(1)=>Ok(execution),
-            Ok(count)=>{execution.scope_known=false;execution.fault=Some(format!("native thread resume count {count}; scope unknown; inspect original execution before release"));Ok(execution)},
-            Err(reason)=>{
-                let cleanup=execution.kill();let until=Instant::now()+Duration::from_secs(2);
-                while Instant::now()<until {
-                    if execution.exited().is_ok_and(|ended|ended.is_some()) {return Err(format!("native setup failed before resume; child cleanup confirmed: {reason}").into());}
-                    std::thread::sleep(Duration::from_millis(10));
-                }
-                execution.fault=Some(format!("native setup failed; cleanup unconfirmed: {reason}; stop={cleanup:?}"));Ok(execution)
-            },
-        }
+    /// AgentQ owns the child handle; TaskQ keeps its exact native scope before allowing user code.
+    pub(super) fn launch_hooks(process:&mut agentq_runtime::agent::Process)->Result<std::sync::Arc<std::sync::Mutex<Option<Self>>>,StartError> {
+        let (key,job)=new_job()?;
+        let scope=std::sync::Arc::new(std::sync::Mutex::new(Some(Self {members:Default::default(),launcher:None,child:None,native:None,key,job:Some(job),assigned:false,scope_known:true,terminal:None,fault:None,cancelled:false})));
+        let configure=process.configure.take();
+        process.configure=Some(std::sync::Arc::new(move|command| {
+            if let Some(configure)=&configure {configure(command);}
+            command.creation_flags(0x08000004);
+        }));
+        let target=scope.clone();
+        process.spawned=Some(std::sync::Arc::new(move|child| {
+            let mut target=target.lock().unwrap_or_else(|e|e.into_inner());let scope=target.as_mut().unwrap();
+            let prepared=(||->Result<u32,String> {
+                let mut handle=std::ptr::null_mut();
+                if unsafe {DuplicateHandle(GetCurrentProcess(),child.as_raw_handle(),GetCurrentProcess(),&mut handle,0,0,2)}==0 {return Err(io::Error::last_os_error().to_string());}
+                scope.launcher=Some(owned(handle,io::Error::last_os_error())?);
+                scope.native=coreq::process::identity(child.id()).map_err(|e|e.to_string())?;
+                if scope.native.is_none() {return Err("suspended native identity unavailable".into());}
+                if unsafe {AssignProcessToJobObject(scope.job.as_ref().unwrap().as_raw_handle(),child.as_raw_handle())}==0 {return Err(io::Error::last_os_error().to_string());}
+                scope.assigned=true;
+                let mut remote=std::ptr::null_mut();
+                if unsafe {DuplicateHandle(GetCurrentProcess(),scope.job.as_ref().unwrap().as_raw_handle(),child.as_raw_handle(),&mut remote,4|8,0,0)}==0 {return Err(io::Error::last_os_error().to_string());}
+                resume(child)
+            })();
+            match prepared {
+                Ok(1)=>{},
+                Ok(count)=>{scope.scope_known=false;scope.fault=Some(format!("native thread resume count {count}; scope unknown; inspect original execution before release"));},
+                Err(reason)=>{
+                    let cleanup=scope.kill();let until=Instant::now()+Duration::from_secs(2);
+                    while Instant::now()<until {
+                        if scope.exited().is_ok_and(|ended|ended.is_some()) {return Err(format!("native setup failed before resume; child cleanup confirmed: {reason}"));}
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    scope.fault=Some(format!("native setup failed; cleanup unconfirmed: {reason}; stop={cleanup:?}"));
+                },
+            }
+            // A partial setup is retained for observation, never returned as a no-start launch error.
+            Ok(())
+        }));
+        Ok(scope)
     }
     /// #2266: a vanished kill-on-close scope whose launcher is gone (checked in `open`) is an ended execution.
     pub fn recover(native:coreq::process::Identity,key:&str)->Result<Self,String> {
         if let Some(scope)=Self::open(native.clone(),key)? {return Ok(scope);}
         crate::data::missing_scope_exit(key)?;
-        Ok(Self {members:std::collections::BTreeMap::new(),child:None,native:Some(native),key:key.into(),job:None,assigned:true,scope_known:true,terminal:Some(-1),fault:None,cancelled:false})
+        Ok(Self {members:std::collections::BTreeMap::new(),launcher:None,child:None,native:Some(native),key:key.into(),job:None,assigned:true,scope_known:true,terminal:Some(-1),fault:None,cancelled:false})
     }
     pub fn open(native:coreq::process::Identity,key:&str)->Result<Option<Self>,String> {
         let wide=name(key)?;
@@ -262,7 +281,7 @@ impl Execution {
             if member==0 {return Err("native launcher does not belong to recorded job".into());}
         }
         if job.is_none() {return Ok(None);}
-        Ok(Some(Self {members:std::collections::BTreeMap::new(),child:None,native:Some(native),key:key.into(),job,assigned:true,scope_known:true,terminal:None,fault:None,cancelled:false}))
+        Ok(Some(Self {members:std::collections::BTreeMap::new(),launcher:None,child:None,native:Some(native),key:key.into(),job,assigned:true,scope_known:true,terminal:None,fault:None,cancelled:false}))
     }
 }
 impl Proc for Execution {
@@ -273,6 +292,11 @@ impl Proc for Execution {
         if self.terminal.is_some() {return Ok(self.terminal);}
         if !self.scope_known {return Err(self.fault.clone().unwrap_or("native execution scope unknown".into()));}
         let root=if let Some(child)=self.child.as_mut() {child.try_wait().map_err(|e|e.to_string())?.map(|s|s.code().unwrap_or(-1))}
+            else if let Some(launcher)=&self.launcher {match unsafe {WaitForSingleObject(launcher.as_raw_handle(),0)} {
+                258=>None,
+                0=>{let mut code=0;if unsafe {GetExitCodeProcess(launcher.as_raw_handle(),&mut code)}==0 {return Err(io::Error::last_os_error().to_string());}Some(code as i32)},
+                _=>return Err(io::Error::last_os_error().to_string()),
+            }}
             else {let native=self.native_identity()?;coreq::process::identity(native.pid).map_err(|e|e.to_string())?.filter(|id|id==&native).is_none().then_some(-1)};
         if let Some(job)=&self.job {members(job,&mut self.members)?;}
         let members=self.job.as_ref().map(active).transpose()?.unwrap_or(0);
@@ -285,6 +309,8 @@ impl Proc for Execution {
         let result=if self.assigned {
             let job=self.job.as_ref().ok_or("native job unavailable; termination unknown")?;
             if unsafe {TerminateJobObject(job.as_raw_handle(),1)}==0 {Err(io::Error::last_os_error().to_string())} else {Ok(())}
+        } else if let Some(launcher)=&self.launcher {
+            if unsafe {TerminateProcess(launcher.as_raw_handle() as isize,1)}==0 {Err(io::Error::last_os_error().to_string())} else {Ok(())}
         } else {
             self.child.as_mut().ok_or("native launcher handle missing")?.kill().map_err(|e|e.to_string())
         };

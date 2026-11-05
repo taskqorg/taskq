@@ -110,3 +110,37 @@
             assert_eq!(error,io::Error::from_raw_os_error(5).to_string(),"method telemetry must not replace the failing operation's native error");
         });
     }
+
+// Native process instruments retain the file-stdin launch without a model turn.
+impl Execution {
+    pub fn spawn(command:&mut Command)->Result<Self,StartError> {
+        // #2266: once the last handle closes (service and launcher both gone) Windows ends every member, so a vanished name proves exit.
+        let (key,job)=new_job()?;
+        // Assignment precedes all user code. No breakaway flag is set.
+        let child=command.creation_flags(0x08000004).spawn().map_err(|e|StartError::io(e,None))?;
+        let observed=coreq::process::identity(child.id());
+        let native=observed.as_ref().ok().and_then(Clone::clone);
+        let mut execution=Self {members:std::collections::BTreeMap::new(),launcher:None,child:Some(child),native,key,job:Some(job),assigned:false,scope_known:true,terminal:None,fault:None,cancelled:false};
+        let prepared=(|| {
+            if execution.native.is_none() {return Err(format!("suspended native identity unavailable: {observed:?}"));}
+            if unsafe {AssignProcessToJobObject(execution.job.as_ref().unwrap().as_raw_handle(),execution.child.as_ref().unwrap().as_raw_handle())}==0 {return Err(io::Error::last_os_error().to_string());}
+            execution.assigned=true;
+            // Kernel association keeps the object alive, but only an open handle preserves its name.
+            let mut remote=std::ptr::null_mut();
+            if unsafe {DuplicateHandle(GetCurrentProcess(),execution.job.as_ref().unwrap().as_raw_handle(),execution.child.as_ref().unwrap().as_raw_handle(),&mut remote,4|8,0,0)}==0 {return Err(io::Error::last_os_error().to_string());}
+            resume(execution.child.as_ref().unwrap())
+        })();
+        match prepared {
+            Ok(1)=>Ok(execution),
+            Ok(count)=>{execution.scope_known=false;execution.fault=Some(format!("native thread resume count {count}; scope unknown; inspect original execution before release"));Ok(execution)},
+            Err(reason)=>{
+                let cleanup=execution.kill();let until=Instant::now()+Duration::from_secs(2);
+                while Instant::now()<until {
+                    if execution.exited().is_ok_and(|ended|ended.is_some()) {return Err(format!("native setup failed before resume; child cleanup confirmed: {reason}").into());}
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                execution.fault=Some(format!("native setup failed; cleanup unconfirmed: {reason}; stop={cleanup:?}"));Ok(execution)
+            },
+        }
+    }
+}

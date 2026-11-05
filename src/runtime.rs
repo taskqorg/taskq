@@ -10,6 +10,12 @@ use std::process::{Child, Command};
 use agentq_runtime::agent::NativeSpec;
 
 mod table;
+mod launch;
+#[cfg(test)]
+#[path = "runtime/native_process_tests.rs"]
+mod native_fixture;
+#[cfg(test)]
+pub use native_fixture::{command, start_command, start_file};
 pub use table::*;
 use table::{ADAPTERS, OTHER};
 
@@ -717,22 +723,6 @@ pub(crate) fn executable(bin: PathBuf, access: &crate::policy::Effective, env: &
 pub(crate) fn cli(rt: &str, access: &crate::policy::Effective, env: &Env) -> Result<Command, String> {
     let a = of(rt);
     executable(if a.has(Cap::SandboxArgs) { agent(rt)?.executable(None)? } else { which(a.bin) }, access, env)
-}
-
-pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Result<Command, String> {
-    let codex = access.codex.as_deref().unwrap_or(env.codex);
-    let mode = access.claude.as_deref().unwrap_or(env.permission_mode);
-    let build = build_cache_for(&l.rt, access, env);
-    let a = of(&l.rt);
-    let args: Vec<std::ffi::OsString> = if a.has(Cap::RemoteControl) {
-        ["--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l, env.jobs, build.as_deref())].map(Into::into).to_vec()
-    } else if a.has(Cap::SandboxArgs) { codex.iter().map(Into::into).collect() }
-    else if a.has(Cap::Grant) && access.refused.is_none() && matches!(access.mode.as_str(), "workspace" | "full") {
-        vec!["--dangerously-skip-permissions".into()]
-    } else { vec![] };
-    let mut c = agent(&l.rt)?.command(cli(&l.rt, access, env)?, &optimized(&l.rt, spec(env, l, env.root.into(), args))?)?;
-    if let Some(p) = build { c.env("RUSTC_WRAPPER", p); }
-    Ok(c)
 }
 
 /// The AgentQ `agent` turn of launch `l` (§ 8 Spawn and resume): TaskQ's attempt variables, board secrets, compile
@@ -1551,22 +1541,6 @@ impl std::fmt::Display for StartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.message.fmt(f) }
 }
 
-/// Prepare stdin before spawn: a child that never reads cannot block its execution owner.
-pub fn start_command(command: &mut Command, root: &Path, text: &str) -> Result<Box<dyn Proc>, StartError> {
-    coreq::telemetry::capture::operation("runtime.launch", || {
-        let (path, _input) = turn_input(root, text, None).map_err(StartError::from)?;
-        let input = File::open(path).map_err(|e| StartError::io(e, None))?;
-        start_file(command,input)
-    }, |_| "launch")
-}
-
-fn start_file(command:&mut Command,input:File)->Result<Box<dyn Proc>,StartError> {
-    coreq::telemetry::capture::inherit_context(command);
-    command.stdin(input);
-    #[cfg(windows)] {windows_process::Execution::spawn(command).map(|child|Box::new(child) as Box<dyn Proc>)}
-    #[cfg(not(windows))] {command.spawn().map(|child|Box::new(child) as Box<dyn Proc>).map_err(|e|StartError::io(e,None))}
-}
-
 pub fn acceptance_action(rt:&str)->&'static str {
     if of(rt).has(Cap::PassiveWriter) {"input acceptance unknown; inspect the pending input in Codex; let any active turn finish before closing that thread; reconcile acceptance before retry"}
     else {"input acceptance unknown; reconcile native input"}
@@ -1654,14 +1628,9 @@ pub fn rules_line(log: &Path, phase: &str, text: &str) -> std::io::Result<()> {
 }
 
 fn start(env: &Env, l: &Launch, log: &Path, text: &str, access: &crate::policy::Effective) -> Result<Box<dyn Proc>, StartError> {
-    std::fs::create_dir_all(log.parent().unwrap()).map_err(|e| StartError::io(e, None))?;
-    let out = File::options().create(true).append(true).open(log).map_err(|e| StartError::io(e, None))?;
-    let err = out.try_clone().map_err(|e| StartError::io(e, None))?;
-    let mut c = command(env, l, access).map_err(StartError::from)?;
-    let text = stdin_text(&l.rt, text);
     if of(&l.rt).has(Cap::PassiveWriter) && l.task>0 && l.resume.is_some() {
-        let (path,_input)=turn_input(env.root,&text,Some(l))?;
-        bind_input(log,l,&path,&text,serde_json::json!({"session":l.session}))?;
+        let (path,_input)=turn_input(env.root,text,Some(l))?;
+        bind_input(log,l,&path,text,serde_json::json!({"session":l.session}))?;
         if let Some(home)=crate::runtime::accounts::log_home(of(&l.rt).bin,log).or_else(codex_home) {
             match app_control::release_passive_writer(&home,env.root,&l.session) {
                 app_control::PassiveWriterOutcome::Absent=>{},
@@ -1669,12 +1638,8 @@ fn start(env: &Env, l: &Launch, log: &Path, text: &str, access: &crate::policy::
                 app_control::PassiveWriterOutcome::Retained(reason)=>log!("#{} attempt {} kept Codex writer lock for {}: {reason}",l.task,l.attempt,l.session),
             }
         }
-        return coreq::telemetry::capture::operation("runtime.launch",|| {
-            let input=File::open(path).map_err(|e|StartError::io(e,None))?;
-            start_file(c.stdout(out).stderr(err),input)
-        },|_|"launch");
     }
-    start_command(c.stdout(out).stderr(err), env.root, &text)
+    coreq::telemetry::capture::operation("runtime.launch",|| launch::start(env,l,log,text,access),|_|"launch")
 }
 
 /// The agy streaming protocol carries one JSON user event, including the literal brief.
@@ -1985,19 +1950,12 @@ impl ClaudeTurn {
             if mode != permission_mode { return Err("Claude saved permission mode differs; a new attempt is required".into()); }
         }
         std::fs::create_dir_all(log.parent().ok_or("missing log directory")?).map_err(|e| e.to_string())?;
-        let mut c = executable(which(of(CLAUDE).bin), access, env)?;
         let (input, input_file, path) = claude_input(&root, text, Some(l))?;
         bind_input(log,l,&path,&input,serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}))?;
-        let args = ["--settings", &compact_settings(&root, env.install, l, env.jobs, build_cache_for(&l.rt, access, env).as_deref()), "--name", &session_name(l), "--remote-control", &session_name(l), "--permission-mode", permission_mode];
-        let mut spec = optimized(&l.rt, spec(env, l, root.clone(), args.map(Into::into).to_vec()))?;
-        if l.role == "operator" {
-            for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"] { c.env_remove(k); }
-            spec.env.retain(|(k, _)| !["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"].iter().any(|r| k == r));
-        }
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),
             announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, handed:false,released:false, launch_error:None,
             resumed: l.resume.is_some().then(std::time::Instant::now), lost: None };
-        let out=agent(&l.rt)?.background_launch(c, &spec, &turn.input, std::time::Duration::from_secs(30))?;
+        let out=launch::background(env, l, log, &turn.input, access)?;
         turn.finish_launch(out)?;
         Ok(turn)
     }
