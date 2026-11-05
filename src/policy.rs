@@ -2,6 +2,7 @@
 //! task text and board answers never grant; legacy `taskq.json` flags are a request, never a grant
 //! ([permission authority](https://github.com/taskqorg/specq/blob/main/engineering/permission-authority.md)).
 
+use crate::runtime::Cap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -176,7 +177,7 @@ fn writable(mode: &str, h: &Host) -> Vec<PathBuf> {
 /// The effective access of `rt` in this project (§ 8 Access). A project grant replaces the host default for its root.
 pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_mode: &str, codex: &[String]) -> Effective {
     let a = crate::runtime::of(rt);
-    let requested = if a.has("grant") { "native runtime defaults; operator grant required".into() } else if !a.has("sandbox-args") { format!("--permission-mode {permission_mode}") } else if codex.is_empty() { "codex defaults".into() } else { codex.join(" ") };
+    let requested = if a.has(Cap::Grant) { "native runtime defaults; operator grant required".into() } else if !a.has(Cap::SandboxArgs) { format!("--permission-mode {permission_mode}") } else if codex.is_empty() { "codex defaults".into() } else { codex.join(" ") };
     let mut e = Effective { runtime: rt.into(), requested, grant: "none".into(), mode: "legacy".into(), enforcement: String::new(), profile: None, linux: false, windows: false, claude: None, codex: None, refused: None };
     let p = match policy {
         Ok(p) => p,
@@ -188,13 +189,13 @@ pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_m
     };
     let root = canon(h.root).display().to_string();
     let g = p.grants.iter().find(|g| g.runtime == rt && g.project.as_deref() == Some(root.as_str())).or_else(|| p.grants.iter().find(|g| g.runtime == rt && g.project.is_none()));
-    let mac = h.os == "macos" && !a.has("app-turn"); // an app turn is no child of the service: nothing to wrap
+    let mac = h.os == "macos" && !a.has(Cap::AppTurn); // an app turn is no child of the service: nothing to wrap
     match g {
         None => {
             // legacy flags run unchanged, never as a grant; only the policy store is closed to the worker
             e.grant = "none (taskq.json is a request)".into();
-            let own = a.has("sandbox-args").then(|| codex_sandbox(codex)).flatten().filter(|s| *s != "danger-full-access");
-            if a.has("grant") || !mac {
+            let own = a.has(Cap::SandboxArgs).then(|| codex_sandbox(codex)).flatten().filter(|s| *s != "danger-full-access");
+            if a.has(Cap::Grant) || !mac {
                 e.refused = Some(format!("no operator grant and no policy store protection for {rt} on {}; grant a preset", h.os));
             } else if let Some(s) = own {
                 // codex's own Seatbelt writes cwd (the root), temp and added dirs: only one sandbox choice, a model,
@@ -224,18 +225,18 @@ pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_m
             e.grant = format!("{} ({}) rev {} by {}", g.mode, if g.project.is_some() { "project" } else { "host" }, p.revision, g.by);
             e.mode = g.mode.clone();
             if g.mode == "full" {
-                e.enforcement = if a.has("grant") { "runtime approval prompts off, uncontained by TaskQ" } else { "runtime sandbox off, uncontained; the same user can edit the policy" }.into();
-                if a.has("remote-control") {
+                e.enforcement = if a.has(Cap::Grant) { "runtime approval prompts off, uncontained by TaskQ" } else { "runtime sandbox off, uncontained; the same user can edit the policy" }.into();
+                if a.has(Cap::RemoteControl) {
                     e.claude = Some("bypassPermissions".into());
-                } else if a.has("sandbox-args") {
+                } else if a.has(Cap::SandboxArgs) {
                     e.codex = Some(codex_unsandboxed(codex));
                 }
-            } else if h.os == "linux" && a.has("sandbox-args") && a.has("cli") && g.project.is_some() {
+            } else if h.os == "linux" && a.has(Cap::SandboxArgs) && a.has(Cap::Cli) && g.project.is_some() {
                 match linux_codex(&g.mode, h.root, codex) {
                     Ok((mode, args)) => { e.mode = mode; e.codex = Some(args); e.linux = true; e.enforcement = "taskq Linux mount/PID sandbox plus native Codex sandbox".into(); }
                     Err(r) => e.refused = Some(r),
                 }
-            } else if h.os == "windows" && a.has("sandbox-args") && a.has("cli") && g.project.is_some() {
+            } else if h.os == "windows" && a.has(Cap::SandboxArgs) && a.has(Cap::Cli) && g.project.is_some() {
                 match windows_codex(&g.mode, h, codex) {
                     Ok(args) => { e.codex = Some(args); e.windows = true; e.enforcement = "taskq native Windows token; writes workspace, runtime home and private temp".into(); }
                     Err(r) => e.refused = Some(r),
@@ -245,9 +246,9 @@ pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_m
             } else {
                 e.enforcement = format!("taskq seatbelt, writes only to the {} set", g.mode);
                 let mut paths = writable(&g.mode, h);
-                if a.has("grant") { paths.extend([h.home.join(a.home), h.home.join(".gemini/antigravity-cli")]); }
+                if a.has(Cap::Grant) { paths.extend([h.home.join(a.home), h.home.join(".gemini/antigravity-cli")]); }
                 e.profile = Some(profile(h.install, Some(&paths), h.home));
-                if a.has("sandbox-args") {
+                if a.has(Cap::SandboxArgs) {
                     e.codex = Some(codex_unsandboxed(codex));
                 }
             }
@@ -309,7 +310,7 @@ fn bounded_codex(mode: &str, args: &[String], label: &str) -> Result<(String, Ve
 
 /// Every runtime taskq starts here, for `service permissions` and `status.json` `policy`.
 pub fn report(install: &Path, root: &Path, permission_mode: &str, codex: &[String]) -> Vec<Effective> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default();
+    let home = crate::platform::user_home().unwrap_or_default();
     let p = load(install);
     crate::runtime::agent_runtimes().iter().map(|rt| resolve(&p, &Host::here(install, root, &home), rt, permission_mode, codex)).collect()
 }

@@ -1,3 +1,4 @@
+use crate::runtime::Cap;
     use super::*;
     use crate::runtime::accounts::{Host, claim, of_log, mark};
 
@@ -789,7 +790,7 @@ for line in sys.stdin:
             let labels = policy.get(*rt).map_or(vec![accounts::DEFAULT.to_string()], |l| l.iter().filter(|e| e.enabled).map(|e| e.label.clone()).collect());
             for label in labels {
                 let home = accounts::home(rt, &label).or_else(|| accounts::base(rt)).unwrap();
-                let files: Vec<PathBuf> = ["auth.json", ".credentials.json"].iter().map(|f| home.join(f)).chain(if super::super::of(rt).has("usage-code-assist") && super::super::which(super::super::of(rt).bin).is_absolute() { agy_login_files() } else { vec![] }).collect();
+                let files: Vec<PathBuf> = ["auth.json", ".credentials.json"].iter().map(|f| home.join(f)).chain(if super::super::of(rt).has(Cap::UsageCodeAssist) && super::super::which(super::super::of(rt).bin).is_absolute() { agy_login_files() } else { vec![] }).collect();
                 let sign = || files.iter().map(|f| std::fs::read(f).ok().map(|b| sha256(&b))).collect::<Vec<_>>();
                 let before = sign();
                 let started = Instant::now();

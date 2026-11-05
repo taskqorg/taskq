@@ -44,7 +44,7 @@ fn site(s: &str) -> bool {
     if s == "dep" { return true; }
     let Some((file, line)) = s.rsplit_once(':') else { return false };
     let Some(name) = file.strip_prefix("src/").and_then(|f| f.strip_suffix(".rs")) else { return false };
-    (["main", "cli", "config", "paths", "wake", "service_run", "board/mod", "board/github", "board/gitlab", "core", "labels", "operator", "platform", "runtime", "service", "tray", "incident"].contains(&name)
+    (["main", "cli", "config", "http", "paths", "wake", "service_run", "board/mod", "board/github", "board/gitlab", "core", "labels", "operator", "platform", "runtime", "service", "tray", "incident"].contains(&name)
         || name.starts_with("cli/") || name.starts_with("tray/"))
         && line.parse::<u32>().is_ok_and(|n| n > 0)
 }
@@ -69,7 +69,7 @@ fn now() -> u64 {
 }
 
 fn context(root: &Path) -> Option<(Value, Option<bool>)> {
-    let v: Value = serde_json::from_slice(&fs::read(root.join("taskq.json")).ok()?).ok()?;
+    let v = crate::config::ProjectFile::of(root).read().ok()?;
     let setting = match v.get("incident_reports") {
         None => None,
         Some(Value::Bool(b)) => Some(*b),

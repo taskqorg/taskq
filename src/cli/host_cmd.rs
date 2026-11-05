@@ -1,5 +1,6 @@
 //! Host commands: capacity, resources, permissions, channel, doctor, setup and onboarding (§ 3, § 5, § 6).
 
+use crate::runtime::Cap;
 use crate::{admission, balance, board, check, data, dispatch, doctor, health, host, labels, lifecycle, platform, pm, policy, resources, runtime, service, setup, snapshot, tools};
 use crate::runtime::accounts;
 use crate::{Res, emit};
@@ -12,7 +13,7 @@ use crate::wake::poke;
 use serde_json::{Value, json};
 use std::fs;
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 /// One owner edit of a host's capacity: runtime limits and load gate fields; `None` keeps a field.
@@ -501,24 +502,24 @@ pub(crate) fn host_setup(cfg: &Config) -> Option<String> {
 
 /// § 6 setup check items of one project (#1938): read-only. The caller passes the effective runtime limits, the § 5
 /// `agents` rows, the § 8 Access report, the open tasks' labels and the board's PR route (`None`: not read).
-pub(crate) fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<String, String>, agents: &Value, access: &[policy::Effective],
+pub(crate) fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<crate::config::Delivery, String>, agents: &Value, access: &[policy::Effective],
     open: Option<Vec<(u64, Vec<String>)>>, pr_route: Option<check::Probe>) -> Vec<check::Item> {
     // A healthy fallback removes the preferred CLI prerequisite; project-disabled pins follow the same exception as admission.
     let disabled = |rt: &str| cfg.runtime_disabled(rt, Some(limits));
-    let selected = labels::select_project(&[], false, &cfg.default_runtime, cfg.auto_reroute, disabled, |rt| {
+    let selected = labels::select_project(&[], false, cfg.default_runtime.name(), cfg.auto_reroute, disabled, |rt| {
         let login = agents.as_array().into_iter().flatten().find(|r| r["runtime"] == rt).and_then(|r| r["login"].as_str());
         let allowed = access.iter().any(|e| e.runtime == rt && e.refused.is_none() && !e.grant.starts_with("none") && e.grant != "unknown");
         if !disabled(rt) && login == Some("logged in") && allowed { Ok(rt.into()) }
         else { Err(("access", format!("{rt} not ready"))) }
     }).ok().map(|(rt, _)| rt);
     // If no runtime is ready, keep the first enabled candidate's setup gaps visible.
-    let selected = selected.or_else(|| labels::candidates(&[], false, &cfg.default_runtime).into_iter().find(|rt| !disabled(rt)));
-    let fallback = selected.as_ref().is_some_and(|rt| rt != &cfg.default_runtime);
+    let selected = selected.or_else(|| labels::candidates(&[], false, cfg.default_runtime.name()).into_iter().find(|rt| !disabled(rt)));
+    let fallback = selected.as_ref().is_some_and(|rt| rt != cfg.default_runtime.name());
     let pinned = |rt: &str| !(cfg.auto_reroute && runtime::CLI_RUNTIMES.contains(&rt) && disabled(rt))
         && open.as_ref().is_some_and(|tasks| tasks.iter().any(|(_, labels)| labels.iter().any(|l| l.strip_prefix("run-") == Some(rt))));
     let runtimes = runtime::agent_runtimes().iter().filter(|rt| {
-        let in_use = !disabled(rt) && match limits.get(**rt) { Some(n) => *n > 0, None => selected.as_ref().unwrap_or(&cfg.default_runtime) == *rt };
-        pinned(rt) || in_use && !(fallback && **rt == cfg.default_runtime)
+        let in_use = !disabled(rt) && match limits.get(**rt) { Some(n) => *n > 0, None => selected.as_deref().unwrap_or(cfg.default_runtime.name()) == **rt };
+        pinned(rt) || in_use && !(fallback && cfg.default_runtime == **rt)
     })
         .map(|rt| {
             let e = access.iter().find(|e| e.runtime == *rt);
@@ -542,7 +543,7 @@ pub(crate) fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery
         unlabelled: open.map(|v| v.into_iter().filter(|(_, l)| !l.iter().any(|l| l.starts_with("host-"))).map(|(n, _)| n).collect()),
         token: (cfg.board.name == "github").then(|| board::github::token(&cfg.install).map(|_| ()).map_err(|_| "missing, empty or unreadable".to_string())),
         delivery,
-        pr_route: (cfg.publish == "pr").then(|| pr_route.unwrap_or_else(|| check::Probe::Unknown("board not read".into()))),
+        pr_route: (cfg.delivery.mode() == "pr").then(|| pr_route.unwrap_or_else(|| check::Probe::Unknown("board not read".into()))),
         host_setup: cfg.host_setup.as_ref().map(|c| (c.clone(), check::host_setup_done(&cfg.root, c))),
     })
 }
@@ -554,7 +555,7 @@ pub(crate) fn setup_check_cmd(root: &Path, json_out: bool) -> Res<()> {
     let access = policy::report(&cfg.install, &cfg.root, &cfg.permission_mode, &cfg.codex);
     let (open, route) = match cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install)) {
         Ok(b) => (b.issues(None).ok().map(|v| v.into_iter().filter(service::is_task).map(|i| (i.number, i.labels)).collect()),
-            (cfg.publish == "pr").then(|| b.pr_route())),
+            (cfg.delivery.mode() == "pr").then(|| b.pr_route())),
         Err(e) => (None, Some(check::Probe::Unknown(e))),
     };
     let items = setup_items(&cfg, &limits, delivery, &runtime::agents(&cfg.install), &access, open, route);
@@ -572,14 +573,14 @@ pub(crate) fn onboard_cmd(install: &Path) -> Res<()> {
         match r["login"].as_str() {
             Some("logged in") => {}
             // a codex-only host is valid: a missing runtime is skipped, not a failure
-            Some("not installed") => { claude &= !runtime::of(rt).has("remote-control"); gaps.push(setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
+            Some("not installed") => { claude &= !runtime::of(rt).has(Cap::RemoteControl); gaps.push(setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
             _ => gaps.extend([format!("Login: {}", runtime::agent_text(r)), format!("Next: {}", runtime::relogin(rt))]),
         }
     }
     let p = host::Policy::read_for_hostname(install, hostname);
     let (mode, codex, has) = p.map_or(("dontAsk".to_string(), vec![], vec![]), |p| (p.permission_mode, p.codex, p.has));
     // codex-app is opt-in (§ 9): its refusal is a gap only where `has` lists it
-    let opted = |es: Vec<policy::Effective>| es.into_iter().filter(|e| !runtime::of(&e.runtime).has("app-turn") || has.contains(&e.runtime)).collect::<Vec<_>>();
+    let opted = |es: Vec<policy::Effective>| es.into_iter().filter(|e| !runtime::of(&e.runtime).has(Cap::AppTurn) || has.contains(&e.runtime)).collect::<Vec<_>>();
     // Access is per folder: the setup folder for owner sessions, each registered root for its workers
     gaps.extend(setup::onboard_access("setup", &opted(policy::report(install, &setup::dir(install), &mode, &[]))));
     let roots = match host::projects(install) {
@@ -588,7 +589,7 @@ pub(crate) fn onboard_cmd(install: &Path) -> Res<()> {
     };
     for root in &roots { gaps.extend(setup::onboard_access(&root.display().to_string(), &opted(policy::report(install, root, &mode, &codex)))); }
     if claude {
-        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("home folder unknown")?;
+        let home = crate::platform::user_home().ok_or("home folder unknown")?;
         gaps.extend(runtime::owner::trust(install, &home, runtime::owner::claude_pids)?);
     }
     gaps.extend(tools::gaps(install, None));

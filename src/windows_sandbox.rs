@@ -1,4 +1,5 @@
 //! Windows §8: one inherited native token; control state never lives in the writable runtime home.
+use crate::runtime::Cap;
 use std::{fs, io::Read, path::{Path, PathBuf}, process::Command};
 use serde_json::Value;
 mod security;
@@ -36,7 +37,7 @@ fn checked(path: &Path) -> Result<PathBuf, String> {
 
 fn home() -> Result<PathBuf, String> {
     checked(&std::env::var_os("CODEX_HOME").map(PathBuf::from)
-        .or_else(|| std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join(".codex")))
+        .or_else(|| crate::platform::user_home().map(|p| p.join(".codex")))
         .ok_or("Windows sandbox: runtime home missing")?)
 }
 
@@ -153,7 +154,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let root = checked(Path::new(&args[0]))?; let install = checked(Path::new(&args[1]))?; let home = checked(Path::new(&args[2]))?;
     let policy = crate::policy::load(&install)?;
     let scope = root.canonicalize().map_err(|e| e.to_string())?.display().to_string();
-    if !policy.grants.iter().any(|g| crate::runtime::of(&g.runtime).has("sandbox-args") && crate::runtime::of(&g.runtime).has("cli") && g.mode == "workspace" && g.project.as_deref() == Some(scope.as_str())) {
+    if !policy.grants.iter().any(|g| crate::runtime::of(&g.runtime).has(Cap::SandboxArgs) && crate::runtime::of(&g.runtime).has(Cap::Cli) && g.mode == "workspace" && g.project.as_deref() == Some(scope.as_str())) {
         return Err("Windows sandbox: explicit Workspace project grant required".into());
     }
     let p = paths(&root, &install, &home)?;

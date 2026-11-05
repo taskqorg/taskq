@@ -116,7 +116,7 @@ pub(crate) fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let cfg = &c.cfg;
     let exe = launcher(&cfg.install);
     let board_env = cfg.board.worker_env(&platform::tool(&cfg.install), &cfg.web_host)?;
-    let env = runtime::Env { context: "", board_env: &board_env, root: &cfg.root, exe: &exe, install: &cfg.install, permission_mode: &cfg.permission_mode, codex: &cfg.codex, publish: &cfg.delivery, jobs: None };
+    let env = runtime::Env { context: "", board_env: &board_env, root: &cfg.root, exe: &exe, install: &cfg.install, permission_mode: &cfg.permission_mode, codex: &cfg.codex, delivery: cfg.delivery, jobs: None };
     let start = |l: &runtime::Launch| {
         let issue = c.board.issue(l.task).map_err(runtime::StartError::admission)?;
         let log = board::entries(c.board.as_ref(), l.task).map_err(runtime::StartError::admission)?;
@@ -463,12 +463,12 @@ impl<'a> ProjectLoop<'a> {
 
     /// § 6 setup check: local items each pass, the board's PR route at most hourly
     fn setup_report(&mut self, s: &Service<'_>, access: &[policy::Effective], quiet: bool, at: u64) -> Value {
-        if !quiet && s.cfg.publish == "pr" && self.pr_route.as_ref().is_none_or(|(t, _)| t.elapsed().as_secs() >= 3600) {
+        if !quiet && s.cfg.delivery.mode() == "pr" && self.pr_route.as_ref().is_none_or(|(t, _)| t.elapsed().as_secs() >= 3600) {
             self.pr_route = Some((Instant::now(), self.c.board.pr_route()));
         }
         let limits = s.cap.as_ref().map_or_else(|_| s.cfg.limits.clone(), |cap| cap.limits.clone());
         let open = s.snapshot.as_ref().map(|snap| snap.tasks.iter().map(|r| (r.n, r.labels.clone())).collect());
-        let setup_items = setup_items(&s.cfg, &limits, Ok(s.cfg.delivery.clone()), &self.agents.as_ref().map_or(Value::Null, |a| a.1["rows"].clone()), access,
+        let setup_items = setup_items(&s.cfg, &limits, Ok(s.cfg.delivery), &self.agents.as_ref().map_or(Value::Null, |a| a.1["rows"].clone()), access,
             open, self.pr_route.as_ref().map(|r| r.1.clone()));
         let mut setup = check::json(&self.project, &setup_items);
         setup["checked"] = json!(at);

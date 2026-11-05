@@ -1,6 +1,7 @@
 //! Polled account usage and fleet account policy ([capacity.md](../docs/design/capacity.md#account-usage-and-fleet-policy)).
 //! One host thread polls each enabled account; the rows it publishes carry a fingerprint, never an email or a token.
 //! A poll only observes: it writes no login file and clears no quota record or hold.
+use crate::runtime::Cap;
 use super::accounts;
 use crate::board::{Board, Comment, Issue};
 use serde::{Deserialize, Serialize};
@@ -505,21 +506,21 @@ impl Ids {
 pub fn fetch(rt: &str, label: &str, ids: &mut Ids) -> Poll {
     let a = super::of(rt);
     // The `agy` login has no account home: one default account per host, read from the user's home.
-    if a.has("usage-code-assist") {
+    if a.has(Cap::UsageCodeAssist) {
         return if super::which(a.bin).is_absolute() { code_assist(rt) } else { Poll::failed("not installed") };
     }
     let Some(home) = accounts::home(rt, label).or_else(|| accounts::base(rt)) else { return Poll::failed("no login") };
     if !home.is_dir() { return Poll::failed("no login"); }
-    if a.has("usage-rpc") {
+    if a.has(Cap::UsageRpc) {
         let bin = super::which(a.bin);
         if !bin.is_absolute() { return Poll::failed("not installed"); }
         let mut c = crate::platform::command(&bin);
         c.arg("app-server");
         if let Some((var, h)) = accounts::environment(rt, &home) { c.env(var, h); }
         let run = || rpc(c, RPC_DEADLINE);
-        return if a.has("auth-file") { guarded(&home.join("auth.json"), run) } else { run() };
+        return if a.has(Cap::AuthFile) { guarded(&home.join("auth.json"), run) } else { run() };
     }
-    if a.has("usage-oauth") {
+    if a.has(Cap::UsageOauth) {
         let mut poll = oauth(rt, &home);
         poll.id = ids.get(rt, label);
         return poll;
@@ -624,17 +625,12 @@ fn oauth(rt: &str, home: &Path) -> Poll {
 
 /// One curl call whose config, with the token, goes through stdin and never an argument; the reply or a fixed reason.
 fn https_json(config: &str) -> Result<Value, String> {
-    let out = match coreq::process::exchange("account.usage", crate::platform::command("curl").args(["-q", "-sS", "--proto", "=https", "-w", "\n%{http_code}", "--config", "-"]),
-        config.as_bytes(), Duration::from_secs(HTTP_DEADLINE + 5)) {
-        Ok(o) | Err(coreq::process::Failure::Exit(o)) => o,
-        Err(_) => return Err("network failed".into()),
-    };
-    let text = String::from_utf8_lossy(&out.stdout);
-    let (body, code) = text.rsplit_once('\n').unwrap_or(("", &text));
-    match code.trim().parse::<u16>() {
-        Ok(200) => serde_json::from_str(body).map_err(|_| "usage shape changed".into()),
-        Ok(0) | Err(_) => Err("network failed".into()),
-        Ok(code) => Err(format!("call refused {code}")),
+    let out = crate::http::with_config("account.usage", &["-q", "-sS", "--proto", "=https", "-w", "\n%{http_code}", "--config", "-"], config, Duration::from_secs(HTTP_DEADLINE + 5))
+        .map_err(|_| "network failed")?;
+    match crate::http::status_tail(&out) {
+        (body, Some(200)) => serde_json::from_str(&body).map_err(|_| "usage shape changed".into()),
+        (_, None) => Err("network failed".into()),
+        (_, Some(code)) => Err(format!("call refused {code}")),
     }
 }
 
@@ -712,8 +708,7 @@ fn agy_token(text: &str, now: i64) -> Result<String, &'static str> {
 /// The login files of the `agy` CLI under the user's home, read only. A login held only in the Windows credential store
 /// reads as no login.
 fn agy_login_files() -> Vec<PathBuf> {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty());
-    home.map_or(vec![], |h| [".gemini/antigravity-cli/antigravity-oauth-token", ".gemini/oauth_creds.json"].iter().map(|f| Path::new(&h).join(f)).collect())
+    crate::platform::user_home().map_or(vec![], |h| [".gemini/antigravity-cli/antigravity-oauth-token", ".gemini/oauth_creds.json"].iter().map(|f| h.join(f)).collect())
 }
 
 fn agy_credentials(rt: &str) -> Result<String, String> {

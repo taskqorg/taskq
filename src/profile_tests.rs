@@ -411,7 +411,7 @@ Changed: x"))];
         use crate::board::Board;
         let staged = || STAGED.with(|v| std::mem::take(&mut *v.borrow_mut())).join("; ");
         let (b, c) = (crate::board::Fake::default(), crate::tests::cfg());
-        let gated = crate::service::Config { delivery: "review-pr".into(), ..crate::tests::cfg() };
+        let gated = crate::service::Config { delivery: crate::config::Delivery::ReviewPr, ..crate::tests::cfg() };
         let t = b.create("T", "## Goal\ng", &["taskq".into()]).unwrap();
         let close = |c: &crate::service::Config, op: &crate::dispatch::Op| crate::dispatch::close_one(&b, c, t, "ok", op).ok();
         assert!(!close(&c, &Default::default()));
@@ -423,7 +423,7 @@ Changed: x"))];
         assert!(!close(&gated, &Default::default()));
         assert!(!close(&c, &crate::dispatch::Op { revision: Some(1), ..Default::default() }));
         // the CLI's verdict refusal and unreadable task are inside the stage too
-        let cli = |n, text: &str| crate::dispatch::close_checked(&b, &c, n, text, &Default::default(), &|i, t| crate::cli::text::close_check(text, i, t, b.defer_publication(&c.publish))).ok();
+        let cli = |n, text: &str| crate::dispatch::close_checked(&b, &c, n, text, &Default::default(), &|i, t| crate::cli::text::close_check(text, i, t, b.defer_publication(c.delivery.mode()))).ok();
         assert!(!cli(t, "no verdict"));
         assert!(!cli(999, ""));
         assert!(close(&c, &Default::default()));

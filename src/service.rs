@@ -1,6 +1,7 @@
 //! The host service (taskq.md § 3, § 4): one loop around `fold`. It owns this host's children and its heartbeat issue;
 //! everything it knows about other hosts comes from the board.
 
+use crate::runtime::Cap;
 use crate::board::{Board, Comment, Issue};
 use crate::core::{self, State, Task};
 use crate::runtime::{Launch, Proc};
@@ -17,9 +18,8 @@ pub struct Config {
     pub web_host: String,
     pub repo: String,
     /// Publication mode `direct|pr`, from the delivery preset (§ 7).
-    pub publish: String,
     /// § 7 delivery preset and its policy revision.
-    pub delivery: String,
+    pub delivery: crate::config::Delivery,
     pub delivery_revision: u64,
     pub me: String,
     pub limits: BTreeMap<String, u32>,
@@ -29,10 +29,10 @@ pub struct Config {
     pub claim: crate::host::ClaimMode,
     pub spillover_grace: u64,
     pub weights: crate::balance::Weights,
-    pub allowed_runtimes: Option<Vec<String>>,
+    pub allowed_runtimes: Option<Vec<crate::runtime::RuntimeId>>,
     pub auto_reroute: bool,
     /// host.json `default_runtime` (§ 9): the runtime of reviewers and of workers without `run-*` (§ 4).
-    pub default_runtime: String,
+    pub default_runtime: crate::runtime::RuntimeId,
     pub routing: Vec<crate::labels::Routing>,
     pub permission_mode: String,
     pub codex: Vec<String>,
@@ -110,7 +110,7 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
             };
             let evidence: Vec<String> = lines.iter().take(4).map(|l| l.replace(['\r', '\n'], " ").chars().take(238).collect()).collect();
             let source = format!("{host}/tidy-{cond}/{project}-{since}");
-            let raw = read(&cfg.root.join("taskq.json")).unwrap_or(Value::Null);
+            let raw = crate::config::ProjectFile::of(&cfg.root).read().unwrap_or(Value::Null);
             let mut op = crate::dispatch::Op::default();
             let reason = match crate::cli::task_cmd::submit_finding(b, &raw, &cfg.root, cfg.board.name, &cfg.web_host, &cfg.repo, &new, &source, &evidence, &mut op, false) {
                 Ok((r, _)) if r.ok() => {
@@ -208,8 +208,8 @@ struct Balancing {
     #[serde(default,skip_serializing_if="Option::is_none")]
     last_spawn: Option<u64>,
     mode: String,
-    default_runtime: String,
-    allowed_runtimes: Option<Vec<String>>,
+    default_runtime: crate::runtime::RuntimeId,
+    allowed_runtimes: Option<Vec<crate::runtime::RuntimeId>>,
     auto_reroute: bool,
     has: Vec<String>,
     focus: Option<Vec<String>>,
@@ -233,8 +233,8 @@ impl Balancing {
             || crate::balance::weights(&json!({"weights":b.weights})).is_err()
             || b.runtimes.values().any(|r|r.load.as_ref().is_some_and(|l|!l.valid()) || b.schema==2 && r.code=="admitted" && r.load.is_none())
             || crate::host::ClaimMode::parse(&b.mode).is_err()
-            || !crate::runtime::CLI_RUNTIMES.contains(&b.default_runtime.as_str())
-            || b.allowed_runtimes.as_ref().is_some_and(|a|a.iter().any(|rt|!RUNTIMES.contains(&rt.as_str())) || a.iter().collect::<BTreeSet<_>>().len()!=a.len())
+            || !crate::runtime::CLI_RUNTIMES.contains(&b.default_runtime.name())
+            || b.allowed_runtimes.as_ref().is_some_and(|a|a.iter().collect::<BTreeSet<_>>().len()!=a.len())
             || crate::labels::routing(&json!({"routing":b.routing})).is_err()
             || b.runtimes.len()!=RUNTIMES.len() || RUNTIMES.iter().any(|rt|!b.runtimes.contains_key(*rt))
             || b.runtimes.values().any(|r|!crate::snapshot::ADMISSION_CODES.iter().any(|(c,_)|*c==r.code) || r.reason.chars().count()>160 || r.code=="admitted" && r.disabled) {return None;}
@@ -254,7 +254,7 @@ impl Balancing {
         // Assignment is private to the primary's board account, so the projection cannot prove eligibility.
         if !local && v.issue.labels.iter().any(|l|l=="assignee-only") {return Err(("unknown","primary assignee eligibility unknown".into()));}
         let reviewer=v.projection.task.state==State::Review;
-        let default=crate::labels::project_default(&v.issue.labels,reviewer,&self.routing,&self.default_runtime);
+        let default=crate::labels::project_default(&v.issue.labels,reviewer,&self.routing,self.default_runtime.name());
         // #2264: a refused runtime reports its occupancy too; only admitted ones rank, as before
         let load=self.runtimes.iter().filter(|(_,r)|r.code=="admitted").filter_map(|(rt,r)|r.load.clone().map(|l|(rt.clone(),l))).collect();
         crate::balance::select(&v.issue.labels,reviewer,default,self.auto_reroute,&self.weights,&load,
@@ -272,7 +272,7 @@ impl Balancing {
     fn weighted_capacity(&self,v:&View,local:bool)->Result<f64,String> {
         self.available_for(v,local).map_err(|(_,reason)|reason)?;
         let reviewer=v.projection.task.state==State::Review;
-        let default=crate::labels::project_default(&v.issue.labels,reviewer,&self.routing,&self.default_runtime);
+        let default=crate::labels::project_default(&v.issue.labels,reviewer,&self.routing,self.default_runtime.name());
         let ignore_pin=v.issue.labels.iter().find_map(|l|l.strip_prefix("run-"))
             .is_some_and(|rt|self.auto_reroute && crate::runtime::CLI_RUNTIMES.contains(&rt) && self.runtimes.get(rt).is_some_and(|r|r.disabled));
         let labels:Vec<_>=v.issue.labels.iter().filter(|l|!ignore_pin || !l.starts_with("run-")).cloned().collect();
@@ -280,7 +280,7 @@ impl Balancing {
         let mut fallback=0.0;
         for rt in crate::labels::candidates(&labels,reviewer,default) {
             let r=&self.runtimes[&rt];
-            if r.code!="admitted" || self.allowed_runtimes.as_ref().is_some_and(|a|!a.contains(&rt)) || needs_gui(&v.issue) && !r.full {continue;}
+            if r.code!="admitted" || self.allowed_runtimes.as_ref().is_some_and(|a|!a.iter().any(|r|*r==rt)) || needs_gui(&v.issue) && !r.full {continue;}
             let load=r.load.as_ref().ok_or("weighted host occupancy unknown")?;
             // Weight 0 (#2240): no unpinned capacity; a run-* pin counts its free slots like an unweighted runtime.
             match self.weights.get(&rt) {
@@ -1191,7 +1191,7 @@ impl<'a> Service<'a> {
                     let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
                     let exit_reason = k.proc.exit_error().map_or_else(|| format!("exit-{code}"), String::from);
                     crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, k.proc.id(), if code == 0 { "ok" } else { "failed" }, &exit_reason);
-                    retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli"),k.proc.id()));
+                    retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has(Cap::Cli),k.proc.id()));
                     false
                 },
                 Err(e)=>{k.unknown=Some(e);true}
@@ -1250,9 +1250,9 @@ impl<'a> Service<'a> {
         let v = crate::config::project_value(&self.cfg.root)?;
         match crate::config::delivery(&v) {
             Ok(d) => {
-                if d != (self.cfg.publish.clone(), self.cfg.delivery.clone(), self.cfg.delivery_revision) {
-                    log!("delivery {} r{} (was {} r{})", d.1, d.2, self.cfg.delivery, self.cfg.delivery_revision);
-                    (self.cfg.publish, self.cfg.delivery, self.cfg.delivery_revision) = d;
+                if d != (self.cfg.delivery, self.cfg.delivery_revision) {
+                    log!("delivery {} r{} (was {} r{})", d.0, d.1, self.cfg.delivery, self.cfg.delivery_revision);
+                    (self.cfg.delivery, self.cfg.delivery_revision) = d;
                 }
                 self.delivery_error = None;
             }
@@ -1620,11 +1620,11 @@ impl<'a> Service<'a> {
             let rt = rt_of(t).unwrap().0;
             self.account_limit(n,t,a,rt,(now+USAGE_PROBE,false),now);
             self.post(n,core::entry("steer",&["quota"],Some(a),"Continue this same task and native session after the original account quota hold; preserve completed work."))
-        } else if let Some((bin, reason)) = local.then(|| rt_of(t).map(|(rt, _)| (rt, crate::runtime::of(rt))).filter(|(_, r)| r.has("sandbox-args"))
+        } else if let Some((bin, reason)) = local.then(|| rt_of(t).map(|(rt, _)| (rt, crate::runtime::of(rt))).filter(|(_, r)| r.has(Cap::SandboxArgs))
             .and_then(|(rt, r)| crate::runtime::auth_rejected(&crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a), rt).map(|e| (r.bin, e)))).flatten() {
             // #1446: a rejected login holds Codex here at once and releases the attempt like a usage limit, retries kept
             if let Err(e) = crate::runtime::mark_login_off(&self.cfg.install, bin, &reason) { eprintln!("login-off not saved: {e}"); }
-            self.logged_out.extend(crate::runtime::agent_runtimes().iter().filter(|r| crate::runtime::of(r).has("sandbox-args")).map(|r| r.to_string()));
+            self.logged_out.extend(crate::runtime::agent_runtimes().iter().filter(|r| crate::runtime::of(r).has(Cap::SandboxArgs)).map(|r| r.to_string()));
             self.gone(n, t, a, &["usage-limit"], &format!("Login off: {bin} {reason}; {}", crate::runtime::relogin(bin)))
         } else if let Some(steer) = local.then(|| self.continuation(n, t, a)).flatten() {
             self.post(n, steer)
@@ -1639,8 +1639,8 @@ impl<'a> Service<'a> {
         if t.state != State::Doing || t.role.as_deref() != Some("worker") { return None; }
         let log = crate::runtime::attempt_log(&self.cfg.root, "worker", n, a);
         // #2198: a Claude Code transcript (the `remote` adapter) shows the background jobs its last turn left running.
-        if rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).has("remote-control")) { return self.background_continuation(n, a, &log); }
-        if !rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).has("thread-link")) { return None; }
+        if rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).has(Cap::RemoteControl)) { return self.background_continuation(n, a, &log); }
+        if !rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).has(Cap::ThreadLink)) { return None; }
         let failure = crate::runtime::transient_failure(&log, rt_of(t)?.0)?;
         crate::runtime::codex_thread(&log)?;
         let head = core::entry("steer", &[], Some(a), "");
@@ -2118,7 +2118,7 @@ impl<'a> Service<'a> {
                 || t.attempt.is_some() && host_of(t) != Some(me.as_str())
                 || self.kids.iter().any(|k| k.task == v.issue.number) { continue; }
             let rt = rt_of(t).map(|(rt, _)| rt.to_string()).unwrap_or_else(|| self.select_runtime(v).map(|(rt, _)| rt)
-                .unwrap_or_else(|_| route(&v.issue, t.state == State::Review, &self.cfg.default_runtime)));
+                .unwrap_or_else(|_| route(&v.issue, t.state == State::Review, self.cfg.default_runtime.name())));
             if let Some(reason) = self.gui_reason(&v.issue, Some(&rt)) {
                 self.waits.insert(v.issue.number, reason);
             }
@@ -2169,7 +2169,7 @@ impl<'a> Service<'a> {
             let task = v.issue.number;
             let unresolved: Vec<_> = v.projection.executions.iter().filter(|x| x.release.is_none()).collect();
             if self.kids.iter().any(|k| k.task == task) || self.held.iter().any(|l| l.task == task) { continue; }
-            let Some(x) = unresolved.iter().find(|x| x.host == me && { let a = crate::runtime::of(&x.runtime); a.has("remote-control") || a.has("app-turn") }) else { continue };
+            let Some(x) = unresolved.iter().find(|x| x.host == me && { let a = crate::runtime::of(&x.runtime); a.has(Cap::RemoteControl) || a.has(Cap::AppTurn) }) else { continue };
             if unresolved.len() != 1 {
                 self.execution_waits.insert(task, "multiple unresolved executions; verify native ownership before recovery".into());
                 continue;
@@ -2283,7 +2283,7 @@ impl<'a> Service<'a> {
                 let no_start=match k.release(self.board,code,&evidence) {Ok(no_start)=>no_start,Err(e)=>{k.unknown=Some(e);return true;}};
                 let exit_reason = k.proc.exit_error().map_or_else(|| format!("exit-{code}"), String::from);
                 crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, k.proc.id(), if code == 0 { "ok" } else { "failed" }, &exit_reason);
-                retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli"),k.proc.id()));
+                retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has(Cap::Cli),k.proc.id()));
                 released.insert(k.execution);
                 // This pass's view predates release; it cannot authorize a continuation before acceptance is resolved.
                 if by_n.get(&k.task).is_some_and(|v|v.projection.task.attempt==Some(k.attempt))
@@ -2365,7 +2365,7 @@ impl<'a> Service<'a> {
                     k.proc.released();
                     match crate::runtime::observe_until(native_until,||k.proc.exited()) {
                         Ok(Some(_))=>{
-                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli"),k.proc.id()));
+                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has(Cap::Cli),k.proc.id()));
                             released.insert(k.execution);stopped.push((k.task,k.attempt));
                             return false;
                         }
@@ -2387,7 +2387,7 @@ impl<'a> Service<'a> {
                     ("ended",_) => match k.release(self.board,stop.unwrap(),"") {
                         Ok(_)=>{
                             crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, pid_before, "ok", kill_reason);
-                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has("cli"),k.proc.id()));
+                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has(Cap::Cli),k.proc.id()));
                             released.insert(k.execution);stopped.push((k.task,k.attempt));
                         },
                         Err(e)=>{k.unknown=Some(e);return true;}
@@ -2410,7 +2410,7 @@ impl<'a> Service<'a> {
         // #2261: the session link belongs to this exact live execution's native session and job, read by its runtime adapter;
         // until a link appears the heartbeat names the adapter's cause.
         // shortcut: bounded native reads restart each pass until a link appears; retain a cursor if costly.
-        for k in self.kids.iter_mut().filter(|k| std::time::Instant::now()<native_until && crate::runtime::of(&k.rt).has("remote-control") && !matches!(k.session_url, Some(Ok(_)))) {
+        for k in self.kids.iter_mut().filter(|k| std::time::Instant::now()<native_until && crate::runtime::of(&k.rt).has(Cap::RemoteControl) && !matches!(k.session_url, Some(Ok(_)))) {
             let (Ok(adapter), Some((spec, job))) = (crate::runtime::agent(&k.rt), k.proc.session_spec()) else { continue };
             k.session_url = Some(crate::runtime::observe_until(native_until, || adapter.session_link(&spec, job.as_deref()))
                 .map_err(|(cause, detail)| crate::runtime::absence(cause.0, detail.as_deref())));
@@ -2800,7 +2800,7 @@ impl<'a> Service<'a> {
             let (rt, session) = rt_of(t).unwrap_or(("", ""));
             let mut session = session.to_string();
             let mut l = Launch { files: String::new(), execution: None, task: n, title: v.issue.title.clone(), attempt: a, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: session.clone(), url: self.board.url(n), resume: None };
-            if session == "-" || crate::runtime::of(rt).has("remote-control") {
+            if session == "-" || crate::runtime::of(rt).has(Cap::RemoteControl) {
                 session = crate::runtime::native_session(rt, &crate::runtime::log_path(&self.cfg.root, &l)).unwrap_or_else(|| if session == "-" { String::new() } else { session });
             }
             let text: Vec<String> = new.iter().map(|c| core::delivery(n, &v.log, c.id)).collect();
@@ -3209,14 +3209,14 @@ impl<'a> Service<'a> {
             ((*rt).into(),RuntimeAvailability {load,code:code.into(),reason:reason.chars().take(160).collect(),full:self.full.contains(*rt),disabled:self.runtime_disabled(rt),quota:accounts.iter().filter(|l|l.starts_with(&format!("quota {rt} "))).cloned().collect()})
         }).collect();
         let mut has=self.cfg.has.clone();has.retain(|h|h!="gui");if self.gui().is_ok() {has.push("gui".into());}
-        Balancing {schema:if self.cfg.weights.is_empty(){1}else{2},weights:self.cfg.weights.clone(),last_spawn:(!self.cfg.weights.is_empty()).then_some(self.last_spawn).flatten(),mode:self.cfg.claim.name().into(),default_runtime:self.cfg.default_runtime.clone(),allowed_runtimes:self.cfg.allowed_runtimes.clone(),
+        Balancing {schema:if self.cfg.weights.is_empty(){1}else{2},weights:self.cfg.weights.clone(),last_spawn:(!self.cfg.weights.is_empty()).then_some(self.last_spawn).flatten(),mode:self.cfg.claim.name().into(),default_runtime:self.cfg.default_runtime,allowed_runtimes:self.cfg.allowed_runtimes.clone(),
             auto_reroute:self.cfg.auto_reroute,has,focus:self.focus_error.is_none().then(||self.focus.clone()),routing:self.cfg.routing.clone(),runtimes}
     }
 
     fn select_runtime(&self, v: &View) -> Result<(String, Option<String>), (&'static str, String)> {
         if v.projection.reroute.is_some() {return Err(("unknown",crate::snapshot::ROUTING_WAIT.into()));}
         let reviewer = v.projection.task.state == State::Review;
-        let default = crate::labels::project_default(&v.issue.labels, reviewer, &self.cfg.routing, &self.cfg.default_runtime);
+        let default = crate::labels::project_default(&v.issue.labels, reviewer, &self.cfg.routing, self.cfg.default_runtime.name());
         let mut load=BTreeMap::new();
         if !self.cfg.weights.is_empty() && !v.issue.labels.iter().any(|l|l.starts_with("run-")) {
             if let Some(e)=&self.headroom_error {return Err(("unknown",e.clone()));}
@@ -3237,7 +3237,7 @@ impl<'a> Service<'a> {
     /// A `needs-gui` task gets only a runtime with effective Full access (§ 4 Filter): never a sandboxed one.
     fn admit_runtime(&self, rt: &str, gui: bool) -> Result<String, (&'static str, String)> {
         if self.cfg.allowed_runtimes.as_ref().is_some_and(|a|!a.iter().any(|r|r==rt)) {return Err(("capability",format!("{rt} excluded by project allowed_runtimes")));}
-        if crate::runtime::of(rt).has("app-turn") && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) {
+        if crate::runtime::of(rt).has(Cap::AppTurn) && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) {
             return Err(("capability", format!("{rt} not in has")));
         }
         if let Some(r) = self.refused_access.get(rt) { return Err(("access", format!("{rt}: {r}"))); }
@@ -3515,7 +3515,7 @@ impl<'a> Service<'a> {
         let began = std::time::Instant::now();
         let started = (self.start)(&l).map(|proc| {
             self.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution, task: l.task, attempt: l.attempt, rt: l.rt.clone(), proc });
-            if crate::runtime::of(&l.rt).has("cli") {
+            if crate::runtime::of(&l.rt).has(Cap::Cli) {
                 // A failed checkpoint retains the handle; polling retries persistence, never launch.
                 if let Err(e)=self.kids.last_mut().unwrap().proc.checkpoint(&self.cfg,&l,execution) { self.kids.last_mut().unwrap().unknown=Some(e); }
             }

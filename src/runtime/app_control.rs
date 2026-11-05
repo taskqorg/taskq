@@ -21,7 +21,7 @@ pub(crate) enum PassiveWriterOutcome {
 pub(super) fn cancel(thread:&str,turn:&str)->Result<(),String> {
     coreq::telemetry::capture::operation("runtime.app-cancel",|| {
         let home=std::env::var_os("CODEX_HOME").map(PathBuf::from)
-            .or_else(||std::env::var_os("HOME").map(|h|Path::new(&h).join(".codex"))).ok_or("Codex App home unavailable")?;
+            .or_else(||crate::platform::user_home().map(|h|h.join(".codex"))).ok_or("Codex App home unavailable")?;
         cancel_at(&home.join("ipc/ipc.sock"),thread,turn,super::observation_deadline(Duration::from_secs(10)))
     }, |_|"app-cancel")
 }

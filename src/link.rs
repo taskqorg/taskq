@@ -309,15 +309,10 @@ impl Dash {
         let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
         let cfg = format!("url = \"{}{route}\"\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\nheader = \"Authorization: Bearer {}\"\ndata-binary = \"{}\"\nmax-time = {wait}\n",
             esc(self.destination.trim_end_matches('/')), esc(&self.credential), esc(&body.to_string()));
-        let out = match coreq::process::exchange("link.http", crate::platform::command("curl").args(["-sS", "--proto", "=https", "-w", "\n%{http_code}", "--config", "-"]),
-            cfg.as_bytes(), Duration::from_secs(wait + 5)) {
-            Ok(o) | Err(coreq::process::Failure::Exit(o)) => o,
-            Err(e) => return Err(format!("curl: {e}")),
-        };
-        let text = String::from_utf8_lossy(&out.stdout);
-        let (body, code) = text.rsplit_once('\n').unwrap_or(("", &text));
-        let code: u16 = code.trim().parse().ok().filter(|c| *c != 0).ok_or("relay unreachable")?;
-        Ok((code, serde_json::from_str(body).unwrap_or(Value::Null)))
+        let out = crate::http::with_config("link.http", &["-sS", "--proto", "=https", "-w", "\n%{http_code}", "--config", "-"], &cfg, Duration::from_secs(wait + 5)).map_err(|e| format!("curl: {e}"))?;
+        let (body, code) = crate::http::status_tail(&out);
+        let code = code.ok_or("relay unreachable")?;
+        Ok((code, serde_json::from_str(&body).unwrap_or(Value::Null)))
     }
 }
 

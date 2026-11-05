@@ -741,3 +741,14 @@
         });
         let _ = fs::remove_dir_all(&t);
     }
+
+// Risk: one caller reads another home than the rest, or an empty variable names the current folder.
+#[test]
+fn the_user_home_prefers_the_native_variable_and_skips_an_empty_one() {
+    let (native, other) = if cfg!(windows) { ("USERPROFILE", "HOME") } else { ("HOME", "USERPROFILE") };
+    let vars = |n: Option<&'static str>, o: Option<&'static str>| move |key: &str| if key == native { n.map(Into::into) } else if key == other { o.map(Into::into) } else { None };
+    assert_eq!(home_from(vars(Some("native"), Some("other"))), Some(PathBuf::from("native")));
+    assert_eq!(home_from(vars(Some(""), Some("other"))), Some(PathBuf::from("other")));
+    assert_eq!(home_from(vars(None, Some("other"))), Some(PathBuf::from("other")));
+    assert_eq!(home_from(vars(None, None)), None);
+}

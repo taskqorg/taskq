@@ -39,7 +39,7 @@ pub(crate) fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
 </dict></plist>
 "#;
     // M15: a regular app (Dock, Cmd+Tab), so no LSUIElement; only the OS default install writes the user's launcher
-    let home = std::env::var_os("HOME").map(PathBuf::from).filter(|_| platform::is_home(install, platform::home_install().as_deref()));
+    let home = crate::platform::user_home().filter(|_| platform::is_home(install, platform::home_install().as_deref()));
     let app = home.as_ref().map_or_else(|| install.join("TaskQ.app"), |h| h.join("Applications/TaskQ.app"));
     // one bundle per identity: the default install's older `<install>/TaskQ.app` would shadow it in LaunchServices
     if home.is_some() { let _ = fs::remove_dir_all(install.join("TaskQ.app")); }
@@ -173,7 +173,7 @@ pub(crate) fn service_project_fields(root:&Path,status:Res<Option<Value>>)->Stri
     match host::Policy::read(&platform::default_install()) {
         Ok(p) => {
             let overlay=p.overlay(root).map(|(_,e)|e);
-            let default=overlay.and_then(|e|e["default_runtime"].as_str()).unwrap_or(&p.default_runtime);
+            let default=overlay.and_then(|e|e["default_runtime"].as_str()).unwrap_or(p.default_runtime.name());
             out.extend([format!("Claim: {} (host {})",claim_name(p.claim),p.me),format!("Default runtime: {default} (host {})",p.me)]);
             if let Some(e)=overlay {
                 if let Some(allowed)=e["allowed_runtimes"].as_array() {out.push(format!("Allowed runtimes: {}",if allowed.is_empty() {"none".into()}else{allowed.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", ")}));}

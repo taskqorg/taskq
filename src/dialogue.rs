@@ -1,5 +1,6 @@
 //! Workspace dialogue (D2/D3/D5–D7): owner turns into launched sessions and the per-conversation watch. Setup keeps
 //! launch truth and the native transcript keeps the dialogue (D1); this module keeps only the turn in flight and the watch.
+use crate::runtime::Cap;
 use crate::setup::Request;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -87,7 +88,7 @@ pub fn accepted(install:&Path,id:&str,op:&str,input:&str)->Res<bool> {
     let saved=turn(install,id)?;
     let Some(t)=saved.filter(|t|t.op_id.as_deref()==Some(op)&&t.input==input)else{return Ok(false)};
     if crate::runtime::owner_stream::handles(&r.runtime){return crate::runtime::owner_stream::accepted(&own(install,id)?,&r,&t);}
-    Ok(!crate::runtime::of(&r.runtime).has("thread-link")||t.app_accepted)
+    Ok(!crate::runtime::of(&r.runtime).has(Cap::ThreadLink)||t.app_accepted)
 }
 
 pub fn send_op(install:&Path,id:&str,input:&str,op:Option<&str>,native:&Native)->Result<(),SendError> {
@@ -96,14 +97,14 @@ pub fn send_op(install:&Path,id:&str,input:&str,op:Option<&str>,native:&Native)-
     let own = own(install, id)?;
     if busy(&turn(install, id)?) { return Err("working".to_string().into()); }
     if (native.holder)(&own, &r).map_err(|e| format!("native holder unknown ({e}); not sent"))? { return Err(crate::runtime::owner::open_in(&r.runtime).into()); }
-    if crate::runtime::of(&r.runtime).has("thread-link") {if let Some(app)=native.app {(app.baseline)(&own,&r)?;}}
+    if crate::runtime::of(&r.runtime).has(Cap::ThreadLink) {if let Some(app)=native.app {(app.baseline)(&own,&r)?;}}
     // Lock acquisition is a refusal; only an attempted store can leave an uncertain receipt.
     crate::setup::locked(install, || Ok(queue(install,id,input,false,op)))?
 }
 
 pub fn retry_refused(install:&Path,id:&str,op:&str,native:&Native)->Res<()> {
     let r=launched(install,id)?;let own=own(install,id)?;
-    if !crate::runtime::of(&r.runtime).has("thread-link")||native.app.is_none() {return Err("No App-owned refused input".into());}
+    if !crate::runtime::of(&r.runtime).has(Cap::ThreadLink)||native.app.is_none() {return Err("No App-owned refused input".into());}
     if (native.holder)(&own,&r)? {return Err("Native App is working; original refused input kept".into());}
     (native.app.unwrap().baseline)(&own,&r)?;
     crate::setup::locked(install,||{
@@ -246,7 +247,7 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
         Err(e) => return finish(install, own, t, format!("not sent: native holder unknown ({e})")),
         Ok(false) => {}
     }
-    if crate::runtime::of(&r.runtime).has("thread-link") {if let Some(app)=native.app {
+    if crate::runtime::of(&r.runtime).has(Cap::ThreadLink) {if let Some(app)=native.app {
         let baseline=match (app.baseline)(own,r) {Ok(n)=>n,Err(e)=>return finish(install,own,t,format!("not sent: {e}"))};
         t.app_baseline=Some(baseline.0);t.app_after=Some(baseline.1);t.state="dispatching".into();t.pid=None;t.started=None;
         store(&own.join("turn.json"),t)?;
@@ -301,12 +302,12 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
         _ => "idle".into(),
     };
     let mut v = json!({
-        "turn": t.as_ref().ok().and_then(|t| t.as_ref()).map(|t| json!({"state": t.state, "at": t.at, "watch": t.watch, "outcome": t.outcome,"op_id":t.op_id,"prior_outcome":t.prior_outcome,"retry_refused":crate::runtime::of(&r.runtime).has("thread-link")&&t.state=="done"&&t.outcome.as_deref()==Some(open.as_str())&&t.app_baseline.is_none()})),
+        "turn": t.as_ref().ok().and_then(|t| t.as_ref()).map(|t| json!({"state": t.state, "at": t.at, "watch": t.watch, "outcome": t.outcome,"op_id":t.op_id,"prior_outcome":t.prior_outcome,"retry_refused":crate::runtime::of(&r.runtime).has(Cap::ThreadLink)&&t.state=="done"&&t.outcome.as_deref()==Some(open.as_str())&&t.app_baseline.is_none()})),
         "watch": match &w { Ok(Some(w)) => json!(w), Ok(None) => json!("no watch"), Err(e) => json!({"unknown": e}) },
     });
     if live {
         if let Ok(Some(turn))=&t {v["turn"]["input"]=json!(turn.input);}
-        if crate::runtime::of(&r.runtime).has("thread-link") {if let Some(app)=native.app {
+        if crate::runtime::of(&r.runtime).has(Cap::ThreadLink) {if let Some(app)=native.app {
             let initial=Turn {input:crate::runtime::owner::read_brief(&crate::setup::dir(install).join(&r.id).join("brief.txt")),app_baseline:Some(0),app_after:Some(0),..Turn::default()};
             let observed=t.as_ref().ok().and_then(|t|t.as_ref()).filter(|t|t.app_baseline.is_some()).unwrap_or(&initial);
             match own(install,&r.id).and_then(|own|(app.observe)(&own,r,observed)) {
@@ -324,7 +325,7 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
             Ok(line) => v["last_line"] = json!(line),
             Err(e) => { state = "unknown".into(); v["reason"] = json!(e); }
         }
-        if !crate::runtime::of(&r.runtime).has("thread-link") && (state == "idle" || state == open) {
+        if !crate::runtime::of(&r.runtime).has(Cap::ThreadLink) && (state == "idle" || state == open) {
             match own(install, &r.id).and_then(|o| (native.holder)(&o, r)) {
                 Ok(true) => state = if crate::runtime::owner_stream::handles(&r.runtime){"working".into()}else{open},
                 Ok(false) => state = "idle".into(),

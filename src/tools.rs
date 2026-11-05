@@ -109,20 +109,19 @@ pub fn check(need: &Need, bin: &Path, required: bool) -> Result<String, String> 
 /// Whether any project registered on this host, or `root`, uses a GitHub board; unknown without either.
 pub fn github(install: &Path, root: Option<&Path>) -> Option<bool> {
     let roots: Vec<_> = root.map(Path::to_path_buf).into_iter().chain(crate::host::projects(install).unwrap_or_default()).collect();
-    let boards: Vec<String> = roots.iter().filter_map(|r| std::fs::read_to_string(r.join("taskq.json")).ok())
-        .filter_map(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    let boards: Vec<String> = roots.iter().filter_map(|r| crate::config::ProjectFile::of(r).read().ok())
         .map(|v| v["board"].as_str().unwrap_or("github").to_string()).collect();
     (!boards.is_empty()).then(|| boards.iter().any(|b| b == "github"))
 }
 
 /// Every tool row of this host: (line, failed). Not needed tools (gh on a GitLab-only host) are left out.
 pub fn rows(install: &Path, root: Option<&Path>) -> Vec<(String, bool)> {
-    let default_runtime = crate::host::Policy::read(install).ok().map(|p| p.default_runtime);
-    let selected = default_runtime.as_deref().and_then(|rt| crate::labels::select(&[], false, rt, |candidate| {
+    let default_runtime = crate::host::Policy::read(install).ok().map(|p| p.default_runtime.name());
+    let selected = default_runtime.and_then(|rt| crate::labels::select(&[], false, rt, |candidate| {
         crate::runtime::missing_cli(candidate).map_or_else(|| Ok(candidate.to_string()), |why| Err(("capability", why)))
     }).ok().map(|(rt, _)| rt));
     let github = github(install, root);
-    needs(github, selected.as_deref().or(default_runtime.as_deref())).into_iter().map(|(n, req)| {
+    needs(github, selected.as_deref().or(default_runtime)).into_iter().map(|(n, req)| {
         match check(&n, &crate::runtime::which(n.tool), req) { Ok(l) => (l, false), Err(l) => (l, true) }
     }).collect()
 }

@@ -8,12 +8,31 @@ use crate::service::Config;
 use serde_json::Value;
 use std::fs;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) struct Ctx {
     pub(crate) cfg: Config,
     pub(crate) raw: Value,
     pub(crate) board: Box<dyn Board>,
+}
+
+/// A project's `taskq.json`: the one place that names, reads and writes the file. Each caller words its own failure.
+pub(crate) struct ProjectFile(PathBuf);
+
+impl ProjectFile {
+    pub(crate) fn of(root: &Path) -> Self { Self(root.join("taskq.json")) }
+    pub(crate) fn path(&self) -> &Path { &self.0 }
+    pub(crate) fn exists(&self) -> bool { self.0.is_file() }
+    /// The parsed file; a missing file keeps `NotFound`, a parse failure reads as `InvalidData`.
+    pub(crate) fn read(&self) -> std::io::Result<Value> {
+        serde_json::from_str(&fs::read_to_string(&self.0)?).map_err(std::io::Error::from)
+    }
+    /// The file as a record: `None` when absent, an error naming the file when it is not a JSON object.
+    pub(crate) fn record(&self) -> Res<Option<Value>> { crate::data::json(&self.0) }
+    pub(crate) fn write(&self, v: &Value) -> Res<()> {
+        let text = serde_json::to_string_pretty(v).map_err(|e| e.to_string())?;
+        platform::write_atomic(&self.0, &(text + "\n"))
+    }
 }
 
 pub(crate) fn hostname() -> String {
@@ -40,10 +59,10 @@ pub(crate) fn load_value(root: &Path, v: Value) -> Res<(Config, Value)> {
 }
 
 /// § 6 setup check: `load`, except that `publish` disagreeing with `delivery` is the `delivery` item, not an error.
-pub(crate) fn check_load(root: &Path) -> Res<(Config, Value, Result<String, String>)> {
+pub(crate) fn check_load(root: &Path) -> Res<(Config, Value, Result<Delivery, String>)> {
     let v = project_value(root)?;
     match delivery(&v) {
-        Ok((_, preset, _)) => load_value(root, v).map(|(c, raw)| (c, raw, Ok(preset))),
+        Ok((preset, _)) => load_value(root, v).map(|(c, raw)| (c, raw, Ok(preset))),
         Err(e) if e.contains(" disagrees with ") => {
             let mut lenient = v;
             if let Some(o) = lenient.as_object_mut() { o.remove("publish"); }
@@ -54,8 +73,8 @@ pub(crate) fn check_load(root: &Path) -> Res<(Config, Value, Result<String, Stri
 }
 
 pub(crate) fn project_value(root: &Path) -> Res<Value> {
-    let p = root.join("taskq.json");
-    serde_json::from_str(&fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?).map_err(|e| format!("{}: {e}", p.display()))
+    let file = ProjectFile::of(root);
+    file.read().map_err(|e| format!("{}: {e}", file.path().display()))
 }
 
 pub(crate) fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
@@ -64,14 +83,13 @@ pub(crate) fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
     let me = std::env::var("TASKQ_HOST").ok().filter(|s| !s.is_empty()).unwrap_or_else(hostname);
     let limits: BTreeMap<String, u32> = v["limits"].as_object().into_iter().flatten().map(|(k, n)| (k.clone(), n.as_u64().unwrap_or(0) as u32)).collect();
     let board = board::kind(&str_or("board", "github"))?;
-    let (publish, delivery, delivery_revision) = delivery(&v)?;
+    let (delivery, delivery_revision) = delivery(&v)?;
     let cfg = Config {
         root: root.to_path_buf(),
         install: platform::default_install(),
         board,
         web_host: str_or("host", board.default_host),
         repo: str_or("repo", ""),
-        publish,
         delivery,
         delivery_revision,
         me,
@@ -82,7 +100,7 @@ pub(crate) fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
         weights: BTreeMap::new(),
         allowed_runtimes: None,
         auto_reroute: false,
-        default_runtime: crate::runtime::OWNER.into(),
+        default_runtime: crate::runtime::RuntimeId::Claude,
         routing: labels::routing(&v)?,
         permission_mode: "dontAsk".into(),
         codex: vec!["-s".into(), "danger-full-access".into()],
@@ -101,30 +119,47 @@ pub(crate) fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
     Ok((cfg, v))
 }
 
-/// § 7 delivery: `(publish mode, preset, revision)`. Absent, `publish` names the preset at revision 0; a preset
-/// never changes by itself, so `publish: pr` stays `auto-merge`.
-pub(crate) fn delivery(v: &Value) -> Res<(String, String, u64)> {
+/// § 7 delivery preset; its wire names are the `delivery.preset` values of `taskq.json`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum Delivery { AutoMerge, ReviewPr, Direct }
+
+impl Delivery {
+    pub(crate) fn name(self) -> &'static str {
+        match self { Self::AutoMerge => "auto-merge", Self::ReviewPr => "review-pr", Self::Direct => "direct" }
+    }
+    /// The publication route a board takes: `pr` or `direct`.
+    pub(crate) fn mode(self) -> &'static str {
+        match self { Self::AutoMerge | Self::ReviewPr => "pr", Self::Direct => "direct" }
+    }
+}
+
+impl std::fmt::Display for Delivery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(self.name()) }
+}
+
+/// § 7 delivery: `(preset, revision)`. Absent, `publish` names the preset at revision 0; a preset never changes by
+/// itself, so `publish: pr` stays `auto-merge`.
+pub(crate) fn delivery(v: &Value) -> Res<(Delivery, u64)> {
     let publish = v["publish"].as_str();
     if v["delivery"].is_null() {
-        return Ok(match publish.unwrap_or("pr") {
-            "direct" => ("direct".into(), "direct".into(), 0),
-            _ => ("pr".into(), "auto-merge".into(), 0),
-        });
+        return Ok((if publish == Some("direct") { Delivery::Direct } else { Delivery::AutoMerge }, 0));
     }
     let d = &v["delivery"];
     let revision = d["revision"].as_u64().ok_or("taskq.json: delivery.revision must be a whole number")?;
     let preset = d["preset"].as_str().unwrap_or_default();
-    let mode = match preset {
-        "auto-merge" | "review-pr" => "pr",
-        "direct" => "direct",
+    let parsed = match preset {
+        "auto-merge" => Delivery::AutoMerge,
+        "review-pr" => Delivery::ReviewPr,
+        "direct" => Delivery::Direct,
         // ponytail: B3 pending-handoff states come first; until then these presets cannot finish a task
         "local" | "push-branch" => return Err(format!("taskq.json: delivery.preset {preset} is not available yet: a result needs a published SHA")),
         _ => return Err(format!("taskq.json: delivery.preset {preset:?}: use auto-merge, review-pr or direct")),
     };
-    if publish.is_some_and(|p| p != mode) {
+    if publish.is_some_and(|p| p != parsed.mode()) {
         return Err(format!("taskq.json: publish {} disagrees with delivery.preset {preset}", publish.unwrap_or_default()));
     }
-    Ok((mode.into(), preset.into(), revision))
+    Ok((parsed, revision))
 }
 
 pub(crate) fn ctx() -> Res<Ctx> {

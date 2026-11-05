@@ -10,6 +10,14 @@ pub use coreq::{Tool, quiet, write_atomic};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The OS user's home: the native variable first, then the other one; an empty value counts as unset.
+pub fn user_home() -> Option<PathBuf> { home_from(|key| std::env::var_os(key)) }
+
+fn home_from(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let order = if cfg!(windows) { ["USERPROFILE", "HOME"] } else { ["HOME", "USERPROFILE"] };
+    order.iter().filter_map(|key| var(key)).find(|home| !home.is_empty()).map(PathBuf::from)
+}
+
 /// AgentQ install layout, shared by host health checks and optional desktop onboarding.
 pub fn agentq_root()->crate::Res<PathBuf> {
     let key=if cfg!(windows){"LOCALAPPDATA"}else{"HOME"};

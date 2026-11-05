@@ -3,6 +3,7 @@
 //! JSON state, the page sends actions back. No board access and no token: actions go through the same files and
 //! commands as the CLI.
 
+use crate::runtime::Cap;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -899,8 +900,8 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
         row["progress_url"] = json!(page.map(|p| format!("{p}{}", row["n"].as_u64().unwrap_or(0))));
     }
     let a = crate::runtime::of(rt);
-    if !a.has("remote-control") && !own {
-        if a.has("thread-link") {
+    if !a.has(Cap::RemoteControl) && !own {
+        if a.has(Cap::ThreadLink) {
             match page {
                 Some(p) => row["session_url"] = json!(format!("{p}{}", row["n"].as_u64().unwrap_or(0))),
                 None => row["session_reason"] = json!(format!("Codex session opens only on {host}")),
@@ -2221,7 +2222,7 @@ fn selftest(dir: &Path) -> Result<(), String> {
 /// The four Add project cases (menu.md M10): `taskq.json` with a passing `selftest` (taskq), with a failing one (old,
 /// owner's marker), else an empty folder or a Git root (new) or files without Git (plain: not a repository).
 fn classify(dir: &Path, selftest: impl Fn(&Path) -> Result<(), String>) -> Value {
-    let (kind, reason) = if dir.join("taskq.json").is_file() {
+    let (kind, reason) = if crate::config::ProjectFile::of(dir).exists() {
         selftest(dir).map_or_else(|e| ("old", e), |_| ("taskq", String::new()))
     } else if dir.join(".git").exists() || fs::read_dir(dir).is_ok_and(|mut d| d.next().is_none()) {
         ("new", String::new())

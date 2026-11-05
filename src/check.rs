@@ -39,7 +39,7 @@ pub struct Facts {
     /// GitHub `<install>/token`; `None`: another board.
     pub token: Option<Result<(), String>>,
     /// The preset, or why `publish` and `delivery` disagree.
-    pub delivery: Result<String, String>,
+    pub delivery: Result<crate::config::Delivery, String>,
     /// `None`: the preset does not publish by PR.
     pub pr_route: Option<Probe>,
     /// `host_setup` and whether its last `service install` run succeeded; `None`: not declared.

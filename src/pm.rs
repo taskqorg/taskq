@@ -1,4 +1,5 @@
 //! Opt-in owner-request exchange, never task authority or a conversation/telemetry channel.
+use crate::runtime::Cap;
 use crate::{Res, enrollment, resources, setup};
 use coreq::enroll::{Https, Wire};
 use serde::{Deserialize, Serialize};
@@ -58,7 +59,7 @@ fn with<T>(install:&Path,f:impl FnOnce(&mut State)->Res<T>)->Res<T> {
     let valid_hash=|v:&str|v.len()==64&&v.bytes().all(|c|c.is_ascii_digit()||(b'a'..=b'f').contains(&c));
     if s.grants.len()>64||s.ops.len()>4096
         ||s.grants.iter().any(|(id,g)|![id,&g.actor_id,&g.installation_id].iter().all(|id|resources::id(id))||g.generation==0
-            ||g.projects.iter().any(|id|!resources::id(id))||g.runtimes.iter().any(|r|!crate::runtime::setup_runtimes().any(|rt|rt==r)||!crate::runtime::of(r).has("remote-control")))
+            ||g.projects.iter().any(|id|!resources::id(id))||g.runtimes.iter().any(|r|!crate::runtime::setup_runtimes().any(|rt|rt==r)||!crate::runtime::of(r).has(Cap::RemoteControl)))
         ||s.ops.iter().any(|(key,o)|!valid_hash(key)||o.request_id!=*key||!valid_hash(&o.hash)
         ||[&o.actor_id,&o.op_id,&o.revision,&o.grant_id,&o.installation_id,&o.project_id,&o.runtime_id].iter().any(|id|!resources::id(id))) {
         return Err("PM storage identity invalid; kept".into());
@@ -71,7 +72,7 @@ pub fn projects(install:&Path,now:u64)->Res<BTreeMap<String,resources::Project>>
 pub fn grant(install:&Path,id:&str,actor:&str,projects:&[String],runtimes:&[String],hours:u64,now:u64)->Res<()> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some(){return Err("a worker cannot change PM grants".into());}
     if !resources::id(id)||!resources::id(actor)||!(1..=720).contains(&hours)||projects.is_empty()||runtimes.is_empty()
-        ||runtimes.iter().any(|r|!crate::runtime::setup_runtimes().any(|rt|rt==r)||!crate::runtime::of(r).has("remote-control")) {return Err("PM grant needs valid IDs, projects, owner runtimes and 1-720 hours".into());}
+        ||runtimes.iter().any(|r|!crate::runtime::setup_runtimes().any(|rt|rt==r)||!crate::runtime::of(r).has(Cap::RemoteControl)) {return Err("PM grant needs valid IDs, projects, owner runtimes and 1-720 hours".into());}
     resources::with(install,|registry| {
     resources::prepare(registry,install,now)?;
     let registered=&registry.projects;

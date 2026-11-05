@@ -2,6 +2,7 @@
 //! [detail](../docs/design/capacity.md#runtime-accounts)): an ordered list of named login homes per CLI runtime,
 //! each enabled or disabled. Polled usage and fleet policy ([usage](usage.rs)) rank new starts; a usage limit moves
 //! them to another enabled account.
+use crate::runtime::Cap;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write};
@@ -47,7 +48,7 @@ pub type Limits = BTreeMap<String, Limit>;
 /// Wall-clock seconds; the service passes board time where it has it.
 pub fn now() -> i64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64) }
 
-pub fn applies(rt: &str) -> bool { crate::runtime::of(rt).has("accounts") }
+pub fn applies(rt: &str) -> bool { crate::runtime::of(rt).has(Cap::Accounts) }
 
 pub fn valid_label(l: &str) -> bool {
     (1..=32).contains(&l.len()) && !l.starts_with('-') && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
@@ -637,7 +638,7 @@ fn add_in(install: &Path, rt: &str, label: &str, base: &Path, login: impl FnOnce
     let args = crate::runtime::of(rt).device_login;
     // the owner's terminal runs the native login; TaskQ never sees the token
     if !login(&home, args)? { return Err(format!("{rt} login for {label} did not finish; the list is unchanged")); }
-    if crate::runtime::of(rt).has("auth-file") && !home.join("config.toml").exists() {
+    if crate::runtime::of(rt).has(Cap::AuthFile) && !home.join("config.toml").exists() {
         let cfg = std::fs::symlink_metadata(base.join("config.toml")).ok().filter(|m| m.is_file()).and_then(|_| std::fs::read(base.join("config.toml")).ok()).unwrap_or_default();
         std::fs::write(home.join("config.toml"), cfg).map_err(|e| format!("account config.toml: {e}"))?;
     }

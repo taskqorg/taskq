@@ -314,7 +314,7 @@ use std::time::{Duration, Instant, SystemTime};
         fs::write(t.join("taskq.json"), r#"{"repo": "o/r", "publish": "pr", "delivery": {"preset": "direct", "revision": 1}}"#).unwrap();
         assert!(load(&t).err().is_some_and(|e| e.contains("disagrees")), "ordinary commands keep refusing");
         let (cfg, _, delivery) = check_load(&t).unwrap();
-        assert_eq!((cfg.publish.as_str(), delivery.unwrap_err().as_str()), ("direct", "taskq.json: publish pr disagrees with delivery.preset direct"));
+        assert_eq!((cfg.delivery.mode(), delivery.unwrap_err().as_str()), ("direct", "taskq.json: publish pr disagrees with delivery.preset direct"));
         fs::write(t.join("taskq.json"), r#"{"repo": "o/r", "delivery": {"preset": "local", "revision": 1}}"#).unwrap();
         assert!(check_load(&t).is_err(), "only the disagreement is lenient");
         fs::remove_dir_all(&t).unwrap();
@@ -335,7 +335,7 @@ use std::time::{Duration, Instant, SystemTime};
         assert!(std::process::Command::new("cp").arg(c.root.join("src.sh")).arg(&script).status().unwrap().success());
         assert_eq!(host_setup(&c), None, "undeclared: nothing runs");
         c.host_setup = Some("scripts/install-git-hooks.sh".into());
-        let gap = |c: &Config| setup_items(c, &BTreeMap::new(), Ok("auto-merge".into()), &Value::Null, &[], None, None).into_iter().find(|i| i.id == "host-setup").unwrap().status;
+        let gap = |c: &Config| setup_items(c, &BTreeMap::new(), Ok(crate::config::Delivery::AutoMerge), &Value::Null, &[], None, None).into_iter().find(|i| i.id == "host-setup").unwrap().status;
         assert_eq!(gap(&c), "gap");
         assert_eq!(host_setup(&c).as_deref(), Some("host setup: `scripts/install-git-hooks.sh` done"));
         assert_eq!(gap(&c), "ok");
@@ -357,27 +357,27 @@ use std::time::{Duration, Instant, SystemTime};
     #[test]
     fn setup_items_check_runtimes_in_use_only() {
         let mut c = cfg();
-        c.default_runtime = "codex".into();
+        c.default_runtime = crate::runtime::RuntimeId::Codex;
         let refused = |rt: &str| policy::Effective { runtime: rt.into(), requested: String::new(), grant: "none (taskq.json is a request)".into(), mode: "legacy".into(),
             enforcement: String::new(), profile: None, linux: false, windows: false, claude: None, codex: None,
             refused: Some(format!("no operator grant and no policy store protection for {rt} on linux; grant a preset")) };
         let access = [refused("claude"), refused("codex")];
         let ids = |limits: &[(&str, u32)]| {
             let limits = limits.iter().map(|(k, n)| (k.to_string(), *n)).collect();
-            setup_items(&c, &limits, Ok("auto-merge".into()), &Value::Null, &access, None, None).into_iter()
+            setup_items(&c, &limits, Ok(crate::config::Delivery::AutoMerge), &Value::Null, &access, None, None).into_iter()
                 .filter(|i| i.id.starts_with("access ")).map(|i| (i.id, i.status)).collect::<Vec<_>>()
         };
         assert_eq!(ids(&[("codex", 4)]), [("access codex".to_string(), "gap")], "limit 4 and the review default");
         assert_eq!(ids(&[]), [("access codex".to_string(), "gap")], "the review default alone is in use");
         assert_eq!(ids(&[("codex", 0), ("claude", 2)]), [("access claude".to_string(), "gap")], "limit 0 is off");
-        let items = setup_items(&c, &BTreeMap::new(), Ok("auto-merge".into()), &Value::Null, &access, None, None);
+        let items = setup_items(&c, &BTreeMap::new(), Ok(crate::config::Delivery::AutoMerge), &Value::Null, &access, None, None);
         assert_eq!(items.iter().find(|i| i.id == "pr-route").unwrap().status, "unknown", "an unread board stays unknown (R12)");
         // #2118: a healthy fallback removes the mandatory Claude prerequisite, but never hides an explicit pin.
-        c.default_runtime = "claude".into();
+        c.default_runtime = crate::runtime::RuntimeId::Claude;
         let mut codex = refused("codex"); codex.refused = None; codex.grant = "fixture owner grant".into();
         let agents = json!([{"runtime":"claude","login":"not installed"},{"runtime":"codex","login":"logged in"}]);
         for pin in [false, true] {
-            let items = setup_items(&c, &BTreeMap::new(), Ok("auto-merge".into()), &agents, &[codex.clone()],
+            let items = setup_items(&c, &BTreeMap::new(), Ok(crate::config::Delivery::AutoMerge), &agents, &[codex.clone()],
                 Some(if pin { vec![(1, vec!["run-claude".into()])] } else { vec![] }), None);
             assert_eq!(items.iter().any(|i| i.id == "cli claude"), pin);
             assert!(items.iter().any(|i| i.id == "access codex"));
@@ -396,29 +396,29 @@ use std::time::{Duration, Instant, SystemTime};
         let agents = json!([{"runtime":"claude","login":"not installed"},{"runtime":"codex","login":"logged in"}]);
         for (cause, reroute, expected_pin) in [("limit",true,false),("excluded",true,false),("accounts",true,false),
             ("limit",false,true),("excluded",false,true),("accounts",false,true),("login",true,true),("access",true,true),("quota",true,true)] {
-            c.default_runtime = "codex".into();
+            c.default_runtime = crate::runtime::RuntimeId::Codex;
             c.auto_reroute = reroute;
-            c.allowed_runtimes = (cause == "excluded").then(||vec!["codex".into()]);
+            c.allowed_runtimes = (cause == "excluded").then(||vec![crate::runtime::RuntimeId::Codex]);
             let limits = [("claude".into(),if cause == "limit" {0}else{2}),("codex".into(),2)].into_iter().collect();
             fs::write(c.install.join(runtime::accounts::FILE), if cause == "accounts" {r#"{"claude":[{"label":"default","enabled":false}]}"#} else {"{}"}).unwrap();
             fs::write(c.install.join(runtime::accounts::STATE), if cause == "quota" {r#"{"claude":{"default":{"limited":1,"until":4102444800}}}"#} else {"{}"}).unwrap();
             let mut claude = grant("claude");
             if cause == "access" {claude.refused = Some("fixture access refusal".into());}
-            let items = setup_items(&c, &limits, Ok("auto-merge".into()), &agents, &[claude,grant("codex")],
+            let items = setup_items(&c, &limits, Ok(crate::config::Delivery::AutoMerge), &agents, &[claude,grant("codex")],
                 Some(vec![(1,vec!["run-claude".into()])]), None);
             assert_eq!(items.iter().any(|i|i.id == "cli claude"),expected_pin,"{cause}, auto_reroute={reroute}: {items:?}");
             assert!(items.iter().any(|i|i.id == "access codex"));
         }
         // Allowed runtimes also narrow unpinned readiness even with a positive host limit and a healthy excluded default.
-        c.default_runtime = "claude".into();
-        c.allowed_runtimes = Some(vec!["codex".into()]);
+        c.default_runtime = crate::runtime::RuntimeId::Claude;
+        c.allowed_runtimes = Some(vec![crate::runtime::RuntimeId::Codex]);
         let limits = [("claude".into(),2),("codex".into(),2)].into_iter().collect();
         let agents = json!([{"runtime":"claude","login":"logged in"},{"runtime":"codex","login":"logged in"}]);
-        let items = setup_items(&c, &limits, Ok("auto-merge".into()), &agents, &[grant("claude"),grant("codex")], Some(vec![]), None);
+        let items = setup_items(&c, &limits, Ok(crate::config::Delivery::AutoMerge), &agents, &[grant("claude"),grant("codex")], Some(vec![]), None);
         assert!(!items.iter().any(|i|i.id.ends_with(" claude")),"{items:?}");
         assert!(items.iter().any(|i|i.id == "access codex"));
         let agents = json!([{"runtime":"claude","login":"logged in"},{"runtime":"codex","login":"not logged in"}]);
-        let items = setup_items(&c, &BTreeMap::new(), Ok("auto-merge".into()), &agents, &[grant("claude"),grant("codex")], Some(vec![]), None);
+        let items = setup_items(&c, &BTreeMap::new(), Ok(crate::config::Delivery::AutoMerge), &agents, &[grant("claude"),grant("codex")], Some(vec![]), None);
         assert!(!items.iter().any(|i|i.id.ends_with(" claude")),"{items:?}");
         assert!(items.iter().any(|i|i.id.ends_with(" codex") && i.status == "gap"),"an unavailable allowed fallback must remain visible: {items:?}");
         fs::remove_dir_all(&c.install).unwrap();
@@ -459,8 +459,7 @@ use std::time::{Duration, Instant, SystemTime};
             board: &board::github::KIND,
             web_host: String::new(),
             repo: "o/r".into(),
-            publish: "pr".into(),
-            delivery: "auto-merge".into(),
+            delivery: crate::config::Delivery::AutoMerge,
             delivery_revision: 0,
             me: "mac".into(),
             limits: BTreeMap::new(),
@@ -470,7 +469,7 @@ use std::time::{Duration, Instant, SystemTime};
             weights: BTreeMap::new(),
             allowed_runtimes: None,
             auto_reroute: false,
-            default_runtime: "claude".into(),
+            default_runtime: crate::runtime::RuntimeId::Claude,
             routing: vec![],
             permission_mode: "dontAsk".into(),
             codex: vec![],
@@ -1175,7 +1174,7 @@ use std::time::{Duration, Instant, SystemTime};
     // into review-pr silently, a review-pr result publishes unapproved or on a stale approval, or the receipt omits the policy.
     #[test]
     fn review_pr_publishes_only_the_approved_sha_and_names_the_policy() {
-        let preset = |v: Value| delivery(&v).map(|(m, p, r)| format!("{m} {p} {r}"));
+        let preset = |v: Value| delivery(&v).map(|(p, r)| format!("{} {p} {r}", p.mode()));
         assert_eq!(preset(json!({})).unwrap(), "pr auto-merge 0");
         assert_eq!(preset(json!({"publish": "pr"})).unwrap(), "pr auto-merge 0", "no silent pr to review-pr");
         assert_eq!(preset(json!({"publish": "direct"})).unwrap(), "direct direct 0");
@@ -1183,7 +1182,7 @@ use std::time::{Duration, Instant, SystemTime};
         assert!(preset(json!({"delivery": {"preset": "local", "revision": 1}})).unwrap_err().contains("not available"));
         assert!(preset(json!({"delivery": {"preset": "review-pr"}})).unwrap_err().contains("revision"));
         assert!(preset(json!({"publish": "direct", "delivery": {"preset": "review-pr", "revision": 1}})).unwrap_err().contains("disagrees"));
-        let c = Config { delivery: "review-pr".into(), delivery_revision: 3, ..cfg() };
+        let c = Config { delivery: crate::config::Delivery::ReviewPr, delivery_revision: 3, ..cfg() };
         let b = Fake::default();
         let n = b.create("T", "## Goal\ng", &["taskq".into()]).unwrap();
         let (one, two) = ("0123456789abcdef0123456789abcdef01234567", "89abcdef0123456789abcdef0123456789abcdef");

@@ -365,7 +365,7 @@ pub fn board_items(b: &dyn crate::board::Board, repo: &str, gitlab: bool, root: 
     let path = crate::paths::dot(root).join("status.json");
     items.push(error_item(crate::data::json(&path), coreq::status::age(&path), crate::snapshot::ttl(root)));
     // #2300: what a worker launch needs on this host beyond the board
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from);
+    let home = crate::platform::user_home();
     let claude = crate::runtime::owner::claude_installed();
     items.push(match &home {
         Some(h) => trust_item(h, &root.canonicalize().unwrap_or_else(|_| root.to_path_buf()), claude),

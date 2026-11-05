@@ -1,5 +1,6 @@
 //! R8/R9: one protected native app-server launch on an existing external slot, never a grant authority.
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+use crate::runtime::Cap;
 use crate::{Res, policy, resources, runtime};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -16,7 +17,7 @@ impl Request {
         if text.len()>16384 {return Err("app-server request exceeds 16384 bytes".into());}
         let r:Self=serde_json::from_str(text).map_err(|_|"invalid protected app-server request")?;
         if r.schema!=SCHEMA||r.policy_revision==0||!runtime::accounts::valid_label(&r.account)
-            ||!r.slot["binding"]["runtime"].as_str().is_some_and(|rt|runtime::of(rt).has("passive-writer")) {return Err("invalid protected app-server identity".into());}
+            ||!r.slot["binding"]["runtime"].as_str().is_some_and(|rt|runtime::of(rt).has(Cap::PassiveWriter)) {return Err("invalid protected app-server identity".into());}
         Ok(r)
     }
     fn root(&self)->Res<PathBuf> {
@@ -153,7 +154,7 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
     let root=r.root()?;let install=canonical(install)?;let home=canonical(home)?;let bin=canonical(bin)?;
     if !crate::host::projects(&install)?.contains(&root) {return Err("protected project is not registered".into());}
     let p=policy::load(&install)?;
-    let grants:Vec<_>=p.grants.iter().filter(|g|runtime::of(&g.runtime).has("passive-writer")&&g.project.as_deref()==root.to_str()).collect();
+    let grants:Vec<_>=p.grants.iter().filter(|g|runtime::of(&g.runtime).has(Cap::PassiveWriter)&&g.project.as_deref()==root.to_str()).collect();
     let g=grants.first().filter(|_|grants.len()==1).ok_or("explicit project Codex Workspace grant required")?;
     if p.revision!=r.policy_revision||g.mode!="workspace"||g.by.trim().is_empty()||g.by=="unknown"||g.at==0 {
         return Err("project Workspace authority missing, stale or mismatched".into());
@@ -335,7 +336,7 @@ mod mac {
         // shortcut: standard host CLI locations; use host-owned runtime resolution if custom installations need support.
         let defaults=std::ffi::OsStr::new("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
         let path=runtime::user_bin_path(defaults,Some(home.as_os_str())).unwrap_or_else(||defaults.to_os_string());
-        runtime::agent(runtime::RUNTIMES[2])?.executable(Some(&path))
+        runtime::agent(runtime::crate::runtime::RuntimeId::CodexApp.name())?.executable(Some(&path))
     }
     pub(super) fn live(id:&coreq::process::Identity)->Res<()> {exact(id,coreq::process::identity(id.pid).map_err(|_|"native liveness unknown".into()))}
     fn child_of(id:&coreq::process::Identity,supervisor:&coreq::process::Identity)->Res<()> {
@@ -450,14 +451,14 @@ mod mac {
         let supervisor=coreq::process::identity(std::process::id()).map_err(|_|"supervisor identity unknown")?.ok_or("supervisor absent")?;
         resources::within(install,resources::WAIT,|s| {prepared(s,key,r,&p.authority)?;input_gate(s,key,r)})?;
         let exe=std::env::current_exe().map_err(|_|"adapter executable unknown")?;
-        let env=runtime::Env{context:"",root:&p.root,exe:&exe,install,permission_mode:"",codex:&p.args,publish:"",board_env:&[],jobs:None};
+        let env=runtime::Env{context:"",root:&p.root,exe:&exe,install,permission_mode:"",codex:&p.args,delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
         let mut cmd=runtime::executable(p.bin.clone(),&p.access,&env)?;
         // Neither authority secrets nor an ambient environment choose native account, configuration or executable.
         cmd.env_clear();for name in ["PATH","LANG","LC_ALL","TMPDIR","TERM"] {if let Some(v)=std::env::var_os(name) {cmd.env(name,v);}}
         cmd.env("HOME",home);
-        let spec=runtime::optimized(runtime::RUNTIMES[2],agentq_runtime::agent::NativeSpec{root:p.root.clone(),session:"-".into(),
+        let spec=runtime::optimized(runtime::crate::runtime::RuntimeId::CodexApp.name(),agentq_runtime::agent::NativeSpec{root:p.root.clone(),session:"-".into(),
             resume:false,args:p.args.iter().map(Into::into).collect(),home:Some(PathBuf::from(p.authority["account_home"].as_str().ok_or("account home unknown")?)),env:vec![]})?;
-        let mut cmd=runtime::agent(runtime::RUNTIMES[2])?.app_server_command(cmd,&spec)?;
+        let mut cmd=runtime::agent(runtime::crate::runtime::RuntimeId::CodexApp.name())?.app_server_command(cmd,&spec)?;
         cmd.stdin(Stdio::piped()).stdout(stdout).stderr(stderr);
         resources::within(install,resources::WAIT,|s|{external_slots::reserved(install,s,&r.slot,"codex")?;input_gate(s,key,r)})?;
         let mut child=cmd.spawn().map_err(|_|"native spawn outcome unknown; intent retained, never replay")?;

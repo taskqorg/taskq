@@ -418,6 +418,8 @@ pub fn http_date(s: &str) -> Option<i64> {
 
 // ---------- HTTP through curl ----------
 
+use crate::http::quote;
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Reply {
     status: u16,
@@ -448,22 +450,6 @@ impl Reply {
 
 fn operation(method: &str) -> &'static str {
     match method { "GET" => "read", "POST" => "create", "PUT" | "PATCH" => "update", "DELETE" => "delete", _ => "other" }
-}
-
-fn quote(s: &str) -> String {
-    let mut q = String::from("\"");
-    for c in s.chars() {
-        match c {
-            '"' => q.push_str("\\\""),
-            '\\' => q.push_str("\\\\"),
-            '\n' => q.push_str("\\n"),
-            '\r' => q.push_str("\\r"),
-            '\t' => q.push_str("\\t"),
-            c => q.push(c),
-        }
-    }
-    q.push('"');
-    q
 }
 
 /// §5: private file transport keeps reply uploads/downloads outside bounded process pipes.
@@ -506,10 +492,7 @@ fn curl(method: &str, url: &str, auth: &str, body: Option<&Value>, etag: Option<
         files.body(b)?;
         cfg += &format!("header = \"Content-Type: application/json\"\ndata-binary = {}\n", quote(&format!("@{}",files.path("request").display())));
     }
-    let out = match coreq::process::exchange("board.http", crate::platform::command("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(65)) {
-        Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
-        Err(e) => return Err(format!("curl: {e}")),
-    };
+    let out = crate::http::with_config("board.http", &["-K", "-"], &cfg, std::time::Duration::from_secs(65)).map_err(|e| format!("curl: {e}"))?;
     if !out.status.success() {
         return Err(format!("curl {method} {url}: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
@@ -914,10 +897,7 @@ impl Api {
         let files=HttpFiles::new()?;
         cfg+=&format!("output = {}\n",quote(&files.path("response").to_string_lossy()));
         if let Some(f) = form { cfg += &format!("form = {}\n", quote(&format!("file=@{}", f.display()))); }
-        let out = match coreq::process::exchange("board.http", crate::platform::command("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(125)) {
-            Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
-            Err(e) => return Err(format!("curl: {e}")),
-        };
+        let out = crate::http::with_config("board.http", &["-K", "-"], &cfg, std::time::Duration::from_secs(125)).map_err(|e| format!("curl: {e}"))?;
         if !out.status.success() { return Err(format!("curl {method} {url}: {}", String::from_utf8_lossy(&out.stderr).trim())); }
         files.response()
     }

@@ -260,7 +260,7 @@ impl Proc for Adopted {
 
 /// The saved execution scope, rather than a vanished launcher's PID, decides whether it remains live.
 pub fn execution_live(row:&crate::data::KidLine)->Result<bool,String> {
-    #[cfg(windows)] if of(&row.runtime).has("cli") && !of(&row.runtime).has("remote-control") {
+    #[cfg(windows)] if of(&row.runtime).has(Cap::Cli) && !of(&row.runtime).has(Cap::RemoteControl) {
         let key=row.job.as_deref().ok_or("legacy Windows execution has no native job scope; reconcile descendants before release")?;
         return windows_process::Execution::recover(row.process.clone(),key)?.exited().map(|ended|ended.is_none());
     }
@@ -270,7 +270,7 @@ pub fn execution_live(row:&crate::data::KidLine)->Result<bool,String> {
 
 /// Cleanup may use an already-attributable board Exit; an absent native scope cannot create that proof.
 pub fn released_execution_live(row:&crate::data::KidLine)->Result<bool,String> {
-    #[cfg(windows)] if of(&row.runtime).has("cli") && !of(&row.runtime).has("remote-control") {
+    #[cfg(windows)] if of(&row.runtime).has(Cap::Cli) && !of(&row.runtime).has(Cap::RemoteControl) {
         let key=row.job.as_deref().ok_or("legacy Windows execution has no native job scope; reconcile before cleanup")?;
         return match windows_process::Execution::open(row.process.clone(),key)? {Some(mut scope)=>scope.exited().map(|ended|ended.is_none()),None=>Ok(false)};
     }
@@ -290,7 +290,7 @@ pub fn uuid() -> String {
 
 /// Claude has a pre-launch alias; the log resolves it (and Codex `-`) to the native session.
 pub fn new_session(rt: &str) -> String {
-    if of(rt).has("caller-session-id") { uuid() } else { "-".into() }
+    if of(rt).has(Cap::CallerSessionId) { uuid() } else { "-".into() }
 }
 
 pub fn log_path(root: &Path, l: &Launch) -> PathBuf {
@@ -329,7 +329,7 @@ pub(crate) fn classify(rt: &str, text: &str) -> Option<agentq_runtime::agent::Re
 /// uncached input, cache reads and cache writes, and their sum.
 pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     use crate::profile::Usage;
-    if of(rt).has("app-turn") { return Usage::Unknown("app-turn"); }
+    if of(rt).has(Cap::AppTurn) { return Usage::Unknown("app-turn"); }
     let Some(text) = log_text(log, pos) else { return Usage::Unknown("log-unreadable") };
     let Some(report) = classify(rt, &text) else { return Usage::Unknown("runtime-unknown") };
     let u = report.usage;
@@ -455,9 +455,9 @@ pub use agentq_runtime::agent::{which_in, user_bin_path};
 /// agy user installs must also resolve in a service's non-login PATH (§ 8).
 pub fn which(name: &str) -> PathBuf {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    if !ADAPTERS.iter().any(|a| a.bin == name && a.has("user-bin")) { return which_in(name, &path); }
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
-    which_in(name, &user_bin_path(&path, home.as_deref()).unwrap_or(path))
+    if !ADAPTERS.iter().any(|a| a.bin == name && a.has(Cap::UserBin)) { return which_in(name, &path); }
+    let home = crate::platform::user_home();
+    which_in(name, &user_bin_path(&path, home.as_deref().map(Path::as_os_str)).unwrap_or(path))
 }
 
 /// The worker's last message in an attempt log, for the `gone` reason (§ 4 step 1); None when unreadable.
@@ -589,7 +589,7 @@ impl Proc for CliTurn {
         let mut lines=text.lines();
         let binding:serde_json::Value=serde_json::from_str(lines.next()?).ok()?;
         let thread=binding["native"]["session"].as_str().filter(|s|plain_thread(s))?;
-        if task==0 || attempt==0 || execution<=attempt || binding["type"]!="taskq.input" || !binding["runtime"].as_str().is_some_and(|r|of(r).has("passive-writer"))
+        if task==0 || attempt==0 || execution<=attempt || binding["type"]!="taskq.input" || !binding["runtime"].as_str().is_some_and(|r|of(r).has(Cap::PassiveWriter))
             || binding["task"].as_u64()!=Some(task) || binding["attempt"].as_u64()!=Some(attempt)
             || binding["execution"].as_u64()!=Some(execution) || binding["input"].as_str()?.is_empty() {return None;}
         let conflict=format!("thread {thread} already has an active writer");
@@ -607,7 +607,7 @@ impl Proc for CliTurn {
     }
     fn job(&self)->Option<String> {self.proc.job()}
     fn checkpoint(&mut self,cfg:&crate::service::Config,l:&Launch,execution:u64)->Result<(),String> {
-        if !of(&l.rt).has("cli") || of(&l.rt).has("remote-control") { return Ok(()) }
+        if !of(&l.rt).has(Cap::Cli) || of(&l.rt).has(Cap::RemoteControl) { return Ok(()) }
         self.recovery=Some(Recovery {install:cfg.install.clone(),root:cfg.root.clone(),task:l.task,attempt:l.attempt,execution,runtime:l.rt.clone()});
         self.persist()
     }
@@ -650,22 +650,22 @@ fn background_session(text: &str) -> Option<String> {
 
 /// Codex's thread id: the first `thread.started` line of the attempt log.
 pub fn codex_thread(log: &Path) -> Option<String> {
-    classify(RUNTIMES[1], &log_text(log, 0)?)?.session
+    classify(RuntimeId::Codex.name(), &log_text(log, 0)?)?.session
 }
 
 /// Why `rt` cannot start here when its CLI does not resolve on PATH (§ 3: no claim, resume or reviewer).
 pub fn missing_cli(rt: &str) -> Option<String> {
     let a = of(rt);
-    if a.has("user-bin") { return (!which(a.bin).is_absolute()).then(|| format!("{} {} CLI not found on the service PATH", a.name, a.bin)); }
+    if a.has(Cap::UserBin) { return (!which(a.bin).is_absolute()).then(|| format!("{} {} CLI not found on the service PATH", a.name, a.bin)); }
     let r = agent(rt).ok()?.ready(None, None);
     (r.install.state == "missing").then_some(r.install.detail)
 }
 
 /// § 6 setup check: the § 8 grant mode the owner gives `rt` on `os`; Claude has no Workspace enforcement off macOS.
-pub fn grant_mode(os: &str, rt: &str) -> &'static str { if os == "macos" || of(rt).has("sandbox-args") && of(rt).has("cli") { "workspace" } else { "full" } }
+pub fn grant_mode(os: &str, rt: &str) -> &'static str { if os == "macos" || of(rt).has(Cap::SandboxArgs) && of(rt).has(Cap::Cli) { "workspace" } else { "full" } }
 
 /// § 6 setup check: whether `rt`'s sandbox on `os` needs `<root>/.codex` (see `linux_sandbox::ready`).
-pub fn needs_codex_dir(os: &str, rt: &str) -> bool { os == "linux" && of(rt).has("sandbox-args") && of(rt).has("cli") }
+pub fn needs_codex_dir(os: &str, rt: &str) -> bool { os == "linux" && of(rt).has(Cap::SandboxArgs) && of(rt).has(Cap::Cli) }
 
 pub struct Env<'a> {
     /// Fresh board goal/acceptance and every ordered note; empty only for non-task instruments.
@@ -677,7 +677,7 @@ pub struct Env<'a> {
     pub permission_mode: &'a str,
     pub codex: &'a [String],
     /// The § 7 delivery preset: `auto-merge`, `review-pr` or `direct`.
-    pub publish: &'a str,
+    pub delivery: crate::config::Delivery,
     /// Secret values: command environment only, never brief, argv or log.
     pub board_env: &'a [(String, String)],
     /// § 8 compile jobs: `CARGO_BUILD_JOBS` for this launch; None sets nothing.
@@ -712,7 +712,7 @@ pub(crate) fn executable(bin: PathBuf, access: &crate::policy::Effective, env: &
 /// The runtime's CLI under `access`, shared by worker turns and setup sessions: Codex runs its native executor.
 pub(crate) fn cli(rt: &str, access: &crate::policy::Effective, env: &Env) -> Result<Command, String> {
     let a = of(rt);
-    executable(if a.has("sandbox-args") { agent(rt)?.executable(None)? } else { which(a.bin) }, access, env)
+    executable(if a.has(Cap::SandboxArgs) { agent(rt)?.executable(None)? } else { which(a.bin) }, access, env)
 }
 
 pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Result<Command, String> {
@@ -720,10 +720,10 @@ pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Resu
     let mode = access.claude.as_deref().unwrap_or(env.permission_mode);
     let build = build_cache_for(&l.rt, access, env);
     let a = of(&l.rt);
-    let args: Vec<std::ffi::OsString> = if a.has("remote-control") {
+    let args: Vec<std::ffi::OsString> = if a.has(Cap::RemoteControl) {
         ["--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l, env.jobs, build.as_deref())].map(Into::into).to_vec()
-    } else if a.has("sandbox-args") { codex.iter().map(Into::into).collect() }
-    else if a.has("grant") && access.refused.is_none() && matches!(access.mode.as_str(), "workspace" | "full") {
+    } else if a.has(Cap::SandboxArgs) { codex.iter().map(Into::into).collect() }
+    else if a.has(Cap::Grant) && access.refused.is_none() && matches!(access.mode.as_str(), "workspace" | "full") {
         vec!["--dangerously-skip-permissions".into()]
     } else { vec![] };
     let mut c = agent(&l.rt)?.command(cli(&l.rt, access, env)?, &optimized(&l.rt, spec(env, l, env.root.into(), args))?)?;
@@ -760,7 +760,7 @@ fn optimization(rt: &str, spec: &mut NativeSpec, install: Option<&Path>) -> Resu
     };
     spec.env.extend([(optimization::ENV.into(), intent.code().into()), ("AGENTQ_LAUNCHER".into(), "taskq".into())]);
     let state = agent(rt)?.prepare(intent, "taskq", spec, install);
-    if of(rt).has("remote-control") {
+    if of(rt).has(Cap::RemoteControl) {
         let env = optimizer_settings(spec)["env"].clone();
         if let Some(i) = spec.args.iter().rposition(|a| a == "--settings") {
             let value = spec.args.get_mut(i + 1).ok_or("Claude settings missing")?;
@@ -813,7 +813,7 @@ fn build_cache_for(rt: &str, access: &crate::policy::Effective, env: &Env) -> Op
 
 fn build_open(rt: &str, access: &crate::policy::Effective, env: &Env) -> bool {
     let codex = access.codex.as_deref().unwrap_or(env.codex);
-    let open = !of(rt).has("sandbox-args") || codex.iter().any(|a| a == "--dangerously-bypass-approvals-and-sandbox")
+    let open = !of(rt).has(Cap::SandboxArgs) || codex.iter().any(|a| a == "--dangerously-bypass-approvals-and-sandbox")
         || crate::policy::codex_sandbox(codex) == Some("danger-full-access");
     open && !access.windows && !access.linux
 }
@@ -893,8 +893,8 @@ fn base_contract(root: &Path) -> Result<Option<(String, Option<Vec<u8>>)>, Start
 
 /// The registered contract file, and whether this release's contract replaces it when absent.
 fn contract_path(root: &Path) -> Result<(PathBuf, bool), StartError> {
-    let config = match std::fs::read(root.join("taskq.json")) {
-        Ok(bytes) => Some(serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|e| refused("project registration", e))?),
+    let config = match crate::config::ProjectFile::of(root).read() {
+        Ok(config) => Some(config),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(refused("project registration", e)),
     };
@@ -912,10 +912,10 @@ fn contract_path(root: &Path) -> Result<(PathBuf, bool), StartError> {
 pub fn brief(env: &Env, l: &Launch) -> String {
     let n = l.task;
     let mut q = env.exe.display().to_string();
-    if of(&l.rt).has("app-turn") || of(&l.rt).has("background") {
+    if of(&l.rt).has(Cap::AppTurn) || of(&l.rt).has(Cap::Background) {
         // the app turn and the native Claude background session run in their host's environment, not the child's (§ 8);
         // Windows app turns run PowerShell
-        q = if cfg!(windows) && of(&l.rt).has("app-turn") {
+        q = if cfg!(windows) && of(&l.rt).has(Cap::AppTurn) {
             format!("$env:TASKQ_TASK='{n}'; $env:TASKQ_ATTEMPT='{}'; $env:TASKQ_ROLE='{}'; $env:TASKQ_ROOT='{}'; & '{}'", l.attempt, l.role.replace('\'', "''"), env.root.display().to_string().replace('\'', "''"), q.replace('\'', "''"))
         } else {
             format!("env TASKQ_TASK={n} TASKQ_ATTEMPT={} TASKQ_ROLE={} TASKQ_ROOT={} {q}", l.attempt, l.role, env.root.display())
@@ -939,7 +939,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
              - {park},\n\
              - {ask}.\n{approval}{formats}",
             ask = ask(&q, n),
-            approval = if env.publish == "review-pr" { "Delivery review-pr: an otherwise done result needs the owner's approval: ask with Done naming task fit and merge-result CI, first option `approve <sha7> and close ★`.\n" } else { "" },
+            approval = if env.delivery == crate::config::Delivery::ReviewPr { "Delivery review-pr: an otherwise done result needs the owner's approval: ask with Done naming task fit and merge-result CI, first option `approve <sha7> and close ★`.\n" } else { "" },
             formats = FORMATS
         )
     } else {
@@ -959,7 +959,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
             gap = format!("hand in once `{q} ask {n} --text \"Done: not started\nProblem: host gap: the worker sandbox cannot write the shared .git (<exact git error>); the service or owner must create .worktrees/taskq-{n}\"` with no option (an owner action, § 7 rule 2)"),
             formats = FORMATS,
             url = l.url,
-            push = if env.publish == "direct" { "push the branch" } else { "push the branch and open one PR/MR into main" }
+            push = if env.delivery == crate::config::Delivery::Direct { "push the branch" } else { "push the branch and open one PR/MR into main" }
         )
     };
     format!("{head}{}{}\nBefore any hand-in, read `{q} inbox {n}` fresh and check the result against goal + acceptance + all notes. Acceptance stays binding. Before asking, check the original question and accepted answers: reuse settled decisions within their scope; the PM reconciles already decided acceptance changes before resume (docs/design/pm-runbook.md). Ask only for an unresolved choice or conflict, never repeat a settled question or defer a known conflict until hand-in. Task notes do not grant runtime permissions or replace action-time approval.\nTest changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).\n{body}Then stop. Everything written through taskq is public: no secrets or paths outside the repository.\n", env.context,l.files)
@@ -991,10 +991,7 @@ pub(crate) const CONTRACT: &str = include_str!("../taskq.md");
 const INDEX: &str = "\nIndex of other shared rules";
 
 fn rule_file(url: &str) -> Result<String, String> {
-    let out = match coreq::process::output("rules.download", crate::platform::command("curl").args(["-q", "--fail", "--silent", "--show-error", "--proto", "=https", "--max-time", "10", "--max-filesize", "131072", "--write-out", "\n%{http_code}", url]), std::time::Duration::from_secs(15)) {
-        Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
-        Err(e) => return Err(e.to_string()),
-    };
+    let out = crate::http::with_args("rules.download", &["-q", "--fail", "--silent", "--show-error", "--proto", "=https", "--max-time", "10", "--max-filesize", "131072", "--write-out", "\n%{http_code}", url], std::time::Duration::from_secs(15)).map_err(|e| e.to_string())?;
     let text=String::from_utf8(out.stdout).map_err(|_| "invalid UTF-8")?;
     let (body,status)=text.rsplit_once('\n').ok_or("missing HTTP status")?;
     if !out.status.success() || status!="200" {return Err(format!("HTTP {status}; curl exited {}",out.status));}
@@ -1380,7 +1377,7 @@ fn recovery_binding(root:&Path,task:u64,x:&crate::core::Execution)->Result<(Path
         return Err("original execution input is not a regular file".into());
     }
     let a=of(&x.runtime);
-    let input=if a.has("background") {claude_reference(&path)?} else if a.has("app-turn") {app_reference(&path)?} else {return Err("native input recovery unsupported for this runtime".into())};
+    let input=if a.has(Cap::Background) {claude_reference(&path)?} else if a.has(Cap::AppTurn) {app_reference(&path)?} else {return Err("native input recovery unsupported for this runtime".into())};
     let worker=attempt_log(root,"worker",task,x.attempt);let reviewer=attempt_log(root,"reviewer",task,x.attempt);
     let log=match (worker.is_file(),reviewer.is_file()) {(true,false)=>worker,(false,true)=>reviewer,_=>return Err("native attempt log missing or ambiguous; preserve the execution".into())};
     let mut binding=None;let mut reader=NativeHistory::default();
@@ -1419,7 +1416,7 @@ fn claude_refusal(returned:bool,stderr:&str,status:Option<Option<i32>>)->Option<
 
 /// The refusal of an unaccepted Claude execution's own launch, from its attempt log; any doubt reads `None` (unknown).
 pub fn refused_launch(root:&Path,task:u64,x:&crate::core::Execution)->Option<String> {
-    if !of(&x.runtime).has("background") || x.accepted || x.release.is_some() {return None;}
+    if !of(&x.runtime).has(Cap::Background) || x.accepted || x.release.is_some() {return None;}
     let logs=[attempt_log(root,"worker",task,x.attempt),attempt_log(root,"reviewer",task,x.attempt)];
     let [log]=logs.iter().filter(|p|p.is_file()).collect::<Vec<_>>()[..] else {return None};
     let text=std::fs::read_to_string(log).ok()?;
@@ -1442,7 +1439,7 @@ pub fn refused_launch(root:&Path,task:u64,x:&crate::core::Execution)->Option<Str
 /// Service start: the native handle of a saved kid. Claude reconnects to its background job; a CLI child is its saved
 /// process with the attempt log read from the saved offset.
 pub fn adopt(root:&Path,install:&Path,k:&crate::data::KidLine,x:&crate::core::Execution)->Result<Box<dyn Proc>,String> {
-    if of(&k.runtime).has("remote-control") {return recover(root,install,k.task,x);}
+    if of(&k.runtime).has(Cap::RemoteControl) {return recover(root,install,k.task,x);}
     #[cfg(windows)]
     let native:Box<dyn Proc>=Box::new(windows_process::Execution::recover(k.process.clone(),k.job.as_deref().ok_or("legacy Windows execution has no native job scope; file kept")?)?);
     #[cfg(unix)]
@@ -1456,13 +1453,13 @@ pub fn adopt(root:&Path,install:&Path,k:&crate::data::KidLine,x:&crate::core::Ex
         (true,false)=>worker,(false,true)=>reviewer,
         _=>return Err("kids: native attempt log missing or ambiguous; file kept".into()),
     };
-    let session = of(&k.runtime).has("stream-input").then(|| native_session(&k.runtime, &log).unwrap_or_else(|| "-".into()));
+    let session = of(&k.runtime).has(Cap::StreamInput).then(|| native_session(&k.runtime, &log).unwrap_or_else(|| "-".into()));
     Ok(Box::new(CliTurn {proc:native,log,pos:k.offset,start:k.offset,stopping:false,accepted:false,read_error:None,session,native:Some(k.process.clone()),recovery:None, rt: k.runtime.clone()}))
 }
 
 /// § 8 step 3: only a Codex app turn defers a re-exec. CLI children run on from their release folder (Windows ones in
 /// their own job) and a Claude turn without a saved native identity is rebuilt from the board by the next image (#2297).
-pub fn handover_waits(rt:&str)->bool {of(rt).has("app-turn")}
+pub fn handover_waits(rt:&str)->bool {of(rt).has(Cap::AppTurn)}
 
 /// Reconnect observation only. This path cannot submit a prompt, queue a turn or change access.
 pub fn recover(root:&Path,install:&Path,task:u64,x:&crate::core::Execution)->Result<Box<dyn Proc>,String> {
@@ -1475,11 +1472,11 @@ pub fn recover(root:&Path,install:&Path,task:u64,x:&crate::core::Execution)->Res
     let (log,binding,input_file)=recovery_binding(&root,task,x)?;
     let input=binding["input"].as_str().ok_or("native recovery input missing")?.to_owned();
     let a=of(&x.runtime);
-    if a.has("background") {Ok(Box::new(ClaudeTurn {root:root.clone(),log,session:if x.id==x.attempt {String::new()} else {binding["native"]["session"].as_str().unwrap_or_default().to_owned()},
+    if a.has(Cap::Background) {Ok(Box::new(ClaudeTurn {root:root.clone(),log,session:if x.id==x.attempt {String::new()} else {binding["native"]["session"].as_str().unwrap_or_default().to_owned()},
             id:String::new(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,mode:"unknown: recovered observer".into(),input,_input_file:input_file,pid:0,done:false,failure:None,
             native:saved.map(|k|k.process),recovery:Some(Recovery {install:install.into(),root:root.clone(),task,attempt:x.attempt,execution:x.id,runtime:x.runtime.clone()}),
             handed:false,released:false,launch_error:Some("recovered execution; original native input acceptance pending".into()),resumed:None,lost:None}))
-    } else if a.has("app-turn") {
+    } else if a.has(Cap::AppTurn) {
             let thread=binding["native"]["thread"].as_str().filter(|s|s.len()>1 && s.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'-')).ok_or("native App thread identity missing; inspect original handshake, never requeue")?.to_owned();
             Ok(Box::new(AppTurn {root,history:AppHistory::default(),hand:None,log,text:input,_input:Some(input_file),binding:Some(binding),thread,done:0,rollout:None,running:app_running,control:app_cancel,cancelled:false,
                 queue_error:Some("recovered execution; original App input acceptance pending".into()),accepted:false}))
@@ -1567,13 +1564,13 @@ fn start_file(command:&mut Command,input:File)->Result<Box<dyn Proc>,StartError>
 }
 
 pub fn acceptance_action(rt:&str)->&'static str {
-    if of(rt).has("passive-writer") {"input acceptance unknown; inspect the pending input in Codex; let any active turn finish before closing that thread; reconcile acceptance before retry"}
+    if of(rt).has(Cap::PassiveWriter) {"input acceptance unknown; inspect the pending input in Codex; let any active turn finish before closing that thread; reconcile acceptance before retry"}
     else {"input acceptance unknown; reconcile native input"}
 }
 
 /// § 8 Access of `rt` here, resolved again for every start and resume; a refusal starts nothing.
 pub fn access(env: &Env, rt: &str) -> Result<crate::policy::Effective, StartError> {
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default();
+    let home = crate::platform::user_home().unwrap_or_default();
     let a = crate::policy::resolve(&crate::policy::load(env.install), &crate::policy::Host::here(env.install, env.root, &home), rt, env.permission_mode, env.codex);
     match &a.refused {
         Some(r) => Err(StartError { message: format!("access refused: {r}"), class:"permission", reportable: false, no_start: true }),
@@ -1607,14 +1604,14 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
             .map_err(|e| StartError::admission(&e))?;
     }
     let home = crate::runtime::accounts::log_home(&l.rt, &log);
-    if of(&l.rt).has("project-trust") {
+    if of(&l.rt).has(Cap::ProjectTrust) {
         let config = home.clone().or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from));
         owner::registered_trust(env.install, env.root, config.as_deref()).map_err(|e| {
             log!("Claude trust setup: {e}");
             StartError::admission("Claude trust setup pending; service retries automatically")
         })?;
     }
-    if of(&l.rt).has("app-turn") {
+    if of(&l.rt).has(Cap::AppTurn) {
         let (text, input_file, path) = app_input(env.root, &text, Some(l)).map_err(StartError::from)?;
         let binding=bind_input(&log,l,&path,&text,serde_json::json!({"thread":l.session}))?;
         let mut turn = AppTurn { root: env.root.canonicalize().map_err(|e| StartError::io(e,None))?, history:AppHistory::default(), hand: None, log, text, _input: Some(input_file), binding:Some(binding), thread: l.session.clone(), done: 0, rollout: None, running: app_running, control:app_cancel, cancelled: false, queue_error: None, accepted: false };
@@ -1626,18 +1623,18 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
         }
         return Ok(Box::new(turn));
     }
-    if of(&l.rt).has("background") && (l.resume.is_none() || claude_background(env.root, &l.session, home.as_deref()).map_err(StartError::from)?) {
+    if of(&l.rt).has(Cap::Background) && (l.resume.is_none() || claude_background(env.root, &l.session, home.as_deref()).map_err(StartError::from)?) {
         return ClaudeTurn::start(env, l, &log, &text, &access).map(|p| Box::new(p) as Box<dyn Proc>);
     }
     let pos = std::fs::metadata(&log).map_or(0, |m| m.len());
     // R3: a new CLI conversation takes its title from the first input line; the rules follow unchanged.
-    let text = if l.resume.is_none() && of(&l.rt).has("cli") && !of(&l.rt).has("remote-control") { format!("{}\n{text}", session_name(l)) } else { text };
+    let text = if l.resume.is_none() && of(&l.rt).has(Cap::Cli) && !of(&l.rt).has(Cap::RemoteControl) { format!("{}\n{text}", session_name(l)) } else { text };
     let child = start(env, l, &log, &text, &access)?;
     let native=match child.native_identity() {
         Ok(identity)=>Some(identity),
         Err(e)=>{log!("#{} process recovery identity unknown: {e}",l.task);None}
     };
-    Ok(Box::new(CliTurn { proc: child, log, pos, start: pos, stopping: false, accepted: false, read_error: None, session: of(&l.rt).has("stream-input").then(|| l.session.clone()), native, recovery: None, rt: l.rt.clone() }))
+    Ok(Box::new(CliTurn { proc: child, log, pos, start: pos, stopping: false, accepted: false, read_error: None, session: of(&l.rt).has(Cap::StreamInput).then(|| l.session.clone()), native, recovery: None, rt: l.rt.clone() }))
 }
 
 /// The attempt log's evidence of § 8 Rule delivery: the injected header and part counts, one JSON line.
@@ -1658,7 +1655,7 @@ fn start(env: &Env, l: &Launch, log: &Path, text: &str, access: &crate::policy::
     let err = out.try_clone().map_err(|e| StartError::io(e, None))?;
     let mut c = command(env, l, access).map_err(StartError::from)?;
     let text = stdin_text(&l.rt, text);
-    if of(&l.rt).has("passive-writer") && l.task>0 && l.resume.is_some() {
+    if of(&l.rt).has(Cap::PassiveWriter) && l.task>0 && l.resume.is_some() {
         let (path,_input)=turn_input(env.root,&text,Some(l))?;
         bind_input(log,l,&path,&text,serde_json::json!({"session":l.session}))?;
         if let Some(home)=crate::runtime::accounts::log_home(of(&l.rt).bin,log).or_else(codex_home) {
@@ -1680,7 +1677,7 @@ fn start(env: &Env, l: &Launch, log: &Path, text: &str, access: &crate::policy::
 pub fn owner_input(rt:&str,text:&str)->String {stdin_text(rt,text)}
 
 fn stdin_text(rt: &str, text: &str) -> String {
-    if of(rt).has("stream-input") { format!("{}\n", serde_json::json!({"event":"user","message":{"content":text}})) } else { text.into() }
+    if of(rt).has(Cap::StreamInput) { format!("{}\n", serde_json::json!({"event":"user","message":{"content":text}})) } else { text.into() }
 }
 
 /// Native background sessions are not children of TaskQ. Keep their full identity and
@@ -1721,12 +1718,12 @@ pub(crate) fn claude_agents(root: &Path) -> Result<Vec<serde_json::Value>, Strin
 fn claude_agents_in(root: &Path, home: Option<&Path>) -> Result<Vec<serde_json::Value>, String> {
     let budget = observation_left(std::time::Duration::from_secs(10));
     if budget.is_zero() { return Err("Claude agents unavailable or timed out".into()); }
-    agent(RUNTIMES[0])?.jobs(crate::platform::command(which("claude")), &claude_spec(root, home), true, budget).map_err(|e| format!("claude agents: {e}"))
+    agent(RuntimeId::Claude.name())?.jobs(crate::platform::command(which("claude")), &claude_spec(root, home), true, budget).map_err(|e| format!("claude agents: {e}"))
 }
 
 pub(crate) fn claude_home() -> Option<PathBuf> {
     std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).or_else(||
-        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|h| PathBuf::from(h).join(".claude")))
+        crate::platform::user_home().map(|h| h.join(".claude")))
 }
 
 pub(crate) fn claude_failure(row: &serde_json::Value, root: &Path, id: &str, home: Option<&Path>) -> &'static str {
@@ -1870,7 +1867,7 @@ fn claude_stop(root: &Path, id: &str, known: Option<&coreq::process::Identity>, 
     let budget = observation_left(std::time::Duration::from_secs(10));
     if budget.is_zero() { return Err("Claude stop unavailable or timed out; state unknown".into()); }
     let (spec, job) = claude_stop_job(root, row, id, home)?;
-    agent(RUNTIMES[0])?.stop_job(crate::platform::command(which("claude")), &spec, &job, budget)
+    agent(RuntimeId::Claude.name())?.stop_job(crate::platform::command(which("claude")), &spec, &job, budget)
         .map_err(|e| format!("claude stop: {e}"))?;
     // Native stop acknowledges the request first; the service owns later retries/readback.
     let rows = claude_agents_in(root, home)?;
@@ -1883,7 +1880,7 @@ fn claude_stop(root: &Path, id: &str, known: Option<&coreq::process::Identity>, 
 fn claude_stop_job(root: &Path, row: &serde_json::Value, id: &str, home: Option<&Path>) -> Result<(NativeSpec, agentq_runtime::agent::BackgroundJob), String> {
     let cwd = row["cwd"].as_str().and_then(|p| Path::new(p).canonicalize().ok()).filter(|c| root.canonicalize().is_ok_and(|r| c.starts_with(r)));
     let spec = claude_spec(cwd.as_deref().unwrap_or(root), home);
-    let job = agent(RUNTIMES[0])?.job(row, &spec, id)?;
+    let job = agent(RuntimeId::Claude.name())?.job(row, &spec, id)?;
     Ok((spec, job))
 }
 
@@ -2023,7 +2020,7 @@ impl ClaudeTurn {
             let record=serde_json::json!({"type":"claude.launch","stdout":stdout,"stderr":stderr,"status":status});
             if let Err(e)=File::options().append(true).open(&self.log).and_then(|mut file|writeln!(file,"{record}")) {log!("Claude refused launch not recorded: {e}");}
             // #1555: the board text names the root and its remedy, never its path.
-            if launch_cause(RUNTIMES[0],&stderr)==Some("workspace-untrusted") {
+            if launch_cause(RuntimeId::Claude.name(),&stderr)==Some("workspace-untrusted") {
                 return Err(StartError::trust_setup());
             }
             return Err(StartError {message:format!("Claude background launch refused: {}",public_line(&refusal,&self.root,200)),class:"other",reportable:false,no_start:true});
@@ -2237,7 +2234,7 @@ pub fn thread_of(url: &str) -> Option<&str> { url.strip_prefix(THREADS) }
 /// The native id of a board session `<rt>:<id>[ <host>]` whose runtime has Remote Control links.
 pub fn remote_session(session: &str) -> Option<&str> {
     let (rt, id) = session.split(' ').next()?.split_once(':')?;
-    of(rt).has("remote-control").then_some(id)
+    of(rt).has(Cap::RemoteControl).then_some(id)
 }
 
 /// A canonical Claude Remote Control URL.
@@ -2257,15 +2254,15 @@ pub fn session_link(root: &Path, own: bool, rt: &str, id: &str, task: u64, attem
     let a = of(rt);
     let id = if own {session_id(root,rt,id,task,attempt,role)} else {id.into()};
     let url = if id == "-" || !plain_thread(&id) { None }
-        else if a.has("thread-link") { own.then(|| thread_url(&id)) }
-        else if a.has("remote-control") { own.then(|| claude_remote(&id)).flatten().or(published.filter(|u| remote_url(u))) }
+        else if a.has(Cap::ThreadLink) { own.then(|| thread_url(&id)) }
+        else if a.has(Cap::RemoteControl) { own.then(|| claude_remote(&id)).flatten().or(published.filter(|u| remote_url(u))) }
         else { None };
     (id, url)
 }
 
 /// Native identity from this attempt's log, without scanning the transcript for a Remote Control URL.
 pub fn session_id(root:&Path,rt:&str,id:&str,task:u64,attempt:u64,role:&str)->String {
-    if id=="-" || of(rt).has("remote-control") {
+    if id=="-" || of(rt).has(Cap::RemoteControl) {
         let l=Launch {files:String::new(),execution:None,task,title:String::new(),attempt,role:role.into(),rt:rt.into(),session:id.into(),url:String::new(),resume:None};
         native_session(rt,&log_path(root,&l)).unwrap_or_else(||id.into())
     } else {id.into()}
@@ -2325,24 +2322,24 @@ pub fn claude_background(root: &Path, session: &str, home: Option<&Path>) -> Res
 pub fn worker_transcript(rt: &str, session: &str, log: &Path) -> Result<(&'static str, PathBuf), String> {
     let a = of(rt);
     let format = crate::transcript::format(rt);
-    if a.has("stream-input") {
+    if a.has(Cap::StreamInput) {
         return match native_session(rt, log) {
             Some(id) if id == session => Ok((format, log.to_path_buf())),
             Some(_) => Err("Antigravity attempt log names another conversation; view unknown".into()),
             None => Err("Antigravity attempt log unavailable or has no conversation yet; view unknown".into()),
         };
     }
-    if !a.has("thread-link") && !a.has("remote-control") { return Err(format!("runtime {rt:?}: no AgentQ history format; view unknown")); }
+    if !a.has(Cap::ThreadLink) && !a.has(Cap::RemoteControl) { return Err(format!("runtime {rt:?}: no AgentQ history format; view unknown")); }
     // § 3 Runtime accounts: the default home first, then each account home; the first error stands when none has it
     let homes = crate::runtime::accounts::homes(a.bin);
     let mut first = None;
     for home in &homes {
-        match if a.has("thread-link") { owner::codex_transcript_in(home, session) } else { claude_transcript_in(home, session) } {
+        match if a.has(Cap::ThreadLink) { owner::codex_transcript_in(home, session) } else { claude_transcript_in(home, session) } {
             Ok(p) => return Ok((format, p)),
             Err(e) => { first.get_or_insert(e); }
         }
     }
-    Err(first.unwrap_or_else(|| format!("transcript unknown: no {} home", if a.has("thread-link") { "Codex" } else { "Claude" })))
+    Err(first.unwrap_or_else(|| format!("transcript unknown: no {} home", if a.has(Cap::ThreadLink) { "Codex" } else { "Claude" })))
 }
 
 pub(crate) const HANDSHAKE: &str = "taskq handshake: reply OK and do nothing else. The task follows in this thread.\n";
@@ -2396,7 +2393,7 @@ pub(crate) fn app_queue(thread:&str,text:&str)->Result<(),String> {
     // #1856: the error names the queue call's exit and stderr; the brief itself stays out of it
     // ponytail: the queue call has no project; any existing directory serves as its working directory
     let spec = NativeSpec { root: std::env::temp_dir(), session: thread.into(), resume: true, ..NativeSpec::default() };
-    agent(RUNTIMES[2])?.app_queue(codex_direct(), &optimized(RUNTIMES[2], spec)?, text, std::time::Duration::from_secs(10)).map(drop).map_err(|e| format!("codex queue failed for thread {thread}: {e}"))
+    agent(RuntimeId::CodexApp.name())?.app_queue(codex_direct(), &optimized(RuntimeId::CodexApp.name(), spec)?, text, std::time::Duration::from_secs(10)).map(drop).map_err(|e| format!("codex queue failed for thread {thread}: {e}"))
 }
 
 /// Codex without a `cmd` in between: an npm `codex.cmd` shim runs its `codex.js` through `node`, since `cmd` caps a
@@ -2501,11 +2498,11 @@ fn app_presence(text: &str, windows: bool) -> Result<bool, String> {
 }
 
 /// `$CODEX_HOME`, default `~/.codex`; a Windows service has no `HOME`.
-pub(crate) fn codex_home() -> Option<PathBuf> { agent(RUNTIMES[1]).ok()?.home() }
+pub(crate) fn codex_home() -> Option<PathBuf> { agent(RuntimeId::Codex.name()).ok()?.home() }
 
 /// The thread's rollout file in the Codex home or a § 3 runtime account's home.
 pub(crate) fn rollout(thread: &str) -> Option<PathBuf> {
-    let codex = agent(RUNTIMES[1]).ok()?;
+    let codex = agent(RuntimeId::Codex.name()).ok()?;
     crate::runtime::accounts::homes("codex").iter().find_map(|home| codex.session_transcript(thread, Some(home)))
 }
 
@@ -2686,7 +2683,7 @@ fn completes(rollout: &Path) -> Result<usize, String> {
 pub(crate) fn rollout_completed_idle(home:&Path,root:&Path,thread:&str)->Result<(),String> {
     if !plain_thread(thread) {return Err("Codex thread identity invalid".into());}
     let root=root.canonicalize().map_err(|_|"Codex project root unavailable")?;
-    let path=agent(RUNTIMES[1])?.session_transcript(thread,Some(home)).ok_or("Codex rollout unavailable in runtime home")?;
+    let path=agent(RuntimeId::Codex.name())?.session_transcript(thread,Some(home)).ok_or("Codex rollout unavailable in runtime home")?;
     let mut reader=NativeHistory::default();
     let (mut identity,mut current,mut completed,mut terminal)=(false,None::<String>,0usize,false);
     let until=observation_deadline(std::time::Duration::from_secs(5));
@@ -2791,7 +2788,7 @@ pub(crate) fn account_email(rt: &str, label: &str) -> Option<String> {
     if a.status.is_empty() { return None; }
     let bin = which(a.bin);
     let (_, out) = probe_in("runtime.account", &bin, a.status, home.as_deref().map(|h| (crate::runtime::accounts::var(rt), h)))?;
-    if a.has("json-status") {
+    if a.has(Cap::JsonStatus) {
         let v: serde_json::Value = serde_json::from_str(&out).ok()?;
         return v["email"].as_str().filter(|e| e.contains('@')).map(String::from);
     }
@@ -2803,7 +2800,7 @@ pub(crate) fn account_email(rt: &str, label: &str) -> Option<String> {
 /// Login state and account from `claude auth status` (JSON) or `codex login status` (text).
 fn login(rt: &str, out: Option<(bool, String)>) -> (&'static str, Option<String>) {
     let Some((_, out)) = out else { return ("unknown", None) };
-    if of(rt).has("json-status") {
+    if of(rt).has(Cap::JsonStatus) {
         let v: serde_json::Value = serde_json::from_str(&out).unwrap_or_default();
         return match v["loggedIn"].as_bool() {
             Some(true) => ("logged in", v["email"].as_str().or(v["authMethod"].as_str()).map(String::from)),
@@ -2826,7 +2823,7 @@ fn login(rt: &str, out: Option<(bool, String)>) -> (&'static str, Option<String>
 /// readable refresh time; Codex `auth_mode` and `last_refresh` of `auth.json`. Never a token value; unreadable: None.
 fn kind_refresh(rt: &str, status: Option<&str>, auth: Option<&str>) -> (Option<String>, Option<String>) {
     let json = |t: Option<&str>| t.and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok()).unwrap_or_default();
-    if of(rt).has("json-status") {
+    if of(rt).has(Cap::JsonStatus) {
         let v = json(status);
         let kind = [&v["authMethod"], &v["subscriptionType"]].iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ");
         return ((!kind.is_empty()).then_some(kind), None);
@@ -2855,8 +2852,8 @@ pub fn login_lines(rows: &serde_json::Value) -> Vec<String> {
 pub fn login_state(rt: &str, bin: &Path) -> &'static str {
     // a runtime name or its binary name (`agy`)
     if ADAPTERS.iter().find(|a| a.name == rt || a.bin == rt).unwrap_or(&OTHER).status.is_empty() {
-        let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).filter(|h| !h.is_empty());
-        return if home.is_some_and(|h| [".gemini/antigravity-cli/jetski_state.pbtxt", ".gemini/oauth_creds.json"].iter().any(|p| Path::new(&h).join(p).is_file())) { "logged in" } else { "unknown" };
+        let home = crate::platform::user_home();
+        return if home.is_some_and(|h| [".gemini/antigravity-cli/jetski_state.pbtxt", ".gemini/oauth_creds.json"].iter().any(|p| h.join(p).is_file())) { "logged in" } else { "unknown" };
     }
     let home = crate::runtime::accounts::default_home(rt)
         .map(|b| crate::runtime::accounts::active_in(&crate::platform::default_install(), rt, &b));
@@ -2865,9 +2862,76 @@ pub fn login_state(rt: &str, bin: &Path) -> &'static str {
 }
 
 /// The only runtime list (§ 9 runtime adapters).
-pub const RUNTIMES: [&str; 4] = ["claude", "codex", "codex-app", "antigravity"];
+/// A runtime taskq can start. A name from the board stays text until it reaches this type: an unknown one has no
+/// variant and gets the adapter that answers no.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeId { Claude, Codex, CodexApp, Antigravity }
+
+impl RuntimeId {
+    pub const ALL: [Self; 4] = [Self::Claude, Self::Codex, Self::CodexApp, Self::Antigravity];
+    pub const fn name(self) -> &'static str {
+        match self { Self::Claude => "claude", Self::Codex => "codex", Self::CodexApp => "codex-app", Self::Antigravity => "antigravity" }
+    }
+    pub fn parse(name: &str) -> Option<Self> { Self::ALL.into_iter().find(|rt| rt.name() == name) }
+}
+
+impl std::fmt::Display for RuntimeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(self.name()) }
+}
+
+impl PartialEq<str> for RuntimeId { fn eq(&self, other: &str) -> bool { self.name() == other } }
+impl PartialEq<&str> for RuntimeId { fn eq(&self, other: &&str) -> bool { self.name() == *other } }
+impl PartialEq<String> for RuntimeId { fn eq(&self, other: &String) -> bool { self.name() == other } }
+
+pub const RUNTIMES: [&str; 4] = [RuntimeId::Claude.name(), RuntimeId::Codex.name(), RuntimeId::CodexApp.name(), RuntimeId::Antigravity.name()];
 /// §4 fallback order, excluding the explicitly selected app runtime.
-pub const CLI_RUNTIMES: [&str; 3] = [RUNTIMES[0], RUNTIMES[1], RUNTIMES[3]];
+pub const CLI_RUNTIMES: [&str; 3] = [RuntimeId::Claude.name(), RuntimeId::Codex.name(), RuntimeId::Antigravity.name()];
+
+/// What a runtime can do; [`Adapter::has`] answers from the table, and no name of a capability reaches a wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cap {
+    /// Runs as a service child.
+    Cli,
+    /// Needs an operator grant; a request without one never admits it.
+    Grant,
+    /// Claude Remote Control links, permission-mode args, attempt id as session.
+    RemoteControl,
+    /// Codex app turn, macOS and Windows opt-in (§ 9).
+    AppTurn,
+    /// Host Codex sandbox args and native executor.
+    SandboxArgs,
+    /// Codex threads, rollouts and app-owned input.
+    ThreadLink,
+    /// Claude's pre-launch session id.
+    CallerSessionId,
+    /// Claude's background job.
+    Background,
+    /// JSON input whose stream names the session.
+    StreamInput,
+    /// A user-installed binary.
+    UserBin,
+    /// § 3 runtime accounts.
+    Accounts,
+    /// JSON login status.
+    JsonStatus,
+    /// Codex `auth.json`.
+    AuthFile,
+    /// Codex CLI resume releases the app's writer lock.
+    PassiveWriter,
+    /// Rate limits from the rollout.
+    RolloutQuota,
+    /// Codex model list.
+    ModelCatalog,
+    /// An account's usage through the app-server call.
+    UsageRpc,
+    /// An account's usage through the provider's OAuth usage call.
+    UsageOauth,
+    /// An account's usage through the Code Assist quota calls with the `agy` login.
+    UsageCodeAssist,
+    /// Launches need the project's trust entry.
+    ProjectTrust,
+}
 
 /// One adapter per runtime (docs/runtime-qualification.md#runtime-adapters): code outside this table asks it for a
 /// capability or a value, never compares runtime names (#2271). Capability names follow the AgentQ runtime trait's
@@ -2880,16 +2944,7 @@ pub struct Adapter {
     pub bin: &'static str,
     pub client: &'static str,
     pub home: &'static str,
-    /// `cli` service child; `grant` operator grant required, legacy requests never admit it; `remote-control` Claude
-    /// Remote Control links, permission-mode args, attempt id as session; `app-turn` Codex app turn, macOS and Windows
-    /// opt-in (§ 9); `sandbox-args` host Codex sandbox args and native executor; `thread-link` Codex threads, rollouts
-    /// and app-owned input; `caller-session-id`, `background` Claude's pre-launch id and background job;
-    /// `stream-input` JSON input whose stream names the session; `user-bin` user-installed binary; `accounts` § 3
-    /// runtime accounts; `json-status` JSON login status; `auth-file` Codex `auth.json`; `passive-writer` Codex CLI
-    /// resume releases the app's writer lock; `rollout-quota` rate limits from the rollout; `model-catalog` Codex model
-    /// list; `usage-rpc`, `usage-oauth`, `usage-code-assist` an account's read-only usage route: the app-server call,
-    /// the provider's OAuth usage call, or the Code Assist quota calls with the `agy` login.
-    pub caps: &'static [&'static str],
+    pub caps: &'static [Cap],
     /// The AgentQ client that launches this runtime.
     /// AgentQ descriptor name (`agentq_runtime::agent::runtime`).
     pub agent: &'static str,
@@ -2912,31 +2967,31 @@ pub struct Adapter {
 }
 
 impl Adapter {
-    pub fn has(&self, cap: &str) -> bool { self.caps.contains(&cap) }
+    pub fn has(&self, cap: Cap) -> bool { self.caps.contains(&cap) }
 }
 
 const CODEX_UPDATE: &str = "update Codex CLI (https://github.com/openai/codex#installation)";
 const CODEX_RELOGIN: &str = "run `codex login --device-auth` with the PM (docs/relogin.md)";
 const ADAPTERS: [Adapter; 4] = [
-    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude",
-        caps: &["cli", "remote-control", "caller-session-id", "background", "accounts", "json-status", "project-trust", "usage-oauth"],
+    Adapter { name: RuntimeId::Claude.name(), bin: "claude", client: "Claude Code", home: ".claude",
+        caps: &[Cap::Cli, Cap::RemoteControl, Cap::CallerSessionId, Cap::Background, Cap::Accounts, Cap::JsonStatus, Cap::ProjectTrust, Cap::UsageOauth],
         agent: "claude", native_home: claude_home, home_var: "CLAUDE_CONFIG_DIR", status: &["auth", "status"], device_login: &["auth", "login"],
-        relogin: "run `claude auth login` with the PM (docs/relogin.md)", setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`",
+        relogin: "run `claude auth login` with the PM (docs/relogin.md)", setup: RuntimeId::Claude.name(), login: "claude auth login", sessions: "`claude agents`",
         min: "2.1.296", update: "run `claude update`", history: "claude-native" },
-    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex",
-        caps: &["cli", "sandbox-args", "thread-link", "accounts", "auth-file", "passive-writer", "rollout-quota", "model-catalog", "usage-rpc"],
+    Adapter { name: RuntimeId::Codex.name(), bin: "codex", client: "Codex", home: ".codex",
+        caps: &[Cap::Cli, Cap::SandboxArgs, Cap::ThreadLink, Cap::Accounts, Cap::AuthFile, Cap::PassiveWriter, Cap::RolloutQuota, Cap::ModelCatalog, Cap::UsageRpc],
         agent: "codex", native_home: codex_home, home_var: "CODEX_HOME", status: &["login", "status"], device_login: &["login", "--device-auth"],
-        relogin: CODEX_RELOGIN, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads",
+        relogin: CODEX_RELOGIN, setup: RuntimeId::CodexApp.name(), login: "codex login", sessions: "the Codex app threads",
         min: "0.159.3", update: CODEX_UPDATE, history: "codex-rollout" },
-    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex",
-        caps: &["app-turn", "sandbox-args", "thread-link", "auth-file", "model-catalog"],
+    Adapter { name: RuntimeId::CodexApp.name(), bin: "codex", client: "Codex", home: ".codex",
+        caps: &[Cap::AppTurn, Cap::SandboxArgs, Cap::ThreadLink, Cap::AuthFile, Cap::ModelCatalog],
         agent: "codex", native_home: codex_home, home_var: "CODEX_HOME", status: &["login", "status"], device_login: &["login", "--device-auth"],
         relogin: CODEX_RELOGIN, setup: "", login: "codex login", sessions: "the Codex app threads",
         min: "0.159.3", update: CODEX_UPDATE, history: "codex-rollout" },
-    Adapter { name: RUNTIMES[3], bin: "agy", client: "Antigravity", home: ".gemini/antigravity",
-        caps: &["cli", "grant", "stream-input", "user-bin", "accounts", "usage-code-assist"],
+    Adapter { name: RuntimeId::Antigravity.name(), bin: "agy", client: "Antigravity", home: ".gemini/antigravity",
+        caps: &[Cap::Cli, Cap::Grant, Cap::StreamInput, Cap::UserBin, Cap::Accounts, Cap::UsageCodeAssist],
         agent: "antigravity", native_home: codex_home, home_var: "", status: &[], device_login: &[],
-        relogin: "sign in through the Antigravity client", setup: RUNTIMES[3], login: "sign in through the Antigravity client", sessions: "Antigravity conversations",
+        relogin: "sign in through the Antigravity client", setup: RuntimeId::Antigravity.name(), login: "sign in through the Antigravity client", sessions: "Antigravity conversations",
         min: "", update: "install or update the Antigravity agy CLI", history: "agy-stream" },
 ];
 // ponytail: an unknown name keeps the old Codex-shaped login defaults (`login status`, `CODEX_HOME`)
@@ -2945,7 +3000,7 @@ const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", caps: 
 
 /// The CLI runtimes a host can run as service children, one per binary: the runtime rows of host tools.
 pub fn clis() -> impl Iterator<Item = &'static Adapter> {
-    ADAPTERS.iter().filter(|a| a.has("cli"))
+    ADAPTERS.iter().filter(|a| a.has(Cap::Cli))
 }
 
 /// The adapter of `rt`; an unknown name gets one that answers no to every question.
@@ -2954,7 +3009,7 @@ pub fn of(rt: &str) -> &'static Adapter {
 }
 
 /// Owner sessions run Claude Code.
-pub const OWNER: &str = RUNTIMES[0];
+pub const OWNER: &str = RuntimeId::Claude.name();
 /// The host config key that holds Codex CLI arguments.
 pub const CODEX_ARGS: &str = "codex";
 
@@ -2991,7 +3046,7 @@ fn agent_row_in(install: &Path, rt: &str, p: &Path, base: Option<&Path>) -> serd
     let env = home.as_deref().and_then(|h| crate::runtime::accounts::environment(bin, h));
     let a = of(rt);
     let out = (!a.status.is_empty()).then(|| probe_in("runtime.login", p, a.status, env)).flatten();
-    let auth = a.has("auth-file").then(|| home.as_deref().and_then(|h| std::fs::read_to_string(h.join("auth.json")).ok())).flatten();
+    let auth = a.has(Cap::AuthFile).then(|| home.as_deref().and_then(|h| std::fs::read_to_string(h.join("auth.json")).ok())).flatten();
     let (kind, refreshed) = kind_refresh(bin, out.as_ref().map(|o| o.1.as_str()), auth.as_deref());
     let (state, account) = if a.status.is_empty() { (login_state(rt, p), None) } else { login(bin, out) };
     // Codex's `login status` reads logged in with a dead refresh token: the last rejection wins until re-login

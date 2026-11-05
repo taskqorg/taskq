@@ -24,7 +24,7 @@ fn locked<T>(install:&Path,f:impl FnOnce()->Res<T>)->Res<T> {
 }
 pub use crate::platform::agentq_root as root;
 fn targets(runtime:&str)->Res<Vec<String>> {
-    let home=std::env::var_os(if cfg!(windows){"USERPROFILE"}else{"HOME"}).map(PathBuf::from).filter(|p|p.is_absolute()).ok_or("native client home unavailable")?;
+    let home=crate::platform::user_home().filter(|p|p.is_absolute()).ok_or("native client home unavailable")?;
     Ok(vec![root()?.display().to_string(),home.join(crate::runtime::of(runtime).home).display().to_string()])
 }
 fn unknown(reason:impl ToString)->Value {json!({"kind":"unknown","reason":reason.to_string()})}
@@ -135,7 +135,7 @@ fn runtimes(install:&Path)->Value {
             (Some(r),_) if r["login"]!="logged in"=>Some(format!("{}",r["login"].as_str().unwrap_or("login unknown"))),
             (Some(_),Ok(p))=>{
                 let exe=std::env::current_exe().unwrap_or_default();let work=crate::setup::dir(install);
-                let env=crate::runtime::Env{context:"",root:&work,exe:&exe,install,permission_mode:&p.permission_mode,codex:&p.codex,publish:"",board_env:&[],jobs:None};
+                let env=crate::runtime::Env{context:"",root:&work,exe:&exe,install,permission_mode:&p.permission_mode,codex:&p.codex,delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
                 crate::runtime::access(&env,crate::runtime::of(rt).setup).err().map(|e|e.message)
             },_=>Some("runtime unknown".into())
         };

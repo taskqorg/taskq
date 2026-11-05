@@ -4,7 +4,7 @@
         Facts {
             os: os.into(), root: PathBuf::from("/p"), host: "h".into(), git: true, external: None,
             runtimes: vec![Runtime { name: "claude".into(), login: Some("logged in".into()), granted: true, ..Default::default() }],
-            codex_dir: true, labelled: false, unlabelled: None, token: Some(Ok(())), delivery: Ok("auto-merge".into()), pr_route: Some(Probe::Ok),
+            codex_dir: true, labelled: false, unlabelled: None, token: Some(Ok(())), delivery: Ok(crate::config::Delivery::AutoMerge), pr_route: Some(Probe::Ok),
             host_setup: None,
         }
     }

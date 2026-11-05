@@ -16,8 +16,8 @@ impl Control {
 
 pub(crate) fn definition(tool:&coreq::Tool)->Res<PathBuf> {
     if cfg!(windows) {return Ok(tool.install.join(format!("{}.xml",tool.title)));}
-    let home=std::env::var_os("HOME").filter(|p|!p.is_empty()).ok_or("native user home unknown")?;
-    Ok(PathBuf::from(home).join(if cfg!(target_os="macos") {format!("Library/LaunchAgents/com.{}.service.plist",tool.name)}else{format!(".config/systemd/user/{}.service",tool.name)}))
+    let home=crate::platform::user_home().ok_or("native user home unknown")?;
+    Ok(home.join(if cfg!(target_os="macos") {format!("Library/LaunchAgents/com.{}.service.plist",tool.name)}else{format!(".config/systemd/user/{}.service",tool.name)}))
 }
 pub fn revision(install:&Path)->Res<String> {revision_for(&crate::platform::tool(install))}
 

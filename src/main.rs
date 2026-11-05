@@ -20,6 +20,7 @@ mod control;
 mod data;
 mod doctor;
 mod health;
+mod http;
 mod deploy;
 mod dispatch;
 mod display;
@@ -188,7 +189,7 @@ fn run(argv: &[String]) -> Res<()> {
                 let open = views.len();
                 println!("board: {} as {} on {}", c.cfg.repo, c.board.me()?, c.cfg.web_host);
                 // #1935: a preset the repository's plan cannot finish, with the owner's fixes
-                println!("delivery: {} r{}: {}", c.cfg.delivery, c.cfg.delivery_revision, match c.board.delivery_gap(&c.cfg.publish) {
+                println!("delivery: {} r{}: {}", c.cfg.delivery, c.cfg.delivery_revision, match c.board.delivery_gap(c.cfg.delivery.mode()) {
                     Ok(None) => "no plan mismatch found".into(),
                     Ok(Some(gap)) => format!("MISMATCH {gap}; fix: make the repository public (merge queue), upgrade the plan, set delivery.preset direct, or merge each PR by hand"),
                     Err(e) => format!("unknown ({e})"),
@@ -347,7 +348,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let mut out = vec![];
             for i in 1..a.pos.len() {
                 let n = a.num(i)?;
-                out.push(close_checked(b, cfg, n, text, &op, &|issue, t| close_check(text, issue, t, b.defer_publication(&cfg.publish))));
+                out.push(close_checked(b, cfg, n, text, &op, &|issue, t| close_check(text, issue, t, b.defer_publication(cfg.delivery.mode()))));
             }
             emit(&out, json)
         }

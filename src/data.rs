@@ -1,6 +1,7 @@
 //! Local data rules (taskq.md § 4 Data): every growing file has a named bound and a pruner the service runs; a corrupt
 //! state file reads unknown with a reason and stays where it is, never reset by a reader.
 
+use crate::runtime::Cap;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -242,7 +243,7 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
         let task=task.parse::<u64>().ok().filter(|n|*n>0)?;
         let attempt=attempt.parse::<u64>().ok().filter(|n|*n>0)?;
         let execution=execution.parse::<u64>().ok().filter(|n|*n>=attempt)?;
-        let a=crate::runtime::of(rt); if !a.has("cli") || a.has("remote-control") && (offset!="0" || job.is_some()) { return None; }
+        let a=crate::runtime::of(rt); if !a.has(Cap::Cli) || a.has(Cap::RemoteControl) && (offset!="0" || job.is_some()) { return None; }
         Some(KidLine {task,attempt,runtime:rt.into(),process:identity(pid,started)?,execution,offset:offset.parse().ok()?,job})
     };
     let v: Vec<KidLine> = lines.enumerate().map(|(i, l)| kid(l).ok_or(format!("kids: line {} malformed; file kept", i + 2))).collect::<Result<_, _>>()?;

@@ -188,7 +188,7 @@ fn reconcile(install:&Path,h:&mut host::Host,at:u64,boot:Res<i64>,mut live:impl 
                 match live(&Identity{pid:b.pid,started:b.started.clone()}) {Ok(true)=>{},Ok(false)=>return Err("denied: caller exited before admission".into()),Err(e)=>return Err(format!("unknown: caller liveness: {e}"))}
                 let roots=host::projects(install).map_err(|e|format!("unknown: {e}"))?;
                 if !roots.contains(&b.root)||b.root.canonicalize().ok().as_ref()!=Some(&b.root) {return Err("denied: caller root is not registered canonically".into());}
-                let v=crate::data::json(&b.root.join("taskq.json")).map_err(|e|format!("unknown: {e}"))?.ok_or("unknown: project configuration absent")?;
+                let v=crate::config::ProjectFile::of(&b.root).record().map_err(|e|format!("unknown: {e}"))?.ok_or("unknown: project configuration absent")?;
                 // The host loop's guarded policy may forbid admission despite a valid host.json.
                 let policy=h.policy.as_ref().map_err(|e|format!("unknown: {e}"))?;
                 let cap=policy.project(&b.root,&v).map_err(|e|format!("unknown: {e}"))?;

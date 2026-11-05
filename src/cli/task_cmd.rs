@@ -1,6 +1,6 @@
 //! Task creation commands: add, start, claim, finding and reroute (§ 5).
 
-use crate::{board, core, dispatch, labels, platform, recipe, runtime, service, setup};
+use crate::{board, core, dispatch, labels, recipe, runtime, service, setup};
 use crate::{Res, deploy, respond};
 use crate::cli::Args;
 use crate::cli::host_cmd::{add_host, serve_hint};
@@ -11,7 +11,6 @@ use crate::cli::text::{all, compact, labelled_acceptance, limit, one_line};
 use crate::core::State;
 use crate::dispatch::{Op, Receipt, act, current, deps_open};
 use serde_json::{Value, json};
-use std::fs;
 use std::path::Path;
 
 /// The fields of one new task (§ 1), from `add` or a recipe (§ 7).
@@ -259,9 +258,9 @@ pub(crate) fn create_claim_issue(b: &dyn Board, raw: &Value, op: &Op) -> Result<
 /// § 1 `taskq claim-issue [N]`: settle the board's claim issue, then write `create_claim_issue` to taskq.json
 /// and read it back. An existing key is never replaced; the receipt adds `key` to the board receipt.
 pub(crate) fn claim_issue_setup(b: &dyn Board, root: &Path, adopt: Option<u64>) -> Res<Value> {
-    let path = root.join("taskq.json");
+    let project = crate::config::ProjectFile::of(root);
     let read = || -> Res<Value> {
-        let v: Value = serde_json::from_str(&fs::read_to_string(&path).map_err(|e| format!("taskq.json unknown: {e}"))?).map_err(|e| format!("taskq.json unknown: {e}"))?;
+        let v = project.read().map_err(|e| format!("taskq.json unknown: {e}"))?;
         if v.is_object() { Ok(v) } else { Err("taskq.json unknown: not an object".into()) }
     };
     let mut v = read()?;
@@ -273,8 +272,7 @@ pub(crate) fn claim_issue_setup(b: &dyn Board, root: &Path, adopt: Option<u64>) 
     r["key"] = json!("create_claim_issue");
     let Some(n) = r["issue"].as_u64().filter(|_| r["outcome"] == "accepted" && configured.is_none()) else { return Ok(r) };
     v["create_claim_issue"] = json!(n);
-    let written = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())
-        .and_then(|text| platform::write_atomic(&path, &(text + "\n")))
+    let written = project.write(&v)
         .and_then(|_| read())
         .and_then(|v| if v["create_claim_issue"].as_u64() == Some(n) { Ok(()) } else { Err("taskq.json read back without the new create_claim_issue".into()) });
     if let Err(e) = written {

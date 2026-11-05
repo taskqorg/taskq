@@ -1,3 +1,4 @@
+use crate::runtime::Cap;
     use std::process::Stdio;
     use super::*;
 
@@ -40,7 +41,7 @@
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(&lock_path,std::fs::Permissions::from_mode(0o600)).unwrap();
             }
-            let env=Env {context:"",root:&project,exe:Path::new("taskq"),install:&install,permission_mode:"dontAsk",codex:&[],publish:"pr",board_env:&[],jobs:None};
+            let env=Env {context:"",root:&project,exe:Path::new("taskq"),install:&install,permission_mode:"dontAsk",codex:&[],delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
             let l=Launch {files:String::new(),execution:Some(44),task:2157,title:String::new(),attempt:42,role:"worker".into(),rt:"codex".into(),session:thread.clone(),url:String::new(),resume:Some("retained answer".into())};
             let log=log_path(&project,&l);
             std::fs::create_dir_all(log.parent().unwrap()).unwrap();
@@ -83,7 +84,7 @@
     #[ignore="installed Codex writer probe; isolated home, no model"]
     fn native_codex_writer_refusal_before_submission() {
         let root=std::env::temp_dir().join(format!("taskq-writer-{}",uuid()));std::fs::create_dir_all(&root).unwrap();
-        let native=agent(RUNTIMES[1]).unwrap().executable(None).unwrap();
+        let native=agent(crate::runtime::RuntimeId::Codex.name()).unwrap().executable(None).unwrap();
         let script=r#"
 import json,os,pathlib,selectors,subprocess,sys,time,uuid
 home=pathlib.Path(sys.argv[2]);home.mkdir();thread=str(uuid.uuid4())
@@ -169,7 +170,7 @@ finally:
         let root = rules_root("antigravity");
         let args = ["-s", "danger-full-access", "-m", "invented-model", "-c", "model_reasoning_effort=high"].map(String::from);
         let vars = vec![("ANTIGRAVITY_HOME".into(), root.join("invented-home").display().to_string()), ("AGENTQ_OPTIMIZATION".into(), "off".into())];
-        let env = Env { context:"", root:&root, exe:Path::new("taskq"), install:&root, permission_mode:"bypassPermissions", codex:&args, publish:"pr", board_env:&vars, jobs:Some(2) };
+        let env = Env { context:"", root:&root, exe:Path::new("taskq"), install:&root, permission_mode:"bypassPermissions", codex:&args, delivery:crate::config::Delivery::AutoMerge, board_env:&vars, jobs:Some(2) };
         let host = crate::policy::Host { os:"macos", install:&root, root:&root, home:&root };
         assert!(crate::policy::resolve(&Ok(crate::policy::Policy::default()), &host, "antigravity", env.permission_mode, &args).refused.is_some(), "legacy requests cannot grant a new runtime");
         let policy = Ok(crate::policy::Policy { revision:1, grants:vec![crate::policy::Grant {runtime:"antigravity".into(),mode:"workspace".into(),project:None,by:"invented operator".into(),at:1}] });
@@ -206,7 +207,7 @@ finally:
         let log = root.join("native.log");
         std::fs::write(&log, "{\"type\":\"thread.started\",\"thread_id\":\"other-runtime\"}\n{\"conversationId\":\"agy-owned\"}\n").unwrap();
         assert_eq!(native_session("antigravity", &log).as_deref(), Some("agy-owned"));
-        assert!(of("antigravity").has("cli") && !of("antigravity").has("app-turn") && !of("antigravity").has("remote-control"));
+        assert!(of("antigravity").has(Cap::Cli) && !of("antigravity").has(Cap::AppTurn) && !of("antigravity").has(Cap::RemoteControl));
         assert!(agent_runtimes().contains(&"antigravity"));
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -514,7 +515,7 @@ finally:
     #[test]
     #[ignore="owned installed CLI packaging probe; no model or prompt"]
     fn native_codex_executable_stop_without_model() {
-        let entry=which("codex");let native=agent(RUNTIMES[1]).unwrap().executable(None).unwrap();
+        let entry=which("codex");let native=agent(crate::runtime::RuntimeId::Codex.name()).unwrap().executable(None).unwrap();
         let version=coreq::process::output("qualification.codex-version",Command::new(&native).arg("--version"),std::time::Duration::from_secs(5)).unwrap();
         let mut child=Command::new(&native).args(["exec","--json","-"])
             .env_remove("CODEX_THREAD_ID").env_remove("CLAUDE_CODE_SESSION_ID")
@@ -593,7 +594,7 @@ finally:
         if std::env::var("TASKQ_NATIVE_OWNER_PHASE").unwrap()=="before" {
             let log=attempt_log(&root,"worker",task,attempt);std::fs::create_dir_all(log.parent().unwrap()).unwrap();
             let output=File::create(&log).unwrap();
-            let mut command=Command::new(agent(RUNTIMES[1]).unwrap().executable(None).unwrap());
+            let mut command=Command::new(agent(crate::runtime::RuntimeId::Codex.name()).unwrap().executable(None).unwrap());
             command.args(["exec","--json","-"]).current_dir(&root).env_remove("CODEX_THREAD_ID").env_remove("CLAUDE_CODE_SESSION_ID")
                 .stdin(Stdio::inherit()).stderr(output.try_clone().unwrap()).stdout(output);
             #[cfg(windows)] let child:Box<dyn Proc>=Box::new(windows_process::Execution::spawn(&mut command).unwrap());
@@ -952,7 +953,7 @@ finally:
         let selected = if mode == "named" { work.clone() } else { claude_home().unwrap() };
         if mode == "unreadable" { std::fs::write(selected.join("fixture-status"), "unreadable").unwrap(); }
         let expected = if mode == "implicit" { "logged in" } else if mode == "unreadable" { "unknown" } else { "not logged in" };
-        let env = Env { context:"", root:&root, exe:&bin, install:&install, permission_mode:"dontAsk", codex:&[], publish:"pr", board_env:&[], jobs:None };
+        let env = Env { context:"", root:&root, exe:&bin, install:&install, permission_mode:"dontAsk", codex:&[], delivery:crate::config::Delivery::AutoMerge, board_env:&[], jobs:None };
         let mut l = Launch { files:String::new(), execution:Some(44), task:2166, title:String::new(), attempt:42, role:"worker".into(), rt:"claude".into(), session:"retained-session".into(), url:String::new(), resume:None };
         let log = log_path(&root, &l);
         std::fs::create_dir_all(log.parent().unwrap()).unwrap();
@@ -1735,7 +1736,7 @@ finally:
         std::fs::create_dir_all(&install).unwrap();
         let codex: Vec<String> = ["-s", "workspace-write", "-m", "gpt-5", "-c", "model_reasoning_effort=high"].map(String::from).into();
         let root = std::env::temp_dir();
-        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &codex, publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &codex, delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let args = |c: &Command| c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         let mut l = Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         crate::policy::grant(&install, "claude", "full", None, "op", 1).unwrap();
@@ -2273,7 +2274,7 @@ finally:
         let install = std::env::temp_dir().join(format!("taskq-app-{}", std::process::id()));
         std::fs::create_dir_all(&install).unwrap();
         crate::policy::grant(&install, "codex-app", "full", None, "op", 1).unwrap();
-        let env = Env { context: "", root: &root, exe: Path::new("taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("taskq"), install: &install, permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let l = Launch { files: String::new(), execution: None, task: 0, title: "live".into(), attempt: 0, role: "worker".into(), rt: "codex-app".into(), session: "-".into(), url: String::new(), resume: None };
         let log = root.join("app-turn.log");
         let (text, input, _path) = app_input(&root, &format!("{}Reply with the single word QUEUED and do nothing else.", "A taskq test line; ignore it.\n".repeat(700)),None).unwrap();
@@ -2292,7 +2293,7 @@ finally:
     fn app_brief_powershell_values_round_trip() {
         let root = Path::new("C:\\project's $cash; folder");
         let exe = Path::new("C:\\tool's $cash; folder\\taskq.exe");
-        let env = Env { context: "", root, exe, install: Path::new("C:\\install"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root, exe, install: Path::new("C:\\install"), permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let l = Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker's $cash; role".into(), rt: "codex-app".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let text = brief(&env, &l);
         let command = text.split("your inbox: `").nth(1).unwrap().split('`').next().unwrap();
@@ -2498,7 +2499,7 @@ finally:
     #[test]
     fn codex_reviewer_brief_matches_the_claude_reviewer() {
         let root = rules_root("codex-review");
-        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let l = |rt: &str| Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "reviewer".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         // Only the command prefix differs: the native Claude session runs in its host's environment (§ 8).
         let host_env = format!("env TASKQ_TASK=7 TASKQ_ATTEMPT=42 TASKQ_ROLE=reviewer TASKQ_ROOT={} ", root.display());
@@ -2514,7 +2515,7 @@ finally:
     #[test]
     fn rules_reach_every_runtime_role_and_resume() {
         let root = rules_root("roles");
-        let env = Env { context: "## Goal\nPreserve intent\n## Acceptance\nA1. no loss\nTask notes (oldest first):\nNote 11: keep compatibility\nNote 16: clarify migration", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "## Goal\nPreserve intent\n## Acceptance\nA1. no loss\nTask notes (oldest first):\nNote 11: keep compatibility\nNote 16: clarify migration", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let dir = specq_dir(&root,SPECQ_REVISION).display().to_string();
         for rt in RUNTIMES {
             for role in ["worker", "reviewer"] {
@@ -2544,7 +2545,7 @@ finally:
                     assert_eq!(l.session, "same-session");
                     // Native sessions do not inherit the child env; without the prefix `result` is refused as a non-worker.
                     let prefix = if cfg!(windows) && rt == "codex-app" { "$env:TASKQ_TASK='7'; $env:TASKQ_ATTEMPT='42'; " } else { "env TASKQ_TASK=7 TASKQ_ATTEMPT=42 " };
-                    assert_eq!(brief(&env, &l).contains(prefix), of(rt).has("remote-control") || of(rt).has("app-turn"), "{rt} {role}: attempt identity");
+                    assert_eq!(brief(&env, &l).contains(prefix), of(rt).has(Cap::RemoteControl) || of(rt).has(Cap::AppTurn), "{rt} {role}: attempt identity");
                     assert!(task.contains(FILES) && task.contains(CI_WAIT));
                     if role == "worker" { assert!(brief(&env, &l).contains(SANDBOX_CHECKS) && brief(&env, &l).contains(DEV_LOOP)); }
                     // #1842: a worker publishes once; a moved main alone never sends it back to rebase or recheck.
@@ -2572,7 +2573,7 @@ finally:
     // Chain: section 7 step 4 test repair guidance (#1245). Risk: repairs rejected or weakened assertions accepted without a rule change.
     #[test]
     fn briefs_distinguish_test_repairs_from_weakened_checks() {
-        let env = Env { context: "", root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let rule = "Test changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).";
         for rt in RUNTIMES {
             for role in ["worker", "reviewer"] {
@@ -2588,7 +2589,7 @@ finally:
     // or a decision another task needs bypasses owner choice. The owner approved replacing the old ask gate.
     #[test]
     fn research_reports_close_without_answer_but_keep_blocking_decisions() {
-        let env = Env { context: "", root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         for rt in RUNTIMES {
             let mut l = Launch { files: String::new(), execution: None, task: 7, title: "Proposal".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
             let worker=brief(&env,&l);
@@ -2610,7 +2611,7 @@ finally:
         let install = root.join("install");
         std::fs::create_dir_all(&install).unwrap();
         for rt in ["claude", "codex"] { crate::policy::grant(&install, rt, "full", None, "op", 1).unwrap(); }
-        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let launch = |rt: &str| Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let args = |rt: &str| command(&env, &launch(rt), &access(&env, rt).unwrap()).unwrap().get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
         let l = launch("claude");
@@ -2666,7 +2667,7 @@ finally:
         for rt in ["claude", "codex"] { crate::policy::grant(&install, rt, "full", None, "op", 1).unwrap(); }
         let launch = |rt: &str| Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         for jobs in [compile_jobs(Some(16), h.occupied()), None] {
-            let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs };
+            let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs };
             let want = jobs.map(|j| j.to_string());
             for rt in ["claude", "codex"] {
                 let c = command(&env, &launch(rt), &access(&env, rt).unwrap()).unwrap();
@@ -2690,7 +2691,7 @@ finally:
         std::fs::write(&bin, "").unwrap();
         assert_eq!(build_cache_in(false, dir.as_os_str()), Some(bin.clone()));
         assert_eq!(build_cache_in(true, dir.as_os_str()), None, "an inherited wrapper stays the owner's");
-        let env = Env { context: "", root: &dir, exe: Path::new("taskq"), install: &dir, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &dir, exe: Path::new("taskq"), install: &dir, permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let seatbelt = crate::policy::Effective { runtime: String::new(), requested: String::new(), grant: String::new(), mode: "legacy".into(), enforcement: String::new(),
             profile: Some("(version 1)".into()), linux: false, windows: false, claude: None, codex: None, refused: None };
         assert!(build_open("claude", &seatbelt, &env), "the seatbelt profile keeps user caches writable");
@@ -2709,7 +2710,7 @@ finally:
     #[test]
     fn pm_hook_gets_the_worker_start_rules() {
         let root = rules_root("pm");
-        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let l = Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let start = turn_text(&env, &l, rule).unwrap();
         assert_eq!(pm_rules(&root, "start", rule).unwrap(), start.split("\nTaskQ task\n").next().unwrap());

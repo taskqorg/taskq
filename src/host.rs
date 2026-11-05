@@ -1,5 +1,5 @@
 //! Host policy, occupied slots and project supervision (taskq.md § 3, § 4, § 9).
-use crate::{Res, service::{self, Capacity, Gate}};
+use crate::{Res, runtime::RuntimeId, service::{self, Capacity, Gate}};
 use serde_json::{Value, json};
 use coreq::telemetry::capture::CommandReceipt;
 use std::{collections::{BTreeMap, BTreeSet}, fs, path::{Path, PathBuf}, sync::{Arc, Mutex}, time::Instant};
@@ -43,7 +43,7 @@ pub struct Policy {
     pub spillover_grace: u64,
     pub weights: crate::balance::Weights,
     /// `default_runtime`: reviewers and workers without `run-*` run on it (§ 4, § 9).
-    pub default_runtime: String,
+    pub default_runtime: crate::runtime::RuntimeId,
     pub codex: Vec<String>,
     pub permission_mode: String,
     pub update_every: u64,
@@ -55,8 +55,8 @@ impl Policy {
         cfg.weights = self.weights.clone();
         cfg.me = self.me.clone(); cfg.has = self.has.clone(); cfg.claim = self.claim; cfg.spillover_grace = self.spillover_grace; cfg.codex = self.codex.clone();
         let overlay = self.overlay(&cfg.root).map(|(_,p)|p);
-        cfg.default_runtime = overlay.and_then(|p|p["default_runtime"].as_str()).unwrap_or(&self.default_runtime).into();
-        cfg.allowed_runtimes = overlay.and_then(|p|p["allowed_runtimes"].as_array()).map(|a|a.iter().map(|rt|rt.as_str().unwrap().to_string()).collect());
+        cfg.default_runtime = overlay.and_then(|p|p["default_runtime"].as_str()).and_then(RuntimeId::parse).unwrap_or(self.default_runtime);
+        cfg.allowed_runtimes = overlay.and_then(|p|p["allowed_runtimes"].as_array()).map(|a|a.iter().filter_map(|rt|rt.as_str().and_then(RuntimeId::parse)).collect());
         cfg.auto_reroute = overlay.is_some_and(|p|p["auto_reroute"]==true);
         cfg.permission_mode = self.permission_mode.clone(); cfg.update_every = self.update_every; cfg.rollback_after = self.rollback_after;
     }
@@ -91,8 +91,8 @@ impl Policy {
         };
         let spillover_grace = if v["spillover_grace"].is_null() {300} else {v["spillover_grace"].as_u64().filter(|n|*n<=i64::MAX as u64).ok_or("host.json: spillover_grace must be nonnegative seconds")?};
         let default_runtime = match v["default_runtime"].as_str() {
-            _ if v["default_runtime"].is_null() => crate::runtime::OWNER.to_string(),
-            Some(rt) if DEFAULT_RUNTIMES.contains(&rt) => rt.to_string(),
+            _ if v["default_runtime"].is_null() => RuntimeId::Claude,
+            Some(rt) if DEFAULT_RUNTIMES.contains(&rt) => RuntimeId::parse(rt).unwrap_or(RuntimeId::Claude),
             _ => return Err(format!("host.json: default_runtime must be {}", DEFAULT_RUNTIMES.join(" or "))),
         };
         let timer = |k: &str, d| if v[k].is_null() { Ok(d) } else { v[k].as_u64().filter(|n| *n > 0).ok_or(format!("host.json: {k} must be positive seconds")) };

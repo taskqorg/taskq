@@ -1,10 +1,11 @@
 //! Antigravity owner sessions: original AgentQ I/O, exact native identity and no submission replay.
+use crate::runtime::Cap;
 use super::owner::{Launched,request_access,spec};
 use crate::setup::Request;
 use std::{fs,io::Write,path::Path,time::Duration};
 use serde_json::{json,Value};
 type Res<T> = Result<T,String>;
-pub fn handles(runtime:&str)->bool {super::of(runtime).has("stream-input")}
+pub fn handles(runtime:&str)->bool {super::of(runtime).has(Cap::StreamInput)}
 pub fn log(own:&Path)->std::path::PathBuf {own.join("native.jsonl")}
 fn input(own:&Path,text:&str)->Res<()> {
     let mut file=fs::OpenOptions::new().create(true).append(true).open(log(own)).map_err(|_|"Native input log unavailable")?;
@@ -52,7 +53,7 @@ pub fn command(own:&Path,r:&Request,resume:bool)->Res<std::process::Command> {
     let install=own.parent().and_then(Path::parent).ok_or("Owner installation unknown")?;
     let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
     let root=r.root.as_deref().map_or(own,Path::new);let exe=std::env::current_exe().map_err(|_|"Owner executable unknown")?;
-    let env=super::Env{context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,publish:"",board_env:&[],jobs:None};
+    let env=super::Env{context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
     let access=request_access(&env,&r.runtime,r)?;
     if !matches!(access.mode.as_str(),"workspace"|"full") {return Err("Antigravity owner sessions require a Workspace or Full operator grant".into());}
     let mut command=super::cli(&r.runtime,&access,&env)?;
@@ -65,7 +66,7 @@ pub fn command(own:&Path,r:&Request,resume:bool)->Res<std::process::Command> {
     super::agent(&r.runtime)?.command(command,&selected)
 }
 fn native_source(session:&str)->Res<()> {
-    let home=std::env::var_os("HOME").or_else(||std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from).ok_or("Native home unknown")?;
+    let home=crate::platform::user_home().ok_or("Native home unknown")?;
     if ["ANTIGRAVITY_HOME","ANTIGRAVITY_APP_DATA_DIR"].iter().any(|key|std::env::var_os(key).is_some()){return Err("Custom Antigravity state mapping unqualified; no input sent".into());}
     readable_source(&home.join(".gemini/antigravity-cli/conversations").join(format!("{session}.db")))
 }

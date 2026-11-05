@@ -649,8 +649,7 @@ Problem: pick one
             board: &crate::board::github::KIND,
             web_host: String::new(),
             repo: "o/r".into(),
-            publish: "pr".into(),
-            delivery: "auto-merge".into(),
+            delivery: crate::config::Delivery::AutoMerge,
             delivery_revision: 0,
             me: me.into(),
             limits: BTreeMap::from([("claude".to_string(), 1)]),
@@ -660,7 +659,7 @@ Problem: pick one
             weights: BTreeMap::new(),
             allowed_runtimes: None,
             auto_reroute: false,
-            default_runtime: "claude".into(),
+            default_runtime: crate::runtime::RuntimeId::Claude,
             routing: vec![],
             permission_mode: "dontAsk".into(),
             codex: vec![],
@@ -709,7 +708,7 @@ Problem: pick one
         c.install = std::env::temp_dir().join(format!("taskq-claude-{}", std::process::id()));
         std::fs::create_dir_all(&c.install).unwrap();
         crate::policy::grant(&c.install, "claude", "full", None, "op", 1).unwrap();
-        let env = Env { context: "", root: &c.root, exe: std::path::Path::new("taskq"), install: &c.install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &c.root, exe: std::path::Path::new("taskq"), install: &c.install, permission_mode: "dontAsk", codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
         let b = Fake::default();
         let n = b.create("Exit qualification", "", &["taskq".into()]).unwrap();
         let a = b.comment(n, "taskq: spawn worker claude:invented win").unwrap();
@@ -789,7 +788,7 @@ Problem: pick one
     fn gitlab_close_waits_for_the_mr_pipeline_then_merges_or_fails_once() {
         for end in ["success", "failed", "canceled"] {
             let (b, mut c) = (Fake::default(), cfg("win"));
-            c.publish = "direct".into();
+            c.delivery = crate::config::Delivery::Direct;
             let n = b.create("Invented GitLab close", "", &["taskq".into()]).unwrap();
             let sha = "a".repeat(40);
             let pipeline = Rc::new(RefCell::new("running"));
@@ -945,7 +944,7 @@ Problem: pick one
         let pass = |s: &mut Service| { s.reread_project().unwrap(); s.pass().unwrap() };
         for _ in 0..3 { pass(&mut s); }
         let notes = |b: &Fake| b.comments(n).unwrap().iter().filter(|e| e.body.starts_with(MANUAL_MERGE_NOTE)).count();
-        assert_eq!((task(&b, n).state, notes(&b), *forwards.borrow(), s.cfg.publish.as_str()), (State::Review, 1, 0, "pr"), "the `pr` wait is noted once");
+        assert_eq!((task(&b, n).state, notes(&b), *forwards.borrow(), s.cfg.delivery.mode()), (State::Review, 1, 0, "pr"), "the `pr` wait is noted once");
         // the owner edits taskq.json; the running service is not restarted
         preset("direct", 3);
         pass(&mut s);
@@ -3601,7 +3600,7 @@ Open: none")).unwrap();
             let ns: Vec<u64> = (0..tasks).map(|_| b.create("T", "", &labels).unwrap()).collect();
             let mut c = cfg("mac");
             c.limits = limits.iter().cloned().collect();
-            c.default_runtime = tr["default"].as_str().unwrap_or("claude").into();
+            c.default_runtime = tr["default"].as_str().and_then(crate::runtime::RuntimeId::parse).unwrap_or(crate::runtime::RuntimeId::Claude);
             let mut s = service(&b, &c, Default::default());
             for (task, attempt, rt) in held {
                 s.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution: attempt, task, attempt, rt, proc: Box::new(FakeProc(Rc::new(RefCell::new(None)))) });
@@ -3640,7 +3639,7 @@ Open: none")).unwrap();
             c.has = vec!["codex-app".into()];
             let e: Exits = Default::default();
             let mut s = service(&b, &c, e.clone());
-            s.cfg.default_runtime = worker.into();
+            s.cfg.default_runtime = crate::runtime::RuntimeId::parse(worker).unwrap();
             s.pass().unwrap();
             let t = task(&b, n);
             if worker == "codex-app" && !cfg!(any(target_os = "macos", windows)) {
@@ -3649,7 +3648,7 @@ Open: none")).unwrap();
                 continue;
             }
             assert_eq!(rt_of(&t).unwrap().0, worker);
-            s.cfg.default_runtime = "claude".into();
+            s.cfg.default_runtime = crate::runtime::RuntimeId::Claude;
             // A losing spawn must not change which runtime actually did the work.
             b.comment(n, &core::entry("spawn", &["worker", if worker == "claude" { "codex:ignored" } else { "claude:ignored" }, "mac"], None, "")).unwrap();
             b.comment(n, &core::entry("result", &["0123456789abcdef0123456789abcdef01234567"], t.attempt, "ok")).unwrap();
@@ -3843,10 +3842,10 @@ Open: none")).unwrap();
             let mut c = cfg("qualification");
             host.apply(&mut c); // preserve actual model/effort/permission options
             c.root = root.clone(); c.install = root.join("install"); c.external = true; c.claim = crate::host::ClaimMode::Any;
-            c.default_runtime = "claude".into(); // staged preference, not a host policy edit
+            c.default_runtime = crate::runtime::RuntimeId::Claude; // staged preference, not a host policy edit
             c.limits = BTreeMap::from([("claude".into(), 0), ("codex".into(), 1)]);
             let env = crate::runtime::Env { context: "", root: &root, exe: std::path::Path::new("taskq"), install: &install,
-                permission_mode: &c.permission_mode, codex: &c.codex, publish: "pr", board_env: &[], jobs: None };
+                permission_mode: &c.permission_mode, codex: &c.codex, delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
             let b = Fake::default();
             let n = b.create("TaskQ Qualification fallback", "", &["taskq".into()]).unwrap();
             if reviewer {
@@ -3918,7 +3917,7 @@ Open: none")).unwrap();
         ] {
             let b = Fake::default();
             let n = b.create("T", "", &[vec!["taskq".to_string()], labels.clone()].concat()).unwrap();
-            let mut c = Config { default_runtime: "codex".into(), ..cfg("fra") };
+            let mut c = Config { default_runtime: crate::runtime::RuntimeId::Codex, ..cfg("fra") };
             c.limits = BTreeMap::from([("claude".into(), 1), ("codex".into(), codex)]);
             let e: Exits = Default::default();
             let mut s = service(&b, &c, e.clone());
@@ -4892,9 +4891,9 @@ Open: none";
             for scenario in ["zero","excluded","accounts-off","quota","full","login","access","unknown","app","none-enabled","fallback-access"] {
                 let b=Fake::default();let root=std::env::temp_dir().join(format!("taskq-project-reroute-{}",crate::runtime::uuid()));
                 std::fs::create_dir_all(&root).unwrap();
-                let mut c=cfg("fleet");c.install=root.clone();c.auto_reroute=true;c.default_runtime="codex".into();
+                let mut c=cfg("fleet");c.install=root.clone();c.auto_reroute=true;c.default_runtime=crate::runtime::RuntimeId::Codex;
                 c.limits=BTreeMap::from([("claude".into(),if matches!(scenario,"zero"|"fallback-access") {0}else{1}),("codex".into(),2)]);
-                if scenario=="excluded" {c.allowed_runtimes=Some(vec!["codex".into()]);}
+                if scenario=="excluded" {c.allowed_runtimes=Some(vec![crate::runtime::RuntimeId::Codex]);}
                 if scenario=="none-enabled" {c.allowed_runtimes=Some(vec![]);}
                 if scenario=="accounts-off" {std::fs::write(root.join("accounts.json"),r#"{"claude":[{"label":"default","enabled":false}]}"#).unwrap();}
                 if scenario=="quota" {crate::runtime::accounts::record_windows(&root,"claude","default",0,&[("seven_day".into(),Some(604800))]).unwrap();}

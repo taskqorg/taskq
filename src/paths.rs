@@ -17,7 +17,7 @@ pub(crate) fn root_for(env: Option<PathBuf>, cwd: PathBuf) -> Res<PathBuf> {
     if let Some(r) = env {
         let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
         let (rc, dc) = (canon(&r), canon(&cwd));
-        if dc.starts_with(&rc) || dc.ancestors().all(|a| !a.join("taskq.json").is_file()) {
+        if dc.starts_with(&rc) || dc.ancestors().all(|a| !crate::config::ProjectFile::of(a).exists()) {
             return Ok(r);
         }
         return Err(format!("TASKQ_ROOT {} is not the project of the current directory {}", r.display(), cwd.display()));
@@ -25,7 +25,7 @@ pub(crate) fn root_for(env: Option<PathBuf>, cwd: PathBuf) -> Res<PathBuf> {
     let mut d = cwd;
     loop {
         let in_worktree = d.parent().and_then(Path::file_name).is_some_and(|n| n == ".worktrees");
-        if d.join("taskq.json").is_file() && !in_worktree {
+        if crate::config::ProjectFile::of(&d).exists() && !in_worktree {
             return Ok(d);
         }
         if !d.pop() {

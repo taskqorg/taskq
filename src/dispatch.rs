@@ -567,11 +567,11 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                 return Receipt { state: Some(t.state.name()), ..Receipt::rejected(n, op, e) };
             }
             // § 4 Profiling: `checks` is the CI verification and merge call
-            if b.defer_publication(&cfg.publish) {
+            if b.defer_publication(cfg.delivery.mode()) {
                 let mut r = act(b, &cfg.root, n, "publish", &[], verdict, op);
                 if r.ok() {
                     r.extra = "publication pending; the service reconciles it".into();
-                    if let Publish::Enqueued(id) = b.publish(n, &sha, &cfg.publish, &issue.title, &format!("Task: {}", b.url(n))) {
+                    if let Publish::Enqueued(id) = b.publish(n, &sha, cfg.delivery.mode(), &issue.title, &format!("Task: {}", b.url(n))) {
                         // Intent is durable before admission; the service recovers even if this receipt write is lost.
                         let next = Op { revision: r.revision, ..Default::default() };
                         let evidence=crate::readiness::receipt(n,&b.url(n),&log,b.take_publication_evidence());
@@ -581,7 +581,7 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                 return r;
             }
             let began = std::time::Instant::now();
-            let published = b.publish(n, &sha, &cfg.publish, &issue.title, &format!("Task: {}", b.url(n)));
+            let published = b.publish(n, &sha, cfg.delivery.mode(), &issue.title, &format!("Task: {}", b.url(n)));
             let evidence=crate::readiness::receipt(n,&b.url(n),&log,b.take_publication_evidence());
             let (outcome, err) = match &published {
                 Publish::Done(_) => ("ok", "none"),
@@ -643,7 +643,7 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
     let rev = core::revision(n, log);
     let op = Op { revision: Some(rev), ..Default::default() };
     let write = |kind, args: &[&str], text: &str| act_as(b, &cfg.root, n, kind, args, text, &op, None, None);
-    let published=b.resume_publication(n, t.result.as_deref().unwrap_or_default(), &cfg.publish, &issue.title, &format!("Task: {}", b.url(n)), &cfg.root, t.enqueued.is_some());
+    let published=b.resume_publication(n, t.result.as_deref().unwrap_or_default(), cfg.delivery.mode(), &issue.title, &format!("Task: {}", b.url(n)), &cfg.root, t.enqueued.is_some());
     let evidence=crate::readiness::receipt(n,&b.url(n),log,b.take_publication_evidence());
     match published {
         Publish::Done(m) => write("close", &[], &join(&[&repeats(n, log, verdict), &format!("delivery {} r{}: {m}", cfg.delivery, cfg.delivery_revision), &evidence])),
@@ -708,7 +708,7 @@ fn successor_moving(b: &dyn Board, root: &Path, n: u64, verdict: &str, op: &Op, 
 
 /// § 7: a gated task or a `review-pr` project publishes only the owner's approved result.
 fn needs_approval(cfg: &Config, t: &Task) -> bool {
-    t.gate.is_some() || cfg.delivery == "review-pr"
+    t.gate.is_some() || cfg.delivery == crate::config::Delivery::ReviewPr
 }
 
 /// Whether this process is an agent (`TASKQ_ATTEMPT` set): it cannot approve a gate (§ 7).

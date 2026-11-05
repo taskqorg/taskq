@@ -1,5 +1,6 @@
 //! Owner sessions (§ 8): how a setup or project request launches, links and gets trusted per runtime. Only this
 //! adapter knows the native argv, output and refusals; `setup` keeps the request state machine.
+use crate::runtime::Cap;
 use crate::setup::{dir, Request};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ pub enum Launched { Job { job: String, session: Option<String>, url: Option<Stri
 
 pub(crate) fn supported(runtime:&str)->bool {
     let a=super::of(runtime);
-    super::owner_stream::handles(runtime) || a.has("remote-control") || a.has("sandbox-args") && a.has("cli") && cfg!(any(target_os="macos",windows))
+    super::owner_stream::handles(runtime) || a.has(Cap::RemoteControl) || a.has(Cap::SandboxArgs) && a.has(Cap::Cli) && cfg!(any(target_os="macos",windows))
 }
 
 pub(super) fn request_access(env:&super::Env,runtime:&str,r:&Request)->Res<crate::policy::Effective> {
@@ -28,7 +29,7 @@ fn choice_args(spec:&mut agentq_runtime::agent::NativeSpec,r:&Request) {
 /// The request's runtime adapter (§ 8 table).
 pub fn launch(own: &Path, r: &Request) -> Launched {
     if super::owner_stream::handles(&r.runtime){return super::owner_stream::launch(own,r);}
-    if super::of(&r.runtime).has("thread-link") { codex_launch(own, r) } else { claude_launch(own, r) }
+    if super::of(&r.runtime).has(Cap::ThreadLink) { codex_launch(own, r) } else { claude_launch(own, r) }
 }
 
 /// An owner session's AgentQ `agent` turn (§ 8 Spawn and resume); `base` loses TaskQ's attempt variables first.
@@ -54,7 +55,7 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     let codex = crate::host::Policy::read_for_hostname(install, crate::config::hostname).map_or(vec![], |p| p.codex);
     let codex=r.choice.as_ref().map_or_else(||codex.clone(),|choice|choice.codex(&codex));
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: "", codex: &codex, delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
     let access = match request_access(&env,a.setup,r) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
@@ -103,7 +104,7 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[], jobs: None };
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
     let access = match request_access(&env,&r.runtime,r) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
@@ -156,7 +157,7 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let a = super::of(&r.runtime);
     let session = r.session.as_deref().filter(|s| super::plain_thread(s)).ok_or("native session unknown; open it in its runtime")?;
     if !super::which(a.bin).is_absolute() { return Err(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
-    if a.has("thread-link") {return Err("App-owned Codex input must use its native queue; CLI resume refused".into());}
+    if a.has(Cap::ThreadLink) {return Err("App-owned Codex input must use its native queue; CLI resume refused".into());}
     release_idle(r)?;
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
@@ -165,8 +166,8 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     // the same folder and grant as the launch, so the turn resumes where the session started
     let workdir = r.root.as_deref().map_or(own, Path::new);
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
-    let access = request_access(&env, if a.has("sandbox-args") { a.setup } else { &r.runtime },r)?;
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
+    let access = request_access(&env, if a.has(Cap::SandboxArgs) { a.setup } else { &r.runtime },r)?;
     let mut c = super::cli(&r.runtime, &access, &env)?;
     let mut spec = spec(&mut c, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
         "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string()]);
@@ -199,7 +200,7 @@ pub(crate) fn app_submit(own:&Path,r:&Request,input:&str)->Res<()> {
     let install=own.parent().and_then(Path::parent).ok_or("owner installation unknown")?;
     let root=r.root.as_deref().map_or(own,Path::new);let exe=std::env::current_exe().map_err(|_|"owner executable unknown")?;
     let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
-    let env=super::Env {context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,publish:"",board_env:&[],jobs:None};
+    let env=super::Env {context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
     request_access(&env,super::of(&r.runtime).setup,r)?;
     super::app_queue(session,input)
 }
@@ -212,7 +213,7 @@ pub(crate) fn app_observe(own:&Path,r:&Request,t:&crate::dialogue::Turn)->Res<cr
 /// D3: Claude lists a session someone has open; Codex refuses the second writer itself, so its check is the turn.
 pub fn holder(_own: &Path, r: &Request) -> Res<bool> {
     if super::owner_stream::handles(&r.runtime){return super::owner_stream::holder(_own,r);}
-    if super::of(&r.runtime).has("thread-link") { return Ok(false); }
+    if super::of(&r.runtime).has(Cap::ThreadLink) { return Ok(false); }
     Ok(holds(&claude_rows()?, r) == Hold::Other)
 }
 
@@ -251,7 +252,7 @@ pub fn open_in(runtime: &str) -> String { format!("open in {runtime}; close it t
 /// D5: the outcome only from the runtime's end record (Claude `result`, Codex `turn.completed`/`turn.failed`); exit alone is unknown.
 pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
     if super::owner_stream::handles(runtime){return super::owner_stream::outcome(runtime,out);}
-    let codex = super::of(runtime).has("thread-link");
+    let codex = super::of(runtime).has(Cap::ThreadLink);
     if codex && format!("{out}{err}").contains("already has an active writer") { return open_in(runtime); }
     for v in out.lines().rev().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
         match (codex, v["type"].as_str()) {
@@ -273,8 +274,8 @@ pub fn transcript_for(install:&Path,r:&Request)->Res<PathBuf> {
 
 pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
     let a = super::of(runtime);
-    if !a.has("thread-link") && !a.has("remote-control") { return Err(format!("runtime {runtime:?}: no retained native transcript file; view unknown")); }
-    if a.has("thread-link") {
+    if !a.has(Cap::ThreadLink) && !a.has(Cap::RemoteControl) { return Err(format!("runtime {runtime:?}: no retained native transcript file; view unknown")); }
+    if a.has(Cap::ThreadLink) {
         codex_transcript_in(&super::codex_home().ok_or("transcript unknown: no home folder")?, session)
     } else {
         super::claude_transcript_in(&super::claude_home().ok_or("transcript unknown: no home folder")?, session)
@@ -373,7 +374,7 @@ pub(crate) fn registered_trust_with(install: &Path, root: &Path, config: Option<
     if !crate::host::projects(install)?.contains(&root) { return Err("trust setup: root is not registered".into()); }
     let home = match config {
         Some(p) => p.to_path_buf(),
-        None => PathBuf::from(std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok_or("trust setup: host home unknown")?),
+        None => crate::platform::user_home().ok_or("trust setup: host home unknown")?,
     };
     // A selected CLAUDE_CONFIG_DIR stores .claude.json inside that directory.
     let key = claude_key(&root);
