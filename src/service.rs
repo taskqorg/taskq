@@ -648,6 +648,25 @@ impl Kid {
     }
 }
 
+/// What one pass read before its steps begin.
+struct PassRead<'v> {
+    views: &'v [View],
+    hosts: &'v [Issue],
+    by_n: HashMap<u64, &'v View>,
+    now: i64,
+    native_until: std::time::Instant,
+}
+
+/// What the steps of one pass leave for the later ones.
+#[derive(Default)]
+struct PassMarks {
+    touched: HashSet<u64>,
+    released: HashSet<u64>,
+    pending_acceptance: HashSet<u64>,
+    deferred: Option<u64>,
+    unresolved_local: BTreeSet<(u64, u64, String)>,
+}
+
 pub struct Service<'a> {
     last_spawn: Option<u64>,
     /// #2255: this project's queue row and the restart pending since, in board time.
@@ -1993,8 +2012,58 @@ impl<'a> Service<'a> {
             self.retired(task,attempt,execution,false,0);
         }
         let previous_fixes = std::mem::take(&mut self.label_fixes);
-        let me = self.cfg.me.clone();
-        let ttl = self.cfg.ttl;
+        let (views, hosts) = self.read_pass_views()?;
+        self.dep_closed = newest_dep_close(&views, &self.deps);
+        let now = self.board.now()?;
+        self.usage_holds(&views, now);
+        self.observe_ownership(&views)?;
+        self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
+        self.copy_images();
+        self.tasks_read = Some(std::time::Instant::now());
+        self.log_churn();
+        self.local_waits(&views);
+        self.one_service_per_host(&hosts, now)?;
+        self.events(&views, now)?;
+        if let Some(b)=hosts.iter().find(|h|h.trusted && host_name(h)==Some(self.cfg.me.as_str())).and_then(|h|Balancing::read(&h.body)) {
+            self.last_spawn=self.last_spawn.max(b.last_spawn);
+        }
+        let by_n: HashMap<u64, &View> = views.iter().map(|v| (v.issue.number, v)).collect();
+        let mut m = PassMarks::default();
+        self.execution_waits.clear();
+        self.release_stale_spawns(&views, &mut m)?;
+        let p = PassRead { views: &views, hosts: &hosts, by_n, now, native_until: std::time::Instant::now() + native_budget };
+        self.recover_native(&views, native_budget)?;
+        self.hold = crate::admission::hold(&self.cfg.install);
+        self.record_headroom_and_quota(&p);
+        self.observe_kids(&p, &mut m)?;
+        self.flag_double_attempts(&p);
+        self.stop_replaced(&p, &mut m);
+        self.session_links(&p);
+        if let Some(first)=m.deferred.and_then(|id|self.kids.iter().position(|k|k.execution==id)) {self.kids.rotate_left(first);}
+        self.flag_heartbeat_conflicts(&p);
+        m.unresolved_local = self.unresolved_reservations();
+        self.flag_slots_without_process();
+        self.settle_executions(&p, &mut m)?;
+        // § 3 Runtime accounts: only the project the connection approved reads fleet policy for this host
+        if self.fleet.due(now) && crate::enrollment::approves(&self.cfg.install, self.cfg.board.name, &self.cfg.web_host, &self.cfg.repo) {
+            let me = self.cfg.me.clone();
+            if let Err(e) = self.fleet.refresh(self.board, &self.cfg.install, &hosts, &me, now) { self.log.push(format!("account policy: {e}")); }
+        }
+        self.write_heartbeat(&p)?;
+        let open: HashSet<u64> = views.iter().map(|v| v.issue.number).collect();
+        crate::profile::repair_ended(&self.cfg.install, &self.cfg.root, &self.cfg.repo, &self.cfg.me, self.board, &open, &mut self.unowned);
+        self.tidy(&p.by_n);
+        let written = m.touched.clone();
+        self.project_labels(&p, &mut m, &previous_fixes)?;
+        self.rewrite_summaries(&p, &mut m, &written);
+        self.cancel_publications(&p, &mut m);
+        self.resume_publications(&p, &mut m);
+        self.route_own_attempts(&p, &mut m)?;
+        self.admit_ready(&p, &mut m)
+    }
+
+    /// Reads the open tasks and hosts, and settles what changes them first: a doctor request, reroutes, boot releases, reopened tasks.
+    fn read_pass_views(&mut self) -> Result<(Vec<View>, Vec<Issue>), String> {
         let (mut views, mut hosts, request) = views_asked(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
         // #2194 A2: a new `taskq doctor --hosts` request runs the health checks now; this pass's heartbeat answers it
         if let Some(id) = request.filter(|id| self.answered.as_ref() != Some(id)) {
@@ -2020,8 +2089,12 @@ impl<'a> Service<'a> {
             (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
             self.listed = views.iter().map(|v| v.issue.number).collect();
         }
-        self.dep_closed = newest_dep_close(&views, &self.deps);
-        let now = self.board.now()?;
+        Ok((views, hosts))
+    }
+
+    /// Takes this host's usage holds from the board and from its accounts; expired ones leave.
+    fn usage_holds(&mut self, views:&[View], now:i64) {
+        let me = self.cfg.me.clone();
         let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
         // § 3 Runtime accounts: a runtime with several accounts takes its hold from the account record (`account_pass`)
         for x in views.iter().flat_map(|v| &v.projection.executions).filter(|x| x.host == me && !accounts.multi(&x.runtime)) {
@@ -2031,14 +2104,14 @@ impl<'a> Service<'a> {
         }
         self.account_pass(now);
         self.limited.retain(|_, (at, _)| now < *at);
-        self.observe_ownership(&views)?;
-        self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
-        self.copy_images();
-        self.tasks_read = Some(std::time::Instant::now());
-        self.log_churn();
+    }
+
+    /// Names this host's own reasons a task cannot run here.
+    fn local_waits(&mut self, views:&[View]) {
+        let me = self.cfg.me.clone();
         // Local eligibility only: another host's heartbeat cannot qualify this runtime or hide its refusal.
         self.waits.clear();
-        for v in &views {
+        for v in views {
             let t = &v.projection.task;
             if !matches!(t.state, State::Ready | State::Doing | State::Review)
                 || label(&v.issue, "host-").is_some_and(|h| h != me)
@@ -2050,20 +2123,25 @@ impl<'a> Service<'a> {
                 self.waits.insert(v.issue.number, reason);
             }
         }
+    }
+
+    /// Holds every write while another install's fresh heartbeat uses this host name.
+    fn one_service_per_host(&mut self, hosts:&[Issue], now:i64) -> Result<(), String> {
+        let me = self.cfg.me.clone();
+        let ttl = self.cfg.ttl;
         // § 4 one service per host name: another install's fresh heartbeat under this name holds every write (#933)
         let title = format!("taskq host {me}");
         let other = hosts.iter().filter(|h| h.title == title && now - h.updated < ttl).flat_map(|h| h.body.lines()).find_map(|l| l.strip_prefix("service ")).filter(|id| *id != self.instance);
         if let Some(id) = other {
             return Err(format!("another service {id} runs as host {me}; stop it or set TASKQ_HOST"));
         }
-        self.events(&views, now)?;
-        if let Some(b)=hosts.iter().find(|h|h.trusted && host_name(h)==Some(self.cfg.me.as_str())).and_then(|h|Balancing::read(&h.body)) {
-            self.last_spawn=self.last_spawn.max(b.last_spawn);
-        }
-        let by_n: HashMap<u64, &View> = views.iter().map(|v| (v.issue.number, v)).collect();
-        let mut touched = HashSet::new();
-        let mut released = HashSet::new();
-        self.execution_waits.clear();
+        Ok(())
+    }
+
+    /// Releases lost spawns that are no longer the live attempt.
+    fn release_stale_spawns(&mut self, views:&[View], m:&mut PassMarks) -> Result<(), String> {
+        let me = self.cfg.me.clone();
+        let released=&mut m.released;
         // #1886: a lost spawn no longer the live attempt (requeued, parked) waits on nothing; any run of its host, a
         // retired one too, releases it no-start so another host can claim the task. A reached start (attempt log or a
         // hand-in of that attempt) stays unknown (R12).
@@ -2078,7 +2156,12 @@ impl<'a> Service<'a> {
             released.insert(a);
             self.log.push(format!("#{n} lost spawn {a}: no attempt log on {me} and no longer the live attempt; released no-start"));
         }
-        let native_until=std::time::Instant::now()+native_budget;
+        Ok(())
+    }
+
+    /// Adopts native executions this host owns and no child holds, within a quarter of the pass budget.
+    fn recover_native(&mut self, views:&[View], native_budget:std::time::Duration) -> Result<(), String> {
+        let me = self.cfg.me.clone();
         // Cold scans leave time for already owned work and control.
         let recovery_until=std::time::Instant::now()+native_budget/4;
         let pivot=self.recovery_after.and_then(|n|views.iter().position(|v|v.issue.number==n)).map_or(0,|i|i+1);
@@ -2119,15 +2202,13 @@ impl<'a> Service<'a> {
                 self.execution_waits.insert(task, format!("execution {} on {}: recovery unknown: {e}", x.id, x.host));
             }
         }
+        Ok(())
+    }
 
-        self.hold = crate::admission::hold(&self.cfg.install);
-        let mut pending_acceptance = HashSet::new();
-        // 1. Observe native state once; retry lost evidence writes without resubmitting input.
-        let mut exited = vec![];
-        let mut retired = vec![];
-        let needs_stop=self.kids.iter().any(|k|!by_n.get(&k.task).is_some_and(|v|v.projection.task.attempt==Some(k.attempt)));
-        let observation_until=if needs_stop {std::time::Instant::now()+native_until.saturating_duration_since(std::time::Instant::now())/2} else {native_until};
-        let mut deferred=None;
+    /// Folds the headroom and quota windows that running children report.
+    fn record_headroom_and_quota(&mut self, p:&PassRead<'_>) {
+        let by_n=&p.by_n;
+        let now=p.now;
         self.headroom_error=None;
         if !self.cfg.weights.is_empty() {
             for k in &self.kids {
@@ -2145,6 +2226,22 @@ impl<'a> Service<'a> {
         for (rt,label,windows) in quota {
             if let Err(e)=crate::runtime::accounts::record_windows(&self.cfg.install,&rt,&label,now,&windows) {self.log.push(format!("account {rt} {label} quota unknown: {e}"));}
         }
+    }
+
+    /// Observes each child once, retries lost evidence writes, and settles the children that exited.
+    fn observe_kids(&mut self, p:&PassRead<'_>, m:&mut PassMarks) -> Result<(), String> {
+        let by_n=&p.by_n;
+        let now=p.now;
+        let native_until=p.native_until;
+        let touched=&mut m.touched;
+        let released=&mut m.released;
+        let pending_acceptance=&mut m.pending_acceptance;
+        let deferred=&mut m.deferred;
+        // 1. Observe native state once; retry lost evidence writes without resubmitting input.
+        let mut exited = vec![];
+        let mut retired = vec![];
+        let needs_stop=self.kids.iter().any(|k|!by_n.get(&k.task).is_some_and(|v|v.projection.task.attempt==Some(k.attempt)));
+        let observation_until=if needs_stop {std::time::Instant::now()+native_until.saturating_duration_since(std::time::Instant::now())/2} else {native_until};
         self.kids.retain_mut(|k| {
             if std::time::Instant::now()>=observation_until {
                 deferred.get_or_insert(k.execution);
@@ -2220,7 +2317,12 @@ impl<'a> Service<'a> {
                 touched.insert(n);
             }
         }
+        Ok(())
+    }
 
+    /// Reports a child whose attempt the log never made current.
+    fn flag_double_attempts(&mut self, p:&PassRead<'_>) {
+        let by_n=&p.by_n;
         // A replaced, once-accepted attempt is ordinary cancellation, not a double claim.
         for k in &self.kids {
             if let Some(v) = by_n.get(&k.task) {
@@ -2231,8 +2333,17 @@ impl<'a> Service<'a> {
                 }
             }
         }
+    }
 
+    /// Stops children of replaced attempts (R11).
+    fn stop_replaced(&mut self, p:&PassRead<'_>, m:&mut PassMarks) {
+        let by_n=&p.by_n;
+        let native_until=p.native_until;
+        let released=&mut m.released;
+        let pending_acceptance=&mut m.pending_acceptance;
+        let deferred=&mut m.deferred;
         // 2. stop children of replaced attempts (R11)
+        let mut retired = vec![];
         let mut stopped = vec![];
         self.kids.retain_mut(|k| {
             let current = by_n.get(&k.task).is_some_and(|v| v.projection.task.attempt == Some(k.attempt));
@@ -2291,6 +2402,11 @@ impl<'a> Service<'a> {
             self.ended(n, a, by_n.get(&n).copied(), None);
         }
         self.held.retain(|l| by_n.get(&l.task).is_some_and(|v| v.projection.task.attempt == Some(l.attempt)));
+    }
+
+    /// Reads the native session links of live executions.
+    fn session_links(&mut self, p:&PassRead<'_>) {
+        let native_until=p.native_until;
         // #2261: the session link belongs to this exact live execution's native session and job, read by its runtime adapter;
         // until a link appears the heartbeat names the adapter's cause.
         // shortcut: bounded native reads restart each pass until a link appears; retain a cursor if costly.
@@ -2299,8 +2415,14 @@ impl<'a> Service<'a> {
             k.session_url = Some(crate::runtime::observe_until(native_until, || adapter.session_link(&spec, job.as_deref()))
                 .map_err(|(cause, detail)| crate::runtime::absence(cause.0, detail.as_deref())));
         }
-        if let Some(first)=deferred.and_then(|id|self.kids.iter().position(|k|k.execution==id)) {self.kids.rotate_left(first);}
+    }
 
+    /// Reports a fresh heartbeat that lists an attempt newer than the accepted one.
+    fn flag_heartbeat_conflicts(&mut self, p:&PassRead<'_>) {
+        let hosts=p.hosts;
+        let by_n=&p.by_n;
+        let now=p.now;
+        let ttl = self.cfg.ttl;
         // 4. Expired heartbeat is not evidence that an external executor stopped.
         // A lease newer than the accepted attempt is a spawn that lost the claim and still runs. An older one is a
         // replaced attempt its host lists until its next pass: normal lag, not a second live attempt (#1140).
@@ -2313,6 +2435,10 @@ impl<'a> Service<'a> {
                 }
             }
         }
+    }
+
+    /// Names each execution this service still observes, and holds its slot once.
+    fn unresolved_reservations(&mut self) -> BTreeSet<(u64, u64, String)> {
         let mut unresolved_local = BTreeSet::new();
         for ((task,_),x) in &self.observations {
             let reservation=(*task,x.attempt,x.runtime.clone());
@@ -2322,6 +2448,12 @@ impl<'a> Service<'a> {
                 self.reserved.push(reservation);
             }
         }
+        unresolved_local
+    }
+
+    /// Records a runtime whose held slots have no live process.
+    fn flag_slots_without_process(&mut self) {
+        let me = self.cfg.me.clone();
         let held_slots = self.entry().held;
         let held_rts: BTreeSet<String> = held_slots.iter().map(|(_, _, r)| r.clone()).collect();
         for rt in held_rts {
@@ -2336,7 +2468,18 @@ impl<'a> Service<'a> {
                 }
             }
         }
-        for v in &views {
+    }
+
+    /// Ends confirmed executions without an outcome and names what the others wait for.
+    fn settle_executions(&mut self, p:&PassRead<'_>, m:&mut PassMarks) -> Result<(), String> {
+        let views=p.views;
+        let hosts=p.hosts;
+        let now=p.now;
+        let me = self.cfg.me.clone();
+        let ttl = self.cfg.ttl;
+        let touched=&mut m.touched;
+        let released=&mut m.released;
+        for v in views {
             let (n,t) = (v.issue.number,&v.projection.task);
             if let Some(a) = t.attempt.filter(|_| host_of(t) != Some(&me) && matches!(t.state,State::Doing|State::Review)) {
                 let delivered = v.projection.delivered(a).unwrap_or(0);
@@ -2367,12 +2510,16 @@ impl<'a> Service<'a> {
                 }
             }
         }
+        Ok(())
+    }
 
-        // § 3 Runtime accounts: only the project the connection approved reads fleet policy for this host
-        if self.fleet.due(now) && crate::enrollment::approves(&self.cfg.install, self.cfg.board.name, &self.cfg.web_host, &self.cfg.repo) {
-            if let Err(e) = self.fleet.refresh(self.board, &self.cfg.install, &hosts, &me, now) { self.log.push(format!("account policy: {e}")); }
-        }
-
+    /// Writes this host's heartbeat when it changed or ages out, and closes a retired name's.
+    fn write_heartbeat(&mut self, p:&PassRead<'_>) -> Result<(), String> {
+        let hosts=p.hosts;
+        let now=p.now;
+        let me = self.cfg.me.clone();
+        let ttl = self.cfg.ttl;
+        let title = format!("taskq host {me}");
         // 3. heartbeat
         let body = self.heartbeat_body();
         self.host_issue = hosts.iter().find(|h| h.title == title).map(|h| h.number);
@@ -2404,14 +2551,16 @@ impl<'a> Service<'a> {
             self.board.comment(h.number, &format!("Retired: this service now runs as host {me}."))?;
             self.board.close(h.number)?;
         }
+        Ok(())
+    }
 
-        let open: HashSet<u64> = views.iter().map(|v| v.issue.number).collect();
-        crate::profile::repair_ended(&self.cfg.install, &self.cfg.root, &self.cfg.repo, &me, self.board, &open, &mut self.unowned);
-        self.tidy(&by_n);
-
+    /// Writes the projected labels; a task the pass changed waits for its next read.
+    fn project_labels(&mut self, p:&PassRead<'_>, m:&mut PassMarks, previous_fixes:&HashMap<u64, (String, Vec<String>, u32, i64, bool)>) -> Result<(), String> {
+        let views=p.views;
+        let now=p.now;
+        let touched=&mut m.touched;
         // 5. projected labels
-        let written = touched.clone();
-        for v in &views {
+        for v in views {
             let n = v.issue.number;
             if touched.contains(&n) {
                 continue;
@@ -2464,6 +2613,13 @@ impl<'a> Service<'a> {
                 touched.insert(n);
             }
         }
+        Ok(())
+    }
+
+    /// Rewrites a stale summary from the log, like a label.
+    fn rewrite_summaries(&mut self, p:&PassRead<'_>, m:&mut PassMarks, written:&HashSet<u64>) {
+        let views=p.views;
+        let touched=&mut m.touched;
         // § 2 Summary: rewrite a stale one from the log like a label
         let previous = std::mem::take(&mut self.summary_fixes);
         let deploy = crate::deploy::config(&self.cfg.root);
@@ -2485,8 +2641,13 @@ impl<'a> Service<'a> {
             }
             self.summary_fixes.insert(n, streak);
         }
+    }
 
-        for v in &views {
+    /// Dequeues a publication its task cancelled, once per cancelling entry.
+    fn cancel_publications(&mut self, p:&PassRead<'_>, m:&mut PassMarks) {
+        let views=p.views;
+        let touched=&mut m.touched;
+        for v in views {
             let n = v.issue.number;
             if v.projection.task.publication.is_some() { continue; }
             let changes = core::changes(n, &v.log);
@@ -2501,7 +2662,16 @@ impl<'a> Service<'a> {
             }
             self.cancelled_publications.insert(n, *id);
         }
+    }
 
+    /// Reconciles the publication queue and writes each wait into the snapshot rows.
+    fn resume_publications(&mut self, p:&PassRead<'_>, m:&mut PassMarks) {
+        let views=p.views;
+        let hosts=p.hosts;
+        let now=p.now;
+        let me = self.cfg.me.clone();
+        let ttl = self.cfg.ttl;
+        let touched=&mut m.touched;
         // § 7 publication intent is board state; every host can reconcile the queue after a restart, even with focus off.
         // The attempt host polls while its heartbeat is fresh; others take over only when it is stale or gone (#1359).
         let live = |h: &str| h != me && hosts.iter().any(|i| i.title == format!("taskq host {h}") && now - i.updated <= ttl);
@@ -2538,7 +2708,16 @@ impl<'a> Service<'a> {
             for r in &mut snapshot.tasks { r.publication = waiting.remove(&r.n); }
         }
         touched.extend(views.iter().filter(|v| v.projection.task.publication.is_some()).map(|v| v.issue.number));
+    }
 
+    /// Delivers input to own attempts; held claims launch once the gate admits them.
+    fn route_own_attempts(&mut self, p:&PassRead<'_>, m:&mut PassMarks) -> Result<(), String> {
+        let views=p.views;
+        let now=p.now;
+        let me = self.cfg.me.clone();
+        let ttl = self.cfg.ttl;
+        let touched=&mut m.touched;
+        let unresolved_local=&m.unresolved_local;
         // 6. route to own attempts, then admit within capacity; the gate holds launches, the lease stays (§ 3)
         let mut pending = BTreeSet::new();
         // a reservation lives within one pass: it becomes a child or a held claim, or is released here
@@ -2546,7 +2725,7 @@ impl<'a> Service<'a> {
         (self.requested, self.refused) = (vec![], None);
         if self.host.is_some() { self.sync_host(); }
         touched.extend(self.release_held());
-        for v in &views {
+        for v in views {
             let (n, t) = (v.issue.number, &v.projection.task);
             let (Some(a), Some(h)) = (t.attempt, host_of(t)) else { continue };
             if h != me || !matches!(t.state, State::Doing | State::Review) || touched.contains(&n) || self.kids.iter().any(|k| k.task == n) {
@@ -2647,13 +2826,22 @@ impl<'a> Service<'a> {
             self.pending = pending;
             self.beat()?;
         }
+        Ok(())
+    }
+
+    /// Admits ready tasks within capacity; every ready task this pass reaches gets one admission code.
+    fn admit_ready(&mut self, p:&PassRead<'_>, m:&mut PassMarks) -> Result<(), String> {
+        let views=p.views;
+        let hosts=p.hosts;
+        let now=p.now;
+        let touched=&mut m.touched;
         // #1616: every ready task this pass reaches gets one admission code, written into the snapshot rows
         let mut decided: BTreeMap<u64, (&'static str, String)> = BTreeMap::new();
         let focus_off = self.focus.is_empty();
         if focus_off { tracing::info!(coreq_refusal = "focus"); }
         let user = if focus_off { String::new() } else { self.board.me().unwrap_or_default() };
         let mut queue: Vec<&View> = vec![];
-        for v in &views {
+        for v in views {
             let (n, t) = (v.issue.number, &v.projection.task);
             if touched.contains(&n) || self.kids.iter().any(|k| k.task == n) { continue; }
             if !(t.state == State::Ready || (t.state == State::Review && t.attempt.is_none() && t.publication.is_none())) { continue; }
@@ -3368,69 +3556,72 @@ impl<'a> Service<'a> {
                 }
                 self.beat()
             }
-            Err(e) => {
-                crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &l.rt, role_code, "spawn", l.task, l.attempt, 0, "failed", e.class());
-                if !e.no_start {
-                    let reason = format!("execution {execution} launch outcome unknown: {e}");
-                    self.execution_waits.insert(l.task, reason.clone());
-                    let reservation = (l.task, l.attempt, l.rt.clone());
-                    if !self.reserved.contains(&reservation) {
-                        crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &l.rt, role_code, "slot-hold", l.task, l.attempt, 0, "failed", "launch-outcome-unknown");
-                        self.reserved.push(reservation);
-                    }
-                    self.pending.insert((l.task, l.attempt));
-                    self.sync_host();
-                    self.beat()?;
-                    return Err(reason);
-                }
-                if e.class() == "trust-setup" {
-                    self.execution_waits.insert(l.task, "Claude trust setup pending; service retries automatically".into());
-                    self.pending.insert((l.task, l.attempt));
-                    self.held.push(l);
-                    return self.beat();
-                }
-                self.pending_releases.insert((l.task, l.attempt, execution));
-                release_execution(self.board, l.task, l.attempt, execution, "no-start")?;
-                self.retired(l.task,l.attempt,execution,false,0);
-                self.sync_host();
-                if e.reportable {
-                    #[cfg(not(test))]
-                    let agents = crate::runtime::agents(&self.cfg.install);
-                    #[cfg(test)]
-                    let agents = self.agent_status.clone();
-                    if agents.as_array().is_some_and(|rows| rows.iter().any(|r| r["runtime"] == l.rt && r["path"].is_string() && r["login"] == "logged in")) {
-                        crate::incident::detect("dispatch.start", concat!("src/service.rs:", line!()), &l.rt, &[], &["runtime:installed"]);
-                    }
-                }
-                let text = format!("start failed: {e}");
-                // without a fresh fold a gone could park the task on a card without options: post nothing, report the
-                // read error; the next pass reconciles the no-start proof and posts the limit card (#1123).
-                let log = crate::board::entries(self.board, l.task).map_err(|r| format!("#{} {text}; gone not posted: {r}", l.task))?;
-                if l.resume.is_some() && log.iter().any(|e| t.inbox.contains(&e.id)
-                    && e.body.lines().next() == Some(core::entry("steer", &["quota"], Some(l.attempt), "").as_str())) {
-                    self.execution_waits.insert(l.task,format!("quota continuation unavailable: {e}; preserve original session/account"));
-                    self.pending.insert((l.task,l.attempt));
-                    return self.beat();
-                }
-                // #1946 (pilotq#170): the cap refusal repeats until the contract shrinks, so one ask replaces gone retries
-                if e.class() == "rules-cap" {
-                    let card = refused_card(l.task, &e.to_string());
-                    self.post(l.task, core::with_fields(core::entry("ask", &[], Some(l.attempt), &card), Some(&format!("rules-cap-{execution}")), None))?;
-                    return Ok(());
-                }
-                if l.resume.is_some() {
-                    let failures = core::executions(l.task, &log).iter().filter(|x| x.attempt == l.attempt && x.through == through && x.release == Some(core::Release::NoStart)).count();
-                    if failures >= core::GONE_MAX as usize {
-                        let op = format!("input-retry-{execution}");
-                        let card = input_card(l.task, &text, failures);
-                        self.post(l.task, core::with_fields(core::entry("ask", &[], Some(l.attempt), &card), Some(&op), None))?;
-                        return Ok(());
-                    }
-                    return Err(format!("#{} {text}; input retained for retry", l.task));
-                }
-                self.gone(l.task, &core::fold(l.task, &log, false), l.attempt, &[], &text).map(|_| ())
+            Err(e) => self.launch_failed(l, e, execution, through, t, role_code),
+        }
+    }
+
+    /// A failed start: an unknown outcome keeps its fence; a proven no-start is released and reported on the board.
+    fn launch_failed(&mut self, l: Launch, e: crate::runtime::StartError, execution: u64, through: u64, t: &Task, role_code: &str) -> Result<(), String> {
+        crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &l.rt, role_code, "spawn", l.task, l.attempt, 0, "failed", e.class());
+        if !e.no_start {
+            let reason = format!("execution {execution} launch outcome unknown: {e}");
+            self.execution_waits.insert(l.task, reason.clone());
+            let reservation = (l.task, l.attempt, l.rt.clone());
+            if !self.reserved.contains(&reservation) {
+                crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &l.rt, role_code, "slot-hold", l.task, l.attempt, 0, "failed", "launch-outcome-unknown");
+                self.reserved.push(reservation);
+            }
+            self.pending.insert((l.task, l.attempt));
+            self.sync_host();
+            self.beat()?;
+            return Err(reason);
+        }
+        if e.class() == "trust-setup" {
+            self.execution_waits.insert(l.task, "Claude trust setup pending; service retries automatically".into());
+            self.pending.insert((l.task, l.attempt));
+            self.held.push(l);
+            return self.beat();
+        }
+        self.pending_releases.insert((l.task, l.attempt, execution));
+        release_execution(self.board, l.task, l.attempt, execution, "no-start")?;
+        self.retired(l.task,l.attempt,execution,false,0);
+        self.sync_host();
+        if e.reportable {
+            #[cfg(not(test))]
+            let agents = crate::runtime::agents(&self.cfg.install);
+            #[cfg(test)]
+            let agents = self.agent_status.clone();
+            if agents.as_array().is_some_and(|rows| rows.iter().any(|r| r["runtime"] == l.rt && r["path"].is_string() && r["login"] == "logged in")) {
+                crate::incident::detect("dispatch.start", concat!("src/service.rs:", line!()), &l.rt, &[], &["runtime:installed"]);
             }
         }
+        let text = format!("start failed: {e}");
+        // without a fresh fold a gone could park the task on a card without options: post nothing, report the
+        // read error; the next pass reconciles the no-start proof and posts the limit card (#1123).
+        let log = crate::board::entries(self.board, l.task).map_err(|r| format!("#{} {text}; gone not posted: {r}", l.task))?;
+        if l.resume.is_some() && log.iter().any(|e| t.inbox.contains(&e.id)
+            && e.body.lines().next() == Some(core::entry("steer", &["quota"], Some(l.attempt), "").as_str())) {
+            self.execution_waits.insert(l.task,format!("quota continuation unavailable: {e}; preserve original session/account"));
+            self.pending.insert((l.task,l.attempt));
+            return self.beat();
+        }
+        // #1946 (pilotq#170): the cap refusal repeats until the contract shrinks, so one ask replaces gone retries
+        if e.class() == "rules-cap" {
+            let card = refused_card(l.task, &e.to_string());
+            self.post(l.task, core::with_fields(core::entry("ask", &[], Some(l.attempt), &card), Some(&format!("rules-cap-{execution}")), None))?;
+            return Ok(());
+        }
+        if l.resume.is_some() {
+            let failures = core::executions(l.task, &log).iter().filter(|x| x.attempt == l.attempt && x.through == through && x.release == Some(core::Release::NoStart)).count();
+            if failures >= core::GONE_MAX as usize {
+                let op = format!("input-retry-{execution}");
+                let card = input_card(l.task, &text, failures);
+                self.post(l.task, core::with_fields(core::entry("ask", &[], Some(l.attempt), &card), Some(&op), None))?;
+                return Ok(());
+            }
+            return Err(format!("#{} {text}; input retained for retry", l.task));
+        }
+        self.gone(l.task, &core::fold(l.task, &log, false), l.attempt, &[], &text).map(|_| ())
     }
 }
 
