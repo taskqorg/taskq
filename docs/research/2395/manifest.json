@@ -1,0 +1,229 @@
+{
+  "schema": 1,
+  "synthetic": false,
+  "repository": "taskqorg/taskq",
+  "producer_revision": "7d0f8ef593cf7ad33352484439decda317334a25",
+  "producer_executable_sha256": "966a23b5f602e49b55ef376480a5ad53ed84d58b2a74bbba274f298de916bc33",
+  "frozen_head": "d82957095f9e8c2117ac56f64dbd1f4c2e1a0c29",
+  "members": [
+    {
+      "task": 2359,
+      "attempt": 6637124225,
+      "result_entry": 6638851330,
+      "result_sha": "a28753c48792eb1ee1a031e677f978519b3bff0b",
+      "pr": 2372,
+      "source_export": {
+        "task": 2359,
+        "url": "https://github.com/taskqorg/taskq/issues/2359",
+        "state": "closed",
+        "result": "a28753c48792eb1ee1a031e677f978519b3bff0b",
+        "source_readiness": {
+          "schema": 1,
+          "accepted_result_state": "proven",
+          "url": "https://github.com/taskqorg/taskq/issues/2359",
+          "current_result_sha": "a28753c48792eb1ee1a031e677f978519b3bff0b",
+          "state": "unknown",
+          "reason": "frozen inputs or successful publication unknown",
+          "task": 2359,
+          "result_entry": 6638851330,
+          "attempt": 6637124225,
+          "result_sha": "a28753c48792eb1ee1a031e677f978519b3bff0b",
+          "evidence": {
+            "schema": 1,
+            "task": 2359,
+            "url": "https://github.com/taskqorg/taskq/issues/2359",
+            "result_entry": 6638851330,
+            "attempt": 6637124225,
+            "result_sha": "a28753c48792eb1ee1a031e677f978519b3bff0b",
+            "frozen": null,
+            "landed": null
+          }
+        }
+      },
+      "source_export_sha256": "587e995644bd701389f6a8aff4bdc79cbe3b32cd1cd370b524ba504f138c0d66",
+      "dependencies": [],
+      "dependency_evidence": {
+        "task": 2359,
+        "dependencies": [],
+        "body": "## Goal\nUnblock taskqorg/dashq#255 A3: preserve all public limit and reset rows when TaskQ replaces ccusage. Live v4.6.74 rows omit Claude Fable and Antigravity Gemini windows.\n\n## Acceptance\nA1. Publish every observed Claude window, including seven_day_fable; the live public page reports Fable 2%, while TaskQ reports only seven_day 34%. Add regression protection for dropped model windows.\nA2. Publish Antigravity Gemini 5h and weekly windows as well as 3p; the public page reports Gemini weekly 74%, while TaskQ publishes only 3p 0%. Retain unknown for missing or unsupported evidence.\nA3. Record native producer evidence and regression checks here. Qualify released service heartbeat rows against ccusage in taskqorg/dashq#255 while ccusage still pushes: every card/window present, percentages within 5 points, resets within 600 s. Do not change logins or stop ccusage.\n\n## Scope\n- Account usage poll, capacity.md, heartbeat mapping and focused regression checks; taskqorg/dashq#255 contains the failing live comparison.\n\nRules: R12\n"
+      },
+      "source_delta_base": "026db2524d6d5d7b34452d4c8d0fbf17073df7b9",
+      "delta_sha256": "292cc6744af00490e4ea51c892fca0ad2c8b477972f6b97ffdc453a12767f65e",
+      "publication": {
+        "repository": "taskqorg/taskq",
+        "pr": 2372,
+        "base": null,
+        "head": "a28753c48792eb1ee1a031e677f978519b3bff0b",
+        "parent": "3d67b3c6df65691bdaef1e71d9c22b6149c75ee6",
+        "merged": "bb1118a859dd2baa6fbd8be305205e35d253e2d3",
+        "integration": "bb1118a859dd2baa6fbd8be305205e35d253e2d3",
+        "ci_kind": "merge_group",
+        "ci_sha": "bb1118a859dd2baa6fbd8be305205e35d253e2d3"
+      },
+      "ci": {
+        "run_id": 41889234175,
+        "run_attempt": 1,
+        "event": "merge_group",
+        "head_sha": "bb1118a859dd2baa6fbd8be305205e35d253e2d3",
+        "conclusion": "success",
+        "observation": {
+          "id": 41889234175,
+          "run_attempt": 1,
+          "event": "merge_group",
+          "head_sha": "bb1118a859dd2baa6fbd8be305205e35d253e2d3",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/taskqorg/taskq/actions/runs/41889234175",
+          "created_at": "2026-11-04T18:39:02Z",
+          "updated_at": "2026-11-04T18:45:00Z"
+        }
+      }
+    },
+    {
+      "task": 2375,
+      "attempt": 6637499494,
+      "result_entry": 6639780838,
+      "result_sha": "1ca5e7ee9dc6714b1b3d65fc69ccba2196dc18cb",
+      "pr": 2387,
+      "source_export": {
+        "task": 2375,
+        "url": "https://github.com/taskqorg/taskq/issues/2375",
+        "state": "closed",
+        "result": "1ca5e7ee9dc6714b1b3d65fc69ccba2196dc18cb",
+        "source_readiness": {
+          "schema": 1,
+          "accepted_result_state": "proven",
+          "url": "https://github.com/taskqorg/taskq/issues/2375",
+          "current_result_sha": "1ca5e7ee9dc6714b1b3d65fc69ccba2196dc18cb",
+          "state": "unknown",
+          "reason": "frozen inputs or successful publication unknown",
+          "task": 2375,
+          "result_entry": 6639780838,
+          "attempt": 6637499494,
+          "result_sha": "1ca5e7ee9dc6714b1b3d65fc69ccba2196dc18cb",
+          "evidence": {
+            "schema": 1,
+            "task": 2375,
+            "url": "https://github.com/taskqorg/taskq/issues/2375",
+            "result_entry": 6639780838,
+            "attempt": 6637499494,
+            "result_sha": "1ca5e7ee9dc6714b1b3d65fc69ccba2196dc18cb",
+            "frozen": null,
+            "landed": null
+          }
+        }
+      },
+      "source_export_sha256": "0e60efe34cc3b9c8893f47b87b4f24a7db9bdb5339f8010b88893ec767d3b236",
+      "dependencies": [],
+      "dependency_evidence": {
+        "task": 2375,
+        "dependencies": [],
+        "body": "## Goal\nProvide the Mac-only cause, minimal native correction and before/after frame, resize and CPU evidence needed to finish #2363.\n\n## Acceptance\nA1. Baseline Mac run records exact installed version/source, raw native resize events, frame/client/bottom positions and main/WebView CPU before correction; establish the cause or report reproduction as unknown.\nA2. Using #2363 source 1b2371899d836213a0b4dce30196eb613b568333, prove a minimal ordinary-native-titlebar correction preserving body/background opacity, Close/dragging, manual sizing and themes; return its exact patch.\nA3. Repeat the same bounded native rest/content/wrapping/titlebar sequence after correction; report event counts, bottom stability and CPU with raw logs and visuals; browser/static proof stays separate.\nA4. Commit the qualification instrument, evidence and minimal correction patch as data; report exact source/patch hashes, remaining limits and native clipboard checks; do not publish the parent UI commits.\n\n## Scope\n- Different-host blocker under R2 and section 7 for #2363 / draft PR #2371. The parent keeps A1-A8 and final implementation/publication; accepted M3, M13 and Product scope is recorded there.\n- Use the isolated Mac worktree and OS temp to test the frozen parent tree plus patch. Do not change the installed app, services, active sessions, grants or host policy.\n- Do not bypass native/privacy denials or infer CPU causality from pictures or coalesced telemetry. Preserve existing appearance preferences outside the requested titlebar fix.\n- Supply the patch and evidence to the parent continuation, with no independent product behavior change or live installation.\n\nRules: R6, R7, R8, R12, R13\n"
+      },
+      "source_delta_base": "bb1118a859dd2baa6fbd8be305205e35d253e2d3",
+      "delta_sha256": "01f21529fa4d2a993e014420f8123ce6299a491a762c362d109d4e9ba9449d64",
+      "publication": {
+        "repository": "taskqorg/taskq",
+        "pr": 2387,
+        "base": null,
+        "head": "1ca5e7ee9dc6714b1b3d65fc69ccba2196dc18cb",
+        "parent": "bb1118a859dd2baa6fbd8be305205e35d253e2d3",
+        "merged": "401a93749b69ccdba671045771d008a23b4d7f77",
+        "integration": "401a93749b69ccdba671045771d008a23b4d7f77",
+        "ci_kind": "merge_group",
+        "ci_sha": "401a93749b69ccdba671045771d008a23b4d7f77"
+      },
+      "ci": {
+        "run_id": 41897191646,
+        "run_attempt": 1,
+        "event": "merge_group",
+        "head_sha": "401a93749b69ccdba671045771d008a23b4d7f77",
+        "conclusion": "success",
+        "observation": {
+          "id": 41897191646,
+          "run_attempt": 1,
+          "event": "merge_group",
+          "head_sha": "401a93749b69ccdba671045771d008a23b4d7f77",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/taskqorg/taskq/actions/runs/41897191646",
+          "created_at": "2026-11-04T19:28:01Z",
+          "updated_at": "2026-11-04T19:33:29Z"
+        }
+      }
+    },
+    {
+      "task": 2380,
+      "attempt": 6639398822,
+      "result_entry": 6640375476,
+      "result_sha": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+      "pr": 2392,
+      "source_export": {
+        "task": 2380,
+        "url": "https://github.com/taskqorg/taskq/issues/2380",
+        "state": "closed",
+        "result": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+        "source_readiness": {
+          "schema": 1,
+          "accepted_result_state": "proven",
+          "url": "https://github.com/taskqorg/taskq/issues/2380",
+          "current_result_sha": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+          "state": "unknown",
+          "reason": "frozen inputs or successful publication unknown",
+          "task": 2380,
+          "result_entry": 6640375476,
+          "attempt": 6639398822,
+          "result_sha": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+          "evidence": {
+            "schema": 1,
+            "task": 2380,
+            "url": "https://github.com/taskqorg/taskq/issues/2380",
+            "result_entry": 6640375476,
+            "attempt": 6639398822,
+            "result_sha": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+            "frozen": null,
+            "landed": null
+          }
+        }
+      },
+      "source_export_sha256": "d6e91064c17138f6185ff09cffcb520b0b65ba8a348cf8aabbf4853a94c0939f",
+      "dependencies": [],
+      "dependency_evidence": {
+        "task": 2380,
+        "dependencies": [],
+        "body": "## Goal\nClaude workers can record slot-hold, spawn and first heartbeat telemetry with pid 0: launch returns only a job ID, the PID arrives at the first agents readback. On Mac #2374 attempt 6637484100 did so, failing the #2370 trace.\n\n## Acceptance\nA1. A Claude worker whose PID is not yet known at launch records slot-hold, spawn and every heartbeat with the real PID above 1, or records them only once it is known\nA2. A lifecycle test with a delayed Claude PID readback fails before the fix and passes after; scripts/telemetry.sh keeps rejecting pid 0\n\n## Scope\n- src/service.rs\n- src/runtime.rs\n"
+      },
+      "source_delta_base": "401a93749b69ccdba671045771d008a23b4d7f77",
+      "delta_sha256": "2df4eaa4db140807fe38d4f33033438d983dec285bbee559845037bd22b036e4",
+      "publication": {
+        "repository": "taskqorg/taskq",
+        "pr": 2392,
+        "base": null,
+        "head": "f7a8fa5b522709824e0dcd52abcb3dc2e7edabc4",
+        "parent": "07ebe3b5b4fc51bc672ec02d02dd7da4c1b9a311",
+        "merged": "d82957095f9e8c2117ac56f64dbd1f4c2e1a0c29",
+        "integration": "d82957095f9e8c2117ac56f64dbd1f4c2e1a0c29",
+        "ci_kind": "merge_group",
+        "ci_sha": "d82957095f9e8c2117ac56f64dbd1f4c2e1a0c29"
+      },
+      "ci": {
+        "run_id": 41902381798,
+        "run_attempt": 1,
+        "event": "merge_group",
+        "head_sha": "d82957095f9e8c2117ac56f64dbd1f4c2e1a0c29",
+        "conclusion": "success",
+        "observation": {
+          "id": 41902381798,
+          "run_attempt": 1,
+          "event": "merge_group",
+          "head_sha": "d82957095f9e8c2117ac56f64dbd1f4c2e1a0c29",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/taskqorg/taskq/actions/runs/41902381798",
+          "created_at": "2026-11-04T20:00:18Z",
+          "updated_at": "2026-11-04T20:07:51Z"
+        }
+      }
+    }
+  ]
+}

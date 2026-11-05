@@ -472,5 +472,7 @@ with tempfile.TemporaryDirectory(prefix='taskq-lint-gate-') as directory:
                 assert status == 0
             assert run.call_args_list[0].args[0] == command
             assert sum(call.args[0] == command for call in run.call_args_list) == 1
-            assert run.call_count == (5 if status == 0 else 1), run.call_args_list
+            assert run.call_count == (6 if status == 0 else 1), run.call_args_list
+            assert sum(call.args[0] == [sys.executable, 'scripts/batch-replay.test.py']
+                       for call in run.call_args_list) == (1 if status == 0 else 0)
 print('PASS lint runs first and once; findings stop before tests/builds')

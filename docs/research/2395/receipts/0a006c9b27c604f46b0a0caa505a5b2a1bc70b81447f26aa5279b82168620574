@@ -1,0 +1,7 @@
+diff --git a/member-3 b/member-3
+new file mode 100644
+index 0000000000000000000000000000000000000000..987f35a5ef4a1b2ab714e6834e70d427756ca923
+--- /dev/null
++++ b/member-3
+@@ -0,0 +1 @@
++invented task 3

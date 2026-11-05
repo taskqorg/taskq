@@ -1,0 +1,5 @@
+            def runner(repo, subset):
+                called.append([s['task'] for s in subset])
+                self.assertEqual(b.git(repo, 'status', '--porcelain'), b'')
+                self.assertEqual(b.git(repo, 'remote'), b'')
+                return 0, b'SYNTHETIC gate passed; not canonical evidence\n'

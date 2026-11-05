@@ -519,6 +519,7 @@ def main():
             run_lint(lint, BUDGET - (time.monotonic() - started))
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
         run([sys.executable, 'scripts/check.test.py'])
+        run([sys.executable, 'scripts/batch-replay.test.py'])
         run([sys.executable, 'scripts/live-probe.test.py'])
         run([sys.executable, 'scripts/telemetry.test.py'])
         # CI runs the rule gate once, in the plan job; local runs include it.
