@@ -62,7 +62,7 @@ The owner can request observation in this session. This specification does not c
 Source review: design worktree baseline `d7fd593`; not a fresh installed-release audit.
 
 - R3 defines PM; R6 defines reports; §2 defines numbered answers; §5 provides `status`, `inbox`, `wait` and task commands.
-- Existing `wait` defaults to a bounded 10-minute window and polls within configured limits (`src/main.rs`, `wait` and command dispatch). It is a blocking command, not a persistent scheduler or chat wake-up mechanism.
+- Existing `wait` defaults to a bounded 10-minute window and polls within configured limits (`src/cli/inbox.rs`, `wait`). It is a blocking command, not a persistent scheduler or chat wake-up mechanism.
 - `wait` stores one `.taskq/pm-cursor` per project root, tracks state strings and initially queries recent changes. Two observers share that cache; a new question with the same state is not independently identified. Read current status on entry; do not claim reliable multi-subscriber question delivery.
 - Reliable observation needs per-subscription delivery cursors and question/attempt revisions, catch-up after gaps and explicit expiry. Cursors are reconstructible delivery metadata, never a second task queue. Define storage and R1 compatibility before implementation.
 - Add bootstrap/capability contracts, shared structured reports and client bindings as a small first slice. No universal plugin engine or direct agent message bus is required.

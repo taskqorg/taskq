@@ -9,10 +9,10 @@
         let root=dir.join("project");let install=dir.join("install");fs::create_dir_all(&root).unwrap();fs::create_dir_all(&install).unwrap();
         let root=root.canonicalize().unwrap();let install=install.canonicalize().unwrap();
         fs::write(root.join("taskq.json"),r#"{"repo":"invented/project"}"#).unwrap();
-        fs::create_dir_all(crate::dot(&root)).unwrap();fs::write(crate::dot(&root).join("focus"),"all").unwrap();
+        fs::create_dir_all(crate::paths::dot(&root)).unwrap();fs::write(crate::paths::dot(&root).join("focus"),"all").unwrap();
         fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
         fs::write(install.join("hold"),json!({"taskq_stop":{"id":"invented-stop","instance":"invented-owner","roots":[root],"issued_at":1,"expires_at":301,"action":"stop","mode":"full"},"previous_hold":null}).to_string()).unwrap();
-        let (mut c,_)=crate::load(&root).unwrap();c.install=install;c.me="mac".into();
+        let (mut c,_)=crate::config::load(&root).unwrap();c.install=install;c.me="mac".into();
         let b=Fake::default();let n=b.create("Invented recovery task","",&["taskq".into()]).unwrap();
         let a=b.comment(n,"taskq: spawn worker codex:invented mac").unwrap();
         b.comment(n,&format!("taskq: accepted {a} attempt {a}")).unwrap();
@@ -56,7 +56,7 @@
         assert!(entries(&f.b,other).unwrap().is_empty());
         assert_eq!(fs::read_to_string(f.c.root.join(format!(".worktrees/taskq-{}/untracked.txt",f.n))).unwrap(),"preserve invented untracked work");
         let mut changed=request.clone();changed.rows[0].evidence="Changed payload".into();assert!(apply(&f.b,&f.c,&changed).is_err());
-        fs::write(crate::dot(&f.c.root).join("focus"),"off").unwrap();
+        fs::write(crate::paths::dot(&f.c.root).join("focus"),"off").unwrap();
         assert!(!allowed(&f.c.install,&f.c.root,f.n),"paused projects must remain blocked after recovery");
     }
     #[test]
@@ -79,7 +79,7 @@
         service.focus=vec!["all".into()];service.pass().unwrap();
         assert_eq!(service.kids.iter().map(|k|k.task).collect::<Vec<_>>(),vec![f.n]);
         assert!(entries(&f.b,other).unwrap().is_empty(),"unselected task has no spawn or mutation");
-        fs::write(crate::dot(&f.c.root).join("focus"),"off").unwrap();service.full_stop_owned();
+        fs::write(crate::paths::dot(&f.c.root).join("focus"),"off").unwrap();service.full_stop_owned();
         assert!(!stopped.get(),"Pause must not reapply the earlier Full stop to recovered work");
         let mut hold=read_hold(&f.c.install).unwrap();hold.as_object_mut().unwrap().remove("recovery");save(&f.c,&hold).unwrap();
         service.full_stop_owned();assert!(stopped.get(),"new Stop revokes selected admission and cancels owned work");
@@ -137,7 +137,7 @@
                 "unknown"=>request.rows[0].effects_known=false,
                 "revision"=>{f.b.comment(f.n,"taskq: later\nReason: Changed owner intent").unwrap();},
                 "work"=>{fs::write(f.c.root.join(format!(".worktrees/taskq-{}/new.txt",f.n)),"new").unwrap();},
-                "pause"=>{fs::write(crate::dot(&f.c.root).join("focus"),"off").unwrap();},
+                "pause"=>{fs::write(crate::paths::dot(&f.c.root).join("focus"),"off").unwrap();},
                 _=>{f.b.state.borrow_mut().comments.retain(|(_,e)|!e.body.starts_with("taskq: released"));},
             }
             let count=f.b.state.borrow().comments.len();

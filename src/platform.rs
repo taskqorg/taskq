@@ -171,7 +171,7 @@ fn emit(line: &str, project: Option<&Path>, stderr: &mut dyn std::io::Write, std
 }
 
 pub fn die(msg: &str) -> ! {
-    log(&error_text(msg, crate::find_root().ok().as_deref()));
+    log(&error_text(msg, crate::paths::find_root().ok().as_deref()));
     exit(1);
 }
 
@@ -264,7 +264,7 @@ pub fn error_text(msg: &str, root: Option<&Path>) -> String {
     let next = if msg.chars().count() > 153 || msg.contains(['\r', '\n']) {
         use std::io::Write;
         let saved = root.ok_or_else(|| "outside a taskq project".to_string()).and_then(|root| {
-            let d = crate::dot(root);
+            let d = crate::paths::dot(root);
             let p = d.join("cli-errors.log");
             fs::create_dir_all(&d).and_then(|_| writeln!(fs::OpenOptions::new().create(true).append(true).open(&p)?, "{msg}")).map_err(|e| format!("{}: {e}", p.display()))?;
             Ok(p)
@@ -275,7 +275,7 @@ pub fn error_text(msg: &str, root: Option<&Path>) -> String {
             Err(why) => return format!("Error: {msg}\nNext: the full diagnostic is above; no cli-errors.log copy ({why})."),
         }
     } else { "Check the input and board/service status, then retry; use `taskq help` for syntax.".into() };
-    format!("Error: {}\nNext: {next}", crate::compact(msg, 153))
+    format!("Error: {}\nNext: {next}", crate::cli::text::compact(msg, 153))
 }
 
 /// Complete bounded dependency output, including nonzero exits whose receipt the caller must inspect.

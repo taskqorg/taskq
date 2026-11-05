@@ -276,7 +276,7 @@ impl Tidy<'_> {
             return Outcome::new(vec![], Value::Null, BTreeMap::new());
         }
         let _safe = Safe::set(self.root);
-        let dot = crate::dot(self.root);
+        let dot = crate::paths::dot(self.root);
         if !self.dry && let Err(e) = std::fs::create_dir_all(&dot) { return self.skip(at, format!(".taskq unwritable: {e}")); }
         // a dry run creates no `.taskq`; one that exists is locked as for a real pass
         let _lock = if self.dry && !dot.exists() { None } else {
@@ -340,7 +340,7 @@ impl Tidy<'_> {
             };
             // findings: a task worktree dirty while no child runs it; a closed task's worktree that stays
             if let Some(n) = task.filter(|_| !it.removed && !alive) {
-                if it.dirty { conditions.entry("dirty").or_default().push(format!("{} dirty, untouched {}", what(n, it.class), crate::age(at.saturating_sub(it.newest) as i64))); }
+                if it.dirty { conditions.entry("dirty").or_default().push(format!("{} dirty, untouched {}", what(n, it.class), crate::display::age(at.saturating_sub(it.newest) as i64))); }
                 if stages.get(&n) == Some(&Some(State::Closed)) && let Some(line) = refusal { conditions.entry("kept").or_default().push(line); }
             }
         }
@@ -372,7 +372,7 @@ impl Tidy<'_> {
 
     /// A skipped pass keeps the last report and says why.
     fn skip(&self, at: u64, reason: String) -> Outcome {
-        let path = crate::dot(self.root).join("tidy.json");
+        let path = crate::paths::dot(self.root).join("tidy.json");
         let mut report = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
         report["at"] = json!(at);
         report["outcome"] = json!(format!("skipped {reason}"));
@@ -382,7 +382,7 @@ impl Tidy<'_> {
 
     fn save(&self, report: &Value) {
         // a cache of the last outcome for `status.json` (R1); a failed write only loses the report; a dry run writes none
-        if !self.dry { let _ = std::fs::write(crate::dot(self.root).join("tidy.json"), report.to_string()); }
+        if !self.dry { let _ = std::fs::write(crate::paths::dot(self.root).join("tidy.json"), report.to_string()); }
     }
 
     /// Directories under `.worktrees` and foreign registry entries, each with its class.
@@ -459,7 +459,7 @@ impl Tidy<'_> {
         let force = || git(self.root, &["worktree", "remove", "--force", &rel]).map(drop);
         // the refusal line carries Git's first stderr line; the service logs it once while it stays the same
         let removed = if self.force && it.dirty {
-            let trash = crate::dot(self.root).join("trash");
+            let trash = crate::paths::dot(self.root).join("trash");
             let save = |dir: &Path, file: String| run(dir, &["add", "-A"]).and_then(|_| run(dir, &["diff", "--cached", "--binary"])).and_then(|patch| {
                 if patch.is_empty() { return Ok(()); }
                 std::fs::create_dir_all(&trash).and_then(|_| std::fs::write(trash.join(file), &patch)).map_err(|e| format!("patch save failed: {e}"))
@@ -487,7 +487,7 @@ impl Tidy<'_> {
         let comments = self.board.comments(n).map_err(|e| format!("board read failed: {e}"))?;
         let entries: Vec<_> = comments.iter().filter(|c| c.trusted).map(|c| core::Entry { id: c.id, body: c.body.clone(), edited: c.edited }).collect();
         let mut held = None;
-        for x in core::executions(n, &entries).into_iter().filter(|x| x.release.is_none() && (x.host == self.me || x.host == crate::hostname())) {
+        for x in core::executions(n, &entries).into_iter().filter(|x| x.release.is_none() && (x.host == self.me || x.host == crate::config::hostname())) {
             if !closed { return Err(format!("execution {} on {} not released", x.id, x.host)); }
             let intent = comments.iter().find(|c| c.id == x.id).map(|c| c.created).filter(|t| *t > 0);
             let ended = intent.zip((self.boot)().ok()).map(|(intent, at)| crate::snapshot::verdict(&crate::snapshot::Signals { local: true, boot: Some((at, intent)), ..Default::default() }));
@@ -508,7 +508,7 @@ impl Tidy<'_> {
         let touched = it.newest.max(commit);
         if it.dirty || it.entry.as_ref().is_some_and(|e| e.locked) || at.saturating_sub(touched) < UNOWNED_AFTER { return None; }
         let rel = format!(".worktrees/{}", it.name);
-        let age = crate::age(at.saturating_sub(touched) as i64);
+        let age = crate::display::age(at.saturating_sub(touched) as i64);
         if self.dry { return Some(Step::Done(format!("{rel} would be removed: unowned, untouched {age}"))); }
         Some(match git(self.root, &["worktree", "remove", &rel]) {
             Ok(_) => Step::Done(format!("{rel} removed: unowned, untouched {age}")),
@@ -596,7 +596,7 @@ pub fn health_line(project: &str, tidy: &Value, now: u64) -> String {
     let own = ["task", "reserved", "unowned"];
     let (k, d, s) = own.iter().fold((0, 0, 0), |(k, d, s), c| (k + n(c, "count"), d + n(c, "dirty"), s + n(c, "bytes")));
     format!("{project}: root {}; .worktrees {k} (dirty {d}, {}); foreign {} (dirty {}); tidy {} {}", tidy["root"].as_str().unwrap_or("unknown"),
-        size(s), n("foreign", "count"), n("foreign", "dirty"), crate::age(now.saturating_sub(at) as i64), tidy["outcome"].as_str().unwrap_or("unknown"))
+        size(s), n("foreign", "count"), n("foreign", "dirty"), crate::display::age(now.saturating_sub(at) as i64), tidy["outcome"].as_str().unwrap_or("unknown"))
 }
 
 fn size(b: u64) -> String {

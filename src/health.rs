@@ -83,9 +83,9 @@ pub fn record_latest(install: &Path) -> Result<String, String> {
 /// The latest release the host doctor saved; unknown when unread or older than [`STALE`].
 pub fn cached_latest(install: &Path) -> Result<String, String> {
     let path = install.join(LATEST);
-    match (std::fs::read_to_string(&path), crate::file_age(&path)) {
+    match (std::fs::read_to_string(&path), coreq::status::age(&path)) {
         (Ok(v), Some(age)) if age <= STALE as u64 && !v.trim().is_empty() => Ok(v.trim().to_string()),
-        (Ok(_), _) => Err(format!("latest release last read over {} ago", crate::age(STALE))),
+        (Ok(_), _) => Err(format!("latest release last read over {} ago", crate::display::age(STALE))),
         _ => Err("latest release not read yet by the host doctor".into()),
     }
 }
@@ -362,8 +362,8 @@ pub fn board_items(b: &dyn crate::board::Board, repo: &str, gitlab: bool, root: 
     let installed = crate::platform::tool(install).current().unwrap_or_else(|| crate::platform::VERSION.into());
     items.push(version_item(&installed, latest));
     items.push(reports_item(&crate::reports::cached(root), gitlab));
-    let path = crate::dot(root).join("status.json");
-    items.push(error_item(crate::data::json(&path), crate::file_age(&path), crate::snapshot::ttl(root)));
+    let path = crate::paths::dot(root).join("status.json");
+    items.push(error_item(crate::data::json(&path), coreq::status::age(&path), crate::snapshot::ttl(root)));
     // #2300: what a worker launch needs on this host beyond the board
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from);
     let claude = crate::runtime::owner::claude_installed();
@@ -533,7 +533,7 @@ pub fn fix(id: &str, status: &str, repo: &str, host: &str, gitlab: bool, reports
 pub fn host_row(h: &Host, repo: &str, gitlab: bool, now: i64, ttl: i64, asked: Option<&Asked>) -> Value {
     let unknown = |reason: String, fix: String| json!({"host": h.name, "version": h.version, "running_selected": h.version_text(), "state": "unknown", "gaps": [], "reason": reason, "fix": fix});
     if !live(h, now, ttl) {
-        return unknown(format!("heartbeat {} old, read fresh; its service is not writing", crate::age(now - h.updated)),
+        return unknown(format!("heartbeat {} old, read fresh; its service is not writing", crate::display::age(now - h.updated)),
             format!("on {}: `taskq service status`; if stopped, `taskq service restart`; if retired, close its heartbeat issue", h.name));
     }
     let Some((at, open)) = h.doctor.as_deref().and_then(parse) else {
@@ -544,7 +544,7 @@ pub fn host_row(h: &Host, repo: &str, gitlab: bool, now: i64, ttl: i64, asked: O
             format!("live heartbeat, no answer to the request within {}s: its service has not run a pass since", asked.map_or(0, |a| a.waited)),
             format!("on {}: `taskq service status` shows the stuck pass; then `taskq doctor --hosts` again", h.name)),
         Some(Ok(_)) => {}
-        _ if now - at > STALE => return unknown(format!("health checks {} old", crate::age(now - at)), format!("run `taskq service restart` on {}", h.name)),
+        _ if now - at > STALE => return unknown(format!("health checks {} old", crate::display::age(now - at)), format!("run `taskq service restart` on {}", h.name)),
         _ => {}
     }
     let state = if open.is_empty() { "ok" } else if open.iter().any(|(_, s)| s == "gap") { "gap" } else { "unknown" };
@@ -573,7 +573,7 @@ pub fn worker_rows(s: &crate::snapshot::Snapshot, ttl: i64) -> Vec<Value> {
         let output = alive.is_ok() && warning.is_none() && h["progress"]["status"] == "active";
         let account = match s.hosts.iter().find(|x| x.name == host) {
             None => "unknown: host heartbeat missing".to_string(),
-            Some(x) if !crate::snapshot::live((s.observed - x.updated).max(0), ttl) => format!("unknown: host heartbeat {} old", crate::age(s.observed - x.updated)),
+            Some(x) if !crate::snapshot::live((s.observed - x.updated).max(0), ttl) => format!("unknown: host heartbeat {} old", crate::display::age(s.observed - x.updated)),
             Some(x) if x.logins.iter().any(|l| l == rt) => format!("login {rt} off"),
             Some(x) => match x.limits.iter().find(|l| l.split(' ').next() == Some(rt)) {
                 Some(l) => format!("limit {l}"),

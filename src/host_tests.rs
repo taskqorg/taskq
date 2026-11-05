@@ -140,21 +140,21 @@
     #[test]
     fn released_admission_hold_wakes_pending_work() {
         let root=temp("inventory-wake");let roots=vec![root.clone()];
-        fs::create_dir_all(crate::dot(&root)).unwrap();
-        fs::write(crate::dot(&root).join("focus"),"approved-label").unwrap();
-        let paths=[crate::dot(&root).join("poke"),root.join("host-poke")];
-        let baseline=crate::poke_times(&paths);
+        fs::create_dir_all(crate::paths::dot(&root)).unwrap();
+        fs::write(crate::paths::dot(&root).join("focus"),"approved-label").unwrap();
+        let paths=[crate::paths::dot(&root).join("poke"),root.join("host-poke")];
+        let baseline=crate::wake::poke_times(&paths);
         let p=policy();let mut h=Host::new(Err("inventory pending".into()));
         for barrier in [Err::<(),String>("handoff: legacy service still running".into()),Err("legacy liveness unknown".into())] {
             h.reload_admission(barrier.clone().map(|_|p.clone()),barrier.err(),&roots);
             assert!(h.reserve(&root,1,1,"codex",&p.cap,true,0).is_err());
-            assert_eq!(crate::poke_times(&paths),baseline,"blocked refresh cannot wake admission");
+            assert_eq!(crate::wake::poke_times(&paths),baseline,"blocked refresh cannot wake admission");
         }
         h.reload_admission(Ok(p.clone()),None,&roots);
-        assert_ne!(crate::poke_times(&paths),baseline,"released hold must wake pending review/start");
-        crate::sleep_until_poke(&paths,baseline,Instant::now()+std::time::Duration::from_secs(60),&mut ||panic!("wake was lost"));
+        assert_ne!(crate::wake::poke_times(&paths),baseline,"released hold must wake pending review/start");
+        crate::wake::sleep_until_poke(&paths,baseline,Instant::now()+std::time::Duration::from_secs(60),&mut ||panic!("wake was lost"));
         assert!(h.reserve(&root,1,1,"codex",&p.cap,true,0).is_ok());
-        assert_eq!(fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"approved-label");
+        assert_eq!(fs::read_to_string(crate::paths::dot(&root).join("focus")).unwrap(),"approved-label");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -291,14 +291,14 @@
             let mut cfg=crate::tests::cfg();cfg.root=root;cfg.install=install;cfg.poll=2;
             let board=crate::board::Fake::default();board.state.borrow_mut().lists=Some(lists);
             crate::board::Board::create(&board,"Waits for the handover","",&["taskq".into()])?;
-            crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(board)},Some(host))
+            crate::service_run::service_run(&crate::config::Ctx {cfg,raw:json!({}),board:Box::new(board)},Some(host))
         })};
         // #1871: the first pass may run slow before its list (macOS gui probe: `log show`, `security`), so the 5 s
         // window starts at the first list. Retained protection: more than one list per poll, or a ready handover, fails.
         let mut until=None;
         let first=Instant::now()+std::time::Duration::from_secs(120);
         while until.is_none_or(|u|Instant::now()<u) {
-            if shared.lock().unwrap().restart_wake() {crate::poke(&root).unwrap();}
+            if shared.lock().unwrap().restart_wake() {crate::wake::poke(&root).unwrap();}
             assert!(!shared.lock().unwrap().handoff_ready(),"the unrepresented slot defers the handover");
             if project.is_finished() {panic!("project loop ended: {:?}",project.join().unwrap());}
             if until.is_none() && lists.load(Ordering::SeqCst)>0 {until=Some(Instant::now()+std::time::Duration::from_secs(5));}
@@ -307,7 +307,7 @@
         }
         let listed=lists.load(Ordering::SeqCst);
         assert!((1..=4).contains(&listed),"5 s after the first list at poll 2 allows one wake and two polls; listed {listed}");
-        shared.lock().unwrap().draining.insert(root.clone());crate::poke(&root).unwrap();
+        shared.lock().unwrap().draining.insert(root.clone());crate::wake::poke(&root).unwrap();
         assert_eq!(project.join().unwrap().unwrap_err(),"project drained");
         let _=fs::remove_dir_all(base);
     }
@@ -349,12 +349,12 @@
                     for project in 0..6 {
                         let project=format!("owner/project{project}");
                         let _repeating=tracing::info_span!("service.loop",coreq_repeating=folded,project=project.as_str()).entered();
-                        assert!(!crate::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
+                        assert!(!crate::config::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
                         assert_eq!(crate::telemetry::diagnostic::health_at(Some(simulated+tick*2000))["lost"],0);
                     }
                 }
                 let _repeating=tracing::info_span!("tray.refresh",coreq_repeating=folded).entered();
-                assert!(!crate::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
+                assert!(!crate::config::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
                 tray();
             });
             // #1339: folded aggregates persist only through finish() or the last Capture drop; another thread's
@@ -450,18 +450,18 @@
     #[test]
     fn host_install_refuses_another_live_root_owner_without_effects() {
         let base=temp("install-legacy-owner");let install=base.join("install");let root=base.join("project");
-        fs::create_dir_all(&install).unwrap();fs::create_dir_all(crate::dot(&root)).unwrap();
+        fs::create_dir_all(&install).unwrap();fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-        fs::write(crate::dot(&root).join("focus"),"retained-focus").unwrap();
+        fs::write(crate::paths::dot(&root).join("focus"),"retained-focus").unwrap();
         let mut child=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","runtime::tests::stop_child","--ignored"])
             .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();
-        fs::write(crate::dot(&root).join("status.json"),json!({"pid":child.id(),"kids":[{"task":7}]}).to_string()).unwrap();
+        fs::write(crate::paths::dot(&root).join("status.json"),json!({"pid":child.id(),"kids":[{"task":7}]}).to_string()).unwrap();
         let before=fs::read(install.join("projects")).unwrap();
         let result=installation::install_bound(&install,&root,None);
         child.kill().unwrap();child.wait().unwrap();
         assert!(result.unwrap_err().contains("another live service owns a registered root"));
         assert_eq!(fs::read(install.join("projects")).unwrap(),before);
-        assert_eq!(fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"retained-focus");
+        assert_eq!(fs::read_to_string(crate::paths::dot(&root).join("focus")).unwrap(),"retained-focus");
         assert!(!install.join("releases").exists()&&!install.join("poke").exists());
         fs::write(install.join("service"),"{broken").unwrap();
         assert!(installation::install_bound(&install,&root,None).unwrap_err().contains("malformed"));
@@ -679,7 +679,7 @@
         let owner=Policy::read(&root).unwrap().me;
         if let Ok(request)=std::env::var("TASKQ_HOST_POLICY_REQUEST") {
             local_capacity(&root,&owner,&serde_json::from_str(&request).unwrap()).unwrap();
-        } else {write_capacity(&root,&owner,&crate::CapEdit {limits:BTreeMap::from([("codex".into(),3)]),..Default::default()},None).unwrap();}
+        } else {write_capacity(&root,&owner,&crate::cli::host_cmd::CapEdit {limits:BTreeMap::from([("codex".into(),3)]),..Default::default()},None).unwrap();}
         crate::platform::write_atomic(&root.join("ack"),"committed").unwrap();
         loop {std::thread::park();}
     }
@@ -830,31 +830,31 @@
     #[test]
     fn capacity_receipts_follow_the_loaded_command_not_equal_values() {
         let root=temp("capacity-receipt");
-        let proj=root.join("proj");fs::create_dir_all(crate::dot(&proj)).unwrap();
+        let proj=root.join("proj");fs::create_dir_all(crate::paths::dot(&proj)).unwrap();
         fs::write(root.join("projects"),format!("{}\n",proj.display())).unwrap();
-        let poke_paths=[crate::dot(&proj).join("poke"),root.join("host-poke")];
+        let poke_paths=[crate::paths::dot(&proj).join("poke"),root.join("host-poke")];
         fs::write(root.join("host.json"),"{\"limits\":{\"codex\":2}}").unwrap();
         let initial=Policy::read(&root).unwrap();
         let owner=initial.me.clone();
         let mut h=Host::new(Ok(initial));
-        let edit=crate::CapEdit {limits:BTreeMap::from([("codex".into(),3)]),gate:Some(false),..Default::default()};
+        let edit=crate::cli::host_cmd::CapEdit {limits:BTreeMap::from([("codex".into(),3)]),gate:Some(false),..Default::default()};
         assert!(write_capacity(&root,&owner,&edit,None).is_err(),"missing required receipts must refuse before effect");
         assert_eq!(Policy::read(&root).unwrap().cap.limits["codex"],2);
         let (capture,guard)=crate::profile::tests::collecting(&root);
         let (_,_,first)=write_capacity(&root,&owner,&edit,None).unwrap();
         let loaded=Policy::read(&root).unwrap();
-        let before_reload=crate::poke_times(&poke_paths);
+        let before_reload=crate::wake::poke_times(&poke_paths);
         h.reload_admission(Ok(loaded.clone()),None,std::slice::from_ref(&proj));
-        assert_ne!(crate::poke_times(&poke_paths),before_reload,"changed host Policy must wake registered project roots");
+        assert_ne!(crate::wake::poke_times(&poke_paths),before_reload,"changed host Policy must wake registered project roots");
         assert!(!capacity_observed(&root,&first).unwrap());
         let (_,_,second)=write_capacity(&root,&owner,&edit,None).unwrap();
         let current=Policy::read(&root).unwrap();
         assert_eq!(loaded.cap,current.cap);assert_ne!(first.encode(),second.encode());
         assert!(observe_capacity(&root,&loaded).is_err(),"late old loader confirmed a different command");
         assert!(!capacity_observed(&root,&second).unwrap());
-        let before_observe=crate::poke_times(&poke_paths);
+        let before_observe=crate::wake::poke_times(&poke_paths);
         assert_eq!(observe_capacity(&root,&current).unwrap(),Some(second.event_id("observed").unwrap()));
-        assert_ne!(crate::poke_times(&poke_paths),before_observe,"observed capacity command must wake registered project roots");
+        assert_ne!(crate::wake::poke_times(&poke_paths),before_observe,"observed capacity command must wake registered project roots");
         assert!(observed_soon(&root,&second));
         assert!(capacity_observed(&root,&first).is_err());
         let mut edited=current.raw.clone();edited["limits"]["codex"]=json!(4);
@@ -881,23 +881,23 @@
         let mut status=coreq::status::common(&tool,"fixture","project",1,None,None);
         status["complete"]=json!(true);status["tasks"]=json!([]);
         assert!(!host.lock().unwrap().publications_ready(&roots));
-        assert!(crate::publish_status(&tool,&root,&status,Some(&host)));
+        assert!(crate::service_run::publish_status(&tool,&root,&status,Some(&host)));
         assert!(host.lock().unwrap().publications_ready(&roots));
         let path=coreq::status::path(&tool,&root);
         assert_eq!(crate::data::json(&path).unwrap().unwrap()["host_instance"],host.lock().unwrap().instance);
         fs::remove_file(&path).unwrap();fs::create_dir(&path).unwrap();
-        assert!(!crate::publish_status(&tool,&root,&status,Some(&host)));
+        assert!(!crate::service_run::publish_status(&tool,&root,&status,Some(&host)));
         assert!(!host.lock().unwrap().publications_ready(&roots));
         assert_eq!(host.lock().unwrap().slots.len(),1,"publication must not lose child ownership");
         fs::remove_dir(&path).unwrap();
-        assert!(crate::publish_status(&tool,&root,&status,Some(&host)));
+        assert!(crate::service_run::publish_status(&tool,&root,&status,Some(&host)));
         for failed in [json!({"complete":false,"tasks":[]}),json!({"complete":true,"tasks":[],"error":"board unavailable"}),
             json!({"complete":true,"tasks":[],"focus_error":"focus command pending"})] {
-            assert!(!crate::publish_status(&tool,&root,&failed,Some(&host)));
+            assert!(!crate::service_run::publish_status(&tool,&root,&failed,Some(&host)));
             assert_eq!(crate::data::json(&path).unwrap().unwrap()["host_instance"],host.lock().unwrap().instance,"failed status lost its owner generation");
             assert!(!host.lock().unwrap().publications_ready(&roots));
         }
-        assert!(crate::publish_status(&tool,&root,&status,Some(&host)));
+        assert!(crate::service_run::publish_status(&tool,&root,&status,Some(&host)));
         let mut h=host.lock().unwrap();
         h.published.insert(root.clone(),Instant::now()-std::time::Duration::from_secs(61));
         assert!(!h.publications_ready(&roots),"old evidence cannot qualify a blocked thread");
@@ -992,7 +992,7 @@
         let project=json!({"repo":"invented/project","hosts":{"this":"copy"},"has":{"copy":["other"]},"permission_mode":"bypass","capacity_hosts":{"named":{"limits":{"codex":9}}},"admission":{"max":9},"load_gate":{"enabled":false}});
         let cap=policy.project(&install,&project).unwrap();
         assert_eq!((cap.limits.get("codex"),cap.max,cap.gate.enabled),(Some(&3),None,true));
-        let (mut config,_)=crate::project_config_value(&install,project).unwrap();
+        let (mut config,_)=crate::config::project_config_value(&install,project).unwrap();
         assert_eq!((config.has.len(),config.permission_mode.as_str()),(0,"dontAsk"));
         policy.apply(&mut config);
         assert_eq!((config.has,config.me),(vec!["gpu".to_string()],if std::env::var("TASKQ_HOST").ok().filter(|s|!s.is_empty()).is_none() {"named".to_string()} else {std::env::var("TASKQ_HOST").unwrap()}));
@@ -1166,12 +1166,12 @@
         assert_eq!(other(&install).unwrap(), None);
         assert!(!install.join("service").exists());
         assert_eq!(aside(&install, "service.zeroed-"), 1);
-        fs::create_dir_all(crate::dot(&install)).unwrap();
-        zeroed(&crate::dot(&install).join("status.json"));
+        fs::create_dir_all(crate::paths::dot(&install)).unwrap();
+        zeroed(&crate::paths::dot(&install).join("status.json"));
         assert!(project_service(&install).is_err());
-        assert!(crate::data::set_aside_zeroed(&crate::dot(&install).join("status.json")).unwrap());
+        assert!(crate::data::set_aside_zeroed(&crate::paths::dot(&install).join("status.json")).unwrap());
         assert_eq!(project_service(&install).unwrap(), None);
-        assert_eq!(aside(&crate::dot(&install), "status.json.zeroed-"), 1);
+        assert_eq!(aside(&crate::paths::dot(&install), "status.json.zeroed-"), 1);
         fs::write(install.join("service"), "bad").unwrap();
         assert!(other(&install).is_err(), "a nonzero unreadable record is never moved");
     }
@@ -1195,11 +1195,11 @@
         let child = if cfg!(windows) { std::process::Command::new("ping").args(["-n", "30", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn() }
             else { std::process::Command::new("sleep").arg("30").spawn() }.unwrap();
         let mut child = child;
-        fs::create_dir_all(crate::dot(&install)).unwrap();
+        fs::create_dir_all(crate::paths::dot(&install)).unwrap();
         let legacy_status = format!("{{\"pid\":{}}}", child.id());
-        fs::write(crate::dot(&install).join("status.json"), &legacy_status).unwrap();
+        fs::write(crate::paths::dot(&install).join("status.json"), &legacy_status).unwrap();
         assert!(startup_status(&install, &install, "invented malformed config","fixture").is_err());
-        assert_eq!(fs::read_to_string(crate::dot(&install).join("status.json")).unwrap(), legacy_status, "startup failure cannot overwrite a live legacy pid");
+        assert_eq!(fs::read_to_string(crate::paths::dot(&install).join("status.json")).unwrap(), legacy_status, "startup failure cannot overwrite a live legacy pid");
         assert!(legacy(&install,&[install.clone()]).is_err());
         // A bare PID is no owner record: unknown holds, whatever the PID.
         fs::write(install.join("service"), child.id().to_string()).unwrap(); assert!(other(&install).unwrap_err().contains("unknown"));
@@ -1217,7 +1217,7 @@
         let mut registry = Registry::default(); registry.refresh(&install, 0);
         fs::write(install.join("projects"), "").unwrap(); registry.refresh(&install, 1);
         assert_eq!(registry.roots.len(), 1, "no folder discovery or unnecessary registry reads");
-        crate::touch(&install.join("poke")); registry.refresh(&install, 2);
+        crate::paths::touch(&install.join("poke")); registry.refresh(&install, 2);
         assert!(registry.roots.is_empty(), "host poke loads the changed exact-root list before the minute poll");
         fs::write(install.join("projects"), "relative\n").unwrap(); registry.refresh(&install, 62);
         assert!(registry.error.as_ref().unwrap().contains("unknown")); assert!(registry.roots.is_empty(), "malformed registry retains the last good list");

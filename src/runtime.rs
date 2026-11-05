@@ -546,7 +546,7 @@ impl CliTurn {
     fn persist(&mut self)->Result<(),String> {
         let Some(r)=&self.recovery else { return Ok(()) };
         let row=crate::data::KidLine {task:r.task,attempt:r.attempt,runtime:r.runtime.clone(),process:self.native_identity()?,execution:r.execution,offset:self.input_offset()?,job:self.proc.job()};
-        crate::checkpoint_kid(&r.install,&r.root,row).map_err(|e|format!("native recovery checkpoint failed: {e}"))?;
+        crate::service_run::checkpoint_kid(&r.install,&r.root,row).map_err(|e|format!("native recovery checkpoint failed: {e}"))?;
         self.recovery=None;
         Ok(())
     }
@@ -1468,7 +1468,7 @@ pub fn handover_waits(rt:&str)->bool {of(rt).has("app-turn")}
 pub fn recover(root:&Path,install:&Path,task:u64,x:&crate::core::Execution)->Result<Box<dyn Proc>,String> {
     if x.release.is_some() {return Err("released execution cannot be recovered as live".into());}
     let root=root.canonicalize().map_err(|e|e.to_string())?;
-    let saved=crate::kids_file(install,&root)?.into_iter().find(|k|k.task==task);
+    let saved=crate::service_run::kids_file(install,&root)?.into_iter().find(|k|k.task==task);
     if saved.as_ref().is_some_and(|k|k.execution!=x.id || k.attempt!=x.attempt || k.runtime!=x.runtime) {
         return Err("protected native recovery identity differs from board execution; preserve the record".into());
     }
@@ -2123,7 +2123,7 @@ impl ClaudeTurn {
             if self.native.as_ref().is_some_and(|n|*n!=current) {return Err("Claude PID incarnation changed; original identity retained".into());}
             // #1561: a process another task's record holds is never this job's identity; the next readback retries.
             if let (None,Some(r))=(&self.native,&self.recovery) {
-                if let Some(other)=crate::kids_file(&r.install,&r.root)?.iter().find(|k|k.task!=r.task&&k.process==current) {
+                if let Some(other)=crate::service_run::kids_file(&r.install,&r.root)?.iter().find(|k|k.task!=r.task&&k.process==current) {
                     return Err(format!("Claude reported the process recorded for #{}; retry native readback",other.task));
                 }
             }
@@ -2137,7 +2137,7 @@ impl ClaudeTurn {
         // #2221: a handed-in job whose process was never observed has no identity to save; exit uses the hand-in.
         if self.handed && self.native.is_none() {return Ok(());}
         let row=crate::data::KidLine {task:r.task,attempt:r.attempt,runtime:"claude".into(),process:self.native_identity()?,execution:r.execution,offset:0,job:None};
-        crate::checkpoint_kid(&r.install,&r.root,row).map_err(|e|format!("Claude native recovery checkpoint failed: {e}"))?;
+        crate::service_run::checkpoint_kid(&r.install,&r.root,row).map_err(|e|format!("Claude native recovery checkpoint failed: {e}"))?;
         self.recovery=None;
         Ok(())
     }

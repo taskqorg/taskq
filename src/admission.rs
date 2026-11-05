@@ -88,7 +88,7 @@ pub fn old_services(install: &Path) -> Vec<String> {
     fs::read_to_string(install.join("projects")).unwrap_or_default().lines().filter(|l| !l.is_empty()).filter_map(|r| {
         let v = coreq::status::read(&t, Path::new(r), STALE as u64)?;
         let ver = v["version"].as_str().unwrap_or("unknown").to_string();
-        coreq::update::newer(MIN_SERVICE, &ver).then(|| format!("{} {ver}", crate::project_name(Path::new(r))))
+        coreq::update::newer(MIN_SERVICE, &ver).then(|| format!("{} {ver}", crate::paths::project_name(Path::new(r))))
     }).collect()
 }
 

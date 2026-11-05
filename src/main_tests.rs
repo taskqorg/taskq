@@ -4,19 +4,19 @@
     fn worker_park_needs_one_blocker_or_time() {
         let w = || (Some("7".to_string()), Some("42".to_string()));
         let (t, a) = w();
-        assert!(super::park(7, None, None, None, t, a).unwrap_err().contains("--blocker"));
-        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), None, None, t, a).is_err(), "{bad}"); }
+        assert!(crate::cli::text::park(7, None, None, None, t, a).unwrap_err().contains("--blocker"));
+        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(crate::cli::text::park(7, Some(bad), None, None, t, a).is_err(), "{bad}"); }
         let (t, a) = w();
-        assert_eq!(super::park(7, Some("dashq#36"), None, None, t, a).unwrap(), ["dashq#36"]);
-        assert!(super::park(7, None, None, None, None, None).unwrap().is_empty());
-        assert!(super::park(7, None, None, None, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
-        assert!(super::park(7, Some("#12"), None, None, None, None).is_err());
+        assert_eq!(crate::cli::text::park(7, Some("dashq#36"), None, None, t, a).unwrap(), ["dashq#36"]);
+        assert!(crate::cli::text::park(7, None, None, None, None, None).unwrap().is_empty());
+        assert!(crate::cli::text::park(7, None, None, None, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
+        assert!(crate::cli::text::park(7, Some("#12"), None, None, None, None).is_err());
         let (t, a) = w();
-        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), None, t, a).unwrap(), ["until", "2026-11-05T09:00:00Z"], "a worker waiting only for time parks with it");
-        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), None, None, None).unwrap(), ["until", "2026-11-05T09:00:00Z"]);
-        assert!(super::park(7, None, Some("2026-11-05"), None, None, None).unwrap_err().contains("bad --until"));
+        assert_eq!(crate::cli::text::park(7, None, Some("2026-11-05T09:00:00Z"), None, t, a).unwrap(), ["until", "2026-11-05T09:00:00Z"], "a worker waiting only for time parks with it");
+        assert_eq!(crate::cli::text::park(7, None, Some("2026-11-05T09:00:00Z"), None, None, None).unwrap(), ["until", "2026-11-05T09:00:00Z"]);
+        assert!(crate::cli::text::park(7, None, Some("2026-11-05"), None, None, None).unwrap_err().contains("bad --until"));
         let (t, a) = w();
-        assert!(super::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), None, t, a).unwrap_err().contains("exclude"));
+        assert!(crate::cli::text::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), None, t, a).unwrap_err().contains("exclude"));
     }
 
     // #2137 A3: reroute reads back ready pins, refuses active/unreleased work, and never rewrites other labels.
@@ -81,20 +81,55 @@
     #[test]
     fn stage_park_records_acceptance_items() {
         let (t, a) = (Some("7".to_string()), Some("42".to_string()));
-        assert_eq!(super::park(7, None, None, Some("2026-11-03T10:00:00Z"), t, a).unwrap(), ["until", "2026-11-03T10:00:00Z"], "a worker stage park wakes at once (#2289)");
-        assert!(super::park(7, None, None, Some("2026-11-03T10:00:00Z"), None, None).unwrap().is_empty(), "an owner or PM stage park still holds");
+        assert_eq!(crate::cli::text::park(7, None, None, Some("2026-11-03T10:00:00Z"), t, a).unwrap(), ["until", "2026-11-03T10:00:00Z"], "a worker stage park wakes at once (#2289)");
+        assert!(crate::cli::text::park(7, None, None, Some("2026-11-03T10:00:00Z"), None, None).unwrap().is_empty(), "an owner or PM stage park still holds");
         let (t, a) = (Some("7".to_string()), Some("42".to_string()));
-        assert_eq!(super::park(7, Some("#9"), None, Some("2026-11-03T10:00:00Z"), t, a).unwrap(), ["#9"], "a blocker still parks on it");
+        assert_eq!(crate::cli::text::park(7, Some("#9"), None, Some("2026-11-03T10:00:00Z"), t, a).unwrap(), ["#9"], "a blocker still parks on it");
         let body = "## Goal\ng\n\n## Acceptance\nA1. a\nA2. b\n- A3. c\n";
-        assert_eq!(super::stage_text("Reason: soak\nNext: A3", &["A2".into(), "A1".into()], body).unwrap(), "Reason: soak\nNext: A3\nStages: A1 A2");
-        assert_eq!(super::stage_text("", &["A3".into()], body).unwrap(), "Stages: A3");
-        assert!(super::stage_text("", &["A4".into()], body).unwrap_err().contains("bad --stage A4: one Acceptance item of this task (A1 A2 A3)"));
-        assert!(super::stage_text("", &["A1".into()], "no items").unwrap_err().contains("(none)"));
-        let text = super::stage_text("Reason: soak", &["A1".into()], body).unwrap();
+        assert_eq!(crate::cli::text::stage_text("Reason: soak\nNext: A3", &["A2".into(), "A1".into()], body).unwrap(), "Reason: soak\nNext: A3\nStages: A1 A2");
+        assert_eq!(crate::cli::text::stage_text("", &["A3".into()], body).unwrap(), "Stages: A3");
+        assert!(crate::cli::text::stage_text("", &["A4".into()], body).unwrap_err().contains("bad --stage A4: one Acceptance item of this task (A1 A2 A3)"));
+        assert!(crate::cli::text::stage_text("", &["A1".into()], "no items").unwrap_err().contains("(none)"));
+        let text = crate::cli::text::stage_text("Reason: soak", &["A1".into()], body).unwrap();
         assert_eq!(crate::core::stages_line(&text), Some(vec!["A1".to_string()]));
     }
 
     use super::*;
+use crate::{board, core, data, dispatch, enrollment, host, platform, policy, profile, reply_files, reports, runtime, service, snapshot, telemetry};
+#[cfg(target_os = "linux")]
+use crate::linux_sandbox;
+use crate::Res;
+use crate::board::{Board, entries};
+use crate::cli::{Args, PM_COMMANDS, USAGE, help};
+use crate::cli::host_cmd::{CapEdit, add_host, cap_changes, channel_cmd, dev_build_cmd, setup_items};
+#[cfg(unix)]
+use crate::cli::host_cmd::host_setup;
+use crate::cli::inbox::{closed_history, closed_pin, closed_row, closed_session, closed_transcript, inbox};
+use crate::cli::service_cmd::{install_focus, lifecycle_scope, pause, resume, service, service_fields, service_project, set_focus, tray, tray_id};
+#[cfg(unix)]
+use crate::cli::service_cmd::service_id;
+#[cfg(target_os = "macos")]
+use crate::cli::service_cmd::tray_app;
+use crate::cli::status_cmd::{json_here_only, status_text};
+use crate::cli::task_cmd::{NewTask, add_task, claim_issue_setup, claimed_create, emit_finding, finding_submit, reroute, start_one, start_task, start_tasks, task_body};
+use crate::cli::text::{all, ask_card, attachment_files, card, card_links, close_verdict, formats_selftest, held_blocker, media_links, one_line, option_lines, result_text, service_card, task_text, upload_attachments, upload_images, width, wrap_reply};
+use crate::config::{Ctx, check_load, delivery, load, project_config_value, project_value};
+use crate::core::{Entry, State, entry, fold};
+use crate::dispatch::{Op, Receipt, act, answer_picks, current};
+use crate::paths::{PROJECT_ROOT, dot, kids_path, needs_checkout, root_for, touch};
+use crate::service::Config;
+#[cfg(unix)]
+use crate::service::{Kid, Service};
+use crate::service_run::{kids_file, mark_checking, pre_boot, retire_pre_boot, write_kids};
+#[cfg(unix)]
+use crate::service_run::{adopt, lifecycle_waits, other_service, recorded, reexec, save_kids};
+use crate::snapshot::in_scope;
+use crate::wake::{ask_reread, change_focus, menu_open, poke, poke_times, sleep_until_poke, take_reread, wake_lock, wake_read};
+use serde_json::{Value, json};
+use std::fs;
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
     use board::Fake;
     use dispatch::close_one;
 
@@ -2398,7 +2433,7 @@
             let t = lines[i].trim_start();
             let indent = &lines[i][..lines[i].len() - t.len()];
             let attr = t.starts_with("#[cfg(test)]") || t.starts_with("#[test]");
-            if attr || file == "main.rs" && indent.is_empty() && WRITER.iter().any(|w| t.contains(w)) {
+            if attr || file == "text.rs" && indent.is_empty() && WRITER.iter().any(|w| t.contains(w)) {
                 let mut j = i + attr as usize;
                 while j < lines.len() && lines[j].trim_start().starts_with("#[") { j += 1; }
                 let one = lines.get(j).map(|l| l.trim_end()).is_some_and(|l| l.ends_with(';') || l.contains('{') && l.ends_with('}'));
@@ -2438,7 +2473,7 @@
     #[test]
     fn every_production_card_goes_through_the_writer() {
         // worker prompts that teach the card form, and the § 2 star of a pick shown in the inbox
-        const KNOWN: [(&str, &str); 4] = [("runtime.rs", "ask {n} --text"), ("runtime.rs", "Delivery review-pr:"), ("snapshot.rs", " ★"), ("main.rs", "Recommendation: worker ★")];
+        const KNOWN: [(&str, &str); 4] = [("runtime.rs", "ask {n} --text"), ("runtime.rs", "Delivery review-pr:"), ("snapshot.rs", " ★"), ("inbox.rs", "Recommendation: worker ★")];
         let mut found = vec![];
         let mut dirs = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
         while let Some(d) = dirs.pop() {
@@ -2725,7 +2760,7 @@
         status["tasks_age_seconds"] = json!(301);
         status["capacity"] = json!({"gate": "off"});
         fs::write(dot(&root).join("status.json"), status.to_string()).unwrap();
-        assert!(file_age(&dot(&root).join("status.json")).unwrap() <= 1);
+        assert!(coreq::status::age(&dot(&root).join("status.json")).unwrap() <= 1);
         assert!(service_fields(&root).contains("Counts: unknown"));
         status["tasks_age_seconds"] = Value::Null;
         fs::write(dot(&root).join("status.json"), status.to_string()).unwrap();

@@ -95,7 +95,7 @@ pub fn limit_text(n: u64, t: &Task, kind: &str, text: &str) -> String {
         }
     });
     // a bare comment `K` folds as a plain answer (ready), so `later` needs the CLI form (§ 2)
-    let card = crate::service_card(n, "the service stopped retrying; no new attempt starts until the owner answers.",
+    let card = crate::cli::text::service_card(n, "the service stopped retrying; no new attempt starts until the owner answers.",
         &format!("retry limit {max} reached by this {kind}; the task waits for the owner."), &[
         "requeue: retry - + a fresh attempt starts now; - it may fail the same way".into(),
         LATER.into(),

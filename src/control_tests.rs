@@ -14,7 +14,7 @@
         crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");fs::create_dir_all(dot(&root)).unwrap();
             assert_eq!(snapshot(&root,&mut None).unwrap()["state"],"untracked");
-            crate::set_focus(&root,"area-private",Some("private owner words")).unwrap();
+            crate::cli::service_cmd::set_focus(&root,"area-private",Some("private owner words")).unwrap();
             let pointer=fs::read_to_string(dot(&root).join("focus.command")).unwrap();
             assert!(!pointer.contains("area-private")&&!pointer.contains("private owner words")&&!pointer.contains(root.to_str().unwrap()));
             let mut seen=None;
@@ -29,12 +29,12 @@
             let applied=rows.iter().find(|r|r["id"]==first["applied_receipt"]).unwrap();
             let observed=rows.iter().find(|r|r["id"]==first["observed_receipt"]).unwrap();
             for key in ["trace","span","operation","version"] {assert_eq!(applied["observation"][key],observed["observation"][key]);}
-            crate::set_focus(&root,"area-private",None).unwrap();
+            crate::cli::service_cmd::set_focus(&root,"area-private",None).unwrap();
             let second=snapshot(&root,&mut seen).unwrap();
             assert_ne!(first["observed_receipt"],second["observed_receipt"],"identical focus reused an old command");
-            crate::pause(&root,false).unwrap();
+            crate::cli::service_cmd::pause(&root,false).unwrap();
             let paused=read(&root).unwrap().unwrap().receipt;
-            crate::resume(&root).unwrap();
+            crate::cli::service_cmd::resume(&root).unwrap();
             assert_eq!(snapshot(&root,&mut seen).unwrap()["state"],"observed");
             let rows=receipts(store);
             assert!(rows.iter().any(|r|r["id"]==paused.event_id("superseded").unwrap()));
@@ -49,26 +49,26 @@
     fn interrupted_and_failed_commands_never_acknowledge_an_equal_focus() {
         crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");fs::create_dir_all(dot(&root)).unwrap();
-            crate::set_focus(&root,"all",None).unwrap();
+            crate::cli::service_cmd::set_focus(&root,"all",None).unwrap();
             let interrupted={
                 let _action=tracing::info_span!("fixture.interrupted").entered();
                 let r=CommandReceipt::current().unwrap();r.checkpoint("received").unwrap();
-                let _locked=crate::wake_lock(&root).unwrap();
+                let _locked=crate::wake::wake_lock(&root).unwrap();
                 let _pending=begin(&root,&r).unwrap();r
             };
             assert!(snapshot(&root,&mut None).unwrap_err().contains("pending"));
             assert_eq!(data::focus(&root).unwrap(),["all"]);
-            crate::set_focus(&root,"all",None).unwrap();
+            crate::cli::service_cmd::set_focus(&root,"all",None).unwrap();
             assert_eq!(snapshot(&root,&mut None).unwrap()["state"],"observed");
             let rows=receipts(store);
             assert!(rows.iter().any(|r|r["id"]==interrupted.event_id("superseded").unwrap()));
             assert!(!rows.iter().any(|r|r["id"]==interrupted.event_id("observed").unwrap()));
             fs::create_dir(dot(&root).join("focus.request")).unwrap();
-            assert!(crate::set_focus(&root,"area-next",None).unwrap_err().contains("partially saved"));
+            assert!(crate::cli::service_cmd::set_focus(&root,"area-next",None).unwrap_err().contains("partially saved"));
             assert_eq!(data::focus(&root).unwrap(),["area-next"]);
             assert!(snapshot(&root,&mut None).unwrap_err().contains("failed"));
             fs::remove_dir(dot(&root).join("focus.request")).unwrap();
-            crate::set_focus(&root,"all",None).unwrap();
+            crate::cli::service_cmd::set_focus(&root,"all",None).unwrap();
             assert_eq!(snapshot(&root,&mut None).unwrap()["state"],"observed");
         });
     }
@@ -78,7 +78,7 @@
     fn bad_tracking_is_preserved_and_never_blocks_safe_restriction() {
         crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");fs::create_dir_all(dot(&root)).unwrap();
-            crate::set_focus(&root,"all",None).unwrap();
+            crate::cli::service_cmd::set_focus(&root,"all",None).unwrap();
             let path=dot(&root).join("focus.command");let valid=fs::read_to_string(&path).unwrap();
             let original=read(&root).unwrap().unwrap().receipt;
             fs::write(dot(&root).join("focus"),"off").unwrap();
@@ -88,16 +88,16 @@
             let mut newer:Value=serde_json::from_str(&valid).unwrap();newer["schema"]=json!(2);
             for bad in ["{".to_owned(),newer.to_string(),"x".repeat(4097)] {
                 fs::write(&path,&bad).unwrap();fs::write(dot(&root).join("focus"),"off").unwrap();
-                assert!(crate::resume(&root).unwrap_err().contains("tracking unavailable"));
+                assert!(crate::cli::service_cmd::resume(&root).unwrap_err().contains("tracking unavailable"));
                 assert!(data::focus(&root).unwrap().is_empty());
                 fs::write(dot(&root).join("focus"),"all").unwrap();
-                assert!(crate::pause(&root,false).unwrap_err().contains("tracking unknown"));
+                assert!(crate::cli::service_cmd::pause(&root,false).unwrap_err().contains("tracking unknown"));
                 assert!(data::focus(&root).unwrap().is_empty());assert_eq!(fs::read_to_string(&path).unwrap(),bad);
                 assert!(snapshot(&root,&mut None).is_err());
             }
             fs::write(&path,&valid).unwrap();
             fs::write(dot(&root).join("focus.command.pending"),"interrupted bytes").unwrap();
-            assert!(crate::resume(&root).is_err());
+            assert!(crate::cli::service_cmd::resume(&root).is_err());
             assert!(snapshot(&root,&mut None).unwrap_err().contains("corrupt"));
             assert_eq!(fs::read_to_string(dot(&root).join("focus.command.pending")).unwrap(),"interrupted bytes");
             assert_eq!(fs::read_to_string(path).unwrap(),valid);
@@ -114,7 +114,7 @@
     fn staged_writes_reconcile_without_replacing_current_with_unapplied_intent() {
         crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");fs::create_dir_all(dot(&root)).unwrap();
-            crate::set_focus(&root,"all",None).unwrap();
+            crate::cli::service_cmd::set_focus(&root,"all",None).unwrap();
             let path=dot(&root).join("focus.command");let stage=dot(&root).join("focus.command.pending");
             let current=fs::read_to_string(&path).unwrap();let old=read(&root).unwrap().unwrap().receipt;
             let never_applied={
@@ -135,9 +135,9 @@
                 let r={
                     let _action=tracing::info_span!("fixture.staged_terminal").entered();
                     let r=CommandReceipt::current().unwrap();r.checkpoint("received").unwrap();
-                    let owner=crate::wake_lock(&root).unwrap();let _pending=begin(&root,&r).unwrap();
+                    let owner=crate::wake::wake_lock(&root).unwrap();let _pending=begin(&root,&r).unwrap();
                     if phase=="applied" {crate::platform::write_atomic(&dot(&root).join("focus"),"area-staged").unwrap();}
-                    crate::poke_locked(&owner).unwrap();r.checkpoint(phase).unwrap();
+                    crate::wake::poke_locked(&owner).unwrap();r.checkpoint(phase).unwrap();
                     let mut v:Value=serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
                     v["phase"]=json!(phase);v["previous"]=Value::Null;
                     v["focus"]=if phase=="applied" {json!(fingerprint(&data::focus(&root).unwrap()))} else {Value::Null};
@@ -150,7 +150,7 @@
                 assert!(!stage.exists());assert_eq!(fs::read(dot(&root).join("focus")).unwrap(),before);
                 assert_eq!(read(&root).unwrap().unwrap().phase,phase);
             }
-            crate::set_focus(&root,"all",None).unwrap();
+            crate::cli::service_cmd::set_focus(&root,"all",None).unwrap();
             assert_eq!(snapshot(&root,&mut None).unwrap()["state"],"observed");
             let mut wrong:Value=serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
             wrong["command"]=json!(old.encode());
@@ -175,7 +175,7 @@
         let root=dir.join("project");fs::create_dir_all(dot(&root)).unwrap();
         tracing::dispatcher::with_default(&dispatch,|| {
             let _command=tracing::info_span!(target:"taskq::observation_fixture","fixture.command").entered();
-            crate::change_focus(&root,false,false,|d|crate::platform::write_atomic(&d.join("focus"),"all")).unwrap();
+            crate::wake::change_focus(&root,false,false,|d|crate::platform::write_atomic(&d.join("focus"),"all")).unwrap();
         });
         capture.flush().unwrap();
         let db=rusqlite::Connection::open(dir.join("db")).unwrap();
@@ -184,7 +184,7 @@
         let observed=tracing::dispatcher::with_default(&dispatch,||snapshot(&root,&mut None)).unwrap();
         assert_eq!(observed["state"],"observed");
         assert!(started.elapsed()<Duration::from_secs(2),"observation waited {:?} on a stalled store",started.elapsed());
-        drop(crate::wake_lock(&root).expect("writer blocked behind a receipt commit"));
+        drop(crate::wake::wake_lock(&root).expect("writer blocked behind a receipt commit"));
         db.execute_batch("ROLLBACK").unwrap();
         assert!(crate::telemetry::settle(Duration::from_secs(30)));capture.flush().unwrap();
         assert!(store.export(0,0,1024).unwrap()["events"].as_array().unwrap().iter().any(|r|r["id"]==observed["observed_receipt"]),"observed receipt never landed");
@@ -198,7 +198,7 @@
         crate::tests::with_test_capture(|store,dir| {
             for phase in ["prepared","changed"] {
                 let root=dir.join(phase);fs::create_dir_all(dot(&root)).unwrap();
-                crate::set_focus(&root,"area-before",None).unwrap();
+                crate::cli::service_cmd::set_focus(&root,"area-before",None).unwrap();
                 let mut child=Command::new(std::env::current_exe().unwrap())
                     .args(["--exact","control::tests::interrupted_command_writer","--ignored","--nocapture"])
                     .env("TASKQ_CONTROL_FIXTURE",&root).env("TASKQ_CONTROL_PHASE",phase)
@@ -214,7 +214,7 @@
                 assert_eq!(data::focus(&root).unwrap(),[expected]);
                 assert!(snapshot(&root,&mut None).unwrap_err().contains("pending"));
                 assert_eq!(data::focus(&root).unwrap(),[expected],"observer replayed an interrupted effect");
-                crate::set_focus(&root,"area-after",None).unwrap();
+                crate::cli::service_cmd::set_focus(&root,"area-after",None).unwrap();
                 assert_eq!(snapshot(&root,&mut None).unwrap()["state"],"observed");
                 let rows=receipts(store);
                 assert!(rows.iter().any(|r|r["id"]==command.event_id("superseded").unwrap()));
@@ -233,7 +233,7 @@
         let capture=coreq::telemetry::capture::Capture::new(store,"taskq","crash-fixture").unwrap();
         tracing::subscriber::with_default(tracing_subscriber::registry().with(capture),|| {
             let _action=tracing::info_span!("fixture.crash").entered();
-            crate::change_focus(&root,false,false,|d|->Res<()> {
+            crate::wake::change_focus(&root,false,false,|d|->Res<()> {
                 if std::env::var("TASKQ_CONTROL_PHASE").unwrap()=="changed" {crate::platform::write_atomic(&d.join("focus"),"area-partial")?;}
                 println!("ACK");std::io::stdout().flush().unwrap();
                 loop {std::thread::park();}

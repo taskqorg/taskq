@@ -59,7 +59,7 @@ pub fn request(install:&Path,pid:u32,selector:&str,milliseconds:u64,limit:u64)->
     // Existing host wake; the target still has to observe and acknowledge the selection.
     let wake=std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(install.join("poke")).map_err(|_|"selection saved; host wake failed")?;
     let wake=coreq::file_lock::try_lock_file(wake).map_err(|_|"selection saved; host wake locked")?;
-    crate::poke_locked(&wake)?;
+    crate::wake::poke_locked(&wake)?;
     Ok(selection.id)
 }
 

@@ -73,7 +73,7 @@ fn bound_inputs(root:&Path,live:&[u64])->Result<std::collections::HashSet<String
     if live.is_empty() {return Ok(names);}
     let mut budget=8*1024*1024u64;
     let mut seen=std::collections::HashSet::new();
-    for entry in fs::read_dir(crate::dot(root)).map_err(|e|e.to_string())? {
+    for entry in fs::read_dir(crate::paths::dot(root)).map_err(|e|e.to_string())? {
         let entry=entry.map_err(|e|e.to_string())?;
         let name=entry.file_name();
         let Some(attempt)=name.to_str().and_then(attempt_of).filter(|a|live.contains(a)) else {continue};
@@ -97,7 +97,7 @@ fn bound_inputs(root:&Path,live:&[u64])->Result<std::collections::HashSet<String
 
 /// One pruning round of the service (§ 4 Data); `live`: native handles plus unresolved reservations.
 pub fn prune(root: &Path, install: &Path, project: &str, live: &[u64]) -> Vec<String> {
-    let d = crate::dot(root);
+    let d = crate::paths::dot(root);
     let mut out = vec![];
     for p in [install.join("taskq.log"), install.join(format!("{project}.log"))] {
         if !(crate::host::active() && p.file_name().is_some_and(|n| n == "taskq.log")) && trim_tail(&p, LOG_MAX) {
@@ -174,7 +174,7 @@ pub fn json(p: &Path) -> Result<Option<Value>, String> {
 /// The labels of `<root>/.taskq/focus` (§ 4): missing, empty or `off` is none. Err with the reason when it is not
 /// short UTF-8 text of labels (unknown: the service admits nothing; the file stays).
 pub fn focus(root: &Path) -> Result<Vec<String>, String> {
-    let b = match fs::read(crate::dot(root).join("focus")) {
+    let b = match fs::read(crate::paths::dot(root).join("focus")) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
         Err(e) => return Err(format!("focus: unreadable ({e}); file kept")),

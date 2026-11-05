@@ -92,7 +92,7 @@ fn entries(install: &Path, projects: &[Value], store: &Store) -> Res<(Vec<Value>
     let mut entries=BTreeMap::new();let mut reasons=BTreeSet::new();
     for p in projects {
         let board=p["issues"].as_str().unwrap_or("");
-        let ttl=p["ttl"].as_i64().unwrap_or(crate::TTL);
+        let ttl=p["ttl"].as_i64().unwrap_or(crate::config::TTL);
         if p["complete"]!=true || p["alive"]!=true
             || !p["tasks_age_seconds"].as_i64().zip(p["age"].as_i64()).is_some_and(|(t,a)|crate::snapshot::live(t.saturating_add(a),ttl)) || board.is_empty() || !p["tasks"].is_array() {
             reasons.insert(format!("{}: messages source stale, incomplete or unavailable",p["name"].as_str().unwrap_or("Project")));

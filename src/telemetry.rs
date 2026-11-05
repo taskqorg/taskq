@@ -73,7 +73,7 @@ pub(crate) fn host_capture(install:&Path)->Result<Option<coreq::telemetry::captu
     let heartbeat=install.join("tray");
     let previous=std::fs::read_to_string(&heartbeat).map_err(|_|format!("{error}; tray owner unknown"))?;
     let pid=previous.trim().parse::<u32>().map_err(|_|format!("{error}; tray owner unknown"))?;
-    if pid==std::process::id() || !crate::file_age(&heartbeat).is_some_and(|age|age<10) {
+    if pid==std::process::id() || !coreq::status::age(&heartbeat).is_some_and(|age|age<10) {
         return Err(format!("{error}; tray owner not fresh"));
     }
     let identity=coreq::process::identity(pid).map_err(|_|format!("{error}; tray identity unknown"))?
@@ -391,7 +391,7 @@ pub fn live_worker_pid(install: &Path, root: Option<&Path>, task: u64, attempt: 
         }
     }
     if let Some(r) = root {
-        if let Ok(path) = crate::kids_path(install, r) {
+        if let Ok(path) = crate::paths::kids_path(install, r) {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 if let Ok((_, kids)) = crate::data::kids(&text) {
                     if let Some(k) = kids.into_iter().find(|k| {

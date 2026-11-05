@@ -75,7 +75,7 @@ fn tray_fault(install: &std::path::Path) -> Option<String> {
 /// finding could not be filed, so the reason logs once (a cache, R1).
 fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str, Vec<String>>, now: u64, log: &mut Vec<String>) {
     const DAY: u64 = 86_400;
-    let path = crate::dot(&cfg.root).join("findings.json");
+    let path = crate::paths::dot(&cfg.root).join("findings.json");
     let read = |p: &std::path::Path| std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(Value::is_object);
     let last = read(&path).unwrap_or_else(|| json!({}));
     let mut next = json!({});
@@ -85,7 +85,7 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
         let p: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '-' }).take(48).collect();
         if p.bytes().all(|c| c == b'.') { "x".into() } else { p }
     };
-    let (host, project) = (part(&cfg.me), part(&crate::project_name(&cfg.root)));
+    let (host, project) = (part(&cfg.me), part(&crate::paths::project_name(&cfg.root)));
     for (cond, lines) in conditions {
         let mut entry = last.get(*cond).cloned().filter(|e| e["since"].is_u64()).unwrap_or_else(|| json!({"since": now}));
         if let Some(n) = entry["issue"].as_u64() {
@@ -101,7 +101,7 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
                 "stale" => ("Root stale", format!("The project root on host {} has not followed its origin default branch for over a day: settle the stale reason so the tidy pass can fast-forward it.", cfg.me)),
                 _ => ("Closed task worktree kept", format!("A closed task's worktree on host {} stays after each tidy pass: settle its kept reason so the worktree goes.", cfg.me)),
             };
-            let new = crate::NewTask {
+            let new = crate::cli::task_cmd::NewTask {
                 conversation: None,
                 title: format!("{what} over a day: {project} on {host}").chars().take(80).collect(),
                 goal,
@@ -112,7 +112,7 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
             let source = format!("{host}/tidy-{cond}/{project}-{since}");
             let raw = read(&cfg.root.join("taskq.json")).unwrap_or(Value::Null);
             let mut op = crate::dispatch::Op::default();
-            let reason = match crate::submit_finding(b, &raw, &cfg.root, cfg.board.name, &cfg.web_host, &cfg.repo, &new, &source, &evidence, &mut op, false) {
+            let reason = match crate::cli::task_cmd::submit_finding(b, &raw, &cfg.root, cfg.board.name, &cfg.web_host, &cfg.repo, &new, &source, &evidence, &mut op, false) {
                 Ok((r, _)) if r.ok() => {
                     entry["issue"] = json!(r.task);
                     log.push(format!("#{} finding filed: tidy {cond} over a day", r.task));
@@ -132,7 +132,7 @@ fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str
         }
         next[*cond] = entry;
     }
-    if next != last && let Err(e) = std::fs::create_dir_all(crate::dot(&cfg.root)).and_then(|_| std::fs::write(&path, next.to_string())) {
+    if next != last && let Err(e) = std::fs::create_dir_all(crate::paths::dot(&cfg.root)).and_then(|_| std::fs::write(&path, next.to_string())) {
         log.push(format!("findings cache: {e}"));
     }
 }
@@ -446,7 +446,7 @@ pub fn newest_dep_close(views: &[View], deps: &DepCache) -> Option<i64> {
 
 /// § 4 step 5 ask card of a task closed during a worker attempt (#1950); its answer resumes the attempt.
 pub(crate) fn closed_card(n: u64, at: &str) -> String {
-    crate::service_card(n, &format!("reopened; the issue was closed at {at} during this worker attempt, with no result or review."),
+    crate::cli::text::service_card(n, &format!("reopened; the issue was closed at {at} during this worker attempt, with no result or review."),
         "only the reviewer's close or a person ends a task (§ 1); a close during an attempt never counts as done.", &[
         "redo: finish the work - + the attempt hands in a result for review; - the attempt runs on".into(),
         format!("later: park it - + nothing runs; `taskq close {n}` then ends it unmerged; - the work stays undone"),
@@ -455,7 +455,7 @@ pub(crate) fn closed_card(n: u64, at: &str) -> String {
 
 /// § 2 ask card of a start the rules cap refused (#1946); an answer starts a fresh attempt.
 pub(crate) fn refused_card(n: u64, why: &str) -> String {
-    crate::service_card(n, "the service refused to start this attempt; nothing ran.", &format!("start refused: {}", why.replace("\nNext: ", "; ")), &[
+    crate::cli::text::service_card(n, "the service refused to start this attempt; nothing ran.", &format!("start refused: {}", why.replace("\nNext: ", "; ")), &[
         "retry after trimming - + a fresh attempt starts; - it is refused again until the rules fit the cap".into(),
         core::LATER.into(),
     ], 1)
@@ -463,7 +463,7 @@ pub(crate) fn refused_card(n: u64, why: &str) -> String {
 
 /// § 2 ask card of resumed input that failed to launch `failures` times; the input stays for a retry.
 pub(crate) fn input_card(n: u64, text: &str, failures: usize) -> String {
-    crate::service_card(n, &format!("the input is retained; {text}"), &format!("input launch failed {failures} times; input retained."), &[
+    crate::cli::text::service_card(n, &format!("the input is retained; {text}"), &format!("input launch failed {failures} times; input retained."), &[
         "retry the input - + resends the undelivered input in this session; - it may fail the same way".into(),
         core::LATER.into(),
     ], 1)
@@ -1041,7 +1041,7 @@ fn record_known_pid(cfg: &Config, unknown_pids: &mut HashMap<u64, &'static str>,
 
 /// R12: retirement and a slot with no handle name only the saved process identity of that execution; 0 when none is saved.
 fn saved_pid(cfg: &Config, task: u64, attempt: u64, execution: u64) -> u32 {
-    crate::kids_path(&cfg.install, &cfg.root).ok()
+    crate::paths::kids_path(&cfg.install, &cfg.root).ok()
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| crate::data::kids(&text).ok())
         .and_then(|(_, kids)| kids.into_iter().find(|k| k.task == task && k.attempt == attempt && k.execution == execution))
@@ -1196,7 +1196,7 @@ impl<'a> Service<'a> {
         let role = self.begun.get(&attempt).map_or("work", |(r, _, _)| if r == "reviewer" { "review" } else { "work" });
         crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &rt, role, "slot-release", task, attempt, pid, if pid > 1 { "ok" } else { "unknown" }, if pid > 1 { "execution-released" } else { "execution-released-pid-unknown" });
         if native {
-            if let Err(e)=crate::retire_kid(&self.cfg,task,attempt,execution) { self.log.push(format!("native recovery cleanup: {e}")); }
+            if let Err(e)=crate::service_run::retire_kid(&self.cfg,task,attempt,execution) { self.log.push(format!("native recovery cleanup: {e}")); }
         }
         self.pending_releases.remove(&(task,attempt,execution));
         self.unknown_pids.remove(&execution);
@@ -1228,8 +1228,8 @@ impl<'a> Service<'a> {
     /// Rereads `taskq.json` for a pass (§ 3 capacity) and takes its § 7 delivery preset, so a pending publication
     /// follows an owner's preset switch without a restart (#1942). An invalid preset keeps the last one, logged once.
     pub fn reread_project(&mut self) -> Result<Value, String> {
-        let v = crate::project_value(&self.cfg.root)?;
-        match crate::delivery(&v) {
+        let v = crate::config::project_value(&self.cfg.root)?;
+        match crate::config::delivery(&v) {
             Ok(d) => {
                 if d != (self.cfg.publish.clone(), self.cfg.delivery.clone(), self.cfg.delivery_revision) {
                     log!("delivery {} r{} (was {} r{})", d.1, d.2, self.cfg.delivery, self.cfg.delivery_revision);
@@ -1752,7 +1752,7 @@ impl<'a> Service<'a> {
     /// the live attempts the handover waits for, else the host handover reason, else the pending restart.
     pub fn selected_line(&self)->Option<String> {
         let selected=crate::platform::tool(&self.cfg.install).current().filter(|v|*v!=self.version && crate::service_versions::version(v))?;
-        let waits:Vec<String>=crate::lifecycle_waits(self,false).into_iter().map(|w| {
+        let waits:Vec<String>=crate::service_run::lifecycle_waits(self,false).into_iter().map(|w| {
             match w.strip_prefix('#').and_then(|n|n.parse::<u64>().ok()).and_then(|n|self.kids.iter().find(|k|k.task==n)) {
                 Some(k)=>format!("#{} attempt {}",k.task,k.attempt),
                 None=>w,
@@ -1773,10 +1773,10 @@ impl<'a> Service<'a> {
         if let Some((at,value))=self.diagnostics.borrow().as_ref().filter(|(at,_)|at.elapsed().as_secs()<60) {let _=at;return value.clone();}
         let selected=crate::platform::tool(&self.cfg.install).current();
         let pending=selected.as_deref().is_some_and(|v|v!=self.version)
-            || self.cfg.install.join("restart").exists() || crate::dot(&self.cfg.root).join("restart").exists();
+            || self.cfg.install.join("restart").exists() || crate::paths::dot(&self.cfg.root).join("restart").exists();
         let waiting=if let Some(host)=&self.host {
             host.lock().map(|h|h.restart&&h.handoff_wait().is_some()).unwrap_or(false)
-        } else {pending&&!crate::lifecycle_waits(self,false).is_empty()};
+        } else {pending&&!crate::service_run::lifecycle_waits(self,false).is_empty()};
         let value=crate::service_versions::collect(&self.cfg.install,&self.version,&self.instance,self.started,waiting);
         *self.diagnostics.borrow_mut()=Some((std::time::Instant::now(),value.clone()));
         value
@@ -1911,7 +1911,7 @@ impl<'a> Service<'a> {
             if let Err(e) = crate::profile::prune(&self.cfg.install) { eprintln!("taskq: telemetry unknown: {e}"); }
         }
         // #2194: an installed service checks its board's health every `health::EVERY` seconds for its heartbeat
-        if crate::installed(&self.cfg.install) && self.health.as_ref().is_none_or(|(at, _)| at.elapsed().as_secs() >= crate::health::EVERY) {
+        if crate::paths::installed(&self.cfg.install) && self.health.as_ref().is_none_or(|(at, _)| at.elapsed().as_secs() >= crate::health::EVERY) {
             self.refresh_health();
         }
         let r = crate::profile::measure("service.pass", || self.pass_inner(NATIVE_PASS_BUDGET));
@@ -2850,7 +2850,7 @@ impl<'a> Service<'a> {
         }
         self.seen = now_seen;
         if first || !moves.is_empty() || self.events_since.is_none_or(|s| s < now - MONTH) {
-            let path = crate::dot(&self.cfg.root).join("events");
+            let path = crate::paths::dot(&self.cfg.root).join("events");
             match record(&path, now, &moves) {
                 Ok(s) => self.events_since = Some(s),
                 Err(e) => self.log.push(format!("events: {e}")),
@@ -2878,7 +2878,7 @@ impl<'a> Service<'a> {
             };
             if let Err(e) = std::fs::create_dir_all(path.parent().unwrap()).and_then(|_| std::fs::write(path, bytes)) { eprintln!("ask image copy {}: {e}", path.display()); }
         }
-        for old in std::fs::read_dir(crate::dot(&self.cfg.root).join("images")).into_iter().flatten().flatten() {
+        for old in std::fs::read_dir(crate::paths::dot(&self.cfg.root).join("images")).into_iter().flatten().flatten() {
             if !keep.contains(&old.path()) { let _ = std::fs::remove_file(old.path()); }
         }
     }
@@ -2891,7 +2891,7 @@ impl<'a> Service<'a> {
         })).collect();
         for (n, (last, state, a)) in &stuck {
             if self.stuck.insert(*n, *last) != Some(*last) {
-                self.log.push(format!("#{n} event stuck {state} {}", crate::age(*a)));
+                self.log.push(format!("#{n} event stuck {state} {}", crate::display::age(*a)));
             }
         }
         self.stuck.retain(|n, _| stuck.contains_key(n) || self.progress.iter().any(|((task,_,_),p)|task==n && p.2));
@@ -2925,7 +2925,7 @@ impl<'a> Service<'a> {
         });
         let skipped = o.report["outcome"].as_str().is_some_and(|s| s.starts_with("skipped"));
         // #1549: a refusal or stale root logs once per changed line, across restarts; `.taskq/cleanup` is a cache (R1)
-        let path = crate::dot(&self.cfg.root).join("cleanup");
+        let path = crate::paths::dot(&self.cfg.root).join("cleanup");
         let last: BTreeSet<String> = std::fs::read_to_string(&path).unwrap_or_default().lines().map(String::from).collect();
         let sticky = |l: &String| [" kept: ", " unconfirmed: ", "root stale: ", "tidy skipped: "].iter().any(|k| l.contains(k));
         let mut next: BTreeSet<String> = if skipped { last.clone() } else { BTreeSet::new() };
@@ -2936,7 +2936,7 @@ impl<'a> Service<'a> {
             }
             self.log.push(line);
         }
-        if next != last && let Err(e) = std::fs::create_dir_all(crate::dot(&self.cfg.root)).and_then(|_| std::fs::write(&path, next.into_iter().map(|l| l + "\n").collect::<String>())) {
+        if next != last && let Err(e) = std::fs::create_dir_all(crate::paths::dot(&self.cfg.root)).and_then(|_| std::fs::write(&path, next.into_iter().map(|l| l + "\n").collect::<String>())) {
             self.log.push(format!("cleanup cache: {e}"));
         }
         if !skipped {
@@ -3127,7 +3127,7 @@ impl<'a> Service<'a> {
         q.waiting = if counted.is_empty() { None } else { q.waiting.or(Some(now)) };
         q.reason = counted.first().map(|(_, r)| if restart { "host restart pending".into() } else { r.clone() });
         // #2290: every unadmitted ready task names this host's reason on its own board, refusals by labels or focus too
-        q.tasks = decided.iter().filter(|(_, (c, _))| *c != "admitted").map(|(n, (c, r))| (*n, crate::compact(&format!("{c}: {r}"), 120))).collect();
+        q.tasks = decided.iter().filter(|(_, (c, _))| *c != "admitted").map(|(n, (c, r))| (*n, crate::cli::text::compact(&format!("{c}: {r}"), 120))).collect();
         // other boards see this row anonymous and with the admission code only: a reason may quote this project's tasks
         let generic = counted.first().map(|(c, _)| if restart { "host restart pending".into() } else { c.to_string() });
         let row = crate::host::Queue { project: None, reason: generic, tasks: BTreeMap::new(), ..q.clone() };

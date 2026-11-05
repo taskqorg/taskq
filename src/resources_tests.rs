@@ -110,13 +110,13 @@
         let authority=crate::host::Policy::read(&t.install).unwrap();
         let mut want=authority.cap.json();want["project_limits"]=json!({"codex":2});
         assert_eq!(observed.policy,want);
-        assert_eq!(observed.revision,authority.project_revision(&t.root, &crate::load(&t.root).unwrap().1).unwrap());
+        assert_eq!(observed.revision,authority.project_revision(&t.root, &crate::config::load(&t.root).unwrap().1).unwrap());
         assert!(report(&t.install,101).unwrap().iter().any(|s|s.contains("remote writes: taskq.project-limits/1 under a --project-limits grant")));
         fs::write(t.install.join("host.json"),"{\"limits\":{\"codex\":5}}").unwrap();
         with(&t.install,|s|prepare(s,&t.install,102)).unwrap();
         let changed=read(&t.install).unwrap().projects["project-1"].clone();
         assert_ne!(changed.revision,observed.revision);
-        assert_eq!(changed.revision,crate::host::Policy::read(&t.install).unwrap().project_revision(&t.root,&crate::load(&t.root).unwrap().1).unwrap());
+        assert_eq!(changed.revision,crate::host::Policy::read(&t.install).unwrap().project_revision(&t.root,&crate::config::load(&t.root).unwrap().1).unwrap());
         for (file,body) in [("host.json","broken"),("host.json.pending","retained")] {
             fs::write(t.install.join(file),body).unwrap();
             with(&t.install,|s|prepare(s,&t.install,103)).unwrap();
@@ -209,8 +209,8 @@
         let r = receipt_of(&t, "op-1");
         assert_ne!(p.revision, first.revision);
         assert_eq!((&r["state"], &r["saved_revision"], &r["effective_revision"]), (&json!("saved"), &json!(p.revision), &Value::Null));
-        fs::create_dir_all(crate::dot(&t.root)).unwrap();
-        let status = |at: u64, host: &str, revision: &str, limits: &Value| fs::write(crate::dot(&t.root).join("status.json"), json!({"at": at, "host": host, "capacity": {"project_revision": revision, "project_limits": limits}}).to_string()).unwrap();
+        fs::create_dir_all(crate::paths::dot(&t.root)).unwrap();
+        let status = |at: u64, host: &str, revision: &str, limits: &Value| fs::write(crate::paths::dot(&t.root).join("status.json"), json!({"at": at, "host": host, "capacity": {"project_revision": revision, "project_limits": limits}}).to_string()).unwrap();
         let (sent, _) = go(&t, &[], &[], 101);
         assert_eq!((sent.len(), &sent[0]["state"]), (1, &json!("saved")), "no status yet: saved");
         let limits = &p.policy["project_limits"];
@@ -297,7 +297,7 @@
         };
         go(&t, &[], &[], 100);
         let r0 = rev(&t);
-        assert_eq!(r0, crate::host::Policy::read(&t.install).unwrap().project_revision(&t.root, &crate::load(&t.root).unwrap().1).unwrap());
+        assert_eq!(r0, crate::host::Policy::read(&t.install).unwrap().project_revision(&t.root, &crate::config::load(&t.root).unwrap().1).unwrap());
         go(&t, &[op("no-flag", json!(1), &r0)], &[], 100);
         assert_eq!(receipt_of(&t, "no-flag")["reason"], "scope", "a grant without --project-limits never writes the overlay");
         assert_eq!(fs::read_to_string(t.install.join("host.json")).unwrap(), host.to_string());
@@ -328,7 +328,7 @@
         assert!(t.install.join("poke").exists(), "the host reloads");
         let r1 = rev(&t);
         let policy = crate::host::Policy::read(&t.install).unwrap();
-        assert_eq!(r1, policy.project_revision(&t.root, &crate::load(&t.root).unwrap().1).unwrap());
+        assert_eq!(r1, policy.project_revision(&t.root, &crate::config::load(&t.root).unwrap().1).unwrap());
         assert_eq!(policy.project(&t.root, &serde_json::from_str(&project).unwrap()).unwrap().limits["codex"], 1);
         let r = receipt_of(&t, "lower");
         assert_eq!((&r["state"], &r["saved_revision"]), (&json!("saved"), &json!(r1)));
@@ -338,8 +338,8 @@
         let (_, log) = go(&t, &[op("lower", json!(0), &r1)], &[], 102);
         assert_eq!(log, ["resources: lower reused with another payload; original kept"]);
         assert_eq!((receipt_of(&t, "lower"), fs::read(t.install.join("host.json")).unwrap()), (r.clone(), bytes));
-        fs::create_dir_all(crate::dot(&t.root)).unwrap();
-        let status = |at: u64, revision: &str, limits: Value| fs::write(crate::dot(&t.root).join("status.json"),
+        fs::create_dir_all(crate::paths::dot(&t.root)).unwrap();
+        let status = |at: u64, revision: &str, limits: Value| fs::write(crate::paths::dot(&t.root).join("status.json"),
             json!({"at": at, "host": policy.me, "capacity": {"project_revision": revision, "project_limits": limits}}).to_string()).unwrap();
         for (at, revision, limits, now) in [(110, r0.as_str(), json!({"codex": 2}), 110), (110, r1.as_str(), json!({"codex": 2}), 110), (90, r1.as_str(), json!({"codex": 1}), 110), (110, r1.as_str(), json!({"codex": 1}), 171)] {
             status(at, revision, limits);
@@ -369,7 +369,7 @@
         // the readback keeps its own age: observed_at is the status time, so 61 s later a consumer reads it stale
         assert_eq!((&pj["observed_at"], &projection(&t.install, 200, true).unwrap()["observed_at"]), (&json!(110), &json!(110)));
         // status reasons survive as blockers; an unknown one makes the target partial, never complete
-        fs::write(crate::dot(&t.root).join("status.json"), json!({"at": 110, "host": policy.me, "capacity": {"project_revision": r1, "project_limits": {"codex": 1},
+        fs::write(crate::paths::dot(&t.root).join("status.json"), json!({"at": 110, "host": policy.me, "capacity": {"project_revision": r1, "project_limits": {"codex": 1},
             "gate": "held", "reasons": [{"code": "cpu", "text": "busy"}, {"code": "future-reason", "text": "?"}]}}).to_string()).unwrap();
         let codex = projection(&t.install, 111, true).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
         assert_eq!((codex["blockers"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap(), b["knowledge"].as_str().unwrap())).collect::<Vec<_>>(), &codex["completeness"]),
@@ -821,8 +821,8 @@
         a["schemas"] = json!([enrollment::SCHEMA, enrollment::RESOURCES]);
         fs::write(conn_file(&t.install), conn(Some(a.clone())).to_string()).unwrap();
         let rev = projection(&t.install, 100, true).unwrap()["targets"][0]["current_revision"].clone();
-        fs::create_dir_all(crate::dot(&t.root)).unwrap();
-        fs::write(crate::dot(&t.root).join("status.json"), json!({"at": 110, "host": crate::host::Policy::read(&t.install).unwrap().me, "capacity": {"project_revision": rev, "project_limits": {"codex": 1}}}).to_string()).unwrap();
+        fs::create_dir_all(crate::paths::dot(&t.root)).unwrap();
+        fs::write(crate::paths::dot(&t.root).join("status.json"), json!({"at": 110, "host": crate::host::Policy::read(&t.install).unwrap().me, "capacity": {"project_revision": rev, "project_limits": {"codex": 1}}}).to_string()).unwrap();
         let codex = |r: &Value| r["payload"]["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
         let deliver = |recs: &[Value], wire: &mut Ingest| coreq::enroll::deliver(&enrollment::dir(&t.install), recs, &mut Default::default(), wire);
         locked(&t.install, || Ok(assert!(enrollment::resources_record(&t.install, &a, 111).unwrap_err().contains("lock unavailable"), "the sender waits only a bounded time behind a writer"))).unwrap();

@@ -23,8 +23,7 @@ fn main() {
     // § 5 `taskq --version` (#1900): before install lookup, telemetry and launcher, so no board, network, service or install access.
     if std::env::args().skip(1).eq(["--version"]) { println!("{}", platform::VERSION); return; }
     let install = platform::default_install();
-    let args=Args::parse(&std::env::args().skip(1).collect::<Vec<_>>());
-    let maintenance=args.as_ref().is_ok_and(|a|a.pos==["profile","migrate"]);
+    let args=cli::Args::parse(&std::env::args().skip(1).collect::<Vec<_>>());
     // #1419: the release updater runs a staged candidate's offline selftest beside the old release's live writer;
     // a slow old writer must not refuse the candidate that replaces it, so the candidate qualifies a private store.
     let staged=std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some()&&args.as_ref().is_ok_and(|a|a.pos==["selftest"]);
@@ -38,7 +37,7 @@ fn main() {
             if pid!=std::process::id()&&matches!(coreq::process::identity(pid),Ok(None)) {let _=std::fs::remove_dir_all(entry.path());}
         }
     }
-    let _telemetry = (!maintenance).then(||telemetry::install_capture(private.as_deref().unwrap_or(&install))).transpose()
+    let _telemetry = telemetry::install_capture(private.as_deref().unwrap_or(&install))
         .map_err(|e| {let _=writeln!(std::io::stderr(),"Telemetry: unknown ({e})");}).ok();
     application();
     platform::drain_telemetry();

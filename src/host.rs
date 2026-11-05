@@ -9,7 +9,7 @@ const CAPACITY_COMMAND:&str="_taskq_capacity_command";
 pub fn active() -> bool { ACTIVE.get() }
 pub fn enter(root: &Path, install: &Path) {
     ACTIVE.set(true);
-    crate::PROJECT_ROOT.set(Some(root.into()));
+    crate::paths::PROJECT_ROOT.set(Some(root.into()));
     crate::platform::project_log(project_log(install, root));
 }
 
@@ -176,7 +176,7 @@ impl Policy {
             .or_else(|| { let c = fs::canonicalize(root).ok()?; m.iter().find(|(k, _)| fs::canonicalize(k.as_str()).is_ok_and(|x| x == c)) })
     }
 
-    pub fn read(install: &Path) -> Res<Self> { Self::read_for_hostname(install,crate::hostname) }
+    pub fn read(install: &Path) -> Res<Self> { Self::read_for_hostname(install,crate::config::hostname) }
 
     pub(crate) fn read_for_hostname(install:&Path,hostname:impl FnOnce()->String)->Res<Self> {
         match fs::symlink_metadata(install.join("host.json.pending")) {
@@ -213,16 +213,16 @@ impl Policy {
 }
 
 /// Existing resource-control lock serializes policy writers with grants.
-pub fn write_capacity(install:&Path, host:&str, edit:&crate::CapEdit, expect:Option<&Value>)->Res<(Capacity,Capacity,CommandReceipt)> {
+pub fn write_capacity(install:&Path, host:&str, edit:&crate::cli::host_cmd::CapEdit, expect:Option<&Value>)->Res<(Capacity,Capacity,CommandReceipt)> {
     crate::resources::locked(install,||write_capacity_locked(install,host,edit,expect,None))
 }
 
 #[tracing::instrument(name="host.policy.write",skip_all)]
-fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:Option<&Value>,mut local:Option<(&mut crate::resources::State,&Value)>)->Res<(Capacity,Capacity,CommandReceipt)> {
+fn write_capacity_locked(install:&Path, host:&str, edit:&crate::cli::host_cmd::CapEdit, expect:Option<&Value>,mut local:Option<(&mut crate::resources::State,&Value)>)->Res<(Capacity,Capacity,CommandReceipt)> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot change host policy".into());}
         let path=install.join("host.json");
         let original=fs::read_to_string(&path).map_err(|e|format!("host.json unknown: {e}"))?;
-        let hostname=crate::hostname();
+        let hostname=crate::config::hostname();
         let old=Policy::parse(serde_json::from_str(&original).map_err(|e|format!("host.json unknown: {e}"))?,&hostname)?;
         if host!=old.me {return Err("host policy edits require this local host; remote edits are unsupported".into());}
         if let Some((state,request))=local.as_mut() {
@@ -311,7 +311,7 @@ pub(crate) fn seed_policy(install:&Path)->Res<()> {
     let path=install.join("host.json");
     if path.try_exists().map_err(|e|format!("host.json unknown: {e}"))? {return Ok(());}
     let policy=json!({"hosts":{},"has":{},(crate::runtime::CODEX_ARGS):["-s","danger-full-access"],"permission_mode":"dontAsk","update_every":60,"rollback_after":600});
-    Policy::parse(policy.clone(),&crate::hostname())?;
+    Policy::parse(policy.clone(),&crate::config::hostname())?;
     fs::create_dir_all(install).map_err(|e|e.to_string())?;
     crate::platform::write_atomic(&path,&format!("{}\n",serde_json::to_string_pretty(&policy).map_err(|e|e.to_string())?))
 }
@@ -322,9 +322,9 @@ pub(crate) fn write_project_limit(install:&Path, root:&Path, rt:&str, limit:Opti
     if std::env::var_os("TASKQ_ATTEMPT").is_some() || !service::RUNTIMES.contains(&rt) {return Ok(Err("unsupported"));}
     let path=install.join("host.json");
     let Ok(original)=fs::read_to_string(&path) else {return Ok(Err("conflict"))};
-    let hostname=crate::hostname();
+    let hostname=crate::config::hostname();
     let Ok(old)=serde_json::from_str(&original).map_err(|e|e.to_string()).and_then(|v|Policy::parse(v,&hostname)) else {return Ok(Err("conflict"))};
-    let Ok((_,project))=crate::load(root) else {return Ok(Err("conflict"))};
+    let Ok((_,project))=crate::config::load(root) else {return Ok(Err("conflict"))};
     if old.project_revision(root,&project)?!=expect {return Ok(Err("conflict"));}
     let key=old.overlay(root).map_or_else(||root.display().to_string(),|(k,_)|k.clone());
     let mut next=old.raw.clone();
@@ -348,7 +348,7 @@ pub(crate) fn write_project_limit(install:&Path, root:&Path, rt:&str, limit:Opti
 fn wall()->Res<u64> {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_secs()).map_err(|_|"capacity clock unknown".into())}
 
 /// Typed native request; OS-owned local controls do not grant the remote exchange any authority.
-pub fn capacity_request(request:&Value)->Res<crate::CapEdit> {
+pub fn capacity_request(request:&Value)->Res<crate::cli::host_cmd::CapEdit> {
     use crate::resources::{keys,count,id};
     let invalid="invalid host capacity request";
     if !keys(request,&["id","issued_at","expires_at","ops"]) || !request["id"].as_str().is_some_and(id)
@@ -356,7 +356,7 @@ pub fn capacity_request(request:&Value)->Res<crate::CapEdit> {
     let issued=request["issued_at"].as_u64().ok_or(invalid)?;let expires=request["expires_at"].as_u64().ok_or(invalid)?;
     if expires<=issued || expires-issued>300 {return Err(invalid.into());}
     let ops=request["ops"].as_array().filter(|ops|!ops.is_empty()&&ops.len()<=service::RUNTIMES.len()+1).ok_or(invalid)?;
-    let mut seen=BTreeSet::new();let mut edit=crate::CapEdit::default();
+    let mut seen=BTreeSet::new();let mut edit=crate::cli::host_cmd::CapEdit::default();
     for op in ops {
         if !keys(op,&["target","policy_schema","expected_revision","changes"]) || op["policy_schema"]!="taskq.host-capacity/1"
             || !op["expected_revision"].as_str().is_some_and(id) || !keys(&op["target"],&["installation_id","generation","project_id","runtime_id"])
@@ -418,7 +418,7 @@ pub fn observe_capacity(install:&Path,loaded:&Policy)->Res<Option<String>> {
     }),|_|"command-observation")?;
     if observed.is_some() && let Ok(roots)=project_paths(install) {
         for root in &roots {
-            if let Err(error)=crate::poke(root) {crate::platform::log(&error);}
+            if let Err(error)=crate::wake::poke(root) {crate::platform::log(&error);}
         }
     }
     Ok(observed)
@@ -567,7 +567,7 @@ impl Host {
         self.held=held;
         if policy_changed||(was_blocked&&self.policy.is_ok()&&self.held.is_none()) {
             for root in roots {
-                if let Err(error)=crate::poke(root) {crate::platform::log(&error);}
+                if let Err(error)=crate::wake::poke(root) {crate::platform::log(&error);}
             }
         }
     }
@@ -850,7 +850,7 @@ pub fn service_line(status:&Value)->String {
 
 /// Legacy roots are never served concurrently, even when their status has gone stale. Unknown holds admission.
 pub fn project_service(root: &Path) -> Res<Option<u32>> {
-    match crate::data::json(&crate::dot(root).join("status.json")) {
+    match crate::data::json(&crate::paths::dot(root).join("status.json")) {
             Err(e) => return Err(format!("legacy liveness unknown: {e}")),
             Ok(None) => Ok(None),
             Ok(Some(v)) => {
@@ -864,7 +864,7 @@ pub fn project_service(root: &Path) -> Res<Option<u32>> {
 fn legacy(install:&Path,roots: &[PathBuf]) -> Res<()> {
     for root in roots {
         // #1445: the host owner lock is held, so a zeroed status.json has no live owner.
-        if crate::data::set_aside_zeroed(&crate::dot(root).join("status.json"))? {append_project(install,root,"status.json zeroed by a power loss; kept as status.json.zeroed-*");}
+        if crate::data::set_aside_zeroed(&crate::paths::dot(root).join("status.json"))? {append_project(install,root,"status.json zeroed by a power loss; kept as status.json.zeroed-*");}
         if project_service(root)?.is_some() { return Err("handoff: legacy service still running".into()); }
     }
     Ok(())
@@ -872,9 +872,9 @@ fn legacy(install:&Path,roots: &[PathBuf]) -> Res<()> {
 
 fn startup_status(install: &Path, root: &Path, error: &str,instance:&str) -> Res<()> {
     if project_service(root)?.is_some() { return Err("legacy ownership retained; startup status not written".into()); }
-    let mut status = coreq::status::common(&crate::platform::tool(install), "unknown", &crate::project_name(root),
+    let mut status = coreq::status::common(&crate::platform::tool(install), "unknown", &crate::paths::project_name(root),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()), Some(error.into()), None);
-    fs::create_dir_all(crate::dot(root)).map_err(|e| e.to_string())?;
+    fs::create_dir_all(crate::paths::dot(root)).map_err(|e| e.to_string())?;
     status["host_instance"]=json!(instance);
     crate::platform::write_status(&crate::platform::tool(install), root, &status)
 }
@@ -935,7 +935,7 @@ pub fn run(install: &Path) -> Res<()> {
     }
     let mut telemetry=crate::telemetry::HostCapture::default();
     // Host identity is stable for this owner; policy and interrupted writes are still read each tick.
-    let mut hostname=crate::hostname();
+    let mut hostname=crate::config::hostname();
     let shared = Arc::new(Mutex::new(Host::new(Policy::read_for_hostname(install,||hostname.clone()))));
     shared.lock().map_err(|_|"host occupancy recovery unknown")?.rebuilding=true;
     let native=coreq::process::identity(std::process::id()).map_err(|e|e.to_string())?.ok_or("host process identity missing")?;
@@ -963,7 +963,7 @@ pub fn run(install: &Path) -> Res<()> {
         if let Some(line)=telemetry.pass(install) {crate::platform::log(&line);}
         // §4 Board request records: here, ahead of the handover paths that skip the rest of the tick.
         if recorded.elapsed()>=crate::requests::RECORD_EVERY {crate::requests::flush(crate::requests::SERVICE);recorded=Instant::now();}
-        // #1297: steady host passes fold like project passes (main.rs `service.loop`).
+        // #1297: steady host passes fold like project passes (service_run.rs `service.loop`).
         let _repeating = tracing::info_span!("service.host.loop", coreq_repeating = true).entered();
         if let Err(e) = crate::profile::prune(install) { eprintln!("taskq: telemetry unknown: {e}"); }
         let publication=publish_service(install,&native,&instance).err();
@@ -983,7 +983,7 @@ pub fn run(install: &Path) -> Res<()> {
             }
         }
         let old = legacy(install,&roots);
-        if hostname.is_empty() {hostname=crate::hostname();}
+        if hostname.is_empty() {hostname=crate::config::hostname();}
         let configured = Policy::read_for_hostname(install,||hostname.clone());
         let (policy,timers)=guarded_policy(configured,&old);
         // #1769: a Stop whose generation ended can never complete; this owner resolves it instead of holding forever
@@ -1032,16 +1032,16 @@ pub fn run(install: &Path) -> Res<()> {
                             Ok(Some(_)) | Err(_) => { std::thread::sleep(std::time::Duration::from_secs(1)); continue; }
                         }
                         // A broken project config holds only this thread; no board or child exists yet.
-                        let context = crate::load(&root).and_then(|(cfg, raw)| {
+                        let context = crate::config::load(&root).and_then(|(cfg, raw)| {
                             let board = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &crate::platform::tool(&install))?;
-                            Ok(crate::Ctx { cfg, raw, board })
+                            Ok(crate::config::Ctx { cfg, raw, board })
                         });
                         match context {
-                            Ok(c) => return crate::service_run(&c, Some(host)),
+                            Ok(c) => return crate::service_run::service_run(&c, Some(host)),
                             Err(e) => {
                                 if let Ok(mut h) = host.lock() {
                                     if h.draining.contains(&root)&&installation::cancelling_root(&install).as_deref()==Some(root.as_path())
-                                        &&!h.slots.keys().any(|(project,_)|project==&root)&&crate::kids_file(&install,&root)?.is_empty() {
+                                        &&!h.slots.keys().any(|(project,_)|project==&root)&&crate::service_run::kids_file(&install,&root)?.is_empty() {
                                         return Err("project drained".into());
                                     }
                                     // No board/native reconciliation exists while configuration is invalid.
@@ -1087,7 +1087,7 @@ pub fn run(install: &Path) -> Res<()> {
                     drop(h);
                     if changed {
                         for root in &roots {
-                            if let Err(error)=crate::poke(root) {crate::platform::log(&error);}
+                            if let Err(error)=crate::wake::poke(root) {crate::platform::log(&error);}
                         }
                     }
                 }
@@ -1114,17 +1114,17 @@ pub fn run(install: &Path) -> Res<()> {
         if let Some((id,result))=finished {
             drop(h);
             let error=result.err().unwrap_or_else(||"controller exited without an observed host stop".into());
-            let _=crate::lifecycle::controller_exited(install,&id,&error);crate::platform::log(&format!("Stop controller: {}",crate::compact(&error,153)));
+            let _=crate::lifecycle::controller_exited(install,&id,&error);crate::platform::log(&format!("Stop controller: {}",crate::cli::text::compact(&error,153)));
             h=shared.lock().unwrap_or_else(|e|e.into_inner());
         }
         if h.updating.as_ref().is_some_and(|job|job.is_finished()) {
             let updated=h.updating.take().unwrap().join().unwrap_or_else(|_|Err("host maintenance panicked; partial effects unknown".into()));
             let text=match &updated {Ok(Maintenance::Update(Some(v)))=>format!("update: {v}"),Ok(Maintenance::Update(None))=>"update: up to date".into(),Ok(Maintenance::Installation(result))=>format!("installation: {result}"),Err(e)=>format!("maintenance: {e}")};
             if maintenance_once(&mut maintenance_result,&text) {log_all(install,&roots,&text);}
-            if crate::installed(install)&&matches!(updated,Ok(Maintenance::Update(Some(_)))) {h.restart=true;}
+            if crate::paths::installed(install)&&matches!(updated,Ok(Maintenance::Update(Some(_)))) {h.restart=true;}
             // § 9 deploy: the release flow records the applied version in each release root that sets `deploy`
-            if let (true,Ok(Maintenance::Update(Some(v))),Ok(exe))=(crate::installed(install),&updated,std::env::current_exe()) {
-                for l in crate::deploy::applied(&exe,&roots,crate::platform::channel(install).unwrap_or("live"),crate::platform::VERSION,v,&crate::hostname()) {log_all(install,&roots,&l);}
+            if let (true,Ok(Maintenance::Update(Some(v))),Ok(exe))=(crate::paths::installed(install),&updated,std::env::current_exe()) {
+                for l in crate::deploy::applied(&exe,&roots,crate::platform::channel(install).unwrap_or("live"),crate::platform::VERSION,v,&crate::config::hostname()) {log_all(install,&roots,&l);}
             }
         }
         let transition_ready=crate::platform::transition_ready(install).is_ok();
@@ -1136,21 +1136,21 @@ pub fn run(install: &Path) -> Res<()> {
             })),|_|"spawn");
             match job {Ok(job)=>h.updating=Some(job),Err(error)=>crate::platform::log(&format!("installation recovery not started: {error}"))}
         }
-        let asked=transition_ready&&!h.restart&&h.updating.is_none()&&(fs::remove_file(install.join("update")).is_ok()||roots.iter().any(|r|fs::remove_file(crate::dot(r).join("update")).is_ok()));
+        let asked=transition_ready&&!h.restart&&h.updating.is_none()&&(fs::remove_file(install.join("update")).is_ok()||roots.iter().any(|r|fs::remove_file(crate::paths::dot(r).join("update")).is_ok()));
         if transition_ready&&!h.restart&&h.updating.is_none()&&(asked || checked.is_none_or(|t| t.elapsed().as_secs() >= timers.0)) {
             checked = Some(Instant::now());
             let install=install.to_path_buf();
             let job=coreq::telemetry::capture::operation("host.update.dispatch",||std::thread::Builder::new().name("taskq-update".into()).spawn(coreq::telemetry::capture::bind(move || {
                 coreq::telemetry::capture::operation("host.update",|| {
-                    (if crate::installed(&install) {crate::platform::service_update(&install)}else{crate::platform::update(&install,true)}).map(Maintenance::Update)
+                    (if crate::paths::installed(&install) {crate::platform::service_update(&install)}else{crate::platform::update(&install,true)}).map(Maintenance::Update)
                 },|_|"update-failed")
             })),|_|"spawn");
             match job {Ok(job)=>h.updating=Some(job),Err(error)=>crate::platform::log(&format!("update not started: {error}"))}
         }
-        if install.join("restart").exists() || roots.iter().any(|r| crate::dot(r).join("restart").exists()) { h.restart = true; }
+        if install.join("restart").exists() || roots.iter().any(|r| crate::paths::dot(r).join("restart").exists()) { h.restart = true; }
         if h.restart_wake() {
             for root in &roots {
-                if let Err(e) = crate::poke(root) { append_project(install, root, &e); }
+                if let Err(e) = crate::wake::poke(root) { append_project(install, root, &e); }
             }
         }
         // The installer's 300 s wait began before this generation started; a reason not retained retries next tick.
@@ -1172,7 +1172,7 @@ pub fn run(install: &Path) -> Res<()> {
             // #2209: every tick, so a superseding intent's receipt names the waits too; the log names each change.
             installation::upgrade_waits(install,crate::platform::VERSION,&waits);
             if waits!=waits_reported {log_all(install,&roots,&format!("host re-exec waits for {waits}"));waits_reported=waits.clone();}
-            if crate::restart_watch(&mut stuck,handover,began.elapsed().as_secs(),300) {log_all(install,&roots,&format!("restart pending over 600 s; waits for {waits}"));}
+            if crate::service_run::restart_watch(&mut stuck,handover,began.elapsed().as_secs(),300) {log_all(install,&roots,&format!("restart pending over 600 s; waits for {waits}"));}
             h=shared.lock().unwrap_or_else(|e|e.into_inner());
             if h.handoff_ready() {
                 if h.stopping&&h.stop_controller.is_some() {
@@ -1201,10 +1201,10 @@ pub fn run(install: &Path) -> Res<()> {
                     std::thread::sleep(std::time::Duration::from_secs(1));continue;
                 }
                 let _ = fs::remove_file(install.join("restart"));
-                for root in &roots { let _ = fs::remove_file(crate::dot(root).join("restart")); }
+                for root in &roots { let _ = fs::remove_file(crate::paths::dot(root).join("restart")); }
                 #[cfg(unix)] {
                     use std::os::unix::process::CommandExt;
-                    let mut command = crate::platform::command(crate::launcher(install));
+                    let mut command = crate::platform::command(crate::paths::launcher(install));
                     command.args(["service", "run"]).current_dir(install).env_remove("TASKQ_ROOT");
                     crate::requests::flush(crate::requests::SERVICE);
                     coreq::telemetry::capture::before_exec();
@@ -1216,10 +1216,10 @@ pub fn run(install: &Path) -> Res<()> {
         }
         drop(h);
         #[cfg(unix)] crate::runtime::reap_inherited();
-        if crate::installed(install) {
+        if crate::paths::installed(install) {
             // #2048: hourly host doctor, off the tick thread: stale releases and qualification leftovers.
             if let Some(line)=doctor.tick(install) {crate::platform::log(&line);}
-            crate::keep_tray(install, &mut tray);
+            crate::service_run::keep_tray(install, &mut tray);
             if began.elapsed().as_secs() >= timers.1 && shared.lock().is_ok_and(|h| h.publications_ready(&roots)) {
                 if let Err(e) = fs::write(install.join("releases").join(crate::platform::VERSION).join("healthy"), "") {
                     crate::platform::log(&format!("release health unknown: {e}"));
@@ -1245,7 +1245,7 @@ pub fn run(install: &Path) -> Res<()> {
 fn restart_waits(roots: &[PathBuf]) -> String {
     let waits:Vec<String>=roots.iter().flat_map(|root| {
         let name=root.file_name().map_or_else(||root.display().to_string(),|n|n.to_string_lossy().into_owned());
-        let status=crate::data::json(&crate::dot(root).join("status.json")).ok().flatten().unwrap_or_default();
+        let status=crate::data::json(&crate::paths::dot(root).join("status.json")).ok().flatten().unwrap_or_default();
         status["restart_waits"].as_array().into_iter().flatten().filter_map(|w|w.as_str()).map(|w|format!("{name} {w}")).collect::<Vec<_>>()
     }).collect();
     if waits.is_empty() {"project passes in flight".into()} else {waits.join(", ")}
@@ -1294,14 +1294,14 @@ fn thread_error(outcome:&std::thread::Result<Res<()>>)->String {
         Ok(Err(e))=>e.clone(),
         Err(panic)=>panic.downcast_ref::<String>().cloned().or_else(||panic.downcast_ref::<&str>().map(|s|s.to_string())).map_or("panic".into(),|p|format!("panic: {p}")),
     };
-    format!("project thread error: {}",crate::compact(&reason,136))
+    format!("project thread error: {}",crate::cli::text::compact(&reason,136))
 }
 
 fn mirror(install: &Path, roots: &[PathBuf], text: &str, stderr: Option<&Path>) {
     for root in roots.iter().filter(|r| stderr != Some(project_log(install, r).as_path())) { append_project(install, root, text); }
 }
 
-fn project_log(install: &Path, root: &Path) -> PathBuf { install.join(format!("{}.log", crate::project_name(root))) }
+fn project_log(install: &Path, root: &Path) -> PathBuf { install.join(format!("{}.log", crate::paths::project_name(root))) }
 
 fn append_project(install: &Path, root: &Path, text: &str) {
     use std::io::Write;

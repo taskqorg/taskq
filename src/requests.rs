@@ -305,7 +305,7 @@ pub fn heartbeat(hour: &BTreeMap<String, u64>, hosts: Option<&BTreeMap<String, u
 /// parses them, so flags anywhere do not change it. Role `worker` or `reviewer` from `TASKQ_ROLE`, else `cli` (owner,
 /// PM, operator). `service run` is the service itself, whichever way its process ends.
 pub fn source(argv: &[String], role: Option<&str>) -> String {
-    let args = crate::Args::parse(argv).map(|a| a.pos).unwrap_or_default();
+    let args = crate::cli::Args::parse(argv).map(|a| a.pos).unwrap_or_default();
     let word = |s: Option<&String>| s.filter(|s| !s.is_empty() && s.len() <= 30 && s.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'))
         .map_or("*".to_string(), Clone::clone);
     let mut cmd = word(args.first());

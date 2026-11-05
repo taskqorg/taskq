@@ -1,5 +1,5 @@
 //! Focus correlation only; settings and admission policy remain authoritative.
-use crate::{Res,data,dot};
+use crate::{Res, data, paths::dot};
 use coreq::telemetry::capture::{CommandReceipt,operation};
 use serde_json::{Value,json};
 use std::{fs,io::Read,path::Path};
@@ -184,7 +184,7 @@ pub fn snapshot(root: &Path, signal: &mut Option<String>, command: &mut Option<S
         let _owner=coreq::file_lock::try_lock_file(file).map_err(|_|"focus command recovery busy; files kept")?;
         recover(root)?;
     }
-    let (link,(focus,command))=crate::wake_read(&dot(root).join("poke"),signal,|| {
+    let (link,(focus,command))=crate::wake::wake_read(&dot(root).join("poke"),signal,|| {
         let focus=data::focus(root)?;
         let observed=observe(root,&focus,command)?;
         Ok((focus,observed))

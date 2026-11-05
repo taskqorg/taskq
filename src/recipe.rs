@@ -1,7 +1,7 @@
 //! Recipes (taskq.md § 7, § 9 `recipes`): a reusable task list whose run adds ordinary held tasks. Identity is the
 //! name and its `version`; both go into each task's op id, so a rerun of the same run returns the first receipts.
 
-use crate::{NewTask, Res};
+use crate::{cli::task_cmd::NewTask, Res};
 use serde::Deserialize;
 use serde_json::Value;
 

@@ -130,7 +130,7 @@ pub fn prepare(b:&dyn Board,root:&Path,n:u64,log:&[Entry]) -> Res<String> {
     for e in log {
         if e.edited||!matches!(core::kind(n,&e.body),"answer"|"steer"|"requeue")||!projection.accepts(e.id){continue;}
         for f in manifest(&e.body)? {
-            let dot=crate::dot(root);directory(&dot)?;let dir=dot.join("reply-files");directory(&dir)?;
+            let dot=crate::paths::dot(root);directory(&dot)?;let dir=dot.join("reply-files");directory(&dir)?;
             let copy=dir.join(&f.hash);directory(&copy)?;let path=copy.join(&f.name);
             if !crate::messages::plain(&path)? || verified(&path,&f).is_err() {
                 let data=b.file(&f.url).map_err(|e|format!("Attachment delivery unknown: {e}; restore board access and retry delivery"))?;

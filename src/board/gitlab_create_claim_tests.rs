@@ -54,8 +54,8 @@
         let labels = vec!["q-held".to_string()];
         // GitLab strips the surrounding whitespace of a stored title and description
         let b = board(|title, text, labels| (title.trim().into(), text.trim().into(), labels));
-        let n = crate::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap();
-        let r = crate::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap_err();
+        let n = crate::cli::task_cmd::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap();
+        let r = crate::cli::task_cmd::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap_err();
         assert_eq!((r.outcome, r.task, r.state), ("accepted", n, Some("held")), "{}", r.reason);
         let cases: [(&str, fn(&str, &str, Vec<String>) -> (String, String, Vec<String>)); 3] = [
             ("title", |_, text, labels| ("Other".into(), text.into(), labels)),
@@ -64,10 +64,10 @@
         ];
         for (field, store) in cases {
             let b = board(store);
-            let r = crate::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap_err();
+            let r = crate::cli::task_cmd::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap_err();
             assert_eq!((r.outcome, r.reason.as_str()), ("unknown", "create readback does not match the request"), "{field}");
             // labels move with the task state after start, so retry discovery identifies the issue by title and body
-            let r = crate::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap_err();
+            let r = crate::cli::task_cmd::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap_err();
             let want = if field == "labels" { ("accepted", "") } else { ("unknown", "created issue conflicts with the immutable request") };
             assert_eq!((r.outcome, r.reason.as_str()), want, "{field}");
         }

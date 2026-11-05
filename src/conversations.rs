@@ -382,7 +382,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                     if !crate::runtime::owner::supported(runtime) {return Err("Selected owner runtime unsupported on this platform; draft kept".into());}
                     if let Some(choice)=&d.choice {
                         choice.validate(runtime)?;
-                        let host=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
+                        let host=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
                         let target=crate::runtime::of(runtime).setup;
                         choice.access(install,Path::new(&d.root),target,&host.permission_mode,&choice.codex(&host.codex))?;
                     }
@@ -473,10 +473,10 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
                 let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;
                 let root=Path::new(r.root.as_deref().ok_or("Owner project unavailable")?);
                 if !crate::host::project_paths(install)?.iter().any(|p|p==root) {return Err("Owner project is not registered".into());}
-                let (cfg,raw)=crate::load(root)?;
+                let (cfg,raw)=crate::config::load(root)?;
                 let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
                 let mut value=if let Some(n)=m["task"].as_u64().filter(|n|*n>0) {crate::reports::selected(root,&*b,n,!cfg.board.closed_reason,None)?}
-                    else {crate::closed_history(&*b,m["page"].as_u64().and_then(|n|u32::try_from(n).ok()).filter(|n|*n>0).unwrap_or(1),None,!cfg.board.closed_reason)?};
+                    else {crate::cli::inbox::closed_history(&*b,m["page"].as_u64().and_then(|n|u32::try_from(n).ok()).filter(|n|*n>0).unwrap_or(1),None,!cfg.board.closed_reason)?};
                 if value["tasks"].as_array().is_some_and(|rows|rows.iter().any(|t|!t["error"].is_null())) {return Err("Task history incomplete; board comments unavailable".into());}
                 value["tasks"]=json!(value["tasks"].as_array().into_iter().flatten().filter(|t|t["conversation"]["id"]==id).cloned().collect::<Vec<_>>());
                 value["tasks"]=json!(value["tasks"].as_array().into_iter().flatten().map(task_header).collect::<Vec<_>>());Ok(value)
@@ -493,11 +493,11 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
 fn task_body(install:&Path,m:&Value)->Res<Value> {
     let root=Path::new(m["root"].as_str().ok_or("Task project missing")?);
     if !crate::host::project_paths(install)?.iter().any(|p|p==root){return Err("Task project is not registered".into());}
-    let status=crate::data::json(&crate::dot(root).join("status.json"))?.ok_or("Task snapshot unavailable")?;
+    let status=crate::data::json(&crate::paths::dot(root).join("status.json"))?.ok_or("Task snapshot unavailable")?;
     let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("Task board unknown")?;
     let n=m["conversation"].as_str().and_then(|s|s.strip_prefix(&format!("task:{board}/"))).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("Task thread does not match its project")?;
     let mut row=if let Some(t)=status["tasks"].as_array().into_iter().flatten().find(|t|t["n"]==n){t.clone()}else{
-        let (cfg,raw)=crate::load(root)?;
+        let (cfg,raw)=crate::config::load(root)?;
         let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
         crate::reports::selected(root,&*b,n,!cfg.board.closed_reason,m["source_revision"].as_u64())?["tasks"].as_array().and_then(|a|a.first()).cloned().ok_or("Task source unavailable")?
     };
@@ -514,12 +514,12 @@ fn task_body(install:&Path,m:&Value)->Res<Value> {
 fn history_page(install:&Path,m:&Value)->Res<Value> {
     let root=Path::new(m["root"].as_str().ok_or("History project missing")?);
     if !crate::host::project_paths(install)?.iter().any(|p|p==root) {return Err("History project is not registered".into());}
-    let status=crate::data::json(&crate::dot(root).join("status.json"))?.ok_or("History snapshot unavailable")?;
+    let status=crate::data::json(&crate::paths::dot(root).join("status.json"))?.ok_or("History snapshot unavailable")?;
     let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("History board unknown")?;
     let n=m["conversation"].as_str().and_then(|s|s.strip_prefix("task:")).and_then(|s|s.strip_prefix(board)).and_then(|s|s.strip_prefix('/')).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("History thread does not match its project")?;
     let closed;
     let task=if let Some(t)=status["tasks"].as_array().and_then(|a|a.iter().find(|t|t["n"]==n)){t}else{
-        let (cfg,raw)=crate::load(root)?;let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
+        let (cfg,raw)=crate::config::load(root)?;let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
         closed=crate::reports::selected(root,&*b,n,!cfg.board.closed_reason,m["revision"].as_u64())?;closed["tasks"].as_array().and_then(|a|a.first()).filter(|t|t["error"].is_null()).ok_or("History source unavailable")?
     };
     if !m["revision"].is_number()||task["revision"]!=m["revision"] {return Err("Recorded questions changed; refresh before paging".into());}
@@ -535,11 +535,11 @@ fn history_page(install:&Path,m:&Value)->Res<Value> {
 }
 
 /// The live service status of a registered project: fresh, complete, with a fresh task read and a live pid.
-fn live_status(root:&Path)->Res<(crate::Config,Value,Value)> {
-    let (cfg,raw)=crate::load(root)?;
-    let path=crate::dot(root).join("status.json");
+fn live_status(root:&Path)->Res<(crate::service::Config,Value,Value)> {
+    let (cfg,raw)=crate::config::load(root)?;
+    let path=crate::paths::dot(root).join("status.json");
     let status=crate::data::json(&path)?.ok_or("Worker service status unavailable")?;
-    let age=crate::file_age(&path).ok_or("Worker service status age unknown")?;
+    let age=coreq::status::age(&path).ok_or("Worker service status age unknown")?;
     if !crate::snapshot::live(age as i64,cfg.ttl) || !crate::snapshot::complete(&status)
         || !status["tasks_age_seconds"].as_u64().and_then(|a|a.checked_add(age)).and_then(|a|i64::try_from(a).ok()).is_some_and(|a|crate::snapshot::live(a,cfg.ttl))
         || !status["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).is_some_and(crate::runtime::alive) {
@@ -566,7 +566,7 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
         let projected=crate::reports::selected(root,&*b,n,!cfg.board.closed_reason,m["revision"].as_u64())?;
         let (rt,id,host,attempt)=crate::reports::worker(&projected,Some(read.attempt))?;
         if host!=local{return remote_read(install,&cfg,&raw,&status,&host,&read);}
-        let session=crate::closed_session(root,&rt,&id,n,attempt)?;
+        let session=crate::cli::inbox::closed_session(root,&rt,&id,n,attempt)?;
         let mut value=crate::dialogue::worker_transcript(&format!("{rt}:{session}"),&crate::runtime::attempt_log(root,"worker",n,attempt),read.before,read.after)?;
         for item in value["items"].as_array_mut().into_iter().flatten(){item["attempt"]=json!(attempt);}
         value["following"]=json!(false);value["activity"]=json!("ended");return Ok(crate::link::fit(value,read.after.is_some()));
@@ -576,7 +576,7 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
     remote_read(install,&cfg,&raw,&status,host,&read)
 }
 
-fn remote_read(install:&Path,cfg:&crate::Config,raw:&Value,status:&Value,host:&str,read:&crate::link::Read)->Res<Value> {
+fn remote_read(install:&Path,cfg:&crate::service::Config,raw:&Value,status:&Value,host:&str,read:&crate::link::Read)->Res<Value> {
     let allow=crate::link::allowed(raw)?;
     let peer=crate::link::peers(status,cfg.ttl,allow.as_deref()).into_iter().find(|p|p.host==host).ok_or_else(||format!("Host {host} publishes no live host link"))?;
     let (mut relay,_)=crate::link::Dash::new(install)?;
@@ -590,7 +590,7 @@ pub(crate) fn closed_remote(install:&Path,root:&Path,host:&str,task:u64,attempt:
     remote_read(install,&cfg,&raw,&status,host,&crate::link::Read{board:board.into(),task,attempt,before,after:None})
 }
 
-fn board_root(install:&Path,board:&str)->Option<(PathBuf,crate::Config,Value,Value)> {
+fn board_root(install:&Path,board:&str)->Option<(PathBuf,crate::service::Config,Value,Value)> {
     crate::host::project_paths(install).ok()?.into_iter().find_map(|root|{
         let (cfg,raw,status)=live_status(&root).ok()?;
         (status["issues"]==board).then_some((root,cfg,raw,status))
@@ -626,7 +626,7 @@ pub(crate) fn serve(install:&Path,read:&crate::link::Read)->Res<Value> {
 /// registered project of this host.
 pub(crate) fn serve_peer(install:&Path,root:&Path,read:&crate::link::Read)->Res<Value> {
     let log=crate::runtime::attempt_log(root,"worker",read.task,read.attempt);
-    serve_peer_with(install,root,read,|local|crate::closed_peer_session(root,local,read.task,read.attempt),|session,before,after|crate::dialogue::worker_transcript(session,&log,before,after))
+    serve_peer_with(install,root,read,|local|crate::cli::inbox::closed_peer_session(root,local,read.task,read.attempt),|session,before,after|crate::dialogue::worker_transcript(session,&log,before,after))
 }
 
 fn serve_peer_with(install:&Path,root:&Path,read:&crate::link::Read,closed:impl FnOnce(&str)->Res<String>,page:impl FnOnce(&str,Option<u64>,Option<u64>)->Res<Value>)->Res<Value> {

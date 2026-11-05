@@ -1,5 +1,5 @@
 //! Short native controller outside the host unit; task/worker ownership stays with the host.
-use crate::{Res,lifecycle};
+use crate::{Res, lifecycle};
 use coreq::process::{Identity,Failure};
 use std::{fs,path::{Path,PathBuf},process::Command,time::{Duration,Instant}};
 

@@ -130,11 +130,11 @@
                 _ => Err(format!("unexpected {method} {url}")),
             }
         }));
-        let links = crate::upload_attachments(github.as_ref(), 7, &paths).unwrap();
+        let links = crate::cli::text::upload_attachments(github.as_ref(), 7, &paths).unwrap();
         let digest: String = ring::digest::digest(&ring::digest::SHA256, &std::fs::read(&zip).unwrap()).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(links, [format!("[⬇ build.zip](https://github.com/o/r/raw/{sha}/7/{digest}-build.zip)")]);
         // Defect: GitHub raw serves HTML as text/plain, so one click showed the page source; the page goes up zipped
-        let links = crate::upload_attachments(github.as_ref(), 7, &[html.display().to_string()]).unwrap();
+        let links = crate::cli::text::upload_attachments(github.as_ref(), 7, &[html.display().to_string()]).unwrap();
         let packed = base64::engine::general_purpose::STANDARD.decode(blob.borrow().as_str()).unwrap();
         let digest: String = ring::digest::digest(&ring::digest::SHA256, &packed).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(links, [format!("[⬇ site.html.zip](https://github.com/o/r/raw/{sha}/7/{digest}-site.html.zip)")]);
@@ -158,7 +158,7 @@
                 _ => Err(format!("unexpected {method} {url}")),
             }
         }));
-        let links = crate::upload_attachments(gitlab.as_ref(), 7, &paths).unwrap();
+        let links = crate::cli::text::upload_attachments(gitlab.as_ref(), 7, &paths).unwrap();
         let name = uploads.borrow()[0].clone();
         assert!(name.ends_with("-build.zip"), "{name}");
         assert_eq!(links, [format!("[⬇ build.zip](https://gitlab.example/-/project/39/uploads/cef859da/{name}#upload=5)")]);
@@ -349,8 +349,8 @@
                 Ok(Reply {status: 200, headers: vec![], body: v.to_string(), operation: "read"})
             }));
             let (json_calls, human_calls) = (std::rc::Rc::new(RefCell::new(0)), std::rc::Rc::new(RefCell::new(0)));
-            let v = crate::inbox_json(&*board(json_calls.clone(), log.to_vec()), &root, "mac", 7).unwrap();
-            let human = crate::inbox(&*board(human_calls.clone(), log.to_vec()), &root, 7).unwrap();
+            let v = crate::cli::inbox::inbox_json(&*board(json_calls.clone(), log.to_vec()), &root, "mac", 7).unwrap();
+            let human = crate::cli::inbox::inbox(&*board(human_calls.clone(), log.to_vec()), &root, 7).unwrap();
             assert_eq!(*json_calls.borrow(), *human_calls.borrow(), "{}: same reads as the human inbox", kind.name);
             assert!(human.starts_with("#7 Pick\n") && human.contains("\nLog:\n"), "human inbox unchanged: {human}");
             let at = |id: u64| iso(&format!("2026-10-30T00:00:0{id}Z")).unwrap();

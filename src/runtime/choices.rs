@@ -108,7 +108,7 @@ fn access_view(access:&crate::policy::Effective)->Value {let mut value=access.js
 /// Fresh project-scoped facts, not a saved grant. Host policy/model defaults are read-only here.
 pub fn view(install:&Path,root:&Path,runtime:&str)->Value {
     let result=(||->Res<Value>{
-        let policy=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
+        let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
         let grants=crate::policy::load(install)?;
         let home=std::env::var_os("HOME").or_else(||std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("Host home unknown")?;
         let target=if super::of(runtime).has("model-catalog"){super::of(runtime).setup}else{runtime};

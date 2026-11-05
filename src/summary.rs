@@ -27,7 +27,7 @@ pub fn render(n: u64, body: &str, log: &[Entry], t: &Task, link: &dyn Fn(u64) ->
     if let Some(r) = t.result.as_deref().filter(|_| t.state != State::Closed) {
         head.push(format!("result {}", &r[..r.len().min(7)]));
     }
-    let merged = (t.state == State::Closed).then(|| crate::merge_receipt(log)).flatten();
+    let merged = (t.state == State::Closed).then(|| crate::cli::inbox::merge_receipt(log)).flatten();
     match (&merged, pr(log)) {
         (Some(m), _) => head.push(m.clone()),
         (None, Some((label, url))) => head.push(format!("[{label}]({url})")),
@@ -150,7 +150,7 @@ fn links(text: &str) -> Vec<(String, String)> {
         if let Some(open) = before.rfind('[') && url.starts_with("https://") {
             let label = before[open + 1..].trim();
             let label = if label.is_empty() { url.rsplit('/').next().unwrap_or_default().split(['?', '#']).next().unwrap_or_default() } else { label };
-            out.push((crate::plain(label, 40), url));
+            out.push((crate::cli::text::plain(label, 40), url));
         }
         rest = &after[end..];
     }

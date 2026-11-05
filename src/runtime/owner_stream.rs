@@ -50,7 +50,7 @@ fn arguments(r:&Request)->Vec<String> {
 }
 pub fn command(own:&Path,r:&Request,resume:bool)->Res<std::process::Command> {
     let install=own.parent().and_then(Path::parent).ok_or("Owner installation unknown")?;
-    let policy=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
+    let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
     let root=r.root.as_deref().map_or(own,Path::new);let exe=std::env::current_exe().map_err(|_|"Owner executable unknown")?;
     let env=super::Env{context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,publish:"",board_env:&[],jobs:None};
     let access=request_access(&env,&r.runtime,r)?;

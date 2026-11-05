@@ -4,7 +4,7 @@
 use crate::board::{self, Board};
 use crate::core::{self, State, Task, options};
 use crate::service::{self, Config, View};
-use crate::{Res, age, cell, compact, runtime};
+use crate::{Res, display::age, cli::text::cell, cli::text::compact, runtime};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
@@ -15,10 +15,10 @@ pub const SCHEMA: u64 = 1;
 pub fn live(age: i64, ttl: i64) -> bool { (0..=ttl).contains(&age) }
 
 /// The project ttl of `root`; an unreadable config uses the default.
-pub fn ttl(root: &std::path::Path) -> i64 { crate::load(root).map_or(crate::TTL, |(c, _)| c.ttl) }
+pub fn ttl(root: &std::path::Path) -> i64 { crate::config::load(root).map_or(crate::config::TTL, |(c, _)| c.ttl) }
 
 /// A `status.json` file at `path` is live when its file age passes [`live`].
-pub fn status_live(path: &std::path::Path, ttl: i64) -> bool { crate::file_age(path).is_some_and(|a| live(a as i64, ttl)) }
+pub fn status_live(path: &std::path::Path, ttl: i64) -> bool { coreq::status::age(path).is_some_and(|a| live(a as i64, ttl)) }
 /// Every open state; `totals` names each one, zero included.
 pub const STATES: [&str; 8] = ["held", "ready", "waiting", "doing", "review", "ask", "later", "failed"];
 /// What a reader finds in a snapshot of each source.
@@ -882,7 +882,7 @@ pub const ANSWER_CHARS: usize = 240;
 /// § 2 visual evidence: the service's copy of an ask image `url`, which the app (no board token) shows inline.
 pub fn image_copy(root: &std::path::Path, url: &str) -> std::path::PathBuf {
     let key: String = ring::digest::digest(&ring::digest::SHA256, url.as_bytes()).as_ref()[..8].iter().map(|b| format!("{b:02x}")).collect();
-    crate::dot(root).join("images").join(key)
+    crate::paths::dot(root).join("images").join(key)
 }
 
 /// The image URLs of a card's Evidence line.

@@ -98,13 +98,13 @@
         let github = [format!("[⬇ logs.tar.gz](https://github.com/o/r/raw/{sha}/5/0a1b2c-logs.tar.gz)"), format!("[⬇ report.pdf](https://github.com/o/r/raw/{sha}/5/3d4e5f-report.pdf)")];
         let gitlab = ["[⬇ build.zip](https://gitlab.example/-/project/39/uploads/cef859da/0a1b2c-build.zip#upload=5)".to_string(), "[⬇ site.html](https://gitlab.example/-/project/39/uploads/0f3a/3d4e5f-site.html#upload=6)".into()];
         for (host, files) in [("GitHub", &github), ("GitLab", &gitlab)] {
-            let result = crate::result_text(5, "Changed: c\nOpen: none", &["cargo test -- pass".into()], &[], None, files).unwrap();
+            let result = crate::cli::text::result_text(5, "Changed: c\nOpen: none", &["cargo test -- pass".into()], &[], None, files).unwrap();
             assert!(result.ends_with(&format!("\nEvidence: {}, {}", files[0], files[1])), "{host}: {result}");
             let log = vec![e(10, "taskq: spawn worker claude:w win".into()), e(11, core::entry("result", &[&sha], Some(10), &result))];
             let got = render(5, "## Goal\ng", &log, &core::fold(5, &log, false), &github_link(5), None);
             assert_eq!(got.lines().last(), Some(format!("Files: {}, {}", files[0], files[1]).as_str()), "{host}: {got}");
             let opts = ["Ship - + done; - risk".to_string(), "Hold - + safe; - slow".into()];
-            let card = crate::ask_card(5, "Done: built\nProblem: ship it?", &opts, Some("1"), &files[..1]).unwrap();
+            let card = crate::cli::text::ask_card(5, "Done: built\nProblem: ship it?", &opts, Some("1"), &files[..1]).unwrap();
             let log = vec![e(10, "taskq: spawn worker claude:w win".into()), e(11, core::entry("ask", &[], Some(10), &card))];
             let got = render(5, "## Goal\ng", &log, &core::fold(5, &log, false), &github_link(5), None);
             assert!(got.contains(&format!("\nEvidence: {}\n", files[0])) && got.ends_with(&format!("\nFiles: {}", files[0])), "{host}: {got}");

@@ -295,7 +295,7 @@ pub(crate) fn versions_in_use(install:&Path)->Res<Vec<String>> {
     })
 }
 
-pub fn command(args:&crate::Args)->Res<()> {
+pub fn command(args:&crate::cli::Args)->Res<()> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot launch or control external app servers".into());}
     if args.pos.len()!=2||args.flags.iter().any(|(k,v)|!["action","request"].contains(&k.as_str())||v.len()!=1) {
         return Err("usage: service app-server --action prepare|launch|observe|cancel|reconcile --request JSON".into());

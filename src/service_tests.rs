@@ -1292,7 +1292,7 @@ Open: none")).unwrap();
         let mut c=cfg("mac");
         c.root=std::env::temp_dir().join(format!("taskq-drain-{}",crate::runtime::uuid()));
         c.install=c.root.join("install");
-        fs::create_dir_all(crate::dot(&c.root)).unwrap();
+        fs::create_dir_all(crate::paths::dot(&c.root)).unwrap();
         let host=std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Err("fixture holds admission".into()))));
         host.lock().unwrap().draining.insert(c.root.clone());
         let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
@@ -1300,11 +1300,11 @@ Open: none")).unwrap();
         let mut s=Service::new(&b,&c,"fixture",Box::new(|_|panic!("drain must never submit work")));
         s.host=Some(host.clone());
         b.state.borrow_mut().fail_comment_reads=1;
-        assert!(crate::stopped_handoff(&mut s,&host,&c).is_err(),"no board observation is not an idle proof");
+        assert!(crate::service_run::stopped_handoff(&mut s,&host,&c).is_err(),"no board observation is not an idle proof");
         s.pass().unwrap();
         assert!(s.kids.is_empty());
         assert!(s.retained_attempts().contains(&a));
-        assert!(!crate::stopped_handoff(&mut s,&host,&c).unwrap(),"missing handle must retain the project and its slot");
+        assert!(!crate::service_run::stopped_handoff(&mut s,&host,&c).unwrap(),"missing handle must retain the project and its slot");
         assert_eq!(host.lock().unwrap().busy.get(&c.root),Some(&true));
         b.labels(n,&[],&[TASK_LABEL.into()]).unwrap();s.pass().unwrap();
         assert!(s.retained_attempts().contains(&a),"label removal is not native termination");
@@ -1314,24 +1314,24 @@ Open: none")).unwrap();
         b.close(n).unwrap();b.state.borrow_mut().fail_comment_reads=1;
         assert!(s.pass().is_err());
         assert!(s.retained_attempts().contains(&a));
-        assert!(!crate::stopped_handoff(&mut s,&host,&c).unwrap(),"failed ownership read cannot certify idle");
+        assert!(!crate::service_run::stopped_handoff(&mut s,&host,&c).unwrap(),"failed ownership read cannot certify idle");
         s.pass().unwrap();
         assert!(s.retained_attempts().contains(&a),"leaving the open-issue list is not native termination");
-        assert!(!crate::stopped_handoff(&mut s,&host,&c).unwrap());
+        assert!(!crate::service_run::stopped_handoff(&mut s,&host,&c).unwrap());
         release_execution(&b,n,a,a,"exit").unwrap();
         s.tasks_read=Some(std::time::Instant::now()-std::time::Duration::from_secs(c.poll.max(1)));
-        assert!(crate::stopped_handoff(&mut s,&host,&c).unwrap(),"read-only monitor must observe terminal delivery and complete drain");
+        assert!(crate::service_run::stopped_handoff(&mut s,&host,&c).unwrap(),"read-only monitor must observe terminal delivery and complete drain");
         let n=b.create("Recovered","",&[TASK_LABEL.into()]).unwrap();
         let a=b.comment(n,"taskq: spawn worker codex:recovered mac").unwrap();
         s.pass().unwrap();assert!(s.retained_attempts().contains(&a));
         let exit=Rc::new(RefCell::new(None));
         s.adopt(Kid { unknown:None, stopping:false, session_url:None,execution:a,task:n,attempt:a,rt:"codex".into(),proc:Box::new(FakeProc(exit.clone()))}).unwrap();
-        assert!(!crate::stopped_handoff(&mut s,&host,&c).unwrap());
+        assert!(!crate::service_run::stopped_handoff(&mut s,&host,&c).unwrap());
         *exit.borrow_mut()=Some(0);
-        assert!(crate::stopped_handoff(&mut s,&host,&c).unwrap(),"reduced monitoring must retire the recovered reservation after exact release");
+        assert!(crate::service_run::stopped_handoff(&mut s,&host,&c).unwrap(),"reduced monitoring must retire the recovered reservation after exact release");
         b.state.borrow_mut().fail_comments=1;
         s.ownership_known=false;
-        assert!(crate::stopped_handoff(&mut s,&host,&c).unwrap(),"read-only recovery can prepare without resuming ordinary board writes");
+        assert!(crate::service_run::stopped_handoff(&mut s,&host,&c).unwrap(),"read-only recovery can prepare without resuming ordinary board writes");
         assert_eq!(b.state.borrow().fail_comments,1,"recovery must not try an ordinary task write");
         drop(s);fs::remove_dir_all(&c.root).unwrap();
     }
@@ -1370,7 +1370,7 @@ Open: none")).unwrap();
             if edited { b.edit_comment(held, id, &format!("{body}\nedited")).unwrap(); }
             let snap = crate::snapshot::read(&b, &c, &json!({}), &[]);
             assert_eq!(snap.tasks.iter().find(|r| r.n == held).unwrap().task.state, State::Held, "only an accepted start overrides held labels");
-            assert!(!crate::start_one(&b, &c.root, held, &crate::Op { revision: Some(0), ..Default::default() }).ok());
+            assert!(!crate::cli::task_cmd::start_one(&b, &c.root, held, &crate::Op { revision: Some(0), ..Default::default() }).ok());
         }
         let n = b.create("Logged start", "", &["q-held".into()]).unwrap();
         b.comment(n, "taskq: hold").unwrap();
@@ -1383,12 +1383,12 @@ Open: none")).unwrap();
         assert_eq!(row.task.state, State::Ready);
         assert_eq!(row.json()["admission"]["code"], "labels");
         assert_eq!(entries(&b, n).unwrap().len(), 2);
-        assert!(crate::start_tasks(&b, &c.root, &[n.to_string()], &crate::Op::default()).unwrap()[0].ok());
+        assert!(crate::cli::task_cmd::start_tasks(&b, &c.root, &[n.to_string()], &crate::Op::default()).unwrap()[0].ok());
         s.pass().unwrap();
         assert_eq!(s.kids.len(), 1, "the repaired task is admitted");
         let attempt = task(&b, n).attempt;
         b.labels(n, &["q-held".into()], &["q-doing".into(), "taskq".into()]).unwrap();
-        assert!(!crate::start_tasks(&b, &c.root, &[n.to_string()], &crate::Op::default()).unwrap()[0].ok());
+        assert!(!crate::cli::task_cmd::start_tasks(&b, &c.root, &[n.to_string()], &crate::Op::default()).unwrap()[0].ok());
         assert_eq!(task(&b, n).attempt, attempt, "a retry never replaces active work");
         assert_eq!(s.kids.len(), 1);
     }
@@ -1427,11 +1427,11 @@ Open: none")).unwrap();
         assert_eq!(s.selected_line(),None,"equal versions: one value");
         assert!(!s.heartbeat_body().lines().any(|l|l.starts_with("selected ")));
         std::fs::write(c.install.join("current"),"9.9.9").unwrap();
-        assert_eq!(s.selected_line().as_deref(),Some(if crate::lifecycle_waits(&s,false).is_empty() {"selected 9.9.9 waits restart pending".to_string()}
+        assert_eq!(s.selected_line().as_deref(),Some(if crate::service_run::lifecycle_waits(&s,false).is_empty() {"selected 9.9.9 waits restart pending".to_string()}
             else {format!("selected 9.9.9 waits #{n} attempt {attempt}")}.as_str()));
         s.kids[0].stopping=false;
         s.observations.clear();
-        let waits=crate::lifecycle_waits(&s,true);
+        let waits=crate::service_run::lifecycle_waits(&s,true);
         assert!(waits.contains(&format!("#{n}")),"{waits:?}");
         std::fs::write(c.install.join("current"),"../x").unwrap();
         assert_eq!(s.selected_line(),None,"an invalid selection is never published");
@@ -1458,8 +1458,8 @@ Open: none")).unwrap();
         assert!(s.handoff_waits(true,true).is_empty(),"#1601: a childless pending attempt passes to the next image");
         assert!(!s.handoff_waits(false,false).is_empty(),"outside a handover it still waits");
         s.pending.remove(&(n,1));
-        if cfg!(windows) {assert!(crate::lifecycle_waits(&s,false).is_empty());}
-        assert!(!crate::lifecycle_waits(&s,true).is_empty(),"stop still waits");
+        if cfg!(windows) {assert!(crate::service_run::lifecycle_waits(&s,false).is_empty());}
+        assert!(!crate::service_run::lifecycle_waits(&s,true).is_empty(),"stop still waits");
     }
 
     // #2228: on win a handed-in Claude resume whose native job stayed ambiguous (pid 0) held the 4.6.59 image exit.
@@ -1477,18 +1477,18 @@ Open: none")).unwrap();
         }
         let b=Fake::default();
         let c=cfg("mac");
-        std::fs::create_dir_all(crate::dot(&c.root)).unwrap();
+        std::fs::create_dir_all(crate::paths::dot(&c.root)).unwrap();
         let mut s=service(&b,&c,Default::default());
         s.ownership_known=true;
         let kid=|task,rt:&str,proc:Box<dyn Proc>|Kid {unknown:None,stopping:false,session_url:None,execution:task,task,attempt:task,rt:rt.into(),proc};
         s.kids.push(kid(1,"claude",Box::new(NoPid)));
         s.kids.push(kid(2,"codex",Box::new(FakeProc(Rc::new(RefCell::new(None))))));
         assert!(crate::runtime::handover_waits("codex-app"),"an app turn still defers the exit");
-        assert!(crate::lifecycle_waits(&s,false).is_empty(),"{:?}",crate::lifecycle_waits(&s,false));
-        assert_eq!(crate::lifecycle_waits(&s,true),["#1","#2"],"stop still waits");
+        assert!(crate::service_run::lifecycle_waits(&s,false).is_empty(),"{:?}",crate::service_run::lifecycle_waits(&s,false));
+        assert_eq!(crate::service_run::lifecycle_waits(&s,true),["#1","#2"],"stop still waits");
         let mut h=crate::host::Host::new(Err("fixture".into()));
         assert!(h.begin_pass(&c.root));h.restart=true;
-        crate::report_handoff(&s,&mut h,&c.root,false).unwrap();
+        crate::service_run::report_handoff(&s,&mut h,&c.root,false).unwrap();
         assert!(h.handoff_ready(),"one pass prepares the re-exec: {:?}",h.handoff_wait());
         let _=std::fs::remove_dir_all(&c.root);
     }
@@ -1682,7 +1682,7 @@ Open: none")).unwrap();
         crate::profile::init(&dir.join("i"));
         let _runtime = coreq::telemetry::capture::Runtime::install_bounded(&dir.join("i/telemetry.log/universal.sqlite3"), "taskq", "fixture",crate::telemetry::budget(&dir.join("i"),"telemetry.sqlite3").unwrap()).unwrap();
         if std::env::var("TASKQ_HANDOFF_MODE").unwrap() == "resume" {
-            crate::resume(&dir).unwrap();
+            crate::cli::service_cmd::resume(&dir).unwrap();
         } else {
             let mut seen = None;
             let link = crate::tests::wake_context(&dir.join(".taskq/poke"), &mut seen).unwrap().unwrap();
@@ -1714,16 +1714,16 @@ Open: none")).unwrap();
             std::fs::write(c.install.join("hold"), "owner-held fixture").unwrap();
             for held in [true, false] {
                 std::fs::write(dir.join(".taskq/focus"), "all").unwrap();
-                crate::pause(&dir,false).unwrap();
+                crate::cli::service_cmd::pause(&dir,false).unwrap();
                 std::fs::remove_file(dir.join(".taskq/poke")).unwrap();
                 let pokes = [dir.join(".taskq/poke"), c.install.join("poke")];
-                let poke_start = crate::poke_times(&pokes);
+                let poke_start = crate::wake::poke_times(&pokes);
                 s.focus = crate::data::focus(&dir).unwrap();
                 s.pass().unwrap();
                 assert_eq!(task(&b, n).state, State::Ready);
-                crate::resume(&dir).unwrap();
+                crate::cli::service_cmd::resume(&dir).unwrap();
                 let mut ticks = 0;
-                crate::sleep_until_poke(&pokes, poke_start, std::time::Instant::now()+std::time::Duration::from_secs(1), &mut || ticks += 1);
+                crate::wake::sleep_until_poke(&pokes, poke_start, std::time::Instant::now()+std::time::Duration::from_secs(1), &mut || ticks += 1);
                 assert_eq!(ticks, 0, "Resume during the pass must skip the next poll wait");
                 s.focus = crate::data::focus(&dir).unwrap();
                 s.pass().unwrap();
@@ -1739,14 +1739,14 @@ Open: none")).unwrap();
                 }
             }
             let pokes = [dir.join(".taskq/poke"), c.install.join("poke")];
-            let poke_start = crate::poke_times(&pokes);
-            crate::touch(&pokes[1]);
-            assert!(crate::sleep_until_poke(&pokes, poke_start, std::time::Instant::now()+std::time::Duration::from_secs(1), &mut || panic!("host poke during a pass was lost")), "a poke reports itself");
-            assert!(!crate::sleep_until_poke(&pokes, crate::poke_times(&pokes), std::time::Instant::now(), &mut || {}), "a timeout is not a poke");
+            let poke_start = crate::wake::poke_times(&pokes);
+            crate::paths::touch(&pokes[1]);
+            assert!(crate::wake::sleep_until_poke(&pokes, poke_start, std::time::Instant::now()+std::time::Duration::from_secs(1), &mut || panic!("host poke during a pass was lost")), "a poke reports itself");
+            assert!(!crate::wake::sleep_until_poke(&pokes, crate::wake::poke_times(&pokes), std::time::Instant::now(), &mut || {}), "a timeout is not a poke");
             // A poke during sleep is observed after the current tick, without waiting another second.
-            let poke_start = crate::poke_times(&pokes);
+            let poke_start = crate::wake::poke_times(&pokes);
             let mut ticks = 0;
-            crate::sleep_until_poke(&pokes, poke_start, std::time::Instant::now()+std::time::Duration::from_secs(2), &mut || {
+            crate::wake::sleep_until_poke(&pokes, poke_start, std::time::Instant::now()+std::time::Duration::from_secs(2), &mut || {
                 ticks += 1;
                 std::fs::remove_file(&pokes[1]).unwrap();
             });
@@ -1763,26 +1763,26 @@ Open: none")).unwrap();
         let c = cfg("mac");
         let b = Fake::default();
         let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
-        assert_eq!(crate::poll_wait(60, true, false, false, false, None), 60, "no board read yet is not idle");
-        assert_eq!(crate::poll_wait(60, true, false, false, true, None), 60, "no board read yet is not idle, focus off too");
+        assert_eq!(crate::wake::poll_wait(60, true, false, false, false, None), 60, "no board read yet is not idle");
+        assert_eq!(crate::wake::poll_wait(60, true, false, false, true, None), 60, "no board read yet is not idle, focus off too");
         s.pass().unwrap();
         let idle = s.snapshot.as_ref();
-        assert_eq!(crate::poll_wait(60, true, false, false, false, idle), 180);
-        assert_eq!(crate::poll_wait(60, false, false, false, false, idle), 60, "a failed pass keeps the normal interval");
-        assert_eq!(crate::poll_wait(60, true, true, false, false, idle), 60, "a running child keeps the normal interval");
-        assert_eq!(crate::poll_wait(60, true, false, true, false, idle), 60, "a poke restores the normal interval");
+        assert_eq!(crate::wake::poll_wait(60, true, false, false, false, idle), 180);
+        assert_eq!(crate::wake::poll_wait(60, false, false, false, false, idle), 60, "a failed pass keeps the normal interval");
+        assert_eq!(crate::wake::poll_wait(60, true, true, false, false, idle), 60, "a running child keeps the normal interval");
+        assert_eq!(crate::wake::poll_wait(60, true, false, true, false, idle), 60, "a poke restores the normal interval");
         let n = b.create("Pending", "", &[TASK_LABEL.into()]).unwrap();
         s.pass().unwrap();
         let snap = s.snapshot.as_mut().unwrap();
         assert!(snap.tasks.iter().any(|r| r.n == n));
         for state in [State::Ready, State::Doing, State::Review, State::Ask] {
             snap.tasks.iter_mut().for_each(|r| r.task.state = state);
-            assert_eq!(crate::poll_wait(60, true, false, false, false, Some(&*snap)), if state == State::Ask {180} else {60}, "{state:?} task");
+            assert_eq!(crate::wake::poll_wait(60, true, false, false, false, Some(&*snap)), if state == State::Ask {180} else {60}, "{state:?} task");
             // #2352: focus off admits nothing, so a board task elsewhere keeps no 60 s pass here
-            assert_eq!(crate::poll_wait(60, true, false, false, true, Some(&*snap)), 180, "{state:?} task, focus off");
-            assert_eq!(crate::poll_wait(60, false, false, false, true, Some(&*snap)), 60, "{state:?} task, focus off, failed pass");
-            assert_eq!(crate::poll_wait(60, true, true, false, true, Some(&*snap)), 60, "{state:?} task, focus off, running child");
-            assert_eq!(crate::poll_wait(60, true, false, true, true, Some(&*snap)), 60, "{state:?} task, focus off, poke");
+            assert_eq!(crate::wake::poll_wait(60, true, false, false, true, Some(&*snap)), 180, "{state:?} task, focus off");
+            assert_eq!(crate::wake::poll_wait(60, false, false, false, true, Some(&*snap)), 60, "{state:?} task, focus off, failed pass");
+            assert_eq!(crate::wake::poll_wait(60, true, true, false, true, Some(&*snap)), 60, "{state:?} task, focus off, running child");
+            assert_eq!(crate::wake::poll_wait(60, true, false, true, true, Some(&*snap)), 60, "{state:?} task, focus off, poke");
         }
     }
 
@@ -1845,14 +1845,14 @@ Open: none")).unwrap();
         let host=std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(policy.clone()))));
         let (ba,bb)=(Fake::default(),Fake::default());let exits=Exits::default();
         let mut ca=cfg("invented");ca.root=base.join("a");ca.install=base.clone();let mut cb=ca.clone();cb.root=base.join("b");
-        for root in [&ca.root,&cb.root] {std::fs::create_dir_all(crate::dot(root)).unwrap();}
+        for root in [&ca.root,&cb.root] {std::fs::create_dir_all(crate::paths::dot(root)).unwrap();}
         let (mut sa,mut sb)=(service(&ba,&ca,exits.clone()),service(&bb,&cb,exits.clone()));
         bb.create("Already running","",&[TASK_LABEL.into()]).unwrap();sb.pass().unwrap();
         let attempt=sb.kids[0].attempt;
         for s in [&mut sa,&mut sb] {s.host=Some(host.clone());s.reload(Ok(policy.cap.clone()));s.sync_host();}
         host.lock().unwrap().draining.insert(ca.root.clone());
         let held=ba.create("Keep queued","",&[TASK_LABEL.into()]).unwrap();sa.pass().unwrap();sa.sync_host();
-        assert!(sa.kids.is_empty()&&crate::drained(&sa,&host.lock().unwrap()));
+        assert!(sa.kids.is_empty()&&crate::service_run::drained(&sa,&host.lock().unwrap()));
         host.lock().unwrap().ready(&ca.root,false);
         let next=bb.create("Next job","",&[TASK_LABEL.into()]).unwrap();sb.pass().unwrap();sb.sync_host();
         assert_eq!(sb.kids.len(),2,"unrelated admission stays open: {:?}",sb.waits);
@@ -1873,7 +1873,7 @@ Open: none")).unwrap();
         let host=std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(policy.clone()))));
         let (ba,bb)=(Fake::default(),Fake::default());
         let mut ca=cfg("invented");ca.root=base.join("a");ca.install=base.clone();let mut cb=ca.clone();cb.root=base.join("b");cb.repo="o/private".into();
-        for root in [&ca.root,&cb.root] {std::fs::create_dir_all(crate::dot(root)).unwrap();}
+        for root in [&ca.root,&cb.root] {std::fs::create_dir_all(crate::paths::dot(root)).unwrap();}
         let (mut sa,mut sb)=(service(&ba,&ca,Default::default()),service(&bb,&cb,Default::default()));
         for s in [&mut sa,&mut sb] {s.host=Some(host.clone());s.reload(Ok(policy.cap.clone()));s.sync_host();}
         host.lock().unwrap().restart=true;
@@ -1930,7 +1930,7 @@ Open: none")).unwrap();
     #[test]
     fn host_quarantine_does_not_starve_and_stopped_handles_can_prepare_restart() {
         let root = std::env::temp_dir().join(format!("taskq-host-stopped-{}", std::process::id()));
-        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let p = crate::host::Policy::parse(json!({"limits": {"claude": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
         let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p.clone()))));
         let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
@@ -1951,10 +1951,10 @@ Open: none")).unwrap();
         s.pass().unwrap();s.rebuild();
         { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
         // This is the monitor entered after a reduced-loop panic: no board pass and no lease renewal.
-        assert!(!crate::stopped_handoff(&mut s, &host, &c).unwrap());
+        assert!(!crate::service_run::stopped_handoff(&mut s, &host, &c).unwrap());
         assert!(!host.lock().unwrap().prepared.contains(&root)); assert_eq!(s.kids.len(), 1);
         *exit.borrow_mut() = Some(0);
-        assert!(!crate::stopped_handoff(&mut s, &host, &c).unwrap());
+        assert!(!crate::service_run::stopped_handoff(&mut s, &host, &c).unwrap());
         let h = host.lock().unwrap();
         assert!(h.busy.keys().all(|p| h.prepared.contains(p)), "coordinator can restart after verified exit");
         assert!(core::executions(n, &entries(&b,n).unwrap()).iter().all(|x| x.release.is_some()), "only confirmed release permits handoff");
@@ -1966,7 +1966,7 @@ Open: none")).unwrap();
     #[test]
     fn released_kid_lets_the_next_pass_prepare_the_restart() {
         let root = std::env::temp_dir().join(format!("taskq-host-released-{}", crate::runtime::uuid()));
-        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let p = crate::host::Policy::parse(json!({"limits": {"claude": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
         let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p))));
         let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
@@ -1980,13 +1980,13 @@ Open: none")).unwrap();
             assert!(host.lock().unwrap().begin_pass(&root));
             s.pass().unwrap(); s.sync_host();
             let mut h = host.lock().unwrap();
-            let drained = crate::drained(s, &h);
+            let drained = crate::service_run::drained(s, &h);
             h.busy.insert(root.clone(), !drained);
-            crate::report_handoff(s, &mut h, &root, drained).unwrap();
+            crate::service_run::report_handoff(s, &mut h, &root, drained).unwrap();
             h.handoff_ready()
         };
         assert!(!project_pass(&mut s), "the live worker defers the handover");
-        assert_eq!(crate::lifecycle_waits(&s, false), vec![format!("#{n}")]);
+        assert_eq!(crate::service_run::lifecycle_waits(&s, false), vec![format!("#{n}")]);
         *exit.borrow_mut() = Some(0);
         assert!(project_pass(&mut s), "the released worker no longer holds the restart");
         assert!(s.kids.is_empty() && host.lock().unwrap().prepared.contains(&root));
@@ -2005,7 +2005,7 @@ Open: none")).unwrap();
         let (ba, bb) = (Fake::default(), Fake::default());
         let mut ca = cfg("invented"); ca.root = base.join("a"); ca.install = base.clone();
         let mut cb = ca.clone(); cb.root = base.join("b");
-        for root in [&ca.root, &cb.root] { std::fs::create_dir_all(crate::dot(root)).unwrap(); }
+        for root in [&ca.root, &cb.root] { std::fs::create_dir_all(crate::paths::dot(root)).unwrap(); }
         let exits = Exits::default();
         let (mut sa, mut sb) = (service(&ba, &ca, exits.clone()), service(&bb, &cb, exits.clone()));
         for s in [&mut sa, &mut sb] { s.host = Some(host.clone()); s.reload(Ok(p.cap.clone())); }
@@ -2016,12 +2016,12 @@ Open: none")).unwrap();
         { let mut h = host.lock().unwrap(); h.restart = true; h.stopping = true; for root in [&ca.root, &cb.root] { h.busy.insert(root.clone(), true); } }
         // One service-loop pass: the barrier's observe pass leaves the handover report untouched.
         let loop_pass = |s: &mut Service| -> bool {
-            let observe = crate::observes(Some(&host), &s.cfg.root).unwrap();
+            let observe = crate::service_run::observes(Some(&host), &s.cfg.root).unwrap();
             if observe { s.observe().unwrap(); return true; }
             s.pass().unwrap(); s.sync_host();
             let mut h = host.lock().unwrap();
             h.busy.insert(s.cfg.root.clone(), !s.idle());
-            crate::report_handoff(s, &mut h, &s.cfg.root, s.idle()).unwrap();
+            crate::service_run::report_handoff(s, &mut h, &s.cfg.root, s.idle()).unwrap();
             false
         };
         assert!(!loop_pass(&mut sa) && !loop_pass(&mut sb), "the first pass of each project reports its handover");
@@ -2049,7 +2049,7 @@ Open: none")).unwrap();
     #[test]
     fn refused_resume_lets_the_restart_hand_over() {
         let root = std::env::temp_dir().join(format!("taskq-host-refused-{}", crate::runtime::uuid()));
-        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let p = crate::host::Policy::parse(json!({"limits": {"codex": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
         let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p))));
         let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
@@ -2059,7 +2059,7 @@ Open: none")).unwrap();
         b.comment(n, "taskq: steer\ncontinue").unwrap();
         let mut s = service(&b, &c, Default::default()); s.host = Some(host.clone());
         { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
-        assert!(handover_pass(&mut s, &host, &root), "one pass reaches the re-exec: {:?}", crate::lifecycle_waits(&s, false));
+        assert!(handover_pass(&mut s, &host, &root), "one pass reaches the re-exec: {:?}", crate::service_run::lifecycle_waits(&s, false));
         assert!(s.kids.is_empty() && s.pending.contains(&(n,a)), "the restart refuses the resume");
         let t = task(&b, n);
         assert_eq!((t.state, t.attempt, s.delivered(a)), (State::Doing, Some(a), 0), "the inbox waits for the next image");
@@ -2072,7 +2072,7 @@ Open: none")).unwrap();
     #[test]
     fn stop_drain_passes_a_released_attempt_to_the_next_start() {
         let root = std::env::temp_dir().join(format!("taskq-host-stop-{}", crate::runtime::uuid()));
-        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let p = crate::host::Policy::parse(json!({"limits": {"codex": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
         let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p.clone()))));
         let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
@@ -2082,7 +2082,7 @@ Open: none")).unwrap();
         b.comment(n, "taskq: steer\ncontinue").unwrap();
         let mut s = service(&b, &c, Default::default()); s.host = Some(host.clone());
         { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; h.stopping = true; }
-        assert!(handover_pass(&mut s, &host, &root), "the drain completes: {:?}", crate::lifecycle_waits(&s, true));
+        assert!(handover_pass(&mut s, &host, &root), "the drain completes: {:?}", crate::service_run::lifecycle_waits(&s, true));
         assert!(s.kids.is_empty() && s.pending.contains(&(n,a)), "the Stop refuses the resume");
         assert_eq!((task(&b, n).state, s.delivered(a)), (State::Doing, 0), "the inbox waits for the next start");
         drop(s);
@@ -2098,7 +2098,7 @@ Open: none")).unwrap();
     #[test]
     fn closed_2252_releases_reach_reexec_in_one_pass() {
         let root = std::env::temp_dir().join(format!("taskq-closed-reexec-{}", crate::runtime::uuid()));
-        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let b = Fake::default();
         let n = b.create("Closed history", "", &[TASK_LABEL.into()]).unwrap();
         let history: Vec<core::Entry> = serde_json::from_str(include_str!("../tests/fixtures/reexec-2252.json").trim_start_matches('\u{feff}')).unwrap();
@@ -2129,7 +2129,7 @@ Open: none")).unwrap();
             s.observe_ownership(&[]).unwrap();
             let waits = s.handoff_waits(true, false); // Unix handover; Windows exits without these observations.
             assert!(waits.iter().any(|w| w.contains(reason)), "an overdue wait must explain the unmatched release: {waits:?}");
-            let line = crate::restart_line(&json!({"restart_waits": waits, "restart_overdue": true})).unwrap();
+            let line = crate::cli::service_cmd::restart_line(&json!({"restart_waits": waits, "restart_overdue": true})).unwrap();
             assert!(line.contains("pending over 600 s") && line.contains(reason));
             assert!(s.observations.contains_key(&key), "mismatch must retain ownership");
         }
@@ -2159,7 +2159,7 @@ Open: none")).unwrap();
             fn id(&self) -> u32 { 1 }
         }
         let root = std::env::temp_dir().join(format!("taskq-closed-exit-{}", crate::runtime::uuid()));
-        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let b = Fake::default();
         let n = b.create("Closed history", "", &[TASK_LABEL.into()]).unwrap();
         let history: Vec<core::Entry> = serde_json::from_str(include_str!("../tests/fixtures/reexec-2252.json").trim_start_matches('\u{feff}')).unwrap();
@@ -2175,7 +2175,7 @@ Open: none")).unwrap();
         let releases = || b.comments(n).unwrap().iter().filter(|e| e.body.starts_with("taskq: released 6595390316")).count();
         let before = releases();
         // A live process contradicting the board Exit is never killed or retired, and runs on past the re-exec.
-        assert!(handover_pass(&mut s, &host, &root), "{:?}", crate::lifecycle_waits(&s, false));
+        assert!(handover_pass(&mut s, &host, &root), "{:?}", crate::service_run::lifecycle_waits(&s, false));
         assert_eq!(s.kids.len(), 1);
         assert_eq!(releases(), before, "the existing release stands; no second release is written");
         std::fs::remove_dir_all(root).unwrap();
@@ -2186,9 +2186,9 @@ Open: none")).unwrap();
         assert!(host.lock().unwrap().begin_pass(root));
         s.pass().unwrap(); s.sync_host();
         let mut h = host.lock().unwrap();
-        let drained = crate::drained(s, &h);
+        let drained = crate::service_run::drained(s, &h);
         h.busy.insert(root.clone(), !drained);
-        crate::report_handoff(s, &mut h, root, drained).unwrap();
+        crate::service_run::report_handoff(s, &mut h, root, drained).unwrap();
         h.handoff_ready()
     }
 
@@ -2200,7 +2200,7 @@ Open: none")).unwrap();
     fn every_handover_wait_resolves_without_a_reservation() {
         for kind in ["claim", "resume", "held claim", "held resume", "reserved"] {
             let root = std::env::temp_dir().join(format!("taskq-host-class-{}", crate::runtime::uuid()));
-            std::fs::create_dir_all(crate::dot(&root)).unwrap();
+            std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
             let p = crate::host::Policy::parse(json!({"limits": {"codex": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
             let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p))));
             let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
@@ -2219,7 +2219,7 @@ Open: none")).unwrap();
             }
             if kind == "reserved" {s.pass().unwrap(); s.reserved.push((n, 99, "codex".into()));}
             host.lock().unwrap().restart = true;
-            assert!(handover_pass(&mut s, &host, &root), "{kind}: one pass reaches the re-exec: {:?}", crate::lifecycle_waits(&s, false));
+            assert!(handover_pass(&mut s, &host, &root), "{kind}: one pass reaches the re-exec: {:?}", crate::service_run::lifecycle_waits(&s, false));
             assert!(s.kids.is_empty() && s.held.is_empty(), "{kind}: nothing starts under the restart");
             assert!(core::executions(n, &entries(&b,n).unwrap()).iter().all(|x| x.release.is_some()), "{kind}: no execution left open");
             std::fs::remove_dir_all(root).unwrap();
@@ -2328,19 +2328,19 @@ Open: none")).unwrap();
         assert!(coreq::process::identity(pid).unwrap().is_some());
         std::fs::remove_file(install.join("native")).unwrap();
         s.reap_owned();
-        let rows=crate::kids_file(&install,&root).unwrap();
+        let rows=crate::service_run::kids_file(&install,&root).unwrap();
         assert_eq!(rows.len(),1);
         assert_eq!((rows[0].task,rows[0].attempt,rows[0].execution,rows[0].process.pid),(n,a,a,pid));
         assert_eq!(*count.borrow(),1,"retry storage, never work");
         assert!(!s.kids.iter().any(|k|k.attempt==a && k.unknown.is_some()));
         let held=std::mem::take(&mut s.kids);
-        let discarded=crate::save_kids(&s,&root);
+        let discarded=crate::service_run::save_kids(&s,&root);
         s.kids=held;
         discarded.unwrap();
-        assert_eq!(crate::kids_file(&install,&root).unwrap(),rows,"a missing handle cannot erase recovery evidence");
+        assert_eq!(crate::service_run::kids_file(&install,&root).unwrap(),rows,"a missing handle cannot erase recovery evidence");
         // A second failed checkpoint must not prevent emergency cancellation.
         let l=Launch {files: String::new(), execution:None,task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"codex".into(),session:"-".into(),url:String::new(),resume:None};
-        let path=crate::kids_path(&install,&root).unwrap();
+        let path=crate::paths::kids_path(&install,&root).unwrap();
         std::fs::write(&path,"corrupt").unwrap();
         assert!(s.kids[0].proc.checkpoint(&c,&l,a).is_err());
         s.kids[0].proc.kill().unwrap();
@@ -3775,7 +3775,7 @@ Open: none")).unwrap();
                     }
                     _ => {}
                 }
-                s.logged_out.extend(crate::login_holds(&probes));
+                s.logged_out.extend(crate::service_run::login_holds(&probes));
                 s.pass().unwrap();
                 let blocked = ["both", "pin", "grant", "focus", "stop", "load", "gui", "gui-grant", "unresolved"].contains(&why);
                 assert_eq!(exits.borrow().len(), usize::from(!blocked), "{reviewer} {why}");
@@ -3866,7 +3866,7 @@ Open: none")).unwrap();
                 command.spawn().map(|p| Box::new(p) as Box<dyn Proc>).map_err(|e| crate::runtime::StartError::io(e, Some("codex")))
             }));
             s.focus = vec!["all".into()];
-            s.logged_out = crate::login_holds(&agents);
+            s.logged_out = crate::service_run::login_holds(&agents);
             s.refused_access = crate::policy::report(&install, &root, &c.permission_mode, &c.codex).into_iter()
                 .filter_map(|e| e.refused.map(|r| (e.runtime, r))).collect();
             for rt in crate::runtime::agent_runtimes() {
@@ -4450,8 +4450,8 @@ Open: none";
     fn admission_reopen_advances_pending_start_and_review() {
         for review in [false,true] {
             let root=std::env::temp_dir().join(format!("taskq-admission-progress-{}-{review}",std::process::id()));
-            std::fs::create_dir_all(crate::dot(&root)).unwrap();
-            std::fs::write(crate::dot(&root).join("focus"),"all").unwrap();
+            std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
+            std::fs::write(crate::paths::dot(&root).join("focus"),"all").unwrap();
             let b=Fake::default();let n=b.create("Pending","",&[TASK_LABEL.into()]).unwrap();
             if review {
                 let a=b.comment(n,"taskq: spawn worker codex:fixture invented").unwrap();
@@ -4464,13 +4464,13 @@ Open: none";
             let exits:Exits=Default::default();let mut s=service(&b,&c,exits.clone());
             s.host=Some(host.clone());s.reload(Ok(p.cap.clone()));s.pass().unwrap();
             assert!(exits.borrow().is_empty(),"held admission cannot claim pending work");
-            let paths=[crate::dot(&root).join("poke"),root.join("host-poke")];let baseline=crate::poke_times(&paths);
+            let paths=[crate::paths::dot(&root).join("poke"),root.join("host-poke")];let baseline=crate::wake::poke_times(&paths);
             host.lock().unwrap().reload_admission(Ok(p),None,&[root.clone()]);
-            crate::sleep_until_poke(&paths,baseline,std::time::Instant::now()+std::time::Duration::from_secs(60),&mut ||panic!("project was not awakened"));
+            crate::wake::sleep_until_poke(&paths,baseline,std::time::Instant::now()+std::time::Duration::from_secs(60),&mut ||panic!("project was not awakened"));
             s.pass().unwrap();
             assert_eq!(exits.borrow().len(),1,"reopened admission must advance pending start/review");
             assert_eq!(task(&b,n).role.as_deref(),Some(if review {"reviewer"}else{"worker"}));
-            assert_eq!(std::fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"all");
+            assert_eq!(std::fs::read_to_string(crate::paths::dot(&root).join("focus")).unwrap(),"all");
             drop(s);std::fs::remove_dir_all(root).unwrap();
         }
     }
@@ -4757,7 +4757,7 @@ Open: none";
             b.comment(review,&core::entry("result",&["0123456789abcdef0123456789abcdef01234567"],Some(a),"Changed: candidate\nOpen: none")).unwrap();
             accept_execution(&b,review,a,a,None).unwrap();release_execution(&b,review,a,a,"exit").unwrap();
             let mut c=cfg("mac");
-            crate::host::Policy::parse(json!({"hosts":{crate::hostname():"mac"},"claim":mode}),&crate::hostname()).unwrap().apply(&mut c);
+            crate::host::Policy::parse(json!({"hosts":{crate::config::hostname():"mac"},"claim":mode}),&crate::config::hostname()).unwrap().apply(&mut c);
             c.limits.insert("claude".into(),4);
             service(&b,&c,Default::default()).pass().unwrap();
             assert_eq!(task(&b,n).state==State::Doing,unlabelled,"{mode}");
@@ -5308,7 +5308,7 @@ Open: none";
             second.pass().unwrap();
             let pending=second.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().admission.as_ref().unwrap();
             assert!(pending.reason.contains("reroute"),"pending writer must explain why work waits");
-            crate::reroute(b,&other.root,"codex","antigravity").unwrap();
+            crate::cli::task_cmd::reroute(b,&other.root,"codex","antigravity").unwrap();
             second.focus=vec!["all".into()];second.pass().unwrap();
         }));
         let receipt=crate::dispatch::finish_reroute(&b,n);
@@ -5317,7 +5317,7 @@ Open: none";
         assert_eq!(pins,[format!("run-{}",rt_of(&p.task).map_or("codex",|r|r.0))],"stale finisher corrupted the live pin");
         assert!(receipt.ok(),"the sole writer can finish: {}",receipt.text());
         assert!(exits.borrow().is_empty(),"the second service cannot admit while the first can still write");
-        crate::reroute(&b,&c.root,"codex","antigravity").unwrap();
+        crate::cli::task_cmd::reroute(&b,&c.root,"codex","antigravity").unwrap();
         let mut second=service(&b,&c,exits.clone());second.focus=vec!["all".into()];second.pass().unwrap();
         assert_eq!(rt_of(&task(&b,n)).unwrap().0,"antigravity");
         assert_eq!(b.issue(n).unwrap().labels.iter().filter(|l|l.starts_with("run-")).cloned().collect::<Vec<_>>(),["run-antigravity"]);
@@ -6311,7 +6311,7 @@ Open: none";
         assert_eq!(run(&dirty, t0 + 86_403), ["#2 finding filed: tidy dirty over a day"]);
         let issue = b.issue(2).unwrap();
         assert!(issue.title.starts_with("Task worktree dirty over a day: ") && is_held(&issue), "{}", issue.title);
-        assert!(issue.body.contains(&format!("## Source\nmac/tidy-dirty/{}-{t0}\n", crate::project_name(&root))), "{}", issue.body);
+        assert!(issue.body.contains(&format!("## Source\nmac/tidy-dirty/{}-{t0}\n", crate::paths::project_name(&root))), "{}", issue.body);
         assert!(issue.body.contains("## Evidence\n- #7 worktree dirty, untouched 3d\n"), "{}", issue.body);
         assert!(run(&dirty, t0 + 5 * 86_400).is_empty(), "no repeat while the finding is open");
         assert_eq!(b.issues(Some(0)).unwrap().len(), 2);
@@ -6390,7 +6390,7 @@ Open: none";
         std::fs::create_dir_all(c.root.join(".taskq")).unwrap();
         let mut s = service(&b, &c, Default::default());
         s.begun.insert(42, ("worker".into(), "codex".into(), None));
-        let path = crate::kids_path(&c.install, &c.root).unwrap();
+        let path = crate::paths::kids_path(&c.install, &c.root).unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         // Invented historical process identity: no live OS process is required for retirement telemetry.
         std::fs::write(&path, "pid 12340 invented-owner executor-v1\n1 42 codex 12345 invented-start 43 0\n").unwrap();
@@ -6607,7 +6607,7 @@ Open: none";
         assert!(s.reserved.iter().any(|r| r.0 == n && r.1 == attempt), "the slot stays held");
         assert!(of(&dir, n, "slot-hold").is_empty(), "no slot-hold without a saved PID");
         s.reserved.clear();
-        let path = crate::kids_path(&c.install, &c.root).unwrap();
+        let path = crate::paths::kids_path(&c.install, &c.root).unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         // Invented historical process identity: no live OS process is required for the record.
         std::fs::write(&path, format!("pid 12340 invented-owner executor-v1\n{n} {attempt} claude 12345 invented-start {execution} 0\n")).unwrap();

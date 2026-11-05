@@ -1,5 +1,5 @@
 //! Local manager slots use the existing operation store and host admission authority (§3).
-use crate::{Res,host,resources};
+use crate::{Res, host, resources};
 use coreq::process::Identity;
 use serde::{Deserialize,Serialize};
 use serde_json::{Value,json};
@@ -99,7 +99,7 @@ pub(crate) fn reserved(install:&Path,s:&resources::State,value:&Value,runtime:&s
     Ok(key)
 }
 
-pub fn command(args:&crate::Args)->Res<()> {
+pub fn command(args:&crate::cli::Args)->Res<()> {
     if args.pos.len()!=2||args.flags.iter().any(|(k,v)|!["identity","action","request","json"].contains(&k.as_str())||v.len()!=1) {return Err("usage: service slots --identity PID | --action reserve|observe|release --request JSON [--json]".into());}
     let result=if let Some(pid)=args.one("identity") {
         if args.one("request").is_some()||args.one("action").is_some() {return Err("slot identity cannot include an action".into());}

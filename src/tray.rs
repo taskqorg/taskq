@@ -31,7 +31,7 @@ use crate::display::PERIODS;
 fn alone(install: &Path) -> bool {
     let hb = install.join("tray");
     let other = fs::read_to_string(&hb).ok().and_then(|p| p.trim().parse::<u32>().ok()).is_some_and(|p| p != std::process::id());
-    !(other && crate::file_age(&hb).is_some_and(|a| a < 10))
+    !(other && coreq::status::age(&hb).is_some_and(|a| a < 10))
 }
 
 /// M15: one TaskQ app per host across install folders: the tray holds this OS temp lock for its life.
@@ -271,7 +271,7 @@ fn task_pin(settings:&mut Settings,install:&Path,st:&Value,m:&Value)->Result<Val
         let root=m["root"].as_str().ok_or("Pin project missing")?;
         let n=m["task"].as_u64().filter(|n|*n>0).ok_or("Pin task missing")?;
         let p=st["projects"].as_array().and_then(|ps|ps.iter().find(|p|p["root"]==root)).ok_or("Pin project unavailable")?;
-        let (cfg,_)=crate::load(Path::new(root))?;
+        let (cfg,_)=crate::config::load(Path::new(root))?;
         let row=p["tasks"].as_array().into_iter().flatten().chain(p["reports"]["reports"].as_array().into_iter().flatten()).find(|t|t["n"]==n);
         (format!("{}://{}/{}#{n}",cfg.board.name,cfg.web_host.to_lowercase(),cfg.repo),row)
     };
@@ -485,7 +485,7 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
             "close" if op.get("text").is_none() => ("later", "Reason: Owner requested cancellation without publication from the tray.".into()),
             _ => return Err("unsupported tray action".into()),
         };
-        if command != "requeue" && (files.is_empty()||!text.trim().is_empty()) { crate::task_text(command, &text)?; }
+        if command != "requeue" && (files.is_empty()||!text.trim().is_empty()) { crate::cli::text::task_text(command, &text)?; }
         vec![command.into(), n.to_string(), "--text".into(), text]
     } else {
         let mut args = vec!["answer".into()];
@@ -496,7 +496,7 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
             }
             (None, Some(text)) => {
                 let text = text.as_str().ok_or("invalid answer text")?;
-                if files.is_empty()||!text.trim().is_empty(){crate::task_text("answer", text)?;}
+                if files.is_empty()||!text.trim().is_empty(){crate::cli::text::task_text("answer", text)?;}
                 args.extend([n.to_string(), "--text".into(), text.into()]);
             }
             _ => return Err("supply one choice or literal text".into()),
@@ -612,7 +612,7 @@ fn answer(install: &Path, m: &Value) -> Value {
     });
     // #1819: an accepted write rereads its task at once; the readback feeds the shared pending store
     if r["outcome"] == "accepted" && let Some(n) = m["op"]["task"].as_u64() {
-        if let Err(e) = crate::ask_reread(root, n) { eprintln!("taskq tray: {e}"); }
+        if let Err(e) = crate::wake::ask_reread(root, n) { eprintln!("taskq tray: {e}"); }
     }
     let mut out = answer_receipt(m, &r);
     out["sync"] = json!({"state": r["state"], "revision": r["revision"]});
@@ -731,13 +731,13 @@ pub(crate) fn inline_images(root: &Path, task: &mut Value) {
 /// One project for the page: its `status.json`, saved focus, labels and `events` lines `[time, kind, attempt, task]`.
 fn project(install: &Path, root: &str) -> Value {
     let r = Path::new(root);
-    let d = crate::dot(r);
+    let d = crate::paths::dot(r);
     // § 4 Data: a corrupt status.json is unknown with its reason, never zero
     let (s, bad) = match crate::data::json(&d.join("status.json")) {
         Ok(s) => (s.unwrap_or(Value::Null), None),
         Err(e) => (Value::Null, Some(e)),
     };
-    let age = crate::file_age(&d.join("status.json"));
+    let age = coreq::status::age(&d.join("status.json"));
     // #1591: one freshness rule; the page gets `live` and `ttl`, never a literal
     let ttl = crate::snapshot::ttl(r);
     let live = age.is_some_and(|a| crate::snapshot::live(a as i64, ttl));
@@ -758,14 +758,14 @@ fn project(install: &Path, root: &str) -> Value {
         Some(e)
     }).collect();
     // the local host's saved capacity, for `Edit limits` and its readback (§ 4 Capacity)
-    let (cap_host, cap_saved, cap_revision,board_kind, project_limits,routing) = match crate::load(r) {
+    let (cap_host, cap_saved, cap_revision,board_kind, project_limits,routing) = match crate::config::load(r) {
         Ok((c, raw)) => {let policy=crate::host::Policy::read(install);let rev=policy.as_ref().ok().and_then(|p|p.revision().ok());let host=policy.as_ref().map(|p|json!(p.me)).unwrap_or(Value::Null);
             (host, policy.map(|p|p.cap.json()).unwrap_or_else(|e| json!({"error": e})),json!(rev), json!(c.board.name), if raw["limits"].is_null() {json!({})} else {raw["limits"].clone()}, raw.get("routing").cloned().unwrap_or_else(||json!([])))},
         Err(e) => (Value::Null, json!({"error": e}), Value::Null,Value::Null, Value::Null,Value::Null),
     };
     let mut tasks = s["tasks"].as_array().cloned().unwrap_or_default();
     let (hosts, tasks_live) = liveness(&s, age, ttl, &mut tasks);
-    let page = crate::load(r).ok().and_then(|(c, _)| crate::enrollment::progress_page(install, &c.repo));
+    let page = crate::config::load(r).ok().and_then(|(c, _)| crate::enrollment::progress_page(install, &c.repo));
     for task in &mut tasks {
         task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task);
         let n=task["n"].clone();
@@ -777,15 +777,15 @@ fn project(install: &Path, root: &str) -> Value {
         inline_images(r, task);
     }
     let installation = fs::read_to_string(install.join("installation-id")).ok().filter(|i| i.len() == 64 && i.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
-    let id: String = crate::project_name(r).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).take(64).collect();
+    let id: String = crate::paths::project_name(r).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).take(64).collect();
     let observed_at=s["at"].as_i64().filter(|at|crate::snapshot::live(now()-*at,ttl)).and(age.map(|a|now()-a as i64));
     let resources = resource_group(&s["capacity"], &cap_saved,&cap_revision, &project_limits, observed_at, installation, &id);
-    let mut out = json!({"root": root, "name": s["project"].as_str().map(String::from).unwrap_or_else(|| crate::project_name(r)),
+    let mut out = json!({"root": root, "name": s["project"].as_str().map(String::from).unwrap_or_else(|| crate::paths::project_name(r)),
         "issues": s["issues"].as_str().unwrap_or(""), "board_kind": board_kind,
-        "delivery": crate::load(r).ok().map(|(c,_)|json!({"preset":c.delivery,"revision":c.delivery_revision})),
+        "delivery": crate::config::load(r).ok().map(|(c,_)|json!({"preset":c.delivery,"revision":c.delivery_revision})),
         "log": s["log"].is_string(), "alive": live, "age": age, "ttl": ttl,
         "complete": crate::snapshot::complete(&s) && live,
-        "error": bad.map(Value::from).or_else(|| [&s["error"], &s["focus_error"]].into_iter().find(|e| e.is_string()).cloned()).unwrap_or(Value::Null), "focus": s["focus"].as_array().cloned().unwrap_or_default(), "saved": saved, "labels": crate::status_labels(r),
+        "error": bad.map(Value::from).or_else(|| [&s["error"], &s["focus_error"]].into_iter().find(|e| e.is_string()).cloned()).unwrap_or(Value::Null), "focus": s["focus"].as_array().cloned().unwrap_or_default(), "saved": saved, "labels": crate::cli::service_cmd::status_labels(r),
         "focus_command": s["focus_command"],"service_pid":s["pid"],"host_instance":s["host_instance"],"restart_waits":s["restart_waits"],"stop_progress":s["stop_progress"],"uninstall_review":crate::lifecycle::uninstall_review(install,"review",Some(r)).unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})), "request": s["request"], "since": since, "events": events, "tasks": tasks, "host": s["host"], "version": s["version"], "update": s["update"],
         "hosts": hosts, "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "tasks_live": tasks_live, "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"], "access": s["access"],
         "incident": s["incident"], "incident_line": s.get("incident").map(crate::incident::line), "incident_notice": s["incident_notice"],
@@ -1841,7 +1841,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let front=|w:&Window|w.is_visible() && w.is_focused();
                 let visible=|o:&Option<(Window,WebView)>|o.as_ref().is_some_and(|(w,_)|front(w));
                 if visible(&ui) || visible(&workspace) || visible(&settings_window) || visible(&views_window) || detached.values().any(|(w,_,_)|front(w)) {
-                    crate::touch(&install.join("menu-open"));
+                    crate::paths::touch(&install.join("menu-open"));
                 }
                 // #2365 A3/A5: faults retire a bundle, a clean start proves it, and each page moves when it holds nothing in flight.
                 if let Some(store)=&mut ui_store {
@@ -3058,22 +3058,22 @@ fn work_area(m: &tao::monitor::MonitorHandle) -> (i32, i32, i32, i32) {
     _=>"invalid",
 }))]
 fn act(action: &str, root: &Path, label: Option<&str>) -> crate::Res<Option<String>> {
-    let d = crate::dot(root);
+    let d = crate::paths::dot(root);
     match action {
-        "pause" => return crate::pause(root,false).map(Some),
+        "pause" => return crate::cli::service_cmd::pause(root,false).map(Some),
         "resume" => {
-            return crate::resume(root).map(|(_,receipt)|Some(receipt));
+            return crate::cli::service_cmd::resume(root).map(|(_,receipt)|Some(receipt));
         }
         // a label of the project's open tasks, never `all` (§ 4)
         "focus" => {
-            if let Some(l) = label.filter(|l| crate::status_labels(root).iter().any(|x| x == l)) {
-                return crate::set_focus(root, l, None).map(Some);
+            if let Some(l) = label.filter(|l| crate::cli::service_cmd::status_labels(root).iter().any(|x| x == l)) {
+                return crate::cli::service_cmd::set_focus(root, l, None).map(Some);
             } else { return Err("Label is no longer available; refresh and choose again".into()); }
         }
         // `Update now` (menu.md M9): the service checks at once (§ 4 step 7); the page waits for the version in status.json
         "update" => {
             fs::write(d.join("update"), "").map_err(|e| e.to_string())?;
-            crate::poke(root)?;
+            crate::wake::poke(root)?;
         }
         "restart" | "stop" | "uninstall" => {
             return Err("Host lifecycle action needs a reviewed request; refresh the Services panel".into());
@@ -3098,7 +3098,7 @@ fn act(action: &str, root: &Path, label: Option<&str>) -> crate::Res<Option<Stri
 }
 
 fn incident_path(root: &Path, incident: &Value) -> Option<PathBuf> {
-    let dir = crate::dot(root).join("incidents").canonicalize().ok()?;
+    let dir = crate::paths::dot(root).join("incidents").canonicalize().ok()?;
     let path = root.join(incident["path"].as_str()?);
     let resolved = path.canonicalize().ok()?;
     (resolved.starts_with(dir) && resolved.is_file() && resolved.extension().is_some_and(|x| x == "json")).then_some(path)
@@ -3191,7 +3191,7 @@ fn classify(dir: &Path, selftest: impl Fn(&Path) -> Result<(), String>) -> Value
     } else {
         ("plain", String::new())
     };
-    json!({"state": "picked", "path": dir, "name": crate::project_name(dir), "kind": kind, "reason": reason})
+    json!({"state": "picked", "path": dir, "name": crate::paths::project_name(dir), "kind": kind, "reason": reason})
 }
 
 /// `service install` in the picked taskq project after the page's confirm; installed only when `<install>/projects`

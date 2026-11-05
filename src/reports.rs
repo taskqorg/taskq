@@ -50,7 +50,7 @@ impl Selected {
 pub(crate) fn selected(root:&Path,b:&dyn Board,n:u64,gitlab:bool,revision:Option<u64>)->Res<Value> {
     static CACHE:std::sync::OnceLock<Selected>=std::sync::OnceLock::new();
     let key=format!("{}|{}|{gitlab}",root.display(),b.url(n));
-    CACHE.get_or_init(Selected::default).read(key,revision,std::time::Instant::now(),||{let value=crate::closed_pin(b,n,gitlab)?;if !value["tasks"][0]["error"].is_null(){return Err("Selected task source incomplete; refresh or open its board".into());}Ok(value)})
+    CACHE.get_or_init(Selected::default).read(key,revision,std::time::Instant::now(),||{let value=crate::cli::inbox::closed_pin(b,n,gitlab)?;if !value["tasks"][0]["error"].is_null(){return Err("Selected task source incomplete; refresh or open its board".into());}Ok(value)})
 }
 
 pub(crate) fn worker(value:&Value,wanted:Option<u64>)->Res<(String,String,String,u64)> {
@@ -135,7 +135,7 @@ impl Cache {
                             coreq::telemetry::capture::operation("reports.collect.source",|| -> Res<(Value,Value)> {
                                 let body=b.source(&format!("docs/research/{}.md",i.number),row["sha"].as_str().ok_or("report SHA missing")?)?.replace("\r\n","\n");
                                 let tasks=proposals(&body)?;
-                                for t in &tasks {crate::task_body(b,&t.task(i.number),&crate::Op::default())?;}
+                                for t in &tasks {crate::cli::task_cmd::task_body(b,&t.task(i.number),&crate::Op::default())?;}
                                 Ok((json!(body),json!(tasks)))
                             },|_|"report-source")
                         }};
@@ -195,7 +195,7 @@ impl Collector {
     pub fn tick(&mut self,root:&Path,poll:u64,ttl:i64,enabled:bool)->Value {
         if self.value.is_null() {self.value=cached(root);}
         self.received();
-        let closes=std::fs::read_to_string(crate::dot(root).join("events")).unwrap_or_default().lines().filter(|l|l.contains(" close ")).collect::<Vec<_>>().join("\n");
+        let closes=std::fs::read_to_string(crate::paths::dot(root).join("events")).unwrap_or_default().lines().filter(|l|l.contains(" close ")).collect::<Vec<_>>().join("\n");
         if closes!=self.closes {self.closes=closes;self.invalidated=true;}
         // #2352: one collection every three polls, under `ttl` (freshness below); a close asks at once.
         let every=(poll.max(1)*3).min(u64::try_from(ttl/2).unwrap_or(0).max(1));
@@ -224,7 +224,7 @@ pub fn summary(value:&Value)->Value {
     json!({"complete":value["complete"],"reason":value["reason"],"observed":value["observed"],"count":rows.map(Vec::len),
         "unread":rows.map(|r|r.iter().filter(|r|r["read"]!=true).count()),"history":value["history"].as_array().map(Vec::len)})
 }
-fn file(root:&Path)->std::path::PathBuf {crate::dot(root).join("reports.json")}
+fn file(root:&Path)->std::path::PathBuf {crate::paths::dot(root).join("reports.json")}
 /// The collected rows; a status written before #1975 still carries them inline until the service rewrites.
 pub fn stored(root:&Path,status:&Value)->Value {
     match crate::data::json(&file(root)) {Ok(Some(v))=>v,_ if status["reports"]["reports"].is_array()=>status["reports"].clone(),_=>Value::Null}
@@ -237,7 +237,7 @@ fn reader(root:std::path::PathBuf)->std::io::Result<std::sync::mpsc::Sender<(Cac
         let mut board:Option<Box<dyn Board>>=None;
         for (mut cache,tx) in jobs {
             if board.is_none() {
-                match crate::load(&root).and_then(|(cfg,raw)|cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(&cfg.install))) {
+                match crate::config::load(&root).and_then(|(cfg,raw)|cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(&cfg.install))) {
                     Ok(b)=>board=Some(b),Err(reason)=>{cache.value["complete"]=json!(false);cache.value["reason"]=json!(reason);}
                 }
             }
@@ -261,7 +261,7 @@ pub fn freshness(mut value:Value,now:i64,ttl:i64,unavailable:Option<&str>)->Valu
 }
 
 pub fn cached(root:&Path)->Value {
-    let result=crate::data::json(&crate::dot(root).join("status.json"));
+    let result=crate::data::json(&crate::paths::dot(root).join("status.json"));
     let (value,reason)=match result {Ok(Some(s))=>(stored(root,&s),s["error"].as_str().map(String::from)),Ok(None)=>(stored(root,&Value::Null),None),Err(e)=>(Value::Null,Some(e))};
     freshness(value,now(),crate::snapshot::ttl(root),reason.as_deref())
 }
@@ -300,7 +300,7 @@ pub fn open_latest(root:&Path,n:u64,sha:Option<&str>)->Res<Value> {
 }
 
 /// Reads bypass board construction and token lookup, so offline navigation cannot become a login/API probe.
-pub fn read_cli(root:&Path,a:&crate::Args)->Res<Option<Value>> {
+pub fn read_cli(root:&Path,a:&crate::cli::Args)->Res<Option<Value>> {
     if a.flags.iter().any(|(k,v)|!["action","sha","page","before","json","text","until"].contains(&k.as_str())||v.len()!=1) {return Err("results: use --action, --sha, --page, --before, --text, --until and --json once each".into());}
     if a.one("text").is_some()&&!matches!(a.one("action"),Some("followup"|"reopen")) {return Err("--text supplies the reason for followup or reopen".into());}
     if a.one("until").is_some()&&a.one("action")!=Some("later") {return Err("--until sets the revisit date of --action later".into());}
@@ -324,8 +324,8 @@ pub struct Proposal {
     runtime:Option<String>, priority:Option<String>,
 }
 impl Proposal {
-    fn task(&self,n:u64)->crate::NewTask {
-        crate::NewTask {conversation:None,title:self.title.clone(),goal:self.goal.clone(),acceptance:self.acceptance.clone(),scope:self.scope.clone(),
+    fn task(&self,n:u64)->crate::cli::task_cmd::NewTask {
+        crate::cli::task_cmd::NewTask {conversation:None,title:self.title.clone(),goal:self.goal.clone(),acceptance:self.acceptance.clone(),scope:self.scope.clone(),
             deps:vec![n],kind:self.kind.clone(),runtime:self.runtime.clone(),priority:self.priority.clone(),host:None,labels:vec![],rules:None}
     }
 }
@@ -388,7 +388,7 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
     }
     let text=|c:Option<&Comment>|c.and_then(|c|c.body.split_once('\n').map(|(_,text)|text)).unwrap_or("").to_string();
     let accepted_close:Vec<_>=closing.into_iter().map(|c|Entry{id:c.id,body:c.body.clone(),edited:false}).collect();
-    let mut row=json!({"n":i.number,"title":i.title,"url":url,"sha":sha,"closed":closed,"read":read,"kind":if report{"report"}else{"task"},"state":"closed","outcome":if completed{"success"}else if i.reason.as_deref()==Some("not_planned"){"not_planned"}else{"unknown"},"merged":crate::merge_receipt(&accepted_close),
+    let mut row=json!({"n":i.number,"title":i.title,"url":url,"sha":sha,"closed":closed,"read":read,"kind":if report{"report"}else{"task"},"state":"closed","outcome":if completed{"success"}else if i.reason.as_deref()==Some("not_planned"){"not_planned"}else{"unknown"},"merged":crate::cli::inbox::merge_receipt(&accepted_close),
         "comments_through":comments.iter().filter(|c|c.trusted&&!c.edited).map(|c|c.id).max().unwrap_or(0),
         "conversation":crate::core::conversation(i.number,&log(comments)),
         "decision":decision,"visible":!legacy_answered&&!matches!(decision,"drop"|"made")&&!(report&&decision=="accepted"),"pending_decision":if making&&!matches!(decision,"made"|"drop"|"accepted"){Some("make")}else{None},"tasks_made":made});
@@ -445,7 +445,7 @@ pub fn experiment(i:&Issue)->bool {
 /// The first prose line of the report's Recommendation section.
 fn recommendation(body:&str)->Option<String> {
     let mut lines=body.lines().skip_while(|l|!(l.starts_with('#')&&l.trim_start_matches('#').trim().eq_ignore_ascii_case("Recommendation"))).skip(1);
-    lines.find(|l|!l.trim().is_empty()).filter(|l|!l.starts_with('#')).map(|l|crate::compact(l.trim(),120))
+    lines.find(|l|!l.trim().is_empty()).filter(|l|!l.starts_with('#')).map(|l|crate::cli::text::compact(l.trim(),120))
 }
 
 /// R6 Decide: undecided reports, oldest close first. Make tasks (made or reserved), Drop and a Later still before
@@ -489,7 +489,7 @@ pub fn act_with_reason(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:
     if action=="open" {return cached_open(root,n,sha);}
     if crate::dispatch::agent() {return Err("report decisions require the owner CLI, outside an attempt".into());}
     let result=if matches!(action,"followup"|"reopen") {successor(b,root,raw,n,sha,action,reason)}else {owner_act_until(b,root,raw,n,sha,action,until)};
-    let _=crate::poke(root);result
+    let _=crate::wake::poke(root);result
 }
 
 fn successor(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reason:&str)->Res<Value> {
@@ -498,14 +498,14 @@ fn successor(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reaso
     let reason=reason.trim();
     if reason.is_empty()||reason.chars().count()>180||reason.contains(['\r','\n']) {return Err("Give a one-line reason, at most 180 characters".into());}
     let label=if action=="reopen" {"Reopen"}else{"Follow-up"};
-    let task=crate::NewTask{conversation:None,title:format!("{label} #{n}"),
+    let task=crate::cli::task_cmd::NewTask{conversation:None,title:format!("{label} #{n}"),
         goal:format!("{label} #{n}: {reason}"),acceptance:vec![format!("The operator's reason is addressed: {reason}")],
         scope:vec![format!("Source: {}",b.url(n)),format!("Reason: {reason}")],deps:vec![n],kind:None,runtime:None,priority:None,host:None,labels:vec![],rules:None};
-    crate::task_body(b,&task,&crate::Op::default())?;
+    crate::cli::task_cmd::task_body(b,&task,&crate::Op::default())?;
     let hash=ring::digest::digest(&ring::digest::SHA256,reason.as_bytes());
     let hash:String=hash.as_ref().iter().map(|b|format!("{b:02x}")).collect();
     let op=crate::Op{id:Some(format!("result.{n}.{sha}.{action}.{hash}")),revision:None};
-    let receipt=crate::add_task(b,root,raw,&task,&op)?;
+    let receipt=crate::cli::task_cmd::add_task(b,root,raw,&task,&op)?;
     Ok(json!({"report":row,"successor":receipt.task,"successor_url":(receipt.task>0).then(||b.url(receipt.task)),"receipt":receipt,"reason":(receipt.outcome!="accepted").then(||receipt.reason.clone())}))
 }
 
@@ -530,7 +530,7 @@ pub(crate) fn owner_act_until(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,
     let body=b.source(&format!("docs/research/{n}.md"),sha)?.replace("\r\n","\n");
     let tasks=proposals(&body)?;
     // Validate all proposals before the first external write; task_body retains §1/routing/limit guards.
-    for t in &tasks {crate::task_body(b,&t.task(n),&crate::Op::default())?;}
+    for t in &tasks {crate::cli::task_cmd::task_body(b,&t.task(n),&crate::Op::default())?;}
     if action=="open" {
         let mut row=mark(b,n,sha,"read",&[])?;row["body"]=json!(body);row["tasks"]=json!(tasks);
         return Ok(json!({"report":row}));
@@ -539,13 +539,13 @@ pub(crate) fn owner_act_until(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,
     // #1945: a board set up without the key (cyprusbz#540) refused every Make; the owner's Make settles it like claim-issue
     let settled;
     let raw=if raw["create_claim_issue"].is_null() {
-        let r=crate::claim_issue_setup(b,root,None).unwrap_or_else(|e|json!({"outcome":"rejected","reason":e,"key":"create_claim_issue"}));
+        let r=crate::cli::task_cmd::claim_issue_setup(b,root,None).unwrap_or_else(|e|json!({"outcome":"rejected","reason":e,"key":"create_claim_issue"}));
         if r["outcome"]!="accepted" {
             return Ok(json!({"report":prior,"reason":format!("create_claim_issue: {}",r["reason"].as_str().unwrap_or("unknown")),"receipt":r}));
         }
         let mut v=raw.clone();v["create_claim_issue"]=r["issue"].clone();settled=v;&settled
     } else {raw};
-    if let Err(receipt)=crate::create_claim_issue(b,raw,&crate::Op::default()) {
+    if let Err(receipt)=crate::cli::task_cmd::create_claim_issue(b,raw,&crate::Op::default()) {
         return Ok(json!({"report":prior,"reason":receipt.reason,"receipt":receipt}));
     }
     // The first make-intent or Drop on this issue wins across hosts. Intent is not queue state; an unknown or
@@ -556,7 +556,7 @@ pub(crate) fn owner_act_until(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,
     for (k,t) in tasks.iter().enumerate() {
         // §1 immutable claims fence duplicate clicks, uncertain POSTs and restart; no receipt file.
         let op=crate::Op{id:Some(format!("report.{n}.{sha}.{}",k+1)),revision:None};
-        let receipt=match crate::add_task(b,root,raw,&t.task(n),&op) {Ok(r)=>r,Err(e)=>return Ok(unknown(b,n,sha,&reserved,&made,e))};
+        let receipt=match crate::cli::task_cmd::add_task(b,root,raw,&t.task(n),&op) {Ok(r)=>r,Err(e)=>return Ok(unknown(b,n,sha,&reserved,&made,e))};
         if !receipt.ok() {let mut value=unknown(b,n,sha,&reserved,&made,receipt.reason.clone());value["receipt"]=json!(receipt);return Ok(value);}
         made.push(receipt.task);
     }
@@ -577,7 +577,7 @@ pub fn prepare(b:&dyn Board,root:&Path,n:u64,sha:&str)->Res<bool> {
     let out=crate::platform::output("reports.candidate",crate::platform::command("git").current_dir(root).args(["cat-file","-e",&spec]),std::time::Duration::from_secs(15))?;
     if !research&&!out.status.success() {return Ok(false);}
     let body=b.source(&format!("docs/research/{n}.md"),sha)?.replace("\r\n","\n");
-    for task in proposals(&body)? {crate::task_body(b,&task.task(n),&crate::Op::default())?;}
+    for task in proposals(&body)? {crate::cli::task_cmd::task_body(b,&task.task(n),&crate::Op::default())?;}
     Ok(true)
 }
 

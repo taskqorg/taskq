@@ -112,7 +112,7 @@ fn retain_reason(install:&Path,p:&Pending,reason:&str)->Res<()> {
         let op=state.ops.get_mut(&p.id).ok_or("installation receipt unavailable")?;
         if op.bound!=binding(p) {return Err("installation reason belongs to another command".into());}
         checked_receipt(op)?;
-        op.receipt["reason"]=json!(crate::compact(reason,256));Ok(())
+        op.receipt["reason"]=json!(crate::cli::text::compact(reason,256));Ok(())
     })
 }
 
@@ -419,7 +419,7 @@ fn acknowledge(install:&Path,expected:&Pending)->Res<bool> {
     if p.phase!="registered"||raw_projects(install)?.as_deref()!=Some(p.next.as_str()) {return Ok(false);}
     let owner=p.owner.as_ref().ok_or("installation native owner missing")?;
     let service=service_status(install);
-    let status=crate::data::json(&crate::dot(&p.root).join("status.json"))?;
+    let status=crate::data::json(&crate::paths::dot(&p.root).join("status.json"))?;
     if !status.as_ref().is_some_and(|status|status["host_install"]==p.id)||!installation_observed(&service,status.as_ref(),&p.version)
         ||service["pid"]!=owner.pid||service["started"]!=owner.started||service["instance"]!=owner.instance {return Ok(false);}
     record(install,&p,"observed")?;
@@ -437,8 +437,8 @@ pub fn install_project(install:&Path,root:&Path)->Res<String> {
 }
 
 fn preflight(install:&Path,root:&Path)->Res<()> {
-    drop(crate::wake_lock(root)?);
-    let (cfg,raw,_)=crate::check_load(root)?;
+    drop(crate::wake::wake_lock(root)?);
+    let (cfg,raw,_)=crate::config::check_load(root)?;
     let board=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
     board.me()?;
     board.issues(None)?;
@@ -486,10 +486,10 @@ fn cancellation_guard(install:&Path,p:&Pending)->Res<()> {
 }
 
 fn empty_attachment_execution(install:&Path,root:&Path,owner:&coreq::process::Identity)->Res<()> {
-    match fs::symlink_metadata(crate::dot(root).join("kids")) {
+    match fs::symlink_metadata(crate::paths::dot(root).join("kids")) {
         Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},_=>return Err("legacy project execution uncertain; attachment kept".into()),
     }
-    let path=crate::kids_path(install,root)?;
+    let path=crate::paths::kids_path(install,root)?;
     match fs::symlink_metadata(&path) {
         Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},
         Ok(meta) if meta.is_file()&&meta.len()<=crate::data::KIDS_MAX=>{
@@ -498,7 +498,7 @@ fn empty_attachment_execution(install:&Path,root:&Path,owner:&coreq::process::Id
         },
         _=>return Err("project execution evidence unreadable; attachment kept".into()),
     }
-    if let Some(status)=crate::data::json(&crate::dot(root).join("status.json"))? {
+    if let Some(status)=crate::data::json(&crate::paths::dot(root).join("status.json"))? {
         if status["pid"]!=owner.pid||status["host_instance"]!=service_status(install)["instance"] {
             return Err("project ownership uncertain; attachment kept".into());
         }
@@ -660,7 +660,7 @@ pub fn upgrade_waits(install:&Path,running:&str,waits:&str)->bool {
     let Ok(Some(p))=upgrade_intent(install) else {return true};
     let receipt=installation_status(install,Some(&p.id));
     if p.version==running||receipt["state"]!="queued" {return true;}
-    let reason=crate::compact(&format!("host re-exec into {} waits for {waits}",p.version),256);
+    let reason=crate::cli::text::compact(&format!("host re-exec into {} waits for {waits}",p.version),256);
     receipt["reason"].as_str()==Some(reason.as_str())||retain_reason(install,&p,&reason).is_ok()
 }
 
@@ -723,7 +723,7 @@ pub(super) fn install_bound(install:&Path,root:&Path,expected:Option<&str>)->Res
         } else {
         let mut paths=vec![install.join(tool.exe_name()),install.join("current"),install.join("previous"),crate::host_control::definition(&tool)?,install.join("projects"),install.join("rollback-floor")];
         #[cfg(all(windows,target_env="gnu"))] paths.push(install.join("WebView2Loader.dll"));
-        paths.extend(roots.iter().map(|r|crate::dot(r).join("focus")));
+        paths.extend(roots.iter().map(|r|crate::paths::dot(r).join("focus")));
         for name in ["current","previous"] {
             match fs::read_to_string(install.join(name)) {
                 Ok(v)=>{let v=v.trim();if v.is_empty()||v.contains("..")||!v.bytes().all(|b|b.is_ascii_alphanumeric()||b".-".contains(&b)) {return Err("installation release selection unknown; kept".into());}let path=tool.release_exe(v);if !fs::symlink_metadata(&path).map_err(|e|e.to_string())?.is_file() {return Err("installation retained release unavailable".into());}if !paths.contains(&path) {paths.push(path);}},
@@ -811,7 +811,7 @@ pub(super) fn install_bound(install:&Path,root:&Path,expected:Option<&str>)->Res
         let floor=match fs::read_to_string(install.join("rollback-floor")) {Ok(v)=>v,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>service["version"].as_str().ok_or("host version missing")?.into(),Err(e)=>return Err(e.to_string())};
         coreq::launcher::set_rollback_floor(&tool,floor.trim())?;
     }
-    let off=crate::install_focus(&root)?;
+    let off=crate::cli::service_cmd::install_focus(&root)?;
     p.phase="registered".into();save(install,&p)?;
     edit.commit()?;
     #[cfg(test)] tests::interrupt(install,"registry")?;

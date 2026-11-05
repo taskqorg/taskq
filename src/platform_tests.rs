@@ -39,7 +39,7 @@
         }
         assert!(raw.is_empty(), "start these through platform::command:\n{}", raw.join("\n"));
         // the scan found the starts: a moved src or a misread test boundary would pass with nothing checked
-        for site in ["src/runtime/owner.rs", "src/board/github.rs", "src/main.rs", "src/windows_sandbox.rs", "src/runtime.rs"] {
+        for site in ["src/runtime/owner.rs", "src/board/github.rs", "src/service_run.rs", "src/windows_sandbox.rs", "src/runtime.rs"] {
             assert!(sites.iter().any(|s| s.replace('\\', "/").starts_with(site)), "no spawn site in {site}: {sites:?}");
         }
         assert!(sites.len() > 50, "{} spawn sites: {sites:?}", sites.len());
@@ -686,7 +686,7 @@
         fs::create_dir_all(install.join("host-policy-migration")).unwrap();
         fs::write(install.join("host-policy-migration/original.json"),"original configuration").unwrap();
         fs::create_dir_all(install.join("link")).unwrap();
-        let native=crate::kids_path(&install,&root).unwrap();fs::create_dir_all(native.parent().unwrap()).unwrap();
+        let native=crate::paths::kids_path(&install,&root).unwrap();fs::create_dir_all(native.parent().unwrap()).unwrap();
         let owner=coreq::process::identity(std::process::id()).unwrap().unwrap();
         let recovery=format!("pid {} {} executor-v1\n7 41 codex 123 child 43 40\n",owner.pid,owner.started);
         fs::write(&native,&recovery).unwrap();
@@ -704,7 +704,7 @@
         for (name,text) in protected {assert_eq!(fs::read_to_string(install.join(name)).ok().as_deref(),Some(text),"update lost {name}");}
         assert_eq!(fs::read_to_string(install.join("host-policy-migration/original.json")).unwrap(),"original configuration");
         assert_eq!(fs::read_to_string(&native).unwrap(),recovery);
-        assert_eq!(crate::kids_file(&install,&root).unwrap()[0].execution,43,"native execution identity survives update");
+        assert_eq!(crate::service_run::kids_file(&install,&root).unwrap()[0].execution,43,"native execution identity survives update");
         assert_eq!(fs::read_to_string(install.join("rollback-floor")).unwrap(),"4.2.0");
         let mut owned=vec!["TaskQ-proj.xml", "admission.json", "admission.lock", "capacity", "current", "hold", "previous", "proj.log", "projects", "releases", "resource-state", "resources", "taskq", "taskqw.exe", "taskq.log", "taskq.log.tmp", "token", "tray", "tray.json", "update.lock", "windows-native", "worker-policy.json", "native", "host-policy-migration", "rollback-floor", "link"];
         owned.extend(protected.iter().map(|(name,_)|*name));owned.sort();

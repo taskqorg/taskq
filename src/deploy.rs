@@ -19,7 +19,7 @@ pub struct Deploy {
 
 /// The `deploy` setting of the project at `root`; none when absent or unreadable.
 pub fn config(root: &Path) -> Option<Deploy> {
-    parse(&crate::project_value(root).ok()?)
+    parse(&crate::config::project_value(root).ok()?)
 }
 
 /// `deploy` of a taskq.json value: a nonempty list of distinct words; anything else reads as absent.
@@ -216,10 +216,10 @@ pub fn applied(exe: &Path, roots: &[std::path::PathBuf], channel: &str, old: &st
     let mut log = vec![];
     if old == new || !word(old) || !word(new) || !word(host) { return log; }
     for root in roots {
-        let release = crate::project_value(root).ok().is_some_and(|v| v["repo"].as_str() == Some(crate::platform::RELEASE_REPO));
+        let release = crate::config::project_value(root).ok().is_some_and(|v| v["repo"].as_str() == Some(crate::platform::RELEASE_REPO));
         if !release || config(root).is_none_or(|d| !d.envs.iter().any(|e| e == channel)) { continue; }
         let args = ["deployed", "--version", new, "--env", channel, "--range", &format!("v{old}..v{new}"), "--host", host];
-        let out = std::fs::OpenOptions::new().create(true).append(true).open(crate::dot(root).join("deployed.log"));
+        let out = std::fs::OpenOptions::new().create(true).append(true).open(crate::paths::dot(root).join("deployed.log"));
         let mut cmd = crate::platform::command(exe);
         cmd.args(args).current_dir(root).env("TASKQ_ROOT", root).stdin(std::process::Stdio::null());
         if let Ok(f) = out { if let Ok(g) = f.try_clone() { cmd.stdout(f).stderr(g); } }

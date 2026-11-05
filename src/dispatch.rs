@@ -4,7 +4,7 @@
 use crate::board::{self, Board, Publish, entries};
 use crate::core::{self, Entry, Gate, State, Task, entry, fold, options};
 use crate::service::{self, Config};
-use crate::{Res, join, poke};
+use crate::{Res, cli::text::join, wake::poke};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::Path;
@@ -69,7 +69,7 @@ pub fn finish_reroute(b: &dyn Board, n: u64) -> Receipt {
         let log=entries(b,n)?;
         let p=core::project(n,&log,false);
         let (id,from,to)=p.reroute.as_ref().ok_or("routing intent no longer pending")?;
-        let machine=crate::hostname();
+        let machine=crate::config::hostname();
         if let Some(writing)=p.routing_writer {
             let writer=log.iter().find(|e|e.id==writing).and_then(|e|e.body.lines().find_map(|s|s.strip_prefix("writer: ")))
                 .and_then(|s|serde_json::from_str::<RoutingWriter>(s).ok()).ok_or("routing writer native identity unknown; fence retained")?;
@@ -271,7 +271,7 @@ impl Receipt {
             join(&[&format!("#{} {}", self.task, self.state.unwrap_or("unknown")), &self.extra, &won, &self.reason, &self.next]).replace("\n\n", "\n")
         } else {
             let why = if self.reason.starts_with('#') { self.reason.clone() } else { format!("#{}: {}", self.task, self.reason) };
-            format!("Error: {}\nNext: {}", crate::compact(&why, 153), crate::compact(&self.next, 154))
+            format!("Error: {}\nNext: {}", crate::cli::text::compact(&why, 153), crate::cli::text::compact(&self.next, 154))
         }
     }
     pub fn json(&self) -> String {
@@ -419,8 +419,8 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
     let wrapped;
     let text = if human {
         if text.contains(board::reply::MARKER)||text.contains(crate::reply_files::MARKER) { return Receipt::rejected(n, op, "text contains a reserved reply marker; reword it, then send again"); }
-        if args.is_empty() && kind != "requeue" && (files.is_empty()||!text.trim().is_empty()) && let Err(e) = crate::task_text(kind, text) { return Receipt::rejected(n, op, e); }
-        wrapped = crate::wrap_reply(text);
+        if args.is_empty() && kind != "requeue" && (files.is_empty()||!text.trim().is_empty()) && let Err(e) = crate::cli::text::task_text(kind, text) { return Receipt::rejected(n, op, e); }
+        wrapped = crate::cli::text::wrap_reply(text);
         if core::has_fields(&wrapped) { return Receipt::rejected(n, op, "wrapped text ends with an `op-id:` or `revision:` line; reword it"); }
         &wrapped
     } else { text };
@@ -480,7 +480,7 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
     let projection = core::project(n, &log, deps);
     let (t, rev) = (projection.task, projection.revision);
     if kind == "result" {
-        if let Ok((cfg, _)) = crate::load(root) {
+        if let Ok((cfg, _)) = crate::config::load(root) {
             let att = attempt.or(before_write.task.attempt).unwrap_or(0);
             let session = before_write.task.session.as_deref().unwrap_or_default();
             let rt = session.split(':').next().filter(|s| !s.is_empty()).unwrap_or("other");
@@ -672,9 +672,9 @@ pub(crate) fn blocked_card(n: u64, reason: &str, merged: Option<&str>) -> String
         "later: park the task - + no publication runs; - waits until the owner requeues it".into(),
     ];
     if let Some(m) = merged {
-        opts.push(format!("close: superseded, no merge - + merged {} carries the work; - this result is not merged", crate::plain(m, 60)));
+        opts.push(format!("close: superseded, no merge - + merged {} carries the work; - this result is not merged", crate::cli::text::plain(m, 60)));
     }
-    crate::service_card(n, "the reviewed result is in publication; the service cannot finish it.", reason, &opts, if merged.is_some() { 3 } else { 1 })
+    crate::cli::text::service_card(n, "the reviewed result is in publication; the service cannot finish it.", reason, &opts, if merged.is_some() { 3 } else { 1 })
 }
 
 /// § 7: a close whose verdict names a successor (`superseded by #M`) leaves it moving. A held successor is started
@@ -702,7 +702,7 @@ fn successor_moving(b: &dyn Board, root: &Path, n: u64, verdict: &str, op: &Op, 
     if agent {
         return refuse(format!("successor #{m} is held; an agent cannot start it"), format!("Ask the owner to start #{m}, then close."));
     }
-    let r = crate::start_one(b, root, m, &Op { id: op.id.as_ref().map(|i| format!("{i}.start-{m}")), revision: None });
+    let r = crate::cli::task_cmd::start_one(b, root, m, &Op { id: op.id.as_ref().map(|i| format!("{i}.start-{m}")), revision: None });
     if r.ok() { Ok(()) } else { refuse(format!("successor #{m} not started: {}", r.reason), format!("Run `taskq start {m}`, then close again.")) }
 }
 

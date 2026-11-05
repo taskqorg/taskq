@@ -276,7 +276,7 @@ const OVERLAY: &str = "taskq.project-limits/1";
 /// revision. An unreadable host policy reads as an error, never as project settings.
 fn policy(install:&Path, root: &Path) -> Res<(Value, String)> {
     let host=crate::host::Policy::read(install)?;
-    let project=crate::load(root)?.1;
+    let project=crate::config::load(root)?.1;
     let mut v=host.cap.json();
     v["project_limits"]=json!(host.project_limits(root,&project)?);
     let revision=host.project_revision(root,&project)?;
@@ -464,7 +464,7 @@ fn decide(install: &Path, s: &mut State, v: &Value, conn: Conn, clock: bool, now
         Err(x) => return Ok(Some(format!("resources: {op} unknown: {x}"))),
     };
     let wake = crate::platform::write_atomic(&install.join("poke"), "");
-    let (Ok((saved, rev)), Ok(want)) = (policy(install, &root), crate::load(&root).and_then(|(_,v)|written.project_revision(&root,&v))) else {
+    let (Ok((saved, rev)), Ok(want)) = (policy(install, &root), crate::config::load(&root).and_then(|(_,v)|written.project_revision(&root,&v))) else {
         return Ok(Some(format!("resources: {op} unknown: readback failed")));
     };
     if rev != want {
@@ -506,7 +506,7 @@ fn readback(s: &mut State, install:&Path, now: u64) {
             continue;
         }
         let root = PathBuf::from(&p.root);
-        let st: Value = fs::read_to_string(crate::dot(&root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        let st: Value = fs::read_to_string(crate::paths::dot(&root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
         let me = crate::host::Policy::read(install).map(|x| x.me).unwrap_or_default();
         let seen = st["at"].as_u64().filter(|t| *t >= at && *t <= now && now - t <= FRESH && st["host"] == me.as_str());
         // the service ran the exact saved host revision for this root, with the saved project limits
@@ -695,8 +695,8 @@ pub fn grant(install: &Path, grant_id: &str, actor: &str, scope: &Scope, by: &st
 /// Registered roots by display path, named like status.json (else the folder name).
 fn names(install: &Path) -> BTreeMap<String, String> {
     fs::read_to_string(install.join("projects")).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|r| {
-        let st: Value = fs::read_to_string(crate::dot(Path::new(r)).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-        (r.to_string(), st["project"].as_str().map(String::from).unwrap_or_else(|| crate::project_name(Path::new(r))))
+        let st: Value = fs::read_to_string(crate::paths::dot(Path::new(r)).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        (r.to_string(), st["project"].as_str().map(String::from).unwrap_or_else(|| crate::paths::project_name(Path::new(r))))
     }).collect()
 }
 
@@ -757,7 +757,7 @@ pub fn projection(install: &Path, now: u64, wait: bool) -> Res<Value> {
         prepare(s, install, now)?;
         for (pid, p) in &s.projects {
             let root = PathBuf::from(&p.root);
-            let st: Value = fs::read_to_string(crate::dot(&root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            let st: Value = fs::read_to_string(crate::paths::dot(&root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
             let at = st["at"].as_u64().filter(|_| st["host"] == host.me.as_str());
             observed = Some(match (observed, at) { (Some(None), _) | (_, None) => None, (Some(Some(o)), Some(a)) => Some(o.min(a)), (None, Some(a)) => Some(a) });
             let fresh = at.is_some_and(|t| t <= now && now - t <= FRESH);

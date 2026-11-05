@@ -195,7 +195,7 @@ fn save_id_choice(install:&Path,runtime:&str,client:Option<&str>,targets:Vec<Str
     if !owner_id(&id) {return Err("Reserved or invalid owner request ID; use a new ID".into());}
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
     let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
-    let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or(a.client).into(), runtime: runtime.into(),
+    let mut r = Request { schema: 2, id: id.clone(), created, host: crate::config::hostname(), platform, client: client.unwrap_or(a.client).into(), runtime: runtime.into(),
         targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None, root, pm, choice };
     r.brief = brief(&r, &id);
     locked(install, || {

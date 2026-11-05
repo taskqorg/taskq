@@ -93,10 +93,10 @@
     #[test]
     fn history_read_is_a_parsable_status_closed_page() {
         for (m,page,since) in [(json!({}),"1",None),(json!({"page":0}),"1",None),(json!({"page":3,"since":42}),"3",Some("42"))] {
-            let a=crate::Args::parse(&history_args(&m)).unwrap();
+            let a=crate::cli::Args::parse(&history_args(&m)).unwrap();
             assert_eq!((a.pos.as_slice(),a.flags.contains_key("closed"),a.one("page"),a.one("since")),(&["status".to_string()][..],true,Some(page),since),"{m}");
         }
-        let a=crate::Args::parse(&history_args(&json!({"task":7,"transcript":true,"before":80}))).unwrap();
+        let a=crate::cli::Args::parse(&history_args(&json!({"task":7,"transcript":true,"before":80}))).unwrap();
         assert_eq!((a.one("task"),a.flags.contains_key("transcript"),a.one("before")),(Some("7"),true,Some("80")),"#1829: exact native read retains task and byte cursor; no session-open command");
     }
 
@@ -342,9 +342,9 @@
     fn queued_focus_actions_keep_context_and_refuse_overflow_without_blocking() {
         crate::tests::with_test_capture(|store,dir| {
             let root=dir.join("project");let install=dir.join("install");
-            fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(&install).unwrap();
+            fs::create_dir_all(crate::paths::dot(&root)).unwrap();fs::create_dir_all(&install).unwrap();
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-            fs::write(crate::dot(&root).join("focus"),"area-maps").unwrap();
+            fs::write(crate::paths::dot(&root).join("focus"),"area-maps").unwrap();
             let (result_tx,result_rx)=std::sync::mpsc::channel();
             let (release_tx,release_rx)=std::sync::mpsc::channel();
             let queue=ActionQueue::start(install.clone(),&["pause","resume","focus"],true,queued_focus,move |root,id,result| {
@@ -365,7 +365,7 @@
             let snapshot=crate::control::snapshot(&root,&mut None,&mut None).unwrap();
             assert_eq!(snapshot.command["applied_receipt"],applied);
             let status=json!({"focus_command":snapshot.command,"focus":snapshot.focus,"tasks":[],"complete":true});
-            fs::write(crate::dot(&root).join("status.json"),status.to_string()).unwrap();
+            fs::write(crate::paths::dot(&root).join("status.json"),status.to_string()).unwrap();
             assert_eq!(project(&install,root.to_str().unwrap())["focus_command"],status["focus_command"]);
             for n in 0..16 {queue.submit(&message("resume",&format!("queued-{n}"))).unwrap();}
             assert!(queue.submit(&message("resume","overflow")).unwrap_err().contains("queue full"));
@@ -398,10 +398,10 @@
     fn workspace_capacity_apply_drops_reader_stamp_and_keeps_strict_payload() {
         crate::tests::with_test_capture(|_store,dir| {
             let root=dir.join("project");let install=dir.join("install");
-            fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(install.join("resources")).unwrap();
+            fs::create_dir_all(crate::paths::dot(&root)).unwrap();fs::create_dir_all(install.join("resources")).unwrap();
             fs::write(root.join("taskq.json"),"{\"repo\":\"fixture/project\"}").unwrap();
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-            fs::write(install.join("host.json"),json!({"hosts":{crate::hostname():"capacity-host"},"limits":{"codex":2}}).to_string()).unwrap();
+            fs::write(install.join("host.json"),json!({"hosts":{crate::config::hostname():"capacity-host"},"limits":{"codex":2}}).to_string()).unwrap();
             let policy=crate::host::Policy::read(&install).unwrap();
             let now=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
             let page=json!({"a":"capacity","root":root,"id":"ws-apply","issued_at":now,"expires_at":now+300,"context":"1 a b","ops":[{
@@ -444,11 +444,11 @@
     fn blocked_capacity_does_not_block_pause() {
         crate::tests::with_test_capture(|_store,dir| {
             let root=dir.join("project");let install=dir.join("install");
-            fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(install.join("resources")).unwrap();
+            fs::create_dir_all(crate::paths::dot(&root)).unwrap();fs::create_dir_all(install.join("resources")).unwrap();
             fs::write(root.join("taskq.json"),"{\"repo\":\"fixture/project\"}").unwrap();
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-            fs::write(install.join("host.json"),json!({"hosts":{crate::hostname():"capacity-host"},"limits":{"codex":2}}).to_string()).unwrap();
-            fs::write(crate::dot(&root).join("focus"),"all").unwrap();
+            fs::write(install.join("host.json"),json!({"hosts":{crate::config::hostname():"capacity-host"},"limits":{"codex":2}}).to_string()).unwrap();
+            fs::write(crate::paths::dot(&root).join("focus"),"all").unwrap();
             let policy=crate::host::Policy::read(&install).unwrap();
             assert_eq!(project(&install,root.to_str().unwrap())["cap_host"],"capacity-host");
             let now=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
@@ -480,9 +480,9 @@
     fn blocked_answer_does_not_block_pause() {
         crate::tests::with_test_capture(|_store,dir| {
             let root=dir.join("project");let install=dir.join("install");
-            fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(&install).unwrap();
+            fs::create_dir_all(crate::paths::dot(&root)).unwrap();fs::create_dir_all(&install).unwrap();
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-            fs::write(crate::dot(&root).join("focus"),"all").unwrap();
+            fs::write(crate::paths::dot(&root).join("focus"),"all").unwrap();
             let (entered_tx,entered_rx)=std::sync::mpsc::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
             let answer=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(WAIT).unwrap();Ok(json!({"answerReceipt":{"state":"accepted"}}))},|_,_,_|{}).unwrap();
             answer.submit(&json!({"a":"answer","root":root,"id":"tray.1","op":{"id":"tray.1"}})).unwrap();entered_rx.recv_timeout(WAIT).unwrap();
@@ -535,13 +535,13 @@
     fn action_failures_reach_the_tray_caller() {
         crate::tests::with_test_capture(|store, _| {
             let root=std::env::temp_dir().join(format!("taskq-action-receipt-{}",std::process::id()));
-            fs::create_dir_all(crate::dot(&root)).unwrap();
-            fs::write(crate::dot(&root).join("focus"),"off").unwrap();
+            fs::create_dir_all(crate::paths::dot(&root)).unwrap();
+            fs::write(crate::paths::dot(&root).join("focus"),"off").unwrap();
             assert!(act("resume",&root,None).unwrap_err().contains("no saved focus"));
-            assert_eq!(fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"off");
-            fs::write(crate::dot(&root).join("focus.paused"),"telemetry-fixture").unwrap();
+            assert_eq!(fs::read_to_string(crate::paths::dot(&root).join("focus")).unwrap(),"off");
+            fs::write(crate::paths::dot(&root).join("focus.paused"),"telemetry-fixture").unwrap();
             act("resume",&root,None).unwrap();
-            assert_eq!(fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"telemetry-fixture");
+            assert_eq!(fs::read_to_string(crate::paths::dot(&root).join("focus")).unwrap(),"telemetry-fixture");
             assert!(act("focus",&root,Some("stale-label")).is_err());
             fs::remove_dir_all(&root).unwrap();
             assert!(act("pause",&root,None).is_err());
@@ -604,7 +604,7 @@
     fn answer_bridge_restricts_targets_and_preserves_literal_owner_input() {
         let install = std::env::temp_dir().join(format!("taskq-tray-answer-{}", std::process::id()));
         let root = install.join("project");
-        fs::create_dir_all(crate::dot(&root)).unwrap();
+        fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         fs::write(install.join("projects"), root.to_str().unwrap()).unwrap();
         let mut m = json!({"root": root, "board": "https://github.com/o/r/issues", "op": {"id": "tray.1", "task": 7, "revision": 20, "text": "2; literal $(text)"}});
         let args = answer_args(&install, &m).unwrap();
@@ -641,7 +641,7 @@
             assert_eq!(input, expected, "§ 5: the entire reply uses file transport, above the old 1 MiB exchange limit");
             assert!(argv.contains(&"--text-file".into()) && argv.iter().map(String::len).sum::<usize>() < 512);
             fs::write(&path, input.as_bytes()).unwrap();
-            let mut parsed = crate::Args::parse(&argv).unwrap();
+            let mut parsed = crate::cli::Args::parse(&argv).unwrap();
             parsed.read_text(&mut std::io::empty()).unwrap();
             assert_eq!(parsed.one("text"), Some(expected.as_str()));
         }
@@ -730,7 +730,7 @@
         fs::create_dir_all(&root).unwrap();
         fs::write(install.join("projects"), root.to_str().unwrap()).unwrap();
         fs::write(root.join("taskq.json"), r#"{"repo":"o/r"}"#).unwrap();
-        let (cfg, _) = crate::load(&root).unwrap();
+        let (cfg, _) = crate::config::load(&root).unwrap();
         let b = Fake::default();
         b.state.borrow_mut().publish = "pending".into(); // a publication attempt must not succeed
         let n = b.create("Needs a decision", "## Goal\ng", &["taskq".into()]).unwrap();
@@ -830,7 +830,7 @@
             let args = answer_args(&install, &m).unwrap();
             assert_eq!(json!(args), c["argv"]);
             let mut file_args = args;file_args.extend(["--json-file".into(), "receipt.json".into()]);
-            assert!(crate::Args::parse(&file_args).is_ok(), "§ 5: every published control supports file receipts: {}", c["action"]);
+            assert!(crate::cli::Args::parse(&file_args).is_ok(), "§ 5: every published control supports file receipts: {}", c["action"]);
             snapshot["tasks"] = json!([c["row"]]);
             assert!(answer_snapshot(&snapshot, &m).is_ok());
             snapshot["tasks"][0]["state"] = json!("closed");
@@ -939,7 +939,7 @@
     #[test]
     fn incident_report_only_opens_json_inside_its_project() {
         let root = std::env::temp_dir().join(format!("taskq-tray-incident-{}", std::process::id()));
-        let dir = crate::dot(&root).join("incidents");
+        let dir = crate::paths::dot(&root).join("incidents");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("report.json"), "{}").unwrap();
         fs::write(root.join("private.json"), "{}").unwrap();
@@ -1050,12 +1050,12 @@
     fn corrupt_status_and_tray_json_read_unknown_and_stay() {
         let install = std::env::temp_dir().join(format!("taskq-tray-corrupt-{}", std::process::id()));
         let root = install.join("project");
-        fs::create_dir_all(crate::dot(&root)).unwrap();
+        fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         // R6/M3: the native adapter preserves the same observation used by status and capacity.
         let status=json!({"observed":99,"tasks_age_seconds":3,"hosts":[{"name":"mac","updated":98}],
             "capacity":{"host_runtime_used":{"codex":2},"reservations":[]},
             "tasks":[{"n":1,"executions":[{"id":7,"role":"worker","runtime":"codex","state":"running"}]}]});
-        fs::write(crate::dot(&root).join("status.json"),status.to_string()).unwrap();
+        fs::write(crate::paths::dot(&root).join("status.json"),status.to_string()).unwrap();
         let projected=project(&root,root.to_str().unwrap());
         for key in ["observed","tasks_age_seconds","capacity"] {assert_eq!(projected[key],status[key],"{key}");}
         // #1591/#1592: rows keep every observed field and gain only the computed `live`, `age` and `age_text`
@@ -1063,13 +1063,13 @@
         assert_eq!(strip(&projected["hosts"]),status["hosts"]);
         assert_eq!(strip(&projected["tasks"][0]["executions"]),status["tasks"][0]["executions"]);
         assert_eq!(projected["tasks"][0]["local_session"],false);
-        fs::write(crate::dot(&root).join("status.json"), "{\"tasks\": [{\"n\": 1").unwrap();
+        fs::write(crate::paths::dot(&root).join("status.json"), "{\"tasks\": [{\"n\": 1").unwrap();
         let p = project(&root, root.to_str().unwrap());
         assert!(p["complete"] == false && p["tasks"] == json!([]) && p["error"].as_str().unwrap().starts_with("status.json: corrupt"), "{p}");
         assert!(!summary(&[p], (0, 1)).known, "counts unknown, never zero");
-        assert_eq!(fs::read_to_string(crate::dot(&root).join("status.json")).unwrap(), "{\"tasks\": [{\"n\": 1");
+        assert_eq!(fs::read_to_string(crate::paths::dot(&root).join("status.json")).unwrap(), "{\"tasks\": [{\"n\": 1");
         // a corrupt focus in a fresh status.json names its reason
-        fs::write(crate::dot(&root).join("status.json"), r#"{"focus": null, "focus_error": "focus: not UTF-8 text; file kept"}"#).unwrap();
+        fs::write(crate::paths::dot(&root).join("status.json"), r#"{"focus": null, "focus_error": "focus: not UTF-8 text; file kept"}"#).unwrap();
         assert_eq!(project(&root, root.to_str().unwrap())["error"], "focus: not UTF-8 text; file kept");
         fs::write(install.join("tray.json"), "{\"view\": \"fu").unwrap();
         let s = Settings::load(&install);
@@ -1094,7 +1094,7 @@
         let _ = fs::remove_dir_all(&base);
         let (install, root) = (base.join("install"), base.join("project"));
         fs::create_dir_all(&install).unwrap();
-        fs::create_dir_all(crate::dot(&root)).unwrap();
+        fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         fs::write(install.join("projects"), format!("{}\n", root.display())).unwrap();
         let r = root.to_str().unwrap();
         let card = "Problem: Pick one\n1. Ship\n2. Wait";
@@ -1102,10 +1102,10 @@
             let mut t = json!({"n": 7, "title": "T", "state": state, "revision": revision, "ops": ops});
             if state == "ask" { t["card"] = json!(card); t["question"] = crate::snapshot::question(card); }
             let s = json!({"complete": true, "issues": "https://github.com/o/r/issues", "observed": now(), "tasks_age_seconds": 0, "tasks": [t]});
-            fs::write(crate::dot(&root).join("status.json"), s.to_string()).unwrap();
+            fs::write(crate::paths::dot(&root).join("status.json"), s.to_string()).unwrap();
         };
         // the ask was notified once, before the answer
-        fs::write(crate::dot(&root).join("events"), format!("since 1\n{} #7 ask 1\n", now() - 5)).unwrap();
+        fs::write(crate::paths::dot(&root).join("events"), format!("since 1\n{} #7 ask 1\n", now() - 5)).unwrap();
         status("ask", 30, &["ask-op"]);
         let s = Settings::load(&install);
         let mut sync = crate::pending::Pending::default();
@@ -1458,14 +1458,14 @@
     fn hour_window_counts_each_ask_and_close_and_names_missing_sources() {
         let root = std::env::temp_dir().join(format!("taskq-1712-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(crate::dot(&root)).unwrap();
+        fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let install = root.join("install");
         let r = root.to_str().unwrap();
         assert_eq!((project(&install, r)["since"].clone(), project(&install, r)["events_error"].clone()), (Value::Null, json!("no events file")));
-        fs::write(crate::dot(&root).join("events"), "1000 #9 ask 3\n").unwrap();
+        fs::write(crate::paths::dot(&root).join("events"), "1000 #9 ask 3\n").unwrap();
         assert_eq!(project(&install, r)["events_error"], "events file has no since line");
         // the first ask before the window; an answer, then a second ask and a close of the same task inside it
-        fs::write(crate::dot(&root).join("events"), "since 0\n1000 #9 ask 11\n5000 #9 ask 22\n6000 #9 close 33 replaced by #10 (ready)\n").unwrap();
+        fs::write(crate::paths::dot(&root).join("events"), "since 0\n1000 #9 ask 11\n5000 #9 ask 22\n6000 #9 close 33 replaced by #10 (ready)\n").unwrap();
         let p = project(&install, r);
         // #1800: a close carries its § 7 outcome as a 5th item; other events keep 4
         assert_eq!((p["events"][2].clone(), p["events"][1].as_array().unwrap().len()), (json!([6000, "close", "33", 9, "replaced by #10 (ready)"]), 4));

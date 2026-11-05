@@ -23,7 +23,7 @@
             let log=entries(&b,n).unwrap();let files=manifest(&log.last().unwrap().body).unwrap();assert_eq!(files.len(),2);
             assert_eq!(files[1].bytes,20*1024*1024);assert_eq!(files[1].name,"document.pdf");
             let worker=prepare(&b,&fixture.0,n,&log).unwrap();assert!(worker.contains("untrusted data"));
-            for (file,original) in files.iter().zip(&paths){let path=crate::dot(&fixture.0).join("reply-files").join(&file.hash).join(&file.name);assert_eq!(fs::read(&path).unwrap(),fs::read(original).unwrap());assert!(worker.contains(&path.to_string_lossy().replace('\\',"\\\\")));}
+            for (file,original) in files.iter().zip(&paths){let path=crate::paths::dot(&fixture.0).join("reply-files").join(&file.hash).join(&file.name);assert_eq!(fs::read(&path).unwrap(),fs::read(original).unwrap());assert!(worker.contains(&path.to_string_lossy().replace('\\',"\\\\")));}
             let (comments,uploads)=(b.comments(n).unwrap().len(),b.state.borrow().images.len());
             assert!(dispatch::act_files(&b,&fixture.0,n,kind,text,&op,&["missing-file".into()]).ok(),"accepted op reconciles before reading original files");
             assert_eq!((b.comments(n).unwrap().len(),b.state.borrow().images.len()),(comments,uploads));
@@ -31,9 +31,9 @@
             let r=dispatch::act_files(&b,&fixture.0,n,kind,text,&stale,&paths);
             if kind=="requeue"{assert_eq!(r.outcome,"stale");assert_eq!(b.state.borrow().images.len(),uploads,"stale requeue uploads nothing");}
             else{assert!(r.ok());assert_eq!(r.note,Some(true),"late replies retain files as a note without answering another question");}
-            fs::write(crate::dot(&fixture.0).join("reply-files").join(&files[0].hash).join(&files[0].name),b"corrupt cache").unwrap();
+            fs::write(crate::paths::dot(&fixture.0).join("reply-files").join(&files[0].hash).join(&files[0].name),b"corrupt cache").unwrap();
             assert!(prepare(&b,&fixture.0,n,&log).is_ok(),"a corrupt cache is repaired only from verified board bytes");
-            fs::remove_file(crate::dot(&fixture.0).join("reply-files").join(&files[0].hash).join(&files[0].name)).unwrap();
+            fs::remove_file(crate::paths::dot(&fixture.0).join("reply-files").join(&files[0].hash).join(&files[0].name)).unwrap();
             assert!(prepare(&b,&fixture.0,n,&log).is_ok(),"cache reconstructs from board without the original client");
         }
     }

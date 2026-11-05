@@ -353,8 +353,8 @@ fn defects_samples(samples:&[Sample], live: &Live, project: Option<&str>, now: u
         let age = r.at_ms.filter(|at| *at <= now).map(|at| (now - at) / 1000);
         if age.is_none() { return Err("unresolved attempt age unknown".into()); }
         overdue += usize::from(age.is_some_and(|a| a > ttl));
-        out += &format!("| {} | #{} | {} | {} | {} | {} | missing terminal record |\n", crate::cell(r.project.as_deref().unwrap_or("unknown")),
-            r.task, r.attempt, crate::cell(&r.rt), crate::cell(r.host.as_deref().unwrap_or("unknown (not recorded)")), age.unwrap());
+        out += &format!("| {} | #{} | {} | {} | {} | {} | missing terminal record |\n", crate::cli::text::cell(r.project.as_deref().unwrap_or("unknown")),
+            r.task, r.attempt, crate::cli::text::cell(&r.rt), crate::cli::text::cell(r.host.as_deref().unwrap_or("unknown (not recorded)")), age.unwrap());
     }
     Ok((out, overdue))
 }
@@ -886,7 +886,7 @@ fn since_ms(s: &str, now: u64) -> Result<u64, String> {
 /// #1345 `profile health`: this CLI's collector, the host service's from its fresh `status.json`, and the shared store.
 fn health(install:&Path)->String {
     let now=SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|d|d.as_secs());
-    let statuses=crate::host::projects(install).map(|roots|roots.iter().map(|r|crate::data::json(&crate::dot(r).join("status.json"))).collect::<Vec<_>>());
+    let statuses=crate::host::projects(install).map(|roots|roots.iter().map(|r|crate::data::json(&crate::paths::dot(r).join("status.json"))).collect::<Vec<_>>());
     let service=statuses.and_then(|s|service_health(&s,now,crate::runtime::alive));
     let mut out=health_lines("CLI telemetry",&Ok((crate::telemetry::diagnostic::health(),std::process::id() as u64,now)));
     out+=&health_lines("Service telemetry",&service);
@@ -894,10 +894,10 @@ fn health(install:&Path)->String {
     // docs/design/worktrees.md: one line per root from its last tidy report; #1766: then its status age
     for root in crate::host::projects(install).unwrap_or_default() {
         let name=root.file_name().map_or("project".into(),|n|n.to_string_lossy().into_owned());
-        let tidy=crate::data::json(&crate::dot(&root).join("tidy.json")).ok().flatten().unwrap_or_default();
+        let tidy=crate::data::json(&crate::paths::dot(&root).join("tidy.json")).ok().flatten().unwrap_or_default();
         out+=&crate::tidy::health_line(&name,&tidy,now);
         out.push('\n');
-        let status=crate::data::json(&crate::dot(&root).join("status.json"));
+        let status=crate::data::json(&crate::paths::dot(&root).join("status.json"));
         out+=&status_line(&name,&status,now);
         out.push('\n');
         // § 4 Churn: one line per flagged task of this root
@@ -915,7 +915,7 @@ fn status_line(project:&str,status:&Result<Option<serde_json::Value>,String>,now
     // a status written before #1766 has no `poll`: the § 9 default
     let poll=st["poll"].as_u64().unwrap_or(60).max(1);
     let age=now.saturating_sub(at);
-    format!("{project}: status {} old · refresh {poll}s{}",crate::age(age as i64),if age>2*poll {" · stale"} else {""})
+    format!("{project}: status {} old · refresh {poll}s{}",crate::display::age(age as i64),if age>2*poll {" · stale"} else {""})
 }
 
 /// The freshest status (under 60 s, live pid) among registered projects; anything else is unknown with its reason (R12).
@@ -925,7 +925,7 @@ fn service_health(statuses:&[Result<Option<serde_json::Value>,String>],now:u64,a
     for status in statuses {
         let st=match status {Ok(Some(st))=>st,Ok(None)=>{reason="service status.json missing".into();continue}Err(e)=>{reason=format!("service status unreadable: {e}");continue}};
         let (Some(at),Some(pid))=(st["at"].as_u64(),st["pid"].as_u64()) else {reason="service status has no pid or time".into();continue};
-        if at>now||now-at>60 {reason=format!("service status {} old",crate::age(now.saturating_sub(at) as i64));continue}
+        if at>now||now-at>60 {reason=format!("service status {} old",crate::display::age(now.saturating_sub(at) as i64));continue}
         if !alive(pid as u32) {reason=format!("service pid {pid} not running");continue}
         if !st["telemetry"].is_object() {reason="service status has no telemetry snapshot".into();continue}
         if best.as_ref().is_none_or(|b|at>b.2) {best=Some((st["telemetry"].clone(),pid,at));}
@@ -977,7 +977,7 @@ pub const WATCH_DOC: &str = "https://github.com/taskqorg/taskq/blob/main/docs/de
 /// #1910 one stall line for a `status.json` task row at `now` (Unix s), thresholds of [`WATCH_DOC`]; a row matches its first rule.
 pub(crate) fn stall(t:&serde_json::Value,now:u64)->Option<String> {
     let since=|k:&str|t[k].as_u64().map(|s|now.saturating_sub(s));
-    let age=|s:u64|crate::age(s as i64);
+    let age=|s:u64|crate::display::age(s as i64);
     let health=if matches!(t["state"].as_str(),Some("doing"|"review")) && t["heartbeat"].is_object() {
         let mut h=t["heartbeat"].clone();crate::snapshot::refresh_heartbeat(&mut h,now as i64,t["attempt"].is_u64());
         h["warning"].as_str().map(String::from)
@@ -1026,13 +1026,13 @@ pub fn watch(install:&Path,since:Option<&str>)->Result<String,String> {
     let (mut stalls,mut health,mut cadences)=(Vec::new(),Vec::new(),Vec::new());
     for root in crate::host::projects(install).map_err(|e|e.to_string())? {
         let name=root.file_name().map_or("project".into(),|n|n.to_string_lossy().into_owned());
-        let status=crate::data::json(&crate::dot(&root).join("status.json"));
+        let status=crate::data::json(&crate::paths::dot(&root).join("status.json"));
         let st=match &status {Ok(Some(st)) if st["at"].as_u64().is_some_and(|at|now.saturating_sub(at)<=2*st["poll"].as_u64().unwrap_or(60).max(1))=>st,
             _=>{stalls.push(status_line(&name,&status,now));continue}};
         let project=st["project"].as_str().unwrap_or(&name).to_owned();
         let tasks=st["tasks"].as_array().cloned().unwrap_or_default();
         stalls.extend(tasks.iter().filter_map(|t|stall(t,now)).map(|s|format!("{project} {s}")));
-        let events=fs::read_to_string(crate::dot(&root).join("events")).unwrap_or_default();
+        let events=fs::read_to_string(crate::paths::dot(&root).join("events")).unwrap_or_default();
         let (line,h)=cadence(&project,&events,&tasks,start);
         cadences.push(line);health.extend(h);
     }

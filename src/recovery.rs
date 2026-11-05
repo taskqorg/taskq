@@ -177,7 +177,7 @@ pub fn apply(b:&dyn Board,c:&Config,request:&Request)->Res<Value> {
         })();
         receipts.push(outcome.unwrap_or_else(|reason|json!({"task":s.task,"op_id":id,"outcome":"unknown","reason":reason})));
     }
-    crate::poke(&c.root)?;
+    crate::wake::poke(&c.root)?;
     Ok(json!({"state":"mixed","stop":request.stop,"receipts":receipts,"reason":"Only confirmed selected tasks may run; all other work stays held"}))
 }
 

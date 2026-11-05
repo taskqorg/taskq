@@ -77,7 +77,7 @@ Ordinary single-click numbered answers and consequential-effect review are prese
 After a meaningful planning milestone, remind once when the held plan can start: “Ready to start when you say.” Track the plan revision/milestone; do not repeat on every reply, after dismissal, or while blocked. A reminder never starts work. An updated plan may earn a new reminder only after another completed milestone.
 
 Option 1 needs authoritative card/attempt binding and duplicate-operation handling in the board model. No claim that forge APIs offer a multi-write transaction. Created-only tasks must remain visibly held; current ready issue creation cannot implement that promise alone. [Q2/P2](plans-and-decisions.md).
-Prefer existing `later` for held tasks if safe creation/start can be qualified. Source `add --later` currently creates a `taskq`/ready issue before appending `later` (`src/main.rs`); that ordering leaves a potential admission window. Qualify creation before eligibility (for example, establish the hold before exposing the task label), partial-write recovery and all writers. No race reproduction or fix is claimed here.
+Prefer existing `later` for held tasks if safe creation/start can be qualified. Source `add --later` currently creates a `taskq`/ready issue before appending `later` (`src/cli/task_cmd.rs`); that ordering leaves a potential admission window. Qualify creation before eligibility (for example, establish the hold before exposing the task label), partial-write recovery and all writers. No race reproduction or fix is claimed here.
 
 ## D09 Bootstrap, standard reports and observation
 

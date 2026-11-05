@@ -1,5 +1,5 @@
 //! Exact host lifecycle intent and outcome in the existing local operation store (H-A5).
-use crate::{Res,host,resources};
+use crate::{Res, host, resources};
 use coreq::telemetry::capture::CommandReceipt;
 use serde::{Deserialize,Serialize};
 use serde_json::{Value,json};

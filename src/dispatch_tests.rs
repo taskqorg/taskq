@@ -23,7 +23,7 @@
         let n=b.create("Reroute","",&["taskq".into(),"run-claude".into()]).unwrap();
         let intent=b.comment(n,"taskq: reroute claude codex\nrouting-fence: 1").unwrap();
         let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
-        let machine=crate::hostname();
+        let machine=crate::config::hostname();
         let writer=|machine:&str,started:&str|serde_json::to_string(&RoutingWriter {machine:machine.into(),pid:native.pid,started:started.into()}).unwrap();
         for identity in [writer("invented-remote-host",&native.started),writer(&machine,&native.started),"invalid invented identity".into()] {
             let claim=b.comment(n,&format!("taskq: routing-write {intent}\nwriter: {identity}")).unwrap();
@@ -220,7 +220,7 @@
             }
         }
         for text in ["", " \n "] {
-            for kind in ["answer", "steer"] { assert!(crate::task_text(kind, text).unwrap_err().contains("type a reply")); }
+            for kind in ["answer", "steer"] { assert!(crate::cli::text::task_text(kind, text).unwrap_err().contains("type a reply")); }
         }
         let b = Fake::default();
         let n = b.create("Reserved suffix", "", &["taskq".into()]).unwrap();
@@ -235,7 +235,7 @@
     fn wake_failure_preserves_acceptance_and_retry_only_notifies() {
         let b = Fake::default();
         let root = std::env::temp_dir().join(format!("taskq-wake-receipt-{}", std::process::id()));
-        let path = crate::dot(&root).join("poke");
+        let path = crate::paths::dot(&root).join("poke");
         std::fs::create_dir_all(&path).unwrap();
         let n = b.create("Wake fixture", "## Goal\ng", &["taskq".into()]).unwrap();
         let op = Op { id: Some("hold-once".into()), revision: None };
@@ -346,7 +346,7 @@ g", &["taskq".into()]).unwrap();
         let (b, root) = (Fake::default(), std::env::temp_dir().join(format!("taskq-limit-{}", std::process::id())));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("taskq.json"), r#"{"repo":"o/r"}"#).unwrap();
-        let (cfg, _) = crate::load(&root).unwrap();
+        let (cfg, _) = crate::config::load(&root).unwrap();
         let sha = "0123456789abcdef0123456789abcdef01234567";
         let at_limit = |reviewers: &[&str]| {
             let n = b.create("T", "## Goal\ng", &["taskq".into()]).unwrap();
@@ -417,7 +417,7 @@ g", &["taskq".into()]).unwrap();
         let root = std::env::temp_dir().join(format!("taskq-notes-{}", crate::runtime::uuid()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("taskq.json"), r#"{"repo":"o/r"}"#).unwrap();
-        let (cfg, _) = crate::load(&root).unwrap();
+        let (cfg, _) = crate::config::load(&root).unwrap();
         let n = b.create("T", "## Goal\nkeep safe\n\n## Acceptance\nA1. no loss", &["taskq".into()]).unwrap();
         let a = b.comment(n, "taskq: spawn worker codex:s win").unwrap();
         let card = b.comment(n, &entry("ask", &[], Some(a), "Problem: Which?\n1. old x\n2. old y")).unwrap();
@@ -500,7 +500,7 @@ g", &["taskq".into()]).unwrap();
             let root=std::env::temp_dir().join(format!("taskq-note-close-{}",crate::runtime::uuid()));
             std::fs::create_dir_all(&root).unwrap();
             std::fs::write(root.join("taskq.json"),r#"{"repo":"o/r"}"#).unwrap();
-            let (cfg,_)=crate::load(&root).unwrap();
+            let (cfg,_)=crate::config::load(&root).unwrap();
             let n=b.create("T","## Goal\ng",&["taskq".into()]).unwrap();
             let a=b.comment(n,"taskq: spawn worker codex:s win").unwrap();
             b.comment(n,&entry("result",&[&"a".repeat(40)],Some(a),"")).unwrap();
@@ -529,7 +529,7 @@ g", &["taskq".into()]).unwrap();
         let root=std::env::temp_dir().join(format!("taskq-note-read-{}",crate::runtime::uuid()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("taskq.json"),r#"{"repo":"o/r"}"#).unwrap();
-        let (cfg,_)=crate::load(&root).unwrap();
+        let (cfg,_)=crate::config::load(&root).unwrap();
         let n=b.create("T","## Goal\ng",&["taskq".into()]).unwrap();
         let a=b.comment(n,"taskq: spawn worker codex:s win").unwrap();
         b.comment(n,&entry("ask",&[],Some(a),"Problem: First?\n1. original meaning\n2. other")).unwrap();

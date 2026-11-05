@@ -603,7 +603,7 @@ finally:
             let mut proc=CliTurn {proc:child,log,pos:0,start:0,stopping:false,accepted:false,read_error:None,session:None,native:Some(native.clone()),recovery:None, rt: "codex".into()};
             proc.checkpoint(&cfg,&launch,attempt).unwrap();
             service.kids.push(crate::service::Kid { unknown:None, stopping:false, session_url:None,task,attempt,execution:attempt,rt:"codex".into(),proc:Box::new(proc)});
-            crate::data::kids(&std::fs::read_to_string(crate::kids_path(&cfg.install,&root).unwrap()).unwrap()).unwrap();
+            crate::data::kids(&std::fs::read_to_string(crate::paths::kids_path(&cfg.install,&root).unwrap()).unwrap()).unwrap();
             coreq::write_durable(&root.join("ready"),&serde_json::json!({"pid":native.pid,"started":native.started}).to_string()).unwrap();
             let until=std::time::Instant::now()+std::time::Duration::from_secs(10);
             loop {assert!(std::time::Instant::now()<until,"controller did not kill the owner");std::thread::sleep(std::time::Duration::from_millis(10));}
@@ -611,15 +611,15 @@ finally:
         #[cfg(windows)]
         if std::env::var("TASKQ_NATIVE_OWNER_CASE").unwrap()=="ended" {
             // #2266 A1: owner and launcher killed -> the kill-on-close job is gone -> adopted as ended -> Exit release.
-            crate::adopt(&mut service,&cfg.install,&root).unwrap();
+            crate::service_run::adopt(&mut service,&cfg.install,&root).unwrap();
             assert_eq!(service.kids.len(),1);assert_eq!(service.kids[0].proc.exited(),Ok(Some(-1)));
             service.reap_owned();assert!(service.kids.is_empty());
             assert_eq!(crate::core::executions(task,&crate::board::entries(&b,task).unwrap())[0].release,Some(crate::core::Release::Exit));
-            assert!(crate::kids_file(&cfg.install,&root).unwrap().is_empty());
+            assert!(crate::service_run::kids_file(&cfg.install,&root).unwrap().is_empty());
             std::fs::write(root.join("verified"),"vanished kill-on-close scope; ended; Exit released; record retired; no replay").unwrap();
             return;
         }
-        crate::adopt(&mut service,&cfg.install,&root).unwrap();
+        crate::service_run::adopt(&mut service,&cfg.install,&root).unwrap();
         assert_eq!(service.kids.len(),1);assert_eq!(service.kids[0].execution,attempt);
         if std::env::var("TASKQ_NATIVE_OWNER_CASE").unwrap()=="cancel" {
             service.reap_owned();assert_eq!(service.kids.len(),1,"a live executor cannot release on owner restart");
@@ -639,11 +639,11 @@ finally:
         println!("intermediate native readback errors (never terminal): {unknown:?}");
         b.state.borrow_mut().fail_comments=1;
         service.reap_owned();assert_eq!(service.kids.len(),1,"lost exit receipt must retain ownership");
-        assert_eq!(crate::kids_file(&cfg.install,&root).unwrap().len(),1);
+        assert_eq!(crate::service_run::kids_file(&cfg.install,&root).unwrap().len(),1);
         service.reap_owned();assert!(service.kids.is_empty());
         let x=crate::core::executions(task,&crate::board::entries(&b,task).unwrap()).remove(0);
         assert!(!x.accepted);assert_eq!(x.release,Some(crate::core::Release::Exit));
-        assert!(crate::kids_file(&cfg.install,&root).unwrap().is_empty());
+        assert!(crate::service_run::kids_file(&cfg.install,&root).unwrap().is_empty());
         std::fs::write(root.join("verified"),"same native execution; acceptance unknown; exit read back; no replay").unwrap();
     }
 
@@ -738,7 +738,7 @@ finally:
             let mut turn=CliTurn {proc:child,log,pos:0,start:0,stopping:false,accepted:false,read_error:None,session:None,native:Some(native.clone()),recovery:None, rt: "codex".into()};
             let launch=Launch {files: String::new(), execution:Some(attempt),task,title:String::new(),attempt,role:"worker".into(),rt:"codex".into(),session:"fixture".into(),url:String::new(),resume:None};
             turn.checkpoint(&cfg,&launch,attempt).unwrap();
-            let saved=crate::kids_file(&cfg.install,&root).unwrap();assert_eq!(saved.len(),1);assert!(saved[0].job.is_some());
+            let saved=crate::service_run::kids_file(&cfg.install,&root).unwrap();assert_eq!(saved.len(),1);assert!(saved[0].job.is_some());
             let mut legacy=saved[0].clone();legacy.job=None;
             assert!(execution_live(&legacy).unwrap_err().contains("legacy"));
             let until=std::time::Instant::now()+std::time::Duration::from_secs(10);
@@ -762,9 +762,9 @@ finally:
                 // #2266: the last handle closes with the launcher gone; kill-on-close ends the descendant.
                 drop(turn);
                 while coreq::process::identity(descendant.pid).unwrap().as_ref()==Some(&descendant) {assert!(std::time::Instant::now()<until,"kill-on-close did not end the descendant");std::thread::sleep(std::time::Duration::from_millis(10));}
-                crate::adopt(&mut service,&cfg.install,&root).unwrap();
+                crate::service_run::adopt(&mut service,&cfg.install,&root).unwrap();
                 assert_eq!(service.kids.len(),1);assert_eq!(service.kids[0].proc.exited(),Ok(Some(-1)));
-                service.reap_owned();assert!(service.kids.is_empty());assert!(crate::kids_file(&cfg.install,&root).unwrap().is_empty());
+                service.reap_owned();assert!(service.kids.is_empty());assert!(crate::service_run::kids_file(&cfg.install,&root).unwrap().is_empty());
                 assert_eq!(crate::core::executions(task,&crate::board::entries(&board,task).unwrap())[0].release,Some(crate::core::Release::Exit));
                 assert_eq!(sentinel.exited(),Ok(None),"another execution's job must remain live");sentinel.kill().unwrap();
                 while sentinel.exited().unwrap().is_none() {assert!(std::time::Instant::now()<until,"sentinel cleanup not confirmed");std::thread::sleep(std::time::Duration::from_millis(10));}
@@ -781,7 +781,7 @@ finally:
             while sentinel.exited().unwrap().is_none() {assert!(std::time::Instant::now()<until,"sentinel cleanup not confirmed");std::thread::sleep(std::time::Duration::from_millis(10));}
             service.kids.push(crate::service::Kid { unknown:None, stopping:false, session_url:None,task,attempt,execution:attempt,rt:"codex".into(),proc});
             board.state.borrow_mut().fail_comments=1;service.reap_owned();assert_eq!(service.kids.len(),1,"failed terminal receipt retains ownership");
-            service.reap_owned();assert!(service.kids.is_empty());assert!(crate::kids_file(&cfg.install,&root).unwrap().is_empty());
+            service.reap_owned();assert!(service.kids.is_empty());assert!(crate::service_run::kids_file(&cfg.install,&root).unwrap().is_empty());
             assert_eq!(crate::core::executions(task,&crate::board::entries(&board,task).unwrap())[0].release,Some(crate::core::Release::Exit));
             drop(service);drop(sentinel);std::fs::remove_dir_all(root).unwrap();
             println!("cold={cold}: launcher exit held while descendant lived; native job cancelled; unrelated job preserved; terminal receipt retried; protected record retired");
@@ -1898,7 +1898,7 @@ finally:
         assert_eq!(t.native_identity(),Ok(original.clone()));assert!(t.recovery.is_some());
         std::fs::remove_file(install.join("native")).unwrap();t.persist().unwrap();
         assert!(t.recovery.is_none());
-        let saved=crate::kids_file(&install,&root).unwrap();assert_eq!(saved.len(),1);
+        let saved=crate::service_run::kids_file(&install,&root).unwrap();assert_eq!(saved.len(),1);
         assert_eq!(saved[0].process,original);assert_eq!(saved[0].runtime,"claude");assert_eq!(saved[0].offset,0);
         let mut conflicting=row.clone();conflicting["pid"]=std::process::id().into();
         assert!(t.capture_identity(&conflicting).is_err());assert_eq!(t.native_identity(),Ok(original.clone()));
@@ -1914,7 +1914,7 @@ finally:
         assert_eq!(after_exit.native_identity(),Ok(original),"cold recovery does not recapture an absent/reused PID");
         let mut other=x.clone();other.id=43;
         assert!(recover(&root,&install,7,&other).is_err());
-        let protected=crate::kids_path(&install,&root).unwrap();std::fs::write(&protected,"corrupt").unwrap();
+        let protected=crate::paths::kids_path(&install,&root).unwrap();std::fs::write(&protected,"corrupt").unwrap();
         assert!(recover(&root,&install,7,&x).is_err());assert_eq!(std::fs::read_to_string(protected).unwrap(),"corrupt");
         drop(after_exit);std::fs::remove_dir_all(root).unwrap();
     }
@@ -2029,17 +2029,17 @@ finally:
             let turn=ClaudeTurn {root:root.clone(),log,session:String::new(),id:"c37eb75a".into(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,mode:"dontAsk".into(),input,
                 _input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,handed:false,released:false,launch_error:None,resumed:None,lost:None};
             s.kids.push(crate::service::Kid {unknown:None,stopping:false,session_url:None,execution:a,task:n,attempt:a,rt:"claude".into(),proc:Box::new(turn)});
-            assert!(!crate::lifecycle_waits(&s,false).contains(&format!("#{n}")),"#2297: a turn without native identity passes to the next image");
+            assert!(!crate::service_run::lifecycle_waits(&s,false).contains(&format!("#{n}")),"#2297: a turn without native identity passes to the next image");
             s.kids[0].proc.checkpoint(&c,&l,a).unwrap();
-            assert!(!crate::lifecycle_waits(&s,false).contains(&format!("#{n}")),"saved native identity: re-exec passes over the live turn");
-            crate::save_kids(&s,&root).unwrap();
+            assert!(!crate::service_run::lifecycle_waits(&s,false).contains(&format!("#{n}")),"saved native identity: re-exec passes over the live turn");
+            crate::service_run::save_kids(&s,&root).unwrap();
             coreq::telemetry::capture::before_exec();
             let error=Command::new(std::env::current_exe().unwrap()).args(["--exact","runtime::tests::claude_image_child","--ignored","--nocapture"])
                 .env("TASKQ_IMAGE_PHASE","after").exec();
             panic!("exec failed: {error}");
         }
         let pid:u32=std::fs::read_to_string(root.join("native-pid")).unwrap().parse().unwrap();
-        crate::adopt(&mut s,&c.install,&root).unwrap();crate::adopt(&mut s,&c.install,&root).unwrap();
+        crate::service_run::adopt(&mut s,&c.install,&root).unwrap();crate::service_run::adopt(&mut s,&c.install,&root).unwrap();
         assert_eq!(s.kids.len(),1);assert_eq!(s.kids[0].execution,a);assert_eq!(s.kids[0].proc.id(),pid);
         let accepted=|| crate::core::executions(n,&crate::board::entries(&b,n).unwrap()).into_iter().find(|x|x.id==a).unwrap();
         let until=std::time::Instant::now()+std::time::Duration::from_secs(10);
@@ -2056,7 +2056,7 @@ finally:
         assert_eq!(accepted().release,Some(crate::core::Release::Exit));
         let log=std::fs::read_to_string(attempt_log(&root,"worker",n,a)).unwrap();
         assert_eq!(log.matches("\"result\":\"owned final\"").count(),1,"answer kept once");
-        crate::save_kids(&s,&root).unwrap();assert!(crate::kids_file(&c.install,&root).unwrap().is_empty());
+        crate::service_run::save_kids(&s,&root).unwrap();assert!(crate::service_run::kids_file(&c.install,&root).unwrap().is_empty());
         std::fs::write(root.join("verified"),"no resubmission; kept answer; exit after native exit").unwrap();
     }
 
@@ -2083,10 +2083,10 @@ finally:
         assert!(refused.contains("#1557"),"the earlier job's process is not this job's identity: {refused}");
         assert!(b.native.is_none(),"a refused readback keeps no identity");
         b.capture_identity(&row("90d3662a",second.id())).unwrap();b.persist().unwrap();
-        let records:Vec<_>=crate::kids_file(&install,&root).unwrap().into_iter().map(|k|(k.task,k.process.pid)).collect();
+        let records:Vec<_>=crate::service_run::kids_file(&install,&root).unwrap().into_iter().map(|k|(k.task,k.process.pid)).collect();
         assert_eq!(records,[(1557,first.id()),(1558,second.id())],"each record carries its own job's process");
-        let mut stolen=crate::kids_file(&install,&root).unwrap()[0].clone();stolen.task=1559;
-        assert!(crate::checkpoint_kid(&install,&root,stolen).unwrap_err().contains("#1557"),"no record takes another task's process");
+        let mut stolen=crate::service_run::kids_file(&install,&root).unwrap()[0].clone();stolen.task=1559;
+        assert!(crate::service_run::checkpoint_kid(&install,&root,stolen).unwrap_err().contains("#1557"),"no record takes another task's process");
         for c in [&mut first,&mut second] {c.kill().unwrap();c.wait().unwrap();}
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -2103,7 +2103,7 @@ finally:
         let mut old=Command::new("sleep").arg("30").spawn().unwrap();
         let mut new=Command::new("sleep").arg("30").spawn().unwrap();
         let recorded=coreq::process::identity(old.id()).unwrap().unwrap();
-        crate::checkpoint_kid(&install,&root,crate::data::KidLine {task:1592,attempt:10,runtime:"claude".into(),process:recorded.clone(),execution:11,offset:0,job:None}).unwrap();
+        crate::service_run::checkpoint_kid(&install,&root,crate::data::KidLine {task:1592,attempt:10,runtime:"claude".into(),process:recorded.clone(),execution:11,offset:0,job:None}).unwrap();
         let turn=|accepted:bool,session:&str|ClaudeTurn { root:root.clone(), log:root.join("1592.log"), session:session.into(),
             id:"c37eb75a".into(), announced:false, accepted, history:ClaudeHistory::default(), before:0, mode:"dontAsk".into(),
             input:"input".into(), _input_file:coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid:0, native:Some(recorded.clone()),
@@ -2118,7 +2118,7 @@ finally:
         let mut t=turn(true,session);
         t.capture_identity(&row).unwrap();t.persist().unwrap();
         assert_eq!(t.id(),new.id(),"the job's new process stands in for the exited one");
-        let records:Vec<_>=crate::kids_file(&install,&root).unwrap().into_iter().map(|k|(k.task,k.execution,k.process.pid)).collect();
+        let records:Vec<_>=crate::service_run::kids_file(&install,&root).unwrap().into_iter().map(|k|(k.task,k.execution,k.process.pid)).collect();
         assert_eq!(records,[(1592,11,new.id())],"the record follows the same execution to its new process");
         new.kill().unwrap();new.wait().unwrap();
         std::fs::remove_dir_all(root).unwrap();
@@ -2132,26 +2132,26 @@ finally:
     fn exited_process_resolves_from_board_exit_at_handover() {
         use crate::board::Board;
         let root=std::env::temp_dir().join(format!("taskq-exited-{}",uuid()));
-        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let b=crate::board::Fake::default();let n=b.create("T","",&[crate::service::TASK_LABEL.into()]).unwrap();
         let a=b.comment(n,"taskq: spawn worker claude:session mac").unwrap();
         let c=crate::service::Config {root:root.clone(),install:root.clone(),..crate::tests::cfg()};
         let mut child=Command::new("sleep").arg("30").spawn().unwrap();
         let native=coreq::process::identity(child.id()).unwrap().unwrap();
-        crate::checkpoint_kid(&root,&root,crate::data::KidLine {task:n,attempt:a,runtime:"claude".into(),process:native.clone(),execution:a,offset:0,job:None}).unwrap();
+        crate::service_run::checkpoint_kid(&root,&root,crate::data::KidLine {task:n,attempt:a,runtime:"claude".into(),process:native.clone(),execution:a,offset:0,job:None}).unwrap();
         child.kill().unwrap();child.wait().unwrap();
         let turn=ClaudeTurn { root:root.clone(), log:root.join("attempt.log"), session:String::new(), id:"c37eb75a".into(), announced:false, accepted:true,
             history:ClaudeHistory::default(), before:0, mode:"dontAsk".into(), input:"input".into(),
             _input_file:coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid:0, native:Some(native), recovery:None, done:false, failure:None, handed:false,released:false, launch_error:None, resumed:None, lost:None };
         let mut s=crate::service::Service::new(&b,&c,"test",Box::new(|_|unreachable!()));
         s.kids.push(crate::service::Kid {unknown:None,stopping:false,session_url:None,execution:a,task:n,attempt:a,rt:"claude".into(),proc:Box::new(turn)});
-        let path=crate::kids_path(&root,&root).unwrap();
+        let path=crate::paths::kids_path(&root,&root).unwrap();
         let saved=std::fs::read_to_string(&path).unwrap();
-        crate::save_kids(&s,&root).unwrap();
+        crate::service_run::save_kids(&s,&root).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(),saved,"#2297: an unreleased record stays and the handover goes on");
         b.comment(n,&format!("taskq: released {a} exit attempt {a}\nop-id: release-{a}")).unwrap();
-        crate::save_kids(&s,&root).unwrap();
-        assert!(crate::kids_file(&root,&root).unwrap().is_empty(),"board exit resolves the record; handover completes");
+        crate::service_run::save_kids(&s,&root).unwrap();
+        assert!(crate::service_run::kids_file(&root,&root).unwrap().is_empty(),"board exit resolves the record; handover completes");
         std::fs::remove_dir_all(root).unwrap();
     }
 

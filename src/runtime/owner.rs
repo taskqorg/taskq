@@ -51,7 +51,7 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
     if super::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let codex = crate::host::Policy::read_for_hostname(install, crate::hostname).map_or(vec![], |p| p.codex);
+    let codex = crate::host::Policy::read_for_hostname(install, crate::config::hostname).map_or(vec![], |p| p.codex);
     let codex=r.choice.as_ref().map_or_else(||codex.clone(),|choice|choice.codex(&codex));
     let exe = std::env::current_exe().unwrap_or_default();
     let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
@@ -100,7 +100,7 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
     if super::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
+    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let exe = std::env::current_exe().unwrap_or_default();
     let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[], jobs: None };
@@ -159,7 +159,7 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     if a.has("thread-link") {return Err("App-owned Codex input must use its native queue; CLI resume refused".into());}
     release_idle(r)?;
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
+    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let codex = policy.map_or(vec![], |p| p.codex);
     // the same folder and grant as the launch, so the turn resumes where the session started
@@ -198,7 +198,7 @@ pub(crate) fn app_submit(own:&Path,r:&Request,input:&str)->Res<()> {
     let session=r.session.as_deref().filter(|s|super::plain_thread(s)).ok_or("native App session unknown")?;
     let install=own.parent().and_then(Path::parent).ok_or("owner installation unknown")?;
     let root=r.root.as_deref().map_or(own,Path::new);let exe=std::env::current_exe().map_err(|_|"owner executable unknown")?;
-    let policy=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
+    let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
     let env=super::Env {context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,publish:"",board_env:&[],jobs:None};
     request_access(&env,super::of(&r.runtime).setup,r)?;
     super::app_queue(session,input)

@@ -14,7 +14,7 @@
         let root = temp("prune");
         let install = root.join("install");
         fs::create_dir_all(&install).unwrap();
-        let d = crate::dot(&root);
+        let d = crate::paths::dot(&root);
         let line = "x".repeat(99) + "\n";
         fs::write(install.join("taskq.log"), line.repeat((LOG_MAX / 100 + 10) as usize)).unwrap();
         fs::write(install.join("p.log"), "small\n").unwrap();
@@ -124,7 +124,7 @@
     #[test]
     fn corrupt_state_reads_unknown_and_stays() {
         let root = temp("corrupt");
-        let d = crate::dot(&root);
+        let d = crate::paths::dot(&root);
         assert_eq!(json(&d.join("status.json")), Ok(None));
         fs::write(d.join("status.json"), "{\"tasks\": [").unwrap();
         assert!(json(&d.join("status.json")).unwrap_err().starts_with("status.json: corrupt"));

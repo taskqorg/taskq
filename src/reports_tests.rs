@@ -50,7 +50,7 @@
     // decided content disappears, or a report correction reopens a completed dependency.
     #[test] fn conversations_1977_decisions_keep_history_and_creation_fences() {
         let (b,claim,n,sha)=board();let raw=json!({"create_claim_issue":claim});
-        let root=std::env::temp_dir().join(format!("taskq-1977-{}",crate::runtime::uuid()));std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let root=std::env::temp_dir().join(format!("taskq-1977-{}",crate::runtime::uuid()));std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let accepted=owner_act_until(&b,&root,&raw,n,&sha,"accept",None).unwrap();
         assert_eq!(accepted["report"]["decision"],"accepted");assert_eq!(accepted["report"]["read"],true);
         let count=b.comments(n).unwrap().len();owner_act_until(&b,&root,&raw,n,&sha,"accept",None).unwrap();assert_eq!(b.comments(n).unwrap().len(),count);
@@ -59,7 +59,7 @@
         let child=corrected["successor"].as_u64().unwrap();assert!(b.issue(child).unwrap().labels.contains(&"q-held".into()));assert!(!b.issue(n).unwrap().open);
         let mut cache=Cache::default();cache.collect(&b);assert!(cache.value["reports"].as_array().unwrap().is_empty());
         assert!(cache.value["history"][0]["body"].is_string(),"decided report content stays readable");
-        std::fs::write(crate::dot(&root).join("reports.json"),cache.value.to_string()).unwrap();
+        std::fs::write(crate::paths::dot(&root).join("reports.json"),cache.value.to_string()).unwrap();
         assert!(cached_open(&root,n,&sha).unwrap()["report"]["body"].is_string());
         let (other,oc,on,os)=board();mark(&other,on,&os,"making",&[]).unwrap();
         let pending=owner_act_until(&other,&root,&json!({"create_claim_issue":oc}),on,&os,"accept",None).unwrap();
@@ -275,39 +275,39 @@
 
     #[test] fn close_event_invalidates_collection_before_the_next_due_pass() {
         let (b,_,_,_)=board();let mut cache=Cache::default();cache.collect(&b);
-        let root=std::env::temp_dir().join(format!("taskq-report-close-{}",crate::runtime::uuid()));std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let root=std::env::temp_dir().join(format!("taskq-report-close-{}",crate::runtime::uuid()));std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         let (tx,rx)=std::sync::mpsc::channel();tx.send(cache).unwrap();
         let mut collector=Collector{pending:Some(rx),started:Some(std::time::Instant::now()),..Default::default()};
         assert_eq!(collector.tick(&root,300,300,false)["complete"],true);
         let rows=stored(&root,&Value::Null);assert!(rows["reports"][0]["body"].is_string(),"#1975: rows land in reports.json");
         assert_eq!(summary(&rows)["count"],1);assert!(summary(&rows).get("reports").is_none(),"status keeps counts, never rows");
-        std::fs::write(crate::dot(&root).join("events"),"invented #12 close 3\n").unwrap();
+        std::fs::write(crate::paths::dot(&root).join("events"),"invented #12 close 3\n").unwrap();
         collector.tick(&root,300,300,false);assert!(collector.invalidated,"observe-only passes retain the requested refresh");
         collector.tick(&root,300,300,true);assert!(collector.pending.is_some(),"close schedules without waiting for poll");
         // No project config: the read-only worker must return unknown, never create or launch anything.
         let failed=collector.pending.take().unwrap().recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         assert_eq!(failed.value["complete"],false);assert!(failed.value["reason"].is_string());
-        assert!(!crate::dot(&root).join("poke").exists(),"completion must not force a new board read");
+        assert!(!crate::paths::dot(&root).join("poke").exists(),"completion must not force a new board read");
         std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test] fn cache_fresh_stale_missing_and_corrupt_are_distinct() {
         let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);
         let root=std::env::temp_dir().join(format!("taskq-report-cache-{}",crate::runtime::uuid()));
-        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
         assert_eq!(cached(&root)["complete"],false);
-        std::fs::write(crate::dot(&root).join("status.json"),"corrupt").unwrap();assert!(cached(&root)["reason"].is_string());
+        std::fs::write(crate::paths::dot(&root).join("status.json"),"corrupt").unwrap();assert!(cached(&root)["reason"].is_string());
         let at=cache.value["observed"].as_i64().unwrap();
         assert_eq!(freshness(cache.value.clone(),at+300,300,None)["complete"],true);
         let stale=freshness(cache.value.clone(),at+301,300,None);assert_eq!(stale["complete"],false);assert_eq!(stale["reports"][0]["n"],n);
         let failed=freshness(cache.value.clone(),at,300,Some("Board unavailable"));assert_eq!(failed["reason"],"Board unavailable");
-        std::fs::write(crate::dot(&root).join("status.json"),json!({"reports":cache.value}).to_string()).unwrap();
+        std::fs::write(crate::paths::dot(&root).join("status.json"),json!({"reports":cache.value}).to_string()).unwrap();
         assert_eq!(cached_list(&root,1,None).unwrap()["reports"][0]["n"],n);
         let history=cached_history(&root,&json!({"task":n})).unwrap();assert_eq!(history["source"],"service");assert_eq!(history["tasks"][0]["n"],n);
         assert!(cached_open(&root,n,&sha).unwrap()["report"]["body"].is_string());
         assert_eq!(cached_open(&root,n,&"c".repeat(40)).unwrap()["complete"],false);
         assert_eq!(open_latest(&root,n,None).unwrap()["report"]["sha"],sha,"steer #2256: no --sha opens the latest result");
-        let mut old=cached(&root);old["observed"]=json!(0);std::fs::write(crate::dot(&root).join("status.json"),json!({"reports":old}).to_string()).unwrap();
+        let mut old=cached(&root);old["observed"]=json!(0);std::fs::write(crate::paths::dot(&root).join("status.json"),json!({"reports":old}).to_string()).unwrap();
         let stale_history=cached_history(&root,&json!({"task":n})).unwrap();assert_eq!(stale_history["complete"],false);assert_eq!(stale_history["tasks"][0]["n"],n);assert!(stale_history["reason"].is_string());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -423,7 +423,7 @@
         b.raw(n,&format!("taskq: report-drop {sha}"),true,false);
         assert_eq!(current(&b,n,&sha).unwrap()["visible"],true,"later Drop cannot win against the make intent");
         let source=b.source(&format!("docs/research/{n}.md"),&sha).unwrap();let tasks=proposals(&source).unwrap();let mut made=vec![];
-        for (k,t) in tasks.iter().enumerate() {let r=crate::add_task(&b,&root,&raw,&t.task(n),&crate::Op{id:Some(format!("report.{n}.{sha}.{}",k+1)),revision:None}).unwrap();assert!(r.ok());made.push(r.task);}
+        for (k,t) in tasks.iter().enumerate() {let r=crate::cli::task_cmd::add_task(&b,&root,&raw,&t.task(n),&crate::Op{id:Some(format!("report.{n}.{sha}.{}",k+1)),revision:None}).unwrap();assert!(r.ok());made.push(r.task);}
         b.state.borrow_mut().fail_comments=1;
         let failed=finish(&b,n,&sha,&prior,&made);assert!(failed["reason"].is_string());assert_eq!(failed["receipts"],json!(made));assert_eq!(failed["report"]["visible"],true);
         let count=b.state.borrow().issues.len();let retried=owner_act_until(&b,&root,&raw,n,&sha,"make",None).unwrap();assert_eq!(retried["report"]["tasks_made"],json!(made));assert_eq!(b.state.borrow().issues.len(),count);

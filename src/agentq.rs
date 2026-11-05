@@ -127,7 +127,7 @@ fn project(install:&Path,mut state:Value,previous_warning:bool)->Value {
 }
 fn runtimes(install:&Path)->Value {
     let rows=crate::runtime::agents(install);
-    let policy=crate::host::Policy::read_for_hostname(install,crate::hostname);
+    let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname);
     crate::runtime::setup_runtimes().map(|rt|{
         let row=rows.as_array().and_then(|rows|rows.iter().find(|r|r["runtime"]==rt));
         let reason=match (row,&policy){
@@ -155,7 +155,7 @@ pub fn start(install:&Path) {
         std::thread::spawn(move||{
             let mut warning=false;
             loop {
-                let mut v=project(&install,detect(),warning);warning=v["warning"]==true;v["host"]=json!(crate::hostname());v["platform"]=json!(std::env::consts::OS);
+                let mut v=project(&install,detect(),warning);warning=v["warning"]==true;v["host"]=json!(crate::config::hostname());v["platform"]=json!(std::env::consts::OS);
                 v["targets"]=crate::runtime::setup_runtimes().map(|rt|(rt.to_string(),json!(targets(rt).ok()))).collect::<serde_json::Map<_,_>>().into();v["runtimes"]=choices.lock().unwrap().clone();
                 *output.lock().unwrap()=v;
                 std::thread::sleep(Duration::from_secs(2));
