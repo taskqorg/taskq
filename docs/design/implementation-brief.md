@@ -1,20 +1,20 @@
 # Implement the TaskQ operator design
 
-Replace the current menu with the approved stable adaptive layout and a proper AI workspace. Preserve every current capability in [the inventory](current-menu-audit.md).
+Replace the current menu with the approved stable adaptive layout and a proper AI workspace. Preserve every current capability in [the inventory](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/current-menu-audit.md).
 This package specifies the target; it does not authorize deployment or claim backend gaps are resolved.
 
 
 ## Current integration entry
 
-Conversations recovery follows P-W3/TW2/TW5/C2/C7/D4: native framing and independent safe Reload preserve the existing single centre. Source/receipt recovery and the common worker/question/answer document are reviewed in [#2140 evidence](evidence/2140/report.md). Unaffected reference geometry and functions remain pinned.
+Conversations recovery follows P-W3/TW2/TW5/C2/C7/D4: native framing and independent safe Reload preserve the existing single centre. Source/receipt recovery and the common worker/question/answer document are reviewed in [#2140 evidence](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/2140/report.md). Unaffected reference geometry and functions remain pinned.
 
 [UI30 reconciliation](ui-polish.md) is the implementation and acceptance map for #1924 and #1926–#1933. It applies scoped owner corrections to current main and extends the 72-group ledger; historical snapshots are not replacement files. [Report #1924](../research/1924.md) records provenance, conflicts and evidence limits. Earlier instructions to create tasks, keep #1738 held, restore archive guards, use answer caps or rebuild completed slices are historical. Current contracts and this reconciliation govern the affected targets. #1918 alone owns the shared state/history changes; no competing overlay or event stream is authorized. No application code, task start, PM message, installation or grant is authorized by this documentation.
 
 ## Current review revision
 
-The owner now requests the complete [review correction handoff](review-handoff.md): trace every R01–R44 remark, reconcile current work, then create coherent held outcomes. Use that entrypoint and evidence/review-package.json for the new PM delivery. This is a review of the closed #1578/#1580 deliveries, not a rerun of the original redesign plan. Do not start implementation.
+The owner now requests the complete [review correction handoff](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/review-handoff.md): trace every R01–R44 remark, reconcile current work, then create coherent held outcomes. Use that entrypoint and evidence/review-package.json for the new PM delivery. This is a review of the closed #1578/#1580 deliveries, not a rerun of the original redesign plan. Do not start implementation.
 
-Apply the owner-requested purple Review/awaiting-merge accent from [visual-style](visual-style.md#palette). The owner accepts the [icon review's](exploration/icon-review.html) eight-state mapping and paired theme colors on 2026-10-23. Blocked must not use PR/merge imagery. Reuse the pinned bundled SVG catalog across both platforms, and reconcile prototype-only names before implementation; see the [audit](exploration/review-control-panels-review.md#icon-and-review-color-audit). The frozen baseline remains unchanged.
+Apply the owner-requested purple Review/awaiting-merge accent from [visual-style](visual-style.md#palette). The owner accepts the [icon review's](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/exploration/icon-review.html) eight-state mapping and paired theme colors on 2026-10-23. Blocked must not use PR/merge imagery. Reuse the pinned bundled SVG catalog across both platforms, and reconcile prototype-only names before implementation; see the [audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/exploration/review-control-panels-review.md#icon-and-review-color-audit). The frozen baseline remains unchanged.
 
 Continue the frozen control-panels visual system, applying [review refinements](menu-product.md#review-refinements), [revision fidelity](visual-style.md#revision-contract) and [shared input](ai-workspace.md#review-input-contract) first. They override archived hover/focus opening, scattered Appearance settings, footer duplication and obsolete transcript/Custom controls below. O1–O3 are resolved in the review refinements; do not reopen them. Preserve later native-only dialogue and retired-Custom decisions from the implementation handoff.
 
@@ -29,8 +29,8 @@ The owner accepts the connected control-panel direction and requests one Project
 Read the live project contract first. This package was prepared in a dirty design checkout at `590b87e457004594b39f7105d3b505bf18630bfd`; its runtime contract and dated audits are snapshots, not the current installed system. Reconcile with current code and board before creating work. Preserve existing tasks and useful shipped improvements.
 
 1. Canonical requirements and explicit owner choices govern behavior. Shared rules govern review; the owner does not replace compliance review.
-2. [Connected control panels](exploration/control-panels.html) is the frozen visual/interaction reference for the newly reviewed menu, settings and Conversations. SHA256: `9c250e850bbda81814f2a66a654d54b44e617615f2fa2c61fb527b1dd6863a04`; revision marker `conversation-walkthrough`.
-3. [Revision review](exploration/control-panels-review.md) separates exercised browser behavior from native/backend gaps. [Session history](session-draft.md) explains accepted, rejected and unresolved choices.
+2. [Connected control panels](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/exploration/control-panels.html) is the frozen visual/interaction reference for the newly reviewed menu, settings and Conversations. SHA256: `9c250e850bbda81814f2a66a654d54b44e617615f2fa2c61fb527b1dd6863a04`; revision marker `conversation-walkthrough`.
+3. [Revision review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/exploration/control-panels-review.md) separates exercised browser behavior from native/backend gaps. [Session history](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/session-draft.md) explains accepted, rejected and unresolved choices.
 4. Earlier `workspace-preview.html` and component references retain capabilities and adverse states absent from the compact overview. They do not override the newer reviewed geometry. Exploration variants are history, not competing approved designs.
 5. The current reference is self-contained editable HTML. Do not regenerate it with `build-workspace-preview.py`; that builder owns the older integrated preview only. Fixture dimensions, timing and local action receipts are illustrative.
 
@@ -73,7 +73,7 @@ Existing contracts retain their own unresolved engineering/product boundaries: f
 
 ### PM deliverable
 
-Use [the existing backlog](refactoring-backlog.md) as the single work breakdown and reconcile [the dated implementation plan](implementation-plan.md) with live work. Do not execute its old installation/rollback commands as current instructions.
+Use [the existing backlog](refactoring-backlog.md) as the single work breakdown and reconcile [the dated implementation plan](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/implementation-plan.md) with live work. Do not execute its old installation/rollback commands as current instructions.
 
 - Map every discussed requirement and existing control to its canonical IDs, preserved destination, existing task or justified new slice. No approved removals were made in this session.
 - File coherent user-outcome tasks with Goal, numbered observable Acceptance, scope, specification/reference links, dependencies and exact evidence requirements. Avoid one task per cosmetic detail and duplicate open work.
@@ -98,10 +98,10 @@ The sections below preserve broader contracts, existing capabilities and histori
 ## Read in order
 
 1. `AGENTS.md`, [taskq.md](../../taskq.md), referenced specq rules.
-2. [Decision register](decision-register.md), [system change map](system-change-map.md), [ordered refactoring backlog](refactoring-backlog.md), then [Use cases](../use-cases/README.md), [menu](menu.md), [AI workspace](ai-workspace.md).
+2. [Decision register](decision-register.md), [system change map](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/system-change-map.md), [ordered refactoring backlog](refactoring-backlog.md), then [Use cases](../use-cases/README.md), [menu](menu.md), [AI workspace](ai-workspace.md).
 3. [Visual style](visual-style.md), [square icon](icon-summary.md), [TaskQ acceptance](operator-ui.md).
 4. [Rendering contract](rendering-contract.md), [acceptance ledger/matrix](ui-acceptance.md), [report template](ui-acceptance-report.md).
-5. [Remote manager](remote-manager.md) and [FRA audit](remote-manager-audit.md), then [4.1.9 audit](release-4.1.9-ui-audit.md), [Current implementation inventory](current-menu-audit.md), [candidate](workspace-prototype.html), [verification](verification.md).
+5. [Remote manager](remote-manager.md) and [FRA audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/remote-manager-audit.md), then [4.1.9 audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/release-4.1.9-ui-audit.md), [Current implementation inventory](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/current-menu-audit.md), [candidate](../../tests/fixtures/design/workspace-prototype.html), [verification](verification.md).
 
 Use `menu-next-variants.html`, `ai-conversations.html`, `agent-settings.html`, `agent-behavior.html` and `plans-and-decisions.html` as component sources. Build `workspace-prototype.html` with `build-workspace-preview.py`; a standalone preview is generated on demand and not committed. Never edit generated output directly. Older menu/icon studies are historical; the square geometry supersedes the wide strip.
 The candidate is a simulation: marked placeholder actions and mock receipts are not backend adapters.
@@ -131,7 +131,7 @@ Apply [product principles](../product-principles.md) to every slice. Preserve ex
 
 ## Plan with the owner before runtime work
 
-Use [D01–D14](decision-register.md) for accepted defaults, accepted D06 recipes and proposed D03 tuning; use G1–G8 for engineering contracts. Do not reopen settled choices. [Scenario review](scenario-review.md) is the coverage/evidence checklist; Spec covered is not Runtime passed.
+Use [D01–D14](decision-register.md) for accepted defaults, accepted D06 recipes and proposed D03 tuning; use G1–G8 for engineering contracts. Do not reopen settled choices. [Scenario review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/scenario-review.md) is the coverage/evidence checklist; Spec covered is not Runtime passed.
 
 - Apply MP3 retention/archive and one-request-per-conversation decisions; qualify attachment budgets, cancellation acknowledgement, operator capacity and interrupted delivery.
 - Apply MP2 rule/snapshot direction; resolve its formal filter contract and remaining UC Q1/Q3–Q6 details: PM direct actions, precise focus, cross-project priority, multi-repo environment and dependency-plan operations.
@@ -170,9 +170,9 @@ Builder fills every acceptance-ledger row; source pinning follows [F1](https://g
 
 Status reports follow [specq Core](https://github.com/taskqorg/specq/blob/main/caveman/rules/core.md); general rules follow [shared-rule improvement](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules), TaskQ decisions live here.
 
-[System change map](system-change-map.md) owns backend slices, acceptance and the remaining product questions. No design approval enables runtime policy.
+[System change map](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/system-change-map.md) owns backend slices, acceptance and the remaining product questions. No design approval enables runtime policy.
 
-[Icon compatibility](custom-icon.md): Custom removal and saved-view fallback; [I1–I6](icon-summary.md) own the fixed Summary SVG. [Final menu review](menu-final-review.md) records wording, hierarchy and icon corrections.
+[Icon compatibility](custom-icon.md): Custom removal and saved-view fallback; [I1–I6](icon-summary.md) own the fixed Summary SVG. [Final menu review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/menu-final-review.md) records wording, hierarchy and icon corrections.
 
 [Refactoring backlog](refactoring-backlog.md) defines ordered workstreams, API boundaries, dependencies and acceptance for implementation tasks.
 
@@ -211,10 +211,10 @@ Installation handoff: [S1–S5](setup-and-project-locations.md) requires a real 
 
 ## Dashboard baseline (#1578)
 
-Implement #1578 against main `21742cea80e5ac90c0e9e375169fecaae8e09773`, preserving the dirty design checkout. [#1573](https://github.com/taskqorg/taskq/issues/1573#issuecomment-6340259438) settles O1–O3; [MP11–MP15, P-V1 and P-W1–P-W3](menu-product.md#dashboard-decisions-1573) are canonical; the [2026-10-23 review handoff](review-handoff.md) maps R01–R44 to them. The earlier open choices and Closed/operator snapshots do not override them.
+Implement #1578 against main `21742cea80e5ac90c0e9e375169fecaae8e09773`, preserving the dirty design checkout. [#1573](https://github.com/taskqorg/taskq/issues/1573#issuecomment-6340259438) settles O1–O3; [MP11–MP15, P-V1 and P-W1–P-W3](menu-product.md#dashboard-decisions-1573) are canonical; the [2026-10-23 review handoff](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/review-handoff.md) maps R01–R44 to them. The earlier open choices and Closed/operator snapshots do not override them.
 
-Frozen archive: [taskq-design-2026-10-22.zip](https://github.com/user-attachments/files/33818402/taskq-design-2026-10-22.zip), 7,839,451 bytes, SHA256 `d9f39f3f24bbb4e43d94c113dbdd222bf839ee78e67e86de4fa0b12e2ef1f640`. [Manifest](evidence/frozen-1573-package.json) verified all 168 TaskQ and 30 shared-file hashes. The archived shared snapshot is provenance only; apply injected specq `d67126cd7e4fb88bcabd63de10748c5c3a9f5442`.
+Frozen archive: [taskq-design-2026-10-22.zip](https://github.com/user-attachments/files/33818402/taskq-design-2026-10-22.zip), 7,839,451 bytes, SHA256 `d9f39f3f24bbb4e43d94c113dbdd222bf839ee78e67e86de4fa0b12e2ef1f640`. [Manifest](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/frozen-1573-package.json) verified all 168 TaskQ and 30 shared-file hashes. The archived shared snapshot is provenance only; apply injected specq `d67126cd7e4fb88bcabd63de10748c5c3a9f5442`.
 
-Editable [reference](exploration/control-panels.html), `conversation-walkthrough`, SHA256 `9c250e850bbda81814f2a66a654d54b44e617615f2fa2c61fb527b1dd6863a04`. Do not regenerate it. Preserve original package evidence; implementation evidence belongs under `evidence/dashboard-1578/`.
+Editable [reference](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/exploration/control-panels.html), `conversation-walkthrough`, SHA256 `9c250e850bbda81814f2a66a654d54b44e617615f2fa2c61fb527b1dd6863a04`. Do not regenerate it. Preserve original package evidence; implementation evidence belongs under `evidence/dashboard-1578/`.
 
 Current components to reuse: Preact/Signals/Wouter shell; project blocks/provider assets; task-controls dispatcher and answer receipts; resource/admission and lifecycle workspace reviews; owner sessions; host-only agents/access/delivery; telemetry history, incidents, setup and updates. Keep Conversations and session adapters with #1580/#1565. No new scheduler, environment engine, gateway, grants, deployment or host migration.

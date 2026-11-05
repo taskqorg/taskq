@@ -262,7 +262,7 @@ module.exports=execution.module('conversations',{
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
-   // #1918 A6: consecutive tool calls fold into one collapsible line (docs/design/conversations-usability-review.md#tool-collapse-1918);
+   // #1918 A6: consecutive tool calls fold into one collapsible line;
    // a message ends the group. `current`: the worker runs, so the last group names its latest step live.
    steps:function(items,current,render,setup=null){
     const out=[],tool=item=>api.nativeItem(item,'Tool');

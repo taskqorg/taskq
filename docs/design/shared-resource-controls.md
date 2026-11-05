@@ -167,7 +167,7 @@ Shared fixtures cover legacy and Auto modes, mixed targets, zero/absent limits, 
 `src/resource-controls.css` SHA-256: `9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907`
 `tests/fixtures/resource-controls.json` SHA-256: `a1637498fa9fcc346c7280186386b7a3d9d96aa09c38f8c27bd9a81e8d6fcbe9`
 
-B4 parent-to-child map: parent design `75757d5d843159726a2ea44ca1615f9cf7fd18fd` ([menu-next variants](menu-next-variants.html) `resourceEditor`, [menu M12](menu.md)); child tray Capacity places the shared component under its existing summary without restyling it; child Balancing (`◎ Balancing…` on home and project pages) is a page of the same component. The parent's project aggregate cap and load window stay absent until a producer advertises them.
+B4 parent-to-child map: parent design `75757d5d843159726a2ea44ca1615f9cf7fd18fd` ([menu-next variants](../../tests/fixtures/design/menu-next-variants.html) `resourceEditor`, [menu M12](menu.md)); child tray Capacity places the shared component under its existing summary without restyling it; child Balancing (`◎ Balancing…` on home and project pages) is a page of the same component. The parent's project aggregate cap and load window stay absent until a producer advertises them.
 
 Browser delivery uses the self-contained `build/web/resource-controls.js` bundle (`npm run build`), published under the existing release filename. Source checksums identify editable CommonJS modules; released bundle integrity comes from `SHA256SUMS`. See [JS packaging](profiling.md#js-execution-architecture).
 

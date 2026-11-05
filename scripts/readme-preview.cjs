@@ -1,5 +1,5 @@
 // README preview for docs/shots/update.sh (#2024 A5): `node scripts/readme-preview.cjs README ROOT STAGE OUT`.
-// Renders README to OUT/README.html, takes full-page screenshots at 1280 and 390 px with every disclosure open and
+// Renders README, takes full-page screenshots at 1280 and 390 px with every disclosure open and
 // writes OUT/page-checks.json. docs/shots/*.png resolve to STAGE, other files to ROOT. Fails when an image does not
 // load or the page overflows horizontally. An instrument (taskq.md R12): a person still reviews the images and pages.
 // ponytail: a Markdown subset (HTML blocks, ### headings, fenced code, paragraphs, code spans, links, *em*, **strong**)
@@ -56,8 +56,6 @@ const local = body.replace(/(src|href)="([^"#:]+)"/g, (all, attr, rel) => {
   return fs.existsSync(file) ? `${attr}="${pathToFileURL(file).href}"` : all;
 });
 fs.mkdirSync(out, {recursive: true});
-// Retained copy: relative to the repository root from docs/shots/evidence/<version>/.
-fs.writeFileSync(path.join(out, 'README.html'), page(body, '../../../../'));
 const render = path.join(out, '.render.html');
 fs.writeFileSync(render, page(local));
 

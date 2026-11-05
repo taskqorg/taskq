@@ -1,7 +1,7 @@
 # UI implementation acceptance
 
 [Shared process](https://github.com/taskqorg/specq/blob/main/design/implementation-fidelity.md) · [rendering rules](rendering-contract.md).
-Historical release review: [4.1.9 audit](release-4.1.9-ui-audit.md). No current release is accepted against this target yet.
+Historical release review: [4.1.9 audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/release-4.1.9-ui-audit.md). No current release is accepted against this target yet.
 
 ## Workflow
 
@@ -10,9 +10,9 @@ Historical release review: [4.1.9 audit](release-4.1.9-ui-audit.md). No current 
 3. Reviewer checks functionality/data first, sizing/navigation second, natural-size rendering third; findings use the F5 fields.
 4. Polish, owner review, freeze and acceptance follow [F6](https://github.com/taskqorg/specq/blob/main/design/implementation-fidelity.md#f6-build-polish-accept); native evidence qualifies the implementation.
 
-Use [synthetic expected fixtures](ui-acceptance-fixtures.json) for histogram, sizing-boundary and lattice checks; these are inputs, not native proof.
+Use [synthetic expected fixtures](../../tests/fixtures/ui-acceptance-fixtures.json) for histogram, sizing-boundary and lattice checks; these are inputs, not native proof.
 Use [report template](ui-acceptance-report.md). Keep reports per candidate; do not overwrite failing evidence. Fixed items link replacement evidence.
-Reports: [4.2.0 candidate on macOS](evidence/g8-macos/report.md).
+Reports: [4.2.0 candidate on macOS](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/g8-macos/report.md).
 
 ## Feature ledger
 

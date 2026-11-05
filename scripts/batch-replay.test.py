@@ -367,27 +367,6 @@ class Replay(unittest.TestCase):
             b.store(root, b'invented receipt')
         self.assertEqual((root / key).read_bytes(), b'tampered')
 
-    def test_git_checkout_preserves_content_addressed_bytes(self):
-        repo = self.root / 'attributes'
-        repo.mkdir()
-        b.git(repo, 'init', '--quiet', '--template=')
-        body = b'{"invented":true}\n'
-        relative = 'docs/research/2395/receipts/' + b.digest(body)
-        path = repo / relative
-        path.parent.mkdir(parents=True)
-        path.write_bytes(body)
-        b.git(repo, '-c', 'core.autocrlf=true', 'add', relative)
-        path.unlink()
-        b.git(repo, '-c', 'core.autocrlf=true', 'checkout-index', '--force', relative)
-        self.assertNotEqual(path.read_bytes(), body, 'before: CRLF conversion breaks the receipt digest')
-        attributes = Path(__file__).resolve().parents[1] / '.gitattributes'
-        (repo / '.gitattributes').write_bytes(attributes.read_bytes())
-        path.write_bytes(body)
-        b.git(repo, '-c', 'core.autocrlf=true', 'add', '.gitattributes', relative)
-        path.unlink()
-        b.git(repo, '-c', 'core.autocrlf=true', 'checkout-index', '--force', relative)
-        self.assertEqual(path.read_bytes(), body, 'after: immutable evidence bypasses newline conversion')
-
     def test_gate_cannot_pass_after_changing_frozen_inputs(self):
         def runner(repo, subset):
             b.git(repo, 'rev-parse', 'HEAD^')

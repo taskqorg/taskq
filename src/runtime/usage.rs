@@ -885,7 +885,7 @@ mod tests {
     // with a fixed reason, a missing reading fails the whole poll, and the row holds only bucket, percent, reset and id.
     #[test]
     fn code_assist_reads_buckets_or_a_fixed_reason() {
-        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2359/macos-antigravity-compatible-agent.json")).unwrap();
+        let native: Value = serde_json::from_str(include_str!("../../tests/fixtures/usage/macos-antigravity-compatible-agent.json")).unwrap();
         let windows = quota_windows(&native["response"]).unwrap();
         assert_eq!(windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(),
             [("gemini-weekly", 74), ("gemini-5h", 0), ("3p-weekly", 0), ("3p-5h", 0)]);
@@ -974,7 +974,7 @@ mod tests {
     // Chain: R12: the native null surface must not hide readable weekly/Fable quotas.
     #[test]
     fn claude_native_null_surface_preserves_windows() {
-        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let native: Value = serde_json::from_str(include_str!("../../tests/fixtures/usage/windows-oauth-usage.json")).unwrap();
         let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
         let parsed = oauth_windows(&native["response"]).expect("null scope.surface is absent, not an unsupported quota");
         assert!(parsed.unreadable.is_empty());
@@ -997,7 +997,7 @@ mod tests {
     // Chain: R12: mixed quota validity preserves readable rows without turning incomplete headroom healthy.
     #[test]
     fn claude_partial_windows_keep_unknown_through_publication_and_headroom() {
-        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let native: Value = serde_json::from_str(include_str!("../../tests/fixtures/usage/windows-oauth-usage.json")).unwrap();
         let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
         let d = dir("claude-partial");
         let mut response = native["response"].clone();
@@ -1078,7 +1078,7 @@ mod tests {
     // would read as headroom 57 on a mixed fleet or after a rollback; only a complete poll may reach it.
     #[test]
     fn claude_partial_poll_is_invisible_to_released_readers() {
-        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let native: Value = serde_json::from_str(include_str!("../../tests/fixtures/usage/windows-oauth-usage.json")).unwrap();
         let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
         let d = dir("claude-n1");
         let account = id("default");
@@ -1122,7 +1122,7 @@ mod tests {
     // Chain: R12: transport failures cannot turn a previous partial poll into healthy aggregate headroom.
     #[test]
     fn claude_failed_polls_preserve_incomplete_origin_until_expiry() {
-        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let native: Value = serde_json::from_str(include_str!("../../tests/fixtures/usage/windows-oauth-usage.json")).unwrap();
         let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
         let d = dir("claude-failed-partial");
         let mut response = native["response"].clone();
@@ -1155,7 +1155,7 @@ mod tests {
     // Chain: R12: unsupported scope/identity and malformed quota fields never invent utilization or public names.
     #[test]
     fn claude_unreadable_scopes_and_fields_preserve_siblings() {
-        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2393/windows-oauth-usage.json")).unwrap();
+        let native: Value = serde_json::from_str(include_str!("../../tests/fixtures/usage/windows-oauth-usage.json")).unwrap();
         for (field, value) in [
             ("percent", serde_json::json!("private@example.invalid")),
             ("percent", serde_json::json!(-1)),
@@ -1189,7 +1189,7 @@ mod tests {
     // Chain: R12: new structured limits retain legacy names and cannot turn an unreadable model cap into headroom.
     #[test]
     fn model_windows_claude_scoped_limits() {
-        let native: Value = serde_json::from_str(include_str!("../../docs/evidence/2359/macos-oauth-usage.json")).unwrap();
+        let native: Value = serde_json::from_str(include_str!("../../tests/fixtures/usage/macos-oauth-usage.json")).unwrap();
         let windows = oauth_windows(&native["response"]).expect("native OAuth metadata must not hide Fable").windows;
         assert_eq!(windows.iter().map(|w| (w.name.as_str(), w.used)).collect::<Vec<_>>(),
             [("seven_day", 38), ("seven_day_fable", 4)]);

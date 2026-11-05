@@ -1,4 +1,4 @@
-/* Parent: menu-next-variants.html (#943), visual-style.md. Scoped internals belong to TaskQ. */
+/* Parent: tests/fixtures/design/menu-next-variants.html, visual-style.md. Scoped internals belong to TaskQ. */
 .tqp{--paper:light-dark(#fafbfc,#252b32);--ink:light-dark(#243039,#eef2f5);--secondary:light-dark(#59636e,#b9c3cd);--line:light-dark(#dce0e5,#46505b);--hover:light-dark(#e9edf1,#37424c);--good:light-dark(#246f59,#8dd2b8);--ask:light-dark(#955525,#edbc96);--bad:light-dark(#a6324b,#ee96a5);font:inherit;line-height:1.4;color:var(--ink);min-width:0;overflow-wrap:anywhere}
 .tqp,.tqp *{box-sizing:border-box}
 .tqp button{font:inherit;color:inherit;border:0;background:transparent;border-radius:5px;padding:4px 6px;min-width:32px;min-height:32px;text-align:left;max-width:100%;overflow-wrap:anywhere}

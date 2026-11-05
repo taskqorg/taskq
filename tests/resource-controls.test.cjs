@@ -40,9 +40,9 @@ for (const c of fx.work) {
   });
   console.log('PASS', c.name);
 }
-// A1: the child keeps the parent design's Balancing order (docs/design/menu-next-variants.html work/resourceEditor):
+// A1: the child keeps the parent design's Balancing order (tests/fixtures/design/menu-next-variants.html work/resourceEditor):
 // project selection, then Mode, then the host maximum, then per-runtime overrides
-const parent = fs.readFileSync('docs/design/menu-next-variants.html', 'utf8');
+const parent = fs.readFileSync('tests/fixtures/design/menu-next-variants.html', 'utf8');
 const fn = name => { const a = parent.indexOf('function ' + name + '('); return parent.slice(a, parent.indexOf('\nfunction ', a + 1)); };
 const inOrder = (text, xs) => { const at = xs.map(s => text.indexOf(s)); return at.every((x, k) => x >= 0 && (!k || x > at[k - 1])); };
 assert(inOrder(fn('work'), ['selected projects', '<input type="checkbox"', 'resourceEditor(s)', 'Review changes']), 'parent Balancing order changed');

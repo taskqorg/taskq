@@ -47,6 +47,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TMPDIR: ${{ runner.temp }}
+          TASKQ_SHOTS_PREVIEW: ${{ runner.temp }}/shots-preview
         run: |
           docs/shots/update.sh "$REF" ${{ steps.bin.outputs.args }} --publish | tee "$RUNNER_TEMP/shots.out"
           grep -q '^fresh ' "$RUNNER_TEMP/shots.out" && echo fresh=true >> "$GITHUB_OUTPUT" || echo fresh=false >> "$GITHUB_OUTPUT"
@@ -56,6 +57,7 @@ jobs:
           name: readme-shots
           path: |
             docs/shots/
+            ${{ runner.temp }}/shots-preview/
             ${{ runner.temp }}/taskq-shots.*/update.log
           if-no-files-found: warn
       - name: Draft PR
@@ -74,6 +76,6 @@ jobs:
           # An existing branch for this version means a PR is already open; never force it.
           git push origin "HEAD:refs/heads/$branch"
           gh pr create --draft --base main --head "$branch" --title "Refresh README screenshots for $version" \
-            --body "Images, manifest and README preview (1280 and 390 px, docs/shots/evidence/$version/) from \`docs/shots/update.sh $REF\`. Review the three images and both preview widths before merging through the merge queue."
+            --body "Images, manifest and README preview (1280 and 390 px, in the run artifact `readme-shots`) from \`docs/shots/update.sh $REF\`. Review the three images and both preview widths before merging through the merge queue."
           # Token pushes start no CI; dispatch the suite on the branch without waiting for it.
           gh workflow run tests.yml --ref "$branch"

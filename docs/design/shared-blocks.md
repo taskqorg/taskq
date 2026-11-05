@@ -11,7 +11,7 @@ The [package index](README.md) and [implementation brief](implementation-brief.m
 | Project summary and counters | [Menu M2/M3](menu.md), [K-A1–K-A8](task-counters.md) | Project identity, provider Board link, compact state capsules, order, filtering, unknown/partial states |
 | Task row and answer | Menu M3, [answer card](answer-card.md), [decisions Q1](plans-and-decisions.md) | Flowing linked identity/title, host/runtime marks, separate session links, exact source choices, draft and receipts |
 | Node summary and Work mode | Menu M12, [MP2/MP10](menu-product.md), [shared resources](shared-resource-controls.md) | Target selection, current policy/usage, Mixed, capability-aware fields, review and effective readback |
-| All blocks | [Visual system](visual-style.md), [final review](menu-final-review.md), [rendering](rendering-contract.md) | Tokens, typography, icon assets/meaning, internal spacing/order, focus and accessible targets |
+| All blocks | [Visual system](visual-style.md), [final review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/menu-final-review.md), [rendering](rendering-contract.md) | Tokens, typography, icon assets/meaning, internal spacing/order, focus and accessible targets |
 
 The root contract and accepted decisions outrank illustrative fixtures. A reference shortcut cannot remove a required feature. When a parent changes, review affected consumers and their fixtures in the same delivery; do not silently freeze a divergent child.
 

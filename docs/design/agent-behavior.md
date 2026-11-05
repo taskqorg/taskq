@@ -57,7 +57,7 @@ Representative workflows, not measured popularity. Proposed new-project default:
 - B-A5: exact-SHA gates, manual handoff, remote readback, unknown-write reconciliation and existing-attempt fencing have model traces before release.
 - B-A6: compact 16/20px, light/dark, narrow views; readable outcome and all actions reachable.
 
-[Interactive component](agent-behavior.html), composed into [workspace](workspace-prototype.html). Merge capabilities and revision/readback use labelled fixtures. No runtime changes.
+[Interactive component](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/agent-behavior.html), composed into [workspace](../../tests/fixtures/design/workspace-prototype.html). Merge capabilities and revision/readback use labelled fixtures. No runtime changes.
 
 ## Contract detail
 

@@ -493,7 +493,15 @@ with tempfile.TemporaryDirectory(prefix='taskq-lint-gate-') as directory:
                 assert status == 0
             assert run.call_args_list[0].args[0] == command
             assert sum(call.args[0] == command for call in run.call_args_list) == 1
-            assert run.call_count == (6 if status == 0 else 1), run.call_args_list
+            assert run.call_count == (7 if status == 0 else 1), run.call_args_list
             assert sum(call.args[0] == [sys.executable, 'scripts/batch-replay.test.py']
                        for call in run.call_args_list) == (1 if status == 0 else 0)
 print('PASS lint runs first and once; findings stop before tests/builds')
+
+# A1 of #2427: evidence, finished reviews and release records never return to the tree.
+assert check['tree_evidence'](['docs/evidence/1/a.json', 'docs/design/evidence/1/a.png', 'docs/shots/evidence/1/a.png', 'docs/reviews/a.md',
+                               'docs/design/exploration/a.html', 'docs/qualification-1.md', 'docs/release-1.md']) == [
+    'docs/evidence/1/a.json', 'docs/design/evidence/1/a.png', 'docs/shots/evidence/1/a.png', 'docs/reviews/a.md',
+    'docs/design/exploration/a.html', 'docs/qualification-1.md', 'docs/release-1.md']
+assert not check['tree_evidence'](['docs/research/2395.md', 'docs/shots/manifest.json', 'tests/fixtures/usage/windows-oauth-usage.json'])
+print('PASS tree guard refuses evidence paths and keeps research notes and fixtures')

@@ -1,9 +1,0 @@
-{
-  "schema": "taskq.service/1",
-  "service": {
-    "state": "unknown",
-    "fresh": false,
-    "reason": "host service owner record missing"
-  },
-  "registry_error": null
-}

@@ -1,7 +1,7 @@
 #!/bin/sh
 # README showcase data for `taskq tray --snapshot` (docs/design/readme-plan.md, Screenshots): two projects with
 # plausible tasks in doing, review, ask and ready, one day of history, no errors, fresh status files.
-# Edge cases live in docs/design/tray-fixture.sh, not here.
+# Edge cases live in tests/fixtures/tray-fixture.sh, not here.
 set -eu
 d=${1:?usage: fixture.sh DIR}
 mkdir -p "$d/install" "$d/storefront/.taskq" "$d/billing-api/.taskq"

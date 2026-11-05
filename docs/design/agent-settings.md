@@ -1,6 +1,6 @@
 # Agent settings workspace
 
-Detailed candidate under MP5/P6; no active grant or runtime change. One selected Workspace review layout. [Integrated reference](workspace-prototype.html); [isolated component](agent-settings.html) is a development fixture.
+Detailed candidate under MP5/P6; no active grant or runtime change. One selected Workspace review layout. [Integrated reference](../../tests/fixtures/design/workspace-prototype.html); [isolated component](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/agent-settings.html) is a development fixture.
 
 ## AS1 Entry and identity
 

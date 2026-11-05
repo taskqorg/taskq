@@ -4970,7 +4970,7 @@ mod tests {
     // A8: real event identity, half-open bounds and incomplete sources feed the same renderer.
     #[test]
     fn approved_real_history_fixtures_use_one_six_bin_svg() {
-        let fixture:Value=serde_json::from_str(include_str!("../docs/reviews/real-data-2026-10-22.json")).unwrap();
+        let fixture:Value=serde_json::from_str(include_str!("../tests/fixtures/tray/real-data-day.json")).unwrap();
         let ps:Vec<Value>=fixture["projects"].as_array().unwrap().iter().map(|p|json!({"name":p["name"],"issues":p["board_issues_url"],"since":p["history_since"],"complete":true,"focus":["all"],"tasks":p["current_tasks"].as_array().unwrap().iter().map(|t|{let mut row=t.clone();row["n"]=t["number"].clone();row}).collect::<Vec<_>>(),"events":p["window_events"].as_array().unwrap().iter().map(|e|json!([e["at"],e["kind"],e["id"],e["task"]])).collect::<Vec<_>>()})).collect();
         let captured=fixture["captured_at"].as_i64().unwrap();
         let range=(fixture["window"]["start"].as_i64().unwrap(),fixture["window"]["end"].as_i64().unwrap());
@@ -4979,7 +4979,7 @@ mod tests {
         assert_eq!(day.counts,[1,0,1,0],"frozen current counters keep distinct task identities");
         assert_eq!(day.bins.iter().map(|b|b.counts[0]).collect::<Vec<_>>(),[5,4,7,12,7,4]);
         assert!(day.bins.iter().all(icon::Bin::complete));assert!(day.bins[5].ongoing);
-        let hour:Value=serde_json::from_str(include_str!("../docs/reviews/real-data-hour-2026-10-22.json")).unwrap();
+        let hour:Value=serde_json::from_str(include_str!("../tests/fixtures/tray/real-data-hour.json")).unwrap();
         let hourly=summary_at(&[taskq.clone()],(hour["window_start"].as_i64().unwrap(),hour["window_end"].as_i64().unwrap()),captured);
         assert_eq!(hourly.bins.iter().map(|b|b.counts[0]).collect::<Vec<_>>(),[1,0,0,1,0,0]);
         let aggregate=summary_at(&ps,range,captured);

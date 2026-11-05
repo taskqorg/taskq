@@ -59,6 +59,7 @@ def runtime_names(path, text):
 
 
 # docs/design/rule-ids.md#contract-detail: rule IDs, the rule-change gate and coverage.
+OUTSIDE_TREE = re.compile(r'^docs/(design/(evidence|review-evidence|exploration)/|evidence/|shots/evidence/|reviews/|qualification-|release-)')
 RULE_DOCS = ('taskq.md', 'docs/design/menu.md', PRODUCT_DOC)
 RULE_TESTS = ('src', 'tests', 'scripts')
 TEST_PATH = re.compile(r'^(src/.*\.rs|tests/.*|scripts/.*\.test\.py)$')
@@ -379,6 +380,11 @@ CONTRACT_LINT_SHA256 = 'f88032eb1210b9fadd98ee250c7371a732a6c7837c3917c026b97490
 LINT_LIMIT = 128 * 1024
 
 
+def tree_evidence(paths):
+    """Tracked paths that belong outside the tree: evidence, finished reviews and release records (docs/testing.md)."""
+    return [p for p in paths if OUTSIDE_TREE.match(p)]
+
+
 def main_checkout(root):
     """The main checkout of a linked worktree, read from its `.git` file; None for anything else."""
     try:
@@ -526,6 +532,9 @@ def main():
             print('+', ' '.join(lint), flush=True)
             run_lint(lint, BUDGET - (time.monotonic() - started))
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
+        tracked = subprocess.check_output(['git', 'ls-files'], cwd=ROOT, text=True, encoding='utf-8').splitlines()
+        if tree_evidence(tracked):
+            raise SystemExit('evidence belongs outside the tree (docs/testing.md#visual-evidence):\n' + '\n'.join(tree_evidence(tracked)))
         run([sys.executable, 'scripts/check.test.py'])
         run([sys.executable, 'scripts/batch-replay.test.py'])
         run([sys.executable, 'scripts/live-probe.test.py'])

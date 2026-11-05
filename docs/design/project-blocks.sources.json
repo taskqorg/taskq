@@ -32,7 +32,7 @@
     "tests/fixtures/project-blocks.json",
     "docs/design/visual-style.md",
     "src/project-blocks.js",
-    "docs/design/menu-next-variants.html",
+    "tests/fixtures/design/menu-next-variants.html",
     "src/project-blocks.LICENSE",
     "src/project-blocks.css",
     "src/ui-icons.json",

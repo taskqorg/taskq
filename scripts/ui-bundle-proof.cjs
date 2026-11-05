@@ -7,7 +7,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),http=require('node:http');
 const {spawn,spawnSync}=require('node:child_process'),assert=require('node:assert/strict');
-const repo=path.join(__dirname,'..'),out=path.resolve(process.argv[2]||'ui-bundle-proof');
+const repo=path.join(__dirname,'..'),out=path.resolve(process.argv[2]||path.join(require('os').tmpdir(),'taskq-ui-bundle-proof'));
 const base=fs.mkdtempSync(path.join(os.tmpdir(),'ui-proof-')),install=path.join(base,'install'),temp=path.join(base,'temp'),channel=path.join(base,'publication');
 const port=19000+process.pid%500,stage=path.join(repo,'scripts','ui-bundle-stage.cjs'),web=path.join(repo,'build','web');
 const evidence={platform:'Windows WebView2',steps:{}},children=[];

@@ -2,7 +2,7 @@
 
 ## Scenario closure and defaults · 2026-10-14
 
-- Added [D01–D14/G1–G8](decision-register.md) and [scenario review](scenario-review.md). Expanded supplied-case coverage to UC-01–UC-15; preserved earlier P IDs as aliases. Walkthrough covers entry, outcome, failure/recovery and remaining gates; not live end-to-end verification.
+- Added [D01–D14/G1–G8](decision-register.md) and [scenario review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/scenario-review.md). Expanded supplied-case coverage to UC-01–UC-15; preserved earlier P IDs as aliases. Walkthrough covers entry, outcome, failure/recovery and remaining gates; not live end-to-end verification.
 - Proposed editable default recipes and simplest-first implementation: existing tasks/dependencies/Ask, project-owned environments and existing commands. General default/customization principle added to specq; exact TaskQ values remain proposals, not applied policy.
 - Read `add --later`: eligible issue creation precedes the `later` entry. Recorded a potential admission race for held-plan creation; source evidence only, no concurrent reproduction or runtime fix.
 - Browser suites: plans/numbered decisions, AI conversations, integrated navigation, agent settings and Delivery all pass. These are fixture checks, not proof of the proposed backend semantics.
@@ -28,7 +28,7 @@
 
 ## Decisions, plans and comparative research · 2026-10-14
 
-- [Comparison](comparative-workflow-review.md): official VibeCrew/Moshi/Conductor/cmux docs; VibeCrew Bridge/Fleet screenshots visually inspected. No installed-product interaction or platform-parity proof.
+- [Comparison](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/comparative-workflow-review.md): official VibeCrew/Moshi/Conductor/cmux docs; VibeCrew Bridge/Fleet screenshots visually inspected. No installed-product interaction or platform-parity proof.
 - Q1/Q2 and P1–P6 separate inline decisions, dependency plans, task stages, environment finalization and backend gates. Shared `specq/design/workflow.md` adds AI-assisted controls; TaskQ-specific authority stays here.
 - `plans-and-decisions.test.cjs`: ordinary/custom answers, sending lock, stale/unknown guards, draft-only AI handoff, reviewed plan, creation/start without duplicate cards, pause/retry, separate question identities and narrow themes pass. Board receipts and transitions are simulated; concurrent writers require backend evidence.
 - Workspace navigation and Delivery regression checks pass. Inspected `plans-wide.png`, `plans-light.png`, `plans-dark.png`; fixed stage title/reason collisions and re-inspected wide/dark captures.
@@ -89,7 +89,7 @@
 
 - Added shared F1–F6 in specq; TaskQ [R-UI1–R-UI6](rendering-contract.md), [acceptance ledger/matrix](ui-acceptance.md), report template and deterministic expected fixtures. Shared changes are local, not published.
 - Human confirmed by owner: Ask, waiting for a human answer. Updated counter contract.
-- Audited released 4.1.9 source and isolated native Mac snapshots; [findings and evidence](release-4.1.9-ui-audit.md). Ask-only fixture proves missing Ask bars in summary. Preserved useful Resources, incident consent and Back recovery in the target ledger.
+- Audited released 4.1.9 source and isolated native Mac snapshots; [findings and evidence](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/release-4.1.9-ui-audit.md). Ask-only fixture proves missing Ask bars in summary. Preserved useful Resources, incident consent and Back recovery in the target ledger.
 - Snapshot sizing differs from live opening. No native Windows, live-popup sizing, keyboard or temporal-motion qualification. Fractional geometry is source evidence, not a recorded animation diagnosis.
 - Fixture JSON/arithmetic, local file links, both repository whitespace checks and specq lint passed. taskq.md remains 300 lines.
 - Documentation/evidence only in this revision; no runtime patch, production restart, permission change, commit or push. Cargo suites not rerun. Pending I5 and rolling-bin proposals remain explicit.
@@ -105,7 +105,7 @@
 
 ## Final candidate · 2026-10-13
 
-Sources: [candidate](final-prototype.html), [AI contract](ai-workspace.md), [implementation inventory](current-menu-audit.md).
+Sources: [candidate](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/final-prototype.html), [AI contract](ai-workspace.md), [implementation inventory](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/current-menu-audit.md).
 
 - Installed 4.1.8 native fixture snapshots inspected: dark home/16 px, light project/16 px. Isolated TASKQ_INSTALL; no live service mutation. Source inventory at `cfae06708776d252d52f31510afed6b47918cee6`; installed/source mismatch recorded.
 - `node docs/design/final-prototype.test.cjs`: PASS. Conversation/revision isolation, duplicate confirmation refusal, local-session eligibility, detach/reopen/reattach ownership.
@@ -119,7 +119,7 @@ Limits: candidate only. Files select metadata; uploads, native windows, service 
 
 The records below qualify their named artifacts/releases only. They do not override the current candidate or establish its native acceptance.
 
-Sources: [menu-prototype.html](menu-prototype.html), [icon-studies.html](icon-studies.html).
+Sources: [menu-prototype.html](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/menu-prototype.html), [icon-studies.html](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/icon-studies.html).
 Requirements: [operator-ui.md](operator-ui.md), [menu.md](menu.md).
 Phase 0 records the approved design target; it does not implement a service adapter, native popover or AI channel.
 The HTML uses English and a small state/action bridge target instead of OpenAI widget state.
@@ -127,7 +127,7 @@ The HTML uses English and a small state/action bridge target instead of OpenAI w
 ## Checks for this package
 
 Run `cargo test --locked`, `cargo run -- selftest`, and `git diff --check` before handoff.
-The prototype tests named in this record were development instruments that no check ran; #1599 removed them. The [frozen package](evidence/frozen-1573-package.json) keeps them; product regressions are covered by `tests/*.test.cjs` and Cargo checks.
+The prototype tests named in this record were development instruments that no check ran; #1599 removed them. The [frozen package](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/frozen-1573-package.json) keeps them; product regressions are covered by `tests/*.test.cjs` and Cargo checks.
 Cargo checks establish current-product regression evidence, not implementation of the target menu.
 
 Observed for this package: both Node commands pass (19 menu fixture checks; icon model, render and pause checks).
@@ -171,7 +171,7 @@ Service target history is `<root>/.taskq/events`; incomplete history reports its
 ## Phase 2 renderer
 
 `src/tray.rs` and `src/tray.html` ship the wry popover, the page bridge, icons, actions and `<install>/tray.json` (§ 4).
-Fixture: `sh docs/design/tray-fixture.sh DIR`, then `TASKQ_INSTALL=DIR/install taskq tray --snapshot DIR/shots`.
+Fixture: `sh tests/fixtures/tray-fixture.sh DIR`, then `TASKQ_INSTALL=DIR/install taskq tray --snapshot DIR/shots`.
 It covers a long title, HTML in a title, the same #12 in two repos, a paused project with a saved focus, a service
 error, a stale status.json, an observation-only project without a log, and a duplicated close event. A second argument
 adds that many minimal projects so Home and Projects scroll; a snapshot page wider than its window fails the run (#1073).
@@ -292,7 +292,7 @@ Source components generate workspace-prototype.html and workspace-preview.html. 
 
 ## Custom icon and final wording review
 
-Historical evidence, superseded by [the approved six-bin renderer](../reviews/visual-decisions.md) and [Custom removal](custom-icon.md). The tests and configurations named below describe that earlier candidate, not supported controls.
+Historical evidence, superseded by [the approved six-bin renderer](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/reviews/visual-decisions.md) and [Custom removal](custom-icon.md). The tests and configurations named below describe that earlier candidate, not supported controls.
 
 Accepted Custom mode and the shared Summary/Custom configuration architecture. Summary now comes from icon-summary.config.json; the integrated build uses the same paint function for built-in and saved custom configurations. Added UC-16, CI protocol/acceptance, final menu review and implementation handoff links. Accepted independent-branch continuation and deferral of monetary budgets recorded.
 
@@ -316,7 +316,7 @@ This publishes specifications, prototype and implementation backlog. No native m
 
 All six shared workflow refinements and AI-assisted controls are accepted and saved in the owning specq files. The handoff now maps each menu capability to service/API semantics, backlog workstreams and observable acceptance. UC-17 covers remote PM behavior; no separate chat transport or live watcher is implemented by this prototype.
 
-Rebuilt workspace-prototype.html and workspace-preview.html from canonical components. The approved layout is unchanged. Visual review removed the redundant Plan label in the plan shortcut; the name and state remain visible. The exact source/reference/shared-rule hashes are in [final-package.json](evidence/final-package.json). Sources are local changes, not proof of remote publication.
+Rebuilt workspace-prototype.html and workspace-preview.html from canonical components. The approved layout is unchanged. Visual review removed the redundant Plan label in the plan shortcut; the name and state remain visible. The exact source/reference/shared-rule hashes are in [final-package.json](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/final-package.json). Sources are local changes, not proof of remote publication.
 
 Validation: all eight browser suites passed. After the one-label correction, plans/decisions and resources/recipes passed again. 93 Cargo tests passed; selftest passed 40 golden traces, formats and a board read. Shared style checker, changed-document links and diff whitespace checks passed; taskq.md remains within 300 lines.
 

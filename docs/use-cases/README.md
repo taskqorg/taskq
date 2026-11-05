@@ -3,7 +3,7 @@
 Validate TaskQ project setup, planning, focus and execution against user intent.
 [Contract](../../taskq.md) · [Menu](../design/menu.md) · [Shared documentation rules](https://github.com/taskqorg/specq/blob/main/caveman/rules/documentation.md).
 
-Follow the [shared use-case method](https://github.com/taskqorg/specq/blob/main/engineering/use-cases.md). Keep TaskQ cases in this file. Needs are distinct from implementation guarantees. [Decision register](../design/decision-register.md) owns pending selections; [scenario review](../design/scenario-review.md) records coverage/evidence. Q2 is resolved; Q1/Q3–Q6 explain remaining contract constraints.
+Follow the [shared use-case method](https://github.com/taskqorg/specq/blob/main/engineering/use-cases.md). Keep TaskQ cases in this file. Needs are distinct from implementation guarantees. [Decision register](../design/decision-register.md) owns pending selections; [scenario review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/scenario-review.md) records coverage/evidence. Q2 is resolved; Q1/Q3–Q6 explain remaining contract constraints.
 
 ## UC-01. Start work on a project
 
@@ -316,7 +316,7 @@ Source: owner; FRA/Hermes with Codex workers. [Remote manager RM1–RM7](../desi
 - Send images/files; receive supported materials and durable board references.
 - After gateway loss, reconcile pending questions and results. Stop watching independently from pausing work.
 
-Result: a replaceable remote PM provides planning and owner control while TaskQ executes independently. Existing integration and remaining qualification are recorded in the [FRA audit](../design/remote-manager-audit.md). Covers UC-02/03/07/09/10/12/14 without a second queue.
+Result: a replaceable remote PM provides planning and owner control while TaskQ executes independently. Existing integration and remaining qualification are recorded in the [FRA audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/remote-manager-audit.md). Covers UC-02/03/07/09/10/12/14 without a second queue.
 
 ## Proposals
 

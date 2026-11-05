@@ -1,7 +1,7 @@
 // F5: deterministic actual-bundle fixtures. Native/DPI/screen-reader qualification is separate.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto'),{chromium}=require('playwright');
 const fixture=JSON.parse(fs.readFileSync('tests/fixtures/conversations.json','utf8'));
-const out=process.env.TASKQ_EVIDENCE_1580||'.taskq/conversations-render';
+const out=process.env.TASKQ_EVIDENCE_1580||require('node:path').join(require('node:os').tmpdir(),'taskq-conversations-render');
 // #1742 Q-A3..A5/A9: long history in the actual bundle. An in-page model of the D4 reader (transcript.rs: 256 KiB pages,
 // at most 200 items, whole records, ignored records skipped) answers reads out of order with seeded delays.
 // Defect class: a jump after prepend, append, font or width change; a duplicate or omitted record at a page seam;

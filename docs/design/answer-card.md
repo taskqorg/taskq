@@ -58,7 +58,7 @@ B4 parent-to-child map, design `cf46e637`:
 | Parent | Child | Placement differences | Evidence |
 |---|---|---|---|
 | [visual-style.md](visual-style.md) palette | `.qac` tokens and the tray body tokens | none | `tests/answer-card.parent.cjs` computed colors |
-| `question()` in [plans-and-decisions.html](plans-and-decisions.html), `qcard` CSS of [workspace-prototype.html](workspace-prototype.html) | `render()` and `src/answer-card.css` | Head flows `? #N title` per M3; host/runtime stay on the tray row above; fixture state preview omitted; Done shows as its own line and option details below their buttons ([One render](#one-render), #1787) | divider, mark, choice fill/shape/numbers, wrap, Other answer and Evidence disclosures equal |
+| `question()` in [plans-and-decisions.html](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/plans-and-decisions.html), `qcard` CSS of [workspace-prototype.html](../../tests/fixtures/design/workspace-prototype.html) | `render()` and `src/answer-card.css` | Head flows `? #N title` per M3; host/runtime stay on the tray row above; fixture state preview omitted; Done shows as its own line and option details below their buttons ([One render](#one-render), #1787) | divider, mark, choice fill/shape/numbers, wrap, Other answer and Evidence disclosures equal |
 | Q1 states | `STATES` receipts | Recorded is "Answer accepted on the board" after readback | fixtures, `tests/tray-answer.browser.cjs` |
 | K-A8 project strip | tray project header | unchanged tray counters | right edge, order, no overflow at counts 0/1/12/100 |
 
@@ -68,7 +68,7 @@ Delivery of #920 is the adapter PR first, per the owner's answer on the task. Th
 
 ## Accepted reference
 
-[Interactive reference](answer-card-reference.html) uses the existing TaskQ design example, with synthetic task #841 and counts. It approves compact placement and ordinary choice/free-text/receipt interaction, not its mocked transport, invented state or approximate icons/tokens/counters. Shared-block B1–B4 takes precedence over those demo details. It does not replace the failure-state fixtures above.
+[Interactive reference](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/answer-card-reference.html) uses the existing TaskQ design example, with synthetic task #841 and counts. It approves compact placement and ordinary choice/free-text/receipt interaction, not its mocked transport, invented state or approximate icons/tokens/counters. Shared-block B1–B4 takes precedence over those demo details. It does not replace the failure-state fixtures above.
 
 Reference SHA-256: `4b857925b7a606f1766b84f2b0e79b36fb26bc1203d8a64a51ccdc29a321c556`.
 

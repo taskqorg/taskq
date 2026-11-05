@@ -156,9 +156,9 @@ Resolve gates in implementation specs/models. Escalate only a discovered product
 
 Record selection as `Dxx.option` with any changed constraint; preserve IDs. Accepting this document's structure does not approve every recommendation.
 After selection, update the owning spec/default and this status; retain alternatives under advanced routes where supported. Unsupported alternatives show a limitation instead of fake controls.
-Re-run [scenario review](scenario-review.md) for affected cases. Runtime release still needs contract/model, adapter and platform evidence.
+Re-run [scenario review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/scenario-review.md) for affected cases. Runtime release still needs contract/model, adapter and platform evidence.
 
 ## Accepted follow-up decisions
 
-- Icon and fixed Summary use the [approved six-bin SVG](../reviews/visual-decisions.md). Custom and its editor/schema are removed; saved Custom resolves to Summary ([compatibility](custom-icon.md)).
+- Icon and fixed Summary use the [approved six-bin SVG](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/reviews/visual-decisions.md). Custom and its editor/schema are removed; saved Custom resolves to Summary ([compatibility](custom-icon.md)).
 - Continue independent valid branches after a failure; hold dependants. Monetary budgets are deferred until reliable usage attribution. Real five-repository inputs remain required for qualification.

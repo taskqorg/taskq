@@ -1,6 +1,6 @@
 # Remote manager
 
-Design target for UC-17. Inherits [agent entry](agent-entry.md), [plans](plans-and-decisions.md), [resources](dynamic-resources.md) and taskq.md R1–R5/R9/R10. No new task authority, scheduler, runtime or live configuration change. [FRA audit](remote-manager-audit.md) separates existing integration from qualification.
+Design target for UC-17. Inherits [agent entry](agent-entry.md), [plans](plans-and-decisions.md), [resources](dynamic-resources.md) and taskq.md R1–R5/R9/R10. No new task authority, scheduler, runtime or live configuration change. [FRA audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/remote-manager-audit.md) separates existing integration from qualification.
 
 ## RM1. One flow, any capable agent
 
