@@ -2459,7 +2459,7 @@ use std::time::{Duration, Instant, SystemTime};
                     i += 1;
                     while i < c.len() && c[i] != '"' { i += if c[i] == '\\' { 2 } else { 1 }; }
                     let lit: String = c[start + 1..i.min(c.len())].iter().collect();
-                    let before: String = c[start.saturating_sub(24)..start].iter().collect();
+                    let before: String = c[start.saturating_sub(48)..start].iter().collect();
                     let read = READS.iter().any(|r| before.trim_end().ends_with(r)) || before.contains("ask_card(");
                     if !read && ["Problem: ", "Done: ", "To answer", "★"].iter().any(|m| lit.contains(m)) { out.push(lit); }
                 }

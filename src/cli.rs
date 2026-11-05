@@ -131,7 +131,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
             Some("accounts") => 5,
-            Some("unpin" | "service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
+            Some("unpin" | "service" | "profile" | "add" | "finding" | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
