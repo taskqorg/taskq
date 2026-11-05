@@ -230,66 +230,44 @@ fn hook_binary(command: &str) -> Option<String> {
     matches!(name.as_str(), "agentq" | "agentq.exe").then(|| word.to_string())
 }
 
-/// Every agentq hook binary in one parsed hook file: any string value that is an agentq hook command.
-fn hook_binaries(v: &Value, out: &mut Vec<String>) {
+/// The client of an agentq hook command, `<binary> hook <client> <event>` as AgentQ writes it: AgentQ's own agent name.
+fn hook_client(command: &str) -> Option<&str> { command.split_once(" hook ")?.1.split_whitespace().next() }
+
+/// Every agentq hook in one parsed hook file, as binary and client: any string value that is an agentq hook command.
+fn hook_binaries(v: &Value, out: &mut Vec<(String, String)>) {
     match v {
-        Value::String(s) => out.extend(hook_binary(s)),
+        Value::String(s) => out.extend(hook_binary(s).zip(hook_client(s).map(str::to_string))),
         Value::Array(a) => a.iter().for_each(|x| hook_binaries(x, out)),
         Value::Object(o) => o.values().for_each(|x| hook_binaries(x, out)),
         _ => {}
     }
 }
 
-/// AgentQ's disable intent as its own `data/integration.json` records it; only explicit `agentq enable` clears it, and
-/// onboarding would re-enable, so an intent or an unread state rules out onboard advice (#2417).
-#[derive(PartialEq)]
-enum Intent { Enabled, HostDisabled, ClientDisabledOrUnread }
+/// AgentQ's disable intent as its own `data/integration.json` records it; only explicit `agentq enable` clears it. A
+/// `profiles` entry is one disabled client (agentq `control::disabled`).
+enum Intent { Clients(Vec<String>), HostDisabled, Unread }
 
 fn agentq_intent(agentq: &Path) -> Intent {
     let text = match std::fs::read_to_string(agentq.join("data").join("integration.json")) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Intent::Enabled,
-        Err(_) => return Intent::ClientDisabledOrUnread,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Intent::Clients(vec![]),
+        Err(_) => return Intent::Unread,
     };
-    let Ok(state) = serde_json::from_str::<Value>(&text) else { return Intent::ClientDisabledOrUnread };
+    let Ok(state) = serde_json::from_str::<Value>(&text) else { return Intent::Unread };
     match (state.get("host_disabled").and_then(Value::as_bool), state.get("profiles").and_then(Value::as_object)) {
         (Some(true), _) => Intent::HostDisabled,
-        (Some(false), Some(profiles)) if profiles.is_empty() => Intent::Enabled,
-        _ => Intent::ClientDisabledOrUnread,
+        (Some(false), Some(profiles)) => Intent::Clients(profiles.keys().cloned().collect()),
+        _ => Intent::Unread,
     }
-}
-
-/// `path` resolves outside the agentq install: a binary agentq did not install.
-fn outside_install(agentq: &Path, path: &Path) -> bool {
-    match (agentq.canonicalize(), path.canonicalize()) {
-        (Ok(install), Ok(p)) => !p.starts_with(install),
-        _ => false,
-    }
-}
-
-/// `binary` has the bytes of a release agentq still keeps.
-fn kept_release(agentq: &Path, binary: &[u8]) -> bool {
-    let Ok(releases) = std::fs::read_dir(agentq.join("releases")) else { return false };
-    releases.flatten().any(|r| {
-        let path = r.path().join(agentq_exe());
-        std::fs::metadata(&path).is_ok_and(|m| m.len() == binary.len() as u64) && std::fs::read(&path).is_ok_and(|b| b == binary)
-    })
-}
-
-/// The install launcher is not one agentq installed: it resolves elsewhere or equals no kept release. A removed release
-/// looks the same, so callers do not assert a dev build; they only withhold onboard, which would replace the launcher.
-fn foreign_launcher(agentq: &Path) -> bool {
-    let launcher = agentq.join(agentq_exe());
-    outside_install(agentq, &launcher) || std::fs::read(&launcher).is_ok_and(|b| !kept_release(agentq, &b))
 }
 
 /// `agentq-hook` (#2300, agentq#190): each agentq hook in `files` (client hook files) runs the current release of the
 /// agentq install `agentq`. The hook runs in the binary it names, a bare `agentq` being the install launcher, so a
-/// binary whose bytes differ from `releases/<current>/agentq` runs old hook code. Onboard advice appears only where
-/// onboarding undoes nothing (#2417): AgentQ is enabled and neither launcher nor hook binary is foreign.
+/// binary whose bytes differ from `releases/<current>/agentq` is a gap, a stale dev launcher included. The fix names the
+/// stale clients: bare `agentq onboard --yes` refuses while any ready client is disabled, and AgentQ's refusal names
+/// `agentq enable`, which would turn that client on (#2417). A disabled host or client is left alone.
 pub fn hook_item(agentq: &Path, files: &[std::path::PathBuf]) -> Item {
     const ID: &str = "agentq-hook";
-    const ONBOARD: &str = "run `agentq onboard --yes`: it installs the current launcher and rewrites the hooks";
     let unknown = |what: String, onboard: bool| Item::unknown(ID, what, if onboard { "run `agentq doctor`; if it names no cause, `agentq onboard --yes`" } else { "run `agentq doctor`" });
     match std::fs::metadata(agentq) {
         Ok(m) if m.is_dir() => {},
@@ -297,9 +275,12 @@ pub fn hook_item(agentq: &Path, files: &[std::path::PathBuf]) -> Item {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Item::ok(ID, "agentq is not installed"),
         Err(e) => return unknown(format!("agentq install folder unreadable: {}", short(&e.to_string())), true),
     }
-    let intent = agentq_intent(agentq);
-    if intent == Intent::HostDisabled { return Item::ok(ID, "agentq is disabled on this host"); }
-    let mut onboard = intent == Intent::Enabled && !foreign_launcher(agentq);
+    let disabled = match agentq_intent(agentq) {
+        Intent::HostDisabled => return Item::ok(ID, "agentq is disabled on this host"),
+        Intent::Clients(clients) => Some(clients),
+        Intent::Unread => None,
+    };
+    let onboard = disabled.as_ref().is_some_and(Vec::is_empty);
     let mut hooks = vec![];
     for f in files {
         let name = f.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
@@ -311,11 +292,13 @@ pub fn hook_item(agentq: &Path, files: &[std::path::PathBuf]) -> Item {
         let Ok(v) = serde_json::from_str::<Value>(&text) else { return unknown(format!("hook file {name} is not JSON"), onboard) };
         let mut found = vec![];
         hook_binaries(&v, &mut found);
-        hooks.extend(found.into_iter().map(|b| (name.clone(), b)));
+        hooks.extend(found.into_iter().map(|(b, c)| (name.clone(), b, c)));
     }
     if hooks.is_empty() { return Item::ok(ID, "no agentq hook installed"); }
-    let hook_path = |bin: &str| if bin.contains(['/', '\\']) { std::path::PathBuf::from(bin) } else { agentq.join(agentq_exe()) };
-    onboard &= !hooks.iter().any(|(_, bin)| outside_install(agentq, &hook_path(bin)));
+    if let Some(off) = &disabled {
+        hooks.retain(|(_, _, client)| !off.contains(client));
+        if hooks.is_empty() { return Item::ok(ID, "agentq hooks belong only to disabled clients"); }
+    }
     let current = match std::fs::read_to_string(agentq.join("current")) {
         Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
         Ok(_) => return unknown("agentq names no current release".into(), onboard),
@@ -325,23 +308,23 @@ pub fn hook_item(agentq: &Path, files: &[std::path::PathBuf]) -> Item {
         Ok(b) => b,
         Err(e) => return unknown(format!("agentq release {current} unreadable: {}", short(&e.to_string())), onboard),
     };
-    let mut dev = None;
-    for (file, bin) in &hooks {
-        let path = hook_path(bin);
+    let (mut stale, mut clients) = (None, vec![]);
+    for (file, bin, client) in &hooks {
+        let path = if bin.contains(['/', '\\']) { std::path::PathBuf::from(bin) } else { agentq.join(agentq_exe()) };
         let binary = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) => return unknown(format!("agentq hook in {file} binary unreadable: {}", short(&e.to_string())), onboard),
         };
         if binary == release { continue; }
-        if outside_install(agentq, &path) {
-            dev.get_or_insert_with(|| format!("agentq hook in {file} runs dev launcher {}", path.display()));
-            continue;
-        }
-        let stale = format!("agentq hook in {file} runs {}, not the current release {current}", path.display());
-        if onboard && kept_release(agentq, &binary) { return Item::gap(ID, stale, ONBOARD); }
-        return unknown(format!("{stale}; AgentQ may be disabled or run a dev build here"), false);
+        let what = format!("agentq hook in {file} runs {}, not the current release {current}", path.display());
+        if disabled.is_none() { return unknown(format!("{what}; AgentQ's disable state is unreadable"), false); }
+        stale.get_or_insert(what);
+        if !clients.contains(&client.as_str()) { clients.push(client.as_str()); }
     }
-    Item::ok(ID, dev.unwrap_or_else(|| format!("agentq hooks run release {current}")))
+    match stale {
+        Some(what) => Item::gap(ID, what, format!("run `agentq onboard --yes {}`: it installs the current launcher over any dev build, rewrites these hooks and leaves disabled clients off", clients.join(" "))),
+        None => Item::ok(ID, format!("agentq hooks run release {current}")),
+    }
 }
 
 /// `agentq-data` (#2300, agentq#190): the data folder of the agentq install `agentq` takes a write. One probe file is
@@ -352,9 +335,7 @@ pub fn data_item(agentq: &Path) -> Item {
     if !agentq.exists() { return Item::ok(ID, "agentq is not installed"); }
     let data = agentq.join("data");
     if !data.is_dir() {
-        let missing = format!("agentq data folder {} missing", data.display());
-        if foreign_launcher(agentq) { return Item::unknown(ID, format!("{missing}; AgentQ may run a dev build here"), "run `agentq doctor`"); }
-        return Item::gap(ID, missing, "run `agentq onboard --yes`");
+        return Item::gap(ID, format!("agentq data folder {} missing", data.display()), "run `agentq onboard --yes`");
     }
     let probe = data.join(format!(".taskq-doctor-{}", std::process::id()));
     let wrote = std::fs::OpenOptions::new().write(true).create_new(true).open(&probe).map(drop);
@@ -540,7 +521,7 @@ pub fn fix(id: &str, status: &str, repo: &str, host: &str, gitlab: bool, reports
             // #2300: the heartbeat carries no paths; the host's own `taskq doctor` names the folder or hook
             _ if status == "unknown" && matches!(id, "claude-trust" | "agentq-hook" | "agentq-data") => format!("run `taskq doctor` on {host}: it names why the check failed"),
             "claude-trust" => format!("on {host}: run `claude` in the project root and accept its trust prompt (`taskq doctor` names the folder)"),
-            "agentq-hook" => format!("run `agentq onboard --yes` on {host}: its client hooks run an old agentq (`taskq doctor` names the hook)"),
+            "agentq-hook" => format!("run `taskq doctor` on {host} and the agentq command it names: its client hooks differ from the current agentq release"),
             "agentq-data" => format!("on {host}: give its OS user write access to the agentq data folder (`taskq doctor` names it)"),
             _ => format!("run `taskq doctor` on {host} and fix the named service error"),
         },
@@ -968,53 +949,65 @@ mod tests {
     }
 
     // Chain: `agentq disable` -> `data/integration.json` -> `taskq doctor` agentq-hook -> `--hosts` (#2417 A2). Risk: the
-    // doctor told a host where AgentQ is off on purpose to run `agentq onboard --yes`, which undoes that choice.
-    // Protection: host disable is ok, a disabled client or an unread state is unknown, and neither names onboard; a
-    // resumed install keeps the #2300 gap.
+    // doctor told a host where AgentQ is off on purpose to run an onboard that undoes the choice or refuses, and AgentQ's
+    // refusal then names `agentq enable`. Protection: host disable and a disabled hook client are ok, an unread state is
+    // unknown, and none names onboard; an unrelated disabled client keeps the gap with a per-agent onboard, which AgentQ
+    // accepts and which leaves that client off.
     #[test]
-    fn doctor_never_advises_onboard_on_a_disabled_agentq() {
+    fn doctor_advises_only_an_onboard_that_keeps_a_disable() {
         let (base, agentq, files) = stale_install("disabled");
         std::fs::create_dir_all(agentq.join("data")).unwrap();
         let state = agentq.join("data/integration.json");
         assert_eq!(hook_item(&agentq, &files).status, "gap", "no state file: no disable intent");
         std::fs::write(&state, json!({"schema": 1, "host_disabled": true, "profiles": {}}).to_string()).unwrap();
         no_onboard(&hook_item(&agentq, &files), "ok");
-        std::fs::write(&state, json!({"schema": 1, "host_disabled": false, "profiles": {"codex": {}}}).to_string()).unwrap();
-        no_onboard(&hook_item(&agentq, &files), "unknown");
+        std::fs::write(&state, json!({"schema": 1, "host_disabled": false, "profiles": {"claude": {}}}).to_string()).unwrap();
+        no_onboard(&hook_item(&agentq, &files), "ok");
         std::fs::write(&state, "{").unwrap();
         no_onboard(&hook_item(&agentq, &files), "unknown");
-        std::fs::write(&state, json!({"schema": 1, "host_disabled": false, "profiles": {}}).to_string()).unwrap();
-        let resumed = hook_item(&agentq, &files);
-        assert_eq!(resumed.status, "gap", "{resumed:?}");
-        assert!(resumed.fix.as_deref().unwrap().contains("agentq onboard --yes"), "{resumed:?}");
+        std::fs::write(&state, json!({"schema": 1, "host_disabled": false, "profiles": {"hermes": {}}}).to_string()).unwrap();
+        let unrelated = hook_item(&agentq, &files);
+        assert_eq!(unrelated.status, "gap", "{unrelated:?}");
+        let fix = unrelated.fix.as_deref().unwrap();
+        assert!(fix.starts_with("run `agentq onboard --yes claude`:"), "{fix}");
+        assert!(!fix.contains("agentq enable"), "{fix}");
+        std::fs::write(agentq.join(agentq_exe()), "agentq 1.2.0").unwrap();
+        std::fs::remove_file(agentq.join("releases/1.2.0").join(agentq_exe())).unwrap();
+        let unread = hook_item(&agentq, &files);
+        assert_eq!(unread.status, "unknown", "{unread:?}");
+        assert!(!unread.fix.as_deref().unwrap().contains("onboard"), "bare onboard refuses while a client is disabled: {unread:?}");
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    // Chain: dev launcher -> `taskq doctor` agentq-hook, agentq-data -> `--hosts` (#2417 A2). Risk: a host running its own
-    // agentq build was told to run `agentq onboard --yes`, which replaces that launcher. Protection: a binary outside the
-    // install is ok and named; a launcher equal to no kept release is unknown, since a removed release looks the same;
-    // neither names onboard. A launcher equal to a kept older release stays the #2300 gap (stale_install).
+    // Chain: dev launcher -> `taskq doctor` agentq-hook, agentq-data -> `--hosts` (#2417 note 6653818228). Risk: a hook
+    // running a stale dev launcher blocks work like any other old hook, so reading it as ok or unknown hides a true
+    // finding. Protection: bytes that differ from the release are a gap naming the binary and each stale client once, in
+    // or outside the install; a checkout binary equal to the release is ok.
     #[test]
-    fn doctor_never_advises_onboard_on_a_dev_launcher() {
-        let (base, agentq, files) = stale_install("dev");
-        assert_eq!(hook_item(&agentq, &files).status, "gap", "a kept older release is a stale launcher");
+    fn doctor_keeps_the_gap_on_a_stale_dev_launcher() {
+        let (base, agentq, mut files) = stale_install("dev");
         let dev = base.join("checkout").join(agentq_exe());
         std::fs::create_dir_all(dev.parent().unwrap()).unwrap();
         std::fs::write(&dev, "local build").unwrap();
-        std::fs::write(&files[0], json!({"command": format!("\"{}\" hook claude pre", dev.display())}).to_string()).unwrap();
+        let command = |client: &str| json!({"command": format!("\"{}\" hook {client} pre", dev.display())}).to_string();
+        std::fs::write(&files[0], command("claude")).unwrap();
         let outside = hook_item(&agentq, &files);
-        no_onboard(&outside, "ok");
-        assert!(outside.text.contains("dev launcher"), "{outside:?}");
+        assert_eq!(outside.status, "gap", "{outside:?}");
+        assert!(outside.text.contains(&dev.display().to_string()), "{outside:?}");
+        let codex = base.join("hooks.json");
+        std::fs::write(&codex, command("codex")).unwrap();
+        files.push(codex);
+        let second = base.join("other.json");
+        std::fs::write(&second, command("codex")).unwrap();
+        files.push(second);
+        assert!(hook_item(&agentq, &files).fix.as_deref().unwrap().starts_with("run `agentq onboard --yes claude codex`:"), "each stale client once");
+        files.truncate(1);
+        std::fs::write(&dev, "agentq 1.2.0").unwrap();
+        assert_eq!(hook_item(&agentq, &files).status, "ok", "a checkout binary equal to the release runs current hook code");
         std::fs::write(&files[0], json!({"command": "agentq hook claude pre"}).to_string()).unwrap();
         std::fs::write(agentq.join(agentq_exe()), "local build").unwrap();
-        no_onboard(&hook_item(&agentq, &files), "unknown");
-        no_onboard(&data_item(&agentq), "unknown");
-        #[cfg(unix)]
-        {
-            std::fs::remove_file(agentq.join(agentq_exe())).unwrap();
-            std::os::unix::fs::symlink(&dev, agentq.join(agentq_exe())).unwrap();
-            no_onboard(&hook_item(&agentq, &files), "ok");
-        }
+        assert_eq!(hook_item(&agentq, &files).status, "gap", "an install launcher equal to no kept release");
+        assert_eq!(data_item(&agentq).status, "gap", "a missing data folder blocks every hook");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1056,7 +1049,7 @@ mod tests {
         let now = 10_000;
         let h = Host { name: "mac".into(), version: "4.7.0".into(), updated: now - 10, doctor: Some("9900 agentq-hook:gap".into()), ..Default::default() };
         let row = host_row(&h, "o/r", false, now, 120, None);
-        assert_eq!((row["state"].as_str(), row["fix"].as_str()), (Some("gap"), Some("run `agentq onboard --yes` on mac: its client hooks run an old agentq (`taskq doctor` names the hook)")), "{row}");
+        assert_eq!((row["state"].as_str(), row["fix"].as_str()), (Some("gap"), Some("run `taskq doctor` on mac and the agentq command it names: its client hooks differ from the current agentq release")), "{row}");
         let _ = std::fs::remove_dir_all(&base);
     }
 
