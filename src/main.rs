@@ -3907,6 +3907,9 @@ fn prefetch_comments(c: &Ctx) -> service::CommentCache {
     })
 }
 
+/// `status --json` and `status --closed` print only JSON on stdout; their consumers parse it whole.
+fn status_prints_json(a: &Args) -> bool { a.flags.contains_key("json") || a.flags.contains_key("closed") }
+
 fn status_snapshot(c: &Ctx, a: &Args) -> (snapshot::Snapshot, Value) {
     let only = a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>();
     let mut snap = snapshot::read_cached(&*c.board, &c.cfg, &c.raw, &only, prefetch_comments(c));
@@ -4279,7 +4282,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             // R6: a board rate-limit pause the local service reports comes first, also when this read fails
             let local = dot(&cfg.root).join("status.json");
             if let Some(w) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).as_ref().and_then(requests::warning) {
-                println!("{w}");
+                if status_prints_json(a) { eprintln!("{w}"); } else { println!("{w}"); }
             }
             if a.flags.contains_key("closed") {
                 let page = a.one("page").map_or(Ok(1), |p| p.parse::<u32>().map_err(|_| "bad --page"))?;
@@ -7388,6 +7391,14 @@ mod tests {
     }
 
     // Before: the tray's `status --json` got the all-project shape after 48 s and every control failed. After: one project.
+    #[test]
+    fn status_budget_warning_stays_out_of_json_stdout() {
+        let prints_json = |words: &[&str]| { let v: Vec<String> = words.iter().map(|s| s.to_string()).collect(); status_prints_json(&Args::parse(&v).unwrap()) };
+        assert!(prints_json(&["status", "--json"]));
+        assert!(prints_json(&["status", "--closed"]));
+        assert!(!prints_json(&["status"]), "text status keeps the warning first on stdout (R6)");
+    }
+
     #[test]
     fn status_json_inside_a_project_reads_only_that_project() {
         assert!(json_here_only(true,&[],true));
