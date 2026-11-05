@@ -3009,17 +3009,15 @@ fn doctor_hosts(roots: Vec<PathBuf>, fresh: bool, json_out: bool) {
         host_rows.push(unread(project, e));
         boards.push(json!({"project": project, "error": e}));
     }
-    for g in gathered {
+    for mut g in gathered {
         let late = format!("not read within {stated}s");
         let error = g.failed.clone().or_else(|| (!g.listed).then(|| late.clone()));
         if let Some(e) = &error { host_rows.push(unread(&g.repo, e)); }
         else if g.rows.is_empty() { host_rows.push(json!({"board": g.repo, "host": "-", "version": "-", "state": "unknown", "gaps": [], "reason": "no host heartbeat", "fix": "install a host service for this board: `taskq service install` in its project"})); }
         host_rows.extend(g.rows.iter().cloned());
-        let workers = g.workers.unwrap_or(Err(late));
+        let workers = g.workers.take().unwrap_or(Err(late));
         if let Err(e) = &workers { workers_unread.push(format!("workers of {}: unknown: {e}", g.repo)); }
-        let mut v = json!({"board": g.repo, "hosts": g.rows, "workers": workers.as_ref().map_or(vec![], Clone::clone)});
-        if let Some(e) = &error { v["error"] = json!(e); }
-        if let Err(e) = &workers { v["workers_error"] = json!(e); }
+        let v = doctor_hosts_board_json(&g, error.as_ref(), &workers);
         if !json_out { for n in &g.notes { eprintln!("doctor: {}: {n}", g.repo); } }
         worker_rows.extend(workers.unwrap_or_default());
         boards.push(v);
@@ -3034,6 +3032,13 @@ fn doctor_hosts(roots: Vec<PathBuf>, fresh: bool, json_out: bool) {
     for l in health::hosts_lines(&host_rows, &worker_rows, &workers_unread) { println!("{l}"); }
     eprintln!("doctor: {} seconds, {}", start.elapsed().as_secs(), requests::summary(&ops, " board requests"));
     if !fresh { eprintln!("doctor: published results; `taskq doctor --hosts --fresh` asks every host to run its checks now (up to {}s)", health::ASK_WAIT); }
+}
+
+fn doctor_hosts_board_json(g: &health::Gathered, error: Option<&String>, workers: &Res<Vec<Value>>) -> Value {
+    let mut v = json!({"board": g.repo, "hosts": g.rows, "workers": workers.as_ref().map_or(vec![], Clone::clone), "notes": g.notes});
+    if let Some(e) = error { v["error"] = json!(e); }
+    if let Err(e) = workers { v["workers_error"] = json!(e); }
+    v
 }
 
 /// § 6 Shared project bootstrap (#2078): run the project's `host_setup` once per host, outside any worker sandbox, and
@@ -4524,6 +4529,31 @@ fn telemetry_line(active: &Value, report: Option<&Value>) -> String {
 
 #[cfg(test)]
 mod tests {
+    // Chain: § 6 fresh request -> refusal -> JSON (#2450). Risk: cached healthy rows hide a failed refresh.
+    // Keep the published result and age, alongside the exact refusal that prevented a fresh check (R12).
+    #[test]
+    fn doctor_fresh_json_keeps_request_failure_beside_published_result() {
+        use super::*;
+        let b = board::replying_to(&board::github::KIND, |method, _, _| {
+            assert_eq!(method, "PATCH");
+            Err("HTTP 403 request refused".into())
+        });
+        let host = snapshot::Host { name: "mac".into(), version: "4.6.87".into(), updated: 9990,
+            doctor: Some("9990 ok".into()), ..Default::default() };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let at = health::Scope { repo: "o/r", gitlab: false, ttl: 300, now: 10_000 };
+        let pace = health::Pace { wait: 300, poll: 20, elapsed: &|| 0, sleep: &|_| panic!("failed request must not wait") };
+        let request = board::Issue { number: 42, title: health::REQUEST_TITLE.into(), trusted: true, ..Default::default() };
+        health::ask(b.as_ref(), &[request], vec![host], &at, &pace, &mut |e| { tx.send((0, e)).unwrap(); });
+        drop(tx);
+        let mut gathered = vec![health::Gathered::new("o/r")];
+        health::gather(&rx, std::time::Instant::now() + std::time::Duration::from_secs(1), &mut gathered, &mut |_| {});
+        let out = doctor_hosts_board_json(&gathered[0], None, &Ok(vec![]));
+        assert_eq!(out["hosts"][0]["state"], "ok", "retain the published check");
+        assert_eq!(out["hosts"][0]["age"], "<1m");
+        assert_eq!(out["notes"], json!(["request not posted: HTTP 403 request refused"]), "fresh request failure must reach JSON");
+    }
+
     // Chain: § 7 rule 3 worker park (#1486, #1823). Risk: a worker parks without a blocker or time (no automatic exit), an
     // owner park starts needing one, or a malformed time reaches the board.
     #[test]
