@@ -172,6 +172,7 @@ Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
 Owner-only `taskq reroute --from <rt> --to <rt>` changes strict pins only on open ready tasks without unresolved execution, never a live attempt or host policy, under a board routing fence and one exclusive writer claim; reports only readback; unknown keeps the fence: [detail](docs/design/commands.md#runtime-reroute).
 Command syntax and effect, op ids, revisions, receipts, task-write acknowledgements and other formats: [commands][cm].
+`taskq pm [--every 3m] [--project P..]` and `taskq pm stop` read nothing and print the exact instructions a session follows to turn manager mode on or off: standing prompt, recurring timer and each tick's steps. TaskQ owns the text; a surface (PilotQ, Claude Code) only runs it, and every tick reads it afresh. Tick rules follow the [PM runbook](docs/design/pm-runbook.md).
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each; a compact one links its full diagnostic in `.taskq/cli-errors.log`, else keeps raw output (R12).
 - Worker `requeue`, `later`, `failed`: `Reason: <blocker>`, optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each; `--stage` adds `Stages:` (§ 2).
 - Commands add `attempt $TASKQ_ATTEMPT` when set. Fold refusals print current state. In a taskq project (`taskq.json` here or above), a `TASKQ_ROOT` without the current directory refuses: `TASKQ_ROOT <root> is not the project of the current directory <dir>`.

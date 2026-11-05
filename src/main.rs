@@ -106,6 +106,7 @@ const USAGE: &str = "taskq agents
  taskq results [N] [--action open|read|accept|followup|reopen|later|drop|make] [--sha SHA] [--text REASON] [--until UTC] [--page N|--before TIME:N] --json
  taskq reports ... (alias of results)
  taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
+ taskq pm [--every 3m] [--project P..] | taskq pm stop
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] [--dry-run] [--all] | taskq doctor [--dry-run] [--hosts] [--json] | taskq update [--check]
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
@@ -128,6 +129,29 @@ Text templates and limits: taskq.md sections 1, 2, 5, 7.";
 
 /// #1910: the one PM command catalog; `taskq help` renders it, `taskq help --json` prints it for other PM surfaces.
 const PM_COMMANDS: &str = include_str!("pm-commands.json");
+
+/// `taskq pm`: the exact manager instructions any agent session follows; TaskQ owns them, the session only runs them.
+fn pm_instructions(a: &Args) -> Res<String> {
+    const USE: &str = "usage: taskq pm [--every 3m] [--project P..] | taskq pm stop";
+    if a.flags.keys().any(|k| k != "every" && k != "project") || a.all("every").len() > 1 { return Err(USE.into()); }
+    match &a.pos[1..] {
+        [stop] if stop == "stop" && a.flags.is_empty() => return Ok(include_str!("pm-manager-stop.md").into()),
+        [] => {}
+        _ => return Err(USE.into()),
+    }
+    let every = a.one("every").unwrap_or("3m");
+    let factor = match every.chars().last() { Some('m') => 60, Some('h') => 3600, _ => return Err(USE.into()) };
+    let seconds = every[..every.len() - 1].parse::<u32>().ok().and_then(|n| n.checked_mul(factor)).filter(|s| (60..=86400).contains(s)).ok_or("taskq pm: --every must be 1m..24h, like 3m or 1h")?;
+    let projects = a.all("project");
+    if projects.iter().any(|p| p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))) { return Err(USE.into()); }
+    let (scope, list, cmd) = if projects.is_empty() {
+        ("all".to_string(), "every project of this surface (PilotQ: `pilotq projects list`, each with its root; elsewhere the one `taskq status` that covers them all).".to_string(), format!("taskq pm --every {every}"))
+    } else {
+        let names = projects.iter().map(|p| format!("--project {p}")).collect::<Vec<_>>().join(" ");
+        (projects.join(", "), format!("{} (PilotQ: roots from `pilotq projects list`; elsewhere `taskq status {names}`).", projects.join(", ")), format!("taskq pm --every {every} {names}"))
+    };
+    Ok(include_str!("pm-manager.md").replace("{{every}}", every).replace("{{seconds}}", &seconds.to_string()).replace("{{scope}}", &scope).replace("{{list}}", &list).replace("{{cmd}}", &cmd))
+}
 
 fn help(json: bool) -> Res<String> {
     if json { return Ok(PM_COMMANDS.trim_end().into()); }
@@ -172,7 +196,7 @@ impl Args {
             }
         }
         let used = match a.pos.first().map(String::as_str) {
-            Some("close" | "start" | "balance") => a.pos.len(),
+            Some("close" | "start" | "balance" | "pm") => a.pos.len(),
             Some("answer") if a.pos.get(1).is_some_and(|p| p.contains('.')) => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
@@ -3457,6 +3481,7 @@ fn run(argv: &[String]) -> Res<()> {
             None => { print!("{}", profile::report(&platform::default_install())); Ok(()) }
             Some(v) => { print!("{}", profile::view(&platform::default_install(), v, a.one("since"))?); Ok(()) }
         },
+        "pm" => { print!("{}", pm_instructions(&a)?); Ok(()) }
         "rules" => match &a.pos[1..] {
             [phase, root, role, task, attempt] if phase == "compact" => {
                 let n = |s: &String| s.parse::<u64>().map_err(|_| format!("rules compact: {s} is not a number"));
@@ -7099,6 +7124,15 @@ mod tests {
         }
         assert!(text.contains("'taskq телеметрия': taskq profile watch --since 1h; procedure: ") && text.contains(profile::WATCH_DOC));
         assert_eq!(serde_json::from_str::<Value>(&help(true).unwrap()).unwrap(), catalog);
+        // Manager mode: exact on and off instructions, period and scope reach the timer prompt verbatim.
+        let args = |v: &[&str]| Args::parse(&v.iter().map(|w| w.to_string()).collect::<Vec<_>>()).unwrap();
+        let on = pm_instructions(&args(&["pm"])).unwrap();
+        assert!(on.contains("`interval` 180") && on.contains("Period: 3m. Prompt, verbatim: `Manager tick: run taskq pm --every 3m and do") && on.contains("`Manager on · 3m · all`") && !on.contains("{{"), "{on}");
+        let some = pm_instructions(&args(&["pm", "--every", "5m", "--project", "a", "--project", "b"])).unwrap();
+        assert!(some.contains("`interval` 300") && some.contains("run taskq pm --every 5m --project a --project b and do") && some.contains("`Manager on · 5m · a, b`"), "{some}");
+        let off = pm_instructions(&args(&["pm", "stop"])).unwrap();
+        assert!(off.contains("`loop_stop`") && off.contains("`Manager off`"));
+        assert!(pm_instructions(&args(&["pm", "--every", "0m"])).is_err() && pm_instructions(&args(&["pm", "--every", "90s"])).is_err() && pm_instructions(&args(&["pm", "go"])).is_err());
         assert!(USAGE.contains("--snapshot DIR"));
         assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--antigravity N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim primary|any|spillover|pinned-only|labelled|manager-only|none] [--default-runtime claude|codex|antigravity]"));
         run(&["service".into(), "capacity".into(), "--help".into()]).unwrap();
