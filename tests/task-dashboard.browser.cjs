@@ -37,7 +37,9 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert(await threadWarning.locator('svg').isVisible());
   await thread55.focus();assert(await threadWarning.locator('.task-health-tip').isVisible(),'row focus exposes the diagnostic without nesting controls');
   const tip=await threadWarning.locator('.task-health-tip').boundingBox();assert(tip.x>=0&&tip.x+tip.width<=1100,'Conversations diagnostic stays inside the viewport');
-  await thread55.click();const details=p.getByRole('region',{name:'Execution health'});
+  await thread55.evaluate(e=>e.blur());await threadWarning.hover();await thread55.locator('.tqp-task-title').hover();assert(await threadWarning.locator('.task-health-tip').isVisible(),'wrapped row keeps a continuous hover path to its diagnostic');
+  await threadWarning.locator('.task-health-tip').hover();assert(await threadWarning.locator('.task-health-tip').isVisible(),'diagnostic remains readable under the pointer');
+  await thread55.click();await p.locator('details.object-metadata>summary').click();const details=p.getByRole('region',{name:'Execution health'});
   assert.equal(await details.count(),1);assert.match(await details.innerText(),/Heartbeat source[\s\S]*board host heartbeat[\s\S]*Last observation \/ age[\s\S]*Freshness[\s\S]*fresh[\s\S]*Execution progress[\s\S]*overdue/);
   assert(await details.locator('time').first().getAttribute('aria-label'));
   await p.evaluate(s=>taskq.receive(s),threadState(null));
@@ -78,8 +80,9 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert.deepEqual(identities,['Alpha#5','Beta#1','Alpha#2','Alpha#3','Beta#3','Alpha#4'],'O2 one comparator with canonical repository tie');
   assert.equal(await p.locator('[data-a=row-menu],.row-menu').count(),0,'no right ellipsis or action column');
   const identity=p.locator('.task-target').filter({hasText:'Alpha#5'});
-  // #1659 A2: the remote mark (proven remote run) then the Claude mark sit right before the current-stage elapsed time.
-  assert.deepEqual(await list().filter({has:identity}).locator('.tqp-task-head').evaluate(e=>[...e.querySelectorAll('[data-icon],.tqp-age')].map(x=>x.dataset.icon||x.textContent)),['play','github','network','claude','4m']);
+  // #2366: the existing remote/runtime marks precede the approved timing group; missing boundaries stay unknown.
+  assert.deepEqual(await list().filter({has:identity}).locator('.tqp-task-head [data-icon]').evaluateAll(es=>es.map(e=>e.dataset.icon)),['play','github','network','claude','rotate-cw']);
+  assert.deepEqual((await list().filter({has:identity}).locator('.task-timing>span').allTextContents()).map(t=>t.trim()),['Unknown','Unknown','Unknown']);
   assert.equal(await list().filter({hasText:'Beta#1'}).locator('.task-stage.review').count(),1,'Review uses the purple review tone');
   // F13 replaces inline disclosure: reading and actions are checked in task-navigation.browser.cjs.
   await identity.hover();await identity.focus();assert.equal(await editor().count(),0,'hover/focus open nothing');
@@ -122,7 +125,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    await p.locator('[data-a=view-editor]').click();const popup=await editor().boundingBox();assert(popup.x>=0&&popup.y>=0&&popup.x+popup.width<=320.5&&popup.y+popup.height<=geometry.viewport+.5,'bounded anchored editor');
    if(out&&font===16){fs.mkdirSync(out,{recursive:true});await p.screenshot({path:out+'/'+theme+'-'+variant+'-editor.png'});}
    if(variant==='short'){const done=editor().getByRole('button',{name:'Done',exact:true});await done.scrollIntoViewIfNeeded();const end=await done.boundingBox();assert(end.y>=0&&end.y+end.height<=geometry.viewport+.5,'last overlay control remains reachable in short windows');await done.click();assert.equal(await editor().count(),0);}else await p.keyboard.press('Escape');if(out&&font===16)await p.screenshot({path:out+'/'+theme+'-'+variant+'.png'});
-   if(variant==='long'){assert.equal(await p.locator('.tqp-age').first().innerText(),'?','unknown elapsed stays on the parent row');}
+   if(variant==='long'){assert.equal(await p.locator('.timing-current').first().innerText(),'Unknown','unknown elapsed stays on the parent row');}
    else {assert.equal((await p.locator('.filter-header').innerText()).includes('?'),true,'partial never zero');}
    observations.push({theme,font,variant,...geometry});await p.close();
   }

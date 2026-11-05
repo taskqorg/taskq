@@ -12,6 +12,7 @@
     "src/notification-panel.js",
     "src/pm-composer.js",
     "src/project-blocks.js",
+    "src/reading-anchor.js",
     "src/relative-time.js",
     "src/reply-files.js",
     "src/reports.js",

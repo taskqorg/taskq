@@ -243,6 +243,7 @@ pub struct Row {
     /// O1: board issue creation and accepted state changes; no inferred execution timings.
     pub created: Option<i64>,
     pub steps: Vec<Value>,
+    pub timing: Value,
     /// R6 stuck: seconds since the newest log entry; `None`: not stuck.
     pub stuck: Option<i64>,
     /// #1616 TaskQ's own admission decision of a ready or waiting task, or a review awaiting its reviewer (#1685); `None` for other states.
@@ -597,6 +598,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         unlinked: if v.projection.task.state == State::Held { unlinked(v.issue.number, &v.issue.body, &numbers) } else { vec![] },
         created: Some(v.issue.created).filter(|t| *t > 0),
         steps: stage_history(v),
+        timing: task_timing(&v.projection,&v.comments,false,None),
         since: v.projection.changes.last().and_then(|(id, ..)| v.comments.iter().find(|c| c.id == *id)).map(|c| c.created),
         failed: (v.projection.task.state == State::Failed).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: failed")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
         later: (v.projection.task.state == State::Later).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: later")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
@@ -643,6 +645,21 @@ pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
         queue: h.body.lines().find_map(|l| l.strip_prefix("queue ")).filter(|_| h.trusted).and_then(|j| serde_json::from_str(j).ok()),
         ttl,
     }
+}
+
+/// O1: first accepted worker ownership and real state boundaries, never comment count or issue age.
+pub(crate) fn task_timing(projection:&core::Projection,comments:&[board::Comment],completed:bool,closed:Option<i64>)->Value {
+    let at=|id:u64|comments.iter().find(|c|c.id==id&&c.trusted&&!c.edited).map(|c|c.created).filter(|t|*t>0);
+    let workers=projection.changes.iter().filter(|(id,_,t)|t.role.as_deref()==Some("worker")&&t.attempt==Some(*id)).map(|(id,_,_)|*id).collect::<Vec<_>>();
+    let first=projection.accepted_inputs.iter().filter(|(execution,_)|projection.executions.iter().any(|x|x.id==*execution&&workers.contains(&x.attempt))).map(|(_,entry)|*entry).min();
+    let started=if first.is_some(){Some(true)}else if workers.is_empty(){Some(false)}else{None};
+    let completed=completed||projection.task.state==State::Closed;
+    let extra_close=completed&&projection.task.state!=State::Closed;
+    let boundary=projection.changes.last().filter(|(_,_,t)|t.state==projection.task.state).and_then(|(id,_,_)|at(*id));
+    json!({"started":started,"first":first.and_then(at),
+        "changes":first.filter(|_|boundary.is_some()||extra_close).map(|id|projection.changes.iter().filter(|(entry,_,_)|*entry>id).count()+usize::from(extra_close)),
+        "current":if extra_close {closed.filter(|t|*t>0)} else {boundary},
+        "completed":completed,"closed":closed.filter(|t|*t>0)})
 }
 
 /// O1: ordered board stages, with unknown boundaries retained. The fold still owns transitions.
@@ -796,6 +813,7 @@ impl Row {
         row["since"] = json!(self.since);
         row["created"] = json!(self.created);
         row["steps"] = json!(self.steps);
+        row["timing"] = self.timing.clone();
         row["stuck"] = json!(self.stuck_age().is_some());
         if let Some(a) = self.stuck_age() { row["age_s"] = json!(a); }
         if let Some(c) = self.churn { row["churn"] = json!({"notes": c.notes, "spawns": c.spawns, "accepted": c.accepted}); }
@@ -1273,11 +1291,28 @@ mod tests {
         assert!(steps[3]["start"].is_null() && steps[3]["end"].is_null() && steps[3]["complete"]==false);
     }
 
+    // O1/R1: total starts with accepted ownership, counts only real transitions, and survives rework.
+    #[test]
+    fn compact_timing_uses_first_worker_and_real_changes() {
+        let bodies=["taskq: hold","taskq: start","taskq: spawn worker codex:invented win","taskq: accepted 3 attempt 3","taskq: steer\nInvented note","taskq: ask attempt 3\nProblem: invented","taskq: answer 1","taskq: result aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa attempt 3","taskq: spawn reviewer codex:review win","taskq: requeue attempt 9","taskq: spawn worker codex:again win"];
+        let comments=bodies.iter().enumerate().map(|(i,body)|board::Comment{id:(i+1) as u64,body:body.to_string(),created:100+i as i64*60,trusted:true,edited:false,author:String::new(),read:None}).collect::<Vec<_>>();
+        let log=comments.iter().map(|c|core::Entry{id:c.id,body:c.body.clone(),edited:false}).collect::<Vec<_>>();
+        let project=core::project(1,&log,false);let timing=task_timing(&project,&comments,false,None);
+        assert_eq!(timing,json!({"started":true,"first":280,"changes":5,"current":700,"completed":false,"closed":null}));
+        let mut missing=comments.clone();missing[3].created=0;assert!(task_timing(&project,&missing,false,None)["first"].is_null());
+        let unstarted=core::project(1,&log[..2],false);assert_eq!(task_timing(&unstarted,&comments,false,None)["started"],false);assert!(task_timing(&unstarted,&comments,false,None)["changes"].is_null());
+        assert!(task_timing(&core::project(1,&log[..3],false),&comments,false,None)["started"].is_null());
+        let mut waiting=core::project(1,&log,false);waiting.task.state=State::Waiting;
+        let unknown=task_timing(&waiting,&comments,false,None);assert!(unknown["current"].is_null());assert!(unknown["changes"].is_null());
+        let unknown=task_timing(&project,&comments,true,None);assert_eq!(unknown["completed"],true);assert!(unknown["closed"].is_null());
+        let closed=task_timing(&project,&comments,true,Some(760));assert_eq!(closed["changes"],6);assert_eq!(closed["closed"],760);assert_eq!(closed["current"],760);
+    }
+
     #[test]
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { heartbeat: Value::Null, worker: None, workers: vec![], conversation: None, brief: String::new(), n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
+            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], timing:Value::Null, stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -1301,7 +1336,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { heartbeat: Value::Null, worker: None, workers: vec![], conversation: None, brief: String::new(), n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None, missing_reviewer: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
+            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], timing:Value::Null, stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -1348,7 +1383,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { heartbeat: Value::Null, worker: None, workers: vec![], conversation: None, brief: String::new(), n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
+            execution_wait: None, missing_reviewer: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], timing:Value::Null, stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None, unlinked: vec![] };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("| ") && l.contains("stuck")).collect::<Vec<_>>(), ["| [#1 T](u1) | owner · stuck 2h | answer the Owner row |"], "{text}");

@@ -286,6 +286,8 @@ pub struct Projection {
     /// Accepted answers in board order, across all attempts (§ 5 `inbox --json`).
     pub answers: Vec<Answer>,
     pub executions: Vec<Execution>,
+    /// O1 read projection: execution id and its first confirmed native-input acceptance entry.
+    pub accepted_inputs: Vec<(u64,u64)>,
     pub changes: Vec<(u64, Task, Task)>,
     /// Review entries that start or end a deferred publication: the merge queue, a profile-only state (#1344)
     pub queue: Vec<(u64, Task, Task)>,
@@ -534,6 +536,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut answers = vec![];
     let mut executions: Vec<Execution> = vec![];
     let (mut changes, mut queue) = (vec![], vec![]);
+    let mut accepted_inputs=vec![];
     let (mut routing_revision, mut reroute, mut routing_writer) = (0, None, None);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
     for e in log {
@@ -612,6 +615,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             } else if l.kind == "accepted" && l.args.len() == 1 {
                 if let Ok(id) = l.args[0].parse::<u64>() {
                     if let Some(x) = executions.iter_mut().find(|x| x.id == id && Some(x.attempt) == l.attempt && x.release != Some(Release::NoStart)) {
+                        if !x.accepted {accepted_inputs.push((x.id,e.id));}
                         x.accepted = true;
                     }
                 }
@@ -655,7 +659,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, revision:rev, routing_revision, reroute, routing_writer, accepted, notes, answers, executions, changes, queue }
+    Projection { task:t, revision:rev, routing_revision, reroute, routing_writer, accepted, notes, answers, executions, accepted_inputs, changes, queue }
 }
 
 /// The board-backed context repeated at every attempt/resume and before hand-in (§ 7).

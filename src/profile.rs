@@ -9,7 +9,7 @@ use std::sync::{OnceLock, atomic::{AtomicU64, Ordering}};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::telemetry::Sample;
 
-pub const OPS: [&str; 12] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy", "service.churn", "service.progress.overdue", "service.progress.recovered", "service.doctor", "account.switch"];
+pub const OPS: [&str; 13] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy", "service.churn", "service.progress.overdue", "service.progress.recovered", "service.doctor", "account.switch", "conversations.source"];
 #[cfg(test)] const PREFIX: &str = "taskq-profile ";
 pub(crate) const ERRORS: [&str; 9] = ["none", "http4xx", "http5xx", "timeout", "permission", "invalid", "other", "panic", "argument-too-long"];
 static LOG: OnceLock<PathBuf> = OnceLock::new();
@@ -140,6 +140,22 @@ fn begin<'a>(path: Option<&'a Path>, detailed: bool, op: &'static str) -> Observ
             process: std::process::id(), span, parent: PARENT.replace(span) }
     });
     Observation { path, began: Instant::now(), record: Record { op: op.into(), us: 0, error: "panic".into(), at_ms: now_ms(), trace, counts: None } }
+}
+
+thread_local!(static SOURCE_WORK: std::cell::RefCell<BTreeMap<String,u64>> = const {std::cell::RefCell::new(BTreeMap::new())});
+#[cfg(test)]
+thread_local!(pub(crate) static LAST_SOURCE_WORK: std::cell::RefCell<BTreeMap<String,u64>> = const {std::cell::RefCell::new(BTreeMap::new())});
+#[cfg(test)]
+thread_local!(pub(crate) static SOURCE_BASELINE: Cell<bool> = const {Cell::new(false)});
+/// A1/A5: fixed numeric I/O counters only, never transcript content, session ids or paths.
+pub(crate) fn source_count(name:&'static str,n:u64) {SOURCE_WORK.with(|counts|*counts.borrow_mut().entry(name.into()).or_default()+=n);}
+pub(crate) fn source_read<T,E:std::fmt::Display>(read:impl FnOnce()->Result<T,E>)->Result<T,E> {
+    let prior=SOURCE_WORK.with(|c|std::mem::take(&mut *c.borrow_mut()));
+    let mut observation=begin(LOG.get().map(PathBuf::as_path),TRACE.get().copied().unwrap_or(false),"conversations.source");
+    let result=read();let counts=SOURCE_WORK.with(|c|std::mem::take(&mut *c.borrow_mut()));
+    observation.record.error=result.as_ref().err().map_or("none".into(),|e|error(&e.to_string()).into());
+    #[cfg(test)] LAST_SOURCE_WORK.with(|c|*c.borrow_mut()=counts.clone());
+    observation.record.counts=Some(counts);SOURCE_WORK.with(|c|*c.borrow_mut()=prior);result
 }
 
 /// [`measure`] of an infallible operation that also records its counts.
