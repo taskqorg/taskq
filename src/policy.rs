@@ -531,6 +531,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&install);
     }
 
+    #[cfg(unix)]
     fn git_project(name: &str) -> PathBuf {
         let t = canon(Path::new(env!("CARGO_MANIFEST_DIR"))).join("target").join(format!("codex-git-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&t);
@@ -542,6 +543,7 @@ mod tests {
     // Chain: #2449 A2 and A3, § 8 Access -> Mac legacy Codex arguments -> `taskq doctor` codex-git. Risk: Codex keeps
     // `<cwd>/.git` read-only, so Git fails in linked worktrees, and a wider root or a planted link would open config,
     // hooks, another project or `<install>`. Protection: only named real Git paths are added; a launch without them is named.
+    #[cfg(unix)]
     #[test]
     fn mac_legacy_codex_adds_only_the_own_git_dir_and_doctor_names_a_launch_without_it() {
         let t = git_project("args");
