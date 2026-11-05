@@ -31,7 +31,7 @@ pub enum Fit {
 /// Native readback of a live process's sandbox.
 pub trait Seatbelt {
     fn confined(&self, pid: u32) -> Result<bool, String>;
-    fn may_read(&self, pid: u32, path: &Path) -> Result<bool, String>;
+    fn may_lookup(&self, pid: u32, name: &str) -> Result<bool, String>;
 }
 
 struct Native;
@@ -44,17 +44,17 @@ impl Seatbelt for Native {
         { let _ = pid; Err("sandbox readback exists only on macOS".into()) }
     }
 
-    fn may_read(&self, pid: u32, path: &Path) -> Result<bool, String> {
+    fn may_lookup(&self, pid: u32, name: &str) -> Result<bool, String> {
         #[cfg(target_os = "macos")]
-        { mac::may_read(pid, path) }
+        { mac::may_lookup(pid, name) }
         #[cfg(not(target_os = "macos"))]
-        { let _ = (pid, path); Err("sandbox readback exists only on macOS".into()) }
+        { let _ = (pid, name); Err("sandbox readback exists only on macOS".into()) }
     }
 }
 
 #[cfg(target_os = "macos")]
 mod mac {
-    use std::{ffi::CString, os::unix::ffi::OsStrExt, path::Path};
+    use std::ffi::CString;
 
     // Sandbox SPI declarations match WebKit's Source/WTF/wtf/spi/darwin/SandboxSPI.h.
     #[link(name = "sandbox")]
@@ -71,10 +71,11 @@ mod mac {
         }
     }
 
-    pub fn may_read(pid: u32, path: &Path) -> Result<bool, String> {
-        let op = CString::new("file-read-data").map_err(|_| "invalid sandbox operation")?;
-        let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| "invalid sandbox path")?;
-        match unsafe { sandbox_check(pid as i32, op.as_ptr(), 1 | SANDBOX_CHECK_NO_REPORT, path.as_ptr()) } {
+    pub fn may_lookup(pid: u32, name: &str) -> Result<bool, String> {
+        let op = CString::new("mach-lookup").map_err(|_| "invalid sandbox operation")?;
+        let name = CString::new(name).map_err(|_| "invalid sandbox lookup name")?;
+        // SANDBOX_FILTER_GLOBAL_NAME = 2; queries policy without performing a lookup or resolving a path.
+        match unsafe { sandbox_check(pid as i32, op.as_ptr(), 2 | SANDBOX_CHECK_NO_REPORT, name.as_ptr()) } {
             0 => Ok(true),
             1 => Ok(false),
             _ => Err("daemon sandbox readback failed".into()),
@@ -98,7 +99,7 @@ pub fn fit(daemon: Result<Option<u32>, String>, profile: Option<&str>, s: &dyn S
         };
     };
     let Some((allow, deny)) = crate::policy::identity(profile) else { return Fit::Unknown("job profile has no identity".into()) };
-    match (s.may_read(pid, &allow), s.may_read(pid, &deny)) {
+    match (s.may_lookup(pid, &allow), s.may_lookup(pid, &deny)) {
         (Ok(true), Ok(false)) => Fit::Fits,
         (Ok(_), Ok(_)) => match s.confined(pid) {
             Ok(false) => differs("daemon runs unconfined, job has a Seatbelt grant"),
@@ -233,6 +234,8 @@ mod tests {
                 if quoted(rule, "subpath").iter().any(|p| under(p)) { allowed = false; }
             } else if rule.starts_with("(literal") {
                 if quoted(rule, "literal").iter().any(|p| p == path) { allowed = false; }
+            } else if rule.starts_with("(global-name") {
+                if quoted(rule, "global-name").iter().any(|p| p == path) { allowed = false; }
             }
         }
         allowed
@@ -242,8 +245,8 @@ mod tests {
         fn confined(&self, _: u32) -> Result<bool, String> {
             Ok(self.0.borrow().as_ref().is_some_and(|d| d.1.is_some()))
         }
-        fn may_read(&self, _: u32, path: &Path) -> Result<bool, String> {
-            Ok(permits(self.0.borrow().as_ref().and_then(|d| d.1.as_deref()), "file-read*", &path.display().to_string()))
+        fn may_lookup(&self, _: u32, name: &str) -> Result<bool, String> {
+            Ok(permits(self.0.borrow().as_ref().and_then(|d| d.1.as_deref()), "mach-lookup", name))
         }
     }
 
@@ -325,7 +328,7 @@ mod tests {
         struct Broken;
         impl Seatbelt for Broken {
             fn confined(&self, _: u32) -> Result<bool, String> { Err("daemon sandbox readback failed".into()) }
-            fn may_read(&self, _: u32, _: &Path) -> Result<bool, String> { Err("daemon sandbox readback failed".into()) }
+            fn may_lookup(&self, _: u32, _: &str) -> Result<bool, String> { Err("daemon sandbox readback failed".into()) }
         }
         let p = projects();
         let g = p.granted_access.profile.as_deref();
@@ -394,12 +397,15 @@ mod tests {
             let begun = Instant::now();
             while Native.confined(pid) != Ok(true) && begun.elapsed() < Duration::from_secs(5) { std::thread::sleep(Duration::from_millis(50)); }
             let confined = Native.confined(pid);
+            let (allow, deny) = policy::identity(own).unwrap();
+            let markers = (Native.may_lookup(pid, &allow), Native.may_lookup(pid, &deny));
             let fits = fit(Ok(Some(pid)), Some(own), &Native);
             let differs = fit(Ok(Some(pid)), Some(other), &Native);
             let full = fit(Ok(Some(pid)), None, &Native);
             daemon.kill().ok();
             daemon.wait().ok();
             assert_eq!(confined, Ok(true));
+            assert_eq!(markers, (Ok(true), Ok(false)), "native lookup markers, pid {pid}");
             assert_eq!(fits, Fit::Fits);
             assert_eq!(differs, Fit::Differs { pid, reason: "daemon runs under another Seatbelt profile" });
             assert!(matches!(full, Fit::Differs { .. }), "a Full job does not fit");
@@ -416,8 +422,6 @@ mod tests {
         assert!(!touch(a, &p.ungranted.join("other")), "another project's worktree is closed");
         assert!(touch(b, &p.ungranted.join("own")), "the ungranted project keeps its legacy worktree writes");
         assert!(touch(b, &p.granted.join("legacy")), "the granted job must not inherit these wider limits");
-        let (allow, _) = policy::identity(a).unwrap();
-        assert!(!touch(a, &allow), "the marker rule grants nothing");
         std::fs::remove_dir_all(&p.dir).ok();
     }
 }
