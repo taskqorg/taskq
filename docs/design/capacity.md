@@ -318,14 +318,17 @@ A Claude poll with unreadable windows has unknown aggregate headroom for account
 
 Antigravity reads `loadCodeAssist` from `cloudcode-pa.googleapis.com`; `retrieveUserQuotaSummary` uses that production host only when `currentTier.usesGcpTos` is true, otherwise `daily-cloudcode-pa.googleapis.com`, as the consumer quota route does. Calls use the compatible `antigravity/hub/2.28.2` User-Agent. Every group's buckets survive, including `gemini-5h`, `gemini-weekly` and `3p-*`. A malformed group or bucket is unknown, not an omitted model family. No missing reading is synthesized as zero.
 
-Each window result is an observation in `quota-headroom.json`, the existing store and 300 s expiry, so `Balancing` needs no new input. A poll never clears a quota record or hold: only a reported reset or the existing probe does.
+Each window of a complete poll is an observation in `quota-headroom.json`, the existing store and 300 s expiry, so `Balancing` needs no new input. A partial poll's windows are not observations. A poll never clears a quota record or hold: only a reported reset or the existing probe does.
 
-**Heartbeat.** One row per readable polled window, plus one `unknown` row per unreadable Claude window or source position. A whole-account failure has one whole-response `unknown` row and retains any still-fresh per-window unknowns for fleet readers. A partial Claude poll retains both kinds. Unknown reasons use only validated names and fixed diagnostics, never provider text:
+**Heartbeat.** One row per readable polled window, plus one `unknown` row per unreadable Claude window or source position. A whole-account failure has one whole-response `unknown` row and retains any still-fresh per-window unknowns for fleet readers. A partial Claude poll retains both kinds, with its readable windows on `limit-partial` rows. Unknown reasons use only validated names and fixed diagnostics, never provider text:
 
 ```text
 limit <rt> <label> id <id|-> window <name> used <0-100> reset <UTC|-> at <UTC>
+limit-partial <rt> <label> id <id|-> window <name> used <0-100> reset <UTC|-> at <UTC>
 limit <rt> <label> id <id|-> unknown <reason>
 ```
+
+**Reader boundary.** Binaries through v4.6.79 ignore `unknown` rows and take the smallest remaining of the `limit` windows they parse, so weekly 43 beside an unreadable Fable would read as headroom 57. A `limit` window row therefore means its poll was complete. A partial poll's readable windows use `limit-partial`, which those binaries drop without a garbled hold row. This reader shows the row and keeps its identity and expiry, but never aggregates it: any matching row marks that account incomplete. The store keeps these windows in `partial`, with `windows` empty, and writes no observation, so a binary rolled back onto the install publishes and derives nothing from a partial poll. An observation from an earlier complete poll lasts until its own 300 s expiry, as after any failed poll. No version gate applies: the boundary holds in any rollout or rollback order. DashQ and other `limit` consumers read such an account as unknown until they adopt the row.
 
 Percent is a whole number. A changed `limit` row never forces a heartbeat write; rows travel with the periodic write. An older reader shows a usage row as a garbled limit in status and health until it updates; that is cosmetic and clears no hold. An observed account is the freshest row per runtime and `id` across this host and, on a host with an approved board, trusted fresh heartbeats of that board, so a limit used on one host ranks that account down on the others. A host with no approved board ranks on its own rows.
 

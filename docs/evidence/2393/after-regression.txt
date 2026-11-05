@@ -7,3 +7,13 @@ The manual all-provider native test remains ignored; these are source/model proo
 limit claude default id - window seven_day used 43 reset 2026-11-09T05:00:00Z at 2026-11-04T22:22:31Z
 limit claude default id - window seven_day_fable used 4 reset 2026-11-09T05:00:00Z at 2026-11-04T22:22:31Z
 test result: ok. 20 passed; 0 failed; 1 ignored; 0 measured; 1056 filtered out; finished in 3.64s
+
+Released-reader regression after correction:
+Command: cargo test --locked --bin taskq runtime::usage::tests
+Platform: Windows; worker bindings removed from the child environment.
+Exit: 0
+test runtime::usage::tests::claude_partial_poll_is_invisible_to_released_readers ... ok
+test runtime::usage::tests::claude_partial_windows_keep_unknown_through_publication_and_headroom ... ok
+test runtime::usage::tests::claude_failed_polls_preserve_incomplete_origin_until_expiry ... ok
+test runtime::usage::tests::claude_native_null_surface_preserves_windows ... ok
+test result: ok. 21 passed; 0 failed; 1 ignored; 0 measured; 1056 filtered out; finished in 3.80s
