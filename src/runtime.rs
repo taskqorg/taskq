@@ -3194,29 +3194,74 @@ pub(crate) fn native_job_id(id: &str) -> bool {
             }))
 }
 
-fn claude_input_event(event: &serde_json::Value, input: &str) -> bool {
-    if event["type"] != "user" {
-        return false;
-    }
-    let content = &event["message"]["content"];
-    content
-        .as_str()
-        .or_else(|| {
-            content
-                .as_array()
-                .filter(|a| a.len() == 1 && a[0]["type"] == "text")
-                .and_then(|a| a[0]["text"].as_str())
-        })
-        .is_some_and(|s| s.trim() == input)
+// Keep TaskQ's byte/identity guards while AgentQ owns native record decoding.
+#[derive(Default)]
+struct ClaudeRecords {
+    reader: NativeHistory,
+    history: Option<agentq_runtime::agent::history::History>,
+    pending: std::vec::IntoIter<serde_json::Value>,
 }
 
-/// One pre-submission permission/baseline read, using the same bounded native decoder.
+impl ClaudeRecords {
+    fn read(
+        &mut self,
+        path: &Path,
+        mut visit: impl FnMut(serde_json::Value) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let Self {
+            reader,
+            history,
+            pending,
+        } = self;
+        reader.lines(path, |line| {
+            if pending.len() == 0 {
+                if history.is_none() {
+                    *history = Some(agentq_runtime::agent::history::History::new(
+                        "claude-native",
+                        "worker-history",
+                        path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .ok_or("Claude history session unavailable")?,
+                    )?);
+                }
+                *pending = history.as_mut().unwrap().poll(path)?.events.into_iter();
+            }
+            let event = pending
+                .as_slice()
+                .first()
+                .ok_or("Claude history record unavailable")?;
+            if event["raw"].as_str() != Some(line) {
+                return Err("Claude history changed during observation".into());
+            }
+            if event["kind"] == "unknown" {
+                return Err("Claude history record shape unknown".into());
+            }
+            visit(event.clone())?;
+            pending.next();
+            Ok(())
+        })
+    }
+}
+
+fn claude_input_event(event: &serde_json::Value, input: &str) -> bool {
+    event["author"] == "user"
+        && event["kind"] == "message"
+        && event["blocks"].as_array().is_some_and(|blocks| {
+            blocks.len() == 1
+                && blocks[0]["type"] == "text"
+                && blocks[0]["text"]
+                    .as_str()
+                    .is_some_and(|s| s.trim() == input)
+        })
+}
+
+/// One pre-submission permission/baseline read through the same bounded AgentQ decoder.
 fn claude_history(
     path: &Path,
     before: usize,
     mut visit: impl FnMut(serde_json::Value),
 ) -> Result<usize, String> {
-    let mut reader = NativeHistory::default();
+    let mut reader = ClaudeRecords::default();
     let mut count = 0;
     let until = observation_deadline(std::time::Duration::from_secs(5));
     loop {
@@ -3241,7 +3286,7 @@ fn claude_history(
 
 #[derive(Default)]
 struct ClaudeHistory {
-    reader: NativeHistory,
+    reader: ClaudeRecords,
     count: usize,
     found: bool,
     ended: bool,
@@ -3279,20 +3324,27 @@ impl ClaudeHistory {
                 );
             }
             if (*found || starts) && !*ended {
-                writeln!(output, "{v}")
-                    .map_err(|e| format!("Claude native observation log failed: {e}"))?;
-                if v["type"] == "assistant" {
-                    let text = v["message"]["content"].as_array().and_then(|blocks| {
+                write!(
+                    output,
+                    "{}",
+                    v["raw"]
+                        .as_str()
+                        .ok_or("Claude history source unavailable")?
+                )
+                .map_err(|e| format!("Claude native observation log failed: {e}"))?;
+                if v["author"] == "assistant" && v["kind"] == "message" {
+                    let text = v["blocks"].as_array().and_then(|blocks| {
                         blocks.iter().rev().find_map(|b| {
                             (b["type"] == "text").then(|| b["text"].as_str()).flatten()
                         })
                     });
-                    if let Some(code) = v["error"]
-                        .as_str()
-                        .or_else(|| (v["isApiErrorMessage"] == true).then_some("unknown"))
-                    {
-                        let text = text.unwrap_or("native API error without detail");
-                        let class = if code == "authentication_failed" {
+                    if v["assistant_failure"].is_object() {
+                        let detail = &v["assistant_failure"];
+                        let code = detail["code"].as_str().unwrap_or("unknown");
+                        let text = detail["detail"]
+                            .as_str()
+                            .unwrap_or("native API error without detail");
+                        let class = if detail["error"] == "auth-rejected" {
                             "auth"
                         } else {
                             crate::profile::class(text)
@@ -3304,7 +3356,7 @@ impl ClaudeHistory {
                         *failure = None;
                     }
                 }
-                *ended = v["type"] == "system" && v["subtype"] == "turn_duration";
+                *ended = v["lifecycle"] == "system turn duration";
             }
             *found |= starts;
             *count += 1;
@@ -3648,7 +3700,7 @@ impl ClaudeTurn {
                 .ok_or("Claude saved permissions unavailable")?;
             let mut mode = None;
             before = claude_history(&path, 0, |v| {
-                if let Some(m) = v["permissionMode"].as_str() {
+                if let Some(m) = v["permission_mode"].as_str() {
                     mode = Some(m.to_owned());
                 }
             })?;

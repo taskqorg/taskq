@@ -402,8 +402,8 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
                 }
             }
             "lifecycle" => {
-                if let Some(t) = lifecycle(e) {
-                    out.push(line("event", &t));
+                if let Some(t) = e["lifecycle"].as_str() {
+                    out.push(line("event", t));
                 }
             }
             // TaskQ's own owner input record in the Antigravity stream: input intent, not native acceptance
@@ -430,37 +430,6 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
         }
     }
     out
-}
-
-/// A2: the native name of a lifecycle event (`turn complete`, `system compact boundary`); usage counters give none.
-fn lifecycle(e: &Value) -> Option<String> {
-    let raw: Value = serde_json::from_str(e["raw"].as_str().unwrap_or_default()).ok()?;
-    let p = &raw["payload"];
-    let name = match e["format"].as_str().unwrap_or_default() {
-        f if f.starts_with("claude-") => [raw["type"].as_str(), raw["subtype"].as_str()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" "),
-        "agy-stream" => raw["step_update"]["step_type"]
-            .as_str()
-            .or(raw["event"].as_str())?
-            .into(),
-        _ => p["type"]
-            .as_str()
-            .or(raw["type"].as_str())
-            .or(raw["method"].as_str())?
-            .into(),
-    };
-    if matches!(name.as_str(), "token_count" | "rate_limit_event" | "") {
-        return None;
-    }
-    let name = name.replace("task_", "turn_").replace(['_', '.', '/'], " ");
-    Some(if name == "init" {
-        "session started".into()
-    } else {
-        name
-    })
 }
 
 fn block(author: &str, b: &Value, out: &mut Vec<Value>) {

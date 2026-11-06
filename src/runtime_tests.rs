@@ -7249,3 +7249,42 @@ fn a_differing_daemon_starts_no_background_job() {
     assert!(!log.exists(), "no input is bound");
     std::fs::remove_dir_all(&root).ok();
 }
+
+// R12 / #2448: an AgentQ page buffered past TaskQ's byte budget cannot conceal changed source bytes.
+#[test]
+fn claude_history_buffered_records_still_require_exact_source() {
+    let root = std::env::temp_dir().join(format!("taskq-claude-buffer-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("transcript.jsonl");
+    let rows: Vec<_> = (0..10)
+        .map(|n| {
+            serde_json::json!({"type":"system", "n":n,"padding":"x".repeat(1024 * 1024)})
+                .to_string()
+                + "\n"
+        })
+        .collect();
+    std::fs::write(&path, rows.concat()).unwrap();
+    let mut reader = ClaudeRecords::default();
+    let mut seen = 0;
+    assert!(
+        !reader
+            .read(&path, |_| {
+                seen += 1;
+                Ok(())
+            })
+            .unwrap()
+    );
+    assert!(seen > 0 && seen < rows.len());
+    assert!(reader.pending.len() > 0);
+    let mut changed = rows.clone();
+    changed[seen] = changed[seen].replace(&format!("\"n\":{seen}"), "\"n\":99");
+    changed.push("{\"type\":\"system\"}\n".into());
+    std::fs::write(&path, changed.concat()).unwrap();
+    assert!(
+        reader
+            .read(&path, |_| panic!("changed buffered record delivered"))
+            .unwrap_err()
+            .contains("changed during observation")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
