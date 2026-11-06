@@ -515,3 +515,44 @@ main_source = Path(__file__).with_name('check.py').read_text(encoding='utf-8')
 build, gate = main_source.index("run(['npm', 'run', 'build'])"), main_source.index('in format_commands(tracked):')
 assert build < main_source.index("if sys.platform == 'linux':") < gate
 print('PASS format gate runs on Linux after the build, covers tracked Rust and keeps fixtures byte-exact')
+
+# docs/testing.md: one receipt per tree; a repeat full gate needs a named reason. Risk: reviewers and retries burn the host on a known result.
+with tempfile.TemporaryDirectory(prefix='taskq-check-receipt-') as temp:
+    repo = Path(temp).resolve() / 'repo'
+    (repo / 'scripts').mkdir(parents=True)
+    script = repo / 'scripts' / 'check.py'
+    script.write_text(Path(__file__).with_name('check.py').read_text(encoding='utf-8'), encoding='utf-8')
+    plain = {k: v for k, v in os.environ.items() if not k.startswith('GIT_') and k not in {'GITHUB_ACTIONS', 'CHECK_FULL', 'CHECK_BASE'}}
+    git = lambda *a, cwd=repo: subprocess.run(['git', '-c', 'user.name=invented', '-c', 'user.email=invented@example.invalid', *a], cwd=cwd, env=plain, check=True, capture_output=True)
+    git('init', '-q')
+    git('add', '-A')
+    git('commit', '-qm', 'invented')
+    linked = Path(temp).resolve() / 'linked'
+    git('worktree', 'add', '-q', str(linked))
+    path = check['receipt_path'](plain, repo)
+    assert path == check['receipt_path'](plain, linked), 'a linked worktree of the same tree shares the receipt'
+    assert path.parent == (repo / '.git' / 'taskq-check-receipts').resolve() and not path.exists()
+    assert check['receipt_path']({**plain, 'GITHUB_ACTIONS': 'true'}, repo) is None
+    # Uncommitted edits are a different tree, and reading one leaves the real index unchanged.
+    index = (repo / '.git' / 'index').read_bytes()
+    (repo / 'edited').write_text('invented', encoding='utf-8')
+    edited = check['receipt_path'](plain, repo)
+    assert edited != path and (repo / '.git' / 'index').read_bytes() == index
+    (repo / 'edited').unlink()
+    refuse = check['repeat_refusal']
+    assert refuse(path, '') is None
+    check['write_receipt'](path, {'result': 'failed', 'base': 'HEAD^', 'head': 'invented-head', 'reason': '', 'at': 'invented-time', 'elapsed_s': 1.0})
+    assert 'failed at invented-time on invented-head' in refuse(path, '')
+    assert refuse(path, 'the previous run failed') is None and refuse(None, '') is None
+    gate = lambda *a: subprocess.run([sys.executable, str(script), '--full', *a], cwd=repo, env=plain, capture_output=True, text=True, timeout=60)
+    done = gate()
+    assert done.returncode != 0 and 'full gate already ran on this tree' in done.stderr and 'Selected checks' not in done.stdout, done
+    done = gate('--reason', '   ')
+    assert done.returncode != 0 and '--reason needs a named reason' in done.stderr and 'Selected checks' not in done.stdout, done
+    path.write_text('not json', encoding='utf-8')
+    assert 'unreadable receipt' in refuse(path, '')
+    # A failed receipt write warns; it never changes the gate outcome.
+    blocked = Path(temp) / 'file'
+    blocked.write_text('invented', encoding='utf-8')
+    check['write_receipt'](blocked / 'receipts' / 'x.json', {'result': 'passed'})
+print('PASS one receipt per tree across worktrees; repeat full gate refused before any check without --reason; CI keeps none')

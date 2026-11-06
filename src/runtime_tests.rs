@@ -6320,6 +6320,12 @@ fn rules_reach_every_runtime_role_and_resume() {
                             && brief(&env, &l).contains(DEV_LOOP)
                     );
                 }
+                // docs/testing.md: a reviewer reads exact-SHA CI and reruns only changed or unknown checks.
+                assert_eq!(
+                    brief(&env, &l).contains(REVIEW_CHECKS),
+                    role == "reviewer",
+                    "{rt} {role}: review checks"
+                );
                 // #1842: a worker publishes once; a moved main alone never sends it back to rebase or recheck.
                 assert_eq!(
                     brief(&env, &l).contains(PUBLISH_ONCE),
