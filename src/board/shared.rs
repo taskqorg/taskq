@@ -187,7 +187,7 @@ pub(super) fn issues(
             .map_err(|_| "shared board snapshot poisoned")?
             .rows
             .values()
-            .filter(|issue| issue.open)
+            .filter(|issue| issue.open && !crate::service::is_host(issue))
             .cloned()
             .collect();
         let mut removed = vec![];
@@ -237,6 +237,9 @@ pub(super) fn issues(
             .lock()
             .map_err(|_| "shared board snapshot poisoned")?;
         let mut next = saved.clone();
+        // Heartbeat presence is list-owned; only the confirmed older-row correction below may replace it.
+        next.rows
+            .retain(|_, issue| !issue.open || !crate::service::is_host(issue));
         // The confirmed reply can arrive while the poll is in flight; only older list rows are corrected.
         for issue in &mut list {
             if let Some(written) = next.confirmed.get(&issue.number).filter(|written| {
