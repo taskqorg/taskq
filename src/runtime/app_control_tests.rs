@@ -190,6 +190,7 @@ fn passive_writer_lock_releases_only_confirmed_idle_unheld_locks() {
                 | "retained-ipc-malformed"
                 | "retained-ipc-refused"
                 | "retained-replaced-inode"
+                | "retained-wrong-cwd"
         ) {
             let listener = Listener::bind(&ipc_path).unwrap();
             #[cfg(unix)]
@@ -198,7 +199,25 @@ fn passive_writer_lock_releases_only_confirmed_idle_unheld_locks() {
             let mode = case.to_string();
             let expected_thread = thread.clone();
             Some(std::thread::spawn(move || -> std::io::Result<()> {
+                // The client can refuse before connecting; teardown must still join the peer.
+                #[cfg(unix)]
+                listener.set_nonblocking(true)?;
+                #[cfg(unix)]
+                let (mut stream, _) = loop {
+                    match listener.accept() {
+                        Ok(peer) => break peer,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            if completion.recv_timeout(Duration::from_millis(5)).is_ok() {
+                                return Ok(());
+                            }
+                        }
+                        Err(e) => return Err(e),
+                    }
+                };
+                #[cfg(windows)]
                 let (mut stream, _) = listener.accept()?;
+                #[cfg(unix)]
+                stream.set_nonblocking(false)?;
                 stream.set_read_timeout(Some(Duration::from_secs(2)))?;
                 stream.set_write_timeout(Some(Duration::from_secs(2)))?;
                 let mut size = [0; 4];
@@ -282,6 +301,7 @@ fn passive_writer_lock_releases_only_confirmed_idle_unheld_locks() {
             &ipc_path,
             Instant::now() + Duration::from_millis(200),
         );
+        eprintln!("passive writer fixture {case}: {outcome:?}");
         let _ = finished.send(());
         if let Some(server) = server {
             let _ = server.join().unwrap();
