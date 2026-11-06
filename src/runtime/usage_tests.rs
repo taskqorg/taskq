@@ -9,6 +9,42 @@ fn dir(name: &str) -> PathBuf {
     d
 }
 
+// Chain: #2448 account usage -> credential read; a missing CLI on PATH cannot hide the adapter's actual result.
+#[test]
+fn usage_2448_does_not_require_a_cli_on_path() {
+    let home = dir("no-cli");
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "runtime::usage::tests::usage_2448_no_cli_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("PATH", "")
+        .env("CLAUDE_CONFIG_DIR", &home)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+#[ignore = "private credential-free subprocess of usage_2448_does_not_require_a_cli_on_path"]
+fn usage_2448_no_cli_child() {
+    assert_eq!(std::env::var_os("PATH").unwrap(), "");
+    assert_eq!(
+        fetch("claude", "default", &mut Ids::default())
+            .unknown
+            .as_deref(),
+        Some("credential-unreadable")
+    );
+}
+
 fn list(install: &Path, labels: &[(&str, bool)]) {
     let rows: Vec<Value> = labels
         .iter()

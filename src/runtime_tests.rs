@@ -877,12 +877,25 @@ fn balancing_quota_observations_keep_windows() {
         quota_windows(&log, "claude"),
         [("seven_day".into(), Some(604800))]
     );
-    std::fs::write(&log,"{\"type\":\"rate_limits\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":18000}}}\n").unwrap();
-    assert_eq!(quota_windows(&log, "codex"), [("300m".into(), Some(18000))]);
     rules_line(&log, "resume", "fixture input").unwrap();
     assert!(
-        quota_windows(&log, "codex").is_empty(),
+        quota_windows(&log, "claude").is_empty(),
         "a successful later turn must not reuse old quota events"
+    );
+    std::fs::write(&log,"{\"type\":\"rate_limits\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":18000}}}\n").unwrap();
+    assert!(
+        quota_windows(&log, "codex").is_empty(),
+        "a usage snapshot alone is not native rejection"
+    );
+    std::fs::write(
+        &log,
+        "{\"type\":\"turn.failed\",\"error\":{\"message\":\"usage limit reached\"}}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        quota_windows(&log, "codex"),
+        [("unknown".into(), None)],
+        "an actual rejection with no window remains unknown"
     );
     std::fs::write(
         &log,
@@ -895,6 +908,56 @@ fn balancing_quota_observations_keep_windows() {
         "no guessed agy reset/window"
     );
     std::fs::remove_file(log).unwrap();
+}
+
+// Chain: #2448/capacity limited -> native rejection only; utilization and siblings cannot hold a working account.
+#[test]
+fn quota_2448_allowed_windows_do_not_hold_accounts() {
+    let log = std::env::temp_dir().join(format!("taskq-quota-rejection-{}", uuid()));
+    for status in ["allowed", "allowed_warning"] {
+        std::fs::write(&log, format!("{}\n", serde_json::json!({
+            "type":"rate_limit_event", "rate_limit_info":{
+                "status":status, "rateLimitType":"five_hour", "utilization":1.0, "resetsAt":100,
+                "unifiedWindows":{"seven_day":{"utilization":1.0,"resetsAt":700}}
+            }
+        }))).unwrap();
+        assert!(
+            quota_windows(&log, "claude").is_empty(),
+            "{status} is not native rejection"
+        );
+    }
+    std::fs::write(&log, format!("{}\n", serde_json::json!({
+        "type":"rate_limit_event", "rate_limit_info":{
+            "status":"rejected", "rateLimitType":"five_hour", "utilization":1.0, "resetsAt":100,
+            "unifiedWindows":{"seven_day":{"utilization":1.0,"resetsAt":700}}
+        }
+    }))).unwrap();
+    assert_eq!(
+        quota_windows(&log, "claude"),
+        [("five_hour".into(), Some(100))],
+        "a non-binding sibling must not extend the rejection"
+    );
+    std::fs::remove_file(log).unwrap();
+}
+
+// Chain: #2448/R12 native input boundary -> acceptance; an unsupported event must remain unknown.
+#[test]
+fn input_2448_unknown_is_not_accepted() {
+    assert!(!takes_input(
+        "claude",
+        &[Event::Unsupported {
+            reason: "future record"
+        }]
+    ));
+    assert!(!takes_input("claude", &[Event::Activity]));
+    assert!(!takes_input("claude", &[Event::TurnStart]));
+    assert!(takes_input(
+        "claude",
+        &[Event::Text {
+            item: None,
+            delta: "work".into()
+        }]
+    ));
 }
 
 // Chain: attempt log -> usage limit before work -> reset. Risk: a limit after work started skips its retry,
@@ -2570,6 +2633,10 @@ fn cli_acceptance_uses_only_native_events_after_its_input_boundary() {
         (
             "claude",
             "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"work\"}]}}\n",
+        ),
+        (
+            "claude",
+            "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"work\"}}}\n",
         ),
     ] {
         std::fs::write(

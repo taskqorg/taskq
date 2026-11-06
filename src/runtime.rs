@@ -982,10 +982,10 @@ fn takes_input(rt: &str, events: &[Event]) -> bool {
     events.iter().any(|e| match e {
         Event::TurnStart => a.has(Cap::ThreadLink),
         Event::Message { .. }
+        | Event::Text { .. }
         | Event::ToolStart { .. }
         | Event::ToolEnd { .. }
-        | Event::Progress
-        | Event::Unsupported { .. } => true,
+        | Event::Progress => true,
         _ => false,
     })
 }

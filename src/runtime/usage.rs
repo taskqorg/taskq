@@ -836,10 +836,6 @@ impl Ids {
 
 /// One account's windows through AgentQ's read-only `account_limits`; its failure reasons stay as reported.
 pub fn fetch(rt: &str, label: &str, ids: &mut Ids) -> Poll {
-    let a = super::of(rt);
-    if !super::which(a.bin).is_absolute() {
-        return Poll::failed("not installed");
-    }
     let home = accounts::home(rt, label).or_else(|| accounts::base(rt));
     // The `agy` login has no account home: one default account per host, read from the user's home.
     if !accounts::var(rt).is_empty() && !home.as_deref().is_some_and(Path::is_dir) {
