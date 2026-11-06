@@ -247,6 +247,9 @@ fn dependency_wait_2469_service_resumes_publication_after_verified_close() {
 
 struct FakeProc(Rc<RefCell<Option<i32>>>);
 impl Proc for FakeProc {
+    fn daemon(&self) -> bool {
+        true
+    }
     fn accepted(&mut self) -> Result<bool, String> {
         Ok(true)
     }
@@ -15143,4 +15146,70 @@ fn disk_guard_holds_new_attempts_keeps_running_ones_and_recovers_at_the_threshol
     );
     assert_ne!(stable(&bytes(MIN_FREE)), stable(&bytes(MIN_FREE - 1)));
     assert_ne!(stable(&bytes(MIN_FREE)), stable("disk unknown"));
+}
+
+// Chain: #2522 A1/A3, R6/R11/R12: runtime dependency disappears -> one pass -> heartbeat and local status.
+// Risk: stale native jobs look running, or monitoring submits a pending steer again or releases ownership.
+#[test]
+fn runtime_2522_one_pass_reports_outages_without_replaying_input() {
+    use crate::runtime::health::FAKE;
+    let (b, c) = (Fake::default(), cfg("win"));
+    std::fs::create_dir_all(&c.root).unwrap();
+    let path = c.root.join("invented-runtime.exe");
+    std::fs::write(&path, "invented executable fixture").unwrap();
+    FAKE.with(|f| *f.borrow_mut() = Some((path.clone(), Ok(Some(77)))));
+    let n = b.create("Working", "", &[TASK_LABEL.into()]).unwrap();
+    let exits: Exits = Default::default();
+    let mut s = service(&b, &c, exits.clone());
+    s.pass().unwrap();
+    let attempt = task(&b, n).attempt;
+    b.comment(n, "taskq: steer\nkeep this pending input")
+        .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    for reason in ["executable missing", "daemon not running"] {
+        if reason == "daemon not running" {
+            std::fs::write(&path, "invented restored fixture").unwrap();
+            FAKE.with(|f| *f.borrow_mut() = Some((path.clone(), Ok(None))));
+        }
+        s.pass().unwrap();
+        assert_eq!(task(&b, n).attempt, attempt);
+        assert_eq!(exits.borrow().len(), 1, "no resubmission of worker input");
+        let heartbeat = s.heartbeat_body();
+        assert!(
+            heartbeat.contains(&format!(
+                "runtime-fault {}",
+                json!({"runtime":"claude","path":path,"reason":reason,"tasks":[n]})
+            )),
+            "{heartbeat}"
+        );
+        let observation = s
+            .execution_statuses()
+            .into_iter()
+            .find(|x| x.task == n)
+            .unwrap();
+        assert_eq!(observation.state, "unknown");
+        assert_eq!(observation.reason, reason);
+        let text = s.snapshot.as_ref().unwrap().text(&c, &json!({})).unwrap();
+        assert!(
+            text.contains(&format!("- host win · claude · {reason}")),
+            "{text}"
+        );
+        assert!(
+            text.contains(&crate::cli::text::cell(path.to_str().unwrap())),
+            "{text}"
+        );
+        assert!(
+            !b.comments(n)
+                .unwrap()
+                .iter()
+                .any(|c| c.body.starts_with("taskq: gone")
+                    || c.body.starts_with("taskq: released")
+                    || c.body.starts_with("taskq: executing"))
+        );
+    }
+    FAKE.with(|f| *f.borrow_mut() = Some((path.clone(), Ok(Some(77)))));
+    s.pass().unwrap();
+    assert!(s.runtime_health.faults.is_empty());
+    FAKE.with(|f| *f.borrow_mut() = None);
+    std::fs::remove_dir_all(&c.root).unwrap();
 }

@@ -2454,3 +2454,55 @@ fn disk_reading_reads_in_the_host_row_and_a_held_one_names_its_next_action() {
     );
     assert!(v["hosts"][3].get("disk").is_none());
 }
+
+// Chain: R6/R12, #2522 A1: runtime dependency readback -> heartbeat -> status.
+// Risk: a deleted executable or dead daemon leaves affected tasks looking healthy, or private/untrusted observations leak.
+#[test]
+fn runtime_2522_faults_name_host_path_and_every_task() {
+    let cfg = crate::tests::cfg();
+    let path = "C:/invented/nvm/claude.exe";
+    for reason in ["executable missing", "daemon not running"] {
+        let line = format!(
+            "runtime-fault {}",
+            json!({"runtime":"claude", "path":path, "reason":reason, "tasks":[5,6]})
+        );
+        let beat = |host: &str, trusted, updated| board::Issue {
+            title: format!("taskq host {host}"),
+            body: format!("version 4\n{line}"),
+            trusted,
+            updated,
+            ..Default::default()
+        };
+        let snap = from_views(
+            "board",
+            &crate::board::Fake::default(),
+            &cfg,
+            1000,
+            &[],
+            &[
+                beat("win", true, 999),
+                beat("forged", false, 999),
+                beat("old", true, 1),
+            ],
+        );
+        let text = snap.text(&cfg, &json!({})).unwrap();
+        assert!(
+            text.contains(&format!(
+                "- host win · claude · {reason} · {path} · tasks #5, #6 · Next:"
+            )),
+            "{text}"
+        );
+        assert!(
+            !text.contains("- host forged · claude") && !text.contains("- host old · claude"),
+            "{text}"
+        );
+        let wire = snap.json();
+        let host = wire["hosts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h["name"] == "win")
+            .unwrap();
+        assert_eq!(host["runtime_faults"][0]["path"], path);
+    }
+}
