@@ -3622,6 +3622,15 @@ impl<'a> Service<'a> {
         l.execution=Some(execution);
         self.observations.insert((l.task,execution),core::Execution {id:execution,attempt:l.attempt,through,
             host:self.cfg.me.clone(),runtime:l.rt.clone(),accepted:false,release:None,usage_hold:None});
+        if let Some(snapshot)=&mut self.snapshot {
+            if let Some(row)=snapshot.tasks.iter_mut().find(|r|r.n==l.task) {
+                if !row.executions.iter().any(|x|x["id"].as_u64()==Some(execution)) {
+                    let mut value=crate::snapshot::execution_status(l.task,&self.observations[&(l.task,execution)],&[],snapshot.observed,self.cfg.ttl);
+                    value["role"]=json!(l.role);
+                    row.executions.push(value);
+                }
+            }
+        }
         if l.role == "worker" && l.resume.is_none() && !self.cfg.external { if let Some(line) = seed(&self.cfg.root, l.task) { self.log.push(line); } }
         let pos = std::fs::metadata(crate::runtime::attempt_log(&self.cfg.root, &l.role, l.task, l.attempt)).map_or(0, |m| m.len());
         let began = std::time::Instant::now();

@@ -2835,7 +2835,18 @@ Open: none")).unwrap();
         c.limits=BTreeMap::from([(rt.into(),1)]);c.has=vec![rt.into()];
         let n=b.create("T","",&[TASK_LABEL.into(),format!("run-{rt}")]).unwrap();
         let exits:Exits=Default::default();let mut s=service(&b,&c,exits.clone());
-        s.pass().unwrap();s.pass().unwrap();let a=task(&b,n).attempt.unwrap();
+        for pass in 1..=2 {
+            s.pass().unwrap();s.beat().unwrap();
+            let mut local=s.snapshot.as_ref().unwrap().tasks.iter().find(|r|r.n==n).unwrap().json()["executions"].clone();
+            let mut published=crate::snapshot::read(&b,&remote,&json!({}),&[]).tasks.into_iter().find(|r|r.n==n).unwrap().json()["executions"].clone();
+            assert_eq!(local.as_array().map(Vec::len),Some(1),"new execution is visible on pass {pass} for {rt}");
+            for rows in [&mut local,&mut published] {for row in rows.as_array_mut().unwrap() {
+                row.as_object_mut().unwrap().remove("observed");row.as_object_mut().unwrap().remove("process_id");
+                if let Some(progress)=row.get_mut("progress").and_then(Value::as_object_mut) {progress.remove("observed");}
+            }}
+            assert_eq!(local,published,"status/heartbeat parity on pass {pass} for {rt}");
+        }
+        let a=task(&b,n).attempt.unwrap();
         let read=||crate::snapshot::read(&b,&remote,&json!({}),&[]).tasks.into_iter().find(|r|r.n==n).unwrap().json();
         let host=b.issues(None).unwrap().into_iter().find(|i|i.title=="taskq host mac").unwrap();
         let running=host.body.clone();
