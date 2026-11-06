@@ -609,11 +609,12 @@ pub const ADMISSION_CODES: [(&str, &str); 13] = [
 ];
 
 /// The fixed reasons of `unknown` (A3): a host that did not decide never reads as admitted or refused.
-pub const ADMISSION_UNKNOWN: [&str; 4] = [
+pub const ADMISSION_UNKNOWN: [&str; 5] = [
     "no host decision",
     "capacity config unreadable",
     "host admission unknown",
     "execution unresolved",
+    "free space unreadable",
 ];
 
 /// One admission decision: `observed` is the board read time it rests on, `host` the deciding host (`None`: TaskQ's
@@ -784,6 +785,8 @@ pub(crate) fn stuck(
 
 #[derive(Default)]
 pub struct Host {
+    /// § 3 Disk guard reading; `None` from a host that publishes none.
+    pub disk: Option<crate::disk::Disk>,
     pub balancing: Value,
     pub diagnostics: Value,
     pub name: String,
@@ -1065,6 +1068,10 @@ pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
             .lines()
             .find_map(|l| l.strip_prefix("focus "))
             .map(str::to_string),
+        disk: h
+            .body
+            .lines()
+            .find_map(|l| crate::disk::Disk::parse(l.strip_prefix("disk ")?)),
         // usage rows share the `limit ` prefix; only a hold line is a limit here
         limits: h
             .body
@@ -1771,6 +1778,7 @@ impl Snapshot {
             "hosts": self.hosts.iter().map(|h| {
                 let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
                 if let Some(s) = &h.selected { r["selected"] = json!(s) }
+                if let Some(d) = h.disk { r["disk"] = json!({"free_bytes": if let crate::disk::Disk::Free(n) = d { Some(n) } else { None }, "holds": d.holds()}) }
                 if h.balancing["schema"]==2 {r["balancing"]=h.balancing.clone();}
                 if let Some(l) = &h.link { r["link"] = json!(l) }
                 if h.queue.is_some() { r["queue"] = json!(h.queue_rows(self.observed)) }
@@ -2069,6 +2077,14 @@ impl Snapshot {
                 anomalies.push(format!(
                     "- host {} · focus unknown: it admits nothing · {doctor}",
                     h.name
+                ));
+            }
+            if let Some(d) = h.disk.filter(|d| d.holds()) {
+                anomalies.push(format!(
+                    "- host {} · disk {} · Next: {}",
+                    h.name,
+                    d.reason(),
+                    d.next()
                 ));
             }
             let rts: Vec<&String> = h.balancing["weights"]
@@ -2466,11 +2482,19 @@ impl Snapshot {
                     h.name,
                     h.version_text(),
                     age(self.observed - h.updated),
-                    h.focus
-                        .as_ref()
-                        .filter(|f| *f != "unknown")
-                        .map(|f| format!(" focus {f}"))
+                    h.disk
+                        .filter(|_| live(self.observed - h.updated, cfg.ttl))
+                        .and_then(|d| Some(format!(
+                            " disk {}{}",
+                            d.free_text()?,
+                            if d.holds() { " (see Anomalies)" } else { "" }
+                        )))
                         .unwrap_or_default()
+                        + &h.focus
+                            .as_ref()
+                            .filter(|f| *f != "unknown")
+                            .map(|f| format!(" focus {f}"))
+                            .unwrap_or_default()
                         + &h.limits
                             .iter()
                             .map(|l| if l.starts_with("quota ") {

@@ -39,8 +39,9 @@ The local `status.json` holds one `capacity` object:
 | `limits`, `used` | Effective runtime ceilings and actual live-child counts, including zero and over-limit values |
 | `load_gate` | Effective `enabled`, `cpu_max`, `memory_min` settings |
 | `gate` | `off`, `open`, `held`, or `unknown`; independent of focus and full slots |
-| `reasons` | All blockers: `cpu`, `memory`, `sample`, `config`, or `cooldown`, with a short readable explanation |
+| `reasons` | All blockers: `disk`, `cpu`, `memory`, `sample`, `config`, or `cooldown`, with a short readable explanation |
 | `cpu_percent`, `memory_available_percent` | Latest raw percentages, null when unavailable |
+| `disk_free_bytes` | Free bytes of the [disk guard](#disk-guard) reading, null when unread |
 | `sample_at` | Wall-clock timestamp for display; null without a valid sample |
 | `sample_age_seconds` | Age measured with the service's monotonic clock at status publication |
 
@@ -96,6 +97,13 @@ Linked from `taskq.md` [§ 3](../../taskq.md#3-attempts-lease-capacity); this te
 - A missing, invalid or stale reading holds; reopening needs 3 consecutive valid samples below the band; ≤ 1 launch per 30 s. A held resume keeps its inbox; a held won claim stays leased. No battery or thermal gating, no forced retirement. Serialize slot grants and transitions; release only after verified failed launch/exit. Pick ready projects round-robin; resumes/reviewers go first.
 - **Host admission.** In-process grants follow the host load gate, admission.max, runtime limits and 30 s spacing. No Fixed mode. A root whose fresh status names another live process holds admission host-wide; unknown liveness holds too. Setup (§ 4) skips limits, holds, Stop and restart.
 - **Emergency hold.** `<install>/hold` blocks worker and reviewer launches (not owner sessions) before the load gate; unreadable holds. `service release` clears ordinary holds only; Mac Stop survives restart/install; selected recovery requires owner evidence and native release ([E3](emergency-recovery.md#e3-recovery)). Children continue unless owner-confirmed Full stop (R11); older services ignore it.
+
+### Disk guard
+
+- **Reading.** Each project service reads, before every pass and every status sample, the bytes its OS user may use on the volume of `<root>` and of `<root>/.worktrees` when that exists (a link can put it on another volume). The fullest volume decides; projects on other volumes keep running. `statvfs` (`f_bavail` × `f_frsize`) or `GetDiskFreeSpaceExW`; no executable parsing, no path in any text.
+- **Rule.** Free under 20,000,000,000 bytes holds; exactly that admits. No band or cooldown: the next pass with space admits. A path that does not read makes the reading unknown, which holds. It precedes the load gate and applies with the gate off. Owner sessions, setup and external slots are not workers or reviewers and stay outside it, so an owner session can free space.
+- **Projection.** `capacity.gate` is `held` (unknown reading: `unknown`) with reason `disk`. Admission code stays `load-gate` (unknown reading: `unknown`), so weighted spread skips the host under N-1 readers. Heartbeat line `disk <bytes>|unknown`; status `Hosts:` prints `disk <n> GB free` and an Anomalies row carries the reason and `Next:`; `--json` hosts carry `disk {free_bytes, holds}`. Doctor check `disk`: [health checks](host-service.md#health-checks-2194).
+- **Never.** The service deletes nothing and stops nothing for space; running children continue.
 
 ## Compile jobs
 

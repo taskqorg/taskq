@@ -731,6 +731,7 @@ fn project(source: &Value, observed_at: u64, now: u64) -> Value {
     }
     for blocker in p["blockers"].as_array_mut().unwrap() {
         if ![
+            "disk",
             "cpu",
             "memory",
             "pressure",
