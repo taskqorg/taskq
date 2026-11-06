@@ -20,10 +20,12 @@ ROOT = Path(__file__).resolve().parents[1]
 BUDGET = 900
 # taskq.md Product: this page is contract text under that ID, so it keeps the root contract's gate and lane.
 PRODUCT_DOC = 'docs/design/product-contract.md'
+# docs/testing.md#visual-evidence: data no build or gate reads; the CI shots job checks their hashes.
+SHOT = re.compile(r'^docs/shots/([^/]+\.png|manifest\.json)$')
 
 
 def selection(paths):
-    if paths and all(Path(p).suffix in {'.md', '.txt'} and p not in {'taskq.md', 'AGENTS.md', 'CLAUDE.md', PRODUCT_DOC} for p in paths):
+    if paths and all(SHOT.match(p) or (Path(p).suffix in {'.md', '.txt'} and p not in {'taskq.md', 'AGENTS.md', 'CLAUDE.md', PRODUCT_DOC}) for p in paths):
         # These pages carry published asset hashes, checked by the Node components.
         return 'web' if any(p in {'docs/design/answer-card.md', 'docs/design/shared-resource-controls.md'} for p in paths) else 'docs'
     if paths and all((p.startswith('src/') and Path(p).suffix in {'.js', '.css', '.html'}) or (p.startswith('tests/') and Path(p).suffix == '.cjs') for p in paths):

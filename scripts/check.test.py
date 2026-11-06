@@ -10,9 +10,17 @@ for paths, expected in [([], 'full'), (['README.md'], 'docs'), (['AGENTS.md'], '
                         (['src/tray.html', 'tests/tray-action.test.cjs'], 'web'),
                         (['src/core.rs', 'README.md'], 'full'), (['Cargo.lock'], 'full'),
                         (['tests/fixtures/status-snapshot.json'], 'full'),
-                        (['.github/workflows/tests.yml'], 'full'), (['unknown'], 'full')]:
+                        (['.github/workflows/tests.yml'], 'full'), (['unknown'], 'full'),
+                        (['docs/shots/manifest.json', 'docs/shots/popover-dark-project-16.png'], 'docs'),
+                        (['docs/shots/manifest.json', 'README.md'], 'docs'), (['docs/shots/manifest.json', 'src/core.rs'], 'full'),
+                        (['docs/shots/update.sh'], 'full'), (['docs/shots/check.sh'], 'full'), (['docs/shots/evidence/a.png'], 'full')]:
     assert select(paths) == expected, (paths, select(paths), expected)
 print('PASS change selection; unknown impact broadens')
+
+# docs/testing.md: only a shots branch escapes the full dispatch; release-check.py accepts a main dispatch as proof.
+workflow = (Path(__file__).parents[1] / '.github/workflows/tests.yml').read_text(encoding='utf-8')
+assert "CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/heads/taskq-shots-') }}" in workflow
+print('PASS a dispatch stays full except on a shots branch')
 
 # Owner-operation fixtures must not inherit a live worker identity or board credential; the launching session stays bound.
 import json
