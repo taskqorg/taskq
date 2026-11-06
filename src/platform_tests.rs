@@ -106,6 +106,54 @@ fn gui_capture_runs_only_after_an_allowed_preflight() {
     );
 }
 
+// One loop thread per project each ran its own `log show`: copies piled up and 64 of 161 hit the 30 s budget in the
+// pass. Risk: a slow query holds a pass, or a second copy starts. Protection: callers never wait, one run per period.
+#[test]
+fn tcc_log_runs_once_per_period_and_never_holds_a_caller() {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    use std::sync::{Arc, Barrier, Mutex};
+    use std::time::{Duration, Instant};
+    static LOG: TccLog = Mutex::new((None, None));
+    let runs = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(Barrier::new(2));
+    let probe = |text: &'static str| {
+        let (runs, gate) = (runs.clone(), gate.clone());
+        move || {
+            runs.fetch_add(1, SeqCst);
+            gate.wait();
+            Some(text.to_string())
+        }
+    };
+    let settle = |want: &str| {
+        let until = Instant::now() + Duration::from_secs(30);
+        while shared_log(&LOG, probe("unexpected")).as_deref() != Some(want) {
+            assert!(Instant::now() < until, "no result {want}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let callers: Vec<_> = (0..8)
+        .map(|_| {
+            let run = probe("first");
+            std::thread::spawn(move || shared_log(&LOG, run))
+        })
+        .collect();
+    for caller in callers {
+        assert_eq!(
+            caller.join().unwrap(),
+            None,
+            "the running query holds no one"
+        );
+    }
+    gate.wait();
+    settle("first");
+    assert_eq!(runs.load(SeqCst), 1, "one query per period");
+    LOG.lock().unwrap().0 = Some(Instant::now() - Duration::from_secs(300));
+    assert_eq!(shared_log(&LOG, probe("second")).as_deref(), Some("first"));
+    gate.wait();
+    settle("second");
+    assert_eq!(runs.load(SeqCst), 2, "the next period runs it again");
+}
+
 // Defect #1845 A1: only Screen Recording was probed; a stale Accessibility or App Data grant surfaced as a worker
 // ask. Risk: a state misread lets a gui task run into the denial or blocks it on a healthy grant.
 #[test]

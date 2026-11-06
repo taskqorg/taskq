@@ -288,6 +288,18 @@ pub(crate) fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     }
 }
 
+/// The capture every 300 s; the grants every pass, since they read the shared TCC log without waiting for it.
+pub(crate) fn refresh_gui(s: &mut Service<'_>, install: &Path) {
+    if s.gui_checked
+        .is_none_or(|t: Instant| t.elapsed().as_secs() >= 300)
+    {
+        s.gui_checked = Some(Instant::now());
+        s.gui_probe = platform::gui_probe();
+        s.gui_stale = platform::stale_grant(install, &s.gui_probe);
+    }
+    s.grants = platform::grants(install);
+}
+
 /// One project loop's inputs and the state it keeps between passes.
 struct ProjectLoop<'a> {
     c: &'a Ctx,
@@ -632,14 +644,7 @@ impl<'a> ProjectLoop<'a> {
             })
             .map(|e| (e.runtime.clone(), e.profile.clone()))
             .collect();
-        if s.gui_checked
-            .is_none_or(|t: Instant| t.elapsed().as_secs() >= 300)
-        {
-            s.gui_checked = Some(Instant::now());
-            s.gui_probe = platform::gui_probe();
-            s.gui_stale = platform::stale_grant(&cfg.install, &s.gui_probe);
-            s.grants = platform::grants(&cfg.install);
-        }
+        refresh_gui(s, &cfg.install);
         access
     }
 
