@@ -1,0 +1,12 @@
+name: pin update
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  update:
+    uses: taskqorg/agentq/.github/workflows/pin-update.yml@main
+    with:
+      auto_merge: false
+    secrets:
+      PIN_APP_KEY: ${{ secrets.PIN_APP_KEY }}
