@@ -1,18 +1,18 @@
 //! The `inbox` and `wait` readers (§ 5).
 
-use crate::board::{entries, Board};
+use crate::Res;
+use crate::board::{Board, entries};
 use crate::config::load;
-use crate::core::{fold, Entry, State};
+use crate::core::{Entry, State, fold};
 use crate::dispatch::deps_open;
 use crate::paths::dot;
 use crate::service::Config;
 use crate::snapshot::in_scope;
-use crate::Res;
 use crate::{
     board, core, dispatch, display, platform, readiness, reply_files, reports, runtime, service,
     snapshot, transcript,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -165,11 +165,12 @@ pub(crate) fn closed_row(
             })
             .last();
         (
-            json!(t
-                .publication
-                .as_deref()
-                .and_then(|p| p.lines().next())
-                .map(|l| l.trim_start_matches("Changed:").trim())),
+            json!(
+                t.publication
+                    .as_deref()
+                    .and_then(|p| p.lines().next())
+                    .map(|l| l.trim_start_matches("Changed:").trim())
+            ),
             json!(pr.map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))),
         )
     });

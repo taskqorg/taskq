@@ -3,26 +3,75 @@ use crate::board::{Board, Fake, entries};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-    // Chain: §2.27/R6: dependency completion -> restart reconciliation -> saved publication, without an answer or launch.
-    #[test]
-    fn dependency_wait_2469_service_resumes_publication_after_verified_close() {
-        let (b,c)=(Fake::default(),cfg("win"));
-        let m=b.create("2468 prerequisite","",&["taskq".into()]).unwrap();
-        let n=b.create("2462 saved publication",&format!("Depends on #{m}"),&["taskq".into()]).unwrap();
-        let a=b.comment(n,"taskq: spawn worker codex:invented win").unwrap();
-        b.comment(n,&core::entry("result",&[&"a".repeat(40)],Some(a),"candidate")).unwrap();
-        b.comment(n,"taskq: publish\nChanged: proof retained\nChecks: A1 ok\nOpen: none").unwrap();
-        {let mut s=Service::new(&b,&c,"test",Box::new(|_|panic!("dependency wait cannot launch")));s.pass().unwrap();}
-        assert_eq!(task(&b,n).state,State::Ask);assert!(task(&b,n).wait.is_some());assert_eq!(b.state.borrow().publications,0);
-        b.close(m).unwrap();b.advance(100);
-        let mut s=Service::new(&b,&c,"test",Box::new(|_|panic!("saved publication cannot launch")));
-        s.pass().unwrap();assert_eq!(task(&b,n).state,State::Review);assert!(task(&b,n).publication.is_some());
-        b.advance(100);s.pass().unwrap();assert_eq!(task(&b,n).state,State::Closed);
-        let comments=b.comments(n).unwrap();
-        assert_eq!(comments.iter().filter(|e|core::kind(n,&e.body)=="spawn").count(),1);
-        assert!(!comments.iter().any(|e|matches!(core::kind(n,&e.body),"answer"|"gone"|"requeue")));
-        assert_eq!(b.state.borrow().publications,1);assert!(b.state.borrow().cancelled_publications.is_empty());
+// Chain: §2.27/R6: dependency completion -> restart reconciliation -> saved publication, without an answer or launch.
+#[test]
+fn dependency_wait_2469_service_resumes_publication_after_verified_close() {
+    let (b, c) = (Fake::default(), cfg("win"));
+    let m = b
+        .create("2468 prerequisite", "", &["taskq".into()])
+        .unwrap();
+    let n = b
+        .create(
+            "2462 saved publication",
+            &format!("Depends on #{m}"),
+            &["taskq".into()],
+        )
+        .unwrap();
+    let a = b
+        .comment(n, "taskq: spawn worker codex:invented win")
+        .unwrap();
+    b.comment(
+        n,
+        &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate"),
+    )
+    .unwrap();
+    b.comment(
+        n,
+        "taskq: publish\nChanged: proof retained\nChecks: A1 ok\nOpen: none",
+    )
+    .unwrap();
+    {
+        let mut s = Service::new(
+            &b,
+            &c,
+            "test",
+            Box::new(|_| panic!("dependency wait cannot launch")),
+        );
+        s.pass().unwrap();
     }
+    assert_eq!(task(&b, n).state, State::Ask);
+    assert!(task(&b, n).wait.is_some());
+    assert_eq!(b.state.borrow().publications, 0);
+    b.close(m).unwrap();
+    b.advance(100);
+    let mut s = Service::new(
+        &b,
+        &c,
+        "test",
+        Box::new(|_| panic!("saved publication cannot launch")),
+    );
+    s.pass().unwrap();
+    assert_eq!(task(&b, n).state, State::Review);
+    assert!(task(&b, n).publication.is_some());
+    b.advance(100);
+    s.pass().unwrap();
+    assert_eq!(task(&b, n).state, State::Closed);
+    let comments = b.comments(n).unwrap();
+    assert_eq!(
+        comments
+            .iter()
+            .filter(|e| core::kind(n, &e.body) == "spawn")
+            .count(),
+        1
+    );
+    assert!(
+        !comments
+            .iter()
+            .any(|e| matches!(core::kind(n, &e.body), "answer" | "gone" | "requeue"))
+    );
+    assert_eq!(b.state.borrow().publications, 1);
+    assert!(b.state.borrow().cancelled_publications.is_empty());
+}
 
 struct FakeProc(Rc<RefCell<Option<i32>>>);
 impl Proc for FakeProc {

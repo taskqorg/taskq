@@ -129,6 +129,58 @@ const plain = (x) => JSON.parse(JSON.stringify(x));
   assert(
     call("answerSlot", { state: "ask", key: "task" }).includes("data-answer"),
   );
+  // A3: the Conversations composer and stale actions must respect the same wait as the card slot.
+  const waiting = {
+    ...JSON.parse(
+      fs.readFileSync("tests/fixtures/answer-card.json", "utf8"),
+    ).cases.find((c) => c.name === "choice").rows[0],
+    n: 2462,
+    state: "ask",
+    action: { actor: "dependency", blocker: "#2468", kind: "completion" },
+  };
+  project.tasks = [waiting];
+  const waitStart = sent.length;
+  const draft = {
+    draft: "Keep the reviewed result",
+    files: [{ id: "invented-file", name: "proof.txt" }],
+    caret: [2, 8],
+  };
+  call("save", board, waiting, draft);
+  const keptDraft = plain(call("load", board, waiting)),
+    beforeWait = sent.length;
+  assert.equal(
+    call("answerCompose", board, waiting),
+    "",
+    "a dependency wait has no answer composer",
+  );
+  const capability = call("answerCapability", board, waiting);
+  assert.equal(capability.answer, false);
+  assert.equal(capability.manage, false);
+  for (const action of [undefined, "requeue", "later", "close"]) {
+    const receipt = await call("answerSend", board, {
+      id: "invented-blocked-" + action,
+      task: waiting.n,
+      revision: waiting.revision,
+      action,
+      text: "Retry",
+    });
+    assert.equal(receipt.state, "rejected");
+  }
+  assert.equal(
+    sent.length,
+    beforeWait,
+    "blocked controls dispatch no bridge input",
+  );
+  assert.deepEqual(
+    plain(call("load", board, waiting)),
+    keptDraft,
+    "waits retain draft, files and caret",
+  );
+  const resumed = { ...waiting, action: { actor: "owner" } };
+  project.tasks = [resumed];
+  assert.equal(call("answerCompose", board, resumed).draft, draft.draft);
+  delete project.tasks;
+  sent.length = waitStart;
   project.complete = false;
   assert.equal(call("answerCapability", board).answer, false);
   project.complete = true;

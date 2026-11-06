@@ -1270,11 +1270,7 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         }
         (Doing | Review, "gone", true) => {
             if !limit(t, resume, GONE_MAX) {
-                if t.state == Review {
-                    end(t)
-                } else {
-                    ready(t)
-                }
+                if t.state == Review { end(t) } else { ready(t) }
             }
         }
         (Doing, "steer", _) => t.inbox.push(id),

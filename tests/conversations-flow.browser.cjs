@@ -345,6 +345,69 @@ const state = {
     await page
       .locator("[data-c-field=answer]")
       .fill("Use the compatible route");
+    // #2469 A3/A6: a wait removes both answer entry points without discarding their shared draft.
+    const beforeWait = await page.evaluate(
+      () => sent.filter((m) => m.a === "answer").length,
+    );
+    await page.evaluate(() => {
+      state.projects[0].tasks[0].action = {
+        actor: "dependency",
+        blocker: "#2468",
+        kind: "completion",
+        next: "service rechecks completion",
+      };
+      deliver();
+    });
+    await page
+      .getByText(
+        "Blocked on #2468 (completion). PM: service rechecks completion",
+        { exact: true },
+      )
+      .waitFor();
+    assert.equal(
+      await page
+        .locator(
+          "[data-c-field=answer],[data-a=answer-send],[data-a=answer-requeue],[data-qac=choice]",
+        )
+        .count(),
+      0,
+      "PM-linked dependency wait has no answer controls",
+    );
+    await page.evaluate(
+      ({ board, n }) =>
+        taskq.receive({ open: { page: "conversations", board, task: n } }),
+      { board, n: task.n },
+    );
+    await page
+      .getByText(
+        "Blocked on #2468 (completion). PM: service rechecks completion",
+        { exact: true },
+      )
+      .waitFor();
+    assert.equal(
+      await page
+        .locator(
+          "[data-c-field=answer],[data-a=answer-send],[data-a=answer-requeue],[data-qac=choice]",
+        )
+        .count(),
+      0,
+      "direct task dependency wait has no answer controls",
+    );
+    assert.equal(
+      await page.evaluate(() => sent.filter((m) => m.a === "answer").length),
+      beforeWait,
+      "observing a wait sends no input",
+    );
+    await page.evaluate(() => {
+      state.projects[0].tasks[0].action = { actor: "owner" };
+      deliver();
+    });
+    await page.locator("[data-c=select][data-id=owner-flow]").click();
+    assert.equal(
+      await page.locator("[data-c-field=answer]").inputValue(),
+      "Use the compatible route",
+      "the same question recovers its draft after reconciliation",
+    );
     await page.locator("[data-a=answer-send]").click();
     const answer = await page.evaluate(() =>
       sent.filter((m) => m.a === "answer" && !m.op.action).at(-1),

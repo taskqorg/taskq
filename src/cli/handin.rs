@@ -1,14 +1,14 @@
 //! Hand-in commands: ask, result and later (§ 2, § 7).
 
+use crate::cli::Args;
 use crate::cli::task_cmd::start_tasks;
 use crate::cli::text::{
     ask_card, attachment, file_stubs, held_blocker, image_files, media, park, result_text,
     stage_text, upload_attachments, upload_images,
 };
-use crate::cli::Args;
 use crate::config::Ctx;
-use crate::dispatch::{act, Op};
-use crate::{reports, respond, Res};
+use crate::dispatch::{Op, act};
+use crate::{Res, reports, respond};
 
 /// `ask`: validates the card and its files before any upload, then posts it.
 pub(crate) fn ask_cmd(c: &Ctx, a: &Args, op: &Op) -> Res<()> {
