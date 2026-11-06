@@ -1964,11 +1964,14 @@ impl Snapshot {
                         action["kind"].as_str().unwrap_or("unknown")
                     )
                 } else {
-                    r.deps
-                        .iter()
-                        .map(|b| format!("[{}]({}) {}", b.dep.name(), b.url, cell(&b.reason)))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    format!(
+                        "dependency ({})",
+                        r.deps
+                            .iter()
+                            .map(|b| format!("[{}]({}) {}", b.dep.name(), b.url, cell(&b.reason)))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
                 };
                 format!(
                     "| {} | {} · {} | {}: {} |",

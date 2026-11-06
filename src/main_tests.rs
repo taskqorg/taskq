@@ -5578,7 +5578,7 @@ fn report_follows_r6() {
         q,
         &entry(
             "ask",
-            &[],
+            &["owner"],
             Some(a),
             "Which way?\nBecause.\n1. left\n2. right ★",
         ),
@@ -6641,7 +6641,7 @@ fn compact_report_keeps_choices_links_and_original_evidence() {
         "Done: inspected\nProblem: {reason}\nEvidence: [context](https://context)\n1. {option} ★\n2. keep\nTo answer: exact syntax"
     );
     let a = fold(n, &entries(&b, n).unwrap(), false).attempt;
-    b.comment(n, &entry("ask", &[], a, &card)).unwrap();
+    b.comment(n, &entry("ask", &["owner"], a, &card)).unwrap();
     let r = report(&b, &c, &Value::Null, &[]).unwrap();
     assert!(r.contains(&format!("{}…", "🦀".repeat(59))));
     assert!(r.contains(&format!("[{}…](https://board/{n})", "r".repeat(159))));
@@ -6676,7 +6676,7 @@ fn owner_action_waits_in_status_and_its_answer_resumes_the_attempt() {
         n,
         &entry(
             "ask",
-            &[],
+            &["owner"],
             a,
             &ask_card(
                 n,
