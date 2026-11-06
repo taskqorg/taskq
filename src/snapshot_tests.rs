@@ -1068,7 +1068,7 @@ fn ready_rows_name_each_hosts_reason() {
         ("quota", "usage-limit: claude: until 2026-11-03T15:00:00Z"),
         (
             "claim mode",
-            "host: spillover waits: primary mac has effective claude capacity; grace 60 s",
+            "host: spillover waits: primary mac has effective claude capacity",
         ),
         ("scope", "focus: focus p0"),
         ("label", "labels: conflicting run-* labels"),

@@ -844,16 +844,22 @@ fn balancing_policy_validates_modes_and_project_execution() {
         ("none", ClaimMode::None),
     ] {
         assert_eq!(
-            Policy::parse(json!({"claim":alias,"spillover_grace":0}), "invented")
+            Policy::parse(json!({"claim":alias}), "invented")
                 .unwrap()
                 .claim,
             mode
         );
     }
-    assert_eq!(policy().spillover_grace, 300);
+    // An old host.json keeps loading: spillover_grace is ignored, whatever its value.
+    for old in [json!(600), json!(0), json!(-1), json!("5")] {
+        assert_eq!(
+            Policy::parse(json!({"claim":"spillover","spillover_grace":old}), "invented")
+                .unwrap()
+                .claim,
+            ClaimMode::Spillover
+        );
+    }
     for invalid in [
-        json!({"spillover_grace":-1}),
-        json!({"spillover_grace":"5"}),
         json!({"claim":true}),
         json!({"claim":"primary"}),
         json!({"claim":"pinned-only"}),

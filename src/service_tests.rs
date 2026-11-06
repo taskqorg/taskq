@@ -1575,7 +1575,6 @@ fn cfg(me: &str) -> Config {
         limits: BTreeMap::from([("claude".to_string(), 1)]),
         has: vec![],
         claim: crate::host::ClaimMode::Any,
-        spillover_grace: 300,
         weights: BTreeMap::new(),
         allowed_runtimes: None,
         auto_reroute: false,
@@ -10562,11 +10561,7 @@ fn balancing_spillover_uses_effective_primary_availability() {
         "corrupt",
         "stale",
         "none",
-        "grace-free",
-        "grace-unknown",
         "spacing",
-        "spacing-grace",
-        "full-grace",
         "pinned",
         "capability",
         "fenced",
@@ -10610,7 +10605,7 @@ fn balancing_spillover_uses_effective_primary_availability() {
                 ..GATE_DEFAULT
             });
         }
-        if matches!(scenario, "spacing" | "spacing-grace") {
+        if scenario == "spacing" {
             // A real open gate inside its 30 s launch interval, as the primary publishes it.
             p.gate.configure(GateCfg {
                 enabled: true,
@@ -10621,7 +10616,7 @@ fn balancing_spillover_uses_effective_primary_availability() {
             p.gate.launch(p.mono);
             assert!(p.heartbeat_body().contains("launch-interval"));
         }
-        if matches!(scenario, "full" | "one-free" | "all-full" | "full-grace") {
+        if matches!(scenario, "full" | "one-free" | "all-full") {
             p.reserved.push((99, 99, "claude".into()));
         }
         if scenario != "none" {
@@ -10635,7 +10630,7 @@ fn balancing_spillover_uses_effective_primary_availability() {
             let hb = b
                 .create("taskq host win", &body, &[HOST_LABEL.into()])
                 .unwrap();
-            if matches!(scenario, "stale" | "grace-unknown") {
+            if scenario == "stale" {
                 b.state
                     .borrow_mut()
                     .issues
@@ -10677,7 +10672,6 @@ fn balancing_spillover_uses_effective_primary_availability() {
         }
         let mut c = cfg("mac");
         c.claim = crate::host::ClaimMode::Spillover;
-        c.spillover_grace = if scenario.contains("grace") { 0 } else { 300 };
         c.has.push("special".into());
         let mut s = service(&b, &c, Default::default());
         s.pass().unwrap();
@@ -10685,8 +10679,13 @@ fn balancing_spillover_uses_effective_primary_availability() {
             scenario,
             "full"
                 | "quota"
-                | "grace-unknown"
-                | "full-grace"
+                | "unknown"
+                | "unknown-focus"
+                | "unknown-load"
+                | "legacy"
+                | "corrupt"
+                | "stale"
+                | "none"
                 | "pinned"
                 | "capability"
                 | "all-full"
@@ -10726,10 +10725,13 @@ fn balancing_spillover_uses_effective_primary_availability() {
                 .as_ref()
                 .unwrap()
                 .reason;
-            assert!(reason.contains("spillover waits"), "{scenario}: {reason}");
+            assert!(
+                reason.contains("spillover waits: primary "),
+                "{scenario}: {reason}"
+            );
+            assert!(!reason.contains("grace"), "{scenario}: {reason}");
         }
-        // A second pass must never duplicate a live claim, even after grace.
-        s.cfg.spillover_grace = 0;
+        // A second pass must never duplicate a live claim.
         s.pass().unwrap();
         assert!(
             entries(&b, n)
@@ -10764,31 +10766,6 @@ fn balancing_launch_spacing_is_waiting_not_exhaustion() {
     }
 }
 
-// #2138 A2/R1: old issue age cannot skip grace after a new ready transition; unrelated notes never reset it.
-#[test]
-fn balancing_grace_uses_last_queue_transition() {
-    let b = Fake::default();
-    let mut c = cfg("mac");
-    c.claim = crate::host::ClaimMode::Spillover;
-    let n = b.create("work", "", &[TASK_LABEL.into()]).unwrap();
-    b.comment(n, "taskq: hold").unwrap();
-    b.advance(1000);
-    let start = b.comment(n, "taskq: start").unwrap();
-    b.advance(100);
-    b.raw(n, "unrelated note", true, false);
-    let mut s = service(&b, &c, Default::default());
-    let views = views(&b, &mut s.cache, &mut s.deps, 300).unwrap().0;
-    let v = views.iter().find(|v| v.issue.number == n).unwrap();
-    let at = v.comments.iter().find(|c| c.id == start).unwrap().created;
-    assert!(s.host_claim(v, &[], at + 299).is_err());
-    assert!(
-        s.host_claim(v, &[], at + 300)
-            .unwrap()
-            .unwrap()
-            .contains("grace")
-    );
-}
-
 // #2201 A1/A2: an untrusted author's fake primary heartbeat with free capacity never delays spillover;
 // host_claim reads only trusted heartbeats, like weighted_host and the own-host balancing read.
 #[test]
@@ -10820,7 +10797,6 @@ fn balancing_spillover_ignores_untrusted_heartbeat() {
     let n = b.create("work", "", &[TASK_LABEL.into()]).unwrap();
     let mut c = cfg("mac");
     c.claim = crate::host::ClaimMode::Spillover;
-    c.spillover_grace = 300;
     let mut s = service(&b, &c, Default::default());
     let views = views(&b, &mut s.cache, &mut s.deps, 300).unwrap().0;
     let v = views.iter().find(|v| v.issue.number == n).unwrap();
