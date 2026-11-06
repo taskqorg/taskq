@@ -6217,6 +6217,11 @@ fn fixture_and_service_cards_pass_the_writer() {
         service::closed_card(7, "2026-10-31 09:00 UTC"),
         service::refused_card(7, "rules over the cap\nNext: trim the rules"),
         service::input_card(7, "worker input", 3),
+        service::input_card(
+            7,
+            "native baseline unavailable: No such file or directory (os error 2)",
+            1,
+        ),
     ];
     for got in &cards {
         assert_eq!(snapshot::question(got)["parsed"], json!(true), "{got}");

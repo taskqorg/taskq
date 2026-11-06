@@ -1,3 +1,111 @@
+// Chain: §2.10/§2.20 (#2499). Risk: reboot parks work or a fresh-attempt answer replays missing history.
+#[test]
+fn recovery_2499_model_traces() {
+    super::golden(r#"[
+      {"name":"boot release preserves the existing retry", "entries":[
+        {"id":1,"body":"taskq: spawn worker codex:old mac"},
+        {"id":2,"body":"taskq: gone attempt 1"},
+        {"id":3,"body":"taskq: spawn worker codex:new mac"},
+        {"id":4,"body":"taskq: released 3 exit attempt 3\nhost booted 2033-05-18 03:33 UTC after intent 1970-01-12 13:46 UTC"},
+        {"id":5,"body":"taskq: gone attempt 3"},
+        {"id":6,"body":"taskq: gone attempt 3"}
+      ],"expect":{"state":"ready","retries":1}},
+      {"name":"boot release keeps a reviewer result", "entries":[
+        {"id":1,"body":"taskq: spawn worker codex:old mac"},
+        {"id":2,"body":"taskq: result aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa attempt 1"},
+        {"id":3,"body":"taskq: spawn reviewer codex:new mac"},
+        {"id":4,"body":"taskq: released 3 exit attempt 3\nhost booted 2033-05-18 03:33 UTC after intent 1970-01-12 13:46 UTC"},
+        {"id":5,"body":"taskq: gone attempt 3"}
+      ],"expect":{"state":"review","result":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+      {"name":"fresh-attempt answer retains notes and fences old input", "entries":[
+        {"id":1,"body":"taskq: spawn worker codex:old mac"},
+        {"id":2,"body":"taskq: steer\nkeep this note"},
+        {"id":3,"body":"taskq: ask attempt 1\n1. requeue: fresh attempt ★\n2. later: park"},
+        {"id":4,"body":"1"},
+        {"id":5,"body":"taskq: spawn worker codex:new mac"},
+        {"id":6,"body":"taskq: executing 4 attempt 1"},
+        {"id":7,"body":"taskq: result aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa attempt 1"}
+      ],"expect":{"state":"doing","attempt":5,"role":"worker","session":"codex:new mac"},"notes":[2,4]}
+    ]"#).unwrap();
+}
+
+// Chain: §2.10 (#2499). Risk: stale or contradictory boot prose waives ordinary failure limits.
+#[test]
+fn recovery_2499_only_latest_accepted_exit_waives_retry() {
+    use super::*;
+    for case in [
+        "ordinary",
+        "edited",
+        "wrong-attempt",
+        "no-start",
+        "duplicate",
+        "newer-execution",
+    ] {
+        let mut log = vec![
+            Entry {
+                id: 1,
+                body: "taskq: spawn worker codex:s mac".into(),
+                edited: false,
+            },
+            Entry {
+                id: 2,
+                body: "taskq: accepted 1 attempt 1".into(),
+                edited: false,
+            },
+        ];
+        if case == "duplicate" {
+            log.push(Entry {
+                id: 3,
+                body: "taskq: released 1 exit attempt 1".into(),
+                edited: false,
+            });
+        }
+        log.push(Entry {
+            id: 4,
+            body: format!(
+                "taskq: released 1 {} attempt {}\n{}",
+                if case == "no-start" {
+                    "no-start"
+                } else {
+                    "exit"
+                },
+                if case == "wrong-attempt" { 99 } else { 1 },
+                if case == "ordinary" {
+                    "native exit observed"
+                } else {
+                    "host booted 2033-05-18 03:33 UTC after intent 1970-01-12 13:46 UTC"
+                }
+            ),
+            edited: case == "edited",
+        });
+        if case == "newer-execution" {
+            log.extend([
+                Entry {
+                    id: 5,
+                    body: "taskq: steer\nnew input".into(),
+                    edited: false,
+                },
+                Entry {
+                    id: 6,
+                    body: "taskq: executing 5 attempt 1".into(),
+                    edited: false,
+                },
+                Entry {
+                    id: 7,
+                    body: "taskq: released 6 exit attempt 1".into(),
+                    edited: false,
+                },
+            ]);
+        }
+        log.push(Entry {
+            id: 8,
+            body: "taskq: gone attempt 1".into(),
+            edited: false,
+        });
+        assert_eq!(fold(7, &log, false).retries, 1, "{case}");
+    }
+}
+
 // Chain: native observations -> replay -> continuation. Risk: late, duplicate or contradictory evidence consumes/replays input.
 #[test]
 fn execution_observations_keep_acceptance_and_exit_independent() {
