@@ -1,6 +1,11 @@
 """R12: doc-only selection cannot hide Rust/config/unknown or missing impact."""
 from pathlib import Path
+import json
+import os
 import runpy
+import subprocess
+import sys
+import tempfile
 
 check = runpy.run_path(str(Path(__file__).with_name('check.py')))
 select, names = check['selection'], check['runtime_names']
@@ -22,12 +27,50 @@ workflow = (Path(__file__).parents[1] / '.github/workflows/tests.yml').read_text
 assert "CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/heads/taskq-shots-') }}" in workflow
 print('PASS a dispatch stays full except on a shots branch')
 
+# docs/testing.md#blast-radius-selection: a small fixture crate proves the scan; the real tree proves its wiring.
+with tempfile.TemporaryDirectory(prefix='taskq-check-blast-') as crate:
+    crate = Path(crate)
+    for name, text in {'src/main.rs': 'mod alpha;\nmod beta;\nmod gamma;\nmod lonely;\nuse crate::alpha::shared;\n#[path = "main_tests.rs"]\nmod tests;\n',
+                       'src/main_tests.rs': '#[test]\nfn root_case() {}\n#[test]\n#[ignore]\nfn other_case() {}\n',
+                       'src/alpha.rs': '#[path = "a_inner.rs"]\nmod inner;\n#[path = "alpha_tests.rs"]\nmod tests;\n', 'src/a_inner.rs': '', 'src/alpha_tests.rs': '',
+                       'src/beta.rs': 'use crate::{alpha, lonely as x};\n', 'src/gamma.rs': 'fn f() { crate::shared(); }\n', 'src/lonely.rs': 'include_str!("../tests/fixtures/read.json");\n',
+                       'tests/fixtures/read.json': '{}', 'tests/fixtures/node.json': '{}', 'tests/fixtures/orphan.json': '{}', 'tests/a.test.cjs': 'require("./fixtures/node.json")', 'tests/version.rs': ''}.items():
+        (crate / name).parent.mkdir(parents=True, exist_ok=True)
+        (crate / name).write_text(text, encoding='utf-8')
+    blast = lambda *paths: check['blast_radius'](list(paths), crate)
+    assert check['module_tree'](crate)['src/a_inner.rs'] == 'alpha::inner', '#[path] names the module, not the file'
+    assert blast('src/alpha.rs')['filters'] == sorted(['alpha::inner::tests', 'alpha::tests', 'beta::tests', 'core::tests', 'gamma::tests', 'service::tests']), 'own, grouped use and root re-export edges'
+    assert blast('src/lonely.rs')['filters'] == sorted(['beta::tests', 'core::tests', 'lonely::tests', 'service::tests'])
+    assert blast('src/alpha.rs')['exact'] == ['tests::other_case', 'tests::root_case'], 'root tests run by exact name: `tests::` matches everything'
+    assert blast('tests/fixtures/read.json')['filters'] == sorted(['core::tests', 'lonely::tests', 'service::tests']), 'a fixture reaches its reader'
+    assert blast('tests/fixtures/node.json')['filters'] == ['core::tests', 'service::tests'], 'Node runs its own fixture'
+    assert blast('tests/version.rs')['integration'] == ['version']
+    assert 'full' in blast('tests/fixtures/orphan.json'), 'a fixture with no known reader is unknown impact'
+    assert blast('docs/a.md')['filters'] == ['core::tests', 'service::tests']
+    for shared in ['build.rs', 'entry.rs', 'Cargo.toml', 'Cargo.lock', 'src/main.rs', 'src/main_tests.rs', 'src/core.rs', 'src/core_tests.rs', 'src/config.rs', 'src/runtime.rs', 'src/runtime/launch.rs',
+                   'src/platform.rs', 'src/platform_tests.rs', 'src/windows_sandbox.rs', 'src/linux_sandbox.rs', 'scripts/check.py', '.github/workflows/tests.yml', 'tests/integration.rs',
+                   'taskq.md', 'AGENTS.md', 'unknown']:
+        assert 'full' in blast(shared), shared
+    assert 'full' in blast('src/alpha.rs', 'tests/fixtures/orphan.json'), 'one unknown file broadens the whole change'
+    assert 'full' in check['blast_radius']([], crate)
+wired = check['module_tree']()
+assert not [str(p) for p in (Path(__file__).parents[1] / 'src').rglob('*.rs') if p.relative_to(Path(__file__).parents[1]).as_posix() not in wired], 'every Rust source maps to a module'
+assert wired['src/host_install_tests.rs'] == 'host::installation::tests'
+assert 'snapshot::' in check['blast_radius'](['src/snapshot.rs'])['filters'], 'a test outside the tests module still runs'
+live = check['blast_radius'](['src/policy.rs', 'src/service.rs'])
+assert {'policy::tests', 'service::tests', 'core::tests'} <= set(live['filters']) and 'host_policy' in live['integration'] and live['exact']
+assert check['blast_radius'](['src/cli/inbox.rs'])['integration'][0] == ''
+narrows, commands = check['narrows'], check['selected_commands']
+pick = dict(filters=['a::tests'], exact=['tests::b'], integration=['version'])
+assert commands(pick) == [['--bin', 'taskq', '--', 'a::tests'], ['--bin', 'taskq', '--', '--exact', 'tests::b'], ['--test', 'integration', '--', 'version::']]
+assert commands({**pick, 'integration': ['', 'version']})[-1] == ['--test', 'integration']
+assert not narrows('shadow', 'pull_request', False, pick), 'shadow changes nothing'
+assert narrows('on', 'pull_request', False, pick)
+for mode, event, full, chosen in [('on', 'merge_group', False, pick), ('on', 'workflow_dispatch', False, pick), ('on', None, False, pick), ('on', 'pull_request', True, pick), ('on', 'pull_request', False, {'full': 'x'})]:
+    assert not narrows(mode, event, full, chosen), (mode, event, full)
+print('PASS blast radius: edges, exact root tests, shared and unknown fall back to full, only an enabled PR run narrows')
+
 # Owner-operation fixtures must not inherit a live worker identity or board credential; the launching session stays bound.
-import json
-import os
-import subprocess
-import sys
-import tempfile
 with tempfile.TemporaryDirectory(prefix='taskq-check-context-') as install:
     parent = {**os.environ, 'TASKQ_TASK': '1840', 'TASKQ_ATTEMPT': 'invented-attempt', 'TASKQ_ROLE': 'worker',
               'TASKQ_ROOT': 'invented-project', 'TASKQ_INSTALL': 'invented-production-install', 'CODEX_THREAD_ID': 'invented-thread', 'GH_TOKEN': 'invented-token', 'CARGO_BUILD_JOBS': '2', 'TASKQ_INCIDENT_REPORTS': 'off'}
