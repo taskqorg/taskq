@@ -4343,9 +4343,9 @@ fn handed_in_copy_job_is_adopted_and_exits_without_recorded_process() {
         line(serde_json::json!({"type":"user","message":{"content":"earlier input"}})),
     )
     .unwrap();
-    std::fs::write(root.join("projects/a").join(format!("{copy}.jsonl")),line(serde_json::json!({"type":"user","message":{"content":input}}))
-            +&line(serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"handed in"}]}}))
-            +&line(serde_json::json!({"type":"system","subtype":"turn_duration"}))).unwrap();
+    std::fs::write(root.join("projects/a").join(format!("{copy}.jsonl")),line(serde_json::json!({"type":"user","sessionId":saved,"message":{"content":input}}))
+            +&line(serde_json::json!({"type":"assistant","sessionId":saved,"message":{"content":[{"type":"text","text":"handed in"}]}}))
+            +&line(serde_json::json!({"type":"system","sessionId":saved,"subtype":"turn_duration"}))).unwrap();
     for (id, session, intent) in [
         ("c3f6f318", &saved, "earlier input"),
         ("94f2ba2a", &copy, input.as_str()),
@@ -7329,6 +7329,60 @@ fn a_differing_daemon_starts_no_background_job() {
     );
     assert!(!log.exists(), "no input is bound");
     std::fs::remove_dir_all(&root).ok();
+}
+
+// Chain: #2448/#2221: only a caller-validated copied job may observe the saved conversation's native records.
+#[test]
+fn claude_history_alias_2448_requires_bound_copy() {
+    let root = std::env::temp_dir().join(format!("taskq-claude-alias-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let (copy, saved, unrelated) = (uuid(), uuid(), uuid());
+    let path = root.join(format!("{copy}.jsonl"));
+    let line = |session: &str| {
+        serde_json::json!({
+            "type":"user", "sessionId":session, "message":{"content":"exact copied input"}
+        })
+        .to_string()
+            + "\n"
+    };
+    std::fs::write(&path, line(&saved)).unwrap();
+    assert!(
+        ClaudeRecords::default()
+            .read(&path, |_| Ok(()))
+            .unwrap_err()
+            .contains("native session differs")
+    );
+    let mut reader = ClaudeRecords::default();
+    reader.copied_from(&saved).unwrap();
+    assert!(
+        reader
+            .read(&path, |v| {
+                assert_eq!(v["session"], copy);
+                assert_eq!(v["native_session"], saved);
+                assert_eq!(v["session_binding"], "alias");
+                Ok(())
+            })
+            .unwrap()
+    );
+    assert!(
+        reader
+            .copied_from(&unrelated)
+            .unwrap_err()
+            .contains("binding changed")
+    );
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(line(&unrelated).as_bytes())
+        .unwrap();
+    assert!(
+        reader
+            .read(&path, |_| panic!("foreign session delivered"))
+            .unwrap_err()
+            .contains("native session differs")
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 // R12 / #2448: an AgentQ page buffered past TaskQ's byte budget cannot conceal changed source bytes.

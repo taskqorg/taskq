@@ -646,7 +646,7 @@ pub fn usage_limit(log: &Path, rt: &str) -> Option<Option<i64>> {
     classify(rt, &log_text(log, 0)?)?.reached
 }
 
-/// The exhausted windows of the latest native turn, read per record by AgentQ, which owns quota-error classification.
+/// The rejected windows of the latest native turn, read per record by AgentQ, which owns quota-error classification.
 /// Unknown names and resets stay unknown; prose never invents a weekly or five-hour reset.
 pub fn quota_windows(log: &Path, rt: &str) -> Vec<(String, Option<i64>)> {
     let Some(events) = events(log, 0) else {
@@ -664,10 +664,10 @@ pub fn quota_windows(log: &Path, rt: &str) -> Vec<(String, Option<i64>)> {
             return vec![];
         };
         let reached = report.reached.flatten();
-        let exhausted: Vec<_> = report
+        let rejected: Vec<_> = report
             .limits
             .iter()
-            .filter(|w| w.exhausted == Some(true) || w.used.is_some_and(|used| used >= 1.0))
+            .filter(|w| w.rejected == Some(true))
             .map(|w| {
                 let name = w
                     .window
@@ -680,10 +680,10 @@ pub fn quota_windows(log: &Path, rt: &str) -> Vec<(String, Option<i64>)> {
                 (name.to_string(), reset.or(reached))
             })
             .collect();
-        if exhausted.is_empty() && report.reached.is_some() {
+        if rejected.is_empty() && report.reached.is_some() {
             windows.push(("unknown".to_string(), reached));
         }
-        windows.extend(exhausted);
+        windows.extend(rejected);
     }
     windows.sort();
     windows.dedup();
@@ -3272,10 +3272,21 @@ pub(crate) fn native_job_id(id: &str) -> bool {
 struct ClaudeRecords {
     reader: NativeHistory,
     history: Option<agentq_runtime::agent::history::History>,
+    alias: Option<String>,
     pending: std::vec::IntoIter<serde_json::Value>,
 }
 
 impl ClaudeRecords {
+    fn copied_from(&mut self, session: &str) -> Result<(), String> {
+        if self.alias.as_deref() == Some(session) {
+            return Ok(());
+        }
+        if self.history.is_some() || self.alias.is_some() {
+            return Err("Claude copied history binding changed".into());
+        }
+        self.alias = Some(session.into());
+        Ok(())
+    }
     fn read(
         &mut self,
         path: &Path,
@@ -3284,18 +3295,26 @@ impl ClaudeRecords {
         let Self {
             reader,
             history,
+            alias,
             pending,
         } = self;
         reader.lines(path, |line| {
             if pending.len() == 0 {
                 if history.is_none() {
-                    *history = Some(agentq_runtime::agent::history::History::new(
-                        "claude-native",
-                        "worker-history",
-                        path.file_stem()
-                            .and_then(|s| s.to_str())
-                            .ok_or("Claude history session unavailable")?,
-                    )?);
+                    use agentq_runtime::agent::history::History;
+                    let session = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .ok_or("Claude history session unavailable")?;
+                    *history = Some(match alias.as_deref() {
+                        Some(native) => History::with_native_session_alias(
+                            "claude-native",
+                            "worker-history",
+                            session,
+                            native,
+                        )?,
+                        None => History::new("claude-native", "worker-history", session)?,
+                    });
                 }
                 *pending = history.as_mut().unwrap().poll(path)?.events.into_iter();
             }
@@ -3723,6 +3742,9 @@ impl ClaudeTurn {
         } else {
             0
         };
+        if !self.session.is_empty() && session != self.session {
+            self.history.reader.copied_from(&self.session)?;
+        }
         let read = self.history.read(
             &claude_transcript_in(home, &session)?,
             before,

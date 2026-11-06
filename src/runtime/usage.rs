@@ -844,7 +844,12 @@ pub fn fetch(rt: &str, label: &str, ids: &mut Ids) -> Poll {
     let Ok(agent) = super::agent(rt) else {
         return Poll::failed("no usage route");
     };
-    let mut poll = poll_of(agent.account_limits(explicit(rt, home.as_deref()), accounts::now()));
+    let executable = super::which(super::of(rt).bin);
+    let mut poll = poll_of(agent.account_limits_with_executable(
+        explicit(rt, home.as_deref()),
+        Some(&executable),
+        accounts::now(),
+    ));
     poll.id = ids.get(rt, label);
     poll
 }

@@ -97,6 +97,7 @@ fn agent_window(
         resets_at: used.map(|_| (NOW + 3600) as u64),
         event_id: None,
         exhausted: None,
+        rejected: None,
         unknown: unknown.map(String::from),
     }
 }
