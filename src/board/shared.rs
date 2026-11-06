@@ -13,6 +13,7 @@ use std::{
 struct Poll {
     open: Option<github::Open>,
     read: Option<Instant>,
+    history: Option<(Instant, i64, i64)>,
     interval: Option<std::time::Duration>,
     epoch: u64,
     full: u64,
@@ -21,6 +22,7 @@ struct Poll {
 #[derive(Clone, Default)]
 struct Snapshot {
     ready: bool,
+    history_since: Option<i64>,
     rows: BTreeMap<u64, Issue>,
     confirmed: BTreeMap<u64, Issue>,
     clock: i64,
@@ -95,7 +97,11 @@ fn rows(api: &Api, snapshot: Snapshot, since: Option<i64>, tasks: bool) -> Vec<I
 /// A local reader never waits for the network poll or initiates one.
 pub(super) fn snapshot(api: &Api, since: Option<i64>, tasks: bool) -> Result<Vec<Issue>> {
     let shared = inventory(api)?;
-    Ok(rows(api, read(&shared)?, since, tasks))
+    let saved = read(&shared)?;
+    if since.is_some_and(|since| saved.history_since.is_none_or(|floor| since < floor)) {
+        return Err("shared board historical range unavailable".into());
+    }
+    Ok(rows(api, saved, since, tasks))
 }
 pub(super) fn issues(
     board: &github::GitHub,
@@ -127,6 +133,14 @@ pub(super) fn issues(
     let poked = pokes
         .iter()
         .any(|(path, at)| poll.pokes.get(path).is_some_and(|prior| prior != at));
+    let history_interval = interval.min(std::time::Duration::from_secs(
+        crate::incoming::FULL_SCAN as u64,
+    ));
+    let history_due = since.is_some_and(|since| {
+        poll.history.is_none_or(|(at, floor, _)| {
+            since < floor || (!tasks && at.elapsed() >= history_interval)
+        })
+    });
     let epoch = shared.epoch.load(Ordering::Acquire);
     let full = shared.full.load(Ordering::Acquire);
     if poll
@@ -135,6 +149,7 @@ pub(super) fn issues(
         || poll.epoch != epoch
         || poked
         || poll.full != full
+        || history_due
     {
         let began = Instant::now();
         let initial = poll.read.is_none();
@@ -143,25 +158,33 @@ pub(super) fn issues(
         let list = board.poll_open(&mut changes, poll.full != full);
         poll.open = board.open.replace(previous);
         let mut list = list?;
-        if initial {
+        let mut history_since = None;
+        if initial || history_due {
             let clock = if *api.clock.borrow() > 0 {
                 *api.clock.borrow()
             } else {
                 wall()
             };
+            let floor = since.unwrap_or_else(|| clock.saturating_sub(crate::incoming::MONTH));
+            let floor = poll
+                .history
+                .map_or(floor, |(_, _, through)| floor.min(through));
             changes.extend(
                 api.all(&format!(
-                    "/issues?state=all&labels={}&per_page=100&since={}",
-                    crate::service::TASK_LABEL,
-                    stamp(clock.saturating_sub(crate::incoming::MONTH))
+                    "/issues?state=all&per_page=100&since={}",
+                    stamp(floor)
                 ))?
                 .iter()
                 .filter(|v| v.get("pull_request").is_none())
                 .map(github::parse_issue),
             );
+            history_since = Some((floor, clock));
             // Include closed task updates in the unchanged probe's watermark.
             if let Some(open) = poll.open.as_mut() {
-                for issue in &changes {
+                for issue in changes
+                    .iter()
+                    .filter(|i| i.labels.iter().any(|l| l == crate::service::TASK_LABEL))
+                {
                     open.known.insert(issue.number, issue.updated);
                 }
             }
@@ -182,16 +205,35 @@ pub(super) fn issues(
                 *issue = written.clone();
             }
         }
+        for issue in &mut list {
+            if let Some(changed) = changes
+                .iter()
+                .find(|changed| changed.number == issue.number && changed.updated >= issue.updated)
+            {
+                *issue = changed.clone();
+            }
+        }
+        list.retain(|issue| issue.open);
         if let Some(open) = poll.open.as_mut() {
             open.list = list.clone();
         }
         next.rows.retain(|_, issue| !issue.open);
-        for issue in changes.into_iter().chain(list) {
-            next.rows.insert(issue.number, issue);
+        for issue in list.into_iter().chain(changes) {
+            if next
+                .rows
+                .get(&issue.number)
+                .is_none_or(|prior| prior.updated <= issue.updated)
+            {
+                next.rows.insert(issue.number, issue);
+            }
         }
         next.clock = *api.clock.borrow();
         next.listed = poll.open.as_ref().map(|o| o.listed);
         next.ready = true;
+        if let Some((floor, through)) = history_since {
+            next.history_since = Some(next.history_since.map_or(floor, |prior| prior.min(floor)));
+            poll.history = Some((began, next.history_since.unwrap(), through));
+        }
         *saved = next;
         poll.read = Some(began);
         poll.epoch = epoch;
@@ -271,7 +313,7 @@ mod tests {
         api.pokes = Some([root.join(".taskq/poke"), root.join("install-poke")]);
         api.transport = Some(Box::new(move |_, url, _| {
             sent.set(sent.get() + 1);
-            if url.contains("state=all") {
+            if url.contains("sort=updated") {
                 assert!(
                     url.contains("labels=taskq"),
                     "unlabelled heartbeat query: {url}"

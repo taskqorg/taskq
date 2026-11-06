@@ -45,7 +45,18 @@ fn shared_2431_inventory_keeps_changes_and_second_reader_adds_no_request() {
         sent,
         "a second reader adds no issue-list request"
     );
-    assert_eq!(shared::issues(&second, Some(0), true).unwrap().len(), 1);
+    assert_eq!(
+        shared::issues(&second, Some(iso("2026-11-06T00:00:00Z").unwrap()), true)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        shared::snapshot(&second.api, Some(0), false)
+            .unwrap_err()
+            .text()
+            .contains("historical range unavailable")
+    );
     assert_eq!(
         calls.get(),
         sent,
@@ -54,7 +65,8 @@ fn shared_2431_inventory_keeps_changes_and_second_reader_adds_no_request() {
     closed.set(true);
     shared::forget(&first.api, false);
     assert!(shared::issues(&first, None, false).unwrap().is_empty());
-    let changes = shared::issues(&second, Some(0), true).unwrap();
+    let changes =
+        shared::issues(&second, Some(iso("2026-11-06T00:00:00Z").unwrap()), true).unwrap();
     assert_eq!(changes.len(), 1);
     assert!(
         !changes[0].open,
@@ -334,4 +346,125 @@ fn shared_2431_reader_child() {
         "the first connection remains pending when the second finishes"
     );
     drop(silent);
+}
+
+// Chain: #2431 A4/M6: first admissions survive closure, label removal, cache loss and between-poll changes.
+#[test]
+fn shared_2431_first_admission_rebuilds_without_inventing_arrivals() {
+    let base = iso("2026-11-06T00:00:00Z").unwrap();
+    let now = std::rc::Rc::new(std::cell::Cell::new(base + 100));
+    let state = std::rc::Rc::new(std::cell::RefCell::new(vec![json!({
+        "number":5,"title":"held draft","state":"open","author_association":"OWNER",
+        "created_at":stamp(base),"updated_at":stamp(base),"labels":[{"name":"q-held"}]
+    })]));
+    let make = || {
+        let mut api = Api::new(
+            "https://fixture.invalid".into(),
+            format!("https://fixture.invalid/repos/o/{}", crate::runtime::uuid()),
+            "invented",
+        );
+        api.poll = Some(std::time::Duration::ZERO);
+        let (now, state) = (now.clone(), state.clone());
+        api.transport = Some(Box::new(move |_, url, _| {
+            let rows = state.borrow();
+            let body = if url.contains("/events?") {
+                let number = if url.contains("/issues/5/") { 5 } else { 7 };
+                let at = base + if number == 5 { 120 } else { 350 };
+                if rows
+                    .iter()
+                    .find(|r| r["number"] == number)
+                    .is_some_and(|r| r["title"] != "held draft")
+                {
+                    json!([{"id":if number==5 {71}else{99},"event":"labeled","label":{"name":"taskq"},"created_at":stamp(at)}])
+                } else {
+                    json!([])
+                }
+            } else {
+                assert!(url.contains("/issues?"), "unexpected request: {url}");
+                let since = url
+                    .split("since=")
+                    .nth(1)
+                    .and_then(|s| iso(s.split('&').next().unwrap()));
+                json!(
+                    rows.iter()
+                        .filter(|r| {
+                            (!url.contains("state=open") || r["state"] == "open")
+                                && (!url.contains("labels=taskq")
+                                    || r["labels"]
+                                        .as_array()
+                                        .unwrap()
+                                        .iter()
+                                        .any(|l| l["name"] == "taskq"))
+                                && since.is_none_or(|since| {
+                                    iso(r["updated_at"].as_str().unwrap()).unwrap() >= since
+                                })
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>()
+                )
+            };
+            let time = stamp(now.get());
+            Ok(Reply {
+                status: 200,
+                headers: vec![(
+                    "Date".into(),
+                    format!(
+                        "Fri, {} Nov {} {} GMT",
+                        &time[8..10],
+                        &time[0..4],
+                        &time[11..19]
+                    ),
+                )],
+                body: body.to_string(),
+                operation: "read",
+            })
+        }));
+        github::GitHub::new(api)
+    };
+    let board = make();
+    let mut history = crate::incoming::History::default();
+    history.refresh(&board, now.get());
+    assert_eq!(history.json("board")["events"], json!([]));
+    {
+        let mut rows = state.borrow_mut();
+        rows[0]["title"] = json!("admitted then requeued");
+        rows[0]["labels"] = json!([{"name":"taskq"}]);
+        rows[0]["updated_at"] = json!(stamp(base + 120));
+    }
+    now.set(base + 200);
+    history.refresh(&board, now.get());
+    assert_eq!(
+        history.json("board")["events"],
+        json!([[base + 120, "new", "71", 5]])
+    );
+    {
+        let mut rows = state.borrow_mut();
+        rows[0]["state"] = json!("closed");
+        rows[0]["labels"] = json!([]);
+        rows[0]["updated_at"] = json!(stamp(base + 250));
+    }
+    now.set(base + 300);
+    let restarted = make();
+    let mut rebuilt = crate::incoming::History::default();
+    rebuilt.refresh(&restarted, now.get());
+    assert_eq!(
+        rebuilt.json("board")["events"],
+        history.json("board")["events"],
+        "unlabelled closed admission survives both caches being lost"
+    );
+    state.borrow_mut().push(json!({"number":7,"title":"admitted and closed between polls","state":"closed","author_association":"OWNER","created_at":stamp(base+340),"updated_at":stamp(base+350),"labels":[]}));
+    now.set(base + 400);
+    rebuilt.refresh(&restarted, now.get());
+    assert_eq!(
+        rebuilt.json("board")["end"],
+        base + 300,
+        "labelled probes cannot advance full coverage"
+    );
+    now.set(base + 300 + crate::incoming::FULL_SCAN);
+    rebuilt.refresh(&restarted, now.get());
+    assert_eq!(rebuilt.json("board")["end"], now.get());
+    assert_eq!(
+        rebuilt.json("board")["events"],
+        json!([[base + 120, "new", "71", 5], [base + 350, "new", "99", 7]])
+    );
 }
