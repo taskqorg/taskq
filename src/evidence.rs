@@ -337,7 +337,16 @@ fn archival_source(b: &dyn Board, root: &Path, a: &Authorization, source: &Sourc
         return Err("canonical source archive missing or changed".into());
     }
     // No extraction or interpretation of downloaded files; Git reads only its owned objects.
-    let expected = git_bytes(root, &["archive", "--format=zip", &a.candidate])?;
+    let expected = git_bytes(
+        root,
+        &[
+            "-c",
+            "core.autocrlf=false",
+            "archive",
+            "--format=zip",
+            &a.candidate,
+        ],
+    )?;
     let expected = archive_files(&expected, false)?;
     if archive_files(&data, false)? != expected && archive_files(&data, true)? != expected {
         return Err("canonical source archive differs from candidate".into());
@@ -1231,6 +1240,113 @@ mod tests {
             None,
             Some(source),
         )
+    }
+
+    // R12/§7: host autocrlf must not change canonical bytes or weaken file/path refusal.
+    #[test]
+    fn archival_source_ignores_autocrlf_and_preserves_eol_and_file_guards() {
+        let (f, candidate, source) = retained();
+        assert!(retained_authorize(&f, &candidate, source, true, true).ok());
+        let mut a: Authorization =
+            serde_json::from_str(&f.log().last().unwrap().body[PREFIX.len()..]).unwrap();
+        for (name, bytes) in [
+            (
+                ".gitattributes",
+                "crlf.txt text eol=crlf\nlf.txt text eol=lf\n",
+            ),
+            ("plain.txt", "invented plain source\n"),
+            ("crlf.txt", "invented CRLF source\n"),
+            ("lf.txt", "invented LF source\n"),
+        ] {
+            std::fs::write(f.root.join(name), bytes).unwrap();
+        }
+        let commit = || {
+            git(
+                &f.root,
+                &[
+                    "-c",
+                    "core.autocrlf=false",
+                    "add",
+                    ".gitattributes",
+                    "*.txt",
+                ],
+            )
+            .unwrap();
+            git(
+                &f.root,
+                &[
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "commit",
+                    "-qm",
+                    "invented line-ending source",
+                ],
+            )
+            .unwrap();
+            git(&f.root, &["rev-parse", "HEAD"])
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        let candidate = commit();
+        a.candidate = candidate.clone();
+        git(&f.root, &["config", "core.autocrlf", "true"]).unwrap();
+        let archive = |sha: &str, paths: &[&str]| {
+            let mut args = vec![
+                "-c",
+                "core.autocrlf=false",
+                "archive",
+                "--format=zip",
+                "--prefix=canonical/",
+                sha,
+            ];
+            args.extend_from_slice(paths);
+            git_bytes(&f.root, &args).unwrap()
+        };
+        let data = archive(&candidate, &[]);
+        let files = archive_files(&data, true).unwrap();
+        assert_eq!(files["plain.txt"], b"invented plain source\n");
+        assert_eq!(files["lf.txt"], b"invented LF source\n");
+        assert_eq!(files["crlf.txt"], b"invented CRLF source\r\n");
+        let source = Source {
+            url: "https://board.example/source.zip".into(),
+            sha256: hash(&data),
+        };
+        f.b.state.borrow_mut().images[1].1 = data;
+        let config = std::fs::read(f.root.join(".git/config")).unwrap();
+        let status = git(&f.root, &["status", "--porcelain"]).unwrap();
+        archival_source(&f.b, &f.root, &a, &source).unwrap();
+        for fault in ["changed", "missing", "extra"] {
+            let data = match fault {
+                "changed" => {
+                    std::fs::write(f.root.join("plain.txt"), b"invented changed source\n").unwrap();
+                    archive(&commit(), &[])
+                }
+                "missing" => archive(
+                    &candidate,
+                    &[".gitattributes", "candidate.txt", "crlf.txt", "lf.txt"],
+                ),
+                _ => {
+                    std::fs::write(f.root.join("plain.txt"), b"invented plain source\n").unwrap();
+                    std::fs::write(f.root.join("extra.txt"), b"invented extra source\n").unwrap();
+                    archive(&commit(), &[])
+                }
+            };
+            let source = Source {
+                url: "https://board.example/source.zip".into(),
+                sha256: hash(&data),
+            };
+            f.b.state.borrow_mut().images[1].1 = data;
+            assert_eq!(
+                archival_source(&f.b, &f.root, &a, &source).unwrap_err(),
+                "canonical source archive differs from candidate",
+                "{fault}"
+            );
+        }
+        assert_eq!(std::fs::read(f.root.join(".git/config")).unwrap(), config);
+        assert_eq!(git(&f.root, &["status", "--porcelain"]).unwrap(), status);
     }
 
     // §7/R5/R13: retained evidence binds a distinct candidate, creation baseline and source ZIP.
