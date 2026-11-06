@@ -380,6 +380,9 @@ const fs = require("node:fs"),
           }, anchor);
           await retained("expanding Details");
         }
+        const nativeBeforeTarget = await page.evaluate(
+          () => sent.filter((m) => m.action === "transcript").length,
+        );
         await page.evaluate(() =>
           taskq.receive({
             open: {
@@ -395,6 +398,14 @@ const fs = require("node:fs"),
           sent.some((m) => m.action === "history" && m.event === 1),
         );
         await page.locator('[data-event="1"]').waitFor();
+        assert(
+          (await page.evaluate(
+            () => sent.filter((m) => m.action === "transcript").length,
+          )) -
+            nativeBeforeTarget <=
+            1,
+          "an exact board target reads at most the live tail, never scans the worker log",
+        );
         const exact = await page
           .locator('[data-event="1"]')
           .evaluate((n) =>

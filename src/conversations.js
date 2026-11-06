@@ -1294,14 +1294,25 @@ module.exports = execution.module("conversations", {
       edge: function (el, v = view) {
         const log = el.querySelector(".dialogue-transcript");
         if (!log || v.end === null || v.reason || v.busy.initial) return;
+        const boundary = (item) => {
+          const node =
+            item && log.querySelector('[data-key="' + api.key(item) + '"]');
+          return (
+            node?.closest(".dialogue-steps:not([open])") ||
+            node ||
+            log
+          ).getBoundingClientRect();
+        };
         const box = el.getBoundingClientRect(),
-          r = log.getBoundingClientRect(),
+          first = boundary(v.items[0]),
+          last = boundary(v.items.at(-1)),
           margin = el.clientHeight;
         if (
           v.start > 0 &&
           !v.busy.before &&
           v.quiet.before < FILL &&
-          r.top > box.top - margin
+          first.top > box.top - margin &&
+          first.top < box.bottom + margin
         )
           (v === live ? api.workerRead : api.read)("before", {
             before: v.start,
@@ -1310,7 +1321,8 @@ module.exports = execution.module("conversations", {
           v.end < v.size &&
           !v.busy.after &&
           v.quiet.after < FILL &&
-          r.bottom < box.bottom + margin
+          last.bottom < box.bottom + margin &&
+          last.bottom > box.top - margin
         )
           (v === live ? api.workerRead : api.read)("after", { after: v.end });
       },
