@@ -1,3 +1,175 @@
+// Chain: §3 (#2499): native refusal -> recovery card. Risk: access/corruption errors are mistaken for absent history.
+#[test]
+fn recovery_2499_transcript_absence_is_specific() {
+    for reason in [
+        "No such file or directory (os error 2)",
+        "The system cannot find the path specified. (os error 3)",
+        "Codex transcript unavailable",
+    ] {
+        assert!(
+            missing_transcript(&format!("native baseline unavailable: {reason}")),
+            "{reason}"
+        );
+    }
+    for reason in [
+        "Permission denied (os error 13)",
+        "Access is denied. (os error 5)",
+        "invalid JSON",
+        "native read timed out",
+    ] {
+        let text = format!("native baseline unavailable: {reason}");
+        assert!(!missing_transcript(&text), "{reason}");
+        assert!(input_card(7, &text, 2).contains("retry the input"));
+    }
+}
+
+// Chain: §2.10/§3 (#2499): prior failure -> confirmed reboot -> gone -> automatic replacement.
+// Risk: the second gone parks rebooted work, or a replacement duplicates a native execution.
+#[test]
+fn recovery_2499_boot_gone_restarts_without_spending_retry() {
+    let (b, c) = (Fake::default(), cfg("mac"));
+    let n = b.create("Rebooted work", "", &[TASK_LABEL.into()]).unwrap();
+    let old = b.comment(n, "taskq: spawn worker codex:old mac").unwrap();
+    release_execution(&b, n, old, old, "no-start").unwrap();
+    b.comment(n, &core::entry("gone", &[], Some(old), "ordinary failure"))
+        .unwrap();
+    let a = b
+        .comment(n, "taskq: spawn worker codex:session mac")
+        .unwrap();
+    accept_execution(&b, n, a, a, None).unwrap();
+    release_execution_text(
+        &b,
+        n,
+        a,
+        a,
+        "exit",
+        "host booted 2033-05-18 03:33 UTC after intent 1970-01-12 13:46 UTC",
+    )
+    .unwrap();
+    let mut s = service(&b, &c, Default::default());
+    s.pass().unwrap();
+    s.pass().unwrap();
+    assert_eq!(task(&b, n).state, State::Doing);
+    assert_eq!(task(&b, n).retries, 1);
+    assert_ne!(task(&b, n).attempt, Some(a));
+    assert_eq!(s.kids.len(), 1);
+    let log = entries(&b, n).unwrap();
+    let gone = log
+        .iter()
+        .find(|e| e.body.starts_with(&format!("taskq: gone attempt {a}")))
+        .unwrap();
+    assert!(!gone.body.contains("retry limit"));
+    assert!(task(&b, n).card.is_none());
+}
+
+// Chain: §3/§7.2 (#2499): refused resume -> recovery choice -> new attempt, same dirty branch and notes.
+// Risk: missing native history causes endless input retries or loses accepted owner context.
+#[test]
+fn recovery_2499_missing_transcript_offers_fresh_attempt() {
+    for (answer, saved, quota) in [
+        ("1", false, false),
+        ("taskq: answer 1", false, true),
+        ("1", true, false),
+    ] {
+        let (b, mut c) = (Fake::default(), cfg("mac"));
+        let n = b
+            .create("Lost transcript", "", &[TASK_LABEL.into()])
+            .unwrap();
+        let a = b
+            .comment(n, "taskq: spawn worker codex:session mac")
+            .unwrap();
+        c.root = started_root("2499", n, a);
+        let branch = c.root.join(format!(".worktrees/taskq-{n}"));
+        std::fs::create_dir_all(&branch).unwrap();
+        let dirty = branch.join("untracked.txt");
+        std::fs::write(&dirty, "preserve work").unwrap();
+        accept_execution(&b, n, a, a, None).unwrap();
+        release_execution(&b, n, a, a, "exit").unwrap();
+        b.comment(
+            n,
+            &core::entry("ask", &[], Some(a), "Problem: choose\n1. keep the branch ★"),
+        )
+        .unwrap();
+        let accepted = b.comment(n, "taskq: answer 1").unwrap();
+        let note = b
+            .comment(
+                n,
+                &core::entry(
+                    "steer",
+                    if quota { &["quota"] } else { &[] },
+                    quota.then_some(a),
+                    "keep this note",
+                ),
+            )
+            .unwrap();
+        if saved {
+            let execution = b
+                .comment(
+                    n,
+                    &core::entry("executing", &[&note.to_string()], Some(a), ""),
+                )
+                .unwrap();
+            release_execution_text(&b, n, a, execution, "no-start", LOST_TRANSCRIPT).unwrap();
+        }
+        let calls = Rc::new(RefCell::new(0));
+        let seen = calls.clone();
+        let mut s = Service::new(
+            &b,
+            &c,
+            "fixture",
+            Box::new(move |l| {
+                assert!(!saved, "saved no-start must ask without launching");
+                *seen.borrow_mut() += 1;
+                assert!(l.resume.is_some());
+                Err("native baseline unavailable: No such file or directory (os error 2)".into())
+            }),
+        );
+        s.pass().unwrap();
+        s.pass().unwrap();
+        assert_eq!(task(&b, n).state, State::Ask);
+        let card = task(&b, n).card.unwrap();
+        let recommended = core::options(&card).into_iter().find(|o| o.2).unwrap().1;
+        assert!(recommended.starts_with("requeue:"), "{card}");
+        assert!(recommended.contains("existing branch"), "{card}");
+        assert!(!card.contains("retry the input"), "{card}");
+        let attempts = *calls.borrow();
+        s.pass().unwrap();
+        assert_eq!(*calls.borrow(), attempts, "no launch while ask waits");
+        drop(s);
+        b.comment(n, answer).unwrap();
+        let mut fresh = Service::new(
+            &b,
+            &c,
+            "fixture",
+            Box::new(|l| {
+                assert!(
+                    l.resume.is_none(),
+                    "fresh attempt must not replay old input"
+                );
+                Ok(Box::new(FakeProc(Rc::new(RefCell::new(None)))))
+            }),
+        );
+        fresh.focus = vec!["all".into()];
+        fresh.pass().unwrap();
+        fresh.pass().unwrap();
+        assert_eq!(fresh.kids.len(), 1);
+        assert_ne!(task(&b, n).attempt, Some(a));
+        assert_eq!(std::fs::read_to_string(&dirty).unwrap(), "preserve work");
+        let p = core::project(n, &entries(&b, n).unwrap(), false);
+        assert!(p.notes.contains(&accepted) && p.notes.contains(&note));
+        let context = core::task_context(n, "## Goal\nPreserve work", &entries(&b, n).unwrap());
+        assert!(context.contains("keep this note") && context.contains("keep the branch"));
+        assert!(
+            p.executions
+                .iter()
+                .filter(|x| x.attempt == a)
+                .all(|x| x.release.is_some())
+        );
+        drop(fresh);
+        std::fs::remove_dir_all(c.root).unwrap();
+    }
+}
+
 use super::*;
 use crate::board::{Board, Fake, entries};
 use std::cell::RefCell;
@@ -14591,7 +14763,7 @@ fn a_differing_daemon_holds_pinned_claude_work_and_unpinned_work_takes_another_r
         .expect("A2: the heartbeat names the daemon");
     assert_eq!(
         serde_json::from_str::<Value>(line).unwrap(),
-        json!({"bin": "claude", "pid": 77, "reason": "daemon runs under another Seatbelt profile", "tasks": [pinned]})
+        json!({"bin": "claude", "pid": 77, "reason": "daemon runs under another Seatbelt profile", "tasks": [pinned], "moved": [free]})
     );
     let claude = &s.balancing().runtimes["claude"];
     assert_eq!(
@@ -14613,6 +14785,65 @@ fn a_differing_daemon_holds_pinned_claude_work_and_unpinned_work_takes_another_r
     s.pass().unwrap();
     assert_eq!(task(&b, pinned).state, State::Doing);
     assert!(!s.heartbeat_body().contains("daemon-sandbox"));
+    ds::fake(None);
+}
+
+// Chain: R6, § 8 Access, #2494 A1. Risk: a differing daemon moves all unpinned work to another runtime and status stays
+// silent because nothing waits; or the row outlives the wait.
+#[test]
+fn work_moved_off_a_refusing_daemon_stays_named_until_the_wait_ends() {
+    use crate::runtime::daemon_sandbox as ds;
+    let b = Fake::default();
+    let mut c = cfg("mac");
+    c.limits = BTreeMap::from([("claude".to_string(), 2), ("codex".to_string(), 2)]);
+    let moved = b.create("Moved", "", &["taskq".into()]).unwrap();
+    let e: Exits = Default::default();
+    let mut s = service(&b, &c, e.clone());
+    s.seatbelt.insert("claude".into(), Some("grant".into()));
+    ds::fake(Some(daemon_differs()));
+    let row = json!({"bin": "claude", "pid": 77, "reason": "daemon runs under another Seatbelt profile", "tasks": [], "moved": [moved]});
+    let line = |s: &Service| {
+        s.heartbeat_body()
+            .lines()
+            .find_map(|l| l.strip_prefix("daemon-sandbox "))
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+    };
+    s.pass().unwrap();
+    assert_eq!(task(&b, moved).state, State::Doing);
+    assert_eq!(line(&s).as_ref(), Some(&row), "the first pass names it");
+    // Nothing is claimable now, and the wait still lasts.
+    s.pass().unwrap();
+    assert_eq!(line(&s).as_ref(), Some(&row), "a later pass still names it");
+    ds::fake(Some(ds::Fit::None));
+    s.pass().unwrap();
+    assert_eq!(line(&s), None, "the wait ended");
+    ds::fake(None);
+}
+
+// Chain: R6, #2494 A1. Risk: status says a daemon moved work that this host never claimed, because another host took
+// the task or the claim did not land.
+#[test]
+fn work_this_host_did_not_claim_never_reads_as_moved_off_a_daemon() {
+    use crate::runtime::daemon_sandbox as ds;
+    let b = Fake::default();
+    let mut c = cfg("mac");
+    c.limits = BTreeMap::from([("claude".to_string(), 2), ("codex".to_string(), 2)]);
+    let elsewhere = b
+        .create("Elsewhere", "", &["taskq".into(), "host-win".into()])
+        .unwrap();
+    let unclaimed = b.create("Unclaimed", "", &["taskq".into()]).unwrap();
+    let mut s = service(&b, &c, Default::default());
+    s.seatbelt.insert("claude".into(), Some("grant".into()));
+    s.unseen.insert(unclaimed, u64::MAX); // an earlier spawn is still unknown: no new claim
+    ds::fake(Some(daemon_differs()));
+    s.pass().unwrap();
+    assert_eq!(task(&b, elsewhere).state, State::Ready);
+    assert_eq!(task(&b, unclaimed).state, State::Ready);
+    let body = s.heartbeat_body();
+    assert!(
+        !body.lines().any(|l| l.starts_with("daemon-sandbox ")),
+        "{body}"
+    );
     ds::fake(None);
 }
 

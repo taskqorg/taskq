@@ -1065,7 +1065,10 @@ fn act_input(
     } else {
         text
     };
+    let rebooted =
+        kind == "gone" && attempt.is_some_and(|a| core::project(n, &log, false).rebooted(a));
     let text = if !(kind == "requeue" && args == ["main-moved"])
+        && !rebooted
         && attempt.is_some()
         && attempt == before.attempt
     {

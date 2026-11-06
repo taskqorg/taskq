@@ -144,6 +144,17 @@ pub fn parse_status(out: &str) -> Result<Option<u32>, String> {
         .ok_or_else(|| "daemon status unreadable".into())
 }
 
+/// The probe's outcome. Claude answers `not running` with exit 1, so only that exact answer survives a failed exit;
+/// a timeout (no outcome) or any other failed exit cannot verify the daemon (R12).
+pub fn status_of(out: Option<(bool, String)>) -> Result<Option<u32>, String> {
+    let (ok, text) = out.ok_or("daemon status did not answer")?;
+    match parse_status(&text) {
+        Ok(None) => Ok(None),
+        status if ok => status,
+        _ => Err("daemon status exited with failure".into()),
+    }
+}
+
 /// The live daemon of `home` against the job's `profile`. Only macOS has this inheritance.
 pub fn read(rt: &str, home: Option<&Path>, profile: Option<&str>) -> Fit {
     #[cfg(test)]
@@ -166,12 +177,7 @@ pub fn read(rt: &str, home: Option<&Path>, profile: Option<&str>) -> Fit {
         &["daemon", "status"],
         super::accounts::environment(rt, home),
     );
-    fit(
-        out.ok_or_else(|| "daemon status did not answer".to_string())
-            .and_then(|(_, text)| parse_status(&text)),
-        profile,
-        &Native,
-    )
+    fit(status_of(out), profile, &Native)
 }
 
 /// Why a job waits: its daemon's state, or another grant holding that daemon so it can drain. A resume of a live
