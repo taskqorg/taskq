@@ -568,7 +568,11 @@ fn native_worker_survives_service_restart() {
     // The in-memory board is rebuilt identically in both processes; only the native record crosses.
     let b = crate::board::Fake::default();
     let task = b
-        .create("TaskQ Qualification 2448", "", &[crate::service::TASK_LABEL.into()])
+        .create(
+            "TaskQ Qualification 2448",
+            "",
+            &[crate::service::TASK_LABEL.into()],
+        )
         .unwrap();
     let attempt = b
         .comment(task, &format!("taskq: spawn worker {rt}:fixture mac"))
@@ -676,7 +680,10 @@ fn native_worker_survives_service_restart() {
     crate::service_run::adopt(&mut service, &fixture, &root).unwrap();
     assert_eq!(service.kids.len(), 1, "the record must adopt its worker");
     assert_eq!(service.kids[0].execution, attempt);
-    assert_eq!(service.kids[0].proc.id() as u64, saved["pid"].as_u64().unwrap());
+    assert_eq!(
+        service.kids[0].proc.id() as u64,
+        saved["pid"].as_u64().unwrap()
+    );
     let until = Instant::now() + Duration::from_secs(400);
     while !service.kids.is_empty() {
         service.reap_owned();
@@ -692,15 +699,22 @@ fn native_worker_survives_service_restart() {
         .find(|x| x.id == attempt)
         .unwrap();
     let session = native_session(&rt, &log).expect("native session receipt");
-    let page = crate::dialogue::worker_transcript(&format!("{rt}:{session}"), &log, None, None)
-        .unwrap();
+    let page =
+        crate::dialogue::worker_transcript(&format!("{rt}:{session}"), &log, None, None).unwrap();
     let replied = page["items"].as_array().unwrap().iter().any(|item| {
         item["role"] == "assistant" && item["text"].as_str().is_some_and(|t| t.contains(canary))
     });
-    let limits = agent(&rt).unwrap().log_limits(&std::fs::read_to_string(&log).unwrap(), Some(&session), None);
+    let limits = agent(&rt).unwrap().log_limits(
+        &std::fs::read_to_string(&log).unwrap(),
+        Some(&session),
+        None,
+    );
     let verified = serde_json::json!({"runtime":rt,"pid":saved["pid"],"session":session,"accepted":row.accepted,"release":format!("{:?}",row.release),"replied":replied,"log_windows":limits.len()});
     std::fs::write(evidence.join("verified"), verified.to_string()).unwrap();
     assert_eq!(row.release, Some(crate::core::Release::Exit));
-    assert!(replied, "the adopted worker's reply must reach the transcript");
+    assert!(
+        replied,
+        "the adopted worker's reply must reach the transcript"
+    );
     std::fs::remove_file(&log).unwrap();
 }
