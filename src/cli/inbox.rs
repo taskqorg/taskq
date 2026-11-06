@@ -184,7 +184,7 @@ pub(crate) fn closed_row(
             .ok()
             .zip(comments.as_ref().ok())
             .map(|(log, comments)| {
-                snapshot::attempts(&core::project(i.number, log, false), comments, role)
+                snapshot::attempts(&core::project(i.number, log, false), log, comments, role)
             })
     };
     let workers = attempts("worker");

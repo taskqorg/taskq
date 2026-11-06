@@ -14,14 +14,15 @@ pub const SCHEMA: u64 = 1;
 /// A5: accepted spawns include reviewer attempts, which do not change the folded state.
 pub(crate) fn attempts(
     projection: &core::Projection,
+    log: &[core::Entry],
     comments: &[board::Comment],
     role: &str,
 ) -> Vec<Value> {
-    comments
+    log
         .iter()
-        .filter(|c| projection.accepts(c.id))
-        .filter_map(|c| {
-            let mut words = c
+        .filter(|e| projection.accepts(e.id))
+        .filter_map(|e| {
+            let mut words = e
                 .body
                 .lines()
                 .next()?
@@ -32,7 +33,7 @@ pub(crate) fn attempts(
                 return None;
             }
             let session = format!("{} {}", words.next()?, words.next()?);
-            Some(json!({"attempt":c.id,"session":session,"role":role,"started":c.created}))
+            Some(json!({"attempt":e.id,"session":session,"role":role,"started":comments.iter().find(|c|c.id==e.id).map(|c|c.created)}))
         })
         .collect()
 }
@@ -953,8 +954,8 @@ pub fn from_views(
         worker: std::iter::once(&v.projection.task).chain(v.projection.changes.iter().rev().map(|(_,_,t)|t))
             .find(|t|t.role.as_deref()==Some("worker") && t.attempt.is_some() && t.session.is_some())
             .map(|t|json!({"attempt":t.attempt,"session":t.session,"role":"worker"})),
-        workers: attempts(&v.projection, &v.comments, "worker"),
-        reviewers: attempts(&v.projection, &v.comments, "reviewer"),
+        workers: attempts(&v.projection, &v.log, &v.comments, "worker"),
+        reviewers: attempts(&v.projection, &v.log, &v.comments, "reviewer"),
         n: v.issue.number,
         conversation: core::conversation(v.issue.number,&v.log).map(|id| json!({"id":id,"brief":v.issue.body,"verdict":v.projection.changes.iter().rev().find_map(|(id,_,_)|v.log.iter().find(|e|e.id==*id && ["taskq: result ","taskq: close","taskq: publish"].iter().any(|prefix|e.body.starts_with(prefix))).and_then(|e|e.body.split_once('\n').map(|(_,text)|core::verdict(v.issue.number,&v.log,text))))})),
         title: v.issue.title.clone(),
