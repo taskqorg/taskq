@@ -2,7 +2,7 @@
 //! status, and the text only reaches people and logs.
 
 /// The cause of a failed board call; [`Reason::code`] is the wire form `status` shows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Reason {
     /// HTTP 401.
     Unauthorized,
@@ -59,7 +59,7 @@ impl Reason {
 }
 
 /// A failed board call: its reason, the HTTP status when a reply came, and the text for people and logs.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Error {
     reason: Reason,
     status: Option<u16>,

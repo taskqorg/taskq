@@ -48,14 +48,7 @@ fn lagging_lists_do_not_repeat_confirmed_heartbeats() {
             operation: operation(method),
         })
     }));
-    let h = GitHub {
-        api,
-        rules: Default::default(),
-        open: Default::default(),
-        heartbeat: Default::default(),
-        evidence: Default::default(),
-        ci: Default::default(),
-    };
+    let h = GitHub::new(api);
     let mut writes = 0;
     for pass in 0..60 {
         clock.set(start + pass * 60);
@@ -127,14 +120,7 @@ fn repository_access_failure_is_plain() {
                 body: json!({"errors":[{"type":kind,"message":"invented refusal"}]}).to_string(),
             })
         }));
-        let board = GitHub {
-            api,
-            rules: Default::default(),
-            open: Default::default(),
-            heartbeat: Default::default(),
-            evidence: Default::default(),
-            ci: Default::default(),
-        };
+        let board = GitHub::new(api);
         assert!(
             board
                 .open_issues()

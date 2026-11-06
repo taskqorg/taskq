@@ -68,11 +68,13 @@ pub(crate) fn prefetch_comments(c: &Ctx) -> service::CommentCache {
         return Default::default();
     }
     let (cfg, schema) = (&c.cfg, c.raw["label_schema"].as_str());
+    let prefer = crate::board::local::preferred();
     std::thread::scope(|s| {
         let handles: Vec<_> = todo
             .chunks(todo.len().div_ceil(8))
             .map(|part| {
                 s.spawn(move || {
+                    crate::board::local::prefer(prefer);
                     let Ok(b) = cfg.board.open(
                         &cfg.web_host,
                         &cfg.repo,
@@ -286,8 +288,10 @@ pub(crate) fn status_all(a: &Args) -> Res<()> {
     // #2291: projects read in parallel; each block prints in list order
     let timing = a.flags.contains_key("timing");
     let started = std::time::Instant::now();
+    let prefer = crate::board::local::preferred();
     let blocks: Vec<(String, Vec<(&'static str, f64)>)> = std::thread::scope(|s| {
         let handles: Vec<_> = roots.iter().map(|r| s.spawn(move || {
+            crate::board::local::prefer(prefer);
             PROJECT_ROOT.with_borrow_mut(|p| *p = Some(r.clone()));
             let clock = std::time::Instant::now();
             let mut t = vec![];

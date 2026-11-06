@@ -97,6 +97,10 @@ pub fn project(repo: &str) {
     PROJECT.set(Some(if ok { repo } else { "other" }.into()));
 }
 
+pub(crate) fn observation_host() -> Option<String> {
+    HOST.with_borrow(Clone::clone)
+}
+
 pub fn host(name: &str) {
     HOST.set(Some(
         name.chars()
@@ -1586,7 +1590,9 @@ pub fn report(install: &Path) -> String {
     let summary=read().unwrap_or_else(|e| format!("Profile: unknown ({e}); all budgets unknown\n\nBoard operations: unknown ({e})\n\nQueue transitions: unknown ({e})\n\nAttempt stages: unknown ({e})\n\nBoard requests by source: unknown ({e})\n"));
     let actions = crate::telemetry::diagnostic::actions(install, None)
         .unwrap_or_else(|e| format!("Actions: unknown ({e})\n"));
-    format!("{summary}\n{actions}")
+    let requests = crate::requests::observations(install, None)
+        .unwrap_or_else(|e| format!("Board HTTP requests: unknown ({e})\n"));
+    format!("{summary}\n{requests}\n{actions}")
 }
 
 /// § 5 `taskq profile export` columns, in order; every row has each of them, null where its kind has none. A new
@@ -2435,7 +2441,11 @@ pub fn view(install: &Path, name: &str, since: Option<&str>) -> Result<String, S
     let (header, rows) = projection.finish();
     match name {
         "tasks" => render_tasks_rows(&header, &rows).map_err(String::from),
-        "board" => render_board_rows(&header, &rows).map_err(String::from),
+        "board" => Ok(format!(
+            "{}\n{}",
+            render_board_rows(&header, &rows)?,
+            crate::requests::observations(install, since)?
+        )),
         _ => Err(format!(
             "unknown profile view: {name} (guide, export, tasks, board, actions, health or watch)"
         )),

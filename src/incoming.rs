@@ -32,6 +32,7 @@ impl Reader {
         let (request, requests) = std::sync::mpsc::sync_channel(1);
         let (responses, response) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
+            crate::host::enter(&cfg.root, &cfg.install);
             let board = cfg.board.open(
                 &cfg.web_host,
                 &cfg.repo,

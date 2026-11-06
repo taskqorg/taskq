@@ -584,3 +584,72 @@ fn budget_follows_the_lowest_resource() {
 pub(crate) fn sources(text: &str, now_ms: u64) -> String {
     sources_samples(&crate::telemetry::Sample::fixtures(text), now_ms)
 }
+
+// Chain: #2431 A5, R12: completed status owns billing, and unreported products never become zero.
+#[test]
+fn requests_2431_observations_keep_billing_dimensions_and_unknowns() {
+    let first = http_observation(
+        "GET issues/N/comments",
+        Some("owner/repo"),
+        "https://api.github.com",
+        Some(200),
+        Duration::from_millis(1),
+        None,
+    );
+    let unchanged = http_observation(
+        "GET issues/N/comments",
+        Some("owner/repo"),
+        "https://api.github.com",
+        Some(304),
+        Duration::from_millis(1),
+        None,
+    );
+    let missing = http_observation(
+        "GET issues/N/comments",
+        Some("owner/repo"),
+        "https://api.github.com",
+        None,
+        Duration::from_millis(1),
+        Some("network"),
+    );
+    for row in [&first, &unchanged, &missing] {
+        coreq::telemetry::Event::new(row.clone()).unwrap();
+    }
+    assert_eq!(first["counts"]["billed"], 1);
+    assert_eq!(unchanged["counts"]["billed"], 0);
+    assert_eq!(unchanged["counts"]["not_modified"], 1);
+    assert!(missing["counts"]["billed"].is_null());
+    assert_eq!(missing["counts"]["unconfirmed"], 1);
+    let rows = [first, unchanged, missing];
+    let report = render_observations(&rows);
+    let install = std::env::temp_dir().join(format!(
+        "taskq-board-observations-{}",
+        crate::runtime::uuid()
+    ));
+    std::fs::create_dir_all(install.join("telemetry.log")).unwrap();
+    let store =
+        coreq::telemetry::Store::open(&install.join("telemetry.log/universal.sqlite3")).unwrap();
+    store
+        .append(
+            &rows
+                .iter()
+                .cloned()
+                .map(|row| coreq::telemetry::Event::new(row).unwrap())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+    assert_eq!(
+        observations(&install, None).unwrap(),
+        report,
+        "the report reads committed CoreQ observations"
+    );
+    drop(store);
+    std::fs::remove_dir_all(install).unwrap();
+    assert!(report.contains("taskq |"));
+    assert!(
+        report.contains("api.github.com/owner/repo | GET:issues.N.comments | 3 | >=1 | 1 | 1"),
+        "{report}"
+    );
+    assert!(report.contains("Unreported products, hosts and boards: unknown"));
+    assert!(render_observations(&[]).starts_with("Board HTTP requests: unknown"));
+}

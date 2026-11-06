@@ -16,16 +16,7 @@ pub const KIND: Kind = Kind {
     reload_token: true,
     token_env: &["GH_TOKEN", "GITHUB_TOKEN"],
     api,
-    board: |api| {
-        Box::new(GitHub {
-            api,
-            rules: Default::default(),
-            open: Default::default(),
-            heartbeat: Default::default(),
-            evidence: Default::default(),
-            ci: Default::default(),
-        })
-    },
+    board: |api| Box::new(GitHub::new(api)),
 };
 
 pub const TOKEN_ERROR: &str = "GitHub board token missing, empty or unreadable; owner must install it in <install>/token; never run gh auth login";
@@ -55,6 +46,7 @@ fn plan_gap(e: &Error) -> bool {
 const PLAN: &str = "this private repository's GitHub plan has no branch rules or merge queue";
 
 pub struct GitHub {
+    pub(super) shared_listed: std::cell::Cell<Option<i64>>,
     evidence: std::cell::RefCell<Vec<crate::readiness::Publication>>,
     ci: std::cell::RefCell<Option<(String, Option<u64>, Option<u64>)>>,
     pub(super) api: Api,
@@ -65,6 +57,20 @@ pub struct GitHub {
     open: std::cell::RefCell<Option<Open>>,
     /// A confirmed own heartbeat survives lagging list refreshes, scoped to the credential generation.
     heartbeat: std::cell::RefCell<Option<(u64, Issue)>>,
+}
+
+impl GitHub {
+    pub(super) fn new(api: Api) -> Self {
+        Self {
+            api,
+            rules: Default::default(),
+            open: Default::default(),
+            heartbeat: Default::default(),
+            evidence: Default::default(),
+            ci: Default::default(),
+            shared_listed: Default::default(),
+        }
+    }
 }
 
 pub(super) struct Open {
@@ -106,7 +112,7 @@ pub(crate) fn parse_comment(v: &Value) -> Comment {
     }
 }
 
-fn parse_issue(v: &Value) -> Issue {
+pub(super) fn parse_issue(v: &Value) -> Issue {
     Issue {
         number: v["number"].as_u64().unwrap_or(0),
         title: s(v, "title"),
@@ -125,7 +131,7 @@ fn parse_issue(v: &Value) -> Issue {
 /// The open-issue list of a pass in one GraphQL query per 100 issues (§ 4 budget): it costs the separate GraphQL
 /// budget 1 point instead of one core request, and returns no pull requests. Labels are its only nested connection:
 /// assignees would make it 2 points (#1043), so listed issues carry none and callers read `issue(n)` when they need them.
-const OPEN_ISSUES: &str = "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { \
+pub(super) const OPEN_ISSUES: &str = "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { \
     issues(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: DESC}) { pageInfo { hasNextPage endCursor } \
     nodes { number title body updatedAt createdAt authorAssociation labels(first: 50) { nodes { name } } } } } }";
 
@@ -289,7 +295,7 @@ impl GitHub {
         Ok(list)
     }
 
-    fn open_issues(&self) -> Result<Vec<Issue>> {
+    pub(super) fn open_issues(&self) -> Result<Vec<Issue>> {
         let repo = self
             .api
             .base
@@ -1504,10 +1510,14 @@ impl Board for GitHub {
         self.evidence.take()
     }
     fn forget(&self) {
+        super::shared::forget(&self.api);
         *self.open.borrow_mut() = None;
     }
     fn kept(&self) -> Option<i64> {
-        Open::reused_at(&self.open)
+        self.shared_listed
+            .get()
+            .or(self.api.proxy_listed.get())
+            .or_else(|| Open::reused_at(&self.open))
     }
     fn merge_ci_green(&self, sha: &str) -> Result<()> {
         Ok(self.merge_ci(sha)?.map(|_| ())?)
@@ -1636,6 +1646,12 @@ impl Board for GitHub {
     }
 
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> {
+        if let Some(result) = super::local::issues(&self.api, since, false) {
+            return result;
+        }
+        if self.api.poll.is_some() {
+            return super::shared::issues(self, since, false);
+        }
         let url = match since {
             Some(t) => format!("/issues?state=all&per_page=100&since={}", stamp(t)),
             None if self.api.root == "https://api.github.com" => return self.open_unchanged(),
@@ -1651,6 +1667,12 @@ impl Board for GitHub {
     }
 
     fn tasks(&self, since: i64) -> Result<Vec<Issue>> {
+        if let Some(result) = super::local::issues(&self.api, Some(since), true) {
+            return result;
+        }
+        if self.api.poll.is_some() {
+            return super::shared::issues(self, Some(since), true);
+        }
         let url = format!(
             "/issues?state=all&labels={}&per_page=100&since={}",
             crate::service::TASK_LABEL,

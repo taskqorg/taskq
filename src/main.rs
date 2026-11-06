@@ -174,6 +174,7 @@ fn run(argv: &[String]) -> Res<()> {
     }
     a.read_text(&mut std::io::stdin().lock())?;
     let cmd = a.pos.first().map(String::as_str).unwrap_or("");
+    board::local::prefer(matches!(cmd, "status" | "start" | "doctor"));
     if std::env::var_os("TASKQ_ROOT").is_some() {
         find_root()?; // § 5: a stale TASKQ_ROOT refuses every command, not only those that read the project
     }
