@@ -1499,6 +1499,115 @@ fn installation_receipt_survives_cursor_removal_and_rejects_missing_phase_proof(
     fs::remove_dir_all(install.parent().unwrap()).unwrap();
 }
 
+// #2495: a cursor gone before its terminal record left `queued` and a wake failure in status, pinned forever.
+#[test]
+fn orphaned_receipt_ends_failed_while_any_owning_cursor_keeps_it() {
+    let (install, root, paths) = fixture();
+    let baseline = snapshot(&install, vec![root.clone()], paths.clone()).unwrap();
+    assert_eq!(
+        installation_status(&install, None),
+        json!({"state":"none"}),
+        "no install was asked about and none is retained"
+    );
+    assert_eq!(
+        installation_status(&install, Some("invented-absent"))["state"],
+        "unknown",
+        "a requested ID without a receipt stays unknown"
+    );
+    let (capture, guard) = crate::profile::tests::collecting(&install);
+    let span = tracing::info_span!("host.install");
+    let entered = span.enter();
+    let mut p = Pending {
+        schema: 1,
+        id: "invented-orphan-receipt".into(),
+        baseline,
+        root: root.clone(),
+        version: crate::platform::VERSION.into(),
+        candidate: "a".repeat(64),
+        original: None,
+        next: format!("{}\n", root.display()),
+        phase: "initial".into(),
+        restore: false,
+        attach: true,
+        owner: None,
+        command: CommandReceipt::current().unwrap().encode(),
+        activation: None,
+    };
+    save(&install, &p).unwrap();
+    receive_initial(&install, &mut p).unwrap();
+    let old = "service wake failed (wake-lock: Incorrect function. (os error 1)); check service status";
+    retain_reason(&install, &p, old).unwrap();
+
+    // Every cursor form that may own the receipt keeps it queued.
+    assert!(retire_orphans(&install).unwrap().is_empty());
+    fs::rename(
+        install.join(INSTALL_PENDING),
+        install.join(UPGRADE_INTENT),
+    )
+    .unwrap();
+    assert!(
+        retire_orphans(&install).unwrap().is_empty(),
+        "an upgrade intent owns its receipt"
+    );
+    fs::write(install.join(UPGRADE_INTENT), "not a cursor").unwrap();
+    assert!(
+        retire_orphans(&install).unwrap().is_empty(),
+        "an unreadable cursor is unknown ownership, not absence"
+    );
+    let live = installation_status(&install, Some(&p.id));
+    assert_eq!(live["state"], "queued");
+    assert_eq!(live["reason"], old);
+
+    fs::remove_file(install.join(UPGRADE_INTENT)).unwrap();
+    let saved_at = crate::resources::with(&install, |state| Ok(state.ops[&p.id].saved_at)).unwrap();
+    assert_eq!(retire_orphans(&install).unwrap(), vec![p.id.clone()]);
+    let retired = installation_status(&install, None);
+    assert_eq!(retired["state"], "failed", "{retired}");
+    assert!(retired["failed_receipt"].is_string(), "{retired}");
+    let reason = retired["reason"].as_str().unwrap();
+    assert!(reason.contains("repeat service install"), "{reason}");
+    assert!(reason.contains("last: service wake failed"), "{reason}");
+    assert_eq!(
+        crate::cli::service_cmd::install_rows(&retired),
+        vec![
+            format!("Install: {} failed", p.id),
+            format!("Install: failed ({reason})"),
+        ],
+        "a known outcome does not read as unknown"
+    );
+    assert!(
+        crate::cli::service_cmd::install_rows(&json!({"state":"none"})).is_empty(),
+        "no retained receipt prints no install row"
+    );
+    assert_eq!(
+        crate::cli::service_cmd::install_rows(&json!({"state":"unknown","reason":"why"})),
+        vec!["Install: unknown (why)"],
+        "true unknown stays unknown"
+    );
+    assert!(
+        retire_orphans(&install).unwrap().is_empty(),
+        "a terminal receipt cannot end twice"
+    );
+    assert_eq!(
+        crate::resources::with(&install, |state| Ok(state.ops[&p.id].saved_at)).unwrap(),
+        saved_at,
+        "the old command keeps its observation time and cannot shadow a newer one"
+    );
+    // The terminal state ends the pin: the normal retention now removes the receipt.
+    let later = wall().unwrap() + 25 * 3600;
+    fs::write(install.join("projects"), &p.next).unwrap();
+    crate::resources::with(&install, |state| {
+        crate::resources::prepare(state, &install, later)
+    })
+    .unwrap();
+    assert_eq!(installation_status(&install, None)["state"], "none");
+    drop(entered);
+    drop(span);
+    drop(guard);
+    drop(capture);
+    fs::remove_dir_all(install.parent().unwrap()).unwrap();
+}
+
 // H-A5 model: caller/host observers race after registry commit; only the original command may complete.
 #[test]
 fn detached_install_observers_share_one_acknowledgement_and_cannot_create_a_command() {

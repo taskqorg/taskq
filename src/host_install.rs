@@ -324,9 +324,74 @@ pub fn installation_status(install: &Path, id: Option<&str>) -> Value {
                 }
                 latest
             };
-        let Some(op)=op else {return Ok(json!({"state":"unknown","reason":"no retained installation receipt"}));};
+        let Some(op)=op else {
+            // Nothing was asked about and nothing is retained: no installation to report, not an unknown one.
+            return Ok(if id.is_some() {json!({"state":"unknown","reason":"no retained installation receipt"})} else {json!({"state":"none"})});
+        };
         Ok(checked_receipt(op).cloned().unwrap_or_else(|reason|json!({"id":op.bound["local_install"]["id"],"action":"install","state":"unknown","reason":reason})))
     }).unwrap_or_else(|reason|json!({"state":"unknown","reason":reason}))
+}
+
+/// Whether a cursor may still own this receipt. Intent is read before its successor, which is saved before the
+/// intent goes, and an unreadable cursor keeps the receipt: its binding is unknown, not absent.
+fn cursor_holds(install: &Path, id: &str) -> Res<bool> {
+    let publishing = format!("{INSTALL_PENDING}.pending");
+    for name in [UPGRADE_INTENT, publishing.as_str(), INSTALL_PENDING] {
+        let path = install.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {
+                if read_cursor(install, &path).map_or(true, |p| p.id == id) {
+                    return Ok(true);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(false)
+}
+
+/// #2495: a cursor commits before its receipt and leaves only after a terminal record, both ordered by the resources
+/// lock held here, so a queued or applied receipt without its cursor has no owner left and would stay pinned forever.
+/// It fails with its last reason and the next action; its old observation time cannot shadow a newer command.
+pub(super) fn retire_orphans(install: &Path) -> Res<Vec<String>> {
+    crate::resources::within(install, crate::resources::WAIT, |state| {
+        let mut retired = Vec::new();
+        for (id, op) in &mut state.ops {
+            if op.bound.get("local_install").is_none() {
+                continue;
+            }
+            // A corrupt receipt keeps its evidence and reads unknown.
+            let Ok(receipt) = checked_receipt(op) else {
+                continue;
+            };
+            if !matches!(receipt["state"].as_str(), Some("queued" | "applied"))
+                || cursor_holds(install, id)?
+            {
+                continue;
+            }
+            let root = receipt["root"].as_str().unwrap_or("its root");
+            let reason = match receipt["reason"].as_str() {
+                Some(last) => format!(
+                    "installation ended without its cursor; repeat service install for {root} (last: {last})"
+                ),
+                None => {
+                    format!("installation ended without its cursor; repeat service install for {root}")
+                }
+            };
+            let command = CommandReceipt::decode(
+                op.bound["local_install"]["command"]
+                    .as_str()
+                    .ok_or("installation command missing")?,
+            )?;
+            op.receipt["failed_receipt"] = json!(crate::telemetry::receipt(&command, "failed")?);
+            op.receipt["state"] = json!("failed");
+            op.receipt["reason"] = json!(crate::cli::text::compact(&reason, 256));
+            op.expires_at = wall()?;
+            retired.push(id.clone());
+        }
+        Ok(retired)
+    })
 }
 
 pub(super) fn registered_projects(install: &Path) -> Res<Option<String>> {
