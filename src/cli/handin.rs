@@ -15,6 +15,10 @@ pub(crate) fn ask_cmd(c: &Ctx, a: &Args, op: &Op) -> Res<()> {
     let (b, root) = (c.board.as_ref(), c.cfg.root.as_path());
     let json = a.flags.contains_key("json");
     let n = a.num(1)?;
+    let actor = a.one("actor");
+    if actor.is_some_and(|actor| !crate::waits::actor(actor)) {
+        return Err("--actor must be owner or pm".into());
+    }
     let (links, images, files) = (a.all("link"), a.all("image"), a.all("file"));
     if links
         .iter()
@@ -45,7 +49,19 @@ pub(crate) fn ask_cmd(c: &Ctx, a: &Args, op: &Op) -> Res<()> {
         ]
         .concat(),
     )?;
-    respond(a, &[act(b, root, n, "ask", &[], &body, op)], json)
+    respond(
+        a,
+        &[act(
+            b,
+            root,
+            n,
+            "ask",
+            &actor.into_iter().collect::<Vec<_>>(),
+            &body,
+            op,
+        )],
+        json,
+    )
 }
 
 /// `result`: validates the text and its files before any upload, then posts the result for the SHA.

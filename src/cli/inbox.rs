@@ -93,9 +93,23 @@ pub(crate) fn inbox_json(b: &dyn Board, root: &Path, me: &str, n: u64) -> Res<Va
         .iter()
         .max_by_key(|e| e.id)
         .map(|e| json!({"id": e.id, "at": at(e.id).map(|c| c.created)}));
+    let deps = if let Some(w) = &t.wait {
+        format!("Depends on {}", w.blocker)
+    } else if t.state == State::Waiting {
+        core::dep_body(&issue.body, t)
+    } else {
+        String::new()
+    };
+    let action = crate::waits::action(
+        t,
+        n,
+        p.revision,
+        &service::blockers(b, &deps, None, &mut Default::default()),
+    );
     Ok(
         json!({"schema": 1, "task": n, "title": issue.title, "url": b.url(n), "open": issue.open, "state": t.state.name(), "revision": p.revision,
-        "source_readiness": readiness::source(n,&b.url(n),&log), "card": t.card, "result": t.result, "attempt": attempt, "last": last, "answers": answers}),
+        "source_readiness": readiness::source(n,&b.url(n),&log), "action":action,
+        "card": t.card, "result": t.result, "attempt": attempt, "last": last, "answers": answers}),
     )
 }
 

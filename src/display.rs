@@ -263,15 +263,21 @@ pub fn model(ps: &mut [Value], now: i64) -> Value {
         for (j, t) in ts.iter_mut().enumerate() {
             let key = format!("{b}/{}", t["n"]);
             t["key"] = json!(key);
-            t["state_name"] = json!(if t["state"] == "review"
-                && t["enqueued"].as_str().is_some_and(|id| !id.is_empty())
-            {
-                "merge queue · CI"
-            } else {
-                name(t["state"].as_str().unwrap_or(""))
-            });
+            t["state_name"] = json!(
+                if t["action"]["actor"] == "dependency" && t["state"] == "ask" {
+                    "Blocked"
+                } else if t["action"]["actor"] == "pm" && t["state"] == "ask" {
+                    "PM action"
+                } else if t["state"] == "review"
+                    && t["enqueued"].as_str().is_some_and(|id| !id.is_empty())
+                {
+                    "merge queue · CI"
+                } else {
+                    name(t["state"].as_str().unwrap_or(""))
+                }
+            );
             t["age"] = json!(elapsed(&t["since"], None));
-            t["total_age"] = json!(elapsed(&t["created"], None));
+            t["total_age"] = json!(elapsed(&t["timing"]["first"], None));
             for s in t["steps"].as_array_mut().into_iter().flatten() {
                 let end = s["end"].as_i64();
                 s["age"] = json!(if s["end"].is_null() || end.is_some() {

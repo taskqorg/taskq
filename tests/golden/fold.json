@@ -1,4 +1,18 @@
 [
+  {"name":"review card classification retains the result", "entries":[
+    {"id":10,"body":"taskq: spawn worker codex:s invented"},
+    {"id":11,"body":"taskq: result aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa attempt 10\n1. owner choice"},
+    {"id":12,"body":"taskq: classify owner"}
+  ],"expect":{"state":"review","result":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","card":"1. owner choice","action_owner":"owner"}},
+  {"name":"PM classification and evidence wait preserve the suspended question", "entries":[
+    {"id":10,"body":"taskq: spawn worker codex:s invented"},
+    {"id":11,"body":"taskq: ask attempt 10\nProblem: evidence required"},
+    {"id":12,"body":"taskq: classify pm"},
+    {"id":13,"body":"taskq: wait evidence #2463"},
+    {"id":14,"body":"taskq: answer 1"},
+    {"id":15,"body":"taskq: wait-ready 12"},
+    {"id":16,"body":"taskq: wait-ready 13 2463.42\nEvidence source: invented immutable proof"}
+  ],"expect":{"state":"ask","attempt":10,"role":"worker","session":"codex:s invented","card":"Problem: evidence required","action_owner":"pm","inbox":[16]}},
   {"name": "host placement audits preserve an active attempt", "entries": [
    {"id": 10, "body": "taskq: spawn worker codex:s1 invented"},
    {"id": 11, "body": "taskq: host-unpin\nhost-unpin-op: invented"},

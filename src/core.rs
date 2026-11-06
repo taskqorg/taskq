@@ -210,6 +210,13 @@ impl Gate {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskWait {
+    pub id: u64,
+    pub kind: String,
+    pub blocker: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Task {
     pub state: State,
@@ -238,6 +245,10 @@ pub struct Task {
     /// Finished stages (§ 2 Stages): the last accepted `later` entry's `Stages:` line, sorted by number; kept until the next one.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub stages: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait: Option<TaskWait>,
 }
 
 /// The issue text whose `Depends on` lines keep `t` waiting (§ 1): `body` plus a worker park's blocker (§ 2).
@@ -682,6 +693,8 @@ fn has_options(s: &str) -> bool {
 }
 
 fn end(t: &mut Task) {
+    t.action_owner = None;
+    t.wait = None;
     t.attempt = None;
     t.role = None;
     t.session = None;
@@ -968,7 +981,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             if t != before || note {
                 last = e.id;
                 accepted.push(e.id);
-                if note || l.kind == "answer" {
+                if note || matches!(l.kind, "answer" | "wait-ready") {
                     notes.push(e.id);
                 }
                 if l.kind == "answer" {
@@ -1149,8 +1162,52 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         }
         (Doing | Review, "ask", true) => {
             t.card = text(l.text);
+            t.action_owner = l
+                .args
+                .first()
+                .filter(|a| crate::waits::actor(a))
+                .map(|a| a.to_string());
+            t.wait = None;
             *resume = Some(t.state);
             t.state = Ask;
+        }
+        (Ask | Review, "classify", false)
+            if t.card.is_some()
+                && t.wait.is_none()
+                && l.args.len() == 1
+                && crate::waits::actor(l.args[0]) =>
+        {
+            t.action_owner = Some(l.args[0].into());
+        }
+        (Ask, "wait", false)
+            if t.wait.is_none()
+                && l.args.len() == 2
+                && matches!(l.args[0], "evidence" | "completion")
+                && blocker_ref(l.args[1]) =>
+        {
+            t.wait = Some(TaskWait {
+                id,
+                kind: l.args[0].into(),
+                blocker: l.args[1].into(),
+            });
+        }
+        (Ask, "wait-ready", false)
+            if t.wait.as_ref().is_some_and(|w| {
+                l.args.first().and_then(|s| s.parse::<u64>().ok()) == Some(w.id)
+            }) =>
+        {
+            let publication =
+                t.wait.as_ref().is_some_and(|w| w.kind == "completion") && t.publication.is_some();
+            t.wait = None;
+            t.action_owner = Some("pm".into());
+            if publication {
+                t.state = resume.take().unwrap_or(Review);
+                t.card = None;
+                t.action_owner = None;
+            }
+            if t.attempt.is_some() && !l.text.is_empty() {
+                t.inbox.push(id);
+            }
         }
         (Review, "publish", _)
             if t.publication.is_none()
@@ -1180,6 +1237,16 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         }
         (Review, "publication-blocked", false) if t.publication.is_some() && !l.text.is_empty() => {
             t.card = text(l.text);
+            t.action_owner = None;
+            t.wait = if l.args.len() == 2 && l.args[0] == "completion" && blocker_ref(l.args[1]) {
+                Some(TaskWait {
+                    id,
+                    kind: "completion".into(),
+                    blocker: l.args[1].into(),
+                })
+            } else {
+                None
+            };
             *resume = Some(Review);
             t.state = Ask;
         }
@@ -1228,7 +1295,8 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
             }
         }
         (Ask, "answer", _)
-            if !l.bare || pick(t.card.as_deref().unwrap_or(""), l.args[0]).is_some() =>
+            if t.wait.is_none()
+                && (!l.bare || pick(t.card.as_deref().unwrap_or(""), l.args[0]).is_some()) =>
         {
             if !own {
                 let card = t.card.as_deref().unwrap_or("");
@@ -1247,6 +1315,7 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
                 }
             }
             t.retries = 0;
+            t.action_owner = None;
             t.card = None;
             match resume.take() {
                 Some(s) => {
