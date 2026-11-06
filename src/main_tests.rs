@@ -5834,6 +5834,23 @@ fn schema_errors(schema: &Value, v: &Value, at: &str, out: &mut Vec<String>) {
     }
 }
 
+// Release shots: each release opened one more draft PR and 13 piled up. Risk: the close step misses them, or reaches a
+// PR that is not an earlier shots PR of this repo. Protection: the guards stay on the close step.
+#[test]
+fn shots_workflow_closes_only_earlier_shots_prs() {
+    let shots = include_str!("../.github/workflows/shots.yml");
+    let close = &shots[shots.find("gh pr list").expect("close step")..];
+    for guard in [
+        ".number < ${url##*/}",
+        "isCrossRepository | not",
+        r#"startswith(\"taskq-shots-\")"#,
+        r#"startswith(\"Refresh README screenshots\")"#,
+        "gh pr close \"$old\" --delete-branch",
+    ] {
+        assert!(close.contains(guard), "{guard}");
+    }
+}
+
 // Chain: § 5 status --json schema -> released snapshot schema and fixtures (#2014). Risk: consumers read a contract the output no longer meets.
 #[test]
 fn status_json_meets_the_released_snapshot_schema() {
