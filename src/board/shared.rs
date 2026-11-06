@@ -203,7 +203,19 @@ pub(super) fn issues(
                 })
                 .collect();
             for prior in missing {
-                let observed = match board.issue(prior.number) {
+                let observed = api
+                    .call("GET", &format!("/issues/{}", prior.number), None)
+                    .and_then(|reply| {
+                        let value = reply.json()?;
+                        if !matches!(value["state"].as_str(), Some("open" | "closed")) {
+                            return Err(Error::new(
+                                Reason::Invalid,
+                                "direct issue state unavailable",
+                            ));
+                        }
+                        Ok(github::parse_issue(&value))
+                    });
+                let observed = match observed {
                     Ok(issue)
                         if issue.number == prior.number
                             && issue.updated >= prior.updated

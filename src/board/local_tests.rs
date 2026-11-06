@@ -475,7 +475,7 @@ fn shared_2431_first_admission_rebuilds_without_inventing_arrivals() {
 fn shared_2431_reopen_survives_an_unchanged_poll() {
     for initially_open in [true, false] {
         for stale_present in [true, false] {
-            for final_read in ["closed", "deleted", "unreadable", "stale"] {
+            for final_read in ["closed", "deleted", "unreadable", "stale", "invalid"] {
                 let base = iso("2026-11-06T00:00:00Z").unwrap();
                 let stage = std::rc::Rc::new(std::cell::Cell::new(0));
                 let lists = std::rc::Rc::new(std::cell::Cell::new(0));
@@ -497,6 +497,11 @@ fn shared_2431_reopen_survives_an_unchanged_poll() {
                                 "deleted" => return Err(Error::http(404, "not found")),
                                 "unreadable" => return Err(Error::http(403, "refused")),
                                 "stale" => row(true, 100),
+                                "invalid" => {
+                                    let mut invalid = row(true, 500);
+                                    invalid["state"] = Value::Null;
+                                    invalid
+                                }
                                 _ => row(false, 500),
                             }
                         } else {
@@ -585,7 +590,7 @@ fn shared_2431_reopen_survives_an_unchanged_poll() {
                 stage.set(5);
                 shared::forget(&board.api, true);
                 let result = board.issues(None);
-                if matches!(final_read, "unreadable" | "stale") {
+                if matches!(final_read, "unreadable" | "stale" | "invalid") {
                     assert!(
                         result
                             .unwrap_err()
