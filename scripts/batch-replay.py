@@ -17,6 +17,10 @@ import tempfile
 import time
 
 
+# docs/testing.md: every replay execution is deliberate; a stored receipt never qualifies one.
+REPLAY_REASON = 'batch replay executes each input'
+
+
 class Refusal(ValueError):
     pass
 
@@ -343,7 +347,7 @@ def bundle_proof(source, repo, manifest, receipts, identity, prepared, started):
               'producer_revision': manifest['producer_revision'],
               'producer_executable_sha256': manifest['producer_executable_sha256'],
               'bundle_sha256': store(receipts, bundle.read_bytes()),
-              'gate_command': ['python3', 'scripts/check.py', '--full'],
+              'gate_command': ['python3', 'scripts/check.py', '--full', '--reason', REPLAY_REASON],
               'members': [{k: m[k] for k in ('task', 'pr', 'attempt', 'result_entry', 'result_sha',
                                            'original_pr_base', 'ci')} for m in members],
               'publication': 'none', 'runtime_qualification': 'none'}
@@ -395,7 +399,7 @@ def checker(repo, receipts, identity, prepared, runner=None):
     """
     base, original_gate, replay_id = prepared['base'], prepared['original_gate'], prepared['replay']
     command = (getattr(runner, 'command', ['synthetic callback', identity['synthetic_gate_tool']])
-               if runner is not None else [sys.executable, 'scripts/check.py', '--full'])
+               if runner is not None else [sys.executable, 'scripts/check.py', '--full', '--reason', REPLAY_REASON])
     cache = {}
 
     def check(subset):

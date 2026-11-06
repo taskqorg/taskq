@@ -10562,7 +10562,11 @@ fn balancing_spillover_uses_effective_primary_availability() {
         "corrupt",
         "stale",
         "none",
-        "grace",
+        "grace-free",
+        "grace-unknown",
+        "spacing",
+        "spacing-grace",
+        "full-grace",
         "pinned",
         "capability",
         "fenced",
@@ -10606,7 +10610,18 @@ fn balancing_spillover_uses_effective_primary_availability() {
                 ..GATE_DEFAULT
             });
         }
-        if matches!(scenario, "full" | "one-free" | "all-full") {
+        if matches!(scenario, "spacing" | "spacing-grace") {
+            // A real open gate inside its 30 s launch interval, as the primary publishes it.
+            p.gate.configure(GateCfg {
+                enabled: true,
+                ..GATE_DEFAULT
+            });
+            p.gate.last = Some((p.mono, 0, Some(1.0), Some(90.0)));
+            p.gate.open = true;
+            p.gate.launch(p.mono);
+            assert!(p.heartbeat_body().contains("launch-interval"));
+        }
+        if matches!(scenario, "full" | "one-free" | "all-full" | "full-grace") {
             p.reserved.push((99, 99, "claude".into()));
         }
         if scenario != "none" {
@@ -10620,7 +10635,7 @@ fn balancing_spillover_uses_effective_primary_availability() {
             let hb = b
                 .create("taskq host win", &body, &[HOST_LABEL.into()])
                 .unwrap();
-            if scenario == "stale" {
+            if matches!(scenario, "stale" | "grace-unknown") {
                 b.state
                     .borrow_mut()
                     .issues
@@ -10662,13 +10677,19 @@ fn balancing_spillover_uses_effective_primary_availability() {
         }
         let mut c = cfg("mac");
         c.claim = crate::host::ClaimMode::Spillover;
-        c.spillover_grace = if scenario == "grace" { 0 } else { 300 };
+        c.spillover_grace = if scenario.contains("grace") { 0 } else { 300 };
         c.has.push("special".into());
         let mut s = service(&b, &c, Default::default());
         s.pass().unwrap();
         let expected = matches!(
             scenario,
-            "full" | "quota" | "grace" | "pinned" | "capability" | "all-full"
+            "full"
+                | "quota"
+                | "grace-unknown"
+                | "full-grace"
+                | "pinned"
+                | "capability"
+                | "all-full"
         );
         assert_eq!(
             task(&b, n).state == State::Doing,
@@ -10720,6 +10741,26 @@ fn balancing_spillover_uses_effective_primary_availability() {
             "{scenario}"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+// Every wording a primary publishes for temporary launch spacing is waiting; real holds stay exhaustion.
+#[test]
+fn balancing_launch_spacing_is_waiting_not_exhaustion() {
+    for waiting in [
+        "launch-interval: launch interval",
+        "host load gate: 30 s launch spacing (12 s remaining)",
+        "host launched 12 s ago",
+        "no load sample since the last host launch",
+    ] {
+        assert!(launch_spacing(waiting), "{waiting}");
+    }
+    for exhausted in [
+        "cpu: CPU 95 % >= 80 %",
+        "host at its maximum of 2 sessions",
+        "claude at capacity",
+    ] {
+        assert!(!launch_spacing(exhausted), "{exhausted}");
     }
 }
 
@@ -14792,4 +14833,107 @@ fn host_unpin_keeps_the_running_executor_and_lease() {
             .any(|(task, id, _)| *task == n && *id == attempt)
     );
     assert!(!b.issue(n).unwrap().labels.contains(&"host-mac".into()));
+}
+
+// Chain: § 3 Disk guard -> claim, resume and reviewer launch -> status and heartbeat (#2492 A1, A2). Risk: full disks
+// kill new reviewers and builds, a held launch loses its inbox, or the guard stops or deletes running work.
+// Protection: below the threshold and on an unknown reading nothing new starts with the load gate off; the running
+// child, the lease and every file stay; at the threshold everything held starts.
+#[test]
+fn disk_guard_holds_new_attempts_keeps_running_ones_and_recovers_at_the_threshold() {
+    use crate::disk::{Disk, MIN_FREE};
+    let b = Fake::default();
+    let (asking, running) = (
+        b.create("A", "", &["taskq".into()]).unwrap(),
+        b.create("R", "", &["taskq".into()]).unwrap(),
+    );
+    let stays = b.create("S", "", &["taskq".into()]).unwrap();
+    let mut c = cfg("mac");
+    c.limits.insert("claude".into(), 9);
+    let e: Exits = Default::default();
+    let mut s = service(&b, &c, e.clone());
+    s.disk = Some(Disk::Free(MIN_FREE));
+    s.pass().unwrap();
+    assert_eq!(e.borrow().len(), 3, "at the threshold all claims start");
+    let a = task(&b, asking).attempt.unwrap();
+    let r = task(&b, running).attempt.unwrap();
+    let new = b.create("N", "", &["taskq".into()]).unwrap();
+    b.comment(
+        asking,
+        &core::entry("ask", &[], Some(a), "Which?\n1. x\n2. y ★"),
+    )
+    .unwrap();
+    *e.borrow()[0].1.borrow_mut() = Some(0);
+    b.comment(
+        running,
+        &core::entry(
+            "result",
+            &["356b3e3f016c96ff237ca11071c611d9fd7222cd"],
+            Some(r),
+            "Changed: x\nChecks: y\nOpen: none",
+        ),
+    )
+    .unwrap();
+    *e.borrow()[1].1.borrow_mut() = Some(0);
+    s.disk = Some(Disk::Free(MIN_FREE - 1));
+    s.pass().unwrap();
+    b.comment(asking, &core::entry("answer", &["1"], None, "x"))
+        .unwrap();
+    for (disk, gate) in [
+        (Disk::Free(MIN_FREE - 1), "held"),
+        (Disk::Unknown, "unknown"),
+    ] {
+        s.disk = Some(disk);
+        s.pass().unwrap();
+        assert_eq!(
+            e.borrow().len(),
+            3,
+            "no resume, reviewer or claim: {disk:?}"
+        );
+        assert!(
+            s.kids.iter().any(|k| k.task == stays) && e.borrow()[2].1.borrow().is_none(),
+            "the running child continues"
+        );
+        assert_eq!(task(&b, new).state, State::Ready);
+        assert!(b.comments(new).unwrap().is_empty(), "no spawn written");
+        assert!(
+            !b.comments(running)
+                .unwrap()
+                .iter()
+                .any(|l| l.body.starts_with("taskq: spawn reviewer")),
+            "no reviewer written"
+        );
+        let capacity = s.capacity_json();
+        assert_eq!(capacity["gate"], gate);
+        assert_eq!(capacity["reasons"][0]["code"], "disk", "{capacity}");
+        let hb = b.issues(None).unwrap().into_iter().find(is_host).unwrap();
+        assert!(
+            hb.body.lines().any(|l| l == format!("#{asking} {a}")),
+            "held resume keeps its lease: {}",
+            hb.body
+        );
+    }
+    s.disk = Some(Disk::Free(MIN_FREE));
+    s.pass().unwrap();
+    assert_eq!(s.capacity_json()["disk_free_bytes"], MIN_FREE);
+    assert!(e.borrow().len() > 3, "space back: held launches start");
+    for _ in 0..3 {
+        s.pass().unwrap();
+    }
+    assert_ne!(task(&b, new).state, State::Ready, "the new claim starts");
+    assert!(
+        b.comments(running)
+            .unwrap()
+            .iter()
+            .any(|l| l.body.starts_with("taskq: spawn reviewer")),
+        "the reviewer starts"
+    );
+    let bytes = |n: u64| format!("disk {n}");
+    assert_eq!(
+        stable(&bytes(MIN_FREE)),
+        stable(&bytes(MIN_FREE + 5)),
+        "free bytes alone force no board write"
+    );
+    assert_ne!(stable(&bytes(MIN_FREE)), stable(&bytes(MIN_FREE - 1)));
+    assert_ne!(stable(&bytes(MIN_FREE)), stable("disk unknown"));
 }

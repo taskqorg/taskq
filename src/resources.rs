@@ -1268,7 +1268,8 @@ pub fn projection(install: &Path, now: u64, wait: bool) -> Res<Value> {
 
 /// `taskq.resources/1` blockers from a status `capacity`'s reasons; `scope(host_scope)` names the target each one holds.
 pub fn blockers(capacity: &Value, scope: impl Fn(bool) -> Value) -> Value {
-    const CODES: [&str; 18] = [
+    const CODES: [&str; 19] = [
+        "disk",
         "cpu",
         "memory",
         "pressure",
@@ -1290,8 +1291,8 @@ pub fn blockers(capacity: &Value, scope: impl Fn(bool) -> Value) -> Value {
     ];
     json!(capacity["reasons"].as_array().into_iter().flatten().map(|r| {
         let code = match r["code"].as_str().unwrap_or("") { "hold" => "host", c if CODES.contains(&c) => c, _ => "unknown" };
-        let host_scope = ["host", "max", "spacing", "version", "cpu", "memory", "pressure", "sample", "config"].contains(&code);
-        json!({"code": code, "scope": scope(host_scope), "knowledge": if code == "sample" || code == "unknown" || (code == "host" && capacity["gate"] == "unknown") { "unknown" } else { "known" }})
+        let host_scope = ["host", "max", "spacing", "version", "disk", "cpu", "memory", "pressure", "sample", "config"].contains(&code);
+        json!({"code": code, "scope": scope(host_scope), "knowledge": if code == "sample" || code == "unknown" || (matches!(code, "host" | "disk") && capacity["gate"] == "unknown") { "unknown" } else { "known" }})
     }).collect::<Vec<_>>())
 }
 

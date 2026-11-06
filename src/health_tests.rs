@@ -1553,3 +1553,39 @@ fn doctor_names_a_mac_codex_launch_without_git_metadata() {
         "{row}"
     );
 }
+
+// Chain: § 3 Disk guard reading -> `taskq doctor` line -> `--hosts` fix (#2492 A2). Risk: a held host passes doctor or
+// an unread volume reads ok. Protection: gap below the threshold, ok at it, unknown stays unknown; each open item has
+// one fix, and no text carries a path.
+#[test]
+fn disk_item_is_gap_below_the_threshold_ok_at_it_and_unknown_when_unread() {
+    use crate::disk::{Disk, MIN_FREE};
+    let cases = [
+        (Disk::Free(MIN_FREE - 1), "gap", true),
+        (Disk::Free(MIN_FREE), "ok", false),
+        (Disk::Unknown, "unknown", true),
+    ];
+    for (disk, status, fix) in cases {
+        let item = disk_item(disk);
+        assert_eq!((item.status, item.fix.is_some()), (status, fix), "{disk:?}");
+        assert!(!item.text.contains(['/', '\\']), "{}", item.text);
+    }
+    assert!(
+        IDS.contains(&"disk"),
+        "a heartbeat `doctor` line may carry it"
+    );
+    let h = |doctor: &str| Host {
+        name: "win".into(),
+        version: crate::platform::VERSION.into(),
+        updated: 10_000,
+        doctor: Some(doctor.into()),
+        ..Default::default()
+    };
+    for (line, fix) in [
+        ("9990 disk:gap", "on win: free space on the project volume"),
+        ("9990 disk:unknown", "on win: let the service user read"),
+    ] {
+        let row = host_row(&h(line), "o/r", false, 10_000, 120, None);
+        assert!(row["fix"].as_str().unwrap().starts_with(fix), "{row}");
+    }
+}

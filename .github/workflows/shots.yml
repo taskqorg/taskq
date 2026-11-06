@@ -78,7 +78,7 @@ jobs:
           git push origin "HEAD:refs/heads/$branch"
           url=$(gh pr create --draft --base main --head "$branch" --title "Refresh README screenshots for $version" \
             --body "Images, manifest and README preview (1280 and 390 px, in the run artifact `readme-shots`) from \`docs/shots/update.sh $REF\`. Review the three images and both preview widths before merging through the merge queue.")
-          # Token pushes start no CI; dispatch the suite on the branch without waiting for it.
+          # Token pushes start no CI; dispatch tests on the branch without waiting. It selects from HEAD^, this one commit.
           gh workflow run tests.yml --ref "$branch"
           # Only the newest set stays open: close earlier shots PRs of this repo and delete their branches.
           gh pr list --state open --limit 200 --json number,title,headRefName,isCrossRepository --jq \

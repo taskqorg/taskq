@@ -20,10 +20,12 @@ ROOT = Path(__file__).resolve().parents[1]
 BUDGET = 900
 # taskq.md Product: this page is contract text under that ID, so it keeps the root contract's gate and lane.
 PRODUCT_DOC = 'docs/design/product-contract.md'
+# docs/testing.md#visual-evidence: data no build or gate reads; the CI shots job checks their hashes.
+SHOT = re.compile(r'^docs/shots/([^/]+\.png|manifest\.json)$')
 
 
 def selection(paths):
-    if paths and all(Path(p).suffix in {'.md', '.txt'} and p not in {'taskq.md', 'AGENTS.md', 'CLAUDE.md', PRODUCT_DOC} for p in paths):
+    if paths and all(SHOT.match(p) or (Path(p).suffix in {'.md', '.txt'} and p not in {'taskq.md', 'AGENTS.md', 'CLAUDE.md', PRODUCT_DOC}) for p in paths):
         # These pages carry published asset hashes, checked by the Node components.
         return 'web' if any(p in {'docs/design/answer-card.md', 'docs/design/shared-resource-controls.md'} for p in paths) else 'docs'
     if paths and all((p.startswith('src/') and Path(p).suffix in {'.js', '.css', '.html'}) or (p.startswith('tests/') and Path(p).suffix == '.cjs') for p in paths):
@@ -485,7 +487,8 @@ def test_environment(environment, install):
     env = dict(environment)
     # Windows process fixtures spawn peers inside each harness case. Bound oversubscription,
     # preserving their own concurrency and wall-clock deadlines and an explicit runner override.
-    if sys.platform == 'win32':
+    # The Mac host shares its CPUs with the running service and its workers.
+    if sys.platform in ('win32', 'darwin'):
         env.setdefault('RUST_TEST_THREADS', str(min(4, os.cpu_count() or 1)))
     for key in ('TASKQ_TASK', 'TASKQ_ATTEMPT', 'TASKQ_ROLE', 'TASKQ_ROOT', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID',
                 'CLAUDE_CODE_SESSION_ID', 'COREQ_TRACE_CONTEXT', 'GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'TASKQ_INCIDENT_REPORTS'):
@@ -493,10 +496,57 @@ def test_environment(environment, install):
     return {**env, 'TASKQ_INSTALL': str(install)}
 
 
+def tree_sha(root=ROOT):
+    """The tree of the working files, uncommitted changes included; the real index stays untouched. None when unknown."""
+    with tempfile.TemporaryDirectory(prefix='taskq-check-index-') as stage:
+        env = {**os.environ, 'GIT_INDEX_FILE': str(Path(stage) / 'index')}
+        git = lambda *a: subprocess.run(['git', *a], cwd=root, env=env, capture_output=True, text=True, check=True).stdout.strip()
+        try:
+            git('read-tree', 'HEAD')
+            git('add', '-A')
+            return git('write-tree')
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+
+def receipt_path(environment, root=ROOT):
+    """docs/testing.md: a local full gate's receipt lives in the shared Git directory, so a reviewer's worktree sees a worker's. CI keeps none."""
+    tree = None if environment.get('GITHUB_ACTIONS') else tree_sha(root)
+    if not tree:
+        return None
+    common = subprocess.check_output(['git', 'rev-parse', '--git-common-dir'], cwd=root, text=True).strip()
+    return (Path(root) / common).resolve() / 'taskq-check-receipts' / f'{tree}.json'
+
+
+def repeat_refusal(path, reason):
+    """The refusal of a repeat full gate on one tree; a `--reason` run proceeds."""
+    if reason or path is None or not path.is_file():
+        return None
+    try:
+        prior = json.loads(path.read_text(encoding='utf-8'))
+        ran = f"{prior['result']} at {prior['at']} on {prior['head']}"
+    except (OSError, ValueError, TypeError, KeyError):
+        ran = 'with an unreadable receipt'
+    return f'full gate already ran on this tree, {ran} ({path}). Read its result or exact-SHA CI, or name why with --reason (docs/testing.md).'
+
+
+def write_receipt(path, record):
+    """A receipt saves work and proves nothing: a failed write warns and never changes the gate's outcome."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile('w', encoding='utf-8', dir=path.parent, delete=False) as stage:
+            json.dump(record, stage)
+        os.replace(stage.name, path)
+        print(f"Check receipt: {record['result']} {path}", flush=True)
+    except OSError as error:
+        print(f'Warning: no check receipt: {error}', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', default=os.environ.get('CHECK_BASE', 'HEAD^'))
     parser.add_argument('--full', action='store_true')
+    parser.add_argument('--reason', default='', help='why this tree needs another full gate (docs/testing.md)')
     parser.add_argument('--plan', action='store_true', help='print selection without running checks')
     parser.add_argument('--rules', action='store_true', help='run only the rule-change gate and coverage report')
     parser.add_argument('--lint', action='store_true', help='prepare and run only the pinned specq contract lint')
@@ -518,8 +568,19 @@ def main():
     if args.plan:
         print('scope='+scope)
         return
+    reason = args.reason.strip()
+    if args.reason and not reason:
+        raise SystemExit('--reason needs a named reason (docs/testing.md)')
+    # Selected runs stay cheap and keep the lint first: only a full gate reads the tree here.
+    receipt = receipt_path(os.environ) if scope == 'full' else None
+    refused = repeat_refusal(receipt, reason)
+    if refused:
+        raise SystemExit(refused)
+    if scope == 'full' and receipt is None and not os.environ.get('GITHUB_ACTIONS'):
+        print('Warning: no check receipt: the tree is unknown', flush=True)
     print('Selected checks:', scope, '| base:', args.base, flush=True)
     started = time.monotonic()
+    result = 'failed'
     env = check_environment(os.environ)
 
     def run(command, extra_env=None, environment=None):
@@ -582,8 +643,13 @@ def main():
         for path in paths:
             if path.startswith('tests/') and path.endswith('.browser.cjs') and os.environ.get('RUNNER_OS') is None:
                 run(['node', path])
+        result = 'passed'
     finally:
         print(f'Selected gate elapsed: {time.monotonic() - started:.3f}s / {BUDGET}s; no retries', flush=True)
+        if receipt:
+            head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+            write_receipt(receipt, {'result': result, 'base': args.base, 'head': head, 'reason': reason,
+                                    'at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'elapsed_s': round(time.monotonic() - started, 3)})
 
 
 if __name__ == '__main__':

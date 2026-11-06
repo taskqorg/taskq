@@ -2394,3 +2394,59 @@ fn a_daemon_that_differs_from_a_jobs_grant_is_an_anomaly() {
         "{text}"
     );
 }
+
+// Chain: heartbeat `disk` line -> status Hosts and Anomalies rows, `--json` (#2492 A2). Risk: a host that holds work
+// for space looks healthy, or an unreadable reading reads as free. Protection: free space in the host row, each holding
+// reading one anomaly with its next action, unknown never printed as a value, an old host and a stale one quiet.
+#[test]
+fn disk_reading_reads_in_the_host_row_and_a_held_one_names_its_next_action() {
+    use crate::disk::{Disk, MIN_FREE};
+    let host = |name: &str, updated: i64, disk| Host {
+        name: name.into(),
+        version: "1.0".into(),
+        updated,
+        disk,
+        ..Default::default()
+    };
+    let snap = Snapshot {
+        source: "board",
+        observed: 10_000,
+        reason: None,
+        reason_code: None,
+        board: json!({"url": "b"}),
+        tasks: vec![],
+        hosts: vec![
+            host("low", 10_000, Some(Disk::Free(MIN_FREE - 1))),
+            host("at", 10_000, Some(Disk::Free(MIN_FREE))),
+            host("lost", 10_000, Some(Disk::Unknown)),
+            host("old", 10_000, None),
+            host("gone", 1, Some(Disk::Free(1))),
+        ],
+    };
+    let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+    let row = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
+    assert!(row.contains(" disk 19.9 GB free (see Anomalies)"), "{row}");
+    assert!(row.contains(" disk 20.0 GB free"), "{row}");
+    assert!(
+        !row.contains("unknown") && row.matches(" disk ").count() == 2,
+        "{row}"
+    );
+    let disk: Vec<_> = text.lines().filter(|l| l.contains(" · disk ")).collect();
+    assert_eq!(
+        disk,
+        [
+            "- host low · disk 19.9 GB free, under 20 GB: no new attempt starts · Next: free space on the project volume; taskq deletes nothing and admits again at 20 GB",
+            "- host lost · disk free space unreadable: no new attempt starts · Next: let the service user read the project folder and its worktrees",
+        ]
+    );
+    let v = snap.json();
+    assert_eq!(
+        v["hosts"][0]["disk"],
+        json!({"free_bytes": MIN_FREE - 1, "holds": true})
+    );
+    assert_eq!(
+        v["hosts"][2]["disk"],
+        json!({"free_bytes": null, "holds": true})
+    );
+    assert!(v["hosts"][3].get("disk").is_none());
+}

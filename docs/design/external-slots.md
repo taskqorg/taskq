@@ -12,7 +12,7 @@ Minimum consumer API version: `taskq.slots/1`, advertised by a fresh `taskq serv
 
 `taskq.slots/1` binds caller, operation, secret release key, registered root, runtime, native caller identity, boot and admission deadline; reserve/observe/release reconcile it; mismatched input or release authority refuses. Durable readback precedes `reserved`; only a fresh matching host-generation receipt permits a turn.
 
-Only the service admits a slot, under the runtime/project/host limits, load gate, spacing, emergency hold, draining and recovery barriers of workers/reviewers. It ignores task focus, never changes focus or admits tasks; pending external roots share project round-robin, task passes never clear their demand.
+Only the service admits a slot, under the runtime/project/host limits, load gate, spacing, emergency hold, draining and recovery barriers of workers/reviewers ([disk guard](capacity.md#disk-guard) is per project and stays outside). It ignores task focus, never changes focus or admits tasks; pending external roots share project round-robin, task passes never clear their demand.
 
 Release attests the consumer ended its whole turn, tools included; irreversible, idempotent, acknowledged after the service removes the slot. Caller exit, silence, post-admission expiry and service restart never prove release: retain occupancy; absent/unreadable caller liveness or unknown boot reads unknown.
 

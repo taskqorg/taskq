@@ -1373,6 +1373,10 @@ const DEV_LOOP: &str = "While editing, run only the filtered checks of the proje
 const PUBLISH_ONCE: &str = "Rebase on origin/main once, before the first push. After that, never rebase or rerun the full checks because main moved:\n\
      the merge queue checks the merge result. Rebase again only when a requeue asks, as `main-moved` with its conflict files.\n";
 
+/// docs/testing.md: the candidate's checks already ran; a reviewer's repeat full gate only loads the host.
+const REVIEW_CHECKS: &str = "Run no local full gate: read the CI of the exact result SHA (`gh pr checks <PR>`) and the worker's Checks,\n\
+     then rerun locally only the checks that changed since them or whose result is unknown, by the project's fast command.\n";
+
 /// taskq.md § 7: a sandbox limit is unknown locally; publication still needs the section 7 CI gate.
 const SANDBOX_CHECKS: &str = "Host tests blocked by the worker sandbox: record sandbox-blocked in Checks, never as PASS; do not requeue for them.\n\
      Their Acceptance gate is green CI on the GitHub PR merge result (merge_group); private fallback uses exact-SHA CI; other routes follow taskq.md section 7 (R12).\n";
@@ -1544,6 +1548,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         format!(
             "Review the result SHA against each Acceptance item `A<k>` and taskq.md, and GitHub PR CI green on the merge result (merge_group); private fallback uses exact-SHA CI; other routes follow the contract. Requeue only for\n\
              Acceptance or contract gaps, not style.\n\
+             {REVIEW_CHECKS}\
              Experiments (`research` or a `Hypothesis:` line, any type) need docs/research/<N>.md at the result SHA, not a prior owner answer, and a close line `Verdict: confirmed|refuted|inconclusive <evidence>` after Changed. Only a decision blocking another task needs ask before close (§ 7).\n\
              {CI_WAIT}Then exactly one of:\n\
              - `{q} close {n} --text \"Changed: <user effect>\nChecks: Task fit: A1 ok|gap|unknown, A2 ..; merge-result CI <green|pending|unknown> on <SHA|pending>\nChecks: Implementation quality: <binding gaps|advisories|none>\nOpen: <item|none>\"` (it publishes),\n\

@@ -20,7 +20,7 @@ Pokes coalesce. The signal link alone proves that this pass observed this signal
 
 Failed status publication records a shared `status-write` outcome and reports the original error in the service log. The loop retains its children and continues supervision, maintenance and retry; failed publication does not acknowledge observed state. Initial release-health marking requires a successfully published, complete pass without a service or focus/control error. The host requires this evidence from every currently registered project within60s, from its own threads; a publication failure or thread exit invalidates that project's evidence. Empty hosts still require valid policy and registry/ownership. Publication recovery can qualify later; an existing release-health marker is not a continuous health report.
 
-Admission checks attach fixed refusal codes to their own generated spans: `hold`, `config`, the load gate's `sample|cpu|memory|cooldown`, or `launch-interval`. An empty focus marks the pass `refused/focus`. A normal pass or accepted Resume alone is not evidence of a child start: read the linked claim/launch and its result. Board/task filters and runtime-access-specific decisions still need full semantic qualification.
+Admission checks attach fixed refusal codes to their own generated spans: `hold`, `config`, `disk`, the load gate's `sample|cpu|memory|cooldown`, or `launch-interval`. An empty focus marks the pass `refused/focus`. A normal pass or accepted Resume alone is not evidence of a child start: read the linked claim/launch and its result. Board/task filters and runtime-access-specific decisions still need full semantic qualification.
 
 ## Focus command state
 

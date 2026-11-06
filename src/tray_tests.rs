@@ -4247,3 +4247,67 @@ pub(crate) fn steady_tick() -> impl FnMut() {
         );
     }
 }
+
+// The 2 s refresh reads a local session's files at most once per TTL; a changed row or an expired entry reads again.
+#[test]
+fn session_link_reads_files_once_per_ttl_across_refreshes() {
+    let mut links = SessionLinks::new();
+    let start = Instant::now();
+    let reads = std::cell::Cell::new(0);
+    let read = |url: &str| {
+        reads.set(reads.get() + 1);
+        Some(url.to_string())
+    };
+    for tick in 0..15u64 {
+        let now = start + Duration::from_secs(tick * 2);
+        let url = remembered_link(&mut links, "a".into(), now, || read("one"));
+        assert_eq!(url.as_deref(), Some("one"));
+    }
+    assert_eq!(reads.get(), 1, "a 30 s window of 2 s ticks reads once");
+    remembered_link(&mut links, "b".into(), start, || read("two"));
+    assert_eq!(reads.get(), 2, "another attempt has its own entry");
+    let later = start + SESSION_LINK_TTL;
+    let url = remembered_link(&mut links, "a".into(), later, || read("new"));
+    assert_eq!(url.as_deref(), Some("new"), "an expired link reads again");
+    assert_eq!(links.len(), 1, "expired entries leave the map");
+}
+
+// #tray CPU: a refresh inside the window serves the remembered link, without rereading the attempt log.
+#[test]
+fn local_session_row_does_not_reread_its_log_each_refresh() {
+    let root = std::env::temp_dir().join(format!("taskq-link-{}", crate::runtime::uuid()));
+    let log = crate::runtime::log_path(
+        &root,
+        &crate::runtime::Launch {
+            files: String::new(),
+            execution: None,
+            task: 7,
+            title: String::new(),
+            attempt: 1,
+            role: String::new(),
+            rt: "codex".into(),
+            session: "-".into(),
+            url: String::new(),
+            resume: None,
+        },
+    );
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    let write = |thread: &str| {
+        let line = format!("{{\"type\":\"thread.started\",\"thread_id\":\"{thread}\"}}\n");
+        std::fs::write(&log, line).unwrap();
+    };
+    let refresh = || {
+        let mut row = json!({"n": 7, "attempt": 1, "session": "codex:- mac"});
+        task_session(&root, "mac", None, &mut row);
+        row["session_url"].clone()
+    };
+    write("first-thread");
+    assert_eq!(refresh(), "codex://threads/first-thread");
+    write("second-thread");
+    assert_eq!(
+        refresh(),
+        "codex://threads/first-thread",
+        "no reread inside the window"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

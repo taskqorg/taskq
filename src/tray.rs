@@ -1728,6 +1728,31 @@ fn now() -> i64 {
 /// Native adapter (M3): a Claude URL is account-scoped, so any host links it (owning host: its transcript, else the
 /// owner's heartbeat via the snapshot); a Codex thread opens only on its owning host, elsewhere its DashQ progress page
 /// (`page` + task number, R6 3), else unavailable with a reason.
+/// How long a local session link stands before the tray reads its files again (seconds behind a new URL at worst).
+const SESSION_LINK_TTL: Duration = Duration::from_secs(30);
+type SessionLinks = std::collections::HashMap<String, (Instant, Option<String>)>;
+static SESSION_LINKS: std::sync::LazyLock<std::sync::Mutex<SessionLinks>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The 2 s refresh must not reparse every local attempt log and transcript each tick (66-82 % CPU on one host).
+fn remembered_link(
+    links: &mut SessionLinks,
+    key: String,
+    now: Instant,
+    read: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    let fresh = |at: &Instant| now.saturating_duration_since(*at) < SESSION_LINK_TTL;
+    if let Some((at, url)) = links.get(&key)
+        && fresh(at)
+    {
+        return url.clone();
+    }
+    links.retain(|_, (at, _)| fresh(at));
+    let url = read();
+    links.insert(key, (now, url.clone()));
+    url
+}
+
 fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
     let Some(object) = row.as_object_mut() else {
         return;
@@ -1778,16 +1803,24 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
         }
         return;
     }
-    let (_, url) = crate::runtime::session_link(
-        root,
-        own,
-        rt,
-        id,
+    let (n, attempt) = (
         row["n"].as_u64().unwrap_or(0),
         row["attempt"].as_u64().unwrap_or(0),
-        row["role"].as_str().unwrap_or(""),
-        published,
     );
+    let role = row["role"].as_str().unwrap_or("");
+    let link =
+        || crate::runtime::session_link(root, own, rt, id, n, attempt, role, published.clone()).1;
+    // A remote row reads no file; a local one parses its attempt log and native transcript.
+    let url = if own {
+        let key = format!(
+            "{}\0{session}\0{n}\0{attempt}\0{role}\0{published:?}",
+            root.display()
+        );
+        let mut links = SESSION_LINKS.lock().unwrap_or_else(|e| e.into_inner());
+        remembered_link(&mut links, key, Instant::now(), link)
+    } else {
+        link()
+    };
     row["session_url"] = json!(url);
     row["native_session_url"] = json!(url);
 }
