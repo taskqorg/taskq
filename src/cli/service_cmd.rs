@@ -681,7 +681,7 @@ pub(crate) fn service(args: &Args) -> Res<()> {
             if args.pos.len()!=2||args.flags.keys().any(|k|k!="json") {return Err("usage: taskq service check [--json]".into());}
             setup_check_cmd(&root, args.flags.contains_key("json"))
         }
-        _ => Err("usage: taskq service install|check|run|onboard|focus|pause|resume|capacity|channel|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
+        _ => Err("usage: taskq service install|check|run|onboard|focus|pause|resume|capacity|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
     }
 }
 
