@@ -6,8 +6,10 @@ use std::{
 
 type Job = Box<dyn FnOnce() + Send>;
 
+static QUEUE: OnceLock<mpsc::Sender<Job>> = OnceLock::new();
+
+// ponytail: one FIFO worker, as for command receipts; a job still queued at a hard exit stays unknown.
 fn queue() -> &'static mpsc::Sender<Job> {
-    static QUEUE: OnceLock<mpsc::Sender<Job>> = OnceLock::new();
     QUEUE.get_or_init(|| {
         let (send, jobs) = mpsc::channel::<Job>();
         std::thread::Builder::new()
@@ -49,10 +51,13 @@ pub(super) fn submit(
         .map_err(|_| "agent record worker unavailable".into())
 }
 
-#[cfg(test)]
-pub(super) fn settle(limit: std::time::Duration) -> bool {
+/// Waits until submitted records have committed or failed; a process that submitted none returns at once.
+pub(crate) fn settle(limit: std::time::Duration) -> bool {
+    let Some(queue) = QUEUE.get() else {
+        return true;
+    };
     let (send, done) = mpsc::channel();
-    queue()
+    queue
         .send(Box::new(move || {
             let _ = send.send(());
         }))

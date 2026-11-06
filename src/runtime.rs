@@ -14,6 +14,7 @@ mod launch;
 #[path = "runtime/native_process_tests.rs"]
 mod native_fixture;
 mod records;
+pub(crate) use records::settle as settle_records;
 mod table;
 #[cfg(test)]
 pub use native_fixture::{command, start_command, start_file};

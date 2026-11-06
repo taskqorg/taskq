@@ -221,18 +221,10 @@ impl Proc for Native {
             self.recorded = true;
             if let Some(install) = &self.install {
                 let _caller = self.caller.as_ref().map(|c| c.span().entered());
-                let result = crate::telemetry::budget(install, "telemetry.sqlite3")
-                    .and_then(|budget| {
-                        coreq::telemetry::Store::open_bounded(
-                            &install.join("telemetry.log/universal.sqlite3"),
-                            budget,
-                        )
-                    })
-                    .and_then(|store| {
-                        self.run
-                            .record(&record_context(), &store)
-                            .and_then(|r| r.recorded)
-                    });
+                // AgentQ froze this run at the terminal poll; only the append waits on the store.
+                let result = self.run.snapshot(&record_context()).and_then(|frozen| {
+                    super::records::submit(install, move |store| frozen.append(store))
+                });
                 if let Err(error) = result {
                     eprintln!("Agent telemetry: unknown ({error})");
                 }

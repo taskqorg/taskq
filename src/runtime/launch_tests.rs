@@ -38,9 +38,9 @@ fn agentq_delayed_record_excludes_later_turn_bytes() {
     writeln!(File::options().append(true).open(&log).unwrap(), "{}",
         serde_json::json!({"type":"assistant","message":{"id":"next-execution","model":"invented-model","usage":{"input_tokens":100,"output_tokens":1}}})).unwrap();
     let store = coreq::telemetry::Store::open(&root.join("records.db")).unwrap();
-    run.record(&record_context(), &store)
+    run.snapshot(&record_context())
         .unwrap()
-        .recorded
+        .append(&store)
         .unwrap();
     let rows = store.export_kinds(&["agent.turn"], 0, 0, 100).unwrap();
     let input = rows["events"][0]["observation"]["input_tokens"].clone();
