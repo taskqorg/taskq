@@ -386,16 +386,29 @@ const snapshot = {
     );
     await page.evaluate((s) => taskq.receive(s), state);
     const rows = page.locator(".conversation-rows");
+    // Equal-time fixture rows may swap on a list switch, so the place is one row and its offset, never a scroll value.
+    const heldOffset = () =>
+      rows.evaluate(
+        (e) =>
+          e
+            .querySelector('.conversation-row[data-id="dense-5"]')
+            .getBoundingClientRect().top - e.getBoundingClientRect().top,
+      );
     await rows.evaluate((e) => {
-      e.scrollTop = 240;
+      e.scrollTop +=
+        e
+          .querySelector('.conversation-row[data-id="dense-5"]')
+          .getBoundingClientRect().top -
+        e.getBoundingClientRect().top +
+        6;
       e.dispatchEvent(new Event("scroll", { bubbles: true }));
     });
+    const heldBefore = await heldOffset();
     await page.locator("[data-c=archive-list]").click();
     await page.locator("[data-c=recent]").click();
-    assert.equal(
-      await rows.evaluate((e) => e.scrollTop),
-      240,
-      "Recent restores its own list scroll",
+    assert(
+      Math.abs((await heldOffset()) - heldBefore) <= 2,
+      "Recent restores its own list position by row key",
     );
     await page.locator("[data-c=new]").click();
     await drain();
@@ -403,7 +416,7 @@ const snapshot = {
     const selectedBox = await selectedRow.boundingBox(),
       listBox = await rows.boundingBox();
     assert(
-      selectedBox.y >= listBox.y &&
+      selectedBox.y >= listBox.y - 1 &&
         selectedBox.y + selectedBox.height <= listBox.y + listBox.height + 1,
       "New reveals its own row in a dense list",
     );

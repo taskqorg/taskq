@@ -283,7 +283,8 @@ module.exports = execution.module("conversations", {
       listObserver = null,
       listObservedRoot = null,
       listAnchor = null,
-      listReveal = null;
+      listReveal = null,
+      listSwitch = false;
     let pane = { width: 280, hidden: false },
       dividerDrag = null;
     let resultFilter = "all",
@@ -6648,6 +6649,7 @@ module.exports = execution.module("conversations", {
           scopeReturn = null;
           revealed = null;
           api.show(action === "recent" ? "recent" : "archive");
+          listSwitch = true;
           listOnly = true;
           api.nav();
           draw();
@@ -7420,7 +7422,8 @@ module.exports = execution.module("conversations", {
           if (n) {
             anchor.hold(rows, a, n);
           }
-        } else if (rows && changed) anchor.restore(rows, lists[list]);
+        } else if (rows && (changed || listSwitch))
+          anchor.restore(rows, lists[list]);
         if (rows && listBefore)
           anchor.measure(rows, listBefore, "conversations");
         listBefore = null;
@@ -7428,7 +7431,10 @@ module.exports = execution.module("conversations", {
         if (
           row &&
           rows?.checkVisibility() &&
-          (changed || focusDraft || listReveal === selected)
+          // A list switch returns to that list's own held rows; it reveals the selection only with no saved place.
+          ((changed && !(listSwitch && anchor.saved(lists[list]))) ||
+            focusDraft ||
+            listReveal === selected)
         ) {
           const r = row.getBoundingClientRect(),
             b = rows.getBoundingClientRect(),
@@ -7441,6 +7447,7 @@ module.exports = execution.module("conversations", {
           api.nav();
         }
         listReveal = null;
+        listSwitch = false;
         if (focusDraft && input && !input.disabled) {
           focusDraft = false;
           if (input !== document.activeElement)
