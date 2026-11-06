@@ -27,7 +27,7 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 | `taskq requeue N [--text T]` / `taskq steer N --text T` | back to `ready` / text to the live worker |
 | `taskq later N [--text T] [--blocker #M\|--until UTC] [--stage A<k>..]` / `taskq failed N --text R` | park (§ 7) / hold |
 | `taskq close N [M..] [--text VERDICT]` | publish (§ 7) and close; one failure never stops the rest |
-| `taskq evidence N --sha SHA --baseline SHA --url URL --sha256 HASH --revision R --op-id ID --readers-current yes [--source-record NAME]` | Owner-only [evidence authorization](../../taskq.md#evidence-only-completion-r5-r13); no gate approval or publication |
+| `taskq evidence N --sha SHA --baseline SHA --url URL --sha256 HASH --revision R --op-id ID --readers-current yes [--source-record NAME \| --source-url URL --source-sha256 HASH]` | Owner-only [evidence authorization](../../taskq.md#evidence-only-completion-r5-r13); no gate approval or publication |
 | `taskq gate N` / `taskq add .. --gate` | § 7 owner gate on a held or ready task: label `needs-gate` and a `gate` entry |
 | `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | § 7 owner approval of the current result (refused with `TASKQ_ATTEMPT`) / recipe run |
 | `taskq status [--only L,..] [--json] [--timing]` / `taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]]` | Read-only R6; `--only`: any label (absent: all); `--timing`: per-project section seconds on stderr. JSON/history: [menu](menu.md#contract-detail) |
@@ -50,6 +50,12 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 | `taskq rules size` / `taskq rules compact ROOT ROLE TASK ATTEMPT` / `taskq rules pm start\|compact` | `size` prints `Rules: <len> of <cap> bytes, headroom <n>`; project CI runs it, so a contract edit over the cap fails before merge. `compact` prints the role's compact rules for the runtime compact hook. `pm` prints the PM rules for the project hook; a worker or reviewer under that hook gets empty output, its rules come with its turn (§ 8). |
 | `taskq claim-issue [N] [--json]` | Shows, or adopts issue N as, the project's `create_claim_issue`; prints `#N create_claim_issue URL (source)` or `Error:` and `Next:` lines. A worker is refused: it cannot change the claim issue. Detail: [claim issue command](finding-tasks.md). |
 | `taskq selftest` / `taskq --version` | load config, fold built-in `tests/golden`, read the board; no writes / [binary version](host-service.md#contract-detail) |
+
+Separate archival provenance passes the retained evidence URL/hash unchanged and adds `--source-url`/`--source-sha256` for a separate board-readable canonical ZIP. The ZIP may have one enclosing directory or repository-relative paths. Candidate Git objects must be locally readable; verification never downloads or executes source. An existing task worktree stays at its clean creation baseline. Both artifacts are read again before close and saved-publication reconciliation.
+
+For #2463, retain candidate `ee39a45cdaf50f9ebc9d4de3c9a8fc92118b2e34`, baseline `49acb093929ed0bc4db0f4a1722b5465bdb83805`, evidence hash `38bbe17dd0d12b64b454942e1c7e970b27bff466e96007494fd6e0806515af1d` and canonical ZIP hash `c3b6b60d64b9509428bef32d60d28100c8ab10aba458906a621bdf32b2e1d045`. A newly downloaded/repacked ZIP is not the retained artifact, even if its source files match.
+
+Owner decision [6679412521](https://github.com/taskqorg/taskq/issues/2463#issuecomment-6679412521) approves the R5/R13 rule only. Before authorizing the exact current result, the PM verifies official reader rollout on every board host. Old readers reject the extended authorization; do not write it to mixed readers. Worker local/CI evidence does not establish rollout, authorize evidence completion or waive source-publication CI.
 
 ### Held dependency amendment
 

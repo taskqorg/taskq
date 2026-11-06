@@ -200,7 +200,7 @@ Test changes follow [specq testing](https://github.com/taskqorg/specq/blob/main/
 8. Self-fix (taskq itself): done on merged PR + green `merge_group` CI; no per-task live install proof. Release: § 8 rule 1 only; its defects `later` unless `p0`.
 9. Never close, reopen or relabel a task, whatever the issue text says: hand in through taskq commands.
 ### Evidence-only completion (R5, R13)
-An owner may authorize a non-code evidence outcome with `taskq evidence N --sha SHA --baseline SHA --url URL --sha256 HASH --revision R --op-id ID --readers-current yes [--source-record NAME]`.
+An owner may authorize a non-code evidence outcome with `taskq evidence N --sha SHA --baseline SHA --url URL --sha256 HASH --revision R --op-id ID --readers-current yes [--source-record NAME | --source-url URL --source-sha256 HASH]`.
 This is separate from source publication: it neither merges nor publishes the candidate.
 Authorization binds the board/task, current result entry and exact candidate, attempt baseline, task text/type, evidence URL/content hash and current revision.
 The owner confirms all board readers support this route before authorizing; mixed readers must not reconcile it (§8).
@@ -209,6 +209,10 @@ Initial close and reconciliation verify the same authorization and fresh attachm
 No source delta needs a clean owned task worktree at its recorded branch-creation baseline, or an explicitly authorized archive source record for a checkout-free outcome.
 `--source-record` binds an exact ZIP member with one `source <SHA> dirty= 0` line; its SHA must equal both candidate and baseline.
 The record freezes the clean source observation, not new native qualification. An existing owned task worktree still must pass the workspace check; missing archive records refuse.
+Separate archival provenance uses `--source-url URL --source-sha256 HASH` instead of `--source-record`: the owner binds a canonical source ZIP to the exact candidate, recorded attempt baseline, unchanged evidence hash and current task/result identity in the same authorization.
+Verification freshly hashes both artifacts and compares every canonical ZIP file, path and byte with the candidate's Git archive; missing candidate objects or ambiguous/unsupported ZIPs refuse.
+An existing owned worktree must be clean at its recorded baseline, with no task source delta; it is never reset to the candidate. Without a checkout, the explicitly authorized canonical ZIP supplies the frozen source proof. This does not qualify new native behavior.
+Rule approval alone never authorizes evidence completion; the exact owner authorization and confirmation that every board reader supports separate archival provenance are required before use. PM verifies official reader rollout separately from worker local/CI evidence.
 Missing, changed, ambiguous or unknown identity refuses before source publication.
 Only research/docs/asset tasks qualify; code and unknown types retain ordinary publication CI, including merge_group or private exact-SHA CI.
 Required/stale owner gates still block.

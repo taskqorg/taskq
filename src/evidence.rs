@@ -25,6 +25,15 @@ struct Authorization {
     op: String,
     #[serde(default)]
     source_record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<Source>,
+}
+/// Explicit owner-selected canonical archive, separate from retained evidence.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Source {
+    pub url: String,
+    pub sha256: String,
 }
 fn hash(bytes: &[u8]) -> String {
     ring::digest::digest(&ring::digest::SHA256, bytes)
@@ -51,7 +60,7 @@ fn hex(s: &str, len: usize) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
-fn git(root: &Path, args: &[&str]) -> Res<String> {
+fn git_bytes(root: &Path, args: &[&str]) -> Res<Vec<u8>> {
     let mut c = crate::platform::command("git");
     c.arg("-C")
         .arg(root)
@@ -65,7 +74,14 @@ fn git(root: &Path, args: &[&str]) -> Res<String> {
         .args(args);
     let output = coreq::process::output("evidence.git", &mut c, std::time::Duration::from_secs(10))
         .map_err(|_| "evidence workspace observation unknown".to_string())?;
-    String::from_utf8(output.stdout).map_err(|_| "evidence workspace identity unreadable".into())
+    if !output.status.success() {
+        return Err("evidence source observation failed or unknown".into());
+    }
+    Ok(output.stdout)
+}
+fn git(root: &Path, args: &[&str]) -> Res<String> {
+    String::from_utf8(git_bytes(root, args)?)
+        .map_err(|_| "evidence workspace identity unreadable".into())
 }
 fn workspace(root: &Path, n: u64, candidate: &str, baseline: &str) -> Res<()> {
     if !hex(candidate, 40) || !hex(baseline, 40) {
@@ -121,6 +137,13 @@ fn workspace(root: &Path, n: u64, candidate: &str, baseline: &str) -> Res<()> {
 /// Reads one small identity member, never extracts an archive or executes its contents.
 /// The ZIP directory, local header, sizes and CRC must agree; ZIP64/encryption/streaming refuse.
 fn zip_record(bytes: &[u8], name: &str) -> Res<String> {
+    let data = zip_member(bytes, name)?;
+    if data.len() > 65536 {
+        return Err("archive source record oversized".into());
+    }
+    String::from_utf8(data).map_err(|_| "archive source record unreadable".into())
+}
+fn zip_member(bytes: &[u8], name: &str) -> Res<Vec<u8>> {
     use std::io::Read;
     let bad = || "archive source record missing, corrupt or unsupported".to_string();
     if name.is_empty()
@@ -128,6 +151,7 @@ fn zip_record(bytes: &[u8], name: &str) -> Res<String> {
         || name.starts_with('/')
         || name.contains('\\')
         || name
+            .trim_end_matches('/')
             .split('/')
             .any(|s| s.is_empty() || s == "." || s == "..")
     {
@@ -151,11 +175,10 @@ fn zip_record(bytes: &[u8], name: &str) -> Res<String> {
                 .map_err(|_| bad())?,
         ) as usize)
     };
-    let end = bytes.len().checked_sub(22).ok_or_else(bad)?;
+    let end = zip_end(bytes)?;
     if bytes.get(end..end + 4) != Some(b"PK\x05\x06")
         || u16at(end + 4)? != 0
         || u16at(end + 6)? != 0
-        || u16at(end + 20)? != 0
     {
         return Err(bad());
     }
@@ -181,7 +204,7 @@ fn zip_record(bytes: &[u8], name: &str) -> Res<String> {
             let crc = u32at(at + 16)? as u32;
             let compressed = u32at(at + 20)?;
             let size = u32at(at + 24)?;
-            if size > 65536 {
+            if size > 25 * 1024 * 1024 {
                 return Err(bad());
             }
             let local = u32at(at + 42)?;
@@ -208,7 +231,7 @@ fn zip_record(bytes: &[u8], name: &str) -> Res<String> {
                 8 => {
                     let mut out = Vec::new();
                     flate2::read::DeflateDecoder::new(data)
-                        .take(65537)
+                        .take(25 * 1024 * 1024 + 1)
                         .read_to_end(&mut out)
                         .map_err(|_| bad())?;
                     out
@@ -220,7 +243,7 @@ fn zip_record(bytes: &[u8], name: &str) -> Res<String> {
             if decoded.len() != size || actual.sum() != crc {
                 return Err(bad());
             }
-            found = Some(String::from_utf8(decoded).map_err(|_| bad())?);
+            found = Some(decoded);
         }
         at = at
             .checked_add(46 + len + extra + comment)
@@ -231,6 +254,105 @@ fn zip_record(bytes: &[u8], name: &str) -> Res<String> {
         return Err(bad());
     }
     found.ok_or_else(bad)
+}
+// Git archives may carry the immutable commit in their EOCD comment.
+fn zip_end(bytes: &[u8]) -> Res<usize> {
+    let start = bytes.len().saturating_sub(65557);
+    let mut ends = (start..bytes.len().saturating_sub(21)).filter(|&i| {
+        bytes.get(i..i + 4) == Some(b"PK\x05\x06")
+            && i + 22 + u16::from_le_bytes([bytes[i + 20], bytes[i + 21]]) as usize == bytes.len()
+    });
+    let end = ends.next().ok_or("source ZIP directory missing")?;
+    if ends.next().is_some() {
+        return Err("source ZIP directory ambiguous".into());
+    }
+    Ok(end)
+}
+fn archive_files(bytes: &[u8], prefixed: bool) -> Res<std::collections::BTreeMap<String, Vec<u8>>> {
+    let bad = || "canonical source ZIP corrupt, ambiguous or unsupported".to_string();
+    let end = zip_end(bytes)?;
+    let count = u16::from_le_bytes(bytes[end + 10..end + 12].try_into().unwrap()) as usize;
+    let mut at = u32::from_le_bytes(bytes[end + 16..end + 20].try_into().unwrap()) as usize;
+    let mut files = std::collections::BTreeMap::new();
+    let mut prefix = None;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut total = 0usize;
+    for _ in 0..count {
+        let header = bytes
+            .get(at..at.checked_add(46).ok_or_else(bad)?)
+            .ok_or_else(bad)?;
+        if &header[..4] != b"PK\x01\x02" {
+            return Err(bad());
+        }
+        let field = |i| u16::from_le_bytes([header[i], header[i + 1]]) as usize;
+        let len = field(28);
+        let name = std::str::from_utf8(bytes.get(at + 46..at + 46 + len).ok_or_else(bad)?)
+            .map_err(|_| bad())?;
+        if !seen.insert(name.to_string()) {
+            return Err(bad());
+        }
+        let data = zip_member(bytes, name)?;
+        total = total
+            .checked_add(data.len())
+            .filter(|v| *v <= 128 * 1024 * 1024)
+            .ok_or_else(bad)?;
+        let path = if prefixed {
+            let (top, rest) = name.split_once('/').ok_or_else(bad)?;
+            if prefix.as_deref().is_some_and(|v| v != top) {
+                return Err(bad());
+            }
+            prefix = Some(top.to_string());
+            rest
+        } else {
+            name
+        };
+        if !path.is_empty() && !path.ends_with('/') && files.insert(path.into(), data).is_some() {
+            return Err(bad());
+        }
+        at = at
+            .checked_add(46 + len + field(30) + field(32))
+            .filter(|v| *v <= end)
+            .ok_or_else(bad)?;
+    }
+    if at != end || (prefixed && count == 0) {
+        return Err(bad());
+    }
+    Ok(files)
+}
+fn archival_source(b: &dyn Board, root: &Path, a: &Authorization, source: &Source) -> Res<()> {
+    if a.source_record.is_some()
+        || !hex(&a.candidate, 40)
+        || !hex(&a.baseline, 40)
+        || !source.url.starts_with("https://")
+        || source.url.contains(char::is_whitespace)
+        || source.url == a.url
+        || !hex(&source.sha256, 64)
+    {
+        return Err("separate archival source identity invalid".into());
+    }
+    let data = b
+        .file(&source.url)
+        .map_err(|_| "canonical source archive read unknown")?;
+    if data.is_empty() || data.len() > 25 * 1024 * 1024 || hash(&data) != source.sha256 {
+        return Err("canonical source archive missing or changed".into());
+    }
+    // No extraction or interpretation of downloaded files; Git reads only its owned objects.
+    let expected = git_bytes(root, &["archive", "--format=zip", &a.candidate])?;
+    let expected = archive_files(&expected, false)?;
+    if archive_files(&data, false)? != expected && archive_files(&data, true)? != expected {
+        return Err("canonical source archive differs from candidate".into());
+    }
+    if root
+        .join(format!(".worktrees/taskq-{}", a.task))
+        .try_exists()
+        .map_err(|_| "evidence workspace existence unknown")?
+        || root
+            .file_name()
+            .is_some_and(|s| s == format!("taskq-{}", a.task).as_str())
+    {
+        workspace(root, a.task, &a.baseline, &a.baseline)?;
+    }
+    Ok(())
 }
 fn result(n: u64, log: &[Entry], t: &Task) -> Res<u64> {
     let p = core::project(n, log, false);
@@ -307,7 +429,9 @@ fn validate(
     if bytes.is_empty() || bytes.len() > 25 * 1024 * 1024 || hash(&bytes) != a.sha256 {
         return Err("evidence attachment missing or changed".into());
     }
-    if let Some(name) = &a.source_record {
+    if let Some(source) = &a.source {
+        archival_source(b, root, a, source)?;
+    } else if let Some(name) = &a.source_record {
         if !hex(&a.candidate, 40) || a.candidate != a.baseline {
             return Err("archive source baseline differs from candidate".into());
         }
@@ -373,9 +497,19 @@ pub fn completion(
             return Err("evidence authorization operation is ambiguous".into());
         }
         validate(b, root, issue, t, log, &a)?;
+        let source = a
+            .source
+            .as_ref()
+            .map(|source| {
+                format!(
+                    "; archival source {} sha256 {}; baseline {}",
+                    source.url, source.sha256, a.baseline
+                )
+            })
+            .unwrap_or_default();
         Ok(format!(
-            "Completion: evidence-only v1: authorization {}; candidate {}; evidence {} sha256 {}; source not published",
-            audit.id, a.candidate, a.url, a.sha256
+            "Completion: evidence-only v1: authorization {}; candidate {}; evidence {} sha256 {}{}; source not published",
+            audit.id, a.candidate, a.url, a.sha256, source
         ))
     })())
 }
@@ -393,6 +527,7 @@ pub fn authorize(
     owner: bool,
     readers: bool,
     source_record: Option<&str>,
+    source: Option<Source>,
 ) -> Receipt {
     let run = || -> Res<Receipt> {
         if !owner || !readers {
@@ -423,6 +558,7 @@ pub fn authorize(
                 || a.sha256 != sha256
                 || a.revision != revision
                 || a.source_record.as_deref() != source_record
+                || a.source != source
             {
                 return Err("evidence operation identity changed".into());
             }
@@ -450,6 +586,7 @@ pub fn authorize(
             sha256: sha256.into(),
             op: id.into(),
             source_record: source_record.map(String::from),
+            source: source.clone(),
         };
         let body = format!(
             "{PREFIX}{}",
@@ -598,6 +735,7 @@ mod tests {
                 },
                 true,
                 true,
+                None,
                 None,
             )
         }
@@ -866,6 +1004,7 @@ mod tests {
                     &op,
                     owner,
                     readers,
+                    None,
                     None
                 )
                 .ok()
@@ -934,6 +1073,7 @@ mod tests {
             true,
             true,
             None,
+            None,
         );
         assert!(!r.ok() && r.reason.contains("source delta"), "{}", r.text());
         assert_eq!(f.b.state.borrow().publications, 0);
@@ -994,6 +1134,7 @@ mod tests {
                 true,
                 true,
                 Some(selected),
+                None,
             );
             if fault == "none" {
                 assert!(r.ok(), "{}", r.text());
@@ -1014,6 +1155,287 @@ mod tests {
             assert!(!dir.exists());
             assert_eq!(f.b.state.borrow().publications, 0);
         }
+    }
+
+    fn retained() -> (Fixture, String, Source) {
+        let f = Fixture::new();
+        // Candidate source belongs to a separate source outcome. The evidence branch stays
+        // at its original creation baseline, with no reset or source commit on that branch.
+        std::fs::write(
+            f.root.join("candidate.txt"),
+            b"invented canonical source\0\xff",
+        )
+        .unwrap();
+        git(&f.root, &["add", "candidate.txt"]).unwrap();
+        git(
+            &f.root,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "commit",
+                "-qm",
+                "invented separate source outcome",
+            ],
+        )
+        .unwrap();
+        let candidate = git(&f.root, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        f.b.comment(f.n, "taskq: requeue").unwrap();
+        let attempt =
+            f.b.comment(f.n, "taskq: spawn worker codex:invented fixture")
+                .unwrap();
+        f.b.comment(f.n, &entry("result", &[&candidate], Some(attempt),
+            "Changed: retained evidence https://board.example/evidence.zip\nOpen: native limitations retained")).unwrap();
+        f.b.comment(f.n, "taskq: spawn reviewer codex:invented-review fixture")
+            .unwrap();
+        let data = git_bytes(
+            &f.root,
+            &["archive", "--format=zip", "--prefix=canonical/", &candidate],
+        )
+        .unwrap();
+        let source = Source {
+            url: "https://board.example/source.zip".into(),
+            sha256: hash(&data),
+        };
+        f.b.state
+            .borrow_mut()
+            .images
+            .push((source.url.clone(), data));
+        (f, candidate, source)
+    }
+    fn retained_authorize(
+        f: &Fixture,
+        candidate: &str,
+        source: Source,
+        owner: bool,
+        readers: bool,
+    ) -> Receipt {
+        authorize(
+            &f.b,
+            &f.root,
+            f.n,
+            candidate,
+            &f.sha,
+            "https://board.example/evidence.zip",
+            &hash(b"invented evidence"),
+            &Op {
+                id: Some("invented-retained-authorization".into()),
+                revision: Some(core::revision(f.n, &f.log())),
+            },
+            owner,
+            readers,
+            None,
+            Some(source),
+        )
+    }
+
+    // §7/R5/R13: retained evidence binds a distinct candidate, creation baseline and source ZIP.
+    // Risk: restart or lost responses publish source, replay native input, or replace an artifact.
+    #[test]
+    fn archival_source_binds_separate_bytes_and_retained_identity() {
+        for saved in [false, true] {
+            let (f, candidate, source) = retained();
+            if saved {
+                f.save();
+            }
+            let before = f.b.state.borrow().images.clone();
+            assert_ne!(candidate, f.sha);
+            let r = retained_authorize(&f, &candidate, source.clone(), true, true);
+            assert!(r.ok(), "{}", r.text());
+            assert!(retained_authorize(&f, &candidate, source.clone(), true, true).ok());
+            let mut changed = source.clone();
+            changed.sha256 = "a".repeat(64);
+            assert!(!retained_authorize(&f, &candidate, changed, true, true).ok());
+            if saved {
+                f.b.state.borrow_mut().lose_comment_response = true;
+            }
+            let r = if saved { f.resume() } else { f.initial() };
+            if saved {
+                assert_eq!(r.outcome, "unknown");
+            } else {
+                assert!(r.ok(), "{}", r.text());
+            }
+            assert_eq!(f.task().state, State::Closed);
+            assert_eq!(f.closes(), 1);
+            let receipt = receipt(f.n, &f.log()).unwrap().1;
+            assert!(
+                receipt.contains(&candidate)
+                    && receipt.contains(&source.sha256)
+                    && receipt.contains(&f.sha)
+            );
+            assert_eq!(f.b.state.borrow().images, before);
+            assert_eq!(
+                git(&f.root.join(".worktrees/taskq-1"), &["rev-parse", "HEAD"])
+                    .unwrap()
+                    .trim(),
+                f.sha
+            );
+            let mut restarted = crate::service::Service::new(
+                &f.b,
+                &f.cfg,
+                "fixture",
+                Box::new(|_| panic!("archival completion must not launch or replay native input")),
+            );
+            restarted.pass().unwrap();
+            assert_eq!(f.closes(), 1);
+            assert_eq!(f.b.state.borrow().publications, 0);
+            assert!(crate::deploy::delivered(f.n, &f.log()).is_none());
+            assert_eq!(
+                crate::readiness::source(f.n, &f.b.url(f.n), &f.log())["state"],
+                "unknown"
+            );
+        }
+        let (f, candidate, source) = retained();
+        let dir = f.root.join(".worktrees/taskq-1");
+        git(&f.root, &["worktree", "remove", dir.to_str().unwrap()]).unwrap();
+        assert!(retained_authorize(&f, &candidate, source, true, true).ok());
+        assert!(f.initial().ok());
+        assert!(!dir.exists());
+        assert_eq!(f.b.state.borrow().publications, 0);
+    }
+
+    // §7: both first close and saved-publication reconciliation freshly verify the same binding.
+    // Existing generic guards retain scope/result/revision/owner-gate coverage; these cases
+    // add the independent source artifact and distinct-baseline boundary.
+    #[test]
+    fn archival_source_refuses_changed_proof_dirty_baseline_and_unsupported_readers() {
+        for saved in [false, true] {
+            for fault in [
+                "source-bytes",
+                "source-missing",
+                "wrong-source",
+                "wrong-path",
+                "corrupt-source",
+                "evidence",
+                "baseline",
+                "dirty",
+                "candidate",
+                "scope",
+                "stale",
+                "edited",
+                "record-conflict",
+            ] {
+                let (f, candidate, source) = retained();
+                if saved {
+                    f.save();
+                }
+                assert!(retained_authorize(&f, &candidate, source, true, true).ok());
+                match fault {
+                    "source-bytes" => f.b.state.borrow_mut().images[1].1.push(0),
+                    "source-missing" => {
+                        f.b.state.borrow_mut().images.pop();
+                    }
+                    "wrong-source" | "wrong-path" | "corrupt-source" => {
+                        let name = if fault == "wrong-path" {
+                            "canonical/other.txt"
+                        } else {
+                            "canonical/candidate.txt"
+                        };
+                        let content: &[u8] = if fault == "wrong-path" {
+                            b"invented canonical source\0\xff"
+                        } else {
+                            b"invented changed source"
+                        };
+                        let mut data = crate::cli::text::zip_one(name, content).unwrap();
+                        if fault == "corrupt-source" {
+                            data[14] ^= 1;
+                        }
+                        let mut st = f.b.state.borrow_mut();
+                        st.images[1].1 = data.clone();
+                        let audit = &mut st.comments.last_mut().unwrap().1;
+                        let mut a: Authorization =
+                            serde_json::from_str(&audit.body[PREFIX.len()..]).unwrap();
+                        a.source.as_mut().unwrap().sha256 = hash(&data);
+                        audit.body = format!("{PREFIX}{}", serde_json::to_string(&a).unwrap());
+                    }
+                    "evidence" => f.b.state.borrow_mut().images[0].1.push(0),
+                    "dirty" => std::fs::write(
+                        f.root.join(".worktrees/taskq-1/untracked"),
+                        b"invented delta",
+                    )
+                    .unwrap(),
+                    "scope" => f.b.edit(f.n, "changed goal").unwrap(),
+                    "stale" => {
+                        f.b.comment(f.n, "taskq: steer\nChanged outcome").unwrap();
+                    }
+                    "edited" => f.b.state.borrow_mut().comments.last_mut().unwrap().1.edited = true,
+                    "baseline" | "candidate" | "record-conflict" => {
+                        let mut st = f.b.state.borrow_mut();
+                        let audit = &mut st.comments.last_mut().unwrap().1;
+                        let mut a: Authorization =
+                            serde_json::from_str(&audit.body[PREFIX.len()..]).unwrap();
+                        match fault {
+                            "baseline" => a.baseline = candidate.clone(),
+                            "candidate" => a.candidate = f.sha.clone(),
+                            _ => a.source_record = Some("identity.txt".into()),
+                        }
+                        audit.body = format!("{PREFIX}{}", serde_json::to_string(&a).unwrap());
+                    }
+                    _ => unreachable!(),
+                }
+                let r = if saved { f.resume() } else { f.initial() };
+                assert!(!r.ok(), "{saved} {fault}: {}", r.text());
+                assert_eq!(f.closes(), 0, "{fault}");
+                assert_eq!(f.b.state.borrow().publications, 0, "{fault}");
+            }
+        }
+        let (f, candidate, source) = retained();
+        for (owner, readers) in [(false, true), (true, false)] {
+            assert!(!retained_authorize(&f, &candidate, source.clone(), owner, readers).ok());
+        }
+        assert_eq!(
+            f.log()
+                .iter()
+                .filter(|e| e.body.starts_with(PREFIX))
+                .count(),
+            0
+        );
+        // Rule approval alone leaves ordinary source-publication gates in force.
+        f.b.comment(f.n, "Owner approved the archival provenance rule")
+            .unwrap();
+        assert!(completion(&f.b, &f.root, &f.b.issue(f.n).unwrap(), &f.task(), &f.log()).is_none());
+    }
+
+    // #2473 A2: optional read-only checkpoint of the retained #2463 artifacts, never replacements.
+    #[test]
+    #[ignore = "requires the original #2463 canonical ZIP and retained evidence archive"]
+    fn archival_2463_retained_artifacts_checkpoint() {
+        let source = std::fs::read(
+            std::env::var("TASKQ_ARCHIVAL_SOURCE").expect("retained canonical ZIP required"),
+        )
+        .unwrap();
+        let evidence = std::fs::read(
+            std::env::var("TASKQ_ARCHIVAL_EVIDENCE").expect("retained evidence required"),
+        )
+        .unwrap();
+        assert_eq!(
+            hash(&source),
+            "c3b6b60d64b9509428bef32d60d28100c8ab10aba458906a621bdf32b2e1d045"
+        );
+        assert_eq!(
+            hash(&evidence),
+            "38bbe17dd0d12b64b454942e1c7e970b27bff466e96007494fd6e0806515af1d"
+        );
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let candidate = "ee39a45cdaf50f9ebc9d4de3c9a8fc92118b2e34";
+        let baseline = "49acb093929ed0bc4db0f4a1722b5465bdb83805";
+        assert_ne!(candidate, baseline);
+        let expected = archive_files(
+            &git_bytes(root, &["archive", "--format=zip", candidate]).unwrap(),
+            false,
+        )
+        .unwrap();
+        assert!(
+            archive_files(&source, false).unwrap() == expected
+                || archive_files(&source, true).unwrap() == expected
+        );
+        println!(
+            "#2463 retained hashes and candidate source match; no authorization, task write, source publication or native launch"
+        );
     }
 
     // A5 read-only development checkpoint: real sanitized receipts/bytes, substituted board only.
@@ -1096,6 +1518,7 @@ mod tests {
             true,
             true,
             Some("taskq-2462-mac-evidence/identity-before.txt"),
+            None,
         );
         assert!(r.ok(), "{}", r.text());
         let (t, log) = read();
