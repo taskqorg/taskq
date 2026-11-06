@@ -795,21 +795,6 @@ pub fn blockers(
         .collect()
 }
 
-/// #2321 dev request: the newest board close time of a done `Depends on` issue of this board among ready tasks, from
-/// the closes `views` already read (no extra board request); unknown close times count as none.
-pub fn newest_dep_close(views: &[View], deps: &DepCache) -> Option<i64> {
-    views
-        .iter()
-        .filter(|v| v.projection.task.state == State::Ready)
-        .flat_map(|v| core::depends(&core::dep_body(&v.issue.body, &v.projection.task)))
-        .filter(|d| d.repo.is_none())
-        .filter_map(|d| {
-            deps.get(&d)
-                .and_then(|(r, at)| r.is_none().then_some(*at).flatten())
-        })
-        .max()
-}
-
 /// § 4 step 5 ask card of a task closed during a worker attempt (#1950); its answer resumes the attempt.
 pub(crate) fn closed_card(n: u64, at: &str) -> String {
     crate::cli::text::service_card(n, &format!("reopened; the issue was closed at {at} during this worker attempt, with no result or review."),
@@ -1307,8 +1292,6 @@ pub struct Service<'a> {
     delivered: HashMap<u64, u64>,
     cache: CommentCache,
     deps: DepCache,
-    /// #2321: [`newest_dep_close`] of the last full pass; the taskq-repo dev host requests a build from it.
-    pub dep_closed: Option<i64>,
     /// Label fix streaks: wanted label, stale labels, passes, board time after the last write, reported.
     label_fixes: HashMap<u64, (String, Vec<String>, u32, i64, bool)>,
     cancelled_publications: HashMap<u64, u64>,
@@ -1910,7 +1893,6 @@ impl<'a> Service<'a> {
             delivered: HashMap::new(),
             cache: HashMap::new(),
             deps: HashMap::new(),
-            dep_closed: None,
             label_fixes: HashMap::new(),
             cancelled_publications: HashMap::new(),
             summarized: HashSet::new(),
@@ -4029,7 +4011,6 @@ impl<'a> Service<'a> {
         }
         let previous_fixes = std::mem::take(&mut self.label_fixes);
         let (views, hosts) = self.read_pass_views()?;
-        self.dep_closed = newest_dep_close(&views, &self.deps);
         let now = self.board.now()?;
         self.usage_holds(&views, now);
         self.observe_ownership(&views)?;

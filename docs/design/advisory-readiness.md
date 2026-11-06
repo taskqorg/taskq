@@ -2,7 +2,7 @@
 
 ## Contract detail
 
-R8/R12/R13: source-ready and binary-ready are separate, read-only evidence projections. Legacy `Depends on`, admission, explicit dev-build demand, coalescing and the dependency close-time trigger remain unchanged (§1/§4/§8). A source proof, close time, installed release, selection or UI bundle never requests a build, release, restart or admission. No timer or per-merge release is added.
+R8/R12/R13: source-ready and binary-ready are separate, read-only evidence projections. Legacy `Depends on` and admission remain unchanged (§1/§4/§8). A source proof, close time, installed release, selection or UI bundle never requests a build, release, restart or admission. No timer or per-merge release is added.
 
 Publication retains an optional `advisory` JSON line in the existing accepted `enqueued` or `close` entry. It binds the board task URL, trusted accepted result entry ID, owning worker attempt and result SHA to the publication repository and PR number. Readers use the accepted transition projection, never the latest raw result text. Edited, replaced, rejected or mismatched results/attempts do not qualify; a rebased result without separately proved coverage stays unknown. Old folds ignore the extra text; no new state or log kind is introduced.
 

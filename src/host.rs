@@ -179,7 +179,6 @@ impl Policy {
         };
         let (update_every, rollback_after) =
             (timer("update_every", 60)?, timer("rollback_after", 600)?);
-        crate::platform::channel_of(&v)?;
         let mut c = v.clone();
         if c["admission"].is_null() {
             c["admission"] = json!({});
@@ -2251,7 +2250,7 @@ pub fn run(install: &Path) -> Res<()> {
                 for l in crate::deploy::applied(
                     &exe,
                     &roots,
-                    crate::platform::channel(install).unwrap_or("live"),
+                    "live",
                     crate::platform::VERSION,
                     v,
                     &crate::config::hostname(),

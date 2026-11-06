@@ -320,8 +320,6 @@ struct ProjectLoop<'a> {
     sampled: Option<Instant>,
     agents: Option<(Instant, Value)>,
     pr_route: Option<(Instant, check::Probe)>,
-    #[cfg(target_os = "macos")]
-    dev_ci: Option<(String, Instant)>,
     focus_error: Option<String>,
     pruned: Option<Instant>,
     /// § 4 board budget: the pause logged last, and the cumulative counts at the last full hour
@@ -351,7 +349,6 @@ struct PassFacts<'p> {
     command: Value,
     access: &'p [policy::Effective],
     requests: Value,
-    dev: Value,
     setup: Value,
     kids: Vec<Value>,
     request: Option<String>,
@@ -412,8 +409,6 @@ impl<'a> ProjectLoop<'a> {
             sampled: None,
             agents: None,
             pr_route: None,
-            #[cfg(target_os = "macos")]
-            dev_ci: None,
             focus_error: None,
             pruned: None,
             paused_logged: None,
@@ -511,7 +506,6 @@ impl<'a> ProjectLoop<'a> {
         if !quiet {
             self.exchanges(s, at);
         }
-        let dev = self.dev_status(s, quiet);
         let setup = self.setup_report(s, &access, quiet, at);
         let complete = r.is_ok();
         let mut status = self.status_report(
@@ -521,7 +515,6 @@ impl<'a> ProjectLoop<'a> {
                 command,
                 access: &access,
                 requests,
-                dev,
                 setup,
                 kids,
                 request,
@@ -801,34 +794,6 @@ impl<'a> ProjectLoop<'a> {
             .to_string();
     }
 
-    /// § 8 item 1: only the Mac thread of the taskq checkout on channel dev, on request (#2311); merge_group CI read at most every 5 minutes per SHA
-    #[cfg(target_os = "macos")]
-    fn dev_status(&mut self, s: &Service<'_>, quiet: bool) -> Value {
-        let c = self.c;
-        let cfg = &c.cfg;
-        if quiet || !self.is_installed || !platform::dev_enabled(&cfg.repo, &cfg.install) {
-            return Value::Null;
-        }
-        // #2321: a ready task whose dependency closed after the installed commit requests the build itself
-        platform::dev_dep_request(&cfg.install, &cfg.root, s.dep_closed);
-        let dev_ci = &mut self.dev_ci;
-        platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
-            if dev_ci
-                .as_ref()
-                .is_some_and(|(s, t)| s == sha && t.elapsed().as_secs() < 300)
-            {
-                return Err("checked".into());
-            }
-            *dev_ci = Some((sha.into(), Instant::now()));
-            c.board.merge_ci_green(sha).map_err(|e| e.to_string())
-        })
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn dev_status(&mut self, _: &Service<'_>, _: bool) -> Value {
-        Value::Null
-    }
-
     /// § 6 setup check: local items each pass, the board's PR route at most hourly
     fn setup_report(
         &mut self,
@@ -982,8 +947,6 @@ impl<'a> ProjectLoop<'a> {
             ("incident", incident::status(&cfg.root)),
             ("incident_notice", json!(incident::notice(&cfg.root))),
             ("requests", f.requests),
-            ("channel", json!(platform::channel(&cfg.install).ok())),
-            ("dev", f.dev),
             ("connection", json!(self.dashq.outcome)),
             ("telemetry_sync", self.telemetry_sync.status.clone()),
             (
@@ -1038,7 +1001,7 @@ impl<'a> ProjectLoop<'a> {
                         for l in deploy::applied(
                             &exe,
                             std::slice::from_ref(&cfg.root),
-                            platform::channel(&cfg.install).unwrap_or("live"),
+                            "live",
                             platform::VERSION,
                             &v,
                             &hostname(),

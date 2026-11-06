@@ -99,51 +99,32 @@ fn doctor_checks_gitlab_token_scopes_and_role() {
 
 // Chain: § 8 update -> `taskq doctor` version check (#2194 A1, A4). Risk: a host stayed on an old release with no
 // sign in doctor or dev advice installed a release (#2498). Protection: old versions stay gaps on both channels;
-// dev advice requests a dev build, live advice is unchanged, and an unread release or channel is unknown.
+// the advice stays `taskq update`, and an unread release or channel is unknown.
 // #2246: a stale service status names restart, never `service install` for a service that exists.
 #[test]
 fn doctor_flags_an_outdated_version() {
+    assert_eq!(version_item("4.6.60", &Ok("4.6.60".into())).status, "ok");
     assert_eq!(
-        version_item("4.6.60", &Ok("4.6.60".into()), Ok("live")).status,
-        "ok"
-    );
-    assert_eq!(
-        version_item("4.7.0-dev.1", &Ok("4.6.60".into()), Ok("dev")).status,
+        version_item("4.7.0-dev.1", &Ok("4.6.60".into())).status,
         "ok",
-        "a newer dev build is not behind"
+        "a newer local build is not behind"
     );
     assert_eq!(
-        version_item("4.6.58", &Err("no network".into()), Ok("live")).status,
+        version_item("4.6.58", &Err("no network".into())).status,
         "unknown"
     );
-    for (channel, fix) in [
-        ("dev", "run `taskq service dev-build`"),
-        ("live", "run `taskq update`"),
-    ] {
-        for installed in ["4.6.58", "4.6.58-261106-0"] {
-            let v = version_item(installed, &Ok("4.6.60".into()), Ok(channel));
-            assert_eq!(
-                (v.status, v.text.as_str(), v.fix.as_deref()),
-                (
-                    "gap",
-                    format!("installed {installed} is behind the latest release 4.6.60").as_str(),
-                    Some(fix)
-                ),
-                "an older base remains a gap on {channel}: {installed}"
-            );
-        }
+    for installed in ["4.6.58", "4.6.58-261106-0"] {
+        let v = version_item(installed, &Ok("4.6.60".into()));
+        assert_eq!(
+            (v.status, v.text.as_str(), v.fix.as_deref()),
+            (
+                "gap",
+                format!("installed {installed} is behind the latest release 4.6.60").as_str(),
+                Some("run `taskq update`")
+            ),
+            "an older base remains a gap: {installed}"
+        );
     }
-    let unknown = version_item(
-        "4.6.58",
-        &Ok("4.6.60".into()),
-        Err("host.json: channel must be dev or live".into()),
-    );
-    assert_eq!(unknown.status, "unknown");
-    assert!(unknown.text.contains("channel unknown"));
-    assert_eq!(
-        unknown.fix.as_deref(),
-        Some("check host.json, then run `taskq doctor`")
-    );
     let r = reports_item(
         &json!({"complete": false, "reason": "Report collection is stale; waiting for the service"}),
         false,

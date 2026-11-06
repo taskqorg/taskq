@@ -49,7 +49,6 @@ pub(crate) const USAGE: &str = "taskq agents
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
  taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]
  taskq service onboard
- taskq service dev-build (macOS channel dev)
  taskq service app-server --action prepare|launch|observe|cancel|reconcile --request JSON
  taskq service slots --identity PID | --action reserve|observe|release --request JSON [--json]
  taskq service stop [--mode drain|full] (macOS)
@@ -212,7 +211,6 @@ impl Args {
             Some("close" | "start" | "balance" | "pm") => a.pos.len(),
             Some("answer") if a.pos.get(1).is_some_and(|p| p.contains('.')) => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
-            Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
             Some("accounts") => 5,
             Some(

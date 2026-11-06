@@ -13,7 +13,6 @@ Workers are not affected by a stale root: they branch from a fetched `origin/mai
 | Class | Paths | Tidy may |
 |---|---|---|
 | Task | `.worktrees/taskq-<N>` (worker, branch `taskq-<N>`), `.worktrees/review-<N>` (reviewer, detached at the result SHA) | remove when clean and the task left that stage |
-| Reserved | `.worktrees/dev-build` (`scripts/dev-install.sh`) | nothing |
 | Unowned | any other directory under `.worktrees` | remove when clean and untouched for 7 days |
 | Foreign | registry entries outside `<root>/.worktrees`: Claude and Codex app worktrees, temp dirs, other checkouts | nothing; report only |
 
@@ -63,7 +62,7 @@ The project log gets one line per removal, refusal and root move; a refusal line
 ## Acceptance
 
 - A closed task's clean worker and reviewer worktrees and its merged branch disappear within one hour on every host that has them; a dirty one stays and shows in health.
-- An unowned clean worktree older than 7 days is removed, its branch kept; `dev-build` and foreign entries are never touched.
+- An unowned clean worktree older than 7 days is removed, its branch kept; foreign entries are never touched.
 - A clean or unrelated-dirty root on the default branch reaches `origin/<default>` within one hour, with or without `refs/remotes/origin/HEAD`; a diverged root, another branch, an unknown default or an overwrite conflict changes nothing and shows `stale <reason>`.
 - No command in the pass can lose uncommitted work or unmerged commits (tests on a temp repo cover each refusal).
 - macOS, Windows and Linux roots behave the same.

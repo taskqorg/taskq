@@ -3,8 +3,8 @@
 use crate::Res;
 use crate::cli::Args;
 use crate::cli::host_cmd::{
-    capacity_cmd, channel_cmd, claim_name, dev_build_cmd, dev_line, hold_cmd, host_setup,
-    onboard_cmd, permissions_cmd, pm_cmd, recover_cmd, resources_cmd, setup_check_cmd,
+    capacity_cmd, claim_name, hold_cmd, host_setup, onboard_cmd, permissions_cmd, pm_cmd,
+    recover_cmd, resources_cmd, setup_check_cmd,
 };
 use crate::config::{check_load, ctx};
 use crate::paths::{dot, find_root, needs_checkout, project_name};
@@ -480,15 +480,6 @@ pub(crate) fn service_report(a: &Args) -> Res<()> {
                 .and_then(|s| s["update"].as_str())
                 .unwrap_or("unknown");
             println!("Update: {update}");
-            println!(
-                "Channel: {}",
-                status
-                    .as_ref()
-                    .ok()
-                    .and_then(Option::as_ref)
-                    .and_then(|s| s["channel"].as_str())
-                    .unwrap_or("unknown")
-            );
             for l in runtime::login_lines(
                 &status
                     .as_ref()
@@ -497,15 +488,6 @@ pub(crate) fn service_report(a: &Args) -> Res<()> {
                     .map_or(Value::Null, |s| s["agents"]["rows"].clone()),
             ) {
                 println!("{l}");
-            }
-            if let Some(dev) = status
-                .as_ref()
-                .ok()
-                .and_then(Option::as_ref)
-                .map(|s| &s["dev"])
-                .filter(|d| d.is_object())
-            {
-                println!("{}", dev_line(dev));
             }
             let churn = status
                 .as_ref()
@@ -538,7 +520,7 @@ pub(crate) fn service_report(a: &Args) -> Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"app-server"|"channel"|"dev-build"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"slots"|"app-server"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 pub(crate) fn service(args: &Args) -> Res<()> {
@@ -605,12 +587,6 @@ pub(crate) fn service(args: &Args) -> Res<()> {
             return Err("usage: taskq service onboard".into());
         }
         return onboard_cmd(&platform::default_install());
-    }
-    if sub == "channel" {
-        return channel_cmd(args);
-    }
-    if sub == "dev-build" {
-        return dev_build_cmd(args, &platform::default_install());
     }
     if sub == "complete-stop" {
         platform::service_log();

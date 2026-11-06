@@ -932,40 +932,19 @@ fn latest_with(
     Ok(ver.into())
 }
 
-/// § 8 item 1 host channel: host.json `channel` `dev|live`; a missing file or key reads `live`.
-pub fn channel(install: &Path) -> Result<&'static str, String> {
-    let v: serde_json::Value = match fs::read(install.join("host.json")) {
-        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| format!("host.json: {e}"))?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok("live"),
-        Err(e) => return Err(format!("host.json: {e}")),
-    };
-    channel_of(&v)
-}
-
-pub fn channel_of(v: &serde_json::Value) -> Result<&'static str, String> {
-    match v["channel"].as_str() {
-        _ if v["channel"].is_null() => Ok("live"),
-        Some("dev") => Ok("dev"),
-        Some("live") => Ok("live"),
-        _ => Err("host.json: channel must be dev or live".into()),
-    }
-}
-
 /// `fetch(name, to)` reads one file of the latest release; tests pass a local one.
 fn channel_update(
     install: &Path,
     fetch: &dyn Fn(&str, &Path) -> Result<(), String>,
 ) -> Result<Option<String>, String> {
-    static NOT_APPLIED: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
     let t = tool(install);
     if let Some(v) = t.current().filter(|v| coreq::update::newer(v, VERSION)) {
         log!("current is {v}; restarting");
         return Ok(Some(v));
     }
     let running = t.current().unwrap_or_else(|| VERSION.into());
-    let live = channel(install)? == "live";
-    // a dev host, or a live host on a `-dev` build that coreq would never replace by an older release
-    if !live || running.contains('-') {
+    // A host on a `-` build that coreq would never replace by an older release.
+    if running.contains('-') {
         let rel = install.join("releases");
         fs::create_dir_all(&rel).map_err(|e| e.to_string())?;
         let probe = rel.join("latest.json.tmp");
@@ -995,14 +974,6 @@ fn channel_update(
             || latest["files"][coreq::update::target()] != name.as_str()
         {
             return Err(format!("latest.json: unexpected version {ver:?} or file"));
-        }
-        if !live {
-            let mut logged = NOT_APPLIED.lock().unwrap_or_else(|e| e.into_inner());
-            if coreq::update::newer(&ver, &running) && *logged != ver {
-                log!("channel dev: release {ver} not applied");
-                *logged = ver;
-            }
-            return Ok(None);
         }
         if ver == running {
             return Ok(None);
@@ -1071,197 +1042,6 @@ fn channel_update(
         return Ok(v);
     }
     Ok(None)
-}
-
-/// § 8 item 1 dev install: the SHA to start now. None on `live`, without a request (#2311: on demand only), while a
-/// build runs, or for the installed or an already started SHA (a started SHA never restarts, so a failed build is not
-/// retried); `ci` is read only after that. `main` is the newest main SHA, so one build coalesces every merge before it.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn dev_next(
-    channel: &str,
-    requested: bool,
-    main: Option<&str>,
-    installed: Option<&str>,
-    started: Option<&str>,
-    building: bool,
-    ci: &mut dyn FnMut(&str) -> Result<(), String>,
-) -> Option<String> {
-    let sha = main.filter(|m| {
-        channel == "dev" && requested && !building && Some(*m) != installed && Some(*m) != started
-    })?;
-    ci(sha).ok().map(|_| sha.to_string())
-}
-
-/// § 8 item 1 dev install gate: repo and channel only; the script comes from the fetched SHA (`dev_spawn`), so a
-/// root checked out before the script existed still installs (#1406).
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn dev_enabled(repo: &str, install: &Path) -> bool {
-    repo == RELEASE_REPO && channel(install) == Ok("dev")
-}
-
-/// The demand file of the dev install (#2311): `taskq service dev-build` writes it; a build start clears it.
-pub fn dev_request(install: &Path) -> PathBuf {
-    install.join("dev").join("request")
-}
-
-/// #2321: a ready task's `Depends on` issue of this board closed at `closed`, after the installed dev commit's commit
-/// time (`git show`, no board request), writes the request; once per close time (`dev/dep-closed` keeps the newest that
-/// wrote one), so a merge commit timed before its own close never requests again after it installs. True when written.
-#[cfg(unix)]
-pub fn dev_dep_request(install: &Path, root: &Path, closed: Option<i64>) -> bool {
-    let dir = install.join("dev");
-    let read = |f: &str| {
-        fs::read_to_string(dir.join(f))
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    };
-    let Some(closed) = closed else { return false };
-    if read("dep-closed")
-        .and_then(|t| t.parse::<i64>().ok())
-        .is_some_and(|t| closed <= t)
-    {
-        return false;
-    }
-    let Some(sha) = read("installed") else {
-        return false;
-    };
-    let commit = crate::tools::run(
-        "dev.installed",
-        command("git")
-            .arg("-C")
-            .arg(root)
-            .args(["show", "-s", "--format=%ct", &sha]),
-        std::time::Duration::from_secs(30),
-    )
-    .ok()
-    .and_then(|o| String::from_utf8_lossy(&o).trim().parse::<i64>().ok());
-    // an installed SHA the root does not hold reads unknown: no request
-    if !commit.is_some_and(|c| closed > c) {
-        return false;
-    }
-    let _ = fs::create_dir_all(&dir);
-    let ok = coreq::write_durable(&dir.join("dep-closed"), &closed.to_string())
-        .and_then(|_| coreq::write_durable(&dev_request(install), "dependency"))
-        .is_ok();
-    if ok {
-        log!("dev install: requested; a ready task's dependency closed after installed {sha}");
-    }
-    ok
-}
-
-/// One project pass of the dev install ([detail](docs/design/host-service.md#dev-install)): fold the script's
-/// report, start the newest green SHA on request, return the `status.json` `dev` value. State lives in `<install>/dev/`.
-#[cfg(unix)]
-pub fn dev_tick(
-    install: &Path,
-    root: &Path,
-    ci: &mut dyn FnMut(&str) -> Result<(), String>,
-) -> serde_json::Value {
-    let dir = install.join("dev");
-    let _ = fs::create_dir_all(&dir);
-    let read = |f: &str| {
-        fs::read_to_string(dir.join(f))
-            .ok()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-    };
-    // the script's exit report is read once: one log line, then `installed` or `failed`
-    if let Some(r) = read("result") {
-        let (sha, outcome) = r.split_once(' ').unwrap_or((&r, "failed"));
-        let ok = outcome == "installed";
-        if ok {
-            log!("dev install: {sha} installed");
-        } else {
-            log!("dev install: {sha} failed; see dev/{sha}.install.log");
-        }
-        let _ = coreq::write_durable(&dir.join(if ok { "installed" } else { "failed" }), sha);
-        if ok {
-            let _ = fs::remove_file(dir.join("failed"));
-        }
-        let _ = fs::remove_file(dir.join("result"));
-    }
-    let building = read("lock/pid")
-        .and_then(|p| p.parse().ok())
-        .is_some_and(crate::runtime::alive);
-    let request = dev_request(install);
-    let (installed, started, failed) = (read("installed"), read("started"), read("failed"));
-    // #2311: no request, no `git ls-remote` and no build
-    if !request.exists() {
-        return serde_json::json!({"installed":installed,"pending":null,"failed":failed,"building":building,"requested":false});
-    }
-    // #1856: a failed or empty read is logged with its command; `main` then reads unknown and nothing starts
-    let main = crate::tools::run(
-        "dev.main",
-        command("git")
-            .arg("-C")
-            .arg(root)
-            .args(["ls-remote", "origin", "refs/heads/main"]),
-        std::time::Duration::from_secs(30),
-    )
-    .and_then(|o| {
-        String::from_utf8_lossy(&o)
-            .split_whitespace()
-            .next()
-            .map(String::from)
-            .filter(|s| s.len() == 40 && s.bytes().all(|c| c.is_ascii_hexdigit()))
-            .ok_or_else(|| {
-                format!(
-                    "`git ls-remote origin refs/heads/main` printed no main SHA: {:?}",
-                    String::from_utf8_lossy(&o).trim()
-                )
-            })
-    })
-    .map_err(|e| log!("dev install: {e}"))
-    .ok();
-    let mut requested = true;
-    if main.is_some() && main == installed {
-        log!(
-            "dev install: request cleared; main {} is installed",
-            installed.as_deref().unwrap_or_default()
-        );
-        let _ = fs::remove_file(&request);
-        requested = false;
-    }
-    if let Some(sha) = dev_next(
-        "dev",
-        requested,
-        main.as_deref(),
-        installed.as_deref(),
-        started.as_deref(),
-        building,
-        ci,
-    ) {
-        let _ = fs::remove_file(&request);
-        requested = false;
-        match coreq::write_durable(&dir.join("started"), &sha)
-            .and_then(|_| dev_spawn(root, &sha, &dir))
-        {
-            Ok(()) => log!("dev install: start {sha}"),
-            Err(e) => log!("dev install: {sha} not started: {e}"),
-        }
-    }
-    let pending = main.filter(|m| Some(m) != installed.as_ref() && Some(m) != failed.as_ref());
-    serde_json::json!({"installed":installed,"pending":pending,"failed":failed,"building":building,"requested":requested})
-}
-
-/// Runs the `scripts/dev-install.sh` of `sha` itself, so the primary checkout's own edits never matter. The build
-/// outlives this service's re-exec into it: its own process group, reparented by the background `&`.
-#[cfg(unix)]
-fn dev_spawn(root: &Path, sha: &str, dir: &Path) -> Result<(), String> {
-    use std::os::unix::process::CommandExt;
-    let st=command("sh").arg("-c")
-        // `--refmap=`: fetch main's objects without updating origin/main, whose ref lock a concurrent fetch may hold (#1633)
-        .arg(r#"(git -C "$1" fetch -q --refmap= --no-write-fetch-head origin main && git -C "$1" show "$2:scripts/dev-install.sh" >"$3/install.sh" && TASKQ_DEV_REPO="$1" exec sh "$3/install.sh" "$2" || echo "$2 failed" >"$3/result") >"$3/$2.install.log" 2>&1 </dev/null &"#)
-        .arg("sh").arg(root).arg(sha).arg(dir)
-        .env_remove("TASKQ_ROOT").env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE")
-        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-        .process_group(0).status().map_err(|e|e.to_string())?;
-    if st.success() {
-        Ok(())
-    } else {
-        Err(format!("sh {st}"))
-    }
 }
 
 fn update_result(result: Result<Option<String>, String>) -> Result<Option<String>, String> {
