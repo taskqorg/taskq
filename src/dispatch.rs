@@ -1720,16 +1720,9 @@ pub fn resume_publication(
         if let Err(e) = crate::waits::acyclic(b, n) {
             return Receipt::rejected(n, &op, format!("publication dependency {reference}: {e}"));
         }
-        let card = crate::cli::text::ask_card(
-            n,
-            &format!(
-                "Done: reviewed result and publication retained\nProblem: publication waits for {reference}: {}",
-                crate::cli::text::plain(&blocker.reason, 160)
-            ),
-            &[],
-            None,
-            &[],
-        );
+        // Keep the writer call adjacent to its literal for the production card guard.
+        #[rustfmt::skip]
+        let card = crate::cli::text::ask_card(n, &format!("Done: reviewed result and publication retained\nProblem: publication waits for {reference}: {}", crate::cli::text::plain(&blocker.reason, 160)), &[], None, &[]);
         return match card {
             Ok(card) => write("publication-blocked", &["completion", &reference], &card),
             Err(e) => Receipt::rejected(n, &op, e),
