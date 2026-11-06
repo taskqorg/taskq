@@ -336,7 +336,10 @@ fn a_failed_status_exit_reads_unknown() {
     }
     // The CLI's real no-daemon answer exits 1: reading it as unknown would hold every launch with no daemon to exit.
     assert_eq!(status_of(Some((false, "not running\n".into()))), Ok(None));
-    assert_eq!(status_of(Some((true, "pid: 41036\n".into()))), Ok(Some(41036)));
+    assert_eq!(
+        status_of(Some((true, "pid: 41036\n".into()))),
+        Ok(Some(41036))
+    );
 }
 
 // Chain: R12, #2494 A3. Risk: a status probe that times out reads as no daemon and the launch joins a live one.

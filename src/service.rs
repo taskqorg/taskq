@@ -6678,24 +6678,25 @@ impl<'a> Service<'a> {
             for (home, tasks) in homes {
                 let fit =
                     crate::runtime::daemon_sandbox::read(rt, home.as_deref(), profile.as_deref());
-                let moved = if crate::runtime::daemon_sandbox::verdict(None, "", &fit, false).is_ok() {
-                    BTreeSet::new()
-                } else {
-                    let open = |n: &&u64| {
-                        views.iter().any(|v| {
-                            v.issue.number == **n
-                                && matches!(
-                                    v.projection.task.state,
-                                    State::Ready | State::Doing | State::Review
-                                )
-                        })
+                let moved =
+                    if crate::runtime::daemon_sandbox::verdict(None, "", &fit, false).is_ok() {
+                        BTreeSet::new()
+                    } else {
+                        let open = |n: &&u64| {
+                            views.iter().any(|v| {
+                                v.issue.number == **n
+                                    && matches!(
+                                        v.projection.task.state,
+                                        State::Ready | State::Doing | State::Review
+                                    )
+                            })
+                        };
+                        self.daemon_reads
+                            .iter()
+                            .filter(|r| r.rt == *rt && r.home == home)
+                            .flat_map(|r| r.moved.iter().filter(open).copied())
+                            .collect()
                     };
-                    self.daemon_reads
-                        .iter()
-                        .filter(|r| r.rt == *rt && r.home == home)
-                        .flat_map(|r| r.moved.iter().filter(open).copied())
-                        .collect()
-                };
                 reads.push(DaemonRead {
                     rt: rt.clone(),
                     queue: active.as_ref() == Some(&home),
