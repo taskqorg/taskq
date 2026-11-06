@@ -512,4 +512,3 @@
                 size, pages.len(), backward.len(), c["history"]["status"], c["history"]["reason"], c["version"], c["native"]["status"]);
         }
     }
-

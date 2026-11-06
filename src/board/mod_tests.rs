@@ -383,7 +383,7 @@
                 Ok(Reply {status:200,headers:vec![],body:value.to_string(),operation:operation(method)})
             }));
             assert_eq!(b.source("docs/research/12.md",&sha).unwrap(),"# Question\nInvented source");
-            
+
         }
     }
     /// A recorded GitHub response; tests/fixtures/github-merge-queue/README.md says how to re-record.

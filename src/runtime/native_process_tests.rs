@@ -32,4 +32,3 @@ pub fn start_file(command:&mut Command,input:File)->Result<Box<dyn Proc>,StartEr
     #[cfg(windows)] {windows_process::Execution::spawn(command).map(|child|Box::new(child) as Box<dyn Proc>)}
     #[cfg(not(windows))] {command.spawn().map(|child|Box::new(child) as Box<dyn Proc>).map_err(|e|StartError::io(e,None))}
 }
-

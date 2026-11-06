@@ -356,4 +356,3 @@ fn staged_selftest_passes_behind_unresponsive_writer() {
     assert!(!events.contains("taskq.selftest")&&!events.contains("\"taskq\""),"staged selftest wrote the running writer's store: {events}");
     fs::remove_dir_all(root).unwrap();
 }
-
