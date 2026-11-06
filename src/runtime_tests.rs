@@ -7288,3 +7288,34 @@ fn claude_history_buffered_records_still_require_exact_source() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// R12 / #2448: previously ignored native metadata cannot hide an exact input or turn end.
+#[test]
+fn claude_history_ignores_metadata_without_accepting_invalid_records() {
+    let root = std::env::temp_dir().join(format!("taskq-claude-shape-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("transcript.jsonl");
+    let log = root.join("attempt.log");
+    let input =
+        serde_json::json!({"type":"user","message":{"content":"exact input"}}).to_string() + "\n";
+    for (record, accepted) in [
+        (
+            serde_json::json!({"type":"file-history-snapshot","snapshot":{}}),
+            true,
+        ),
+        (serde_json::json!({}), false),
+    ] {
+        let text =
+            format!("{record}\n{input}{{\"type\":\"system\",\"subtype\":\"turn_duration\"}}\n");
+        std::fs::write(&path, text).unwrap();
+        let mut history = ClaudeHistory::default();
+        if accepted {
+            assert_eq!(history.read(&path, 0, "exact input", &log), Ok(true));
+            assert!(history.ended);
+        } else {
+            assert!(history.read(&path, 0, "exact input", &log).is_err());
+            assert!(!history.found);
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
