@@ -5723,10 +5723,7 @@ impl<'a> Service<'a> {
                 ));
             }
             let (rt, fallback) = match self.select_runtime(v) {
-                Ok(rt) => {
-                    self.daemon_moved(n, rt.1.as_deref().unwrap_or_default());
-                    rt
-                }
+                Ok(rt) => rt,
                 Err(r) => {
                     self.daemon_waiter(n, &r.1);
                     decided.insert(n, r);
@@ -6991,6 +6988,8 @@ impl<'a> Service<'a> {
         );
         match r? {
             Some((l, log)) => {
+                // Only a won claim moved the task: another host's or a lost claim says nothing about this daemon.
+                self.daemon_moved(n, reason);
                 let through = l.attempt;
                 self.launch(l, through, log)
             }

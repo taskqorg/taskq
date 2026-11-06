@@ -14607,6 +14607,33 @@ fn work_moved_off_a_refusing_daemon_stays_named_until_the_wait_ends() {
     ds::fake(None);
 }
 
+// Chain: R6, #2494 A1. Risk: status says a daemon moved work that this host never claimed, because another host took
+// the task or the claim did not land.
+#[test]
+fn work_this_host_did_not_claim_never_reads_as_moved_off_a_daemon() {
+    use crate::runtime::daemon_sandbox as ds;
+    let b = Fake::default();
+    let mut c = cfg("mac");
+    c.limits = BTreeMap::from([("claude".to_string(), 2), ("codex".to_string(), 2)]);
+    let elsewhere = b
+        .create("Elsewhere", "", &["taskq".into(), "host-win".into()])
+        .unwrap();
+    let unclaimed = b.create("Unclaimed", "", &["taskq".into()]).unwrap();
+    let mut s = service(&b, &c, Default::default());
+    s.seatbelt.insert("claude".into(), Some("grant".into()));
+    s.unseen.insert(unclaimed, u64::MAX); // an earlier spawn is still unknown: no new claim
+    ds::fake(Some(daemon_differs()));
+    s.pass().unwrap();
+    assert_eq!(task(&b, elsewhere).state, State::Ready);
+    assert_eq!(task(&b, unclaimed).state, State::Ready);
+    let body = s.heartbeat_body();
+    assert!(
+        !body.lines().any(|l| l.starts_with("daemon-sandbox ")),
+        "{body}"
+    );
+    ds::fake(None);
+}
+
 // Chain: § 8 Access, #2432 A1. Risk: a held launch or a resume reaches the shared daemon under another grant, or
 // waiting consumes the attempt, or a grant that waits never gets its turn.
 #[test]
