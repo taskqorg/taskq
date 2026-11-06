@@ -347,6 +347,18 @@ fn refusal_admission(code: &str, text: &str) -> (&'static str, String) {
     (code, text.into())
 }
 
+/// Temporary launch spacing as published by a primary: every wording `launch_refusal` and host admission use.
+fn launch_spacing(reason: &str) -> bool {
+    [
+        "launch-interval",
+        "launch spacing",
+        "host launched ",
+        "no load sample since the last host launch",
+    ]
+    .iter()
+    .any(|w| reason.contains(w))
+}
+
 /// R12/§4: task-facing effective availability, published on the existing per-board heartbeat.
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -6284,12 +6296,6 @@ impl<'a> Service<'a> {
             .last()
             .and_then(|(id, _, _)| v.comments.iter().find(|c| c.id == *id))
             .map_or(v.issue.created, |c| c.created);
-        if now >= since && now - since >= self.cfg.spillover_grace as i64 {
-            return Ok(Some(format!(
-                "spillover: grace {} s elapsed",
-                self.cfg.spillover_grace
-            )));
-        }
         let mut reasons = vec![];
         let mut exhausted = vec![];
         let mut known = false;
@@ -6320,6 +6326,12 @@ impl<'a> Service<'a> {
                     ));
                 }
                 Err(("unknown", reason)) => reasons.push(format!("primary {name}: {reason}")),
+                Err((_, reason)) if launch_spacing(&reason) => {
+                    return Err(format!(
+                        "spillover waits: primary {name} launch spacing: {reason}; grace {} s",
+                        self.cfg.spillover_grace
+                    ));
+                }
                 Err((_, reason)) => exhausted.push(format!("primary {name}: {reason}")),
             }
         }
@@ -6330,6 +6342,12 @@ impl<'a> Service<'a> {
             Ok(Some(format!(
                 "spillover: zero effective primary availability; {}",
                 exhausted.join("; ")
+            )))
+        } else if now >= since && now - since >= self.cfg.spillover_grace as i64 {
+            Ok(Some(format!(
+                "spillover: grace {} s elapsed; {}",
+                self.cfg.spillover_grace,
+                reasons.join("; ")
             )))
         } else {
             Err(format!(

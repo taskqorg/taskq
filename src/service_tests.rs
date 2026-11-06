@@ -10562,7 +10562,11 @@ fn balancing_spillover_uses_effective_primary_availability() {
         "corrupt",
         "stale",
         "none",
-        "grace",
+        "grace-free",
+        "grace-unknown",
+        "spacing",
+        "spacing-grace",
+        "full-grace",
         "pinned",
         "capability",
         "fenced",
@@ -10606,7 +10610,18 @@ fn balancing_spillover_uses_effective_primary_availability() {
                 ..GATE_DEFAULT
             });
         }
-        if matches!(scenario, "full" | "one-free" | "all-full") {
+        if matches!(scenario, "spacing" | "spacing-grace") {
+            // A real open gate inside its 30 s launch interval, as the primary publishes it.
+            p.gate.configure(GateCfg {
+                enabled: true,
+                ..GATE_DEFAULT
+            });
+            p.gate.last = Some((p.mono, 0, Some(1.0), Some(90.0)));
+            p.gate.open = true;
+            p.gate.launch(p.mono);
+            assert!(p.heartbeat_body().contains("launch-interval"));
+        }
+        if matches!(scenario, "full" | "one-free" | "all-full" | "full-grace") {
             p.reserved.push((99, 99, "claude".into()));
         }
         if scenario != "none" {
@@ -10620,7 +10635,7 @@ fn balancing_spillover_uses_effective_primary_availability() {
             let hb = b
                 .create("taskq host win", &body, &[HOST_LABEL.into()])
                 .unwrap();
-            if scenario == "stale" {
+            if matches!(scenario, "stale" | "grace-unknown") {
                 b.state
                     .borrow_mut()
                     .issues
@@ -10662,13 +10677,19 @@ fn balancing_spillover_uses_effective_primary_availability() {
         }
         let mut c = cfg("mac");
         c.claim = crate::host::ClaimMode::Spillover;
-        c.spillover_grace = if scenario == "grace" { 0 } else { 300 };
+        c.spillover_grace = if scenario.contains("grace") { 0 } else { 300 };
         c.has.push("special".into());
         let mut s = service(&b, &c, Default::default());
         s.pass().unwrap();
         let expected = matches!(
             scenario,
-            "full" | "quota" | "grace" | "pinned" | "capability" | "all-full"
+            "full"
+                | "quota"
+                | "grace-unknown"
+                | "full-grace"
+                | "pinned"
+                | "capability"
+                | "all-full"
         );
         assert_eq!(
             task(&b, n).state == State::Doing,
@@ -10720,6 +10741,26 @@ fn balancing_spillover_uses_effective_primary_availability() {
             "{scenario}"
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+// Every wording a primary publishes for temporary launch spacing is waiting; real holds stay exhaustion.
+#[test]
+fn balancing_launch_spacing_is_waiting_not_exhaustion() {
+    for waiting in [
+        "launch-interval: launch interval",
+        "host load gate: 30 s launch spacing (12 s remaining)",
+        "host launched 12 s ago",
+        "no load sample since the last host launch",
+    ] {
+        assert!(launch_spacing(waiting), "{waiting}");
+    }
+    for exhausted in [
+        "cpu: CPU 95 % >= 80 %",
+        "host at its maximum of 2 sessions",
+        "claude at capacity",
+    ] {
+        assert!(!launch_spacing(exhausted), "{exhausted}");
     }
 }
 
