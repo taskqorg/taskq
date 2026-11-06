@@ -410,6 +410,7 @@ pub struct Row {
     pub worker: Option<Value>,
     /// Accepted worker sources in board order; read-only history, never execution authority.
     pub workers: Vec<Value>,
+    pub reviewers: Vec<Value>,
     pub conversation: Option<Value>,
     pub n: u64,
     pub title: String,
@@ -928,6 +929,8 @@ pub fn from_views(
             .map(|t|json!({"attempt":t.attempt,"session":t.session,"role":"worker"})),
         workers: v.projection.changes.iter().filter(|(id,_,t)|t.role.as_deref()==Some("worker")&&t.attempt==Some(*id))
             .map(|(id,_,t)|json!({"attempt":id,"session":t.session,"role":"worker","started":v.comments.iter().find(|c|c.id==*id).map(|c|c.created)})).collect(),
+        reviewers: v.projection.changes.iter().filter(|(id,_,t)|t.role.as_deref()==Some("reviewer")&&t.attempt==Some(*id))
+            .map(|(id,_,t)|json!({"attempt":id,"session":t.session,"role":"reviewer","started":v.comments.iter().find(|c|c.id==*id).map(|c|c.created)})).collect(),
         n: v.issue.number,
         conversation: core::conversation(v.issue.number,&v.log).map(|id| json!({"id":id,"brief":v.issue.body,"verdict":v.projection.changes.iter().rev().find_map(|(id,_,_)|v.log.iter().find(|e|e.id==*id && ["taskq: result ","taskq: close","taskq: publish"].iter().any(|prefix|e.body.starts_with(prefix))).and_then(|e|e.body.split_once('\n').map(|(_,text)|core::verdict(v.issue.number,&v.log,text))))})),
         title: v.issue.title.clone(),
@@ -1388,6 +1391,9 @@ impl Row {
         }
         if !self.workers.is_empty() {
             row["workers"] = json!(self.workers);
+        }
+        if !self.reviewers.is_empty() {
+            row["reviewers"] = json!(self.reviewers);
         }
         if let Some(c) = &self.conversation {
             row["conversation"] = c.clone();

@@ -1,6 +1,7 @@
 "use strict";
 const ui = require("./ui-runtime.js"),
-  copyLabel = require("./copy-label.js");
+  copyLabel = require("./copy-label.js"),
+  anchor = require("./reading-anchor.js");
 const execution = ui.execution;
 const replyFiles = require("./reply-files.js");
 
@@ -503,12 +504,15 @@ const {
     );
   },
   mount: function (el, adapter) {
+    anchor.watch(el.ownerDocument);
     const { apply, paint, markup } = execution.module("answer-card.mount", {
       markup: function () {
         return [...cards]
           .map(
             ([k, c]) =>
-              '<div data-qac-key="' +
+              '<div data-row-key="' +
+              esc(k) +
+              '" data-qac-key="' +
               esc(k) +
               '">' +
               render(
@@ -563,6 +567,11 @@ const {
         }
       },
       paint: function () {
+        // Data arriving during scrolling waits until it stops; a click or key ends the wait.
+        if (anchor.busy()) {
+          anchor.after(el, paint);
+          return;
+        }
         const a = document.activeElement,
           focus =
             a && el.contains(a)
@@ -578,7 +587,7 @@ const {
                   e: a.selectionEnd,
                 }
               : null;
-        const scroll = el.scrollTop,
+        const place = anchor.held(el),
           open = new Set(
             [...el.querySelectorAll("details[open]")].map(
               (d) =>
@@ -596,7 +605,8 @@ const {
             )
           )
             d.open = true;
-        el.scrollTop = scroll;
+        anchor.restore(el, place, "answer-card");
+        anchor.track(el, "answer-card");
         for (const [k, local] of locals)
           if (Array.isArray(local.caret) && local.caret.length === 2) {
             const input = el.querySelector(

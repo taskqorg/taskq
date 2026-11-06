@@ -313,6 +313,17 @@ const fs = require("node:fs"),
         1,
         "#2159: review retains worker history without a live worker",
       );
+      await page.waitForTimeout(200);
+      assert.equal(
+        await page.evaluate(
+          () => sent.filter((m) => m.action === "transcript").length,
+        ),
+        0,
+        "A6: opening an ended attempt reads no log",
+      );
+      await panel
+        .locator('[data-c=worker-attempt][data-attempt="' + task.attempt + '"]')
+        .click();
       m = await read();
       await reply(m, {
         items: [],

@@ -2,7 +2,8 @@
 const copyLabel = require("./copy-label.js");
 const { h, Fragment } = require("preact"),
   ui = require("./ui-runtime.js"),
-  { execution } = ui;
+  { execution } = ui,
+  anchor = require("./reading-anchor.js");
 const views = require("./task-views.js"),
   blocks = require("./project-blocks.js"),
   popover = require("./anchored-popover.js"),
@@ -492,6 +493,7 @@ module.exports = execution.module("taskDashboard", {
               class: "task-row completed-row",
               key: pin.ref,
               "data-pin": pin.ref,
+              "data-row-key": "pin:" + pin.ref,
             },
             h("span", {
               dangerouslySetInnerHTML: {
@@ -1456,8 +1458,9 @@ module.exports = execution.module("taskDashboard", {
           view.previousSection = m.selected;
           view.completedEditor = false;
           if (!owned)
-            api.current().scroll =
-              menu.querySelector(".content")?.scrollTop || 0;
+            api.current().scroll = anchor.compact(
+              anchor.snapshot(menu.querySelector(".content")),
+            );
           m.selected = d.id;
           view.popup = null;
           if (d.id === "completed") api.openCompleted();

@@ -225,6 +225,17 @@ fn history_read_is_a_parsable_status_closed_page() {
         (Some("7"), true, Some("80")),
         "#1829: exact native read retains task and byte cursor; no session-open command"
     );
+    // A closed thread's background read names the board's exact task and asks for no worker log.
+    let a = crate::cli::Args::parse(&history_args(&json!({"task":7,"board":true}))).unwrap();
+    assert_eq!(
+        (
+            a.pos.as_slice(),
+            a.flags.contains_key("closed"),
+            a.one("task"),
+            a.flags.contains_key("transcript")
+        ),
+        (&["status".to_string()][..], true, Some("7"), false)
+    );
 }
 
 #[test]
@@ -2096,6 +2107,68 @@ fn incident_report_only_opens_json_inside_its_project() {
         );
     }
     fs::remove_dir_all(root).unwrap();
+}
+
+// Chain: Scroll position (taskq.md), docs/design/ai-workspace.md. Risk: the page boundary refuses a drift or
+// click-to-text fact, so `taskq profile actions` never reads it, or takes a name outside the closed lists.
+#[test]
+fn reading_facts_cross_the_web_boundary_as_actions() {
+    let id = format!("{}.1", "a".repeat(32));
+    let row = |operation: &str, outcome: &str, error: &str| json!({"kind":"ui","operation":operation,"trace":id,"span":id,"parent":null,"started_ms":1,"duration_us":7,"outcome":outcome,"error":error});
+    for operation in [
+        "tasks",
+        "history",
+        "conversations",
+        "bounded",
+        "answer-card",
+        "finding-composer",
+        "workspace",
+    ]
+    .iter()
+    .flat_map(|surface| {
+        [
+            "insert-above",
+            "append",
+            "removal",
+            "late-image",
+            "resize",
+            "refresh",
+        ]
+        .map(|cause| format!("js.scroll.drift.{surface}.{cause}"))
+    }) {
+        let accepted = web_observation(&row(&operation, "failed", "scroll-drift")).unwrap();
+        assert_eq!(
+            (&accepted["kind"], &accepted["source"]),
+            (&json!("method"), &json!("action")),
+            "{operation}"
+        );
+    }
+    for operation in ["cold.snapshot", "warm.cache", "cold.board", "warm.unknown"] {
+        let accepted = web_observation(&row(
+            &format!("js.conversation.open.{operation}"),
+            "ok",
+            "none",
+        ))
+        .unwrap();
+        assert_eq!(
+            accepted["duration_us"], 7,
+            "click-to-text carries its elapsed time"
+        );
+        assert!(
+            accepted["trace"].is_string() && accepted["span"].is_string(),
+            "the action reader requires both"
+        );
+    }
+    for operation in [
+        "js.scroll.drift.private.refresh",
+        "js.scroll.drift.tasks.private",
+        "js.conversation.open.cold.private",
+    ] {
+        assert!(
+            web_observation(&row(operation, "ok", "none")).is_err(),
+            "{operation}"
+        );
+    }
 }
 
 // Risk: page metadata smuggles content or forges a method outside the bundled inventory.
