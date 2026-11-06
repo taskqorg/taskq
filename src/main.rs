@@ -472,6 +472,18 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                     owner,
                     a.one("readers-current") == Some("yes"),
                     a.one("source-record"),
+                    match (a.one("source-url"), a.one("source-sha256")) {
+                        (None, None) => None,
+                        (Some(url), Some(sha256)) => Some(evidence::Source {
+                            url: url.into(),
+                            sha256: sha256.into(),
+                        }),
+                        _ => {
+                            return Err(
+                                "separate source requires --source-url and --source-sha256".into()
+                            );
+                        }
+                    },
                 )],
                 json,
             )

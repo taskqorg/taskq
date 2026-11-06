@@ -105,3 +105,13 @@ The Windows selected gate defaults to at most four Rust harness threads, preserv
 The release-publisher fixture bounds its unavailable-lock case at 60s on Windows (10s elsewhere): it launches the Python gh substitute 60 times. The Windows selected gate exceeded the former 10s wrapper; the focused check completed 60 attempts in 7.23s. An explicit attempt-count assertion retains the retry ceiling, alongside the unchanged index-preservation and no-lock-stealing assertions. Product lock timing is unchanged.
 
 `runtime::tests::claude_account_environment_parity` bounds each isolated mode at 60s on Windows (30s elsewhere) and reports its elapsed time. Even the implicit mode runs five native calls with individual 10s deadlines. The #2359 full Windows gate timed out in that mode under the former 30s outer bound; the unchanged focused case passed in 1.74s, so the original delay's cause is unknown. Login/home parity, retained-session/input assertions, native deadlines and the 900s gate budget remain unchanged; no retry is allowed.
+
+## Retained archival-source checkpoint
+
+The ordinary `evidence::tests` selection covers separate source binding, mismatches and lost-response reconciliation through production dispatch. The read-only #2463 checkpoint additionally needs the original retained artifacts; newly downloaded source ZIPs can have different container hashes and cannot substitute for them:
+
+```sh
+TASKQ_ARCHIVAL_SOURCE=/path/to/retained-canonical.zip TASKQ_ARCHIVAL_EVIDENCE=/path/to/retained-evidence.zip cargo test --locked --bin taskq archival_2463_retained_artifacts_checkpoint -- --ignored --nocapture
+```
+
+It checks both fixed SHA-256 values and candidate source bytes without owner authorization, board writes, native launches or source publication. The candidate Git objects must already be available. Passing this checkpoint does not establish official reader rollout or authorize closing #2463 (§7).
