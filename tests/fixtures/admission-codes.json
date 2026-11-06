@@ -57,7 +57,8 @@
     "no host decision",
     "capacity config unreadable",
     "host admission unknown",
-    "execution unresolved"
+    "execution unresolved",
+    "free space unreadable"
   ],
   "tasks": [
     {
@@ -238,6 +239,18 @@
         "observed": 1000,
         "host": "mac",
         "reason": "execution unresolved"
+      }
+    },
+    {
+      "n": 34,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "unknown",
+        "observed": 1000,
+        "host": "mac",
+        "reason": "free space unreadable"
       }
     },
     {

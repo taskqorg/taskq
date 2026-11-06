@@ -19,6 +19,7 @@ mod core;
 mod data;
 mod deploy;
 mod dialogue;
+mod disk;
 mod dispatch;
 mod display;
 mod doctor;

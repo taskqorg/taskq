@@ -189,22 +189,25 @@ pub(crate) fn gate_text(c: &Value) -> String {
         Some("open") => "Ready".into(),
         Some("held") => format!(
             "Waiting: {}",
-            reasons(&["cpu", "memory", "cooldown", "max", "spacing", "version"])
-                .into_iter()
-                .map(|r| match r["code"].as_str() {
-                    Some("cpu") => "CPU",
-                    Some("memory") => "memory",
-                    Some("max") => "host maximum",
-                    Some("spacing") => "host spacing",
-                    Some("version") => "old service",
-                    _ => "recovery",
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
+            reasons(&[
+                "disk", "cpu", "memory", "cooldown", "max", "spacing", "version"
+            ])
+            .into_iter()
+            .map(|r| match r["code"].as_str() {
+                Some("cpu") => "CPU",
+                Some("disk") => "low disk",
+                Some("memory") => "memory",
+                Some("max") => "host maximum",
+                Some("spacing") => "host spacing",
+                Some("version") => "old service",
+                _ => "recovery",
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
         ),
         Some(_) => format!(
             "Unknown: {}",
-            reasons(&["sample", "config", "host"])
+            reasons(&["disk", "sample", "config", "host"])
                 .into_iter()
                 .filter_map(|r| r["text"].as_str())
                 .collect::<Vec<_>>()

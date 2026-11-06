@@ -1428,6 +1428,7 @@ const { rtName } = execution.module("resource-controls", {
     })[rt] || rt,
 });
 const BLOCKERS = {
+  disk: "low disk",
   cpu: "CPU",
   memory: "memory",
   pressure: "memory pressure",
@@ -1447,7 +1448,7 @@ const BLOCKERS = {
   provider: "provider limit",
   unknown: "unknown reason",
 };
-const GATE = ["cpu", "memory", "pressure", "cooldown"];
+const GATE = ["disk", "cpu", "memory", "pressure", "cooldown"];
 
 // The group's scopes: host (no project), project (no runtime) and runtime targets, in runtime order.
 

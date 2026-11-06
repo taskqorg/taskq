@@ -1763,6 +1763,12 @@ mod win {
         pub fn GetSystemTimes(idle: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
         pub fn GlobalMemoryStatusEx(m: *mut MemoryStatusEx) -> i32;
         pub fn GetTickCount64() -> u64;
+        pub fn GetDiskFreeSpaceExW(
+            path: *const u16,
+            available: *mut u64,
+            total: *mut u64,
+            free: *mut u64,
+        ) -> i32;
     }
 }
 
@@ -1873,6 +1879,40 @@ pub fn memory_available() -> Option<f64> {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 pub fn host_memory() -> Option<(f64, u32)> {
+    None
+}
+
+/// Bytes this OS user may still use on the volume of `path`; `None` when it does not read (§ 3 Disk guard).
+#[cfg(unix)]
+pub fn disk_free(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: a valid C string and a zeroed output struct `statvfs` fills
+    let mut s = unsafe { std::mem::zeroed::<libc::statvfs>() };
+    (unsafe { libc::statvfs(path.as_ptr(), &mut s) } == 0)
+        .then(|| (s.f_bavail as u64).saturating_mul(s.f_frsize as u64))
+}
+
+/// Bytes this OS user may still use on the volume of `path`; `None` when it does not read (§ 3 Disk guard).
+#[cfg(windows)]
+pub fn disk_free(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let path: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let mut available = 0u64;
+    // SAFETY: a NUL-terminated wide path and one output; the API takes null for the two others
+    (unsafe {
+        win::GetDiskFreeSpaceExW(
+            path.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    } != 0)
+        .then_some(available)
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn disk_free(_: &Path) -> Option<u64> {
     None
 }
 

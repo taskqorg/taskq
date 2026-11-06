@@ -140,6 +140,9 @@ Attempt stages and queue transitions (§ 4 Profiling) are adapter observations o
 An owner-account local CLI exchange (`taskq service slots`, `taskq.slots/1`) lets an external consumer hold service-admitted slots under worker limits and barriers; it grants nothing, ignores focus, admits no tasks; only attested completion or a verified later boot releases a slot: [slot authority](docs/design/external-slots.md#slot-authority).
 ### Runtime accounts
 Per-host login homes, failover, usage ranking and fleet policy: [contract detail](docs/design/capacity.md#runtime-accounts).
+### Disk guard
+Under 20 GB free on a volume holding the project or its worktrees, its service starts no new worker or reviewer (claim, resume), load gate off too; an unreadable reading holds as unknown (R12). Running attempts continue; a held resume keeps its inbox and starts when space returns; the service deletes nothing. Status (R6) and doctor show it: [disk guard](docs/design/capacity.md#disk-guard).
+
 ## 4. Service
 `taskq service run`: one host process for `<install>/projects`, one loop thread per root; `service install` registers a project and persists the process (§ 8). A project panic restarts only its thread, reattaching children; 3 in 10 min quarantine it (reap, heartbeat, `status.json` only) until `service restart`. Exits log why. Loop:
 1. Reap exact executions per the [adapter matrix][ar]. Missing/unsupported reads stay unknown. Terminal turns request owned-tree stop where needed; confirm exit before release.

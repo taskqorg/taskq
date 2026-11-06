@@ -488,6 +488,7 @@ impl<'a> ProjectLoop<'a> {
         if !quiet {
             self.probe_agents(s);
         }
+        s.disk = Some(crate::disk::Disk::read(&s.cfg.root));
         let r = if reduced {
             s.reduced()
                 .and_then(|_| Err(self.panics.reason.clone().unwrap_or_default()))
@@ -1169,6 +1170,7 @@ impl<'a> ProjectLoop<'a> {
                 );
             }
             s.wall = wall as i64;
+            s.disk = Some(crate::disk::Disk::read(&cfg.root));
             s.sync_host();
             status["tasks_age_seconds"] = json!(s.tasks_read.map(|t| t.elapsed().as_secs()));
             status["capacity"] = s.capacity_json();
