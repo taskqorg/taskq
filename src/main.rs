@@ -480,7 +480,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                         }),
                         _ => {
                             return Err(
-                                "separate source requires --source-url and --source-sha256".into()
+                                "separate source requires --source-url and --source-sha256".into(),
                             );
                         }
                     },
