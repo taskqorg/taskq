@@ -756,16 +756,26 @@ pub fn open_latest(root: &Path, n: u64, sha: Option<&str>) -> Res<Value> {
 /// Reads bypass board construction and token lookup, so offline navigation cannot become a login/API probe.
 pub fn read_cli(root: &Path, a: &crate::cli::Args) -> Res<Option<Value>> {
     if a.flags.iter().any(|(k, v)| {
-        !["action", "sha", "page", "before", "json", "text", "until"].contains(&k.as_str())
+        ![
+            "action", "sha", "page", "before", "json", "text", "until", "op-id",
+        ]
+        .contains(&k.as_str())
             || v.len() != 1
     }) {
         return Err(
-            "results: use --action, --sha, --page, --before, --text, --until and --json once each"
+            "results: use --action, --sha, --page, --before, --text, --until, --op-id and --json once each"
                 .into(),
         );
     }
-    if a.one("text").is_some() && !matches!(a.one("action"), Some("followup" | "reopen")) {
-        return Err("--text supplies the reason for followup or reopen".into());
+    if a.one("text").is_some()
+        && !matches!(
+            a.one("action"),
+            Some("accept" | "later" | "drop" | "followup" | "reopen")
+        )
+    {
+        return Err(
+            "--text supplies the reason for accept, later, drop, followup or reopen".into(),
+        );
     }
     if a.one("until").is_some() && a.one("action") != Some("later") {
         return Err("--until sets the revisit date of --action later".into());
@@ -932,11 +942,12 @@ pub fn project(i: &Issue, closed: i64, comments: &[Comment], url: String) -> Opt
         });
     let mut sorted: Vec<_> = comments.iter().filter(|c| c.trusted && !c.edited).collect();
     sorted.sort_by_key(|c| c.id);
-    let (mut read, mut decision, mut made, mut making, mut until) = (
+    let (mut read, mut decision, mut made, mut making, mut until, mut decision_reason) = (
         legacy_answered,
         if legacy_answered { "answered" } else { "none" },
         json!([]),
         false,
+        None,
         None,
     );
     for c in sorted {
@@ -976,7 +987,8 @@ pub fn project(i: &Issue, closed: i64, comments: &[Comment], url: String) -> Opt
                     until = c
                         .body
                         .split_once('\n')
-                        .and_then(|(_, s)| s.trim().strip_prefix("until "))
+                        .and_then(|(_, s)| s.trim().lines().next())
+                        .and_then(|s| s.strip_prefix("until "))
                         .filter(|u| crate::core::utc(u))
                         .map(String::from);
                 }
@@ -985,6 +997,11 @@ pub fn project(i: &Issue, closed: i64, comments: &[Comment], url: String) -> Opt
                     making = true;
                 } else if kind != "read" {
                     decision = value;
+                    decision_reason = c
+                        .body
+                        .lines()
+                        .skip(1)
+                        .find_map(|l| l.strip_prefix("Reason: "));
                 }
             }
         }
@@ -1005,7 +1022,7 @@ pub fn project(i: &Issue, closed: i64, comments: &[Comment], url: String) -> Opt
     let mut row = json!({"n":i.number,"title":i.title,"url":url,"sha":sha,"closed":closed,"read":read,"kind":if report{"report"}else{"task"},"state":"closed","outcome":if completed{"success"}else if i.reason.as_deref()==Some("not_planned"){"not_planned"}else{"unknown"},"merged":crate::cli::inbox::merge_receipt(&accepted_close),
         "comments_through":comments.iter().filter(|c|c.trusted&&!c.edited).map(|c|c.id).max().unwrap_or(0),
         "conversation":crate::core::conversation(i.number,&log(comments)),
-        "decision":decision,"visible":!legacy_answered&&!matches!(decision,"drop"|"made")&&!(report&&decision=="accepted"),"pending_decision":if making&&!matches!(decision,"made"|"drop"|"accepted"){Some("make")}else{None},"tasks_made":made});
+        "decision":decision,"decision_reason":decision_reason,"visible":!legacy_answered&&!matches!(decision,"drop"|"made")&&!(report&&decision=="accepted"),"pending_decision":if making&&!matches!(decision,"made"|"drop"|"accepted"){Some("make")}else{None},"tasks_made":made});
     let details = text(handin);
     let verdict = crate::core::verdict(i.number, &log(comments), &text(closing));
     row["result"] = json!(details.lines().find_map(|l| l.strip_prefix("Changed: ")));
@@ -1165,7 +1182,7 @@ fn current(b: &dyn Board, n: u64, sha: &str) -> Res<Value> {
 }
 
 fn mark(b: &dyn Board, n: u64, sha: &str, kind: &str, made: &[u64]) -> Res<Value> {
-    mark_until(b, n, sha, kind, made, None)
+    mark_until(b, n, sha, kind, made, None, "", None)
 }
 fn mark_until(
     b: &dyn Board,
@@ -1174,6 +1191,8 @@ fn mark_until(
     kind: &str,
     made: &[u64],
     until: Option<&str>,
+    reason: &str,
+    op_id: Option<&str>,
 ) -> Res<Value> {
     let row = current(b, n, sha)?;
     if row["visible"] == false
@@ -1198,7 +1217,16 @@ fn mark_until(
         ("later", Some(u)) => format!("\nuntil {u}"),
         _ => String::new(),
     };
-    let text = format!("taskq: {prefix}-{kind} {sha}{tail}");
+    let reason = if reason.is_empty() {
+        String::new()
+    } else {
+        format!("\nReason: {reason}")
+    };
+    let text = crate::core::with_fields(
+        format!("taskq: {prefix}-{kind} {sha}{tail}{reason}"),
+        op_id,
+        None,
+    );
     let id = b.comment(n, &text)?;
     let comments = b.comments(n)?;
     if !comments
@@ -1220,6 +1248,7 @@ pub fn act_with_reason(
     action: &str,
     reason: &str,
     until: Option<&str>,
+    op_id: Option<&str>,
 ) -> Res<Value> {
     if action == "open" {
         return cached_open(root, n, sha);
@@ -1230,7 +1259,7 @@ pub fn act_with_reason(
     let result = if matches!(action, "followup" | "reopen") {
         successor(b, root, raw, n, sha, action, reason)
     } else {
-        owner_act_until(b, root, raw, n, sha, action, until)
+        owner_act_until(b, root, raw, n, sha, action, until, reason, op_id)
     };
     let _ = crate::wake::poke(root);
     result
@@ -1295,7 +1324,15 @@ pub(crate) fn owner_act_until(
     sha: &str,
     action: &str,
     until: Option<&str>,
+    reason: &str,
+    op_id: Option<&str>,
 ) -> Res<Value> {
+    let reason = reason.trim();
+    if !reason.is_empty()
+        && (!matches!(action, "accept" | "later" | "drop") || reason.contains(['\r', '\n']))
+    {
+        return Err("Accept, Later or Drop take a one-line reason".into());
+    }
     if !["open", "read", "accept", "later", "drop", "make"].contains(&action) {
         return Err(
             "result action must be open, read, accept, followup, reopen, later, drop or make"
@@ -1306,13 +1343,35 @@ pub(crate) fn owner_act_until(
         return Err("--until sets a report Later's revisit date".into());
     }
     let prior = current(b, n, sha)?;
+    if let Some(id) = op_id {
+        if id.is_empty() || id.contains(char::is_whitespace) {
+            return Err("--op-id: one word".into());
+        }
+        if let Some(previous) = b
+            .comments(n)?
+            .into_iter()
+            .find(|c| c.trusted && !c.edited && crate::core::op_id(n, &c.body) == Some(id))
+        {
+            let prefix = if prior["kind"] == "task" {
+                "result"
+            } else {
+                "report"
+            };
+            if previous.body.lines().next()
+                != Some(format!("taskq: {prefix}-{action} {sha}").as_str())
+            {
+                return Err("result op-id already records a different outcome".into());
+            }
+            return Ok(json!({"report":prior}));
+        }
+    }
     if prior["kind"] == "task" {
         if !matches!(action, "read" | "accept" | "later" | "drop") {
             return Err(
                 "completed task actions are read, accept, later, drop, followup or reopen".into(),
             );
         }
-        return Ok(json!({"report":mark(b,n,sha,action,&[])?}));
+        return Ok(json!({"report":mark_until(b,n,sha,action,&[],None,reason,op_id)?}));
     }
     if prior["visible"] == false {
         return Ok(json!({"report":prior}));
@@ -1331,7 +1390,7 @@ pub(crate) fn owner_act_until(
         let row = if matches!(action, "accept" | "drop") && prior["pending_decision"] == "make" {
             prior
         } else {
-            mark_until(b, n, sha, action, &[], until)?
+            mark_until(b, n, sha, action, &[], until, reason, op_id)?
         };
         return Ok(
             if matches!(action, "accept" | "drop") && row["pending_decision"] == "make" {

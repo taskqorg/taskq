@@ -178,6 +178,8 @@ A running service records unrecorded board request counts to telemetry every 4 m
 ### Host link
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
+Report outcomes (R1/R3/R6/R13): recording an outcome includes `taskq results N --action accept|later|drop|make`. Accept, Later and Drop take optional one-line `--text`.
+Store it as `Reason: <text>` after the unchanged SHA-bound marker header and Later's `until` line; expose `decision_reason` and show it with the report. Old markers need no reason; repeats with the same `--op-id` retain the first outcome and reason.
 Owner-only `taskq reroute --from <rt> --to <rt>` changes strict pins only on open ready tasks without unresolved execution, never a live attempt or host policy, under a board routing fence and one exclusive writer claim; reports only readback; unknown keeps the fence: [detail](docs/design/commands.md#runtime-reroute).
 `taskq unpin N --host H --revision R --op-id ID` clears only the named host label for future admission; owner/PM only, preserving active execution and all other placement (§5 [detail](docs/design/commands.md#host-unpin)). Add output names requested placement versus host defaults (R2/R9/R12). Syntax, effects, op ids, revisions, receipts, task-write acknowledgements and formats: [commands][cm].
 `taskq pm [--every 3m] [--project P..]` and `taskq pm stop` read nothing and print the exact instructions a session follows to turn manager mode on or off: standing prompt, recurring timer and each tick's steps. TaskQ owns the text; a surface (PilotQ, Claude Code) only runs it, and every tick reads it afresh. Tick rules follow the [PM runbook](docs/design/pm-runbook.md).

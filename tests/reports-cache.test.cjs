@@ -195,6 +195,7 @@ v.receive({
     ...ordinary,
     read: true,
     decision: "accepted",
+    decision_reason: "Already covered by the accepted plan",
     comments_through: 30,
   },
 });
@@ -209,6 +210,11 @@ assert.equal(
   "late read cannot erase acceptance",
 );
 assert.equal(v.count(), 1);
+assert.equal(
+  v.current().decision_reason,
+  "Already covered by the accepted plan",
+  "late read cannot erase the outcome reason",
+);
 v.move(1);
 v.move(-1);
 assert.deepEqual(
