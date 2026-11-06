@@ -1716,14 +1716,20 @@ pub fn resume_publication(
         if let Err(e) = crate::waits::acyclic(b, n) {
             return Receipt::rejected(n, &op, format!("publication dependency {reference}: {e}"));
         }
-        return write(
-            "publication-blocked",
-            &["completion", &reference],
+        let card = crate::cli::text::ask_card(
+            n,
             &format!(
                 "Done: reviewed result and publication retained\nProblem: publication waits for {reference}: {}",
-                blocker.reason
+                crate::cli::text::plain(&blocker.reason, 160)
             ),
+            &[],
+            None,
+            &[],
         );
+        return match card {
+            Ok(card) => write("publication-blocked", &["completion", &reference], &card),
+            Err(e) => Receipt::rejected(n, &op, e),
+        };
     }
     if let Some(proof) = crate::evidence::completion(b, &cfg.root, issue, t, log) {
         return match proof {
