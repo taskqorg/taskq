@@ -323,6 +323,31 @@ fn a_waiting_grant_drains_the_daemon() {
     assert!(waiters().get(&slot(None)).is_none());
 }
 
+// Chain: R12, #2494 A3. Risk: a status probe that exits with failure reads as a healthy daemon or as no daemon, and a
+// job of another grant joins it.
+#[test]
+fn a_failed_status_exit_reads_unknown() {
+    let failed = Fit::Unknown("daemon status exited with failure".into());
+    for text in ["pid:     41036\n", "error: control socket refused\n", ""] {
+        assert_eq!(
+            fit(status_of(Some((false, text.into()))), None, &Sim::default()),
+            failed
+        );
+    }
+    // The CLI's real no-daemon answer exits 1: reading it as unknown would hold every launch with no daemon to exit.
+    assert_eq!(status_of(Some((false, "not running\n".into()))), Ok(None));
+    assert_eq!(status_of(Some((true, "pid: 41036\n".into()))), Ok(Some(41036)));
+}
+
+// Chain: R12, #2494 A3. Risk: a status probe that times out reads as no daemon and the launch joins a live one.
+#[test]
+fn a_status_timeout_reads_unknown() {
+    assert_eq!(
+        fit(status_of(None), None, &Sim::default()),
+        Fit::Unknown("daemon status did not answer".into())
+    );
+}
+
 // Chain: #2432. Risk: Claude's status wording drifts and the readback invents a pid or reads no daemon as a live one.
 #[test]
 fn daemon_status_output_parses() {

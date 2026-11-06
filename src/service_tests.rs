@@ -14550,7 +14550,7 @@ fn a_differing_daemon_holds_pinned_claude_work_and_unpinned_work_takes_another_r
         .expect("A2: the heartbeat names the daemon");
     assert_eq!(
         serde_json::from_str::<Value>(line).unwrap(),
-        json!({"bin": "claude", "pid": 77, "reason": "daemon runs under another Seatbelt profile", "tasks": [pinned]})
+        json!({"bin": "claude", "pid": 77, "reason": "daemon runs under another Seatbelt profile", "tasks": [pinned], "moved": [free]})
     );
     let claude = &s.balancing().runtimes["claude"];
     assert_eq!(
@@ -14572,6 +14572,38 @@ fn a_differing_daemon_holds_pinned_claude_work_and_unpinned_work_takes_another_r
     s.pass().unwrap();
     assert_eq!(task(&b, pinned).state, State::Doing);
     assert!(!s.heartbeat_body().contains("daemon-sandbox"));
+    ds::fake(None);
+}
+
+// Chain: R6, § 8 Access, #2494 A1. Risk: a differing daemon moves all unpinned work to another runtime and status stays
+// silent because nothing waits; or the row outlives the wait.
+#[test]
+fn work_moved_off_a_refusing_daemon_stays_named_until_the_wait_ends() {
+    use crate::runtime::daemon_sandbox as ds;
+    let b = Fake::default();
+    let mut c = cfg("mac");
+    c.limits = BTreeMap::from([("claude".to_string(), 2), ("codex".to_string(), 2)]);
+    let moved = b.create("Moved", "", &["taskq".into()]).unwrap();
+    let e: Exits = Default::default();
+    let mut s = service(&b, &c, e.clone());
+    s.seatbelt.insert("claude".into(), Some("grant".into()));
+    ds::fake(Some(daemon_differs()));
+    let row = json!({"bin": "claude", "pid": 77, "reason": "daemon runs under another Seatbelt profile", "tasks": [], "moved": [moved]});
+    let line = |s: &Service| {
+        s.heartbeat_body()
+            .lines()
+            .find_map(|l| l.strip_prefix("daemon-sandbox "))
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+    };
+    s.pass().unwrap();
+    assert_eq!(task(&b, moved).state, State::Doing);
+    assert_eq!(line(&s).as_ref(), Some(&row), "the first pass names it");
+    // Nothing is claimable now, and the wait still lasts.
+    s.pass().unwrap();
+    assert_eq!(line(&s).as_ref(), Some(&row), "a later pass still names it");
+    ds::fake(Some(ds::Fit::None));
+    s.pass().unwrap();
+    assert_eq!(line(&s), None, "the wait ended");
     ds::fake(None);
 }
 
