@@ -1116,7 +1116,6 @@ pub(crate) fn cfg() -> Config {
         limits: BTreeMap::new(),
         has: vec![],
         claim: host::ClaimMode::Any,
-        spillover_grace: 300,
         weights: BTreeMap::new(),
         allowed_runtimes: None,
         auto_reroute: false,

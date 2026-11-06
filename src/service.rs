@@ -27,7 +27,6 @@ pub struct Config {
     pub has: Vec<String>,
     /// Host task-claim mode (§4/§9); manager/owner turns are independent.
     pub claim: crate::host::ClaimMode,
-    pub spillover_grace: u64,
     pub weights: crate::balance::Weights,
     pub allowed_runtimes: Option<Vec<crate::runtime::RuntimeId>>,
     pub auto_reroute: bool,
@@ -6325,13 +6324,7 @@ impl<'a> Service<'a> {
             ClaimMode::Labelled => return Err("labelled claim: no host-* label".into()),
             _ => {}
         }
-        let since = v
-            .projection
-            .changes
-            .last()
-            .and_then(|(id, _, _)| v.comments.iter().find(|c| c.id == *id))
-            .map_or(v.issue.created, |c| c.created);
-        let mut reasons = vec![];
+        let mut unknown = vec![];
         let mut exhausted = vec![];
         let mut known = false;
         for host in hosts
@@ -6339,7 +6332,7 @@ impl<'a> Service<'a> {
             .filter(|h| h.trusted && host_name(h).is_some_and(|name| name != self.cfg.me))
         {
             let Some(balance) = Balancing::read(&host.body) else {
-                reasons.push("primary availability unknown: incompatible heartbeat".into());
+                unknown.push("primary availability unknown: incompatible heartbeat".into());
                 continue;
             };
             if balance.mode != "any" {
@@ -6348,7 +6341,7 @@ impl<'a> Service<'a> {
             known = true;
             let name = host_name(host).unwrap();
             if !crate::snapshot::live(now - host.updated, self.cfg.ttl) {
-                reasons.push(format!(
+                unknown.push(format!(
                     "primary {name} availability unknown: stale heartbeat"
                 ));
                 continue;
@@ -6356,41 +6349,33 @@ impl<'a> Service<'a> {
             match balance.available(v) {
                 Ok((rt, _)) => {
                     return Err(format!(
-                        "spillover waits: primary {name} has effective {rt} capacity; grace {} s",
-                        self.cfg.spillover_grace
+                        "spillover waits: primary {name} has effective {rt} capacity"
                     ));
                 }
-                Err(("unknown", reason)) => reasons.push(format!("primary {name}: {reason}")),
+                Err(("unknown", reason)) => unknown.push(format!("primary {name}: {reason}")),
                 Err((_, reason)) if launch_spacing(&reason) => {
                     return Err(format!(
-                        "spillover waits: primary {name} launch spacing: {reason}; grace {} s",
-                        self.cfg.spillover_grace
+                        "spillover waits: primary {name} launch spacing: {reason}"
                     ));
                 }
                 Err((_, reason)) => exhausted.push(format!("primary {name}: {reason}")),
             }
         }
-        if !known && reasons.is_empty() {
-            reasons.push("primary availability unknown: no primary heartbeat".into());
+        if !known && unknown.is_empty() {
+            unknown.push("primary availability unknown: no primary heartbeat".into());
         }
-        if reasons.is_empty() {
-            Ok(Some(format!(
+        Ok(Some(if unknown.is_empty() {
+            format!(
                 "spillover: zero effective primary availability; {}",
                 exhausted.join("; ")
-            )))
-        } else if now >= since && now - since >= self.cfg.spillover_grace as i64 {
-            Ok(Some(format!(
-                "spillover: grace {} s elapsed; {}",
-                self.cfg.spillover_grace,
-                reasons.join("; ")
-            )))
+            )
         } else {
-            Err(format!(
-                "spillover waits: {}; grace {} s",
-                reasons.join("; "),
-                self.cfg.spillover_grace
-            ))
-        }
+            unknown.extend(exhausted);
+            format!(
+                "spillover: no primary shown available; {}",
+                unknown.join("; ")
+            )
+        }))
     }
 
     fn weighted_host(
