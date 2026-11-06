@@ -10,8 +10,8 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agentq-runtime"
-version = "0.13.0"
-source = "git+https://github.com/taskqorg/agentq?tag=runtime-v0.13.0#d60307ba08e38a6977cee15049ab07f1e5cc4ef5"
+version = "0.13.1"
+source = "git+https://github.com/taskqorg/agentq?tag=runtime-v0.13.1#0a90c6973317bf8110d7e8d1460da78a71361e16"
 dependencies = [
  "coreq",
  "libc",

@@ -3233,8 +3233,8 @@ impl ClaudeRecords {
             if event["raw"].as_str() != Some(line) {
                 return Err("Claude history changed during observation".into());
             }
-            if event["kind"] == "unknown" {
-                return Err("Claude history record shape unknown".into());
+            if event["validity"]["status"] != "valid" {
+                return Err("Claude history record shape invalid or unknown".into());
             }
             visit(event.clone())?;
             pending.next();
