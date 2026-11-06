@@ -349,9 +349,18 @@ fn gitlab_report_make_settles_the_claim_issue_and_creates_held_drafts_once() {
     let config = || -> Value {
         serde_json::from_str(&std::fs::read_to_string(root.join("taskq.json")).unwrap()).unwrap()
     };
-    let made =
-        crate::reports::owner_act_until(b.as_ref(), &root, &config(), 540, &sha, "make", None)
-            .unwrap();
+    let made = crate::reports::owner_act_until(
+        b.as_ref(),
+        &root,
+        &config(),
+        540,
+        &sha,
+        "make",
+        None,
+        "",
+        None,
+    )
+    .unwrap();
     assert_eq!(made["report"]["decision"], "made", "{made}");
     assert_eq!(
         config()["create_claim_issue"],
@@ -387,9 +396,18 @@ fn gitlab_report_make_settles_the_claim_issue_and_creates_held_drafts_once() {
     );
     // a retry, with the written key or without it, creates nothing
     for raw in [config(), json!({"board": "gitlab", "repo": "o/r"})] {
-        let again =
-            crate::reports::owner_act_until(b.as_ref(), &root, &raw, 540, &sha, "make", None)
-                .unwrap();
+        let again = crate::reports::owner_act_until(
+            b.as_ref(),
+            &root,
+            &raw,
+            540,
+            &sha,
+            "make",
+            None,
+            "",
+            None,
+        )
+        .unwrap();
         assert_eq!(again["report"]["tasks_made"], json!([542]));
         assert_eq!(issues.borrow().len(), 3);
     }

@@ -77,6 +77,8 @@ const task = {
                         url: board + "/14",
                         read: true,
                         decision: "accepted",
+                        decision_reason:
+                          "Already covered by the accepted plan; retain the original receipt and recovery evidence.",
                         visible: false,
                       },
                     ],
@@ -300,6 +302,27 @@ const task = {
                 await page.locator('.task-target[data-task="14"]').isVisible(),
                 "decided history retained",
               );
+              await openResult(14);
+              await page
+                .getByText(
+                  "Reason: Already covered by the accepted plan; retain the original receipt and recovery evidence.",
+                  { exact: true },
+                )
+                .waitFor();
+              if (
+                out &&
+                ((width === 350 && font === 20 && theme === "dark") ||
+                  (width === 1100 && font === 16 && theme === "light"))
+              ) {
+                fs.mkdirSync(out, { recursive: true });
+                await page.screenshot({
+                  path: path.join(
+                    out,
+                    `decision-reason-${surface}-${theme}-${width}-${font}.png`,
+                  ),
+                });
+              }
+              if (width < 621) await page.locator("[data-c=list]").click();
               await openResult(13);
               assert.equal(
                 await page.locator("[data-result-card=decision]").count(),

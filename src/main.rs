@@ -445,6 +445,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                     a.one("action").unwrap_or("open"),
                     a.one("text").unwrap_or(""),
                     a.one("until"),
+                    op.id.as_deref(),
                 )?,
             };
             println!("{value}");

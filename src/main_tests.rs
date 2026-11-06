@@ -6488,6 +6488,7 @@ fn cli_audit_boundaries_and_no_write_on_invalid_text() {
     let args =
         |v: &[&str]| Args::parse(&v.iter().map(|w| w.to_string()).collect::<Vec<_>>()).unwrap();
     let on = pm_instructions(&args(&["pm"])).unwrap();
+    assert!(on.contains("taskq results N --action accept|later|drop|make --sha SHA --json"));
     assert!(
         on.contains("`interval` 180")
             && on.contains(

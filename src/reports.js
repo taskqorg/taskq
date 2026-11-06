@@ -344,6 +344,7 @@ const { create, body } = execution.module("reports", {
       for (const field of [
         "read",
         "decision",
+        "decision_reason",
         "visible",
         "pending_decision",
         "tasks_made",
@@ -352,8 +353,10 @@ const { create, body } = execution.module("reports", {
       ])
         if (Object.hasOwn(report, field)) fields[field] = report[field];
       if (op.action === "read" && won?.sha === op.sha) {
-        if (["later", "accepted"].includes(won.decision))
+        if (["later", "accepted"].includes(won.decision)) {
           fields.decision = won.decision;
+          fields.decision_reason = won.decision_reason;
+        }
         if (won.decision === "later") fields.later_until = won.later_until;
         if (won.pending_decision === "make") fields.pending_decision = "make";
       }
@@ -1227,6 +1230,7 @@ const { create, body } = execution.module("reports", {
               time.stamp(time.seconds(r.closed), "Task closed"),
             ),
           r.reason && h("p", { role: "status" }, "Result unknown: " + r.reason),
+          r.decision_reason && h("p", null, "Reason: " + r.decision_reason),
           !ordinary &&
             h(
               "p",

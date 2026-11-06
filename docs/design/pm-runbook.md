@@ -16,6 +16,7 @@ Under [taskq.md R3](../../taskq.md#r3-roles), the queue drives itself. The PM st
 - Task decisions and evidence do not create runtime grants, exact-SHA approval, new data recipients or action-time confirmation. Preserve those checks; after a denial, check new relevant user evidence and retry only when permitted. Report a remaining mandatory boundary as that boundary, not as a fresh product decision.
 - The PM parks (`later`) or requeues only by an owner decision or to fix a defect, never as a wait.
 - Manager mode: `taskq pm` prints the session steps (timer, each tick) and `taskq pm stop` ends them. A session runs them exactly. The tick answers technical asks itself and asks the person only product, scope, visual and money questions.
+- Report outcomes: recording an outcome includes `taskq results N --action accept|later|drop|make --sha SHA --json`; a note elsewhere does not clear Decide. Decide technical outcomes yourself and relay only product, scope or visual choices to the owner. Accept, Later and Drop can include `--text` to retain the reason; Later also needs `--until UTC`. Read back the recorded outcome.
 
 ### Dependency waits
 
