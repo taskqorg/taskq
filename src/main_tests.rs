@@ -1,3 +1,88 @@
+// Chain: §2.26/§2.27/R6: CLI routing must reach the writer, and a lost wait-ready reply must not forward proof twice.
+#[test]
+fn dependency_wait_2469_cli_routes_and_retries_without_replay() {
+    let c = Ctx {
+        cfg: cfg(),
+        raw: json!({}),
+        board: Box::new(Fake::default()),
+    };
+    let b = c.board.as_ref();
+    let n = b.create("consumer", "", &["taskq".into()]).unwrap();
+    let m = b.create("proof", "", &["taskq".into()]).unwrap();
+    let a = b
+        .comment(n, "taskq: spawn worker codex:invented win")
+        .unwrap();
+    let question = b
+        .comment(n, &format!("taskq: ask attempt {a}\nProblem: proof needed"))
+        .unwrap();
+    let run = |words: &[&str]| {
+        let words = words.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+        command(&c, &words[0], &Args::parse(&words)?)
+    };
+    let n = n.to_string();
+    let revision = question.to_string();
+    let blocker = format!("#{m}");
+    run(&[
+        "classify",
+        &n,
+        "--actor",
+        "pm",
+        "--revision",
+        &revision,
+        "--op-id",
+        "cli-classify",
+    ])
+    .unwrap();
+    run(&[
+        "wait",
+        &n,
+        "--kind",
+        "evidence",
+        "--blocker",
+        &blocker,
+        "--revision",
+        &revision,
+        "--op-id",
+        "cli-wait",
+    ])
+    .unwrap();
+    let proof = b
+        .comment(m, "Invented proof with exact candidate identity")
+        .unwrap();
+    let evidence = format!("{m}.{proof}");
+    let ready = [
+        "wait-ready",
+        &n,
+        "--evidence",
+        &evidence,
+        "--revision",
+        &revision,
+        "--op-id",
+        "cli-ready",
+    ];
+    run(&ready).unwrap();
+    let count = b.comments(n.parse().unwrap()).unwrap().len();
+    run(&ready).unwrap();
+    assert_eq!(b.comments(n.parse().unwrap()).unwrap().len(), count);
+    assert_eq!(
+        core::revision(n.parse().unwrap(), &entries(b, n.parse().unwrap()).unwrap()),
+        question
+    );
+    assert!(
+        fold(
+            n.parse().unwrap(),
+            &entries(b, n.parse().unwrap()).unwrap(),
+            false
+        )
+        .wait
+        .is_none()
+    );
+    assert!(
+        Args::parse(&["wait".into(), "--window".into(), "1".into()]).is_ok(),
+        "bare wait retains observation syntax"
+    );
+}
+
 // Chain: § 7 rule 3 worker park (#1486, #1823). Risk: a worker parks without a blocker or time (no automatic exit), an
 // owner park starts needing one, or a malformed time reaches the board.
 #[test]
@@ -5493,7 +5578,7 @@ fn report_follows_r6() {
         q,
         &entry(
             "ask",
-            &[],
+            &["owner"],
             Some(a),
             "Which way?\nBecause.\n1. left\n2. right ★",
         ),
@@ -5746,6 +5831,23 @@ fn schema_errors(schema: &Value, v: &Value, at: &str, out: &mut Vec<String>) {
         for (i, x) in a.iter().enumerate() {
             schema_errors(items, x, &format!("{at}[{i}]"), out)
         }
+    }
+}
+
+// Release shots: each release opened one more draft PR and 13 piled up. Risk: the close step misses them, or reaches a
+// PR that is not an earlier shots PR of this repo. Protection: the guards stay on the close step.
+#[test]
+fn shots_workflow_closes_only_earlier_shots_prs() {
+    let shots = include_str!("../.github/workflows/shots.yml");
+    let close = &shots[shots.find("gh pr list").expect("close step")..];
+    for guard in [
+        ".number < ${url##*/}",
+        "isCrossRepository | not",
+        r#"startswith(\"taskq-shots-\")"#,
+        r#"startswith(\"Refresh README screenshots\")"#,
+        "gh pr close \"$old\" --delete-branch",
+    ] {
+        assert!(close.contains(guard), "{guard}");
     }
 }
 
@@ -6014,7 +6116,7 @@ fn hand_cards(file: &str, src: &str) -> Vec<String> {
 fn every_production_card_goes_through_the_writer() {
     // worker prompts that teach the card form, and the § 2 star of a pick shown in the inbox
     const KNOWN: [(&str, &str); 4] = [
-        ("runtime.rs", "ask {n} --text"),
+        ("runtime.rs", "ask {n} --actor owner --text"),
         ("runtime.rs", "Delivery review-pr:"),
         ("snapshot.rs", " ★"),
         ("inbox.rs", "Recommendation: worker ★"),
@@ -6556,7 +6658,7 @@ fn compact_report_keeps_choices_links_and_original_evidence() {
         "Done: inspected\nProblem: {reason}\nEvidence: [context](https://context)\n1. {option} ★\n2. keep\nTo answer: exact syntax"
     );
     let a = fold(n, &entries(&b, n).unwrap(), false).attempt;
-    b.comment(n, &entry("ask", &[], a, &card)).unwrap();
+    b.comment(n, &entry("ask", &["owner"], a, &card)).unwrap();
     let r = report(&b, &c, &Value::Null, &[]).unwrap();
     assert!(r.contains(&format!("{}…", "🦀".repeat(59))));
     assert!(r.contains(&format!("[{}…](https://board/{n})", "r".repeat(159))));
@@ -6591,7 +6693,7 @@ fn owner_action_waits_in_status_and_its_answer_resumes_the_attempt() {
         n,
         &entry(
             "ask",
-            &[],
+            &["owner"],
             a,
             &ask_card(
                 n,
@@ -6972,6 +7074,60 @@ fn conversations_board_cost_checkpoint() {
             }
         }
     }
+}
+
+#[test]
+fn closed_thread_keeps_attempt_roles_and_source_times() {
+    // A5: closed threads must interleave every accepted attempt with board records, just like live threads.
+    let b = Fake::default();
+    let n = b.create("Thread fixture", "", &["taskq".into()]).unwrap();
+    let first = b.comment(n, "taskq: spawn worker codex:first mac").unwrap();
+    b.comment(n, "taskq: spawn worker codex:ignored mac")
+        .unwrap();
+    b.comment(n, &format!("taskq: gone attempt {first}"))
+        .unwrap();
+    let second = b
+        .comment(n, "taskq: spawn worker codex:second mac")
+        .unwrap();
+    b.comment(
+        n,
+        &format!("taskq: result {} attempt {second}", "a".repeat(40)),
+    )
+    .unwrap();
+    let reviewer = b
+        .comment(n, "taskq: spawn reviewer codex:review mac")
+        .unwrap();
+    let live = snapshot::read(&b, &cfg(), &Value::Null, &[]).json()["tasks"][0].clone();
+    b.comment(n, &format!("taskq: close attempt {reviewer}"))
+        .unwrap();
+    b.close(n).unwrap();
+    let comments = b.comments(n).unwrap();
+    let started = |id| comments.iter().find(|c| c.id == id).unwrap().created;
+    let row = closed_pin(&b, n, false).unwrap()["tasks"][0].clone();
+    assert_eq!(
+        row["workers"],
+        json!([
+            {"attempt":first,"role":"worker","session":"codex:first mac","started":started(first)},
+            {"attempt":second,"role":"worker","session":"codex:second mac","started":started(second)}
+        ])
+    );
+    assert_eq!(
+        row["reviewers"],
+        json!([
+            {"attempt":reviewer,"role":"reviewer","session":"codex:review mac","started":started(reviewer)}
+        ])
+    );
+    assert_eq!(live["workers"], row["workers"]);
+    assert_eq!(live["reviewers"], row["reviewers"]);
+    assert_eq!(closed_history(&b, 1, None, false).unwrap()["tasks"][0], row);
+    b.state.borrow_mut().fail_comment_reads = 1;
+    let unknown = closed_pin(&b, n, false).unwrap()["tasks"][0].clone();
+    assert!(
+        !unknown["error"].is_null(),
+        "unreadable history stays unknown"
+    );
+    assert!(unknown["workers"].is_null());
+    assert!(unknown["reviewers"].is_null());
 }
 
 #[test]

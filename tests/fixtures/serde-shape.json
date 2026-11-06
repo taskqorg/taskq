@@ -16,6 +16,12 @@
     "held"
   ],
   "core.Task": {
+    "action_owner": "string",
+    "wait": {
+      "id": "integer",
+      "kind": "string",
+      "blocker": "string"
+    },
     "state": "string",
     "attempt": "integer",
     "role": "string",

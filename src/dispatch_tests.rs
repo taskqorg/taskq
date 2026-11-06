@@ -1,6 +1,383 @@
 use super::*;
 use crate::board::Fake;
 
+// §2.26/R6: #2427 needs #2463 proof before publication; retain its review and question identity.
+#[test]
+fn dependency_wait_2469_preserves_review_and_requires_forwarded_proof() {
+    let b = Fake::default();
+    let root = std::path::Path::new(".");
+    let n = b
+        .create("2427 evidence consumer", "", &["taskq".into()])
+        .unwrap();
+    let m = b
+        .create("2463 proof producer", "", &["taskq".into()])
+        .unwrap();
+    let spawn = b
+        .comment(n, "taskq: spawn worker codex:invented win")
+        .unwrap();
+    let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    b.comment(n, &format!("taskq: result {sha} attempt {spawn}"))
+        .unwrap();
+    let review = b
+        .comment(n, "taskq: spawn reviewer codex:review win")
+        .unwrap();
+    let question = b
+        .comment(
+            n,
+            &format!("taskq: ask attempt {review}\nProblem: forward proof"),
+        )
+        .unwrap();
+    let op = Op {
+        id: Some("wait-2469".into()),
+        revision: Some(question),
+    };
+    let r = act(
+        &b,
+        root,
+        n,
+        "wait",
+        &["evidence", &format!("#{m}")],
+        "",
+        &op,
+    );
+    assert!(
+        r.ok(),
+        "explicit evidence wait must be accepted: {}",
+        r.text()
+    );
+    let before = current(&b, n).unwrap().1;
+    assert_eq!(before.result.as_deref(), Some(sha));
+    assert_eq!(before.attempt, Some(review));
+    assert_eq!(core::revision(n, &entries(&b, n).unwrap()), question);
+    let wait = b.comments(n).unwrap().last().unwrap().id.to_string();
+    assert!(!act(&b, root, n, "answer", &[], "retry", &Op::default()).ok());
+    assert!(!act(&b, root, n, "wait-ready", &[&wait], "", &Op::default()).ok());
+    let proof = b
+        .comment(
+            m,
+            "Invented proof: immutable candidate deadbeef; no native replay.",
+        )
+        .unwrap();
+    let proof_ref = format!("{m}.{proof}");
+    let ready = Op {
+        id: Some("proof-2469".into()),
+        revision: Some(question),
+    };
+    assert!(act(&b, root, n, "wait-ready", &[&wait, &proof_ref], "", &ready).ok());
+    assert!(
+        b.comments(n)
+            .unwrap()
+            .iter()
+            .any(|c| c.body.contains(&b.url(m)) && c.body.contains("Invented proof"))
+    );
+    assert_eq!(current(&b, n).unwrap().1.attempt, Some(review));
+    assert!(
+        act(
+            &b,
+            root,
+            n,
+            "answer",
+            &[],
+            "Proof forwarded; reconcile the candidate",
+            &Op {
+                revision: Some(question),
+                ..Default::default()
+            }
+        )
+        .ok()
+    );
+    let resumed = current(&b, n).unwrap().1;
+    assert_eq!(resumed.state, State::Review);
+    assert_eq!(resumed.result, before.result);
+    assert_eq!(resumed.attempt, before.attempt);
+    assert!(b.state.borrow().cancelled_publications.is_empty());
+}
+
+// R6/R12/§7: #2462's publication prerequisite #2468 is a dependency, never an owner retry or a lost result.
+#[test]
+fn dependency_wait_2469_publication_completion_is_verified_without_replay() {
+    let b = Fake::default();
+    let cfg = crate::tests::cfg();
+    let root = cfg.root.as_path();
+    let m = b
+        .create("2468 rule implementation", "", &["taskq".into()])
+        .unwrap();
+    let n = b
+        .create(
+            "2462 evidence publication",
+            &format!("Depends on #{m}"),
+            &["taskq".into()],
+        )
+        .unwrap();
+    b.comment(n, "taskq: spawn worker codex:invented win")
+        .unwrap();
+    let spawn = core::fold(n, &entries(&b, n).unwrap(), false)
+        .attempt
+        .unwrap();
+    b.comment(
+        n,
+        &format!("taskq: result aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa attempt {spawn}"),
+    )
+    .unwrap();
+    b.comment(
+        n,
+        "taskq: publish\nChanged: evidence retained\nChecks: A1 ok\nOpen: none",
+    )
+    .unwrap();
+    b.comment(n, "taskq: enqueued invented-queue").unwrap();
+    let (issue, t, _) = current(&b, n).unwrap();
+    let saved = t.clone();
+    assert!(resume_publication(&b, &cfg, &issue, &t, &entries(&b, n).unwrap()).ok());
+    let (issue, t, _) = current(&b, n).unwrap();
+    let rev = core::revision(n, &entries(&b, n).unwrap());
+    assert_eq!(t.state, State::Ask);
+    assert_eq!(t.result, saved.result);
+    assert_eq!(t.publication, saved.publication);
+    assert_eq!(t.enqueued, saved.enqueued);
+    assert!(!t.card.as_ref().unwrap().contains("retry:"));
+    let wait = t.wait.as_ref().unwrap().id.to_string();
+    let op = Op {
+        id: Some("completion-2469".into()),
+        revision: Some(rev),
+    };
+    assert!(!act(&b, root, n, "wait-ready", &[&wait], "", &op).ok());
+    b.close(m).unwrap();
+    b.state
+        .borrow_mut()
+        .issues
+        .iter_mut()
+        .find(|i| i.number == m)
+        .unwrap()
+        .reason = Some("not_planned".into());
+    assert!(
+        !act(&b, root, n, "wait-ready", &[&wait], "", &op).ok(),
+        "uncompleted closure is unknown"
+    );
+    b.state
+        .borrow_mut()
+        .issues
+        .iter_mut()
+        .find(|i| i.number == m)
+        .unwrap()
+        .reason = Some("completed".into());
+    let (issue, t, _) = current(&b, n).unwrap();
+    assert!(
+        resume_publication(&b, &cfg, &issue, &t, &entries(&b, n).unwrap()).ok(),
+        "the service releases a completed publication prerequisite without answering"
+    );
+    let resumed = current(&b, n).unwrap().1;
+    assert_eq!(
+        (
+            resumed.state,
+            resumed.result,
+            resumed.publication,
+            resumed.enqueued,
+            resumed.gate,
+            resumed.attempt,
+            resumed.retries
+        ),
+        (
+            saved.state,
+            saved.result,
+            saved.publication,
+            saved.enqueued,
+            saved.gate,
+            saved.attempt,
+            saved.retries
+        )
+    );
+    assert_eq!(b.state.borrow().publications, 0);
+    assert!(b.state.borrow().cancelled_publications.is_empty());
+    assert!(
+        !entries(&b, n)
+            .unwrap()
+            .iter()
+            .any(|e| core::kind(n, &e.body) == "answer")
+    );
+    assert!(issue.open);
+}
+
+// §2.26/R2/R9: cycles, unknown graphs, stale cards and untrusted evidence cannot release suspended work.
+#[test]
+fn dependency_wait_2469_refuses_cycles_unknown_and_stale_proof() {
+    let b = Fake::default();
+    let root = std::path::Path::new(".");
+    let n = b.create("waiting", "", &["taskq".into()]).unwrap();
+    let spawn = b
+        .comment(n, "taskq: spawn worker codex:invented win")
+        .unwrap();
+    let question = b
+        .comment(n, &format!("taskq: ask attempt {spawn}\nProblem: proof"))
+        .unwrap();
+    let op = Op {
+        id: Some("cycle-2469".into()),
+        revision: Some(question),
+    };
+    let m = b
+        .create("cycle", &format!("Depends on #{n}"), &["taskq".into()])
+        .unwrap();
+    let z = b
+        .create("transitive", &format!("Depends on #{m}"), &["taskq".into()])
+        .unwrap();
+    for target in [n, m, z, 999] {
+        assert!(
+            !act(
+                &b,
+                root,
+                n,
+                "wait",
+                &["evidence", &format!("#{target}")],
+                "",
+                &op
+            )
+            .ok()
+        );
+    }
+    let m = b.create("proof", "", &["taskq".into()]).unwrap();
+    assert!(
+        !act_child(
+            &b,
+            root,
+            n,
+            "wait",
+            &["evidence", &format!("#{m}")],
+            "",
+            &op,
+            (Some(n.to_string()), Some(spawn.to_string()))
+        )
+        .ok()
+    );
+    assert!(
+        act(
+            &b,
+            root,
+            n,
+            "wait",
+            &["evidence", &format!("#{m}")],
+            "",
+            &op
+        )
+        .ok()
+    );
+    let wait = current(&b, n).unwrap().1.wait.unwrap().id.to_string();
+    for (trusted, edited) in [(false, false), (true, true)] {
+        let id = b.raw(m, "Invented proof", trusted, edited);
+        let proof = format!("{m}.{id}");
+        assert!(
+            !act(
+                &b,
+                root,
+                n,
+                "wait-ready",
+                &[&wait, &proof],
+                "",
+                &Op {
+                    id: Some(format!("invalid-{id}")),
+                    revision: Some(question)
+                }
+            )
+            .ok()
+        );
+    }
+    let id = b.comment(m, "Invented valid proof").unwrap();
+    let proof = format!("{m}.{id}");
+    b.comment(
+        n,
+        &format!("taskq: requeue\nReason: owner replaces the attempt"),
+    )
+    .unwrap();
+    let next = b.comment(n, "taskq: spawn worker codex:next win").unwrap();
+    let newer = b
+        .comment(
+            n,
+            &format!("taskq: ask attempt {next}\nProblem: newer question"),
+        )
+        .unwrap();
+    assert!(
+        !act(
+            &b,
+            root,
+            n,
+            "wait-ready",
+            &[&wait, &proof],
+            "",
+            &Op {
+                id: Some("stale-proof".into()),
+                revision: Some(question)
+            }
+        )
+        .ok()
+    );
+    let late = act(
+        &b,
+        root,
+        n,
+        "answer",
+        &[],
+        "Answer to the old question",
+        &Op {
+            revision: Some(question),
+            ..Default::default()
+        },
+    );
+    assert!(late.ok() && late.note == Some(true));
+    assert_eq!(core::revision(n, &entries(&b, n).unwrap()), newer);
+    assert_eq!(current(&b, n).unwrap().1.state, State::Ask);
+}
+
+// §2.27/R12: another task can add its edge after preflight; the losing edge must undo itself.
+#[test]
+fn dependency_wait_2469_rechecks_graph_after_concurrent_edge() {
+    let b = Fake::default();
+    let root = std::path::Path::new(".");
+    let n = b.create("consumer", "", &["taskq".into()]).unwrap();
+    let m = b.create("producer", "", &["taskq".into()]).unwrap();
+    for task in [n, m] {
+        let spawn = b
+            .comment(task, "taskq: spawn worker codex:invented win")
+            .unwrap();
+        b.comment(
+            task,
+            &format!("taskq: ask pm attempt {spawn}\nProblem: proof"),
+        )
+        .unwrap();
+    }
+    let revision = core::revision(n, &entries(&b, n).unwrap());
+    let read = b.state.borrow().comment_reads + 2;
+    b.state.borrow_mut().after_comment_read =
+        Some((m, read, vec![format!("taskq: wait evidence #{n}")]));
+    let r = act(
+        &b,
+        root,
+        n,
+        "wait",
+        &["evidence", &format!("#{m}")],
+        "",
+        &Op {
+            id: Some("race-2469".into()),
+            revision: Some(revision),
+        },
+    );
+    assert!(!r.ok() && r.reason.contains("cycle"), "{r:?}");
+    assert!(current(&b, n).unwrap().1.wait.is_none());
+    assert!(current(&b, m).unwrap().1.wait.is_some());
+    assert_eq!(core::revision(n, &entries(&b, n).unwrap()), revision);
+    let unedited = b
+        .comments(n)
+        .unwrap()
+        .iter()
+        .map(|c| Entry {
+            id: c.id,
+            body: c.body.clone(),
+            edited: false,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        core::fold(n, &unedited, false).wait.is_none(),
+        "same-second edits still refuse the losing entry"
+    );
+}
+
 #[test]
 fn closing_review_records_its_result_event() {
     let dir = std::env::temp_dir().join(format!("taskq-2283-{}", crate::runtime::uuid()));

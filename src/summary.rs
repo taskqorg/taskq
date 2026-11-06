@@ -44,7 +44,14 @@ pub fn render(
             .find(|e| kinds.contains(&core::kind(n, &e.body)))
             .copied()
     };
-    let mut head = vec![format!("**{}**", title(t.state.name()))];
+    let mut head = vec![format!(
+        "**{}**",
+        if t.wait.is_some() {
+            "Blocked".into()
+        } else {
+            title(t.state.name())
+        }
+    )];
     if let Some(r) = t.result.as_deref().filter(|_| t.state != State::Closed) {
         head.push(format!("result {}", &r[..r.len().min(7)]));
     }
@@ -70,6 +77,16 @@ pub fn render(
         head.push(format!("{} running", t.role.as_deref().unwrap_or("worker")));
     }
     let mut lines = vec![MARKER.to_string(), head.join(" · ")];
+    if let Some(w) = &t.wait {
+        lines.push(format!("Dependency: {} ({}) · PM forwards proof or verifies completion; question revision {} retained",w.blocker,w.kind,p.revision));
+    } else if t.state == State::Ask {
+        lines.push(format!(
+            "Action owner: {}",
+            t.action_owner
+                .as_deref()
+                .unwrap_or("unknown; PM classifies the original question")
+        ));
+    }
     match t.state {
         State::Ask => lines.extend(
             t.card

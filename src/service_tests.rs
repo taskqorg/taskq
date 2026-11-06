@@ -3,6 +3,76 @@ use crate::board::{Board, Fake, entries};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+// Chain: §2.27/R6: dependency completion -> restart reconciliation -> saved publication, without an answer or launch.
+#[test]
+fn dependency_wait_2469_service_resumes_publication_after_verified_close() {
+    let (b, c) = (Fake::default(), cfg("win"));
+    let m = b
+        .create("2468 prerequisite", "", &["taskq".into()])
+        .unwrap();
+    let n = b
+        .create(
+            "2462 saved publication",
+            &format!("Depends on #{m}"),
+            &["taskq".into()],
+        )
+        .unwrap();
+    let a = b
+        .comment(n, "taskq: spawn worker codex:invented win")
+        .unwrap();
+    b.comment(
+        n,
+        &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate"),
+    )
+    .unwrap();
+    b.comment(
+        n,
+        "taskq: publish\nChanged: proof retained\nChecks: A1 ok\nOpen: none",
+    )
+    .unwrap();
+    {
+        let mut s = Service::new(
+            &b,
+            &c,
+            "test",
+            Box::new(|_| panic!("dependency wait cannot launch")),
+        );
+        s.pass().unwrap();
+    }
+    assert_eq!(task(&b, n).state, State::Ask);
+    assert!(task(&b, n).wait.is_some());
+    assert_eq!(b.state.borrow().publications, 0);
+    b.close(m).unwrap();
+    b.advance(100);
+    let mut s = Service::new(
+        &b,
+        &c,
+        "test",
+        Box::new(|_| panic!("saved publication cannot launch")),
+    );
+    s.pass().unwrap();
+    assert_eq!(task(&b, n).state, State::Review);
+    assert!(task(&b, n).publication.is_some());
+    b.advance(100);
+    s.pass().unwrap();
+    assert_eq!(task(&b, n).state, State::Closed);
+    let comments = b.comments(n).unwrap();
+    assert_eq!(
+        comments
+            .iter()
+            .filter(|e| core::kind(n, &e.body) == "spawn")
+            .count(),
+        1
+    );
+    assert!(
+        !comments
+            .iter()
+            .any(|e| matches!(core::kind(n, &e.body), "answer" | "gone" | "requeue"))
+    );
+    assert_eq!(b.state.borrow().publications, 1);
+    assert!(b.state.borrow().cancelled_publications.is_empty());
+}
+
 struct FakeProc(Rc<RefCell<Option<i32>>>);
 impl Proc for FakeProc {
     fn accepted(&mut self) -> Result<bool, String> {
@@ -7335,6 +7405,11 @@ fn historical_no_host_repair_child() {
             c.root = dir.clone();
             let path = dir.join("taskq.log");
             let (_capture, _guard) = crate::profile::tests::collecting(&dir);
+            // This fixture proves repair ownership, not the collector's disk latency.
+            #[cfg(windows)]
+            _capture
+                .acknowledge_within(std::time::Duration::from_secs(30))
+                .unwrap();
             let project = if evidence == "foreign-project" {
                 "other/project"
             } else {
@@ -11213,6 +11288,21 @@ fn focus_and_needs_choose_tasks() {
     let mut s = service(&b, &w, Default::default());
     s.pass().unwrap();
     assert_eq!(task(&b, win).state, State::Doing);
+}
+
+// The shared TCC log has no result on the first pass. Risk: a grants read tied to the 300 s capture keeps that reading a
+// whole period. Protection: grants refresh every pass while the capture waits its period.
+#[test]
+fn gui_grants_refresh_every_pass_between_captures() {
+    let b = Fake::default();
+    let c = cfg("mac");
+    let mut s = service(&b, &c, Default::default());
+    let at = std::time::Instant::now();
+    s.gui_checked = Some(at);
+    s.grants.insert("earlier".into(), "stale".into());
+    crate::service_run::refresh_gui(&mut s, std::path::Path::new("/i"));
+    assert_eq!(s.gui_checked, Some(at), "the capture waits its period");
+    assert!(!s.grants.contains_key("earlier"));
 }
 
 // Chain: § 4 needs-gui routing (#1124). Risk: a gui task starts on a sandboxed runtime or an unprobed host, or waits silently.

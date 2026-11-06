@@ -21,7 +21,8 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 |---|---|
 | `taskq labels` / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H] [--rules IDs\|all] [--conversation ID --op-id ID]` / `taskq start N [M..]` | §6 labels; add: `#<N> held`; §1 start |
 | `taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]` | § 1 create/optional-start receipts; `add` routing/scope/dependency flags apply |
-| `taskq ask N --text Q [--option O..] [--recommend K] [--link URL..]` | question card |
+| `taskq ask N --text Q [--actor owner\|pm] [--option O..] [--recommend K] [--link URL..]` | classified question card; omitted actor stays unknown |
+| `taskq classify N --actor owner\|pm --revision R --op-id ID` / `taskq wait N --blocker #M --kind evidence\|completion --revision R --op-id ID` / `taskq wait-ready N [--evidence M.COMMENT] --revision R --op-id ID` | owner/PM only; reconcile a suspended question without replacing its attempt or result ([waits](pm-runbook.md#dependency-waits)); bare `wait` retains its observation-only meaning |
 | `taskq answer N --text A` / `taskq answer N.K [M.K..]` / `taskq pick N.K --text R` | owner's answer or option pick, all checked first; `pick`: § 2 PM view |
 | `taskq result N --sha SHA [--checks C] [--text T] [--option O..] [--recommend K] [--link URL..]` | hand in; full 40-hex SHA |
 | `taskq requeue N [--text T]` / `taskq steer N --text T` | back to `ready` / text to the live worker |

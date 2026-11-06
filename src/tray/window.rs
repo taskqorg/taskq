@@ -202,21 +202,15 @@ impl TrayState {
                 LogicalSize::new(320.0, 400.0)
             })
             .with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
-        // ordinary snapshots render off-screen; opacity evidence must remain visible and unoccluded (R12)
+        // WebKit suspends animation frames in occluded windows; native checkpoints must stay visible (R12).
+        let checkpoint = self.routes.iter().any(|r| r == "conversations-checkpoint");
+        let visible_capture = self.agentq_shots || self.opacity_shots || checkpoint;
         let b = if self.snapshot.is_some() {
             b.with_position(tao::dpi::LogicalPosition::new(
-                if self.agentq_shots || self.opacity_shots {
-                    40.0
-                } else {
-                    -20000.0
-                },
-                if self.agentq_shots || self.opacity_shots {
-                    40.0
-                } else {
-                    -20000.0
-                },
+                if visible_capture { 40.0 } else { -20000.0 },
+                if visible_capture { 40.0 } else { -20000.0 },
             ))
-            .with_always_on_top(self.opacity_shots)
+            .with_always_on_top(self.opacity_shots || checkpoint)
             .with_focused(false)
         } else {
             b

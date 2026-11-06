@@ -838,17 +838,20 @@ async function sharedTaskPins(browser) {
     );
     // F16 replaces the separate closed transcript with metadata-first, attempt-fenced reads in the common document.
     // Keep the old protection: unknown source, read-only history, evicted-source restore, earlier paging and late replies.
+    // Opening a thread reads no ended log, so each log opens from its attempt row; a saved position still reads its one page.
     const metadata = async (n, extra = {}) => {
       await page.waitForFunction(
         (n) =>
           sent.some(
-            (m) => m.a === "completed" && m.task === n && !m.transcript,
+            (m) =>
+              m.a === "completed" && m.task === n && !m.transcript && !m.board,
           ),
         n,
       );
       const m = await page.evaluate((n) => {
         const i = sent.findIndex(
-          (m) => m.a === "completed" && m.task === n && !m.transcript,
+          (m) =>
+            m.a === "completed" && m.task === n && !m.transcript && !m.board,
         );
         return sent.splice(i, 1)[0];
       }, n);
@@ -912,6 +915,12 @@ async function sharedTaskPins(browser) {
           }),
         { m, value },
       );
+    await page.waitForFunction(() =>
+      sent.some(
+        (m) =>
+          m.a === "completed" && m.task === 3001 && !m.transcript && !m.board,
+      ),
+    );
     let request = await page.evaluate(() => {
       const i = sent.findIndex((m) => m.a === "completed" && m.task === 3001);
       return sent.splice(i, 1)[0];
@@ -936,6 +945,7 @@ async function sharedTaskPins(browser) {
     );
     await page.locator("[data-c=closed-object]").click();
     await metadata(3001);
+    await page.locator('[data-c=worker-attempt][data-attempt="30010"]').click();
     request = await take(3001);
     assert.equal(request.attempt, 30010);
     assert.equal(request.closed, true);
@@ -973,6 +983,9 @@ async function sharedTaskPins(browser) {
     for (const n of [3002, 3003]) {
       await open(n);
       await metadata(n);
+      await page
+        .locator('[data-c=worker-attempt][data-attempt="' + n * 10 + '"]')
+        .click();
       const m = await take(n);
       await reply(m, {
         generation: "invented-" + n,

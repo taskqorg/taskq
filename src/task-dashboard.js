@@ -2,7 +2,8 @@
 const copyLabel = require("./copy-label.js");
 const { h, Fragment } = require("preact"),
   ui = require("./ui-runtime.js"),
-  { execution } = ui;
+  { execution } = ui,
+  anchor = require("./reading-anchor.js");
 const views = require("./task-views.js"),
   blocks = require("./project-blocks.js"),
   popover = require("./anchored-popover.js"),
@@ -492,6 +493,7 @@ module.exports = execution.module("taskDashboard", {
               class: "task-row completed-row",
               key: pin.ref,
               "data-pin": pin.ref,
+              "data-row-key": "pin:" + pin.ref,
             },
             h("span", {
               dangerouslySetInnerHTML: {
@@ -1034,6 +1036,16 @@ module.exports = execution.module("taskDashboard", {
       },
       // #1781: details carry a short question cue; the full question and options read in Conversations (input-scroll 04).
       question: function (t) {
+        if (t.state === "ask" && t.action?.blocker)
+          return h(
+            "p",
+            { role: "status" },
+            "Blocked on " +
+              t.action.blocker +
+              "; original question revision " +
+              t.revision +
+              " retained.",
+          );
         if (t.state !== "ask")
           return t.card && h("p", { class: "task-card-text" }, t.card);
         const q = t.question,
@@ -1127,6 +1139,47 @@ module.exports = execution.module("taskDashboard", {
           api.question(t),
           t.result &&
             h("p", { class: "task-card-text" }, "Result: " + t.result),
+          t.action &&
+            h(
+              "p",
+              { role: "status" },
+              "Action: " +
+                t.action.actor +
+                " · " +
+                t.action.status +
+                " · " +
+                t.action.responsible +
+                ": " +
+                t.action.next,
+            ),
+          t.attention &&
+            h(
+              "p",
+              { role: "status" },
+              (t.attention.flagged === true ? "Attention · " : "") +
+                "Total " +
+                (t.attention.total_s ?? "unknown") +
+                "s · current " +
+                (t.attention.current_s ?? "unknown") +
+                "s · transitions " +
+                (t.attention.transitions ?? "unknown") +
+                " · retries " +
+                (t.retries ?? "unknown"),
+            ),
+          t.attention &&
+            ["roots", "downstream"].map((kind) =>
+              h(
+                "p",
+                null,
+                kind + ": ",
+                t.attention.graph === "unknown" && kind === "roots"
+                  ? "unknown · "
+                  : null,
+                (t.attention[kind] || []).map((r) =>
+                  h("a", { href: r.url, "data-url": r.url }, r.ref + " "),
+                ),
+              ),
+            ),
           require("./task-health.js").details(t),
           h(
             "div",
@@ -1456,8 +1509,9 @@ module.exports = execution.module("taskDashboard", {
           view.previousSection = m.selected;
           view.completedEditor = false;
           if (!owned)
-            api.current().scroll =
-              menu.querySelector(".content")?.scrollTop || 0;
+            api.current().scroll = anchor.compact(
+              anchor.snapshot(menu.querySelector(".content")),
+            );
           m.selected = d.id;
           view.popup = null;
           if (d.id === "completed") api.openCompleted();

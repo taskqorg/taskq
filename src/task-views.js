@@ -1,5 +1,6 @@
 "use strict";
 const { execution } = require("./ui-runtime.js"),
+  anchor = require("./reading-anchor.js"),
   { marks } = require("./project-blocks.js"),
   states = Object.keys(marks);
 const builtins = [
@@ -56,7 +57,7 @@ const api = execution.module("taskViews", {
       pinned: v.pinned !== false,
       saved: api.criteria(v.saved),
       working: api.criteria(v.working || v.saved),
-      scroll: Number.isFinite(v.scroll) && v.scroll >= 0 ? v.scroll : 0,
+      scroll: anchor.compact(v.scroll) || { rows: [] },
       open: api.text(v.open, 4096) || null,
       draft: api.text(v.draft, 80),
     };
@@ -98,7 +99,7 @@ const api = execution.module("taskViews", {
                 pinned: true,
                 working:
                   id === "all" ? { states: legacy.taskFilter || [] } : {},
-                scroll: id === "all" ? legacy.scroll || 0 : 0,
+                scroll: id === "all" ? legacy.scroll : null,
               },
           ),
           ...found,

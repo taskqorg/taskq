@@ -1116,16 +1116,16 @@ const initialState = {
           const persisted = await page.evaluate(
             () =>
               sent.filter((m) => m.a === "workspace-checkpoint").at(-1).value
-                .conversation.context.scrolls.recent,
+                .conversation.context.lists.recent.rows[0],
+          );
+          assert.equal(
+            persisted.key,
+            after.id,
+            "immediate recovery retains the corrected sidebar row",
           );
           assert(
-            Math.abs(
-              persisted -
-                (await page
-                  .locator(".conversation-rows")
-                  .evaluate((e) => e.scrollTop)),
-            ) <= 2,
-            "immediate recovery retains the corrected sidebar scroll",
+            Math.abs(persisted.y - after.y) <= 2,
+            "immediate recovery retains the corrected sidebar offset",
           );
           assert.equal(
             await fits(),

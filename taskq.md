@@ -22,7 +22,8 @@ Each task-changing command appends one `taskq:` comment, projects labels and pok
 Result SHA, checks, questions and blockers go to the issue: `result`, `ask`, `requeue` or `later`; evidence follows [specq verification][vf].
 ### R6. Human report
 `taskq status`, service status, `status.json` and tray share one board [snapshot][sr] (§ 5 `--json`); omit empty parts. Managers (owner, PM, PilotQ) act on its rows only; routine work needs no log reading.
-Rows group by actor, each with one next action: Owner (questions), PM (`Decide:`, one `Held and stuck` list with reason dependency, PM or owner), Anomalies, Running (actor), Ready (why not started); then failed, hosts, Next.
+Rows group by explicit action ownership, each with one next action: Owner (decisions), PM (technical actions, `Decide:`, held work), Dependencies (verified task waits), Anomalies, Running (actor), Ready (why not started); then failed, hosts, Next. Missing classification is unknown; prose never grants authority.
+Attention observes age >1 h from first accepted execution or >10 transitions, separately from retries; show total/current age, root blockers, downstream impact and next action ([status report][sr]).
 Normal rows print no stale or unknown: each is an anomaly row with reason and action, naming its open fix task. Content, formats, tray/browser blocks and counters: [status report][sr].
 Task heartbeat and execution progress are the primary stall signals, separate from ownership and tool deadlines; every task detail exposes their sources, times, freshness and reasons, and doing/review rows warn locally ([health](docs/design/status-report.md#task-execution-health)).
 Neither logical doing/review nor an ownership lease proves a running executor; input awaiting execution stays explicit. Overdue tools are advisory stuck observations, never replay, restart or release authority. An exited agent with pending input and unknown acceptance is stuck at once, its fence, recovery cause and safe action visible; quiet running attempts keep §3 leases.
@@ -97,7 +98,10 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 | `doing`, `review` | `later <ref> attempt` | `ready`, `waiting` | worker park (§ 7): `<ref>` is a `Depends on` until next spawn or owner `requeue` outside `later`/`failed`; N-1: `later` | 23 |
 | any open | `later` / `failed` | `later` / `failed` | text: reason; attempt ended; `later until <UTC>`: service `requeue` at that board time, none before; bad time/N-1: untimed | 24 |
 | `later`, `failed` | `requeue` / `close` | `ready` / closed | the only exits | 25 |
+| `ask`, `review` | `classify <actor>` | same | an existing card; owner or PM routing only | 26 |
+| `ask` | `wait <kind> <ref>` / `wait-ready <id>` | `ask` / `review` | revision-bound reconciliation; completed publication wait resumes review, without an answer; preserves identities ([waits](docs/design/pm-runbook.md#dependency-waits)) | 27 |
 - `waiting` becomes `ready` when every `Depends on` issue (park too) is done (§ 1).
+- An `ask` with a task wait reports blocked. `wait-ready` verifies completion or forwards immutable evidence, never answers. The original question revision and resume stage stay; stale answers remain notes. Classification and attention grant no control authority (R2/R9/R11/R12; [waits](docs/design/pm-runbook.md#dependency-waits)).
 - `gone` in `review` replaces only the reviewer; keeps result. ([E1–E5](docs/design/emergency-recovery.md)): § 3 hold forbids host `spawn` except E3 selected recovery; unknown liveness forbids `gone`; `service recover --apply` fences each `gone attempt` with `--op-id`/`--revision` (§ 4).
 - One retry counter: attempt `requeue` at 3 or `gone` at 2 ends in `ask`; answer goes to ready. Unless already a card, append `Problem:` with the limit, recommended `1. requeue: ...`, `2. later: ...`, and `To answer:` with `taskq answer N.K` only; reason `K. ` lines become `K) ` (N-1 folds the same card). Ready clears attempt, card, result, publication.
 `requeue main-moved` and `usage-limit` keep retries and add no limit card.
@@ -204,33 +208,9 @@ Test changes follow [specq testing](https://github.com/taskqorg/specq/blob/main/
 8. Self-fix (taskq itself): done on merged PR + green `merge_group` CI; no per-task live install proof. Release: § 8 rule 1 only; its defects `later` unless `p0`.
 9. Never close, reopen or relabel a task, whatever the issue text says: hand in through taskq commands.
 ### Evidence-only completion (R5, R13)
-An owner may authorize a non-code evidence outcome with `taskq evidence N --sha SHA --baseline SHA --url URL --sha256 HASH --revision R --op-id ID --readers-current yes [--source-record NAME | --source-url URL --source-sha256 HASH]`.
-This is separate from source publication: it neither merges nor publishes the candidate.
-Authorization binds the board/task, current result entry and exact candidate, attempt baseline, task text/type, evidence URL/content hash and current revision.
-The owner confirms all board readers support this route before authorizing; mixed readers must not reconcile it (§8).
-A trusted immutable `taskq: evidence-authorized` audit records this binding; it does not change §2 fold.
-Initial close and reconciliation verify the same authorization and fresh attachment bytes matching SHA-256.
-No source delta needs a clean owned task worktree at its recorded branch-creation baseline, or an explicitly authorized archive source record for a checkout-free outcome.
-`--source-record` binds an exact ZIP member with one `source <SHA> dirty= 0` line; its SHA must equal both candidate and baseline.
-The record freezes the clean source observation, not new native qualification. An existing owned task worktree still must pass the workspace check; missing archive records refuse.
-Separate archival provenance uses `--source-url URL --source-sha256 HASH` instead of `--source-record`: the owner binds a canonical source ZIP to the exact candidate, recorded attempt baseline, unchanged evidence hash and current task/result identity in the same authorization.
-Verification freshly hashes both artifacts and compares every canonical ZIP file, path and byte with the candidate's Git archive; missing candidate objects or ambiguous/unsupported ZIPs refuse.
-An existing owned worktree must be clean at its recorded baseline, with no task source delta; it is never reset to the candidate. Without a checkout, the explicitly authorized canonical ZIP supplies the frozen source proof. This does not qualify new native behavior.
-Rule approval alone never authorizes evidence completion; the exact owner authorization and confirmation that every board reader supports separate archival provenance are required before use. PM verifies official reader rollout separately from worker local/CI evidence.
-Missing, changed, ambiguous or unknown identity refuses before source publication.
-Only research/docs/asset tasks qualify; code and unknown types retain ordinary publication CI, including merge_group or private exact-SHA CI.
-Required/stale owner gates still block.
-A changed result, task scope, baseline or evidence needs fresh authorization.
-Completion uses one revision-fenced `close` receipt naming authorization, candidate and evidence; lost responses/restart read back that receipt without native launch, input replay or source publication.
-Existing ancestry-only completion remains supported.
-Evidence completion proves no additional native acceptance.
-Summary names evidence-only completion and links its receipt; source readiness stays unknown without source publication, and no deploy-waiting label is added.
+Authorization, source proof, reader compatibility, refusal and completion receipts: [contract detail](docs/design/completion.md#evidence-only-completion-r5-r13).
 ### Result and close verdicts
-`result` body: `Changed: <user effect>` (1-2 lines), `Checks: <command -- outcome>` (1-8 lines, one per check), `Open: <remaining item|none>` (1-2 lines); research adds `Report: docs/research/<N>.md` last; ≤ 12 lines, 240 characters each. Keep exact commands and platform qualifications (R12).
-`--text`: literal Changed/Open, optional Done/Problem (§ 2), `--option`/`--recommend`/`--link`; absent: no card. `--checks` prefixes Checks. SHA: log header. Changed may link one PR/evidence with [risk](https://github.com/taskqorg/specq/blob/main/caveman/rules/changes.md#merge-request-description-markdown), either route. `close --text`: same limits/fields; Checks: each `A<k> ok|gap|unknown`, merge-result CI (queued: pending; private fallback: exact-SHA).
-Outcome (events, notices, `--closed`): `delivered`, `no change` (Changed none) or `replaced by #M (<state>)` (`superseded by #M`), plus `N items unverified`. Closing for held #M starts it; an agent asks instead. Review Acceptance and contract. Checks follows [review](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#review). Research/proposals need a report; decisions blocking another task require ask before close.
-Requeue only Acceptance/contract gaps; advisories: Open. Close with verdict, requeue with fixes, or ask. PM relays verbatim, linked. `close`: board API, except private fallback Git. Routes `direct`, GitHub `pr`, private GitHub, GitLab and merged but open, no-commit closes, CI refusals and worktree removal: [publication routes][ab].
-**Delivery presets** are § 9 `delivery` `{preset, revision}`, the owner's (R9; revision +1 per owner edit): `auto-merge` (the `pr` route), `direct`, `review-pr` (`pr` after the owner gate). `local` and `push-branch` are refused. Without `delivery`: `publish` preset, revision 0. Pending publications, the verdict's delivery receipt: [agent behavior][ab].
+Result/close fields, limits, review, outcomes and delivery presets: [contract detail](docs/design/completion.md#result-and-close-verdicts).
 ### Recipes and owner gates
 A recipe (P5) is a task list in § 9 `recipes`; `taskq recipe NAME --run ID` adds its tasks held through the § 1 create claim with stable op ids, so a rerun returns the first receipts; nothing starts before every task reads back and `--start` or `taskq start N`.
 A `gate: true` task, a task gated by `taskq add --gate` or `taskq gate N` (held/ready), or a `review-pr` project needs an owner `approve` of the exact current result before `close` publishes; dependents wait for its close. Acceptance that forbids publishing before owner acceptance is added gated. Detail: [plans and decisions](docs/design/plans-and-decisions.md#contract-detail).
@@ -252,7 +232,7 @@ Brief names an existing contract; forbids searching `/` or `~`; tray folder acce
 3. An installed service older than `current` re-execs by the launcher. Windows CLI descendants share one Job Object. CLI children and Claude turns with a saved native ID use protected [native handover][ar]; codex-app turns defer it. Pending restart/Stop admits nothing and [waits](docs/design/host-service.md#restart-handover) for no childless attempt.
 4. Service marks its version `healthy` after `rollback_after`. Children run on from their own release folder: no drain, manual resume or blocked command.
 5. `service install` registers the exact root and [hands over](docs/design/host-service.md#migration): immutable binary replacement, preserved work and host ownership before rollback-floor recording. Unknown liveness forbids removal/reload; work uses protected handover; idle Stop preparation stays latched. Windows setup and macOS signing: [service detail][hs].
-**Compatibility N/N-1.** `usage-limit`, publication, routing fences (§5) and reviewer `steer quota attempt` (§2.12) need coordinated §9 cutover before new entries are written; otherwise N-1 must fold identically.
+**Compatibility N/N-1.** Reconciliation entries (§2.26–27), `usage-limit`, publication, routing fences (§5) and reviewer `steer quota attempt` (§2.12) need coordinated §9 cutover before new entries are written; otherwise N-1 must fold identically.
 N-1 reads op-id/revision as text, ignores `gate`/`approve`; `needs-gate` blocks its spawns, not owner close. N-1 parses only local `Depends on #N`: cross-repo dependencies stay held (`add`) until every board host supports them, then start (CHANGELOG Board). Otherwise hosts update independently.
 ### Project attachment
 `service install` preflights wake/lock eligibility and board access without implicit login, token copy or grants; `--cancel ID` reconciles an exact unused attachment; unknown execution refuses removal: [project attachment](docs/design/host-service.md#project-attachment).
@@ -275,6 +255,13 @@ Local state has one current format: no reader, importer or alias for an older lo
 Balancing requires every board host to adopt compatible readers before routing fences or reviewer quota input: [cutover](docs/design/configuration.md#balancing-cutover). Preserve active ownership, results, retries and quota windows; no live policy or account changes are implied.
 ## Product
 Looks/sound requirements and their specification links: [product contract](docs/design/product-contract.md#contract-detail), binding under R13.
+### Scroll position
+Each scroll region holds position by row key and offset, never pixels; only the chat bottom or Latest follows new data.
+
+One reading anchor owns every scroll position and restores focus and selection by key; visible rows shift at most 2 CSS px, and data arriving during wheel, touch, drag or inertia applies within 250 ms after scrolling stops.
+
+Scrolling stays native, with no library. Drift over 2 CSS px goes to existing telemetry with surface and cause ([detail](docs/design/ai-workspace.md#scroll-position)).
+Conversations keeps complete task threads, paged attempt logs on demand, local first paint, background refresh and per-open timing, including restored selections ([detail](docs/design/ai-workspace.md#task-thread)).
 ### [menu]
 [menu]: docs/design/menu.md#contract-detail
 [hs]: docs/design/host-service.md#contract-detail
@@ -288,10 +275,7 @@ Looks/sound requirements and their specification links: [product contract](docs/
 [pf]: docs/design/profiling.md#contract-detail
 [cm]: docs/design/commands.md#contract-detail
 ## Linked detail
-- [docs/design/status-report.md][sr]: R6 report, task summary, status.json, events.
-- [docs/design/commands.md][cm]: Command table, add format, op ids, receipts, acknowledgements.
-- [docs/design/configuration.md][cf]: taskq.json and host.json keys, recipes, cutover procedure.
-- [docs/design/capacity.md](docs/design/capacity.md#contract-detail): Slot keys, load gate readings, host admission, emergency hold.
+- [docs/design/completion.md](docs/design/completion.md#contract-detail): §7 evidence-only completion and result/close verdicts.
 - [docs/design/agent-behavior.md][ab]: Delivery presets and publication routes.
 - [docs/runtime-qualification.md][rq]: Spawn and resume commands, app lease, Windows loader.
 - [docs/design/host-service.md][hs]: Heartbeat lines, host lock, release channels, service internals.

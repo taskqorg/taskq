@@ -123,7 +123,7 @@ enum Ev {
     Evaluated(u64, u64, &'static str),
     Click(Rect),
     Shot,
-    Shot2,
+    Shot2(usize),
     /// Add project: the generation fences a late picker or install result.
     Added(u64, Value),
     Answer(Value),
@@ -2301,7 +2301,7 @@ fn queued_resources(_install: &Path, _root: &Path, _message: &Value) -> crate::R
 }
 /// MP14 Completed: one board history page through the owner CLI; the tray itself stays token-free.
 fn queued_history(_install: &Path, root: &Path, m: &Value) -> crate::Res<Value> {
-    if m["transcript"] != true {
+    if m["transcript"] != true && m["board"] != true {
         return crate::reports::cached_history(root, m);
     }
     let mut c = owner_command(root)?;
@@ -2893,6 +2893,7 @@ fn web_observation(row: &Value) -> crate::Res<Value> {
                     | "unowned-async"
                     | "completion-timeout"
                     | "collection-incomplete"
+                    | "scroll-drift"
             )
         )
     {
@@ -3041,6 +3042,7 @@ struct TrayState {
     overflow: Vec<String>,
     capture_errors: Vec<String>,
     checkpoint_complete: bool,
+    checkpoint_deadline: Option<Instant>,
     adding: Value,
     add_generation: u64,
     moved: bool,

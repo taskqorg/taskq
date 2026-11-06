@@ -7,6 +7,52 @@ const q = require("../src/project-blocks.js"),
   fx = require("./fixtures/project-blocks.json");
 const p = fx.project,
   row = fx.row;
+// R6/A3-A6: both shared row forms expose typed routing and observational attention, with escaped source text.
+for (const compact of [false, true]) {
+  const html = q.task(
+    p,
+    {
+      ...row,
+      state: "ask",
+      action: {
+        actor: "dependency",
+        blocker: "#2468",
+        kind: "completion",
+        responsible: "pm",
+        next: "verify <completion>",
+      },
+      retries: 2,
+      attention: {
+        flagged: true,
+        total_s: 3601,
+        current_s: 100,
+        transitions: 11,
+        roots: [{ ref: "#2468" }],
+        downstream: [{ ref: "#2427" }],
+        graph: "known",
+        responsible: "pm",
+        next: "verify <completion>",
+      },
+    },
+    false,
+    compact,
+  );
+  assert(
+    html.includes("Blocked on #2468 (completion)") &&
+      html.includes("Attention: total") &&
+      html.includes("transitions 11") &&
+      html.includes("retries 2"),
+  );
+  assert(
+    html.includes("roots #2468") &&
+      html.includes("downstream #2427") &&
+      html.includes("verify &lt;completion&gt;"),
+  );
+  assert(
+    !html.includes("<completion>"),
+    "routing metadata is escaped, never executable",
+  );
+}
 // F13/F14: the shared compact row is one exact Conversations target, never a nested issue/detail action.
 const unified = q.task(p, row, true, true);
 assert.equal(

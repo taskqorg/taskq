@@ -16,6 +16,7 @@ function taskqConversationsCheckpoint(state){
   else return fail('unexpected action '+m.action);
   setTimeout(()=>taskq.receive({dialogueReceipt:{...m,state:'accepted',value}}),0);
  };
+ const frame=fn=>requestAnimationFrame(()=>{try{fn();}catch(error){fail(String(error));}});
  const s={...state,host:'invented',projects:[{root:'fixture',name:'Invented checkpoint',issues:board,alive:true,complete:true,tasks:[{n:7,title:'Preserve a reading passage across late layout',state:'doing',role:'worker',attempt:71,revision:71,runtime:'codex',session:'codex:invented invented',local_session:true,host:'invented',executions:[{attempt:71,state:'running'}],history_count:10,history_lazy:true}]}],messages:{complete:true,entries:[]},conversations:{complete:true,items:[],navigation:{threads:{selected:id}}}};
  delete s.page;taskq.receive(s);taskq.receive({open:{page:'conversations',root:'fixture',board,task:7}});
  setTimeout(()=>{
@@ -24,15 +25,15 @@ function taskqConversationsCheckpoint(state){
    reader.dispatchEvent(new WheelEvent('wheel',{deltaY:-1,bubbles:true}));
    reader.scrollTop+=paragraph.getBoundingClientRect().top-reader.getBoundingClientRect().top-20;reader.dispatchEvent(new Event('scroll'));
    const range=document.createRange();range.selectNodeContents(paragraph);getSelection().removeAllRanges();getSelection().addRange(range);record.querySelector('.copy-block').focus({preventScroll:true});
-   requestAnimationFrame(()=>{
+   frame(()=>{
     const y=paragraph.getBoundingClientRect().top-reader.getBoundingClientRect().top,text=getSelection().toString(),focus=document.activeElement;
     const spacer=document.createElement('div');spacer.style.height='120px';record.previousElementSibling.prepend(spacer);record.querySelector('.block-details').open=true;
-    requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    frame(()=>frame(()=>frame(()=>{
      const drift=paragraph.getBoundingClientRect().top-reader.getBoundingClientRect().top-y;
      const sidebar=document.querySelector('.conversation-rows').getBoundingClientRect(),timingVisible=[...document.querySelectorAll('.task-timing>span')].every(n=>{const range=document.createRange();range.selectNodeContents(n);return [...range.getClientRects()].every(r=>r.left>=sidebar.left-1&&r.right<=sidebar.right+1);});
      const value={drift,selection:getSelection().toString()===text,focus:document.activeElement===focus,timingVisible};
      if(Math.abs(drift)>2||!value.selection||!value.focus||!timingVisible)fail('anchor/focus/selection/timing '+JSON.stringify(value));
-     else post(JSON.stringify({a:'snapshot-checkpoint',state:'passed',value}));
+     else post(JSON.stringify({a:'snapshot-checkpoint',step:state.checkpoint,state:'passed',value}));
     })));
    });
   }catch(error){fail(String(error));}

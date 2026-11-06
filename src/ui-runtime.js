@@ -16,7 +16,15 @@ const execution = {
       Object.defineProperty(wrapped, key, {
         ...descriptor,
         value: function (...args) {
-          method ??= shared.module(name, { [key]: descriptor.value })[key];
+          // A page past the telemetry method bound keeps working unmeasured: telemetry never takes a page down.
+          if (!method) {
+            try {
+              method = shared.module(name, { [key]: descriptor.value })[key];
+            } catch (error) {
+              if (error.message !== "telemetry method limit") throw error;
+              method = descriptor.value;
+            }
+          }
           return Reflect.apply(method, this, args);
         },
       });
@@ -24,7 +32,14 @@ const execution = {
     return Object.freeze(wrapped);
   },
 };
-const frequent = new Set(["scroll", "pointermove", "input"]);
+const frequent = new Set([
+  "scroll",
+  "pointermove",
+  "input",
+  "wheel",
+  "touchmove",
+  "load",
+]);
 function send(message) {
   const context = execution.context();
   globalThis.ipc?.postMessage(
@@ -35,6 +50,45 @@ function send(message) {
         : {}),
     }),
   );
+}
+// A measured fact with a closed name: `prefix.<one of each list>`, inventoried by scripts/check-web.cjs.
+// `taskq profile actions` reads the row like any action; it carries its own elapsed time and no user text.
+let measuredRun = null,
+  measuredSerial = 0;
+function measured(prefix, ...lists) {
+  return function (
+    parts,
+    { duration_us = 0, outcome = "ok", error = "none" } = {},
+  ) {
+    if (
+      !globalThis.ipc ||
+      parts.length !== lists.length ||
+      parts.some((part, i) => !lists[i].includes(part))
+    )
+      return false;
+    measuredRun ??= [...crypto.getRandomValues(new Uint8Array(16))]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const context = execution.context(),
+      span = measuredRun + "." + ++measuredSerial;
+    globalThis.ipc.postMessage(
+      JSON.stringify({
+        a: "web-observation",
+        row: {
+          kind: "ui",
+          operation: "js." + [prefix, ...parts].join("."),
+          trace: context?.trace || span,
+          span,
+          parent: context?.span || null,
+          started_ms: Date.now(),
+          duration_us: Math.max(0, Math.round(duration_us)),
+          outcome,
+          error,
+        },
+      }),
+    );
+    return true;
+  };
 }
 function connect() {
   core.connect((row) => {
@@ -103,4 +157,5 @@ module.exports = {
   repeat,
   cancel,
   effect,
+  measured,
 };

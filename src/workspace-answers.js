@@ -47,11 +47,14 @@ const { create } = execution.module("workspace.answers", {
       },
       answerCapability: function (board, row) {
         const p = api.project(board);
+        const blocked = row?.action?.actor === "dependency";
         return {
-          manage: true,
-          files: true,
-          answer: !!p && p.alive && p.complete === true,
-          reason: "Project status is unavailable or stale; check the board",
+          manage: !blocked,
+          files: !blocked,
+          answer: !blocked && !!p && p.alive && p.complete === true,
+          reason: blocked
+            ? "Task waits for its dependency; reconcile the blocker"
+            : "Project status is unavailable or stale; check the board",
           composer,
           project: view.S?.projects.find((p) => p.issues === board)?.name,
           paged:
@@ -248,7 +251,18 @@ const { create } = execution.module("workspace.answers", {
       // The answer card owns the slot's descendants; Preact renders the slot without children.
       answerSlot: function (t) {
         return t.state === "ask"
-          ? h("div", { "data-answer": t.key, key: "answer:" + t.key })
+          ? t.action?.actor === "dependency"
+            ? h(
+                "p",
+                { role: "status" },
+                "Blocked on " +
+                  t.action.blocker +
+                  " (" +
+                  t.action.kind +
+                  "). PM: " +
+                  t.action.next,
+              )
+            : h("div", { "data-answer": t.key, key: "answer:" + t.key })
           : null;
       },
       answerNotices: function (board, task) {
@@ -800,6 +814,15 @@ const { create } = execution.module("workspace.answers", {
         }
         const key = p.root + "#" + op.id;
         if (answerRequests.has(key)) return answerRequests.get(key).promise;
+        if (
+          p.tasks?.find((t) => t.n === op.task)?.action?.actor === "dependency"
+        ) {
+          return Promise.resolve({
+            state: "rejected",
+            reason: "Task waits for its dependency",
+            next: "Reconcile the blocker before answering",
+          });
+        }
         let resolve;
         const promise = new Promise((r) => (resolve = r));
         const timer = defer(() => {

@@ -139,6 +139,26 @@
         "later"
       ],
       "verdict": null,
+      "action": {
+        "actor": "service",
+        "status": "ready",
+        "responsible": "service",
+        "next": "follow the current task stage"
+      },
+      "attention": {
+        "flagged": null,
+        "total_s": null,
+        "current_s": null,
+        "transitions": null,
+        "source": "accepted worker input receipt (board time)",
+        "roots": [],
+        "downstream": [],
+        "graph": "known",
+        "responsible": "service",
+        "next": "follow the current task stage",
+        "reason": "first accepted execution unknown; current state boundary unknown; transition count unknown"
+      },
+      "retries": 0,
       "since": null,
       "created": 1,
       "steps": [
@@ -239,6 +259,26 @@
         "later"
       ],
       "verdict": null,
+      "action": {
+        "actor": "unknown",
+        "status": "unknown",
+        "responsible": "pm",
+        "next": "taskq classify 2 --revision 4 --op-id <id> --actor owner|pm"
+      },
+      "attention": {
+        "flagged": null,
+        "total_s": null,
+        "current_s": 98,
+        "transitions": null,
+        "source": "accepted worker input receipt (board time)",
+        "roots": [],
+        "downstream": [],
+        "graph": "known",
+        "responsible": "pm",
+        "next": "taskq classify 2 --revision 4 --op-id <id> --actor owner|pm",
+        "reason": "first accepted execution unknown; transition count unknown"
+      },
+      "retries": 0,
       "worker": {
         "attempt": 3,
         "session": "claude:abc mac",
@@ -375,6 +415,31 @@
       ],
       "verdict": null,
       "brief": "Depends on #3",
+      "action": {
+        "actor": "dependency",
+        "status": "blocked",
+        "responsible": "service",
+        "next": "service rechecks verified dependency completion"
+      },
+      "attention": {
+        "flagged": null,
+        "total_s": null,
+        "current_s": null,
+        "transitions": null,
+        "source": "accepted worker input receipt (board time)",
+        "roots": [
+          {
+            "ref": "#3",
+            "url": "https://board/3"
+          }
+        ],
+        "downstream": [],
+        "graph": "unknown",
+        "responsible": "service",
+        "next": "service rechecks verified dependency completion",
+        "reason": "first accepted execution unknown; current state boundary unknown; transition count unknown; dependency graph coverage unknown"
+      },
+      "retries": 0,
       "since": null,
       "created": 6,
       "steps": [
@@ -447,6 +512,26 @@
         "retry"
       ],
       "verdict": null,
+      "action": {
+        "actor": "service",
+        "status": "ready",
+        "responsible": "service",
+        "next": "follow the current task stage"
+      },
+      "attention": {
+        "flagged": null,
+        "total_s": null,
+        "current_s": 94,
+        "transitions": null,
+        "source": "accepted worker input receipt (board time)",
+        "roots": [],
+        "downstream": [],
+        "graph": "known",
+        "responsible": "service",
+        "next": "follow the current task stage",
+        "reason": "first accepted execution unknown; transition count unknown"
+      },
+      "retries": 0,
       "since": 8,
       "created": 7,
       "steps": [
@@ -546,6 +631,26 @@
         ],
         "open": "none"
       },
+      "action": {
+        "actor": "service",
+        "status": "ready",
+        "responsible": "service",
+        "next": "follow the current task stage"
+      },
+      "attention": {
+        "flagged": null,
+        "total_s": null,
+        "current_s": 90,
+        "transitions": null,
+        "source": "accepted worker input receipt (board time)",
+        "roots": [],
+        "downstream": [],
+        "graph": "known",
+        "responsible": "service",
+        "next": "follow the current task stage",
+        "reason": "first accepted execution unknown; transition count unknown"
+      },
+      "retries": 0,
       "worker": {
         "attempt": 11,
         "session": "claude:def mac",

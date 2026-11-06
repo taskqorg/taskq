@@ -1570,17 +1570,46 @@ pub fn grants(install: &Path) -> BTreeMap<String, String> {
     unsafe extern "C" {
         fn AXIsProcessTrusted() -> bool;
     }
-    // ponytail: one `log show` over the last hour per probe (300 s); an App Data grant no worker touched within it reads unknown
-    // #1856: an unreadable log is logged with its command; the grants then read as without it
-    let log = crate::tools::run("gui.tcc_log", command("/usr/bin/log").args(["show", "--last", "1h", "--style", "compact", "--predicate",
-        "subsystem == \"com.apple.TCC\" AND eventMessage CONTAINS \"Failed to match existing code requirement\""]), std::time::Duration::from_secs(30))
-        .map_err(|e| crate::platform::log(&format!("gui grants: {e}"))).ok().map(|o| String::from_utf8_lossy(&o).into_owned());
+    // ponytail: one `log show` over the last hour per host process and 300 s; an App Data grant no worker touched within it reads unknown
+    static LOG: TccLog = std::sync::Mutex::new((None, None));
+    let log = shared_log(&LOG, || {
+        // #1856: an unreadable log is logged with its command; the grants then read as without it
+        crate::tools::run("gui.tcc_log", command("/usr/bin/log").args(["show", "--last", "1h", "--style", "compact", "--predicate",
+            "subsystem == \"com.apple.TCC\" AND eventMessage CONTAINS \"Failed to match existing code requirement\""]), std::time::Duration::from_secs(30))
+            .map_err(|e| crate::platform::log(&format!("gui grants: {e}"))).ok().map(|o| String::from_utf8_lossy(&o).into_owned())
+    });
     // SAFETY: no arguments; reads this process's TCC state without a prompt
     grant_states(
         unsafe { AXIsProcessTrusted() },
         log.as_deref(),
         &install.join("taskq"),
     )
+}
+
+/// Last start and last result of the TCC log query.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+type TccLog = std::sync::Mutex<(Option<std::time::Instant>, Option<String>)>;
+
+/// Starts `run` on its own thread when the last start is 300 s old and returns the last result, `None` before the first
+/// ends, so no caller waits. The query's 30 s budget is below that period, so two runs never overlap.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn shared_log(
+    state: &'static TccLog,
+    run: impl FnOnce() -> Option<String> + Send + 'static,
+) -> Option<String> {
+    let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
+    if s.0.is_none_or(|t| t.elapsed().as_secs() >= 300) {
+        s.0 = Some(std::time::Instant::now());
+        let job = coreq::telemetry::capture::bind(move || {
+            let result = run();
+            state.lock().unwrap_or_else(|e| e.into_inner()).1 = result;
+        });
+        let thread = std::thread::Builder::new().name("taskq-tcc-log".into());
+        if let Err(e) = thread.spawn(job) {
+            log(&format!("gui grants: {e}"));
+        }
+    }
+    s.1.clone()
 }
 
 #[cfg(not(target_os = "macos"))]

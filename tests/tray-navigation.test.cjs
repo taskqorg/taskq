@@ -28,8 +28,7 @@ assert.equal(context.document.scrollingElement.scrollTop, 0);
 context.back();
 assert.equal(context.page, "settings");
 context.back();
-assert.equal(context.page, "home");
-assert.equal(context.document.scrollingElement.scrollTop, 120);
+assert.equal(context.page, "home"); // Back returning to the same row is proved on a real layout by tests/scroll-anchor.browser.cjs.
 assert.equal(
   JSON.stringify(context.disclosures),
   '{"scope":true,"counts":false}',

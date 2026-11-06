@@ -1,6 +1,7 @@
 "use strict";
 const copyLabel = require("./copy-label.js");
-const ui = require("./ui-runtime.js");
+const ui = require("./ui-runtime.js"),
+  anchor = require("./reading-anchor.js");
 const execution = ui.execution;
 const shell = require("./app-shell.js");
 const { h, Fragment } = require("preact");
@@ -1353,9 +1354,7 @@ const { createState, create } = execution.module("tray", {
         view.restoreScroll = 0;
         view.unavailable = null;
         present(true);
-        (
-          menu.querySelector(".content") || document.scrollingElement
-        ).scrollTop = 0;
+        anchor.top(menu.querySelector(".content") || document.scrollingElement);
         menu.querySelector("h1")?.focus();
       },
       back: function () {
@@ -1386,9 +1385,10 @@ const { createState, create } = execution.module("tray", {
         view.aiRoot = prior.aiRoot;
         view.restoreScroll = prior.scroll;
         present(true);
-        (
-          menu.querySelector(".content") || document.scrollingElement
-        ).scrollTop = prior.scroll;
+        anchor.restore(
+          menu.querySelector(".content") || document.scrollingElement,
+          prior.scroll,
+        );
         viewState.focus(prior.focus);
       },
       routeButton: function (route, label = routes[route]) {
@@ -1483,7 +1483,13 @@ const { createState, create } = execution.module("tray", {
         const p = view.S.projects.find((p) => p.root === t.root);
         return h(
           "div",
-          { class: "task-row", "data-card": t.key, tabindex: -1, key: t.key },
+          {
+            class: "task-row",
+            "data-card": t.key,
+            "data-row-key": "task:" + t.key,
+            tabindex: -1,
+            key: t.key,
+          },
           raw(TaskqProjectBlocks.task(blockProject(p), t, true, true)),
         );
       },
@@ -1917,7 +1923,7 @@ const { createState, create } = execution.module("tray", {
           ]),
           h(
             "div",
-            { class: "options periods" },
+            { class: "options periods", "data-row-key": "history:periods" },
             view.S.display.periods.map(({ id: k, name: l }) =>
               h(
                 "button",
@@ -1936,12 +1942,15 @@ const { createState, create } = execution.module("tray", {
           view.draft && custom(),
           h(
             "div",
-            { class: "body meta" },
+            { class: "body meta", "data-row-key": "history:range" },
             when(H.start, H.tz) + " – " + when(H.end, H.tz),
           ),
           h(
             "div",
-            { class: "history-legend body meta" },
+            {
+              class: "history-legend body meta",
+              "data-row-key": "history:legend",
+            },
             kinds.map((k, i) =>
               h(
                 "span",
@@ -1958,7 +1967,7 @@ const { createState, create } = execution.module("tray", {
           ),
           h(
             "div",
-            { class: "history-plot" },
+            { class: "history-plot", "data-row-key": "history:plot" },
             raw(
               H.svg?.replace(
                 /viewBox="0 0 [^"]+"/,
@@ -1984,7 +1993,11 @@ const { createState, create } = execution.module("tray", {
           ),
           h(
             "div",
-            { class: "body meta history-detail", role: "status" },
+            {
+              class: "body meta history-detail",
+              role: "status",
+              "data-row-key": "history:detail",
+            },
             rows[selected]
               ? when(rows[selected].start, H.tz) +
                   " – " +
@@ -2012,7 +2025,10 @@ const { createState, create } = execution.module("tray", {
             ),
           h(
             "details",
-            { "data-view-key": "history-source" },
+            {
+              "data-view-key": "history-source",
+              "data-row-key": "history:source",
+            },
             api.disclosure("info", "Source and exact interval"),
             h(
               "div",
@@ -4678,7 +4694,7 @@ const { createState, create } = execution.module("tray", {
         if (row)
           row.classList.toggle(
             "pinned",
-            content.scrollTop > 0 &&
+            anchor.scrolled(content) &&
               row.getBoundingClientRect().top <=
                 content.getBoundingClientRect().top + height + 1,
           );
@@ -5009,32 +5025,19 @@ const { createState, create } = execution.module("tray", {
         if (!view.S || view.resizing || (ports.views && !view.dashboard))
           return;
         const firstRender = !view.drawn;
-        const active = document.activeElement,
-          scroll = (menu.querySelector(".content") || document.scrollingElement)
-            .scrollTop;
+        const place = anchor.held(
+          menu.querySelector(".content") || document.scrollingElement,
+        );
         const bounds = new Map(
           [...menu.querySelectorAll("[data-bound]")].map((e) => [
             e.dataset.bound,
-            e.scrollTop,
+            anchor.held(e),
           ]),
         );
-        const focusKey =
-          !navigating && active && menu.contains(active)
-            ? JSON.stringify(active.dataset)
-            : null;
-        // a refresh rebuilds the menu: refocus the same control, link or heading, by tag, data and position (U-A4)
-        const same = (e) =>
-          e.tagName === active.tagName &&
-          JSON.stringify(e.dataset) === focusKey;
-        const focusAt = focusKey
-          ? [...menu.querySelectorAll(active.tagName)]
-              .filter(same)
-              .indexOf(active)
-          : -1;
-        const focusedSummary =
-          !navigating && active?.tagName === "SUMMARY"
-            ? [...menu.querySelectorAll("summary")].indexOf(active)
-            : -1;
+        // a refresh rebuilds the menu: refocus the same control in the row with the same key (U-A4)
+        const focusMark = navigating
+          ? null
+          : anchor.focusMark(menu, document.activeElement);
         const open =
             navigating || view.restoreScroll != null
               ? view.disclosures
@@ -5174,23 +5177,13 @@ const { createState, create } = execution.module("tray", {
           menu
             .querySelectorAll(".hist,.agents,.service,.incident-notice")
             .forEach((d) => (d.open = !(p && d.classList.contains("service"))));
-        if (!navigating) {
-          const target =
-            focusedSummary >= 0
-              ? menu.querySelectorAll("summary")[focusedSummary]
-              : focusKey && active.tagName === "H1"
-                ? menu.querySelector("h1")
-                : focusKey && focusKey !== "{}"
-                  ? [...menu.querySelectorAll(active.tagName)].filter(same)[
-                      focusAt
-                    ]
-                  : null;
-          target?.focus({ preventScroll: true });
-        }
-        (
-          menu.querySelector(".content") || document.scrollingElement
-        ).scrollTop = view.restoreScroll ?? scroll;
+        anchor.focusTarget(menu, focusMark)?.focus({ preventScroll: true });
+        const viewport =
+            menu.querySelector(".content") || document.scrollingElement,
+          surface = view.page === "cadence" ? "history" : "tasks";
+        anchor.restore(viewport, view.restoreScroll ?? place, surface);
         view.restoreScroll = null;
+        anchor.track(viewport, surface);
         api.stickyFilters();
         if (firstRender) viewState.focus(view.restoreFocus);
         fit();
@@ -5199,10 +5192,9 @@ const { createState, create } = execution.module("tray", {
         // a block that drops a cut line asks for the smaller height
         const bound = [...menu.querySelectorAll("[data-bound]")];
         bound.forEach((c) => {
-          c.scrollTop = bounds.has(c.dataset.bound)
-            ? bounds.get(c.dataset.bound)
-            : 0;
-          wholeLines(c);
+          anchor.restore(c, bounds.get(c.dataset.bound), "bounded");
+          anchor.wholeLines(c);
+          anchor.track(c, "bounded");
         });
         if (bound.some((c) => c.style.maxHeight)) fit();
         if (ports.views) {
@@ -5214,51 +5206,12 @@ const { createState, create } = execution.module("tray", {
         }
         viewState.flush();
       },
-      wholeLines: function (c) {
-        if (c.scrollHeight <= c.clientHeight) return;
-        const top = c.getBoundingClientRect().top + c.clientTop;
-        const lines = () => {
-          const r = document.createRange(),
-            w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT),
-            a = [];
-          for (let n; (n = w.nextNode());) {
-            r.selectNodeContents(n);
-            a.push(...r.getClientRects());
-          }
-          return a;
-        };
-        const shrink = (d) => (c.style.maxHeight = c.offsetHeight - d + "px");
-        const cut = (edge) =>
-          Math.min(
-            ...lines()
-              .filter((l) => l.top < edge && l.bottom > edge)
-              .map((l) => l.top),
-          );
-        const head = cut(top);
-        if (head < top && c.scrollTop + c.clientHeight < c.scrollHeight - 1)
-          c.scrollTop -= top - head;
-        else if (head < top) {
-          const d =
-            Math.min(
-              ...lines()
-                .filter((l) => l.top >= top)
-                .map((l) => l.top),
-            ) - top;
-          if (d < c.clientHeight) {
-            shrink(d);
-            c.scrollTop += d;
-          }
-        }
-        const bottom = top + c.clientHeight,
-          tail = cut(bottom);
-        if (tail > top && tail < bottom) shrink(bottom - tail);
-      },
       settle: function (c) {
         if (!c.isConnected) return;
-        const s = c.scrollTop;
+        const place = anchor.snapshot(c);
         c.style.maxHeight = "";
-        c.scrollTop = s;
-        wholeLines(c);
+        anchor.restore(c, place, "bounded");
+        anchor.wholeLines(c);
         fit();
       },
       refresh: function (now) {
@@ -5498,6 +5451,7 @@ const { createState, create } = execution.module("tray", {
       },
       mount: function () {
         window.taskq = { settle, receive, measure, model: { unique, mode } };
+        anchor.watch(document);
         dashboard.mount();
         ui.listen(menu, "toggle", () => viewState.schedule(), true);
         ui.listen(
@@ -6069,9 +6023,14 @@ const { createState, create } = execution.module("tray", {
     let batching = 0,
       staged = null;
     // M3.26: native readback and its callbacks produce one DOM commit, fit and navigation save.
+    // A render carrying data waits until scrolling stops; navigation does not wait.
     const paint = (...args) => {
       if (batching) {
         staged = [!!(staged?.[0] || args[0])];
+        return;
+      }
+      if (!args[0] && anchor.busy()) {
+        anchor.after("paint", () => present());
         return;
       }
       (ports.render || draw)(...args);

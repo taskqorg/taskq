@@ -1016,6 +1016,19 @@ fn act_input(
             "text ends with an `op-id:` or `revision:` line; reword it",
         );
     }
+    let forwarded = match crate::waits::validate(
+        b,
+        n,
+        &before,
+        kind,
+        args,
+        op,
+        child.is_some_and(|env| env.0.is_some() || env.1.is_some()),
+    ) {
+        Ok(text) => text,
+        Err(e) => return Receipt::rejected(n, op, e),
+    };
+    let text = forwarded.as_deref().unwrap_or(text);
     let human = matches!(kind, "answer" | "steer") || kind == "requeue" && attempt.is_none();
     if !files.is_empty() && !human {
         return Receipt::rejected(
@@ -1158,6 +1171,32 @@ fn act_input(
     };
     // lost: an earlier entry moved the revision, or `fold` ignores this one (a raced op id included)
     let before_write = core::project(n, &log[..i], deps);
+    if kind == "wait" || kind == "publication-blocked" && args.first() == Some(&"completion") {
+        if let Err(why) = crate::waits::acyclic(b, n) {
+            // The unknown kind also refuses when the board's edit timestamp has only second precision.
+            if let Err(e) = b.edit_comment(
+                n,
+                id,
+                &format!("taskq: ignored-wait\n{body}\n\nReason: dependency graph refused"),
+            ) {
+                return unknown(e.to_string());
+            }
+            let back = match board::entries(b, n) {
+                Ok(log) => log,
+                Err(e) => return unknown(e.to_string()),
+            };
+            if !back
+                .iter()
+                .any(|e| e.id == id && (e.edited || core::kind(n, &e.body) == "ignored-wait"))
+                || core::project(n, &back, deps).accepts(id)
+            {
+                return unknown(
+                    "dependency refusal did not read back; wait retained as unknown".into(),
+                );
+            }
+            return Receipt::rejected(n, op, format!("dependency wait refused: {why}"));
+        }
+    }
     if !owner_note && op.revision.is_some_and(|r| r != before_write.revision)
         || !core::project(n, &log[..=i], deps).accepts(id)
     {
@@ -1418,6 +1457,28 @@ fn close_body(
                     ..Receipt::rejected(n, op, e)
                 };
             }
+            if !service::blockers(
+                b,
+                &core::dep_body(&issue.body, &t),
+                None,
+                &mut Default::default(),
+            )
+            .is_empty()
+            {
+                let saved = act(b, &cfg.root, n, "publish", &[], verdict, op);
+                if !saved.ok() {
+                    return saved;
+                }
+                let (issue, t, _) = match current(b, n) {
+                    Ok(v) => v,
+                    Err(e) => return Receipt::rejected(n, op, e),
+                };
+                let log = match entries(b, n) {
+                    Ok(log) => log,
+                    Err(e) => return Receipt::rejected(n, op, e),
+                };
+                return resume_publication(b, cfg, &issue, &t, &log);
+            }
             if let Some(proof) = crate::evidence::completion(b, &cfg.root, &issue, &t, &log) {
                 return match proof {
                     Ok(proof) => act(
@@ -1616,6 +1677,27 @@ pub fn resume_publication(
     let Some(verdict) = &t.publication else {
         return Receipt::rejected(n, &Op::default(), "no pending publication");
     };
+    if t.state == State::Ask
+        && t.wait.as_ref().is_some_and(|w| w.kind == "completion")
+        && (!needs_approval(cfg, t) || t.gate == Some(Gate::Approved))
+    {
+        let wait = t.wait.as_ref().unwrap();
+        let op = Op {
+            id: Some(format!("publication-wait-ready-{}", wait.id)),
+            revision: Some(core::revision(n, log)),
+        };
+        return act_as(
+            b,
+            &cfg.root,
+            n,
+            "wait-ready",
+            &[&wait.id.to_string()],
+            "",
+            &op,
+            None,
+            None,
+        );
+    }
     if t.state != State::Review || needs_approval(cfg, &t) && t.gate != Some(Gate::Approved) {
         return Receipt::rejected(n, &Op::default(), "publication no longer approved");
     }
@@ -1627,6 +1709,25 @@ pub fn resume_publication(
     let write = |kind, args: &[&str], text: &str| {
         act_as(b, &cfg.root, n, kind, args, text, &op, None, None)
     };
+    let blockers = service::blockers(
+        b,
+        &core::dep_body(&issue.body, t),
+        None,
+        &mut Default::default(),
+    );
+    if let Some(blocker) = blockers.first() {
+        let reference = blocker.dep.name();
+        if let Err(e) = crate::waits::acyclic(b, n) {
+            return Receipt::rejected(n, &op, format!("publication dependency {reference}: {e}"));
+        }
+        // Keep the writer call adjacent to its literal for the production card guard.
+        #[rustfmt::skip]
+        let card = crate::cli::text::ask_card(n, &format!("Done: reviewed result and publication retained\nProblem: publication waits for {reference}: {}", crate::cli::text::plain(&blocker.reason, 160)), &[], None, &[]);
+        return match card {
+            Ok(card) => write("publication-blocked", &["completion", &reference], &card),
+            Err(e) => Receipt::rejected(n, &op, e),
+        };
+    }
     if let Some(proof) = crate::evidence::completion(b, &cfg.root, issue, t, log) {
         return match proof {
             Ok(proof) => act_as(

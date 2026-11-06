@@ -1,6 +1,7 @@
 "use strict";
 const ui = require("./ui-runtime.js"),
-  copyLabel = require("./copy-label.js");
+  copyLabel = require("./copy-label.js"),
+  anchor = require("./reading-anchor.js");
 const execution = ui.execution;
 
 const { fresh, problem, request, receipt, receiptText, mount } =
@@ -128,10 +129,16 @@ const { fresh, problem, request, receipt, receiptText, mount } =
       );
     },
     mount: function (el, adapter) {
+      anchor.watch(el.ownerDocument);
       const { paint, save, submit } = execution.module(
         "finding-composer.mount",
         {
           paint: function () {
+            // Data arriving during scrolling waits until it stops; a click or key ends the wait.
+            if (anchor.busy()) {
+              anchor.after(el, paint);
+              return;
+            }
             const d = current,
               p = project(),
               locked = !!d.request,
@@ -144,7 +151,7 @@ const { fresh, problem, request, receipt, receiptText, mount } =
                     end: active.selectionEnd,
                   }
                 : null;
-            const scroll = el.scrollTop;
+            const place = anchor.held(el);
             let h =
               '<div class="tqf-line"><strong>New TaskQ task</strong><button type="button" data-finding="cancel">Cancel</button></div>';
             if (d.cancelled) {
@@ -260,7 +267,8 @@ const { fresh, problem, request, receipt, receiptText, mount } =
             form.innerHTML = h;
             for (const area of form.querySelectorAll("textarea"))
               area.style.height = area.scrollHeight + 2 + "px";
-            el.scrollTop = scroll;
+            anchor.restore(el, place, "finding-composer");
+            anchor.track(el, "finding-composer");
             if (focus?.field) {
               const target = form.querySelector(
                 '[data-field="' + focus.field + '"]',

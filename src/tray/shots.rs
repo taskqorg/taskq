@@ -101,7 +101,7 @@ impl TrayState {
                 }
             }
         }
-        let st = state(
+        let mut st = state(
             &self.install,
             &s,
             theme == "dark",
@@ -111,6 +111,8 @@ impl TrayState {
         );
         // the Conversations and question fixtures merge invented tasks into the real pushed state (palette, font, theme)
         self.checkpoint_complete = false;
+        self.checkpoint_deadline = None;
+        st["checkpoint"] = json!(self.step);
         let merged = self.conversation_shots
             || ANSWERS.iter().any(|(_, s)| *s == script)
             || REPORT_SHOTS.iter().any(|(_, s)| *s == script);
@@ -131,9 +133,10 @@ impl TrayState {
             web_eval(wv, script, "tray.web.fixture", &self.proxy, &mut self.web);
         }
         let p = self.proxy.clone();
+        let step = self.step;
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(800));
-            let _ = p.send_event(Ev::Shot2);
+            let _ = p.send_event(Ev::Shot2(step));
         });
     }
 
@@ -146,12 +149,27 @@ impl TrayState {
             shot_name(&self.install, &self.routes, self.step)
         );
         if !self.web.pending.is_empty() {
-            self.shot_wait = Some(Ev::Shot2);
+            self.shot_wait = Some(Ev::Shot2(self.step));
             return;
         }
         // the workspace page has no menu to measure
         if self.routes.iter().any(|r| r == "conversations-checkpoint") && !self.checkpoint_complete
         {
+            if self.checkpoint_deadline.is_none() {
+                self.checkpoint_deadline = Some(Instant::now() + Duration::from_secs(5));
+                let proxy = self.proxy.clone();
+                let step = self.step;
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(5));
+                    let _ = proxy.send_event(Ev::Shot2(step));
+                });
+            }
+            if self
+                .checkpoint_deadline
+                .is_some_and(|deadline| Instant::now() < deadline)
+            {
+                return;
+            }
             self.capture_errors
                 .push(format!("{name}: native checkpoint did not complete"));
         }

@@ -93,9 +93,23 @@ pub(crate) fn inbox_json(b: &dyn Board, root: &Path, me: &str, n: u64) -> Res<Va
         .iter()
         .max_by_key(|e| e.id)
         .map(|e| json!({"id": e.id, "at": at(e.id).map(|c| c.created)}));
+    let deps = if let Some(w) = &t.wait {
+        format!("Depends on {}", w.blocker)
+    } else if t.state == State::Waiting {
+        core::dep_body(&issue.body, t)
+    } else {
+        String::new()
+    };
+    let action = crate::waits::action(
+        t,
+        n,
+        p.revision,
+        &service::blockers(b, &deps, None, &mut Default::default()),
+    );
     Ok(
         json!({"schema": 1, "task": n, "title": issue.title, "url": b.url(n), "open": issue.open, "state": t.state.name(), "revision": p.revision,
-        "source_readiness": readiness::source(n,&b.url(n),&log), "card": t.card, "result": t.result, "attempt": attempt, "last": last, "answers": answers}),
+        "source_readiness": readiness::source(n,&b.url(n),&log), "action":action,
+        "card": t.card, "result": t.result, "attempt": attempt, "last": last, "answers": answers}),
     )
 }
 
@@ -179,14 +193,16 @@ pub(crate) fn closed_row(
             .map(|(q, a)| json!({"question":q.as_deref().map(snapshot::question),"answered":a}))
             .collect::<Vec<_>>()
         });
-    let workers = log.as_ref().ok().map(|log| {
-        core::project(i.number, log, false)
-            .changes
-            .into_iter()
-            .filter(|(id, _, t)| t.role.as_deref() == Some("worker") && t.attempt == Some(*id))
-            .map(|(id, _, t)| json!({"attempt":id,"role":"worker","session":t.session}))
-            .collect::<Vec<_>>()
-    });
+    let attempts = |role| {
+        log.as_ref()
+            .ok()
+            .zip(comments.as_ref().ok())
+            .map(|(log, comments)| {
+                snapshot::attempts(&core::project(i.number, log, false), log, comments, role)
+            })
+    };
+    let workers = attempts("worker");
+    let reviewers = attempts("reviewer");
     let timing = log
         .as_ref()
         .ok()
@@ -215,7 +231,7 @@ pub(crate) fn closed_row(
         )
     });
     let close = log.is_ok().then(|| display::close_outcome(verdict, next));
-    json!({"n": i.number,"revision":log.as_ref().ok().map(|log|core::revision(i.number,log)), "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "source_readiness": log.as_ref().map_or_else(|_|readiness::unavailable(i.number,&b.url(i.number),"task log unavailable"),|log|readiness::source(i.number,&b.url(i.number),log)), "timing":timing,"history":history,"workers":workers,"brief":i.body,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err().map(|e| e.text())})
+    json!({"n": i.number,"revision":log.as_ref().ok().map(|log|core::revision(i.number,log)), "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "source_readiness": log.as_ref().map_or_else(|_|readiness::unavailable(i.number,&b.url(i.number),"task log unavailable"),|log|readiness::source(i.number,&b.url(i.number),log)), "timing":timing,"history":history,"workers":workers,"reviewers":reviewers,"brief":i.body,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err().map(|e| e.text())})
 }
 
 pub(crate) fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {

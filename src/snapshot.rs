@@ -11,6 +11,33 @@ use std::collections::{BTreeMap, HashMap};
 
 pub const SCHEMA: u64 = 1;
 
+/// A5: accepted spawns include reviewer attempts, which do not change the folded state.
+pub(crate) fn attempts(
+    projection: &core::Projection,
+    log: &[core::Entry],
+    comments: &[board::Comment],
+    role: &str,
+) -> Vec<Value> {
+    log
+        .iter()
+        .filter(|e| projection.accepts(e.id))
+        .filter_map(|e| {
+            let mut words = e
+                .body
+                .lines()
+                .next()?
+                .trim()
+                .strip_prefix("taskq:")?
+                .split_whitespace();
+            if words.next() != Some("spawn") || words.next() != Some(role) {
+                return None;
+            }
+            let session = format!("{} {}", words.next()?, words.next()?);
+            Some(json!({"attempt":e.id,"session":session,"role":role,"started":comments.iter().find(|c|c.id==e.id).map(|c|c.created)}))
+        })
+        .collect()
+}
+
 /// #1591 the one freshness rule (§ 3 lease, § 4 status, R6) for CLI, tray and menu: an observation `age` seconds old
 /// is live within the project ttl, else stale; a negative age (clock skew) is stale.
 pub fn live(age: i64, ttl: i64) -> bool {
@@ -405,11 +432,14 @@ pub fn refresh_heartbeat(h: &mut Value, now: i64, active: bool) {
 
 #[derive(Default)]
 pub struct Row {
+    pub attention: Value,
+    pub wait_url: Option<String>,
     pub heartbeat: Value,
     /// Last accepted worker source for read-only history, never current task authority.
     pub worker: Option<Value>,
     /// Accepted worker sources in board order; read-only history, never execution authority.
     pub workers: Vec<Value>,
+    pub reviewers: Vec<Value>,
     pub conversation: Option<Value>,
     pub n: u64,
     pub title: String,
@@ -892,7 +922,7 @@ pub fn from_views(
     open.sort_by_key(|v| (service::priority(&v.issue), v.issue.number));
     let urls = session_urls(hosts);
     let numbers: Vec<u64> = open.iter().map(|v| v.issue.number).collect();
-    let tasks = open.into_iter().map(|v| {
+    let mut tasks:Vec<Row> = open.into_iter().map(|v| {
         let recovery=input_recovery(v);
         let last=v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created);
         // #2257: a result whose worker execution stays unreleased past ttl gets no reviewer (§ 3 Recovery); name the host step
@@ -922,12 +952,15 @@ pub fn from_views(
         heartbeat["executor"]=executor(&v.projection.task,&executions,pending,observed,cfg.ttl);
         refresh_heartbeat(&mut heartbeat,observed,matches!(v.projection.task.state,State::Doing|State::Review)&&v.projection.task.attempt.is_some());
         Row {
+        attention: Value::Null,
+        wait_url: v.projection.task.wait.as_ref().and_then(|w|core::depends(&format!("Depends on {}",w.blocker)).into_iter().next())
+            .map(|dep|dep.repo.as_deref().map_or_else(||b.url(dep.n),|repo|b.foreign_url(repo,dep.n))),
         heartbeat,
         worker: std::iter::once(&v.projection.task).chain(v.projection.changes.iter().rev().map(|(_,_,t)|t))
             .find(|t|t.role.as_deref()==Some("worker") && t.attempt.is_some() && t.session.is_some())
             .map(|t|json!({"attempt":t.attempt,"session":t.session,"role":"worker"})),
-        workers: v.projection.changes.iter().filter(|(id,_,t)|t.role.as_deref()==Some("worker")&&t.attempt==Some(*id))
-            .map(|(id,_,t)|json!({"attempt":id,"session":t.session,"role":"worker","started":v.comments.iter().find(|c|c.id==*id).map(|c|c.created)})).collect(),
+        workers: attempts(&v.projection, &v.log, &v.comments, "worker"),
+        reviewers: attempts(&v.projection, &v.log, &v.comments, "reviewer"),
         n: v.issue.number,
         conversation: core::conversation(v.issue.number,&v.log).map(|id| json!({"id":id,"brief":v.issue.body,"verdict":v.projection.changes.iter().rev().find_map(|(id,_,_)|v.log.iter().find(|e|e.id==*id && ["taskq: result ","taskq: close","taskq: publish"].iter().any(|prefix|e.body.starts_with(prefix))).and_then(|e|e.body.split_once('\n').map(|(_,text)|core::verdict(v.issue.number,&v.log,text))))})),
         title: v.issue.title.clone(),
@@ -968,6 +1001,7 @@ pub fn from_views(
         failed: (v.projection.task.state == State::Failed).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: failed")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
         later: (v.projection.task.state == State::Later).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: later")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
+    crate::waits::attention(&mut tasks, observed, b);
     let hosts = hosts
         .iter()
         .map(|h| host(h, observed, cfg.ttl as i64))
@@ -1311,6 +1345,9 @@ pub fn status_totals(status: &Value) -> Option<BTreeMap<&'static str, usize>> {
 }
 
 impl Row {
+    pub fn action(&self) -> Value {
+        crate::waits::action(&self.task, self.n, self.revision, &self.deps)
+    }
     fn health_warning(&self) -> Option<&str> {
         matches!(self.task.state, State::Doing | State::Review)
             .then(|| self.heartbeat["warning"].as_str())
@@ -1383,11 +1420,32 @@ impl Row {
         if !self.brief.is_empty() {
             row["brief"] = json!(self.brief);
         }
+        row["action"] = self.action();
+        row["attention"] = self.attention.clone();
+        row["retries"] = json!(self.task.retries);
+        if let Some(w) = &self.task.wait {
+            row["action"]["blocker_url"] = json!(
+                self.wait_url
+                    .clone()
+                    .or_else(|| self
+                        .deps
+                        .iter()
+                        .find(|d| d.dep.name() == w.blocker)
+                        .map(|d| d.url.clone()))
+                    .unwrap_or_else(|| {
+                        let base = self.url.rsplit_once('/').map_or("", |(base, _)| base);
+                        format!("{base}/{}", w.blocker.trim_start_matches('#'))
+                    })
+            );
+        }
         if let Some(worker) = &self.worker {
             row["worker"] = worker.clone();
         }
         if !self.workers.is_empty() {
             row["workers"] = json!(self.workers);
+        }
+        if !self.reviewers.is_empty() {
+            row["reviewers"] = json!(self.reviewers);
         }
         if let Some(c) = &self.conversation {
             row["conversation"] = c.clone();
@@ -1782,56 +1840,57 @@ impl Snapshot {
             }
         }
         // R6 Owner: questions and review cards, each with the answer command
-        let owner: Vec<String> = self
+        let card_row = |r: &Row| {
+            let card = r.task.card.clone().unwrap_or_default();
+            let (n, url) = (r.n, &r.url);
+            let opts = options(&card);
+            let o: Vec<String> = opts
+                .iter()
+                .map(|(k, t, star)| {
+                    let label = cell(&compact(t, 120));
+                    let label = if t.chars().count() > 120 {
+                        format!("[{label}]({url})")
+                    } else {
+                        label
+                    };
+                    format!("{n}.{k} {label}{}", if *star { " ★" } else { "" })
+                })
+                .collect();
+            // § 2: an `ask` card without options is an owner action
+            let action = opts.is_empty() && r.task.state == State::Ask;
+            let o = if action {
+                cell(&format!(
+                    "waiting for {}: {}",
+                    r.action()["actor"].as_str().unwrap_or("unknown"),
+                    compact(&brief(&card), 120)
+                ))
+            } else {
+                o.join(" · ")
+            };
+            let o = match &r.task.pick {
+                Some((k, why)) => format!("{o} · PM {n}.{k}: {}", cell(&compact(why, 160))),
+                None => o,
+            };
+            let next = match (&r.task.pick, opts.iter().find(|x| x.2)) {
+                (Some((k, _)), _) => format!("`taskq answer {n}.{k}`"),
+                (None, Some((k, _, _))) => format!("`taskq answer {n}.{k}`"),
+                _ if action => format!("`taskq answer {n} --text <done>`"),
+                _ => format!("answer on [the board]({url})"),
+            };
+            format!(
+                "| {} | [{}]({}) | {o} | {next} |",
+                link(r),
+                cell(&compact(&brief(&card), 160)),
+                url
+            )
+        };
+        let owner = self
             .tasks
             .iter()
             .filter(|r| {
-                r.task.state == State::Ask
-                    || (r.task.state == State::Review && r.task.card.is_some())
+                matches!(r.task.state, State::Ask | State::Review) && r.action()["actor"] == "owner"
             })
-            .map(|r| {
-                let card = r.task.card.clone().unwrap_or_default();
-                let (n, url) = (r.n, &r.url);
-                let opts = options(&card);
-                let o: Vec<String> = opts
-                    .iter()
-                    .map(|(k, t, star)| {
-                        let label = cell(&compact(t, 120));
-                        let label = if t.chars().count() > 120 {
-                            format!("[{label}]({url})")
-                        } else {
-                            label
-                        };
-                        format!("{n}.{k} {label}{}", if *star { " ★" } else { "" })
-                    })
-                    .collect();
-                // § 2: an `ask` card without options is an owner action
-                let action = opts.is_empty() && r.task.state == State::Ask;
-                let o = if action {
-                    cell(&format!(
-                        "waiting for owner: {}",
-                        compact(&brief(&card), 120)
-                    ))
-                } else {
-                    o.join(" · ")
-                };
-                let o = match &r.task.pick {
-                    Some((k, why)) => format!("{o} · PM {n}.{k}: {}", cell(&compact(why, 160))),
-                    None => o,
-                };
-                let next = match (&r.task.pick, opts.iter().find(|x| x.2)) {
-                    (Some((k, _)), _) => format!("`taskq answer {n}.{k}`"),
-                    (None, Some((k, _, _))) => format!("`taskq answer {n}.{k}`"),
-                    _ if action => format!("`taskq answer {n} --text <done>`"),
-                    _ => format!("answer on [the board]({url})"),
-                };
-                format!(
-                    "| {} | [{}]({}) | {o} | {next} |",
-                    link(r),
-                    cell(&compact(&brief(&card), 160)),
-                    url
-                )
-            })
+            .map(&card_row)
             .collect();
         part(
             &mut out,
@@ -1850,6 +1909,7 @@ impl Snapshot {
             .filter_map(|r| {
                 let n = r.n;
                 let (reason, next) = match r.task.state {
+                    State::Ask if r.task.wait.is_some() => return None,
                     State::Held if !r.unlinked.is_empty() => {
                         let m: Vec<String> = r.unlinked.iter().map(|m| format!("#{m}")).collect();
                         (
@@ -1858,28 +1918,6 @@ impl Snapshot {
                         )
                     }
                     State::Held => ("PM".to_string(), format!("`taskq start {n}`")),
-                    State::Waiting => {
-                        let deps: Vec<String> = r
-                            .deps
-                            .iter()
-                            .map(|b| {
-                                format!(
-                                    "[{}]({}) {}",
-                                    b.dep.name(),
-                                    b.url,
-                                    cell(&compact(&b.reason, 80))
-                                )
-                            })
-                            .collect();
-                        (
-                            format!("dependency ({})", deps.join(", ")),
-                            if r.stuck.is_some() {
-                                "re-read the dependencies; every blocker is closed".into()
-                            } else {
-                                "wait for the dependency".into()
-                            },
-                        )
-                    }
                     State::Later => (
                         match r.task.until.as_deref().and_then(crate::time::iso) {
                             Some(at) => format!(
@@ -1898,7 +1936,7 @@ impl Snapshot {
                         },
                         format!("`taskq requeue {n}`"),
                     ),
-                    State::Ask if r.stuck.is_some() => {
+                    State::Ask if r.stuck.is_some() && r.action()["actor"] == "owner" => {
                         ("owner".into(), "answer the Owner row".into())
                     }
                     _ => return None,
@@ -1915,6 +1953,20 @@ impl Snapshot {
             })
             .collect();
         let mut pm = vec![];
+        let actions = self
+            .tasks
+            .iter()
+            .filter(|r| {
+                matches!(r.task.state, State::Ask | State::Review) && r.action()["actor"] == "pm"
+            })
+            .map(&card_row)
+            .collect::<Vec<_>>();
+        if !actions.is_empty() {
+            pm.push(format!(
+                "PM actions:\n| Task | Question | Options | Next |\n|---|---|---|---|\n{}",
+                actions.join("\n")
+            ));
+        }
         if let Some(d) = decide {
             pm.push(d);
         }
@@ -1929,6 +1981,54 @@ impl Snapshot {
             out.push("PM:".into());
             out.push(pm.join("\n\n"));
         }
+        let dependencies = self
+            .tasks
+            .iter()
+            .filter(|r| r.task.wait.is_some() || r.task.state == State::Waiting)
+            .map(|r| {
+                let action = r.json()["action"].clone();
+                let blockers = if r.task.wait.is_some() {
+                    format!(
+                        "[{}]({}) · {}",
+                        action["blocker"].as_str().unwrap_or("unknown"),
+                        action["blocker_url"].as_str().unwrap_or(""),
+                        action["kind"].as_str().unwrap_or("unknown")
+                    )
+                } else {
+                    format!(
+                        "dependency ({})",
+                        r.deps
+                            .iter()
+                            .map(|b| format!("[{}]({}) {}", b.dep.name(), b.url, cell(&b.reason)))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                format!(
+                    "| {} | {} · {} | {}: {} |",
+                    link(r),
+                    action["status"].as_str().unwrap_or("unknown"),
+                    blockers,
+                    action["responsible"].as_str().unwrap_or("unknown"),
+                    cell(action["next"].as_str().unwrap_or("unknown"))
+                )
+            })
+            .collect();
+        part(
+            &mut out,
+            "Dependencies:\n| Task | Blocker | Next |\n|---|---|---|",
+            dependencies,
+        );
+        let attention=self.tasks.iter().filter(|r|r.attention["flagged"]==true).map(|r| {
+            let a=&r.attention;let duration=|key:&str|a[key].as_i64().map_or("unknown".into(),age);
+            let refs=|key:&str|a[key].as_array().into_iter().flatten().map(|d|format!("[{}]({})",d["ref"].as_str().unwrap_or("unknown"),d["url"].as_str().unwrap_or(""))).collect::<Vec<_>>().join(", ");
+            format!("| {} | total {} · current {} · transitions {} · retries {} | roots {}{} · downstream {} | {}: {} |",link(r),duration("total_s"),duration("current_s"),a["transitions"],r.task.retries,if a["graph"]=="unknown"{"unknown · "}else{""},refs("roots"),refs("downstream"),a["responsible"].as_str().unwrap_or("unknown"),cell(a["next"].as_str().unwrap_or("unknown")))
+        }).collect();
+        part(
+            &mut out,
+            "Attention:\n| Task | Age and transitions | Impact | Next |\n|---|---|---|---|",
+            attention,
+        );
         // R6 Anomalies (A3/A4): every stale, unknown or missing source, with its reason, action and open fix task
         let fix = |kind: &str| {
             ANOMALY_FIXES
@@ -1944,6 +2044,15 @@ impl Snapshot {
         };
         let doctor = "Next: inspect the host service (`taskq doctor --hosts`)";
         let mut anomalies = vec![];
+        for r in self.tasks.iter().filter(|r| {
+            matches!(r.task.state, State::Ask | State::Review) && r.action()["actor"] == "unknown"
+        }) {
+            anomalies.push(format!(
+                "- {} · action ownership unknown · PM: inspect original question and decisions; {}",
+                link(r),
+                cell(r.action()["next"].as_str().unwrap_or("unknown"))
+            ));
+        }
         for h in &self.hosts {
             let fresh = live(self.observed - h.updated, cfg.ttl);
             if !fresh {

@@ -23,7 +23,10 @@ pub(crate) const USAGE: &str = "taskq agents
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N [M..]
  taskq deps N --board URL --deps LIST --op-id ID --revision R [--json]
- taskq ask N --text Q --option O.. --recommend K [--link URL..]
+ taskq ask N --text Q --option O.. --recommend K [--actor owner|pm] [--link URL..]
+ taskq classify N --actor owner|pm --revision R --op-id ID [--json]
+ taskq wait N --blocker #M --kind evidence|completion --revision R --op-id ID [--json]
+ taskq wait-ready N [--evidence M.COMMENT] --revision R --op-id ID [--json]
  taskq answer N --text A | taskq answer N.K [M.K..] | taskq pick N.K --text R
  Human replies: answer, steer, requeue accept --text-stdin or --text-file PATH instead of --text; attach with --file PATH (repeat) or --files-from PATH (JSON array)
  JSON files: status, answer, steer, requeue, later, close, start, failed accept --json --json-file PATH
@@ -213,10 +216,10 @@ impl Args {
             Some("rules") => 6,
             Some("accounts") => 5,
             Some(
-                "unpin" | "deps" | "service" | "profile" | "add" | "finding" | "evidence"
-                | "approve" | "gate" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue"
-                | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "results"
-                | "enroll" | "connection",
+                "classify" | "wait" | "wait-ready" | "unpin" | "deps" | "service" | "profile"
+                | "add" | "finding" | "evidence" | "approve" | "gate" | "recipe" | "ask" | "answer"
+                | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue"
+                | "claim-issue" | "results" | "enroll" | "connection",
             ) => 2,
             _ => 1,
         };

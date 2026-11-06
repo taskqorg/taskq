@@ -1,6 +1,7 @@
 // M8/UI02: one schema and native Settings adapter for every route; no task or operation state.
 "use strict";
-const { execution } = require("./ui-runtime.js");
+const { execution } = require("./ui-runtime.js"),
+  anchor = require("./reading-anchor.js");
 const { normalize, create } = execution.module("tray.viewState", {
   normalize: function (saved, snapshot, routes, root = "home") {
     const roots = new Set((snapshot.projects || []).map((p) => p.root)),
@@ -98,8 +99,7 @@ const { normalize, create } = execution.module("tray.viewState", {
                 section: v.section === "inbox" ? "inbox" : null,
               }
             : {}),
-          scroll:
-            valid && Number.isFinite(v.scroll) && v.scroll >= 0 ? v.scroll : 0,
+          scroll: (valid && anchor.compact(v.scroll)) || { rows: [] },
           open,
           focus:
             valid &&
@@ -204,9 +204,11 @@ const { normalize, create } = execution.module("tray.viewState", {
           messageFilter: view.messageFilter,
           message: view.message,
           section: view.section,
-          scroll:
-            (menu.querySelector(".content") || document.scrollingElement)
-              ?.scrollTop || 0,
+          scroll: anchor.compact(
+            anchor.snapshot(
+              menu.querySelector(".content") || document.scrollingElement,
+            ),
+          ),
           open:
             root === "conversations"
               ? { ...view.disclosures, ...api.groups() }
@@ -311,8 +313,11 @@ const { normalize, create } = execution.module("tray.viewState", {
         if (!hydrated || view.S?.page !== undefined) return;
         if (root === "home" && view.dashboard && view.page === "home")
           require("./task-views.js").current(view.dashboard).scroll =
-            (menu.querySelector(".content") || document.scrollingElement)
-              ?.scrollTop || 0;
+            anchor.compact(
+              anchor.snapshot(
+                menu.querySelector(".content") || document.scrollingElement,
+              ),
+            );
         const navigation = normalize(
             {
               schema: 1,
