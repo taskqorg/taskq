@@ -158,6 +158,7 @@ pub(super) fn issues(
         let list = board.poll_open(&mut changes, poll.full != full);
         poll.open = board.open.replace(previous);
         let mut list = list?;
+        let relisted = poll.open.as_ref().is_some_and(|open| !open.reused);
         let mut history_since = None;
         if initial || history_due {
             let clock = if *api.clock.borrow() > 0 {
@@ -180,6 +181,57 @@ pub(super) fn issues(
             );
             history_since = Some((floor, clock));
         }
+        let baseline: Vec<_> = shared
+            .snapshot
+            .lock()
+            .map_err(|_| "shared board snapshot poisoned")?
+            .rows
+            .values()
+            .filter(|issue| issue.open)
+            .cloned()
+            .collect();
+        let mut removed = vec![];
+        if relisted {
+            let missing: Vec<_> = baseline
+                .iter()
+                .filter(|prior| {
+                    prior.open
+                        && !list.iter().any(|i| i.number == prior.number)
+                        && !changes
+                            .iter()
+                            .any(|i| i.number == prior.number && i.updated >= prior.updated)
+                })
+                .collect();
+            for prior in missing {
+                let observed = match board.issue(prior.number) {
+                    Ok(issue)
+                        if issue.number == prior.number
+                            && issue.updated >= prior.updated
+                            && issue.updated > 0 =>
+                    {
+                        issue
+                    }
+                    Ok(_) => {
+                        poll.open = None;
+                        return Err(format!("shared board issue {} reconciliation unknown: direct observation older than accepted update or invalid", prior.number).into());
+                    }
+                    Err(e) if e.reason() == Reason::NotFound => {
+                        removed.push(prior.clone());
+                        continue;
+                    }
+                    Err(e) => {
+                        poll.open = None;
+                        return Err(e.map_text(|text| {
+                            format!(
+                                "shared board issue {} reconciliation unknown: {text}",
+                                prior.number
+                            )
+                        }));
+                    }
+                };
+                changes.push(observed);
+            }
+        }
         let mut saved = shared
             .snapshot
             .lock()
@@ -196,7 +248,11 @@ pub(super) fn issues(
                 *issue = written.clone();
             }
         }
-        next.rows.retain(|_, issue| !issue.open);
+        for prior in removed {
+            if next.rows.get(&prior.number) == Some(&prior) {
+                next.rows.remove(&prior.number);
+            }
+        }
         for issue in list.into_iter().chain(changes) {
             if next
                 .rows

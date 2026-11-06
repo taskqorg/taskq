@@ -469,76 +469,139 @@ fn shared_2431_first_admission_rebuilds_without_inventing_arrivals() {
     );
 }
 
-// Chain: #2431 A4: a newer historical reopen wins an older closed probe and survives the next unchanged poll.
+// Chain: #2431 A4: newer accepted issue facts survive unchanged, ordinary and forced relists;
+// missing rows require direct closure/deletion evidence, never a lagging list's absence.
 #[test]
 fn shared_2431_reopen_survives_an_unchanged_poll() {
     for initially_open in [true, false] {
-        let base = iso("2026-11-06T00:00:00Z").unwrap();
-        let stage = std::rc::Rc::new(std::cell::Cell::new(0));
-        let lists = std::rc::Rc::new(std::cell::Cell::new(0));
-        let (current, reads) = (stage.clone(), lists.clone());
-        let mut api = Api::new(
-            "https://fixture.invalid".into(),
-            format!("https://fixture.invalid/repos/o/{}", crate::runtime::uuid()),
-            "invented",
-        );
-        api.poll = Some(std::time::Duration::ZERO);
-        api.transport = Some(Box::new(move |_, url, _| {
-            let row = |open, at| json!({"number":5,"title":"reopened","state":if open {"open"}else{"closed"},"author_association":"OWNER","created_at":stamp(base),"updated_at":stamp(base+at),"labels":[{"name":"taskq"}]});
-            let body = if url.contains("state=open") {
-                reads.set(reads.get() + 1);
-                if initially_open {
-                    json!([row(true, 100)])
-                } else {
-                    json!([])
-                }
-            } else if url.contains("sort=updated") {
-                if current.get() == 1 {
-                    json!([row(false, 200)])
-                } else {
-                    json!([])
-                }
-            } else {
-                assert!(
-                    url.contains("state=all") && !url.contains("labels="),
-                    "historical query: {url}"
+        for stale_present in [true, false] {
+            for final_read in ["closed", "deleted", "unreadable", "stale"] {
+                let base = iso("2026-11-06T00:00:00Z").unwrap();
+                let stage = std::rc::Rc::new(std::cell::Cell::new(0));
+                let lists = std::rc::Rc::new(std::cell::Cell::new(0));
+                let direct = std::rc::Rc::new(std::cell::Cell::new(0));
+                let (current, reads, singles) = (stage.clone(), lists.clone(), direct.clone());
+                let mut api = Api::new(
+                    "https://fixture.invalid".into(),
+                    format!("https://fixture.invalid/repos/o/{}", crate::runtime::uuid()),
+                    "invented",
                 );
-                json!([if current.get() == 0 {
-                    row(initially_open, 100)
+                api.poll = Some(std::time::Duration::ZERO);
+                api.transport = Some(Box::new(move |_, url, _| {
+                    let row = |open, at| json!({"number":5,"title":format!("accepted at {at}"),"state":if open {"open"}else{"closed"},"author_association":"OWNER","created_at":stamp(base),"updated_at":stamp(base+at),"labels":[{"name":"taskq"}]});
+                    let other = json!({"number":6,"state":"open","updated_at":stamp(base+400),"labels":[{"name":"taskq"}]});
+                    let body = if url.ends_with("/issues/5") {
+                        singles.set(singles.get() + 1);
+                        if current.get() == 5 {
+                            match final_read {
+                                "deleted" => return Err(Error::http(404, "not found")),
+                                "unreadable" => return Err(Error::http(403, "refused")),
+                                "stale" => row(true, 100),
+                                _ => row(false, 500),
+                            }
+                        } else {
+                            row(true, 300)
+                        }
+                    } else if url.contains("state=open") {
+                        reads.set(reads.get() + 1);
+                        let mut rows = vec![];
+                        if current.get() < 3 && initially_open
+                            || current.get() == 3 && stale_present
+                        {
+                            rows.push(row(true, 100));
+                        }
+                        if current.get() >= 3 {
+                            rows.push(other);
+                        }
+                        json!(rows)
+                    } else if url.contains("sort=updated") {
+                        let since = iso(url.split("since=").nth(1).unwrap()).unwrap();
+                        match current.get() {
+                            1 => {
+                                assert!(since <= base + 200);
+                                json!([row(false, 200)])
+                            }
+                            3 => {
+                                assert_eq!(since, base + 300);
+                                json!([other])
+                            }
+                            _ => json!([]),
+                        }
+                    } else {
+                        assert!(
+                            url.contains("state=all") && !url.contains("labels="),
+                            "historical query: {url}"
+                        );
+                        json!([if current.get() == 0 {
+                            row(initially_open, 100)
+                        } else {
+                            row(true, 300)
+                        }])
+                    };
+                    Ok(Reply {
+                        status: 200,
+                        headers: vec![("Date".into(), "Fri, 06 Nov 2026 00:10:00 GMT".into())],
+                        body: body.to_string(),
+                        operation: "read",
+                    })
+                }));
+                let board = github::GitHub::new(api);
+                assert_eq!(
+                    board.issues(None).unwrap().len(),
+                    usize::from(initially_open)
+                );
+                stage.set(1);
+                let history = board.issues(Some(base)).unwrap();
+                assert!(history[0].open);
+                assert_eq!(history[0].updated, base + 300);
+                assert_eq!(lists.get(), 2);
+                let check = |rows: Vec<Issue>| {
+                    let task = rows
+                        .iter()
+                        .find(|i| i.number == 5)
+                        .expect("accepted reopened task lost");
+                    assert!(task.open);
+                    assert_eq!(task.updated, base + 300);
+                    assert_eq!(task.title, "accepted at 300");
+                };
+                stage.set(2);
+                check(board.issues(None).unwrap());
+                assert_eq!(
+                    lists.get(),
+                    2,
+                    "unchanged poll cannot mask loss with relisting"
+                );
+                stage.set(3);
+                check(board.issues(None).unwrap());
+                assert_eq!(
+                    lists.get(),
+                    3,
+                    "unrelated task change causes an ordinary relist"
+                );
+                assert_eq!(direct.get(), usize::from(!stale_present));
+                stage.set(4);
+                check(board.issues(None).unwrap());
+                assert_eq!(lists.get(), 3);
+                stage.set(5);
+                shared::forget(&board.api, true);
+                let result = board.issues(None);
+                if matches!(final_read, "unreadable" | "stale") {
+                    assert!(
+                        result
+                            .unwrap_err()
+                            .text()
+                            .contains("issue 5 reconciliation unknown")
+                    );
+                    check(shared::snapshot(&board.api, None, false).unwrap());
+                    stage.set(6);
+                    check(board.issues(None).unwrap());
+                    assert_eq!(lists.get(), 5, "unknown reconciliation retries a full read");
                 } else {
-                    row(true, 300)
-                }])
-            };
-            Ok(Reply {
-                status: 200,
-                headers: vec![("Date".into(), "Fri, 06 Nov 2026 00:10:00 GMT".into())],
-                body: body.to_string(),
-                operation: "read",
-            })
-        }));
-        let board = github::GitHub::new(api);
-        assert_eq!(
-            board.issues(None).unwrap().len(),
-            usize::from(initially_open)
-        );
-        stage.set(1);
-        let history = board.issues(Some(base)).unwrap();
-        assert!(history[0].open);
-        assert_eq!(history[0].updated, base + 300);
-        assert_eq!(lists.get(), 2);
-        stage.set(2);
-        let unchanged = board.issues(None).unwrap();
-        assert_eq!(
-            unchanged.len(),
-            1,
-            "reopened task vanished from the kept list"
-        );
-        assert!(unchanged[0].open);
-        assert_eq!(unchanged[0].updated, base + 300);
-        assert_eq!(
-            lists.get(),
-            2,
-            "the unchanged read must use the retained list"
-        );
+                    assert!(result.unwrap().iter().all(|i| i.number != 5));
+                    stage.set(6);
+                    assert!(board.issues(None).unwrap().iter().all(|i| i.number != 5));
+                }
+            }
+        }
     }
 }
