@@ -179,15 +179,6 @@ pub(super) fn issues(
                 .map(github::parse_issue),
             );
             history_since = Some((floor, clock));
-            // Include closed task updates in the unchanged probe's watermark.
-            if let Some(open) = poll.open.as_mut() {
-                for issue in changes
-                    .iter()
-                    .filter(|i| i.labels.iter().any(|l| l == crate::service::TASK_LABEL))
-                {
-                    open.known.insert(issue.number, issue.updated);
-                }
-            }
         }
         let mut saved = shared
             .snapshot
@@ -205,18 +196,6 @@ pub(super) fn issues(
                 *issue = written.clone();
             }
         }
-        for issue in &mut list {
-            if let Some(changed) = changes
-                .iter()
-                .find(|changed| changed.number == issue.number && changed.updated >= issue.updated)
-            {
-                *issue = changed.clone();
-            }
-        }
-        list.retain(|issue| issue.open);
-        if let Some(open) = poll.open.as_mut() {
-            open.list = list.clone();
-        }
         next.rows.retain(|_, issue| !issue.open);
         for issue in list.into_iter().chain(changes) {
             if next
@@ -225,6 +204,21 @@ pub(super) fn issues(
                 .is_none_or(|prior| prior.updated <= issue.updated)
             {
                 next.rows.insert(issue.number, issue);
+            }
+        }
+        if let Some(open) = poll.open.as_mut() {
+            open.list = next
+                .rows
+                .values()
+                .filter(|issue| issue.open)
+                .cloned()
+                .collect();
+            for issue in next
+                .rows
+                .values()
+                .filter(|i| i.labels.iter().any(|l| l == crate::service::TASK_LABEL))
+            {
+                open.known.insert(issue.number, issue.updated);
             }
         }
         next.clock = *api.clock.borrow();
