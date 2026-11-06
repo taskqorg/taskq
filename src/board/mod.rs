@@ -1390,7 +1390,7 @@ impl Api {
         self.allowed(method, &url)?;
         let mutates = method != "GET" && !local::read_query(method, &url, body.as_ref());
         if mutates {
-            shared::forget(self);
+            shared::forget(self, false);
         }
         let pace = self
             .credentials
@@ -1527,7 +1527,7 @@ impl Api {
         );
         self.observe_http(op, status, began.elapsed(), result.as_ref().err());
         if mutates {
-            shared::forget(self);
+            shared::forget(self, false);
         }
         result
     }

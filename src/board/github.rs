@@ -1510,7 +1510,7 @@ impl Board for GitHub {
         self.evidence.take()
     }
     fn forget(&self) {
-        super::shared::forget(&self.api);
+        super::shared::forget(&self.api, true);
         *self.open.borrow_mut() = None;
     }
     fn kept(&self) -> Option<i64> {

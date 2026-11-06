@@ -50,7 +50,7 @@ fn shared_2431_inventory_keeps_changes_and_second_reader_adds_no_request() {
         "a historical reader shares the same poll"
     );
     closed.set(true);
-    shared::forget(&first.api);
+    shared::forget(&first.api, false);
     assert!(shared::issues(&first, None, false).unwrap().is_empty());
     let changes = shared::issues(&second, Some(0), true).unwrap();
     assert_eq!(changes.len(), 1);

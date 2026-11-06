@@ -58,7 +58,7 @@ fn native_http_child() {
     };
     phase("capture.start");
     let _runtime =
-        coreq::telemetry::capture::Runtime::install(&dir.join("db"), "fixtureq", "1").unwrap();
+        coreq::telemetry::capture::Runtime::install(&dir.join("db"), "taskq", "1").unwrap();
     phase("capture.ready");
     let installed = began.elapsed();
     crate::profile::tests::take_report();
@@ -152,7 +152,7 @@ fn native_http_child() {
             .unwrap()
             .iter()
             .any(
-                |r| r["observation"]["operation"] == "fixtureq.operation.board.http"
+                |r| r["observation"]["operation"] == "taskq.operation.board.http"
                     && r["observation"]["kind"] == "method"
                     && r["observation"]["outcome"] == "ok"
             )
