@@ -1408,6 +1408,7 @@ pub struct Service<'a> {
     pub seatbelt: BTreeMap<String, Option<String>>,
     /// This pass's readback of each live daemon that `seatbelt` jobs here depend on.
     daemon_reads: Vec<DaemonRead>,
+    pub(crate) runtime_health: crate::runtime::health::Monitor,
     pub waits: BTreeMap<u64, String>,
     pub execution_waits: BTreeMap<u64, String>,
     pending_releases: BTreeSet<(u64, u64, u64)>,
@@ -1962,6 +1963,7 @@ impl<'a> Service<'a> {
             full: BTreeSet::new(),
             seatbelt: BTreeMap::new(),
             daemon_reads: vec![],
+            runtime_health: Default::default(),
             waits: BTreeMap::new(),
             execution_waits: BTreeMap::new(),
             pending_releases: BTreeSet::new(),
@@ -1991,7 +1993,8 @@ impl<'a> Service<'a> {
         self.reap_owned();
         self.reconcile_ownership()?;
         self.sync_host();
-        self.beat_reduced(before != self.kids.len())
+        let changed = self.observe_runtime_health();
+        self.beat_reduced(changed || before != self.kids.len())
     }
 
     /// #1766: the Stop barrier keeps an idle prepared project out of passes (#1402); it still reads the board for
@@ -2005,7 +2008,52 @@ impl<'a> Service<'a> {
         ));
         self.copy_images();
         self.tasks_read = Some(std::time::Instant::now());
-        self.beat_reduced(false)
+        let changed = self.observe_runtime_health();
+        self.beat_reduced(changed)
+    }
+
+    fn observe_runtime_health(&mut self) -> bool {
+        let before = self.runtime_health.faults.clone();
+        let kids: Vec<_> = self
+            .observations
+            .iter()
+            .filter(|(_, x)| x.release.is_none())
+            .map(|((task, execution), x)| {
+                let role = self
+                    .begun
+                    .get(&x.attempt)
+                    .map_or("worker", |b| b.0.as_str());
+                let log = crate::runtime::attempt_log(&self.cfg.root, role, *task, x.attempt);
+                let home = crate::runtime::accounts::log_home(&x.runtime, &log);
+                let daemon = self
+                    .kids
+                    .iter()
+                    .find(|k| k.task == *task && k.execution == *execution)
+                    .map_or(crate::runtime::of(&x.runtime).has(Cap::Background), |k| {
+                        k.proc.daemon()
+                    });
+                (*task, *execution, x.runtime.clone(), home, daemon)
+            })
+            .collect();
+        crate::runtime::observe_until(std::time::Instant::now() + NATIVE_PASS_BUDGET, || {
+            self.runtime_health.observe(&kids)
+        });
+        if let Some(snapshot) = &mut self.snapshot {
+            if !self.runtime_health.faults.is_empty()
+                && !snapshot.hosts.iter().any(|h| h.name == self.cfg.me)
+            {
+                snapshot.hosts.push(crate::snapshot::Host {
+                    name: self.cfg.me.clone(),
+                    updated: snapshot.observed,
+                    ttl: self.cfg.ttl,
+                    ..Default::default()
+                });
+            }
+            if let Some(host) = snapshot.hosts.iter_mut().find(|h| h.name == self.cfg.me) {
+                host.runtime_faults = self.runtime_health.faults.clone();
+            }
+        }
+        before != self.runtime_health.faults
     }
 
     /// The heartbeat of a reduced or observe pass: read at most every `ttl / 5`, at once when its children changed;
@@ -2888,6 +2936,8 @@ impl<'a> Service<'a> {
         } else {
             self.unknown_pids.insert(kid.execution, "adopted");
         }
+        self.runtime_health
+            .remember(kid.task, kid.execution, &kid.rt);
         self.kids.push(kid);
         Ok(())
     }
@@ -3256,7 +3306,7 @@ impl<'a> Service<'a> {
         crate::snapshot::Signals {
             local: true,
             child: child.map(|k| crate::snapshot::Child {
-                unknown: k.unknown.as_deref(),
+                unknown: self.runtime_health.reason(k.task).or(k.unknown.as_deref()),
                 stopping: k.stopping,
                 ..Default::default()
             }),
@@ -3264,7 +3314,10 @@ impl<'a> Service<'a> {
                 .held
                 .iter()
                 .any(|l| l.task == task && l.attempt == x.attempt),
-            wait: self.execution_waits.get(&task).map(String::as_str),
+            wait: self
+                .runtime_health
+                .reason(task)
+                .or_else(|| self.execution_waits.get(&task).map(String::as_str)),
             input_pending: self.delivered(x.attempt) < x.through,
             ask: self.snapshot.as_ref().is_some_and(|s| {
                 s.tasks
@@ -3706,6 +3759,12 @@ impl<'a> Service<'a> {
                 .map(|s| format!("execution {}", serde_json::to_string(s).unwrap())),
         );
         lines.extend(self.daemon_reads.iter().filter_map(DaemonRead::line));
+        lines.extend(
+            self.runtime_health
+                .faults
+                .iter()
+                .map(|f| format!("runtime-fault {f}")),
+        );
         lines.push(format!(
             "queue {}",
             serde_json::to_string(&self.queues()).unwrap()
@@ -4005,6 +4064,7 @@ impl<'a> Service<'a> {
         self.hold = crate::admission::hold(&self.cfg.install);
         self.record_headroom_and_quota(&p);
         self.observe_kids(&p, &mut m)?;
+        self.observe_runtime_health();
         self.flag_double_attempts(&p);
         self.stop_replaced(&p, &mut m);
         self.session_links(&p);
@@ -7469,6 +7529,7 @@ impl<'a> Service<'a> {
         ))
         .map_or(0, |m| m.len());
         let began = std::time::Instant::now();
+        self.runtime_health.remember(l.task, execution, &l.rt);
         let started = (self.start)(&l).map(|proc| {
             self.kids.push(Kid {
                 unknown: None,

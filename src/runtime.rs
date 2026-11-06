@@ -26,6 +26,7 @@ mod app_control;
 pub mod choices;
 pub mod daemon_sandbox;
 pub mod headroom;
+pub mod health;
 pub mod owner;
 pub mod owner_stream;
 pub mod usage;
@@ -107,6 +108,10 @@ pub fn session_name(l: &Launch) -> String {
 
 /// A running child; a trait so the service can be tested with fake processes.
 pub trait Proc {
+    /// This execution depends on a shared background daemon; a foreground turn does not.
+    fn daemon(&self) -> bool {
+        false
+    }
     /// Read-only progress source and current input byte boundary; never an execution verdict.
     fn progress_source(&self) -> Result<(PathBuf, u64), String> {
         Err("native progress source unavailable".into())
@@ -1254,13 +1259,8 @@ pub fn codex_thread(log: &Path) -> Option<String> {
 
 /// Why `rt` cannot start here when its CLI does not resolve on PATH (§ 3: no claim, resume or reviewer).
 pub fn missing_cli(rt: &str) -> Option<String> {
-    let a = of(rt);
-    if a.has(Cap::UserBin) {
-        return (!which(a.bin).is_absolute())
-            .then(|| format!("{} {} CLI not found on the service PATH", a.name, a.bin));
-    }
-    let r = agent(rt).ok()?.ready(None, None);
-    (r.install.state == "missing").then_some(r.install.detail)
+    agent(rt).ok()?;
+    health::binary(rt).err()
 }
 
 /// § 6 setup check: the § 8 grant mode the owner gives `rt` on `os`; Claude has no Workspace enforcement off macOS.
@@ -1331,16 +1331,7 @@ pub(crate) fn cli(
     access: &crate::policy::Effective,
     env: &Env,
 ) -> Result<Command, String> {
-    let a = of(rt);
-    executable(
-        if a.has(Cap::SandboxArgs) {
-            agent(rt)?.executable(None)?
-        } else {
-            which(a.bin)
-        },
-        access,
-        env,
-    )
+    executable(health::resolve(rt)?, access, env)
 }
 
 /// The AgentQ `agent` turn of launch `l` (§ 8 Spawn and resume): TaskQ's attempt variables, board secrets, compile
@@ -3976,6 +3967,9 @@ impl ClaudeTurn {
 }
 
 impl Proc for ClaudeTurn {
+    fn daemon(&self) -> bool {
+        true
+    }
     fn progress_source(&self) -> Result<(PathBuf, u64), String> {
         if self.accepted {
             Ok((self.log.clone(), self.start))

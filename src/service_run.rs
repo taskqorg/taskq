@@ -1257,8 +1257,8 @@ impl<'a> ProjectLoop<'a> {
 /// The status rows of this project's live children.
 fn kid_rows(s: &Service<'_>) -> Vec<Value> {
     s.kids.iter().map(|k| {
-        let unknown = k.unknown.as_ref();
-        let child = snapshot::Child { unknown: unknown.map(String::as_str), ..Default::default() };
+        let unknown = s.runtime_health.reason(k.task).or(k.unknown.as_deref());
+        let child = snapshot::Child { unknown, ..Default::default() };
         let live = if snapshot::verdict(&snapshot::Signals { local: true, child: Some(child), ..Default::default() }).0 == "unknown" { "unknown" } else { "running" };
         json!({"task": k.task, "attempt": k.attempt, "rt": k.rt, "pid": k.proc.id(), "live": live, "reason": unknown})
     }).collect()

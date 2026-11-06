@@ -826,6 +826,8 @@ pub struct Host {
     pub queue: Option<crate::host::Queues>,
     /// Heartbeat `daemon-sandbox {json}` (#2432): each daemon that differs from the grant of this project's jobs.
     pub daemon_sandbox: Vec<Value>,
+    /// R6 runtime dependency failures observed this host pass.
+    pub runtime_faults: Vec<Value>,
     /// The project ttl this row was read with: the heartbeat's liveness.
     pub ttl: i64,
 }
@@ -1156,6 +1158,13 @@ pub fn host(h: &board::Issue, observed: i64, ttl: i64) -> Host {
             .body
             .lines()
             .filter_map(|l| l.strip_prefix("daemon-sandbox "))
+            .filter(|_| h.trusted)
+            .filter_map(|j| serde_json::from_str(j).ok())
+            .collect(),
+        runtime_faults: h
+            .body
+            .lines()
+            .filter_map(|l| l.strip_prefix("runtime-fault "))
             .filter(|_| h.trusted)
             .filter_map(|j| serde_json::from_str(j).ok())
             .collect(),
@@ -1777,6 +1786,7 @@ impl Snapshot {
             "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "vocabulary": vocabulary(), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
             "hosts": self.hosts.iter().map(|h| {
                 let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
+                if !h.runtime_faults.is_empty() { r["runtime_faults"] = json!(h.runtime_faults); }
                 if let Some(s) = &h.selected { r["selected"] = json!(s) }
                 if let Some(d) = h.disk { r["disk"] = json!({"free_bytes": if let crate::disk::Disk::Free(n) = d { Some(n) } else { None }, "holds": d.holds()}) }
                 if h.balancing["schema"]==2 {r["balancing"]=h.balancing.clone();}
@@ -2136,6 +2146,18 @@ impl Snapshot {
                         age(q["restart"].as_i64().unwrap_or(0))
                     ));
                 }
+            }
+            for fault in &h.runtime_faults {
+                let tasks = fault["tasks"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_u64)
+                    .map(|n| format!("#{n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                anomalies.push(format!("- host {} · {} · {} · {} · tasks {tasks} · Next: restore the runtime on {}; preserve execution; do not replay input",
+                    cell(&h.name), cell(fault["runtime"].as_str().unwrap_or("unknown")), cell(&compact(fault["reason"].as_str().unwrap_or("unknown"), 160)), cell(fault["path"].as_str().unwrap_or("unknown")), cell(&h.name)));
             }
             for d in &h.daemon_sandbox {
                 let bin = cell(&compact(d["bin"].as_str().unwrap_or("runtime"), 40));
