@@ -574,7 +574,7 @@ fn antigravity_turn_uses_its_log_boundary_and_preserves_quota_unknowns() {
         session: None,
         native: None,
         recovery: None,
-        rt: "codex".into(),
+        rt: "antigravity".into(),
     };
     assert_eq!(turn.exited(), Ok(None));
     assert_eq!(turn.accepted(), Ok(false));
@@ -872,15 +872,13 @@ fn session_links_follow_the_adapter() {
 #[test]
 fn balancing_quota_observations_keep_windows() {
     let log = std::env::temp_dir().join(format!("taskq-quota-metadata-{}", uuid()));
-    std::fs::write(&log,concat!("{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"rateLimitType\":\"seven_day\",\"resetsAt\":604800}}\n",
-            "{\"type\":\"rate_limits\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":18000}}}\n")).unwrap();
+    std::fs::write(&log,"{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"rateLimitType\":\"seven_day\",\"resetsAt\":604800}}\n").unwrap();
     assert_eq!(
-        quota_windows(&log, "codex"),
-        [
-            ("300m".into(), Some(18000)),
-            ("seven_day".into(), Some(604800))
-        ]
+        quota_windows(&log, "claude"),
+        [("seven_day".into(), Some(604800))]
     );
+    std::fs::write(&log,"{\"type\":\"rate_limits\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":18000}}}\n").unwrap();
+    assert_eq!(quota_windows(&log, "codex"), [("300m".into(), Some(18000))]);
     rules_line(&log, "resume", "fixture input").unwrap();
     assert!(
         quota_windows(&log, "codex").is_empty(),
@@ -1015,11 +1013,11 @@ fn live_background_reads_jobs_the_last_turn_left_running() {
     let running = r#"{"type":"queue-operation","content":"<task-notification>\n<task-id>b7x9</task-id>\n<status>running</status>\n</task-notification>"}"#;
     let killed = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_4","name":"KillShell","input":{"shell_id":"b7x9"}}]}}"#;
     let cases: [(Vec<&str>, Vec<&str>); 8] = [
-        (vec![start, fg, fg_done, bash, started], vec!["Full check"]),
-        (vec![start, bash, started, running], vec!["Full check"]),
+        (vec![start, fg, fg_done, bash, started], vec!["Bash"]),
+        (vec![start, bash, started, running], vec!["Bash"]),
         (
             vec![start, bash, started, monitor, monitor_started],
-            vec!["Full check", "CI watch"],
+            vec!["Bash", "Monitor"],
         ),
         (vec![start, bash, started, done], vec![]),
         (vec![start, bash, started, killed], vec![]),
@@ -1030,11 +1028,11 @@ fn live_background_reads_jobs_the_last_turn_left_running() {
     for (lines, want) in cases {
         let text = lines.join("\n") + "\n";
         std::fs::write(&log, &text).unwrap();
-        assert_eq!(live_background(&log), want, "{text}");
+        assert_eq!(live_background(&log, "claude"), want, "{text}");
     }
     let _ = std::fs::remove_file(&log);
     assert!(
-        live_background(&log).is_empty(),
+        live_background(&log, "claude").is_empty(),
         "an unreadable log has no live job"
     );
 }
@@ -2566,10 +2564,13 @@ fn cli_acceptance_uses_only_native_events_after_its_input_boundary() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("turn.log");
     let old = "{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\"}\n";
-    for native in [
-        "",
-        "{\"type\":\"turn.started\"}\n",
-        "{\"type\":\"assistant\",\"message\":{}}\n",
+    for (rt, native) in [
+        ("codex", ""),
+        ("codex", "{\"type\":\"turn.started\"}\n"),
+        (
+            "claude",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"work\"}]}}\n",
+        ),
     ] {
         std::fs::write(
             &path,
@@ -2587,7 +2588,7 @@ fn cli_acceptance_uses_only_native_events_after_its_input_boundary() {
             session: None,
             native: None,
             recovery: None,
-            rt: "codex".into(),
+            rt: rt.into(),
         };
         assert_eq!(turn.accepted(), Ok(false));
         assert_eq!(turn.exited(), Ok(Some(0)));

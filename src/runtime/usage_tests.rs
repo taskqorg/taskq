@@ -1,5 +1,4 @@
 use super::*;
-use crate::runtime::Cap;
 use crate::runtime::accounts::{Host, claim, mark, of_log};
 
 const NOW: i64 = 1_800_000_000;
@@ -51,124 +50,87 @@ fn id(label: &str) -> String {
     fingerprint(&format!("{label}@example.com"))
 }
 
-// Chain: capacity.md § Account usage and fleet policy, owner note on #2341: the `agy` login polled read-only. Risk: an
-// undocumented reply reads as a healthy account, or a token reaches a row. Protection: any other shape is `unknown`
-// with a fixed reason, a missing reading fails the whole poll, and the row holds only bucket, percent, reset and id.
+fn agent_window(
+    name: Option<&str>,
+    used: Option<f64>,
+    unknown: Option<&str>,
+) -> agentq_runtime::agent::Window {
+    agentq_runtime::agent::Window {
+        window: name.map(String::from),
+        used,
+        resets_at: used.map(|_| (NOW + 3600) as u64),
+        event_id: None,
+        exhausted: None,
+        unknown: unknown.map(String::from),
+    }
+}
+
+/// What AgentQ reports for a Claude account with a weekly reading and a Fable scope.
+fn claude_poll() -> Poll {
+    poll_of(vec![
+        agent_window(Some("seven_day"), Some(0.43), None),
+        agent_window(Some("seven_day_fable"), Some(0.04), None),
+    ])
+}
+
+/// The same account when AgentQ cannot read the Fable scope.
+fn claude_partial() -> Poll {
+    poll_of(vec![
+        agent_window(Some("seven_day"), Some(0.43), None),
+        agent_window(Some("seven_day_fable"), None, Some("evidence-unreadable")),
+    ])
+}
+
+// Chain: capacity.md § Account usage and fleet policy. Replaces the native-shape tests of this file: AgentQ `limits.rs`
+// owns those shapes. Risk: TaskQ loses a sibling reading, invents a percent, or reads a reason as a window. Protection:
+// each kind of AgentQ window maps to one Poll field.
 #[test]
-fn code_assist_reads_buckets_or_a_fixed_reason() {
-    let native: Value = serde_json::from_str(include_str!(
-        "../../tests/fixtures/usage/macos-antigravity-compatible-agent.json"
-    ))
-    .unwrap();
-    let windows = quota_windows(&native["response"]).unwrap();
+fn poll_of_keeps_siblings_and_reasons() {
+    let p = poll_of(vec![
+        agent_window(Some("seven_day"), Some(0.43), None),
+        agent_window(Some("seven_day_fable"), None, Some("evidence-unreadable")),
+        agent_window(None, None, Some("limit-group-unreadable")),
+    ]);
     assert_eq!(
-        windows
+        p.windows
             .iter()
             .map(|w| (w.name.as_str(), w.used))
             .collect::<Vec<_>>(),
+        [("seven_day", 43)]
+    );
+    assert_eq!(
+        p.unreadable,
         [
-            ("gemini-weekly", 74),
-            ("gemini-5h", 0),
-            ("3p-weekly", 0),
-            ("3p-5h", 0)
+            "seven_day_fable: evidence-unreadable",
+            "limit-group-unreadable"
         ]
     );
-    assert!(
-        windows.iter().all(|w| w.reset.is_some()),
-        "native resets survive"
-    );
-    let summary = serde_json::json!({"groups": [
-            {"displayName": "Gemini Models", "description": "provider text", "buckets": [
-                {"bucketId": "gemini-5h", "window": "5h", "remainingFraction": 0.8, "resetTime": "2026-11-04T10:00:00.123456Z", "description": "provider text"},
-                {"bucketId": "gemini-weekly", "window": "weekly", "remainingFraction": 0.0, "resetTime": "2026-11-09T00:00:00+01:00"}]},
-            {"displayName": "Claude and GPT models", "buckets": [{"bucketId": "3p-5h", "remainingFraction": 1}]}]});
-    let w = quota_windows(&summary).unwrap();
     assert_eq!(
-        w.iter()
+        p.unknown, None,
+        "a sibling failure is not a whole-response failure"
+    );
+    for (windows, reason) in [
+        (vec![], "not-reported"),
+        (
+            vec![agent_window(None, None, Some("keychain-would-prompt"))],
+            "keychain-would-prompt",
+        ),
+    ] {
+        let p = poll_of(windows);
+        assert_eq!(p.unknown.as_deref(), Some(reason));
+        assert!(p.windows.is_empty() && p.unreadable.is_empty());
+    }
+    let p = poll_of(vec![
+        agent_window(Some("300m"), Some(1.0), None),
+        agent_window(Some("300m"), Some(0.1), None),
+    ]);
+    assert_eq!(
+        p.windows
+            .iter()
             .map(|w| (w.name.as_str(), w.used))
             .collect::<Vec<_>>(),
-        [("gemini-5h", 20), ("gemini-weekly", 100), ("3p-5h", 0)]
-    );
-    assert_eq!(w[0].reset, utc("2026-11-04T10:00:00Z"));
-    assert_eq!(
-        w[1].reset,
-        utc("2026-11-08T23:00:00Z"),
-        "an offset reset reads as UTC"
-    );
-    assert_eq!(w[2].reset, None);
-    for bad in [
-        serde_json::json!({}),
-        serde_json::json!({"groups": []}),
-        serde_json::json!({"groups": [{"buckets": []}]}),
-        serde_json::json!({"groups": [{"buckets": [{"bucketId": "gemini-5h"}]}]}),
-        serde_json::json!({"groups": [{"buckets": [{"bucketId": "gemini-5h", "remainingFraction": 1.5}]}]}),
-        serde_json::json!({"groups": [{"buckets": [{"bucketId": "has space", "remainingFraction": 0.5}]}]}),
-        serde_json::json!({"groups": [{"buckets": [{"bucketId": "gemini-5h", "remainingFraction": 0.5}, {"remainingFraction": 0.5}]}]}),
-    ] {
-        assert_eq!(quota_windows(&bad), Err("usage shape changed"), "{bad}");
-    }
-
-    assert_eq!(
-        code_assist_project(&serde_json::json!({"cloudaicompanionProject": "fine-project-1"})),
-        Some("fine-project-1")
-    );
-    for bad in [
-        serde_json::json!({}),
-        serde_json::json!({"cloudaicompanionProject": ""}),
-        serde_json::json!({"cloudaicompanionProject": "a\"\nurl = \"x"}),
-    ] {
-        assert_eq!(code_assist_project(&bad), None, "{bad}");
-    }
-    let call = code_assist_call("cloudcode-pa.googleapis.com", "loadCodeAssist", "tok", "{}");
-    assert!(
-        call.contains("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")
-            && call.contains("Bearer tok"),
-        "{call}"
-    );
-
-    use base64::Engine;
-    let now = crate::time::iso("2026-11-04T10:00:00").unwrap();
-    let file = r#"{"token":{"access_token":"ya29.a-b_c","refresh_token":"never-used","expiry":"2026-11-04T11:00:00.5+00:00"}}"#;
-    assert_eq!(agy_token(file, now).as_deref(), Ok("ya29.a-b_c"));
-    let keyring = format!(
-        "go-keyring-base64:{}",
-        base64::engine::general_purpose::STANDARD.encode(file)
-    );
-    assert_eq!(agy_token(&keyring, now).as_deref(), Ok("ya29.a-b_c"));
-    assert_eq!(
-        agy_token(
-            r#"{"access_token":"tok","expiry_date":1794787200000}"#,
-            1794787199
-        )
-        .as_deref(),
-        Ok("tok")
-    );
-    assert_eq!(
-        agy_token(
-            r#"{"access_token":"tok","expiry_date":1794787200000}"#,
-            1794787200
-        ),
-        Err("token expired")
-    );
-    assert_eq!(
-        agy_token(
-            r#"{"token":{"access_token":"tok","expiry":"2026-11-04T09:00:00Z"}}"#,
-            now
-        ),
-        Err("token expired")
-    );
-    assert_eq!(
-        agy_token(r#"{"refresh_token":"only"}"#, now),
-        Err("no login")
-    );
-    assert_eq!(agy_token("not json", now), Err("no login"));
-    assert_eq!(
-        agy_token(r#"{"access_token":"a\"b"}"#, now),
-        Err("usage shape changed")
-    );
-    assert_eq!(
-        agy_token("go-keyring-base64:!!", now),
-        Err("usage shape changed")
+        [("300m", 100), ("300m-2", 10)],
+        "a repeated length keeps both readings"
     );
 }
 
@@ -177,32 +139,15 @@ fn code_assist_reads_buckets_or_a_fixed_reason() {
 #[test]
 fn model_windows_survive_poll_to_heartbeat() {
     let d = dir("model-windows");
-    let reset = crate::time::stamp(NOW + 3600);
-    let claude = serde_json::json!({"seven_day": {"utilization": 34, "resets_at": reset}, "seven_day_fable": null,
-            "limits": [{"group": "weekly", "percent": 2, "resets_at": reset, "scope": {"model": {"display_name": "Fable"}}}]});
-    let summary = serde_json::json!({"groups": [
-            {"buckets": [{"bucketId": "gemini-5h", "remainingFraction": 1, "resetTime": reset},
-                {"bucketId": "gemini-weekly", "remainingFraction": 0.26, "resetTime": reset}]},
-            {"buckets": [{"bucketId": "3p-5h", "remainingFraction": 1}, {"bucketId": "3p-weekly", "remainingFraction": 1}]}]});
-    let p = code_assist_with("invented-token", |call| {
-        if call.contains(":loadCodeAssist") {
-            return Ok(serde_json::json!({"cloudaicompanionProject": "invented-project"}));
-        }
-        assert!(
-            call.contains(
-                "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
-            ),
-            "consumer quotas need the daily endpoint"
-        );
-        assert!(
-            call.contains("User-Agent: antigravity/hub/2.28.2"),
-            "the generic agent hides Gemini quotas on the native route"
-        );
-        Ok(summary.clone())
-    });
-    assert_eq!(p.unknown, None);
+    let p = poll_of(vec![
+        agent_window(Some("gemini-5h"), Some(0.0), None),
+        agent_window(Some("gemini-weekly"), Some(0.74), None),
+    ]);
     poll_with(&d, NOW, |rt, _| match rt {
-        "claude" => oauth_windows(&claude).unwrap(),
+        "claude" => poll_of(vec![
+            agent_window(Some("seven_day"), Some(0.34), None),
+            agent_window(Some("seven_day_fable"), Some(0.02), None),
+        ]),
         "antigravity" => p.clone(),
         _ => Poll::failed("no login"),
     })
@@ -249,8 +194,6 @@ fn model_windows_survive_poll_to_heartbeat() {
                 Some(NOW + 3600),
                 NOW
             ),
-            ("antigravity".into(), "3p-5h".into(), 0, None, NOW),
-            ("antigravity".into(), "3p-weekly".into(), 0, None, NOW),
         ]
     );
     std::fs::remove_dir_all(d).unwrap();
@@ -259,13 +202,8 @@ fn model_windows_survive_poll_to_heartbeat() {
 // Chain: R12: the native null surface must not hide readable weekly/Fable quotas.
 #[test]
 fn claude_native_null_surface_preserves_windows() {
-    let native: Value = serde_json::from_str(include_str!(
-        "../../tests/fixtures/usage/windows-oauth-usage.json"
-    ))
-    .unwrap();
-    let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
-    let parsed = oauth_windows(&native["response"])
-        .expect("null scope.surface is absent, not an unsupported quota");
+    let now = NOW;
+    let parsed = claude_poll();
     assert!(parsed.unreadable.is_empty());
     assert_eq!(
         parsed
@@ -315,19 +253,9 @@ fn claude_native_null_surface_preserves_windows() {
 // Chain: R12: mixed quota validity preserves readable rows without turning incomplete headroom healthy.
 #[test]
 fn claude_partial_windows_keep_unknown_through_publication_and_headroom() {
-    let native: Value = serde_json::from_str(include_str!(
-        "../../tests/fixtures/usage/windows-oauth-usage.json"
-    ))
-    .unwrap();
-    let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
+    let now = NOW;
     let d = dir("claude-partial");
-    let mut response = native["response"].clone();
-    response["seven_day_fable"] = serde_json::json!({"utilization": 1});
-    response["limits"][1]
-        .as_object_mut()
-        .unwrap()
-        .remove("percent");
-    let mut parsed = oauth_windows(&response).unwrap();
+    let mut parsed = claude_partial();
     parsed.id = Some(id("default"));
     assert_eq!(
         parsed
@@ -338,10 +266,7 @@ fn claude_partial_windows_keep_unknown_through_publication_and_headroom() {
         [("seven_day", 43)],
         "an unreadable structured quota invalidates the same legacy window"
     );
-    assert_eq!(
-        parsed.unreadable,
-        ["limits[1] seven_day_fable: unreadable utilization"]
-    );
+    assert_eq!(parsed.unreadable, ["seven_day_fable: evidence-unreadable"]);
     let save = |p: &Poll| {
         poll_with(&d, now, |rt, _| {
             if rt == "claude" {
@@ -361,11 +286,7 @@ fn claude_partial_windows_keep_unknown_through_publication_and_headroom() {
         "both readable and unknown rows survive persistence"
     );
     assert!(lines[0].contains("window seven_day used 43"));
-    assert!(
-        lines[1].ends_with(
-            "unknown quota unreadable limits[1] seven_day_fable: unreadable utilization"
-        )
-    );
+    assert!(lines[1].ends_with("unknown quota unreadable seven_day_fable: evidence-unreadable"));
     for line in &lines {
         assert_eq!(Row::parse(line).unwrap().line(), *line);
     }
@@ -377,7 +298,11 @@ fn claude_partial_windows_keep_unknown_through_publication_and_headroom() {
     assert!(super::super::headroom::cause(&d, "claude", now).contains("unreadable quota windows"));
 
     // No readable window left still masks a previous saved observation; no zero is synthesized.
-    let empty = oauth_windows(&serde_json::json!({"seven_day": {}})).unwrap();
+    let empty = poll_of(vec![agent_window(
+        Some("seven_day"),
+        None,
+        Some("evidence-unreadable"),
+    )]);
     save(&empty);
     assert_eq!(
         View::read(&d).lines("claude", "default", true, now).len(),
@@ -388,7 +313,7 @@ fn claude_partial_windows_keep_unknown_through_publication_and_headroom() {
         None
     );
 
-    let mut complete = oauth_windows(&native["response"]).unwrap();
+    let mut complete = claude_poll();
     complete.id = parsed.id.clone();
     save(&complete);
     assert_eq!(
@@ -533,19 +458,10 @@ fn n1_rollback_rows(install: &Path, id: &str, at: i64) -> Vec<String> {
 // would read as headroom 57 on a mixed fleet or after a rollback; only a complete poll may reach it.
 #[test]
 fn claude_partial_poll_is_invisible_to_released_readers() {
-    let native: Value = serde_json::from_str(include_str!(
-        "../../tests/fixtures/usage/windows-oauth-usage.json"
-    ))
-    .unwrap();
-    let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
+    let now = NOW;
     let d = dir("claude-n1");
     let account = id("default");
-    let mut response = native["response"].clone();
-    response["limits"][1]
-        .as_object_mut()
-        .unwrap()
-        .remove("percent");
-    let mut partial = oauth_windows(&response).unwrap();
+    let mut partial = claude_partial();
     partial.id = Some(account.clone());
     assert!(
         !partial.unreadable.is_empty() && !partial.windows.is_empty(),
@@ -611,7 +527,7 @@ fn claude_partial_poll_is_invisible_to_released_readers() {
         "a partial row expires with its poll"
     );
 
-    let mut complete = oauth_windows(&native["response"]).unwrap();
+    let mut complete = claude_poll();
     complete.id = Some(account.clone());
     save(&complete);
     let lines = View::read(&d).lines("claude", "default", true, now);
@@ -671,18 +587,10 @@ fn claude_partial_poll_is_invisible_to_released_readers() {
 // Chain: R12: transport failures cannot turn a previous partial poll into healthy aggregate headroom.
 #[test]
 fn claude_failed_polls_preserve_incomplete_origin_until_expiry() {
-    let native: Value = serde_json::from_str(include_str!(
-        "../../tests/fixtures/usage/windows-oauth-usage.json"
-    ))
-    .unwrap();
-    let now = utc(native["observed_at"].as_str().unwrap()).unwrap();
+    // Before the log file time: an observation takes the older of the clock and the file time.
+    let now = 1_700_000_000;
     let d = dir("claude-failed-partial");
-    let mut response = native["response"].clone();
-    response["limits"][1]
-        .as_object_mut()
-        .unwrap()
-        .remove("percent");
-    let partial = oauth_windows(&response).unwrap();
+    let partial = claude_partial();
     poll_with(&d, now, |rt, _| {
         if rt == "claude" {
             partial.clone()
@@ -724,7 +632,7 @@ fn claude_failed_polls_preserve_incomplete_origin_until_expiry() {
         assert!(
             lines
                 .iter()
-                .any(|l| l.contains("unknown quota unreadable limits[1] seven_day_fable"))
+                .any(|l| l.contains("unknown quota unreadable seven_day_fable"))
         );
     }
     let log = d.join("turn.jsonl");
@@ -745,7 +653,7 @@ fn claude_failed_polls_preserve_incomplete_origin_until_expiry() {
         1,
         "expired per-window unknowns stop travelling to the fleet"
     );
-    let complete = oauth_windows(&native["response"]).unwrap();
+    let complete = claude_poll();
     poll_with(&d, at + 1, |rt, _| {
         if rt == "claude" {
             complete.clone()
@@ -760,214 +668,6 @@ fn claude_failed_polls_preserve_incomplete_origin_until_expiry() {
         "a complete poll recovers all quotas"
     );
     std::fs::remove_dir_all(d).unwrap();
-}
-
-// Chain: R12: unsupported scope/identity and malformed quota fields never invent utilization or public names.
-#[test]
-fn claude_unreadable_scopes_and_fields_preserve_siblings() {
-    let native: Value = serde_json::from_str(include_str!(
-        "../../tests/fixtures/usage/windows-oauth-usage.json"
-    ))
-    .unwrap();
-    for (field, value) in [
-        ("percent", serde_json::json!("private@example.invalid")),
-        ("percent", serde_json::json!(-1)),
-        (
-            "scope",
-            serde_json::json!({"model": {"display_name": "private@example.invalid"}}),
-        ),
-        (
-            "scope",
-            serde_json::json!({"model": {"display_name": "Fable"}, "surface": "private@example.invalid"}),
-        ),
-        ("scope", serde_json::json!("private@example.invalid")),
-        ("group", serde_json::json!("private@example.invalid")),
-    ] {
-        let mut response = native["response"].clone();
-        response["limits"][1][field] = value;
-        let parsed = oauth_windows(&response).unwrap();
-        assert_eq!(
-            parsed
-                .windows
-                .iter()
-                .map(|w| (w.name.as_str(), w.used))
-                .collect::<Vec<_>>(),
-            [("seven_day", 43)]
-        );
-        assert_eq!(parsed.unreadable.len(), 1);
-        assert!(parsed.unreadable[0].starts_with("limits[1]"));
-        assert!(
-            !parsed.unreadable[0].contains('@'),
-            "provider text never reaches public diagnostics"
-        );
-        assert_eq!(
-            parsed.unknown, None,
-            "a sibling failure is not a whole-response failure"
-        );
-    }
-    let parsed =
-        oauth_windows(&serde_json::json!({"seven_day": {"utilization": 43}, "limits": "changed"}))
-            .unwrap();
-    assert_eq!(parsed.windows.len(), 1);
-    assert_eq!(parsed.unreadable, ["limits: unreadable list"]);
-    let mut response = native["response"].clone();
-    response["seven_day"] = serde_json::json!({});
-    let parsed = oauth_windows(&response).unwrap();
-    assert_eq!(
-        parsed.windows.len(),
-        2,
-        "a readable structured quota also replaces an unreadable legacy value"
-    );
-    assert!(parsed.unreadable.is_empty());
-    for response in [
-        Value::Null,
-        serde_json::json!([]),
-        serde_json::json!({}),
-        serde_json::json!({"error": "private@example.invalid"}),
-    ] {
-        assert_eq!(
-            oauth_windows(&response),
-            Err("usage shape changed"),
-            "no quota evidence stays whole-response unknown"
-        );
-    }
-}
-
-// Chain: R12: new structured limits retain legacy names and cannot turn an unreadable model cap into headroom.
-#[test]
-fn model_windows_claude_scoped_limits() {
-    let native: Value = serde_json::from_str(include_str!(
-        "../../tests/fixtures/usage/macos-oauth-usage.json"
-    ))
-    .unwrap();
-    let windows = oauth_windows(&native["response"])
-        .expect("native OAuth metadata must not hide Fable")
-        .windows;
-    assert_eq!(
-        windows
-            .iter()
-            .map(|w| (w.name.as_str(), w.used))
-            .collect::<Vec<_>>(),
-        [("seven_day", 38), ("seven_day_fable", 4)]
-    );
-    assert!(
-        windows.iter().all(|w| w.reset.is_some()),
-        "native resets survive"
-    );
-    let partial = oauth_windows(
-        &serde_json::json!({"seven_day": {"utilization": 38}, "seven_day_fable": {}}),
-    )
-    .unwrap();
-    assert_eq!(
-        partial
-            .windows
-            .iter()
-            .map(|w| (w.name.as_str(), w.used))
-            .collect::<Vec<_>>(),
-        [("seven_day", 38)]
-    );
-    assert_eq!(
-        partial.unreadable,
-        ["seven_day_fable: unreadable utilization"],
-        "an unreadable quota window is still unknown"
-    );
-    let v = serde_json::json!({"seven_day": {"utilization": 34}, "seven_day_fable": {"utilization": 1},
-            "limits": [{"group": "weekly", "percent": 2, "scope": {"model": {"display_name": "Fable"}}},
-                {"group": "session", "percent": 10, "scope": {"model": {"id": "new-model"}}},
-                {"group": "session", "percent": 4}]});
-    assert_eq!(
-        oauth_windows(&v)
-            .unwrap()
-            .windows
-            .iter()
-            .map(|w| (w.name.as_str(), w.used))
-            .collect::<Vec<_>>(),
-        [
-            ("seven_day", 34),
-            ("seven_day_fable", 2),
-            ("five_hour_new-model", 10),
-            ("five_hour", 4)
-        ]
-    );
-    for limit in [
-        serde_json::json!({"group": "monthly", "percent": 2}),
-        serde_json::json!({"group": "weekly", "scope": {"model": {"display_name": "Fable"}}}),
-        serde_json::json!({"group": "weekly", "percent": 2, "scope": "changed"}),
-        serde_json::json!({"group": "weekly", "percent": 2, "scope": {"unsupported": true}}),
-        serde_json::json!({"group": "weekly", "percent": 2, "scope": {"model": {"display_name": "private@example.invalid"}}}),
-    ] {
-        let partial = oauth_windows(
-            &serde_json::json!({"seven_day": {"utilization": 34}, "limits": [limit]}),
-        )
-        .unwrap();
-        assert_eq!(
-            partial.unreadable.len(),
-            1,
-            "unsupported scope or utilization stays unknown"
-        );
-        assert!(
-            partial.windows.iter().all(|w| w.name == "seven_day"),
-            "no invented model scope"
-        );
-    }
-}
-
-// Chain: R12: GCP keeps production quotas; a failed call or unreadable model family never becomes a partial poll.
-#[test]
-fn model_windows_code_assist_routes_and_unknown() {
-    let valid = serde_json::json!({"buckets": [{"bucketId": "3p-weekly", "remainingFraction": 1}]});
-    for gcp in [false, true] {
-        let p = code_assist_with("invented-token", |call| {
-            if call.contains(":loadCodeAssist") {
-                return Ok(serde_json::json!({"currentTier": {"usesGcpTos": gcp}}));
-            }
-            let host = if gcp {
-                "cloudcode-pa.googleapis.com"
-            } else {
-                "daily-cloudcode-pa.googleapis.com"
-            };
-            assert!(call.contains(&format!(
-                "https://{host}/v1internal:retrieveUserQuotaSummary"
-            )));
-            Ok(serde_json::json!({"groups": [valid]}))
-        });
-        assert_eq!(p.unknown, None);
-        assert_eq!(p.windows.len(), 1);
-    }
-    for bad in [
-        serde_json::json!({}),
-        serde_json::json!({"buckets": "changed"}),
-        serde_json::json!({"buckets": []}),
-        serde_json::json!({"buckets": [{"bucketId": "gemini-weekly"}]}),
-    ] {
-        let p = code_assist_with("invented-token", |call| {
-            if call.contains(":loadCodeAssist") {
-                return Ok(serde_json::json!({}));
-            }
-            Ok(serde_json::json!({"groups": [valid, bad]}))
-        });
-        assert_eq!(
-            (p.windows.len(), p.unknown.as_deref()),
-            (0, Some("usage shape changed"))
-        );
-    }
-    let p = code_assist_with("invented-token", |call| {
-        if call.contains(":loadCodeAssist") {
-            return Ok(serde_json::json!({}));
-        }
-        Err("call refused 403".into())
-    });
-    assert_eq!(
-        (p.windows.len(), p.unknown.as_deref()),
-        (0, Some("call refused 403"))
-    );
-    let p = code_assist_with("invented-token", |_| {
-        Ok(serde_json::json!({"currentTier": {"usesGcpTos": "changed"}}))
-    });
-    assert_eq!(
-        (p.windows.len(), p.unknown.as_deref()),
-        (0, Some("usage shape changed"))
-    );
 }
 
 // Chain: capacity.md: Antigravity keeps one default account per host until a per-account `agy` home is qualified. Risk:
@@ -1106,178 +806,6 @@ fn comment(id: u64, body: &str, trusted: bool, edited: bool) -> Comment {
         author: String::new(),
         read: None,
     }
-}
-
-// Chain: §3 Runtime accounts (#2341 A1): each native reply shape reads as windows or one fixed reason. Risk: a
-// changed reply reads as a healthy account, or a provider's text reaches the board.
-#[test]
-fn routes_read_windows_or_a_fixed_reason() {
-    let account = serde_json::json!({"id": 2, "result": {"account": {"type": "chatgpt", "email": "Owner@Example.com"}}});
-    let limits = serde_json::json!({"id": 3, "result": {"rateLimits": {"primary": {"usedPercent": 67.6, "windowDurationMins": 10080, "resetsAt": 1794379777}, "secondary": null}}});
-    let p = rpc_poll(&account, &limits);
-    assert_eq!(
-        p.id.as_deref(),
-        Some(fingerprint("owner@example.com").as_str()),
-        "the fingerprint ignores case"
-    );
-    assert_eq!(
-        p.windows,
-        [Window {
-            name: "10080m".into(),
-            used: 68,
-            reset: Some(1794379777)
-        }]
-    );
-    assert_eq!(
-        rpc_poll(
-            &serde_json::json!({"id": 2, "result": {"account": null}}),
-            &limits
-        )
-        .unknown
-        .as_deref(),
-        Some("no login")
-    );
-    assert_eq!(
-        rpc_poll(
-            &account,
-            &serde_json::json!({"id": 3, "error": {"message": "secret words"}})
-        )
-        .unknown
-        .as_deref(),
-        Some("call refused")
-    );
-    assert_eq!(
-        rpc_poll(
-            &account,
-            &serde_json::json!({"id": 3, "result": {"rateLimits": {}}})
-        )
-        .unknown
-        .as_deref(),
-        Some("usage shape changed")
-    );
-    let by_workspace = rpc_poll(
-        &serde_json::json!({"id": 2, "result": {"account": {"type": "chatgpt"}, "workspaceRouting": {"chatgptAccountId": "acc-1"}}}),
-        &limits,
-    );
-    assert_eq!(by_workspace.id, Some(fingerprint("acc-1")));
-
-    let v = serde_json::json!({"five_hour": {"utilization": 12.4, "resets_at": "2026-11-04T10:00:00.123456+00:00"}, "seven_day": {"utilization": 100.0, "resets_at": null},
-            "seven_day_opus": null, "extra_usage": {"utilization": 90.0}});
-    assert_eq!(
-        oauth_windows(&v).unwrap().windows,
-        [
-            Window {
-                name: "five_hour".into(),
-                used: 12,
-                reset: crate::time::iso("2026-11-04T10:00:00Z")
-            },
-            Window {
-                name: "seven_day".into(),
-                used: 100,
-                reset: None
-            },
-        ],
-        "credits and empty windows are no window"
-    );
-    assert_eq!(
-        oauth_windows(&serde_json::json!({"renamed": {"utilization": 1}})),
-        Err("usage shape changed")
-    );
-    assert_eq!(
-        utc("2026-11-04T10:00:00+02:00"),
-        crate::time::iso("2026-11-04T08:00:00Z")
-    );
-    assert_eq!(
-        utc("2026-11-04T10:00:00Z"),
-        crate::time::iso("2026-11-04T10:00:00Z")
-    );
-    assert_eq!(utc("soon"), None);
-
-    let token = |extra: &str| format!(r#"{{"claudeAiOauth":{{"accessToken":"sk-a_b.c"{extra}}}}}"#);
-    assert_eq!(
-        access_token(&token(",\"expiresAt\":1800000001000"), NOW).as_deref(),
-        Ok("sk-a_b.c")
-    );
-    assert_eq!(
-        access_token(&token(",\"expiresAt\":1800000000000"), NOW),
-        Err("token expired"),
-        "an expired token is never refreshed"
-    );
-    assert_eq!(access_token("{}", NOW), Err("no login"));
-    assert_eq!(
-        access_token(
-            r#"{"claudeAiOauth":{"accessToken":"a\"\nurl = evil"}}"#,
-            NOW
-        ),
-        Err("usage shape changed"),
-        "nothing reaches the curl config but token characters"
-    );
-}
-
-// Chain: §3 Runtime accounts (#2341 A1): the app-server replies out of order among notifications while stdin stays
-// open; a silent server is killed at the deadline; a changed login file voids the result. Risk: a hung child blocks
-// every later poll, or a token refresh passes unnoticed.
-#[test]
-fn rpc_keeps_stdin_open_and_bounds_a_silent_server() {
-    let python = crate::runtime::which("python3");
-    if !python.is_absolute() {
-        return;
-    }
-    let script = r#"
-import json, sys
-for line in sys.stdin:
-    m = json.loads(line)
-    if m.get("id") == 3:
-        print(json.dumps({"method": "remoteControl/status/changed"}), flush=True)
-        print(json.dumps({"id": 3, "result": {"rateLimits": {"primary": {"usedPercent": 40, "windowDurationMins": 300}}}}), flush=True)
-        print(json.dumps({"id": 2, "result": {"account": {"email": "a@example.com"}}}), flush=True)
-"#;
-    let mut c = crate::platform::command(&python);
-    c.args(["-c", script]);
-    let p = rpc(c, Duration::from_secs(20));
-    assert_eq!(
-        (p.id, p.windows.len(), p.unknown),
-        (Some(fingerprint("a@example.com")), 1, None)
-    );
-
-    let mut silent = crate::platform::command(&python);
-    silent.args(["-c", "import time; time.sleep(60)"]);
-    let started = Instant::now();
-    assert_eq!(
-        rpc(silent, Duration::from_millis(300)).unknown.as_deref(),
-        Some("timeout")
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(20),
-        "the deadline ends the child"
-    );
-
-    let d = dir("guard");
-    let file = d.join("auth.json");
-    std::fs::write(&file, "one").unwrap();
-    let ok = Poll {
-        id: Some("00000000".into()),
-        windows: vec![Window {
-            name: "300m".into(),
-            used: 1,
-            reset: None,
-        }],
-        ..Default::default()
-    };
-    assert_eq!(
-        guarded(&file, || ok.clone()),
-        ok,
-        "an unchanged login file passes"
-    );
-    let refreshed = guarded(&file, || {
-        std::fs::write(&file, "two").unwrap();
-        ok.clone()
-    });
-    assert_eq!(
-        (refreshed.windows.len(), refreshed.unknown.as_deref()),
-        (0, Some("login file changed"))
-    );
-    std::fs::remove_dir_all(d).unwrap();
 }
 
 // Chain: §3 Runtime accounts (#2341 A2): rows carry a fingerprint and fixed reasons, never an email or a token; a
@@ -1855,58 +1383,6 @@ fn account_floor_shape() {
 }
 
 // #2341 A1 instrument: a real read-only poll on this host, run by hand on each host from a checkout:
-#[test]
-fn keychain_reads_the_item_and_never_reads_a_prompt_as_a_login() {
-    assert_eq!(
-        keychain_args("Claude Code-credentials", ""),
-        [
-            "find-generic-password",
-            "-s",
-            "Claude Code-credentials",
-            "-w"
-        ]
-    );
-    assert_eq!(
-        keychain_args("gemini", "antigravity"),
-        [
-            "find-generic-password",
-            "-s",
-            "gemini",
-            "-a",
-            "antigravity",
-            "-w"
-        ]
-    );
-    assert_eq!(
-        keychain_reply(Some(0), b"{\"a\":1}\n"),
-        Ok(Some("{\"a\":1}".to_string()))
-    );
-    assert_eq!(keychain_reply(Some(0), b"\n"), Ok(None));
-    assert_eq!(keychain_reply(Some(44), b""), Ok(None));
-    assert_eq!(
-        keychain_reply(Some(36), b"").unwrap_err(),
-        "keychain would prompt"
-    );
-    assert_eq!(
-        keychain_reply(Some(51), b"").unwrap_err(),
-        "keychain read failed 51"
-    );
-    assert_eq!(
-        keychain_reply(None, b"").unwrap_err(),
-        "keychain read failed"
-    );
-}
-
-#[test]
-fn app_server_failure_names_its_exit_code_only_when_it_exited() {
-    assert_eq!(
-        rpc_failure("app-server failed", Some(1)),
-        "app-server exit 1"
-    );
-    assert_eq!(rpc_failure("app-server failed", None), "app-server failed");
-    assert_eq!(rpc_failure("timeout", Some(1)), "timeout");
-}
-
 // `cargo test --locked --bin taskq native_poll_qualifies -- --ignored --nocapture`. It prints rows only: fingerprints,
 // percents and fixed reasons, and fails when a login file changes or a row carries an email.
 #[test]
@@ -1934,15 +1410,6 @@ fn native_poll_qualifies() {
             let files: Vec<PathBuf> = ["auth.json", ".credentials.json"]
                 .iter()
                 .map(|f| home.join(f))
-                .chain(
-                    if super::super::of(rt).has(Cap::UsageCodeAssist)
-                        && super::super::which(super::super::of(rt).bin).is_absolute()
-                    {
-                        agy_login_files()
-                    } else {
-                        vec![]
-                    },
-                )
                 .collect();
             let sign = || {
                 files
@@ -1951,7 +1418,7 @@ fn native_poll_qualifies() {
                     .collect::<Vec<_>>()
             };
             let before = sign();
-            let started = Instant::now();
+            let started = std::time::Instant::now();
             let p = fetch(rt, &label, &mut ids);
             assert_eq!(sign(), before, "{rt} {label}: a poll changed a login file");
             let at = accounts::now();

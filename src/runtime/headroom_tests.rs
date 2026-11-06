@@ -75,3 +75,39 @@ fn weighted_headroom_native_observation() {
     assert!(remaining(&root, "codex", 1400).is_err());
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// Chain: taskq#2448 A1. Reading through AgentQ must keep the released .headroom marker: a changed source hash counts an
+// old observation again. A window without a reading stays unknown; a repeated window length keeps both groups.
+#[test]
+fn agent_windows_keep_event_ids_unknowns_and_groups() {
+    let root = std::env::temp_dir().join(format!("taskq-headroom-{}", super::super::uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let log = root.join("turn.jsonl");
+    std::fs::write(&log, "{\"type\":\"rate_limit_event\",\"uuid\":\"e1\",\"rate_limit_info\":{\"rateLimitType\":\"five_hour\",\"utilization\":0.5,\"resetsAt\":9000}}\n").unwrap();
+    observe(&root, "claude", &log, 1000).unwrap();
+    let seen: Value =
+        serde_json::from_str(&std::fs::read_to_string(log.with_extension("headroom")).unwrap())
+            .unwrap();
+    assert_eq!(
+        seen["five_hour"]["source"],
+        "0d50ae30d7038ef2fdf8aa3bca59bcd498b0ab13b386c0752d95e726ad8f2d4d",
+        "a released marker must keep matching"
+    );
+    std::fs::write(&log, "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"rateLimitType\":\"seven_day\",\"status\":\"allowed\"}}\n").unwrap();
+    assert!(
+        observations("claude", &super::super::events(&log, 0).unwrap()).is_empty(),
+        "a window without a reading is unknown, never healthy"
+    );
+    std::fs::write(&log, "{\"rateLimitsByLimitId\":{\"a\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":9000}},\"b\":{\"primary\":{\"used_percent\":10,\"window_minutes\":300,\"resets_at\":9000}}}}\n").unwrap();
+    let rows = observations("codex", &super::super::events(&log, 0).unwrap());
+    assert_eq!(
+        rows.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["300m", "300m-2"]
+    );
+    assert_eq!(
+        rows.values().map(|r| r.1).fold(1.0, f64::min),
+        0.0,
+        "an exhausted group is not hidden by its sibling"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

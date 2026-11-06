@@ -658,7 +658,7 @@ fn outcome_only_from_end_records() {
             "{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true}\n",
             ""
         ),
-        "failed: error_max_turns"
+        "failed: client-error"
     );
     assert_eq!(
         outcome("codex", "{\"type\":\"turn.completed\"}\n", ""),
@@ -670,7 +670,7 @@ fn outcome_only_from_end_records() {
             "{\"type\":\"turn.failed\",\"error\":{\"message\":\"quota\"}}\n",
             ""
         ),
-        "failed: quota"
+        "failed: turn-failed"
     );
     assert!(outcome("codex", "{\"type\":\"turn.started\"}\n", "").starts_with("unknown"));
     assert!(

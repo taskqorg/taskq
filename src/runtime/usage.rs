@@ -3,13 +3,11 @@
 //! A poll only observes: it writes no login file and clears no quota record or hold.
 use super::accounts;
 use crate::board::{Board, Comment, Issue};
-use crate::runtime::Cap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// The last poll per runtime and label, in `<install>`.
 pub const FILE: &str = "account-usage.json";
@@ -30,9 +28,7 @@ const SKEW: i64 = 60;
 const FLEET_TTL: i64 = 600;
 /// A comment written in the second of a read may be missing from it; the views cache settles the same way.
 const SETTLE: i64 = 30;
-const RPC_DEADLINE: Duration = Duration::from_secs(30);
-const HTTP_DEADLINE: u64 = 20;
-/// ponytail: `claude auth status` starts a process; a login changes identity rarely.
+/// ponytail: an identity read starts a process; a login changes identity rarely.
 const ID_REFRESH: i64 = 600;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -812,7 +808,7 @@ pub fn spawn(install: PathBuf) {
     }
 }
 
-/// Native-probe fingerprints per runtime and label.
+/// Identity fingerprints per runtime and label.
 #[derive(Default)]
 pub struct Ids(BTreeMap<(String, String), (i64, Option<String>)>);
 
@@ -827,603 +823,69 @@ impl Ids {
         {
             return id.clone();
         }
-        let id = super::account_email(rt, label).map(|email| fingerprint(&email));
+        let home = accounts::home(rt, label).or_else(|| accounts::base(rt));
+        let id = super::agent(rt)
+            .ok()
+            .and_then(|a| a.account_identity(explicit(rt, home.as_deref())))
+            .or_else(|| super::account_email(rt, label))
+            .map(|identity| fingerprint(&identity));
         self.0.insert(key, (now, id.clone()));
         id
     }
 }
 
-/// The native read-only route of one account, chosen by adapter capability.
+/// One account's windows through AgentQ's read-only `account_limits`; its failure reasons stay as reported.
 pub fn fetch(rt: &str, label: &str, ids: &mut Ids) -> Poll {
     let a = super::of(rt);
+    if !super::which(a.bin).is_absolute() {
+        return Poll::failed("not installed");
+    }
+    let home = accounts::home(rt, label).or_else(|| accounts::base(rt));
     // The `agy` login has no account home: one default account per host, read from the user's home.
-    if a.has(Cap::UsageCodeAssist) {
-        return if super::which(a.bin).is_absolute() {
-            code_assist(rt)
-        } else {
-            Poll::failed("not installed")
-        };
-    }
-    let Some(home) = accounts::home(rt, label).or_else(|| accounts::base(rt)) else {
-        return Poll::failed("no login");
-    };
-    if !home.is_dir() {
+    if !accounts::var(rt).is_empty() && !home.as_deref().is_some_and(Path::is_dir) {
         return Poll::failed("no login");
     }
-    if a.has(Cap::UsageRpc) {
-        let bin = super::which(a.bin);
-        if !bin.is_absolute() {
-            return Poll::failed("not installed");
-        }
-        let mut c = crate::platform::command(&bin);
-        c.arg("app-server");
-        if let Some((var, h)) = accounts::environment(rt, &home) {
-            c.env(var, h);
-        }
-        let run = || rpc(c, RPC_DEADLINE);
-        return if a.has(Cap::AuthFile) {
-            guarded(&home.join("auth.json"), run)
-        } else {
-            run()
-        };
-    }
-    if a.has(Cap::UsageOauth) {
-        let mut poll = oauth(rt, &home);
-        poll.id = ids.get(rt, label);
-        return poll;
-    }
-    Poll::failed("no usage route")
-}
-
-/// A login file changed during the poll: the route refreshed it, so the result says so and the owner sees it.
-fn guarded(file: &Path, run: impl FnOnce() -> Poll) -> Poll {
-    let sign = || std::fs::read(file).ok().map(|b| sha256(&b));
-    let before = sign();
-    let poll = run();
-    if sign() == before {
-        return poll;
-    }
-    crate::platform::log("account usage: a poll changed a login file");
-    Poll {
-        id: poll.id,
-        ..Poll::failed("login file changed")
-    }
-}
-
-/// `codex app-server`: stdin must stay open until the replies arrive, or the server exits without answering.
-fn rpc(mut c: std::process::Command, deadline: Duration) -> Poll {
-    use std::process::Stdio;
-    let Ok(mut child) = c
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return Poll::failed("app-server failed");
+    let Ok(agent) = super::agent(rt) else {
+        return Poll::failed("no usage route");
     };
-    let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Poll::failed("app-server failed");
-    };
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        for line in std::io::BufReader::new(stdout)
-            .lines()
-            .map_while(Result::ok)
-        {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    let sent = [
-        r#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"taskq","title":"TaskQ","version":"0"}}}"#,
-        r#"{"method":"initialized"}"#,
-        r#"{"id":2,"method":"account/read","params":{"refreshToken":false}}"#,
-        r#"{"id":3,"method":"account/rateLimits/read"}"#,
-    ].iter().all(|m| writeln!(stdin, "{m}").and_then(|_| stdin.flush()).is_ok());
-    let end = Instant::now() + deadline;
-    let (mut account, mut limits) = (None, None);
-    let mut failed = (!sent).then_some("app-server failed");
-    while failed.is_none() && (account.is_none() || limits.is_none()) {
-        match rx.recv_timeout(end.saturating_duration_since(Instant::now())) {
-            Ok(line) => {
-                let Ok(v) = serde_json::from_str::<Value>(&line) else {
-                    continue;
-                };
-                match v["id"].as_u64() {
-                    Some(2) => account = Some(v),
-                    Some(3) => limits = Some(v),
-                    _ => {}
-                }
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => failed = Some("timeout"),
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                failed = Some("app-server failed")
-            }
-        }
-    }
-    drop(stdin);
-    let exit = Instant::now() + Duration::from_secs(3);
-    while Instant::now() < exit && matches!(child.try_wait(), Ok(None)) {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    if matches!(child.try_wait(), Ok(None)) {
-        let _ = child.kill();
-    }
-    let code = child.wait().ok().and_then(|status| status.code());
-    if let Some(reason) = failed {
-        return Poll::failed(&rpc_failure(reason, code));
-    }
-    rpc_poll(&account.unwrap_or_default(), &limits.unwrap_or_default())
+    let mut poll = poll_of(agent.account_limits(explicit(rt, home.as_deref()), accounts::now()));
+    poll.id = ids.get(rt, label);
+    poll
 }
 
-/// A server that ended before it answered names its exit code, so a host's row shows more than that it failed.
-fn rpc_failure(reason: &str, code: Option<i32>) -> String {
-    match code {
-        Some(code) if reason == "app-server failed" => format!("app-server exit {code}"),
-        _ => reason.to_string(),
-    }
+/// The home AgentQ must name: the default account keeps its native default, as its keychain item does.
+fn explicit<'a>(rt: &str, home: Option<&'a Path>) -> Option<&'a Path> {
+    home.and_then(|home| accounts::environment(rt, home).map(|(_, home)| home))
 }
 
-fn rpc_poll(account: &Value, limits: &Value) -> Poll {
-    if account["error"].is_null() && account["result"]["account"].is_null() {
-        return Poll::failed("no login");
-    }
-    let a = &account["result"]["account"];
-    let identity = a["email"]
-        .as_str()
-        .or_else(|| account["result"]["workspaceRouting"]["chatgptAccountId"].as_str())
-        .filter(|s| !s.trim().is_empty());
-    let id = identity.map(fingerprint);
-    match rate_windows(limits) {
-        Ok(windows) => Poll {
-            id,
-            windows,
-            ..Default::default()
-        },
-        Err(reason) => Poll {
-            id,
-            ..Poll::failed(reason)
-        },
-    }
-}
-
-fn rate_windows(reply: &Value) -> Result<Vec<Window>, &'static str> {
-    if !reply["error"].is_null() {
-        return Err("call refused");
-    }
-    let limits = &reply["result"]["rateLimits"];
-    let mut out = vec![];
-    for key in ["primary", "secondary"] {
-        let w = &limits[key];
-        if w.is_null() {
-            continue;
-        }
-        let used = w["usedPercent"]
-            .as_f64()
-            .filter(|n| n.is_finite())
-            .ok_or("usage shape changed")?;
-        let name = w["windowDurationMins"]
-            .as_u64()
-            .map_or_else(|| key.to_string(), |mins| format!("{mins}m"));
-        out.push(Window {
-            name,
-            used: percent(used),
-            reset: w["resetsAt"].as_i64().filter(|r| *r >= 0),
-        });
-    }
-    if out.is_empty() {
-        Err("usage shape changed")
-    } else {
-        Ok(out)
-    }
-}
-
-/// The OAuth route: read the access token, never refresh or store it; it travels to the provider on curl's stdin only.
-fn oauth(rt: &str, home: &Path) -> Poll {
-    let token = match credentials(rt, home)
-        .and_then(|text| access_token(&text, accounts::now()).map_err(String::from))
-    {
-        Ok(token) => token,
-        Err(reason) => return Poll::failed(&reason),
-    };
-    let config = format!(
-        "url = \"https://api.anthropic.com/api/oauth/usage\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"anthropic-beta: oauth-2025-04-20\"\nmax-time = {HTTP_DEADLINE}\n"
-    );
-    match https_json(&config).and_then(|v| oauth_windows(&v).map_err(String::from)) {
-        Ok(poll) => poll,
-        Err(reason) => Poll::failed(&reason),
-    }
-}
-
-/// One curl call whose config, with the token, goes through stdin and never an argument; the reply or a fixed reason.
-fn https_json(config: &str) -> Result<Value, String> {
-    let out = crate::http::with_config(
-        "account.usage",
-        &[
-            "-q",
-            "-sS",
-            "--proto",
-            "=https",
-            "-w",
-            "\n%{http_code}",
-            "--config",
-            "-",
-        ],
-        config,
-        Duration::from_secs(HTTP_DEADLINE + 5),
-    )
-    .map_err(|_| "network failed")?;
-    match crate::http::status_tail(&out) {
-        (body, Some(200)) => serde_json::from_str(&body).map_err(|_| "usage shape changed".into()),
-        (_, None) => Err("network failed".into()),
-        (_, Some(code)) => Err(format!("call refused {code}")),
-    }
-}
-
-/// The two Code Assist calls with the `agy` login. Both endpoints are undocumented, so any other reply fails closed.
-fn code_assist(rt: &str) -> Poll {
-    let token = match agy_credentials(rt)
-        .and_then(|text| agy_token(&text, accounts::now()).map_err(String::from))
-    {
-        Ok(token) => token,
-        Err(reason) => return Poll::failed(&reason),
-    };
-    code_assist_with(&token, https_json)
-}
-
-fn code_assist_with(token: &str, mut read: impl FnMut(&str) -> Result<Value, String>) -> Poll {
-    let load = match read(&code_assist_call(
-        "cloudcode-pa.googleapis.com",
-        "loadCodeAssist",
-        token,
-        r#"{\"metadata\":{\"ideType\":\"ANTIGRAVITY\"}}"#,
-    )) {
-        Ok(v) => v,
-        Err(reason) => return Poll::failed(&reason),
-    };
-    let project = code_assist_project(&load);
-    let body = project.map_or(r#"{}"#.to_string(), |p| {
-        format!(r#"{{\"project\":\"{p}\"}}"#)
-    });
-    let id = project.map(fingerprint);
-    let host = match load.pointer("/currentTier/usesGcpTos") {
-        Some(Value::Bool(true)) => "cloudcode-pa.googleapis.com",
-        None | Some(Value::Bool(false)) => "daily-cloudcode-pa.googleapis.com",
-        _ => {
-            return Poll {
-                id,
-                ..Poll::failed("usage shape changed")
-            };
-        }
-    };
-    match read(&code_assist_call(
-        host,
-        "retrieveUserQuotaSummary",
-        token,
-        &body,
-    ))
-    .and_then(|v| quota_windows(&v).map_err(String::from))
-    {
-        Ok(windows) => Poll {
-            id,
-            windows,
-            ..Default::default()
-        },
-        Err(reason) => Poll {
-            id,
-            ..Poll::failed(&reason)
-        },
-    }
-}
-
-fn code_assist_call(host: &str, method: &str, token: &str, body: &str) -> String {
-    format!(
-        "url = \"https://{host}/v1internal:{method}\"\nheader = \"Authorization: Bearer {token}\"\nheader = \"Content-Type: application/json\"\nheader = \"User-Agent: antigravity/hub/2.28.2\"\ndata = \"{body}\"\nmax-time = {HTTP_DEADLINE}\n"
-    )
-}
-
-/// The account's Code Assist project; only characters safe inside a curl config line pass. The reply names no email,
-/// so its fingerprint is the account id.
-fn code_assist_project(load: &Value) -> Option<&str> {
-    load["cloudaicompanionProject"].as_str().filter(|p| {
-        !p.is_empty()
-            && p.len() <= 128
-            && p.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
-    })
-}
-
-/// Every bucket of every model family, as `gemini-5h` or `3p-weekly`. A bucket with no reading fails the whole poll:
-/// a dropped bucket could be the exhausted one, and unknown is never healthy.
-fn quota_windows(v: &Value) -> Result<Vec<Window>, &'static str> {
-    let shape = "usage shape changed";
-    let mut out = vec![];
-    for group in v["groups"].as_array().ok_or(shape)? {
-        let buckets = group["buckets"]
-            .as_array()
-            .filter(|b| !b.is_empty())
-            .ok_or(shape)?;
-        for bucket in buckets {
-            let name = bucket["bucketId"]
-                .as_str()
-                .filter(|n| valid_window(n))
-                .ok_or(shape)?;
-            let left = bucket["remainingFraction"]
-                .as_f64()
-                .filter(|f| (0.0..=1.0).contains(f))
-                .ok_or(shape)?;
-            out.push(Window {
-                name: name.to_string(),
-                used: percent((1.0 - left) * 100.0),
-                reset: bucket["resetTime"].as_str().and_then(utc),
-            });
-        }
-    }
-    if out.is_empty() { Err(shape) } else { Ok(out) }
-}
-
-/// The `agy` login's access token: a token file, or the same text in the OS keyring, optionally base64 with go-keyring's
-/// prefix. Only characters safe inside a curl config line pass.
-fn agy_token(text: &str, now: i64) -> Result<String, &'static str> {
-    use base64::Engine;
-    let decoded = match text.trim().strip_prefix("go-keyring-base64:") {
-        Some(b) => base64::engine::general_purpose::STANDARD
-            .decode(b.trim())
-            .ok()
-            .and_then(|b| String::from_utf8(b).ok())
-            .ok_or("usage shape changed")?,
-        None => text.to_string(),
-    };
-    let v: Value = serde_json::from_str(&decoded).map_err(|_| "no login")?;
-    let t = if v["token"].is_object() {
-        &v["token"]
-    } else {
-        &v
-    };
-    let token = t["access_token"]
-        .as_str()
-        .filter(|t| !t.is_empty())
-        .ok_or("no login")?;
-    if !token
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
-    {
-        return Err("usage shape changed");
-    }
-    let expiry = t["expiry"]
-        .as_str()
-        .and_then(utc)
-        .or_else(|| t["expiry_date"].as_i64().map(|ms| ms / 1000));
-    if expiry.is_some_and(|at| at <= now) {
-        return Err("token expired");
-    }
-    Ok(token.to_string())
-}
-
-/// The login files of the `agy` CLI under the user's home, read only. A login held only in the Windows credential store
-/// reads as no login.
-fn agy_login_files() -> Vec<PathBuf> {
-    crate::platform::user_home().map_or(vec![], |h| {
-        [
-            ".gemini/antigravity-cli/antigravity-oauth-token",
-            ".gemini/oauth_creds.json",
-        ]
-        .iter()
-        .map(|f| h.join(f))
-        .collect()
-    })
-}
-
-fn agy_credentials(rt: &str) -> Result<String, String> {
-    if cfg!(target_os = "macos") {
-        if let Some(text) = keychain_read("gemini", rt)? {
-            return Ok(text);
-        }
-    }
-    agy_login_files()
-        .iter()
-        .find_map(|f| std::fs::read_to_string(f).ok())
-        .ok_or_else(|| "no login".to_string())
-}
-
-/// Plan and model windows, including scoped `limits[]`; credits are no window.
-fn oauth_windows(v: &Value) -> Result<Poll, &'static str> {
-    let shape = "usage shape changed";
+/// AgentQ windows as a poll: a window with a name and reading is readable, a named one without is unreadable, and a
+/// nameless reason fails the whole poll when nothing was readable.
+fn poll_of(windows: Vec<agentq_runtime::agent::Window>) -> Poll {
     let mut poll = Poll::default();
-    for (index, (name, w)) in v.as_object().ok_or(shape)?.iter().enumerate() {
-        if !(name.starts_with("five_hour") || name.starts_with("seven_day"))
-            || name == "seven_day_breakdown"
-            || w.is_null()
-        {
-            continue;
-        }
-        if !valid_window(name) {
-            poll.unreadable
-                .push(format!("legacy[{index}]: unsafe window name"));
-            continue;
-        }
-        match oauth_window(name.clone(), &w["utilization"], &w["resets_at"]) {
-            Ok(w) => poll.windows.push(w),
-            Err(reason) => poll.unreadable.push(format!("{name}: {reason}")),
-        }
-    }
-    if let Some(limits) = v.get("limits").filter(|l| !l.is_null()) {
-        if let Some(limits) = limits.as_array() {
-            for (index, l) in limits.iter().enumerate() {
-                let mut source = format!("limits[{index}]");
-                let parsed = (|| {
-                    let mut name = match l["group"].as_str() {
-                        Some("session") => "five_hour".to_string(),
-                        Some("weekly") => "seven_day".to_string(),
-                        _ => return Err("unsupported group"),
-                    };
-                    let scope = l
-                        .get("scope")
-                        .filter(|s| !s.is_null())
-                        .map(|s| s.as_object().ok_or("unreadable scope"))
-                        .transpose()?;
-                    if let Some(model) = scope.and_then(|s| s.get("model")).filter(|m| !m.is_null())
-                    {
-                        let model = model["display_name"]
-                            .as_str()
-                            .or_else(|| model["id"].as_str())
-                            .filter(|m| !m.is_empty())
-                            .ok_or("unreadable model")?;
-                        name.push('_');
-                        name.push_str(&model.to_ascii_lowercase().replace(' ', "_"));
-                    }
-                    if !valid_window(&name) {
-                        return Err("unsafe window name");
-                    }
-                    source.push(' ');
-                    source.push_str(&name);
-                    if scope.is_some_and(|s| {
-                        s.iter()
-                            .any(|(key, value)| key != "model" && !value.is_null())
-                    }) {
-                        return Err("unsupported scope");
-                    }
-                    // An authoritative structured reading must not leave a healthier legacy value behind.
-                    poll.windows.retain(|w| w.name != name);
-                    poll.unreadable
-                        .retain(|reason| !reason.starts_with(&format!("{name}: ")));
-                    oauth_window(name, &l["percent"], &l["resets_at"])
-                })();
-                match parsed {
-                    Ok(w) => poll.windows.push(w),
-                    Err(reason) => poll.unreadable.push(format!("{source}: {reason}")),
-                }
-            }
-        } else {
-            poll.unreadable.push("limits: unreadable list".into());
+    let mut reasons = vec![];
+    for w in super::headroom::unique_names(windows) {
+        let reason = w.unknown.as_deref().unwrap_or("unreadable");
+        match (w.window.as_deref().filter(|n| valid_window(n)), w.used) {
+            (Some(name), Some(used)) if used.is_finite() => poll.windows.push(Window {
+                name: name.to_string(),
+                used: percent(used * 100.0),
+                reset: w.resets_at.and_then(|r| i64::try_from(r).ok()),
+            }),
+            (Some(name), _) => poll.unreadable.push(format!("{name}: {reason}")),
+            (None, _) => reasons.push(reason.to_string()),
         }
     }
     if poll.windows.is_empty() && poll.unreadable.is_empty() {
-        Err(shape)
+        poll.unknown = Some(
+            reasons
+                .first()
+                .map_or("not-reported", String::as_str)
+                .to_string(),
+        );
     } else {
-        Ok(poll)
+        poll.unreadable.extend(reasons);
     }
-}
-
-fn oauth_window(name: String, used: &Value, reset: &Value) -> Result<Window, &'static str> {
-    let used = used
-        .as_f64()
-        .filter(|n| n.is_finite() && *n >= 0.0)
-        .ok_or("unreadable utilization")?;
-    Ok(Window {
-        name,
-        used: percent(used),
-        reset: reset.as_str().and_then(utc),
-    })
-}
-
-/// `2026-11-04T10:00:00.123+00:00` or `...Z` as board seconds; `None` for anything else.
-fn utc(s: &str) -> Option<i64> {
-    let base = s.get(..19).filter(|b| b.as_bytes()[10] == b'T')?;
-    let at = crate::time::iso(base)?;
-    let rest = s[19..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
-    if rest.is_empty() || rest == "Z" {
-        return Some(at);
-    }
-    let (sign, rest) = match rest.as_bytes()[0] {
-        b'+' => (1, &rest[1..]),
-        b'-' => (-1, &rest[1..]),
-        _ => return None,
-    };
-    let (h, m) = rest.split_once(':')?;
-    Some(at - sign * (h.parse::<i64>().ok()? * 3600 + m.parse::<i64>().ok()? * 60))
-}
-
-/// The access token of a credentials document; only characters safe inside a curl config line pass.
-fn access_token(text: &str, now: i64) -> Result<String, &'static str> {
-    let v: Value = serde_json::from_str(text).map_err(|_| "no login")?;
-    let oauth = &v["claudeAiOauth"];
-    let token = oauth["accessToken"]
-        .as_str()
-        .filter(|t| !t.is_empty())
-        .ok_or("no login")?;
-    if !token
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
-    {
-        return Err("usage shape changed");
-    }
-    if oauth["expiresAt"]
-        .as_i64()
-        .is_some_and(|ms| ms <= now.saturating_mul(1000))
-    {
-        return Err("token expired");
-    }
-    Ok(token.to_string())
-}
-
-fn credentials(rt: &str, home: &Path) -> Result<String, String> {
-    if cfg!(target_os = "macos") {
-        // A home named by the home variable has its own keychain service, as the native login stores it.
-        let suffix = accounts::environment(rt, home).map_or(String::new(), |(_, h)| {
-            format!("-{}", &sha256(h.to_string_lossy().as_bytes())[..8])
-        });
-        if let Some(text) = keychain_read(&format!("Claude Code-credentials{suffix}"), "")? {
-            return Ok(text);
-        }
-    }
-    std::fs::read_to_string(home.join(".credentials.json")).map_err(|_| "no login".to_string())
-}
-
-const KEYCHAIN: &str = "/usr/bin/security";
-/// A silent read takes milliseconds, so a read this long waits on a dialog.
-const KEYCHAIN_DEADLINE: Duration = Duration::from_secs(5);
-/// ponytail: one latch per service process; per-item latches if a host ever mixes trusted and untrusted items.
-static KEYCHAIN_PROMPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// A macOS keychain item, read through the tool both native logins store it with, the one the item's access list trusts.
-/// `None` is no item. A read that outlasts its deadline would prompt: it stops, and this process reads no item again.
-fn keychain_read(service: &str, account: &str) -> Result<Option<String>, String> {
-    use std::sync::atomic::Ordering;
-    if KEYCHAIN_PROMPTED.load(Ordering::Relaxed) {
-        return Err("keychain would prompt".into());
-    }
-    match coreq::process::output(
-        "account.usage",
-        crate::platform::command(KEYCHAIN).args(keychain_args(service, account)),
-        KEYCHAIN_DEADLINE,
-    ) {
-        Ok(o) | Err(coreq::process::Failure::Exit(o)) => keychain_reply(o.status.code(), &o.stdout),
-        Err(coreq::process::Failure::Timeout) => {
-            KEYCHAIN_PROMPTED.store(true, Ordering::Relaxed);
-            Err("keychain would prompt".into())
-        }
-        Err(_) => Err("keychain read failed".into()),
-    }
-}
-
-fn keychain_args(service: &str, account: &str) -> Vec<String> {
-    let mut args = vec![
-        "find-generic-password".to_string(),
-        "-s".to_string(),
-        service.to_string(),
-    ];
-    if !account.is_empty() {
-        args.extend(["-a".to_string(), account.to_string()]);
-    }
-    args.push("-w".to_string());
-    args
-}
-
-/// The tool exits with the low byte of the keychain status: 44 no item, 36 interaction not allowed.
-fn keychain_reply(code: Option<i32>, stdout: &[u8]) -> Result<Option<String>, String> {
-    match code {
-        Some(0) => {
-            Ok(Some(String::from_utf8_lossy(stdout).trim().to_string()).filter(|t| !t.is_empty()))
-        }
-        Some(44) => Ok(None),
-        Some(36) => Err("keychain would prompt".into()),
-        Some(code) => Err(format!("keychain read failed {code}")),
-        None => Err("keychain read failed".into()),
-    }
+    poll
 }
 
 #[cfg(test)]

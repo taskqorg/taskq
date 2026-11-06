@@ -1,18 +1,29 @@
 use super::*;
+
+/// One native record through AgentQ, at a fixed time.
+fn feed(r: &mut Reader, rt: &str, record: &Value, at: i64) {
+    for record in super::super::agent(rt)
+        .unwrap()
+        .log_records(&record.to_string())
+    {
+        r.apply(&record.events, at);
+    }
+}
+
 // A4: reproduce the 6620 s Antigravity tool with no timeout; no board/process action exists here.
 #[test]
 fn unbounded_tool_stall_clears_only_on_progress_and_preserves_concurrent_tools() {
     let mut r = Reader::default();
     let event = |id, state| json!({"event":"step_update","step_update":{"conversation_id":"invented","step_index":id,"state":state,"step_type":"tool"}});
-    r.event(&event(90, "ACTIVE"), 1000);
+    feed(&mut r, "antigravity", &event(90, "ACTIVE"), 1000);
     assert_eq!(r.value(1900, 60)["status"], "active");
     assert_eq!(r.value(1901, 60)["status"], "overdue");
-    r.event(&event(91, "ACTIVE"), 1902);
+    feed(&mut r, "antigravity", &event(91, "ACTIVE"), 1902);
     assert_eq!(r.value(7620, 60)["status"], "overdue");
-    r.event(&event(90, "DONE"), 7621);
+    feed(&mut r, "antigravity", &event(90, "DONE"), 7621);
     assert_eq!(r.value(7621, 60)["pending_tools"], 1);
     assert_eq!(r.value(7621, 60)["status"], "active");
-    r.event(&event(91, "DONE"), 7622);
+    feed(&mut r, "antigravity", &event(91, "DONE"), 7622);
     assert_eq!(
         r.value(99999, 60)["status"],
         "quiet",
@@ -21,17 +32,31 @@ fn unbounded_tool_stall_clears_only_on_progress_and_preserves_concurrent_tools()
 }
 #[test]
 fn explicit_tool_deadline_keeps_its_budget_and_completed_events_do_not_extend_it() {
+    let mut claude = Reader::default();
+    feed(
+        &mut claude,
+        "claude",
+        &json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t","name":"Bash","input":{"timeout":120000}}]}}),
+        1000,
+    );
     assert_eq!(
-        timeout(&json!({"timeout":120000})),
-        Some(120),
+        claude.value(1000, 60)["deadline"],
+        1120,
         "Claude Bash uses milliseconds"
     );
     let mut r = Reader::default();
-    r.event(&json!({"type":"response_item","payload":{"type":"function_call","call_id":"c","arguments":"{\"timeout_ms\":3600000}"}}),1000);
+    feed(
+        &mut r,
+        "codex",
+        &json!({"type":"response_item","payload":{"type":"function_call","call_id":"c","arguments":"{\"timeout_ms\":3600000}"}}),
+        1000,
+    );
     r.completed(4500);
     assert_eq!(r.value(4720, 60)["status"], "active");
     assert_eq!(r.value(4721, 60)["status"], "overdue");
-    r.event(
+    feed(
+        &mut r,
+        "codex",
         &json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c"}}),
         4722,
     );
@@ -78,14 +103,14 @@ fn timestamp_fault_stays_unknown_until_a_valid_turn_boundary() {
         .unwrap();
         pin_time();
         let mut r = Reader::default();
-        assert_eq!(r.read(&path, 0, || now, 60)["status"], "quiet");
+        assert_eq!(r.read(&path, 0, "codex", || now, 60)["status"], "quiet");
         let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
         writeln!(f,"{}",json!({"timestamp":timestamp,"type":"item.started","item":{"id":"c","type":"command_execution"}})).unwrap();
         pin_time();
-        let fault = r.read(&path, 0, || now + 1, 60);
+        let fault = r.read(&path, 0, "codex", || now + 1, 60);
         assert_eq!(fault["status"], "unknown");
         assert_eq!(
-            content(r.read(&path, 0, || now + 101, 60)),
+            content(r.read(&path, 0, "codex", || now + 101, 60)),
             content(fault.clone()),
             "time and an empty read cannot recover a consumed event"
         );
@@ -97,17 +122,20 @@ fn timestamp_fault_stays_unknown_until_a_valid_turn_boundary() {
         .unwrap();
         pin_time();
         assert_eq!(
-            content(r.read(&path, 0, || now + 102, 60)),
+            content(r.read(&path, 0, "codex", || now + 102, 60)),
             content(fault.clone()),
             "unrelated progress cannot prove the missing tool ended"
         );
         writeln!(f, "{}", json!({"type":"turn.completed"})).unwrap();
         pin_time();
-        assert_eq!(r.read(&path, 0, || now + 103, 60)["status"], "quiet");
+        assert_eq!(
+            r.read(&path, 0, "codex", || now + 103, 60)["status"],
+            "quiet"
+        );
         writeln!(f,"{}\n{}",json!({"timestamp":"invalid","type":"item.started","item":{"id":"c","type":"command_execution"}}),json!({"type":"turn.completed"})).unwrap();
         pin_time();
         assert_eq!(
-            r.read(&path, 0, || now + 104, 60)["status"],
+            r.read(&path, 0, "codex", || now + 104, 60)["status"],
             "quiet",
             "a valid boundary in the same batch is not discarded"
         );
@@ -135,7 +163,7 @@ fn hot_log_samples_time_after_read_and_keeps_future_metadata_fenced() {
     f.set_times(mtime(1000)).unwrap();
     let mut r = Reader::default();
     let mut samples = 0;
-    let value=r.read(&path,0,|| {
+    let value=r.read(&path, 0, "codex", || {
             samples+=1;
             if samples==1 {
                 writeln!(f,"{}",json!({"timestamp":crate::time::stamp(1001),"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
@@ -149,7 +177,7 @@ fn hot_log_samples_time_after_read_and_keeps_future_metadata_fenced() {
     let offset = r.history.offset;
     writeln!(f,"{}",json!({"timestamp":crate::time::stamp(1002),"type":"item.started","item":{"id":"c","type":"command_execution"}})).unwrap();
     f.set_times(mtime(1003)).unwrap();
-    let future = r.read(&path, 0, || 1002, 60);
+    let future = r.read(&path, 0, "codex", || 1002, 60);
     assert_eq!(future["status"], "unknown");
     assert_eq!(
         future["reason"],
@@ -160,7 +188,7 @@ fn hot_log_samples_time_after_read_and_keeps_future_metadata_fenced() {
         "future metadata must not consume events"
     );
     f.set_times(mtime(1002)).unwrap();
-    let recovered = r.read(&path, 0, || 1002, 60);
+    let recovered = r.read(&path, 0, "codex", || 1002, 60);
     assert_eq!(recovered["status"], "active");
     assert_eq!(recovered["pending_tools"], 1);
     assert!(valid(&recovered));
@@ -173,7 +201,7 @@ fn hot_log_samples_time_after_read_and_keeps_future_metadata_fenced() {
     let mut reversed = Reader::default();
     let mut clock = [1002, 1001].into_iter();
     assert_eq!(
-        reversed.read(&path, 0, || clock.next().unwrap(), 60)["status"],
+        reversed.read(&path, 0, "codex", || clock.next().unwrap(), 60)["status"],
         "unknown",
         "a clock reversal cannot make a future mtime fallback healthy"
     );
@@ -196,24 +224,33 @@ fn incremental_source_does_not_turn_reads_partial_writes_or_replacement_into_hea
         .unwrap()
         .as_secs() as i64;
     let mut r = Reader::default();
-    let first = r.read(&path, 0, || now, 60);
+    let first = r.read(&path, 0, "codex", || now, 60);
     assert_eq!(first["status"], "active");
     assert_eq!(
-        r.read(&path, 0, || now + 901, 60)["status"],
+        r.read(&path, 0, "codex", || now + 901, 60)["status"],
         "overdue",
         "read is not progress"
     );
     let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
     write!(f, "{{").unwrap();
-    assert_eq!(r.read(&path, 0, || now + 902, 60)["status"], "unknown");
+    assert_eq!(
+        r.read(&path, 0, "codex", || now + 902, 60)["status"],
+        "unknown"
+    );
     writeln!(
         f,
         "\"type\":\"item.completed\",\"item\":{{\"id\":\"c\",\"type\":\"command_execution\"}}}}"
     )
     .unwrap();
-    assert_eq!(r.read(&path, 0, || now + 903, 60)["status"], "quiet");
+    assert_eq!(
+        r.read(&path, 0, "codex", || now + 903, 60)["status"],
+        "quiet"
+    );
     fs::rename(&path, dir.join("old")).unwrap();
     fs::write(&path, "{}\n").unwrap();
-    assert_eq!(r.read(&path, 0, || now + 904, 60)["status"], "unknown");
+    assert_eq!(
+        r.read(&path, 0, "codex", || now + 904, 60)["status"],
+        "unknown"
+    );
     fs::remove_dir_all(dir).unwrap();
 }

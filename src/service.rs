@@ -3050,8 +3050,10 @@ impl<'a> Service<'a> {
         }
         let log = crate::runtime::attempt_log(&self.cfg.root, "worker", n, a);
         // #2198: a Claude Code transcript (the `remote` adapter) shows the background jobs its last turn left running.
-        if rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).has(Cap::RemoteControl)) {
-            return self.background_continuation(n, a, &log);
+        if let Some((rt, _)) =
+            rt_of(t).filter(|(rt, _)| crate::runtime::of(rt).has(Cap::RemoteControl))
+        {
+            return self.background_continuation(n, a, rt, &log);
         }
         if !rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).has(Cap::ThreadLink)) {
             return None;
@@ -3072,8 +3074,14 @@ impl<'a> Service<'a> {
     /// #2198: the `steer` that resumes Claude worker attempt `a` whose turn ended with its own
     /// [live background job](docs/design/capacity.md#background-job-at-turn-end); None without one, past
     /// [`BACKGROUND_MAX`] or when the board log is unread.
-    fn background_continuation(&self, n: u64, a: u64, log: &std::path::Path) -> Option<String> {
-        let jobs = crate::runtime::live_background(log);
+    fn background_continuation(
+        &self,
+        n: u64,
+        a: u64,
+        rt: &str,
+        log: &std::path::Path,
+    ) -> Option<String> {
+        let jobs = crate::runtime::live_background(log, rt);
         if jobs.is_empty() {
             return None;
         }
@@ -3213,6 +3221,7 @@ impl<'a> Service<'a> {
                     Ok((path, start)) => entry.0.read(
                         &path,
                         start,
+                        &kid.rt,
                         || (self.progress_clock)(self.board),
                         self.cfg.poll,
                     ),

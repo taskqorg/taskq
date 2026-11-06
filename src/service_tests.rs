@@ -9587,7 +9587,7 @@ fn claude_turn_ending_with_its_own_background_check_resumes_instead_of_gone() {
         );
         assert!(
             steers[k].body.contains(BACKGROUND_STEER)
-                && steers[k].body.contains("Full check")
+                && steers[k].body.contains("Bash")
                 && steers[k].body.contains("foreground"),
             "{}",
             steers[k].body
@@ -13118,7 +13118,7 @@ fn progress_health_lifecycle_captures_once_recovers_and_keeps_execution_fenced()
     s.progress_clock = |b| b.now().unwrap() + 5;
     use std::io::Write;
     let mut hot = fs::OpenOptions::new().append(true).open(&path).unwrap();
-    writeln!(hot,"{}",json!({"timestamp":crate::time::stamp(sampled),"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
+    writeln!(hot,"{}",json!({"timestamp":crate::time::stamp(sampled),"event":"step_update","step_update":{"conversation_id":"invented","step_index":91,"state":"DONE","step_type":"agent_response"}})).unwrap();
     hot.set_times(
         fs::FileTimes::new()
             .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(sampled as u64)),
