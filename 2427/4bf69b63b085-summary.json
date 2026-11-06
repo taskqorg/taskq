@@ -1,0 +1,70 @@
+{
+  "candidate": "5d67515a7152fa7fd6f7edab4271cd4212aa0451",
+  "binary_sha256": "138a28462814e12baaec679713c8501eee376d1f2497af67a28cfbbfecadd133",
+  "policy_hashes": {
+    "host.json": "9a6e815a27ce239dd1a6864d22d37f2350221e9577f207d5e447bd2053cbeb1a",
+    "worker-policy.json": "79515bf3547cd3f239d6c354ff443628ce79d6f7750a39616253d961550265c2"
+  },
+  "rows": [
+    {
+      "runtime": "claude",
+      "exit": 0,
+      "seconds": 11.17,
+      "manifest_path": "claude-manifest.json",
+      "policy_unchanged": true,
+      "launches": 1,
+      "reads": 6,
+      "status_heartbeat_equal_reads": 6,
+      "unequal": [],
+      "canary_in_native_log": true,
+      "taskq_transcript_has_reply": true,
+      "release": "Some(Exit)",
+      "scope": "candidate Service with fixture board and native client; no installed service"
+    },
+    {
+      "runtime": "codex",
+      "exit": 0,
+      "seconds": 8.28,
+      "manifest_path": "codex-manifest.json",
+      "policy_unchanged": true,
+      "launches": 1,
+      "reads": 8,
+      "status_heartbeat_equal_reads": 8,
+      "unequal": [],
+      "canary_in_native_log": true,
+      "taskq_transcript_has_reply": true,
+      "release": "Some(Exit)",
+      "scope": "candidate Service with fixture board and native client; no installed service"
+    },
+    {
+      "runtime": "codex-app",
+      "exit": 0,
+      "seconds": 12.84,
+      "manifest_path": "codex-app-manifest.json",
+      "policy_unchanged": true,
+      "launches": 1,
+      "reads": 12,
+      "status_heartbeat_equal_reads": 12,
+      "unequal": [],
+      "canary_in_native_log": true,
+      "taskq_transcript_has_reply": true,
+      "release": "Some(Exit)",
+      "scope": "candidate Service with fixture board and native client; no installed service"
+    },
+    {
+      "runtime": "antigravity",
+      "exit": 0,
+      "seconds": 10.33,
+      "manifest_path": "antigravity-manifest.json",
+      "policy_unchanged": true,
+      "launches": 1,
+      "reads": 10,
+      "status_heartbeat_equal_reads": 10,
+      "unequal": [],
+      "canary_in_native_log": true,
+      "taskq_transcript_has_reply": true,
+      "release": "Some(Exit)",
+      "scope": "candidate Service with fixture board and native client; no installed service"
+    }
+  ]
+}
