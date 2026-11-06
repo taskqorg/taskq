@@ -105,6 +105,10 @@ impl Error {
     pub fn reason(&self) -> Reason { self.reason }
     pub fn status(&self) -> Option<u16> { self.status }
     pub fn text(&self) -> &str { &self.text }
+    /// The provider's file limit refused the call: HTTP 413, or a 4xx body that says so.
+    pub fn too_large(&self) -> bool {
+        matches!(self.status, Some(413)) || (matches!(self.status, Some(400..=499)) && self.text.to_ascii_lowercase().contains("too large"))
+    }
 
     /// The telemetry class of this failure.
     pub fn class(&self) -> &'static str {

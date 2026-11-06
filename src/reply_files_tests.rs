@@ -59,6 +59,23 @@
         assert_eq!(b.comments(n).unwrap().len(),count,"same-operation retry writes nothing");
     }
 
+    // Risk (A5): telemetry read the kind from failure text, so a file name decided it.
+    #[test]
+    fn the_failure_site_decides_the_refusal_kind_not_its_text() {
+        let fixture=Fixture::new();let install=fixture.0.join("install");fs::create_dir(&install).unwrap();
+        let data=b"invented bytes";
+        let named=|name:&str|serde_json::json!({"file":{"id":"file-1","name":name,"mime":"application/octet-stream","bytes":data.len()},"data":STANDARD.encode(data)});
+        let mut encoding=named("413 too large.bin");encoding["data"]=Value::String("not base64!".into());
+        assert_eq!(store_file(&install,&encoding).unwrap_err().kind,RefusalKind::Metadata);
+        assert_eq!(store_file(&install,&named("..")).unwrap_err().kind,RefusalKind::Metadata);
+        let mut short=named("metadata checksum readback.bin");short["file"]["bytes"]=serde_json::json!(1);
+        assert_eq!(store_file(&install,&short).unwrap_err().kind,RefusalKind::Storage,"the name holds other kinds' words");
+        let file=store_file(&install,&named("413 too large metadata.bin")).unwrap();
+        let paths=draft_paths(&install,&serde_json::json!([file])).unwrap();
+        let b=Fake::default();let n=b.create("refused media","",&["taskq".into()]).unwrap();b.state.borrow_mut().bad_image=true;
+        assert_eq!(upload(&b,n,&paths).unwrap_err().kind,RefusalKind::Readback,"the name holds other kinds' words");
+    }
+
     // Chain: §5 paste/drop native copy -> saved reply -> upload refusal. Risk: lost draft or partial media moves task.
     #[test]
     fn private_copy_and_refused_upload_preserve_the_draft_and_task() {

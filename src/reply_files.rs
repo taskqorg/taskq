@@ -13,12 +13,21 @@ pub struct File {
     #[serde(default, skip_serializing_if="String::is_empty")] pub url: String,
 }
 pub fn hash(data: &[u8]) -> String { ring::digest::digest(&ring::digest::SHA256,data).as_ref().iter().map(|b|format!("{b:02x}")).collect() }
-pub fn refusal_kind(reason:&str)->&'static str {
-    if reason.contains("413")||reason.contains("too large"){"attachment-provider"}
-    else if reason.contains("checksum")||reason.contains("readback"){"attachment-readback"}
-    else if reason.contains("metadata")||reason.contains("encoding"){"attachment-metadata"}
-    else{"attachment-storage"}
+/// Why an attachment was refused, decided where the failure is met; [`RefusalKind::code`] is its telemetry form.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum RefusalKind {Provider,Readback,Metadata,Storage}
+impl RefusalKind {
+    pub const fn code(self)->&'static str {
+        match self {Self::Provider=>"attachment-provider",Self::Readback=>"attachment-readback",Self::Metadata=>"attachment-metadata",Self::Storage=>"attachment-storage"}
+    }
 }
+/// A refused attachment: its kind for telemetry and the text for people.
+#[derive(Clone,Debug,PartialEq,Eq)]
+pub struct Refused {pub kind:RefusalKind,pub text:String}
+impl Refused {fn new(kind:RefusalKind,text:impl Into<String>)->Self {Self{kind,text:text.into()}}}
+impl From<String> for Refused {fn from(text:String)->Self {Self::new(RefusalKind::Storage,text)}}
+impl From<&str> for Refused {fn from(text:&str)->Self {Self::new(RefusalKind::Storage,text)}}
+const INVALID: &str = "Attachment metadata invalid; remove it and select the file again";
 fn valid(f: &File) -> bool {
     crate::resources::id(&f.id) && !f.name.is_empty() && !f.name.chars().any(char::is_control)
         && Path::new(&f.name).file_name().and_then(|n|n.to_str())==Some(f.name.as_str())
@@ -32,7 +41,7 @@ fn directory(path: &Path) -> Res<()> {
     Ok(())
 }
 fn draft_path(install: &Path, f: &File) -> Res<PathBuf> {
-    if !valid(f){return Err("Attachment metadata invalid; remove it and select the file again".into());}
+    if !valid(f){return Err(INVALID.into());}
     let setup=crate::setup::dir(install);directory(&setup)?;
     let dir=setup.join("reply-files");directory(&dir)?;
     let copy=dir.join(&f.hash);directory(&copy)?;
@@ -74,11 +83,13 @@ pub fn store_local(install: &Path, local: &Value) -> Res<Value> {
     }
     Ok(local)
 }
-pub fn store_file(install:&Path,m:&Value)->Res<File> {
-    let data=STANDARD.decode(m["data"].as_str().ok_or("Attachment data missing; select the file again")?).map_err(|e|format!("Attachment encoding: {e}; select the file again"))?;
+pub fn store_file(install:&Path,m:&Value)->Result<File,Refused> {
+    let metadata=|text:String|Refused::new(RefusalKind::Metadata,text);
+    let data=STANDARD.decode(m["data"].as_str().ok_or("Attachment data missing; select the file again")?).map_err(|e|metadata(format!("Attachment encoding: {e}; select the file again")))?;
     let mut value=m["file"].clone();value["hash"]=Value::String(hash(&data));
-    let f:File=serde_json::from_value(value).map_err(|e|format!("Attachment metadata: {e}; select the file again"))?;
+    let f:File=serde_json::from_value(value).map_err(|e|metadata(format!("Attachment metadata: {e}; select the file again")))?;
     if data.len() as u64!=f.bytes{return Err("Attachment length differs; select the original file again".into());}
+    if !valid(&f){return Err(metadata(INVALID.into()));}
     let path=draft_path(install,&f)?;save(&path,&data,&f)?;Ok(f)
 }
 pub fn draft_paths(install: &Path, value: &Value) -> Res<Vec<String>> {
@@ -101,13 +112,13 @@ pub fn selected(paths: &[String]) -> Res<Vec<(PathBuf, File)>> {
     }).collect()
 }
 /// Called only after the dispatcher's operation/revision/state checks, before its final board entry.
-pub fn upload(b: &dyn Board,n:u64,paths:&[String]) -> Res<Vec<File>> {
+pub fn upload(b: &dyn Board,n:u64,paths:&[String]) -> Result<Vec<File>,Refused> {
     let selected=selected(paths)?; // validate every local file before any upload
     selected.into_iter().map(|(path,mut f)|{
-        f.url=b.upload_file(n,&path).map_err(|e|format!("{}: {e}; check board access or the provider's file limit, then retry the same operation",f.name))?;
+        f.url=b.upload_file(n,&path).map_err(|e|Refused::new(if e.too_large(){RefusalKind::Provider}else{RefusalKind::Storage},format!("{}: {e}; check board access or the provider's file limit, then retry the same operation",f.name)))?;
         if !f.url.starts_with("https://")||f.url.contains(['\n','\r',' ','(',')']){return Err("Attachment upload returned an unsafe URL; check the board adapter before retrying".into());}
-        let bytes=b.file(&f.url).map_err(|e|format!("{}: upload readback failed: {e}; check delivery with the same operation",f.name))?;
-        if bytes.len() as u64!=f.bytes||hash(&bytes)!=f.hash{return Err(format!("{}: upload readback checksum differs; original kept, retry after fixing board storage",f.name));}
+        let bytes=b.file(&f.url).map_err(|e|Refused::new(RefusalKind::Readback,format!("{}: upload readback failed: {e}; check delivery with the same operation",f.name)))?;
+        if bytes.len() as u64!=f.bytes||hash(&bytes)!=f.hash{return Err(Refused::new(RefusalKind::Readback,format!("{}: upload readback checksum differs; original kept, retry after fixing board storage",f.name)));}
         Ok(f)
     }).collect()
 }

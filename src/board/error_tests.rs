@@ -39,6 +39,16 @@ fn text_without_a_reply_stays_other_and_reads_back_whole() {
 
 // Chain: A5 reason code -> status --json schema. Risk: a reason reaches status under a code the released schema refuses.
 #[test]
+fn a_file_limit_is_read_from_the_reply_not_from_a_request_name() {
+    assert!(Error::http(413, "PUT /x: HTTP 413").too_large());
+    assert!(Error::http(422, "PUT /x: HTTP 422 file is Too Large").too_large());
+    assert_eq!(Error::http(413, "PUT /x: HTTP 413").reason(), Reason::Refused, "the status reason stays on the wire");
+    assert!(!Error::http(409, "PUT /x: HTTP 409 Conflict").too_large());
+    assert!(!Error::http(500, "PUT /x: HTTP 500 too large").too_large());
+    assert!(!Error::new(Reason::Network, "too large").too_large());
+}
+
+#[test]
 fn every_reason_code_is_in_the_status_schema() {
     let schema: serde_json::Value = serde_json::from_str(include_str!("../../tests/fixtures/status-snapshot.schema.json")).unwrap();
     let allowed = schema["properties"]["reason_code"]["enum"].as_array().unwrap();

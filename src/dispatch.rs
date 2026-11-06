@@ -484,7 +484,7 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
         return Receipt { state: Some(before.state.name()), revision: Some(rev), ..Receipt::rejected(n, op, format!("#{n} is {}: `{kind}` not accepted", before.state.name())) }.late(late);
     }
     let unknown = |e: String| Receipt::new(n, op, "unknown", e, format!("Run `taskq inbox {n}`, then retry with the same --op-id."));
-    let files=match crate::reply_files::upload(b,n,files){Ok(files)=>files,Err(e)=>{tracing::info!(coreq_refusal=crate::reply_files::refusal_kind(&e));return Receipt::rejected(n,op,e);}};
+    let files=match crate::reply_files::upload(b,n,files){Ok(files)=>files,Err(e)=>{tracing::info!(coreq_refusal=e.kind.code());return Receipt::rejected(n,op,e.text);}};
     if before.publication.is_some() && matches!(kind, "requeue" | "later" | "failed" | "publication-failed")
         && let Err(e) = b.cancel_publication(n, before.result.as_deref().unwrap_or_default())
     {

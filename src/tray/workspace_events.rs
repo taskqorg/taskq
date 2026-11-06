@@ -136,7 +136,7 @@ impl TrayState {
             }
             Some("reply-file") => {
                 let result=crate::reply_files::store_file(&self.install,&m);
-                let receipt=match result{Ok(file)=>json!({"id":m["id"],"state":"accepted","file":file}),Err(e)=>{tracing::info!(coreq_refusal=crate::reply_files::refusal_kind(&e));json!({"id":m["id"],"state":"rejected","kind":"storage","reason":e})}};
+                let receipt=match result{Ok(file)=>json!({"id":m["id"],"state":"accepted","file":file}),Err(e)=>{tracing::info!(coreq_refusal=e.kind.code());json!({"id":m["id"],"state":"rejected","kind":"storage","reason":e.text})}};
                 web_eval(wv,&format!("taskq.receive({})",json!({"replyFileReceipt":receipt})),"tray.web.receive",&self.proxy,calls);
             }
             Some("answer") => {

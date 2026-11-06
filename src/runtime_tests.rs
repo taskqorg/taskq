@@ -1484,6 +1484,14 @@ finally:
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    // Risk (A5): the service read its trust wait from the error text.
+    #[test]
+    fn only_the_trust_error_marks_the_trust_wait() {
+        let pending=StartError::trust_pending();
+        assert!(pending.trust_pending&&pending.no_start&&pending.class()=="admission");
+        assert!(!StartError::admission(pending.message).trust_pending,"same text, no trust wait");
+    }
+
     // A1 / R9: trust repair can retry a definite no-start, but never reuse uncertain input.
     #[test]
     fn trust_retry_reuses_only_a_definitely_refused_input() {

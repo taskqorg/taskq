@@ -1191,7 +1191,7 @@ fn rules(root: &Path, resume: bool, fetch: impl FnMut(&str) -> Result<String, St
 /// contract file to trim, never a local path (§ 7 rule 6).
 pub(crate) fn over_cap(root: &Path, len: usize) -> StartError {
     let name = contract_path(root).ok().and_then(|(p, _)| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_else(|| "taskq.md".into());
-    StartError { message: format!("rules bundle {len} bytes, {} over the {RULES_CAP}-byte cap\nNext: trim {name} below the cap, then retry", len - RULES_CAP), class: "rules-cap", reportable: false, no_start: true }
+    StartError { message: format!("rules bundle {len} bytes, {} over the {RULES_CAP}-byte cap\nNext: trim {name} below the cap, then retry", len - RULES_CAP), class: "rules-cap", reportable: false, no_start: true, trust_pending: false }
 }
 
 /// § 8 Rule delivery: `taskq rules size` measures the continuation bundle, the larger one, with the working-tree
@@ -1512,26 +1512,31 @@ pub struct StartError {
     class: &'static str,
     pub reportable: bool,
     pub no_start: bool,
+    /// The project's Claude trust is not set yet: admission holds it and the service retries.
+    pub trust_pending: bool,
 }
 
 impl StartError {
     pub(crate) fn trust_setup() -> Self {
-        Self {message:"Claude trust setup refused; service retries automatically".into(),class:"trust-setup",reportable:false,no_start:true}
+        Self {message:"Claude trust setup refused; service retries automatically".into(),class:"trust-setup",reportable:false,no_start:true,trust_pending:false}
+    }
+    pub(crate) fn trust_pending() -> Self {
+        Self {trust_pending:true,..Self::admission("Claude trust setup pending; service retries automatically")}
     }
     pub fn admission(message: impl Into<String>) -> Self {
-        Self {message:message.into(),class:"admission",reportable:false,no_start:true}
+        Self {message:message.into(),class:"admission",reportable:false,no_start:true,trust_pending:false}
     }
     pub fn class(&self)->&'static str {self.class}
     pub fn io(error: std::io::Error, runtime: Option<&str>) -> Self {
         use std::io::ErrorKind;
         let reportable = matches!(error.kind(), ErrorKind::Other | ErrorKind::InvalidData | ErrorKind::UnexpectedEof | ErrorKind::BrokenPipe);
         let message = runtime.map_or_else(|| error.to_string(), |rt| format!("{rt}: {error}"));
-        Self { message, class:crate::profile::io_class(&error), reportable, no_start: true }
+        Self { message, class:crate::profile::io_class(&error), reportable, no_start: true, trust_pending: false }
     }
 }
 
 impl From<String> for StartError {
-    fn from(message: String) -> Self { Self { class:crate::profile::class(&message), message, reportable: false, no_start: true } }
+    fn from(message: String) -> Self { Self { class:crate::profile::class(&message), message, reportable: false, no_start: true, trust_pending: false } }
 }
 impl From<&str> for StartError {
     fn from(message: &str) -> Self { message.to_string().into() }
@@ -1552,7 +1557,7 @@ pub fn access(env: &Env, rt: &str) -> Result<crate::policy::Effective, StartErro
     let home = crate::platform::user_home().unwrap_or_default();
     let a = crate::policy::resolve(&crate::policy::load(env.install), &crate::policy::Host::here(env.install, env.root, &home), rt, env.permission_mode, env.codex);
     match &a.refused {
-        Some(r) => Err(StartError { message: format!("access refused: {r}"), class:"permission", reportable: false, no_start: true }),
+        Some(r) => Err(StartError { message: format!("access refused: {r}"), class:"permission", reportable: false, no_start: true, trust_pending: false }),
         None => Ok(a),
     }
 }
@@ -1587,7 +1592,7 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
         let config = home.clone().or_else(|| std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from));
         owner::registered_trust(env.install, env.root, config.as_deref()).map_err(|e| {
             log!("Claude trust setup: {e}");
-            StartError::admission("Claude trust setup pending; service retries automatically")
+            StartError::trust_pending()
         })?;
     }
     if of(&l.rt).has(Cap::AppTurn) {
@@ -1970,7 +1975,7 @@ impl ClaudeTurn {
                 use coreq::process::Failure;
                 if matches!(e,Failure::InvalidDeadline|Failure::Capacity|Failure::Owner(_)|Failure::Spawn(_)|Failure::InputLimit) {
                     let class=match &e {Failure::Spawn(error)=>crate::profile::io_class(error),Failure::InvalidDeadline|Failure::InputLimit=>"invalid",_=>"other"};
-                    return Err(StartError {message:format!("Claude background launch: {e}"),class,reportable:false,no_start:true});
+                    return Err(StartError {message:format!("Claude background launch: {e}"),class,reportable:false,no_start:true,trust_pending:false});
                 }
                 self.launch_error=Some(format!("Claude background launch outcome unknown: {e}; reconcile the original input"));
                 return Ok(());
@@ -1988,7 +1993,7 @@ impl ClaudeTurn {
             if launch_cause(RuntimeId::Claude.name(),&stderr)==Some("workspace-untrusted") {
                 return Err(StartError::trust_setup());
             }
-            return Err(StartError {message:format!("Claude background launch refused: {}",public_line(&refusal,&self.root,200)),class:"other",reportable:false,no_start:true});
+            return Err(StartError {message:format!("Claude background launch refused: {}",public_line(&refusal,&self.root,200)),class:"other",reportable:false,no_start:true,trust_pending:false});
         }
         if let Some(id)=returned {
             if !self.id.is_empty() && self.id!=id {self.launch_error=Some("Claude returned a different background job; reconcile the original input and session".into());}

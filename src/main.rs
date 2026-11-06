@@ -119,15 +119,21 @@ fn golden_selftest(traces: &str, published: bool) -> Res<usize> {
     result
 }
 
-#[tracing::instrument(name="run",skip_all)]
-fn run(argv: &[String]) -> Res<()> {
-    let mut a = Args::parse(argv)?;
-    telemetry::diagnostic::poll(&platform::default_install());
+/// Applies `--diagnose` and its limits before the command runs.
+fn diagnose(a: &Args) -> Res<()> {
     if let Some(selector)=a.one("diagnose") {
         let milliseconds=a.one("diagnose-ms").unwrap_or("60000").parse::<u64>().map_err(|_|"invalid --diagnose-ms")?;
         let limit=a.one("diagnose-limit").unwrap_or("256").parse::<u64>().map_err(|_|"invalid --diagnose-limit")?;
         telemetry::diagnostic::select(selector,Duration::from_millis(milliseconds),limit)?;
     } else if a.one("diagnose-ms").is_some() || a.one("diagnose-limit").is_some() {return Err("diagnostic limits require --diagnose".into());}
+    Ok(())
+}
+
+#[tracing::instrument(name="run",skip_all)]
+fn run(argv: &[String]) -> Res<()> {
+    let mut a = Args::parse(argv)?;
+    telemetry::diagnostic::poll(&platform::default_install());
+    diagnose(&a)?;
     if a.pos.is_empty() || a.pos.first().is_some_and(|s| s == "help") || a.pos.iter().any(|s| s == "-h") || a.flags.contains_key("help") {
         println!("{}", help(a.flags.contains_key("json"))?);
         return Ok(());

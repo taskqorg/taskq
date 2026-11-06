@@ -3642,7 +3642,7 @@ impl<'a> Service<'a> {
             }
         });
         if started.as_ref().is_err_and(|e|e.class()=="admission") {
-            if started.as_ref().err().is_some_and(|e| e.to_string().starts_with("Claude trust setup")) {
+            if started.as_ref().err().is_some_and(|e| e.trust_pending) {
                 self.execution_waits.insert(l.task, "Claude trust setup pending; service retries automatically".into());
             }
             self.pending.insert((l.task,l.attempt));
