@@ -2427,7 +2427,10 @@ fn disk_reading_reads_in_the_host_row_and_a_held_one_names_its_next_action() {
     let row = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
     assert!(row.contains(" disk 19.9 GB free (see Anomalies)"), "{row}");
     assert!(row.contains(" disk 20.0 GB free"), "{row}");
-    assert!(!row.contains("unknown") && row.matches(" disk ").count() == 2, "{row}");
+    assert!(
+        !row.contains("unknown") && row.matches(" disk ").count() == 2,
+        "{row}"
+    );
     let disk: Vec<_> = text.lines().filter(|l| l.contains(" · disk ")).collect();
     assert_eq!(
         disk,
@@ -2437,7 +2440,13 @@ fn disk_reading_reads_in_the_host_row_and_a_held_one_names_its_next_action() {
         ]
     );
     let v = snap.json();
-    assert_eq!(v["hosts"][0]["disk"], json!({"free_bytes": MIN_FREE - 1, "holds": true}));
-    assert_eq!(v["hosts"][2]["disk"], json!({"free_bytes": null, "holds": true}));
+    assert_eq!(
+        v["hosts"][0]["disk"],
+        json!({"free_bytes": MIN_FREE - 1, "holds": true})
+    );
+    assert_eq!(
+        v["hosts"][2]["disk"],
+        json!({"free_bytes": null, "holds": true})
+    );
     assert!(v["hosts"][3].get("disk").is_none());
 }

@@ -1207,10 +1207,9 @@ pub fn fix(
         ),
         None => match id {
             "version" => format!("run `taskq update` on {host}"),
-            "disk" if status == "unknown" => format!(
-                "on {host}: {}",
-                crate::disk::Disk::Unknown.next()
-            ),
+            "disk" if status == "unknown" => {
+                format!("on {host}: {}", crate::disk::Disk::Unknown.next())
+            }
             "disk" => format!("on {host}: {}", crate::disk::Disk::Free(0).next()),
             "reports" => match reports.and_then(parse_reports) {
                 Some((cause, numbers)) => reports_fix(cause, &numbers, host, gitlab),

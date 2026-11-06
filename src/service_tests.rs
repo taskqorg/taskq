@@ -14844,7 +14844,11 @@ fn disk_guard_holds_new_attempts_keeps_running_ones_and_recovers_at_the_threshol
     ] {
         s.disk = Some(disk);
         s.pass().unwrap();
-        assert_eq!(e.borrow().len(), 3, "no resume, reviewer or claim: {disk:?}");
+        assert_eq!(
+            e.borrow().len(),
+            3,
+            "no resume, reviewer or claim: {disk:?}"
+        );
         assert!(
             s.kids.iter().any(|k| k.task == stays) && e.borrow()[2].1.borrow().is_none(),
             "the running child continues"

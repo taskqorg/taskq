@@ -49,10 +49,17 @@ fn disk_reader_reads_a_real_folder_and_a_missing_one_stays_unknown() {
 // Risk: public text rounds a held reading up to the threshold, or a heartbeat value is misread by a reader.
 #[test]
 fn disk_text_never_rounds_up_and_the_heartbeat_value_round_trips() {
-    assert!(Disk::Free(MIN_FREE - 1).reason().starts_with("19.9 GB free"));
+    assert!(
+        Disk::Free(MIN_FREE - 1)
+            .reason()
+            .starts_with("19.9 GB free")
+    );
     assert_eq!(Disk::Free(MIN_FREE).free_text().unwrap(), "20.0 GB free");
     for d in [Disk::Free(MIN_FREE - 1), Disk::Unknown] {
-        assert_eq!(Disk::parse(d.line().strip_prefix("disk ").unwrap()), Some(d));
+        assert_eq!(
+            Disk::parse(d.line().strip_prefix("disk ").unwrap()),
+            Some(d)
+        );
     }
     assert_eq!(Disk::parse("much"), None);
 }
@@ -65,6 +72,12 @@ fn disk_reason_survives_the_gate_line_and_the_remote_projection() {
     assert_eq!(crate::cli::host_cmd::gate_text(&held), "Waiting: low disk");
     assert_eq!(crate::cli::host_cmd::gate_text(&unread), "Unknown: y");
     let code = |c| crate::resources::blockers(c, |_| serde_json::json!(null))[0].clone();
-    assert_eq!((code(&held)["code"].as_str(), code(&held)["knowledge"].as_str()), (Some("disk"), Some("known")));
+    assert_eq!(
+        (
+            code(&held)["code"].as_str(),
+            code(&held)["knowledge"].as_str()
+        ),
+        (Some("disk"), Some("known"))
+    );
     assert_eq!(code(&unread)["knowledge"], "unknown");
 }

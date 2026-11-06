@@ -1570,7 +1570,10 @@ fn disk_item_is_gap_below_the_threshold_ok_at_it_and_unknown_when_unread() {
         assert_eq!((item.status, item.fix.is_some()), (status, fix), "{disk:?}");
         assert!(!item.text.contains(['/', '\\']), "{}", item.text);
     }
-    assert!(IDS.contains(&"disk"), "a heartbeat `doctor` line may carry it");
+    assert!(
+        IDS.contains(&"disk"),
+        "a heartbeat `doctor` line may carry it"
+    );
     let h = |doctor: &str| Host {
         name: "win".into(),
         version: crate::platform::VERSION.into(),
