@@ -7405,6 +7405,11 @@ fn historical_no_host_repair_child() {
             c.root = dir.clone();
             let path = dir.join("taskq.log");
             let (_capture, _guard) = crate::profile::tests::collecting(&dir);
+            // This fixture proves repair ownership, not the collector's disk latency.
+            #[cfg(windows)]
+            _capture
+                .acknowledge_within(std::time::Duration::from_secs(30))
+                .unwrap();
             let project = if evidence == "foreign-project" {
                 "other/project"
             } else {
