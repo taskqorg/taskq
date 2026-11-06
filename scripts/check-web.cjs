@@ -62,6 +62,26 @@ function inventory(source, name) {
             "js." + prefix.value + "." + (method.key.name || method.key.value),
           );
       }
+      if (member === "measured" && node.callee.object?.name === "ui") {
+        const [prefix, ...lists] = node.arguments;
+        if (
+          typeof prefix.value !== "string" ||
+          lists.some(
+            (list) =>
+              list.type !== "ArrayExpression" ||
+              list.elements.some((e) => typeof e.value !== "string"),
+          )
+        )
+          fail("static measured operation lists required");
+        for (const operation of lists.reduce(
+          (all, list) =>
+            all.flatMap((name) =>
+              list.elements.map((e) => name + "." + e.value),
+            ),
+          ["js." + prefix.value],
+        ))
+          operations.add(operation);
+      }
       if (
         ["effect", "action"].includes(member) &&
         ["execution", "ui"].includes(node.callee.object?.name)
@@ -103,6 +123,29 @@ function inventory(source, name) {
   visit(acorn.parse(source, { ecmaVersion: "latest" }));
   return operations;
 }
+// Only the reading anchor touches scroll offsets. Each exception names why it holds no reader position.
+const SCROLL_OWNER = "reading-anchor.js",
+  SCROLL_EXCEPTIONS = {
+    "tray.rs":
+      "native capture harness strings set a fixture position; no reader sees them",
+  };
+function scrollViolations(root) {
+  const out = [];
+  for (const file of fs
+    .readdirSync(path.join(root, "src"), { recursive: true })
+    .map((f) => String(f).replaceAll("\\", "/"))
+    .filter(
+      (f) =>
+        /\.(?:js|rs)$/.test(f) && f !== SCROLL_OWNER && !SCROLL_EXCEPTIONS[f],
+    ))
+    fs.readFileSync(path.join(root, "src", file), "utf8")
+      .split("\n")
+      .forEach((line, i) => {
+        if (/\.scrollTop\b|\.scrollTo\(|\.scrollBy\(/.test(line))
+          out.push(file + ":" + (i + 1));
+      });
+  return out;
+}
 if (require.main === module) {
   const root = path.resolve(__dirname, ".."),
     operations = new Set([
@@ -134,6 +177,11 @@ if (require.main === module) {
       .readFileSync(path.join(root, "src", file), "utf8")
       .matchAll(/\b(?:icon|button)\('([a-z0-9-]+)'/g))
       if (!names.has(name)) throw Error(file + ": unknown icon " + name);
+  const scroll = scrollViolations(root);
+  if (scroll.length)
+    throw Error(
+      "scroll offsets belong to " + SCROLL_OWNER + ": " + scroll.join(", "),
+    );
   const out = process.argv[2];
   if (out) {
     fs.mkdirSync(out, { recursive: true });
@@ -147,3 +195,4 @@ if (require.main === module) {
     );
 }
 module.exports = inventory;
+module.exports.scrollViolations = scrollViolations;

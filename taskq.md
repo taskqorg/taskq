@@ -275,6 +275,13 @@ Local state has one current format: no reader, importer or alias for an older lo
 Balancing requires every board host to adopt compatible readers before routing fences or reviewer quota input: [cutover](docs/design/configuration.md#balancing-cutover). Preserve active ownership, results, retries and quota windows; no live policy or account changes are implied.
 ## Product
 Looks/sound requirements and their specification links: [product contract](docs/design/product-contract.md#contract-detail), binding under R13.
+### Scroll position
+Each scroll region holds position by row key and offset, never pixels; only the chat bottom or Latest follows new data.
+
+One reading anchor owns every scroll position and restores focus and selection by key; visible rows shift at most 2 CSS px, and data arriving during wheel, touch, drag or inertia applies within 250 ms after scrolling stops.
+
+Scrolling stays native, with no library. Drift over 2 CSS px goes to existing telemetry with surface and cause ([detail](docs/design/ai-workspace.md#scroll-position)).
+Conversations keeps complete task threads, paged attempt logs on demand, local first paint, background refresh and per-open timing, including restored selections ([detail](docs/design/ai-workspace.md#task-thread)).
 ### [menu]
 [menu]: docs/design/menu.md#contract-detail
 [hs]: docs/design/host-service.md#contract-detail

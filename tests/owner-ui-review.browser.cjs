@@ -391,7 +391,7 @@ const state = {
         .locator(".dialogue-item")
         .filter({ hasText: "Unattributed native block" })
         .innerText(),
-      /Model unavailable/,
+      /Model unknown/,
     );
     assert(
       !(await workspace
@@ -400,7 +400,9 @@ const state = {
         .then((t) => t.includes("DO_NOT_INFER_THIS_MODEL"))),
     );
     await workspace
-      .getByRole("button", { name: "Load earlier worker", exact: true })
+      .locator(".attempt-row")
+      .first()
+      .getByRole("button", { name: "Open full log", exact: true })
       .click();
     await workspace.getByText("First model message", { exact: true }).waitFor();
     const chronological = await workspace

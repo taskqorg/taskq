@@ -17,7 +17,7 @@ const snapshot = { projects: [{ root: "/alpha" }] },
       taskFilter: ["doing", "unknown", "doing", "ready"],
       aiRoot: "/alpha",
       working: { "/alpha": true, "/removed": true },
-      scroll: 120,
+      scroll: { rows: [{ key: "task:a:1", y: -4 }] },
       open: { scope: true, obsolete: "not boolean" },
       pending: { action: "close" },
     },
@@ -50,7 +50,11 @@ for (const [current, page] of [
     routes,
   ).current;
   assert.equal(result.page, page);
-  assert.equal(result.scroll, 0);
+  assert.deepEqual(
+    result.scroll,
+    { rows: [] },
+    "a saved number is not a position",
+  );
   assert.equal(result.aiRoot, null);
 }
 assert.equal(
@@ -64,13 +68,17 @@ assert.deepEqual(
       ...base,
       trail: [
         { page: "/removed", project: "/removed" },
-        { page: "settings", scroll: 20, workCard: { secret: "draft" } },
+        {
+          page: "settings",
+          scroll: { rows: [{ key: "r", y: 20 }] },
+          workCard: { secret: "draft" },
+        },
       ],
     },
     snapshot,
     routes,
   ).trail.map((v) => [v.page, v.scroll, v.workCard]),
-  [["settings", 20, undefined]],
+  [["settings", { rows: [{ key: "r", y: 20 }] }, undefined]],
 );
 assert.equal(
   normalize(
@@ -96,7 +104,7 @@ const current = {
     task: 112,
     revision: 71,
   },
-  scroll: 123,
+  scroll: { rows: [{ key: "task:a:112", y: -3 }] },
   open: { reader: true },
   focus: { tag: "BUTTON", key: "{}", index: 0 },
 };
@@ -121,7 +129,7 @@ assert(
 );
 assert.deepEqual(large.current.answer, current.answer);
 assert.deepEqual(large.current.focus, current.focus);
-assert.equal(large.current.scroll, 123);
+assert.deepEqual(large.current.scroll, current.scroll);
 assert(large.trail.length > 0, "retain newest Back contexts within the bound");
 // #2168 C2/C7: accumulated off-screen disclosures must not block saving current navigation.
 const disclosures = Object.fromEntries(
@@ -135,7 +143,16 @@ const field = { tagName: "TEXTAREA", dataset: { cField: "text" } },
 let mounted = [visible];
 const menu = {
   contains: () => true,
-  querySelector: () => ({ scrollTop: 123 }),
+  querySelector: () => ({
+    clientWidth: 300,
+    getBoundingClientRect: () => ({ top: 0, bottom: 100 }),
+    querySelectorAll: () => [
+      {
+        dataset: { rowKey: "task:a:112" },
+        getBoundingClientRect: () => ({ top: -3, bottom: 30, height: 33 }),
+      },
+    ],
+  }),
   querySelectorAll: (s) =>
     s.startsWith("details") ? mounted : s === "TEXTAREA" ? [field] : [],
 };
@@ -165,7 +182,7 @@ assert.equal(
 const navigation = sent[0].navigation;
 assert(new TextEncoder().encode(JSON.stringify(navigation)).length <= 65536);
 assert.deepEqual(navigation.current.answer, current.answer);
-assert.equal(navigation.current.scroll, 123);
+assert.deepEqual(navigation.current.scroll, current.scroll);
 assert.deepEqual(navigation.current.focus, {
   tag: "TEXTAREA",
   key: JSON.stringify(field.dataset),

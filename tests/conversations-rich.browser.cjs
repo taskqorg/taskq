@@ -141,14 +141,24 @@ const fs = require("node:fs"),
       assert.equal(
         await panel.locator("img").count(),
         4,
-        "reader caps mounted images",
+        "inline previews retain D4's mounted image bound",
       );
+      assert.equal(await panel.locator("figure.transcript-image").count(), 7);
+      await panel.locator('[data-image-key="attempt:71:14:0"]').click();
+      assert.equal(
+        await panel.locator('[data-key="attempt:71:14:0"] img').count(),
+        1,
+      );
+      assert(
+        (await panel.locator("img").count()) <= 4,
+        "switching previews keeps the mounted bound",
+      );
+      await panel.locator('[data-image-key="attempt:71:10:0"]').click();
       assert.match(
-        await panel.locator('[data-key="10:0"] .meta').innerText(),
+        await panel.locator('[data-key="attempt:71:10:0"] .meta').innerText(),
         /^Native image/,
         "a native user-image wrapper never claims board/human authorship",
       );
-      assert.match(await panel.innerText(), /Image reader preview limit/);
       assert.match(await panel.innerText(), /Image bytes missing/);
       assert.equal(
         await panel
@@ -174,7 +184,9 @@ const fs = require("node:fs"),
         .filter({ hasText: "Exact source" })
         .click();
       assert.equal(
-        await panel.locator('[data-key="0:0"] details pre').innerText(),
+        await panel
+          .locator('[data-key="attempt:71:0:0"] details pre')
+          .innerText(),
         text,
       );
       await panel
@@ -189,7 +201,9 @@ const fs = require("node:fs"),
         );
         for (const width of [900, 540]) {
           await page.setViewportSize({ width, height: 760 });
-          await panel.locator('[data-key="0:0"]').scrollIntoViewIfNeeded();
+          await panel
+            .locator('[data-key="attempt:71:0:0"]')
+            .scrollIntoViewIfNeeded();
           assert(
             await page
               .locator(".conversation-reader")
@@ -226,6 +240,72 @@ const fs = require("node:fs"),
         (await page.evaluate(() => taskq.bounds().conversations.nativeBytes)) >
           src.length * 6,
         "resident byte accounting includes recorded images",
+      );
+      // Several individually valid images can exceed the reader's shared 2 MiB budget.
+      const large = await page.evaluate(() => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 640;
+        canvas.height = 384;
+        const ctx = canvas.getContext("2d"),
+          pixels = ctx.createImageData(640, 384);
+        for (let i = 0; i < pixels.data.length; i += 65536)
+          crypto.getRandomValues(pixels.data.subarray(i, i + 65536));
+        ctx.putImageData(pixels, 0, 0);
+        return canvas.toDataURL();
+      });
+      assert(
+        large.length < 2 * 1024 * 1024 && large.length * 4 > 2 * 1024 * 1024,
+      );
+      const previous = await page.evaluate(
+        () => sent.filter((m) => m.action === "transcript").at(-1).id,
+      );
+      await panel.locator('[data-c="worker-latest"]').click();
+      await page.waitForFunction(
+        (id) => sent.filter((m) => m.action === "transcript").at(-1).id !== id,
+        previous,
+      );
+      await page.evaluate(
+        ({ thread, large }) => {
+          const m = sent.filter((m) => m.action === "transcript").at(-1);
+          taskq.receive({
+            dialogueReceipt: {
+              ...m,
+              conversation: thread,
+              state: "accepted",
+              value: {
+                generation: "fixture-rich",
+                start: 0,
+                end: 30,
+                size: 30,
+                items: Array.from({ length: 4 }, (_, i) => ({
+                  at: 10 + i,
+                  i: 0,
+                  role: "image",
+                  text: "",
+                  image: {
+                    name: "Large invented preview " + i,
+                    src: large,
+                    width: 640,
+                    height: 384,
+                  },
+                })),
+              },
+            },
+          });
+        },
+        { thread, large },
+      );
+      await page.waitForFunction(() =>
+        document.body.textContent.includes("Large invented preview"),
+      );
+      const mounted = await panel
+        .locator("img")
+        .evaluateAll((nodes) =>
+          nodes.reduce((n, img) => n + img.getAttribute("src").length, 0),
+        );
+      assert(
+        mounted > 0 && mounted <= 2 * 1024 * 1024,
+        "mounted previews share the 2 MiB bound",
       );
       assert(
         !requests.some((u) => /^https?:/.test(u)),

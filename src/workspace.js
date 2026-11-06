@@ -1,6 +1,7 @@
 "use strict";
 const copyLabel = require("./copy-label.js");
 const ui = require("./ui-runtime.js"),
+  anchor = require("./reading-anchor.js"),
   icons = require("./ui-icons.js"),
   shell = require("./app-shell.js"),
   { h } = require("preact"),
@@ -985,7 +986,15 @@ const { create } = execution.module("workspace", {
                       p,
                       [...history.nodes, ...events, question].filter(Boolean),
                     ),
-            !row.archived && p && t && answers.answerSteerComposer(p.issues, t),
+            !row.archived &&
+              p &&
+              (t
+                ? answers.answerSteerComposer(p.issues, t)
+                : h(
+                    "p",
+                    { class: "meta" },
+                    "This task is closed or no longer on the live board. No worker message will be sent.",
+                  )),
             p && answers.answerNotices(p.issues, row.task),
           ],
         };
@@ -1690,15 +1699,18 @@ const { create } = execution.module("workspace", {
       },
       ...execution.module("workspace.instance", {
         draw: function () {
+          // Data arriving during scrolling waits until it stops; navigation sets its restore and does not wait.
+          if (anchor.busy() && view.restoreScroll == null) {
+            anchor.after("workspace", () => api.draw());
+            return;
+          }
           conversations.capture();
           view.disclosures = { ...view.disclosures, ...state.groups() };
           const s = snapshot.value,
             active = document.activeElement,
             focus = state.capture().focus,
-            scroll =
-              view.restoreScroll ??
-              menu.querySelector(".content")?.scrollTop ??
-              0;
+            place =
+              view.restoreScroll ?? anchor.held(menu.querySelector(".content"));
           document.documentElement.style.colorScheme = s?.theme || "light dark";
           menu.style.setProperty("--size", (s?.font || 16) + "px");
           for (const entry of (s?.palette || "").split(";")) {
@@ -1844,11 +1856,10 @@ const { create } = execution.module("workspace", {
           )
             reports.mount(menu);
           state.restore(view.disclosures);
-          if (
-            view.page !== "conversations" &&
-            menu.querySelector(".content").scrollTop !== scroll
-          )
-            menu.querySelector(".content").scrollTop = scroll;
+          if (view.page !== "conversations") {
+            anchor.restore(menu.querySelector(".content"), place, "workspace");
+            anchor.track(menu.querySelector(".content"), "workspace");
+          }
           view.restoreScroll = null;
           // Background redraws leave an unchanged native editor (and its IME owner) alone.
           if (document.hasFocus() && document.activeElement !== active) {
@@ -1974,6 +1985,8 @@ const { create } = execution.module("workspace", {
             ...state.capture(),
             conversation: conversations.context(),
           });
+          if (page === "conversations" && view.page !== "conversations")
+            conversations.entering();
           view.page = page;
           if (page === "operations") {
             view.operation = {
@@ -2111,13 +2124,16 @@ const { create } = execution.module("workspace", {
             return;
           }
           const prior = renderer.pop() || {
-            page: "conversations",
-            open: {},
-            scroll: 0,
-          };
+              page: "conversations",
+              open: {},
+              scroll: 0,
+            },
+            entering =
+              prior.page === "conversations" && view.page !== "conversations";
           state.apply(prior);
           if (prior.conversation)
             conversations.restoreContext(prior.conversation);
+          if (entering) conversations.entering();
           api.draw();
           menu.querySelector(".shell-overflow")?.removeAttribute("open");
           state.focus(prior.focus);
@@ -2384,6 +2400,7 @@ const { create } = execution.module("workspace", {
         mount: function () {
           copyLabel.mount(menu);
           ui.connect();
+          anchor.watch(document);
           window.taskq = { receive: api.receive, bounds: api.bounds };
           conversations.mount();
           api.draw();

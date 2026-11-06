@@ -7060,6 +7060,60 @@ fn conversations_board_cost_checkpoint() {
 }
 
 #[test]
+fn closed_thread_keeps_attempt_roles_and_source_times() {
+    // A5: closed threads must interleave every accepted attempt with board records, just like live threads.
+    let b = Fake::default();
+    let n = b.create("Thread fixture", "", &["taskq".into()]).unwrap();
+    let first = b.comment(n, "taskq: spawn worker codex:first mac").unwrap();
+    b.comment(n, "taskq: spawn worker codex:ignored mac")
+        .unwrap();
+    b.comment(n, &format!("taskq: gone attempt {first}"))
+        .unwrap();
+    let second = b
+        .comment(n, "taskq: spawn worker codex:second mac")
+        .unwrap();
+    b.comment(
+        n,
+        &format!("taskq: result {} attempt {second}", "a".repeat(40)),
+    )
+    .unwrap();
+    let reviewer = b
+        .comment(n, "taskq: spawn reviewer codex:review mac")
+        .unwrap();
+    let live = snapshot::read(&b, &cfg(), &Value::Null, &[]).json()["tasks"][0].clone();
+    b.comment(n, &format!("taskq: close attempt {reviewer}"))
+        .unwrap();
+    b.close(n).unwrap();
+    let comments = b.comments(n).unwrap();
+    let started = |id| comments.iter().find(|c| c.id == id).unwrap().created;
+    let row = closed_pin(&b, n, false).unwrap()["tasks"][0].clone();
+    assert_eq!(
+        row["workers"],
+        json!([
+            {"attempt":first,"role":"worker","session":"codex:first mac","started":started(first)},
+            {"attempt":second,"role":"worker","session":"codex:second mac","started":started(second)}
+        ])
+    );
+    assert_eq!(
+        row["reviewers"],
+        json!([
+            {"attempt":reviewer,"role":"reviewer","session":"codex:review mac","started":started(reviewer)}
+        ])
+    );
+    assert_eq!(live["workers"], row["workers"]);
+    assert_eq!(live["reviewers"], row["reviewers"]);
+    assert_eq!(closed_history(&b, 1, None, false).unwrap()["tasks"][0], row);
+    b.state.borrow_mut().fail_comment_reads = 1;
+    let unknown = closed_pin(&b, n, false).unwrap()["tasks"][0].clone();
+    assert!(
+        !unknown["error"].is_null(),
+        "unreadable history stays unknown"
+    );
+    assert!(unknown["workers"].is_null());
+    assert!(unknown["reviewers"].is_null());
+}
+
+#[test]
 fn closed_pin_reads_exact_issue_and_fences_transcript() {
     let b = Fake::default();
     for n in 1..=12 {

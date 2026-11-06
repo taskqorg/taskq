@@ -181,11 +181,22 @@ const fs = require("node:fs"),
         .locator(".conversation-reader")
         .evaluate((el) => {
           el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight * 2);
-          el.dispatchEvent(new Event("scroll"));
           const top = el.getBoundingClientRect().top,
-            n = [...el.querySelectorAll("[data-native-part]")].find(
-              (n) => n.getBoundingClientRect().bottom > top,
-            );
+            visible = () =>
+              [...el.querySelectorAll("[data-native-part]")].find(
+                (n) => n.getBoundingClientRect().bottom > top,
+              );
+          // On every font, park the record's copy control just above the viewport so focus has to scroll.
+          for (let i = 0; i < 8 && visible(); i++) {
+            const copy = visible()
+              .closest("[data-key]")
+              .querySelector(".copy-block")
+              .getBoundingClientRect();
+            if (copy.bottom <= top) break;
+            el.scrollTop += copy.bottom - top + 1;
+          }
+          el.dispatchEvent(new Event("scroll"));
+          const n = visible();
           if (!n) return null;
           const range = document.createRange();
           range.selectNodeContents(n);
@@ -200,6 +211,30 @@ const fs = require("node:fs"),
         });
       assert(anchor, "visible paragraph has an identity");
       await page.locator('[data-key="' + anchor.key + '"] .copy-block').focus();
+      // Focus scrolls its control into view; the hold starts from where that leaves the reader.
+      anchor.y = await page.evaluate(
+        (a) =>
+          new Promise((r) =>
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => {
+                const el = document.querySelector(".conversation-reader");
+                r(
+                  el
+                    .querySelector(
+                      '[data-key="' +
+                        a.key +
+                        '"] [data-native-part="' +
+                        a.part +
+                        '"]',
+                    )
+                    .getBoundingClientRect().top -
+                    el.getBoundingClientRect().top,
+                );
+              }),
+            ),
+          ),
+        anchor,
+      );
       await page.evaluate(() => {
         nativeCount++;
       });
@@ -345,6 +380,9 @@ const fs = require("node:fs"),
           }, anchor);
           await retained("expanding Details");
         }
+        const nativeBeforeTarget = await page.evaluate(
+          () => sent.filter((m) => m.action === "transcript").length,
+        );
         await page.evaluate(() =>
           taskq.receive({
             open: {
@@ -360,6 +398,14 @@ const fs = require("node:fs"),
           sent.some((m) => m.action === "history" && m.event === 1),
         );
         await page.locator('[data-event="1"]').waitFor();
+        assert(
+          (await page.evaluate(
+            () => sent.filter((m) => m.action === "transcript").length,
+          )) -
+            nativeBeforeTarget <=
+            1,
+          "an exact board target reads at most the live tail, never scans the worker log",
+        );
         const exact = await page
           .locator('[data-event="1"]')
           .evaluate((n) =>

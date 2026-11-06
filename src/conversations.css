@@ -1573,14 +1573,11 @@
   max-width: 100%;
   width: auto;
   height: auto;
-  max-height: 320px;
+  max-height: 480px;
   object-fit: contain;
   object-position: left top;
 }
-.transcript-image details[open] + img {
-  max-height: none;
-}
-.transcript-image :is(summary, figcaption) {
+.transcript-image figcaption {
   font-size: 0.85em;
   color: var(--muted);
 }

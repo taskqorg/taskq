@@ -470,6 +470,7 @@ fn remote_codex_reads_starting_until_accepted() {
         heartbeat: Value::Null,
         worker: None,
         workers: vec![],
+        reviewers: vec![],
         conversation: None,
         brief: String::new(),
         n: 1,
@@ -541,6 +542,7 @@ fn codex_thread_links_only_on_its_host_else_dashq_progress() {
         heartbeat: Value::Null,
         worker: None,
         workers: vec![],
+        reviewers: vec![],
         conversation: None,
         brief: String::new(),
         n: 3,
@@ -713,6 +715,7 @@ fn stuck_row_prints_one_line_and_json_age() {
         heartbeat: Value::Null,
         worker: None,
         workers: vec![],
+        reviewers: vec![],
         conversation: None,
         brief: String::new(),
         n,
@@ -1482,6 +1485,7 @@ fn every_wait_producer_maps_to_a_spec_named_owner_text() {
         heartbeat: Value::Null,
         worker: None,
         workers: vec![],
+        reviewers: vec![],
         conversation: None,
         brief: String::new(),
         n: 1,
@@ -1600,6 +1604,21 @@ fn retained_worker_identity_comes_only_from_accepted_board_projection() {
         [9],
         "history enumerates accepted sources only"
     );
+}
+
+// Chain: Task thread, docs/design/ai-workspace.md. Risk: a thread hides a reviewer attempt: a task with none still prints no key.
+#[test]
+fn row_lists_reviewer_attempts_only_when_present() {
+    let row = |reviewers| {
+        Row {
+            reviewers,
+            ..Default::default()
+        }
+        .json()
+    };
+    assert!(row(vec![]).get("reviewers").is_none());
+    let reviewer = json!({"attempt":9,"session":"codex:- mac","role":"reviewer","started":5});
+    assert_eq!(row(vec![reviewer.clone()])["reviewers"], json!([reviewer]));
 }
 
 // #1775 A3: a reviewer spawned in review leaves `changes` (state moves only). Risk: its execution row has no role,

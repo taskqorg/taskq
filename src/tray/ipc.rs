@@ -528,10 +528,14 @@ impl TrayState {
             "snapshot-checkpoint"
                 if self.snapshot.is_some()
                     && self.routes.iter().any(|r| r == "conversations-checkpoint")
+                    && m["step"].as_u64() == Some(self.step as u64)
                     && m["state"] == "passed" =>
             {
                 self.checkpoint_complete = true;
                 println!("PASS native Conversations checkpoint: {}", m["value"]);
+                if self.checkpoint_deadline.take().is_some() {
+                    let _ = self.proxy.send_event(Ev::Shot2(self.step));
+                }
             }
             "overflow" if self.snapshot.is_some() => self.overflow.push(format!(
                 "{} by {} px",
