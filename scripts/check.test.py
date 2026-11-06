@@ -34,10 +34,10 @@ print('PASS isolated fixture installation, worker identity and credentials; laun
 # #1940: reduce process oversubscription, retaining all fixture deadlines and explicit CI overrides.
 env = {k:v for k,v in os.environ.items() if k != 'RUST_TEST_THREADS'}
 shaped = check['test_environment'](env, 'invented-install')
-if sys.platform == 'win32':
+if sys.platform in ('win32', 'darwin'):
     assert shaped['RUST_TEST_THREADS'] == str(min(4, os.cpu_count() or 1))
 assert check['test_environment']({**env, 'RUST_TEST_THREADS':'2'}, 'invented-install')['RUST_TEST_THREADS'] == '2'
-print('PASS bounded Windows harness concurrency; explicit override preserved')
+print('PASS bounded Windows and Mac harness concurrency; explicit override preserved')
 
 assert names('src/tray.rs', 'if rt == "claude" {}') == ['src/tray.rs:1: if rt == "claude" {}']
 assert names('src/tray.rs', 'of(rt).remote\n#[cfg(test)]\nmod tests {\nlet rt = "codex";\n}') == []
