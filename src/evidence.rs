@@ -79,6 +79,58 @@ fn git_bytes(root: &Path, args: &[&str]) -> Res<Vec<u8>> {
     }
     Ok(output.stdout)
 }
+/// Uncompressed files the source comparison accepts (`archive_files`); a larger ZIP cannot match.
+const ARCHIVE_LIMIT: u64 = 128 * 1024 * 1024;
+fn read_limited(path: &Path, limit: u64) -> Res<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(limit + 1).read_to_end(&mut bytes))
+        .map_err(|_| "evidence workspace observation unknown")?;
+    if bytes.len() as u64 > limit {
+        return Err("evidence workspace observation unknown".into());
+    }
+    Ok(bytes)
+}
+/// A real repository's ZIP exceeds the bounded process output, so Git writes it to private storage.
+fn candidate_archive(root: &Path, candidate: &str) -> Res<Vec<u8>> {
+    struct Private(std::path::PathBuf);
+    impl Drop for Private {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let dir = Private(
+        std::env::temp_dir().join(format!("taskq-evidence-archive-{}", crate::runtime::uuid())),
+    );
+    let mut options = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        options.mode(0o700);
+    }
+    options
+        .create(&dir.0)
+        .map_err(|_| "evidence workspace observation unknown")?;
+    let file = dir.0.join("candidate.zip");
+    let output = format!(
+        "--output={}",
+        file.to_str()
+            .ok_or("evidence workspace observation unknown")?
+    );
+    git_bytes(
+        root,
+        &[
+            "-c",
+            "core.autocrlf=false",
+            "archive",
+            "--format=zip",
+            &output,
+            candidate,
+        ],
+    )?;
+    read_limited(&file, ARCHIVE_LIMIT)
+}
 fn git(root: &Path, args: &[&str]) -> Res<String> {
     String::from_utf8(git_bytes(root, args)?)
         .map_err(|_| "evidence workspace identity unreadable".into())
@@ -337,17 +389,7 @@ fn archival_source(b: &dyn Board, root: &Path, a: &Authorization, source: &Sourc
         return Err("canonical source archive missing or changed".into());
     }
     // No extraction or interpretation of downloaded files; Git reads only its owned objects.
-    let expected = git_bytes(
-        root,
-        &[
-            "-c",
-            "core.autocrlf=false",
-            "archive",
-            "--format=zip",
-            &a.candidate,
-        ],
-    )?;
-    let expected = archive_files(&expected, false)?;
+    let expected = archive_files(&candidate_archive(root, &a.candidate)?, false)?;
     if archive_files(&data, false)? != expected && archive_files(&data, true)? != expected {
         return Err("canonical source archive differs from candidate".into());
     }
@@ -1455,6 +1497,100 @@ mod tests {
         assert_eq!(git(&f.root, &["status", "--porcelain"]).unwrap(), status);
     }
 
+    // R12/§7 defect: the candidate archive read through the 1 MiB process output cap refused a
+    // real repository as "evidence workspace observation unknown". Protects the comparison of
+    // archives above that cap and the unchanged missing/changed candidate refusals.
+    #[test]
+    fn archival_source_reads_candidate_archive_above_process_output_cap() {
+        let (f, candidate, source) = retained();
+        assert!(retained_authorize(&f, &candidate, source, true, true).ok());
+        let mut a: Authorization =
+            serde_json::from_str(&f.log().last().unwrap().body[PREFIX.len()..]).unwrap();
+        // Deterministic and incompressible, so the ZIP itself stays above the cap.
+        let mut word = 0x9e37_79b9_7f4a_7c15u64;
+        let large: Vec<u8> = (0..2 * 1024 * 1024 / 8)
+            .flat_map(|_| {
+                word ^= word << 13;
+                word ^= word >> 7;
+                word ^= word << 17;
+                word.to_le_bytes()
+            })
+            .collect();
+        let commit = |bytes: &[u8]| {
+            std::fs::write(f.root.join("large.bin"), bytes).unwrap();
+            git(&f.root, &["add", "large.bin"]).unwrap();
+            git(
+                &f.root,
+                &[
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "commit",
+                    "-qm",
+                    "invented large source",
+                ],
+            )
+            .unwrap();
+            git(&f.root, &["rev-parse", "HEAD"])
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        let canonical = |sha: &str| {
+            let file = f.root.join(".git/invented-canonical.zip");
+            let output = format!("--output={}", file.to_str().unwrap());
+            git_bytes(
+                &f.root,
+                &[
+                    "archive",
+                    "--format=zip",
+                    "--prefix=canonical/",
+                    &output,
+                    sha,
+                ],
+            )
+            .unwrap();
+            let data = std::fs::read(&file).unwrap();
+            let source = Source {
+                url: "https://board.example/source.zip".into(),
+                sha256: hash(&data),
+            };
+            f.b.state.borrow_mut().images[1].1 = data.clone();
+            (data, source)
+        };
+        a.candidate = commit(&large);
+        let (data, source) = canonical(&a.candidate);
+        assert!(data.len() > 1024 * 1024);
+        assert_eq!(archive_files(&data, true).unwrap()["large.bin"], large);
+        archival_source(&f.b, &f.root, &a, &source).unwrap();
+
+        let mut changed = large.clone();
+        changed[0] ^= 1;
+        let (_, source) = canonical(&commit(&changed));
+        assert_eq!(
+            archival_source(&f.b, &f.root, &a, &source).unwrap_err(),
+            "canonical source archive differs from candidate"
+        );
+        a.candidate = "0".repeat(40);
+        assert_eq!(
+            archival_source(&f.b, &f.root, &a, &source).unwrap_err(),
+            "evidence workspace observation unknown"
+        );
+    }
+
+    #[test]
+    fn candidate_archive_read_refuses_over_limit_as_unknown() {
+        let (f, _, _) = retained();
+        let file = f.root.join(".git/invented-limit.zip");
+        std::fs::write(&file, b"12345").unwrap();
+        assert_eq!(read_limited(&file, 5).unwrap(), b"12345");
+        assert_eq!(
+            read_limited(&file, 4).unwrap_err(),
+            "evidence workspace observation unknown"
+        );
+    }
+
     // §7/R5/R13: retained evidence binds a distinct candidate, creation baseline and source ZIP.
     // Risk: restart or lost responses publish source, replay native input, or replace an artifact.
     #[test]
@@ -1646,11 +1782,7 @@ mod tests {
         let candidate = "ee39a45cdaf50f9ebc9d4de3c9a8fc92118b2e34";
         let baseline = "49acb093929ed0bc4db0f4a1722b5465bdb83805";
         assert_ne!(candidate, baseline);
-        let expected = archive_files(
-            &git_bytes(root, &["archive", "--format=zip", candidate]).unwrap(),
-            false,
-        )
-        .unwrap();
+        let expected = archive_files(&candidate_archive(root, candidate).unwrap(), false).unwrap();
         assert!(
             archive_files(&source, false).unwrap() == expected
                 || archive_files(&source, true).unwrap() == expected
