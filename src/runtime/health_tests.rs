@@ -78,18 +78,27 @@ fn runtime_2522_dead_daemon_is_not_a_running_worker() {
 
 // Chain: #2522 A2/A3, §8: real CLI boundary, isolated PATH -> fresh resolution and read-only daemon probe.
 // Risk: a vanished binary is cached until service restart, or a health probe starts/resumes a worker.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn runtime_2522_native_probe_and_fresh_resolution() {
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     let root = std::env::temp_dir().join(format!("taskq-2522-native-{}", uuid()));
     for dir in ["old", "current"] {
         std::fs::create_dir_all(root.join(dir)).unwrap();
     }
     for dir in ["old", "current"] {
-        let bin = root.join(dir).join("claude");
+        let bin = root.join(dir).join(if cfg!(windows) {
+            "claude.cmd"
+        } else {
+            "claude"
+        });
+        #[cfg(unix)]
         std::fs::write(&bin, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TASKQ_HEALTH_CALLS\"\n[ \"$1 $2\" = 'daemon status' ] || exit 91\nprintf 'not running\\n'\nexit 1\n").unwrap();
-        std::fs::set_permissions(bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        #[cfg(windows)]
+        std::fs::write(&bin, "@echo off\r\necho %*>> \"%TASKQ_HEALTH_CALLS%\"\r\nif not \"%*\"==\"daemon status\" exit /b 91\r\necho not running\r\nexit /b 1\r\n").unwrap();
     }
     let out = coreq::process::output(
         "qualification.runtime-dependency",
@@ -110,20 +119,27 @@ fn runtime_2522_native_probe_and_fresh_resolution() {
     );
     assert!(out.is_ok(), "{out:?}");
     assert_eq!(
-        std::fs::read_to_string(root.join("calls")).unwrap(),
+        std::fs::read_to_string(root.join("calls"))
+            .unwrap()
+            .replace("\r\n", "\n"),
         "daemon status\n",
         "no worker input was submitted"
     );
     std::fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 #[ignore = "isolated runtime dependency fixture"]
 fn runtime_2522_native_child() {
     let root = PathBuf::from(std::env::var_os("TASKQ_HEALTH_ROOT").unwrap());
-    let old = root.join("old/claude");
-    let current = root.join("current/claude");
+    let bin = if cfg!(windows) {
+        "claude.cmd"
+    } else {
+        "claude"
+    };
+    let old = root.join("old").join(bin);
+    let current = root.join("current").join(bin);
     assert_eq!(binary("claude").unwrap(), old);
     assert_eq!(read_daemon("claude", &old, None), Ok(None));
     std::fs::remove_file(old).unwrap();
