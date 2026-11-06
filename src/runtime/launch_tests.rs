@@ -496,3 +496,211 @@ fn native_trait_start_resume_and_transcript() {
     .unwrap();
     println!("{}\nevidence={}", manifest, evidence.display());
 }
+
+// A2 (#2448): paid real worker -> owner SIGKILL -> a new process adopts it -> native exit -> Exit release, with no new submission.
+// The board is in memory and the installed service is untouched; `live-probe.py` remains the installed-service proof.
+#[cfg(unix)]
+#[test]
+#[ignore = "paid native qualification; TASKQ_NATIVE_RUNTIME and TASKQ_NATIVE_INSTALL require owner approval"]
+fn native_worker_survives_service_restart() {
+    use crate::board::Board;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    let rt = std::env::var("TASKQ_NATIVE_RUNTIME").expect("TASKQ_NATIVE_RUNTIME");
+    let install =
+        PathBuf::from(std::env::var_os("TASKQ_NATIVE_INSTALL").expect("TASKQ_NATIVE_INSTALL"));
+    let Some(phase) = std::env::var_os("TASKQ_RESTART_PHASE") else {
+        let evidence =
+            std::env::temp_dir().join(format!("taskq-native-qualification-2448-{}", uuid()));
+        std::fs::create_dir_all(evidence.join("install")).unwrap();
+        println!("evidence={}", evidence.display());
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "runtime::launch::tests::native_worker_survives_service_restart",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("TASKQ_RESTART_EVIDENCE", &evidence)
+            .stdin(Stdio::null());
+        let mut old = command
+            .env("TASKQ_RESTART_PHASE", "before")
+            .stdout(File::create(evidence.join("before.log")).unwrap())
+            .stderr(File::create(evidence.join("before.err")).unwrap())
+            .spawn()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(120);
+        while !evidence.join("ready").exists() {
+            assert!(old.try_wait().unwrap().is_none(), "owner exited early");
+            assert!(Instant::now() < until, "no native identity in time");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        old.kill().unwrap();
+        old.wait().unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(evidence.join("ready")).unwrap()).unwrap();
+        let pid = saved["pid"].as_u64().unwrap() as u32;
+        println!(
+            "owner killed; native pid {pid} alive: {}",
+            coreq::process::identity(pid).unwrap().is_some()
+        );
+        let after = coreq::process::output(
+            "qualification.native-worker-restart",
+            command
+                .env("TASKQ_RESTART_PHASE", "after")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+            Duration::from_secs(420),
+        );
+        assert!(after.is_ok(), "adoption failed: {after:?}");
+        println!(
+            "{}",
+            std::fs::read_to_string(evidence.join("verified")).unwrap()
+        );
+        return;
+    };
+    let evidence = PathBuf::from(std::env::var_os("TASKQ_RESTART_EVIDENCE").unwrap());
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let exe = std::env::current_exe().unwrap();
+    let fixture = evidence.join("install");
+    let host = crate::host::Policy::read_for_hostname(&install, crate::config::hostname).unwrap();
+    // The in-memory board is rebuilt identically in both processes; only the native record crosses.
+    let b = crate::board::Fake::default();
+    let task = b
+        .create("TaskQ Qualification 2448", "", &[crate::service::TASK_LABEL.into()])
+        .unwrap();
+    let attempt = b
+        .comment(task, &format!("taskq: spawn worker {rt}:fixture mac"))
+        .unwrap();
+    let cfg = crate::service::Config {
+        root: root.clone(),
+        install: fixture.clone(),
+        ..crate::tests::cfg()
+    };
+    let mut service = crate::service::Service::new(
+        &b,
+        &cfg,
+        "native-fixture",
+        Box::new(|_| panic!("restart must not submit new work")),
+    );
+    let l = Launch {
+        files: String::new(),
+        execution: Some(attempt),
+        task,
+        title: "TaskQ Qualification 2448".into(),
+        attempt,
+        role: "worker".into(),
+        rt: rt.clone(),
+        session: "-".into(),
+        url: String::new(),
+        resume: None,
+    };
+    let log = log_path(&root, &l);
+    if phase == "before" {
+        std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+        File::create(&log).unwrap();
+        let authority = Env {
+            context: "",
+            root: &root,
+            exe: &exe,
+            install: &install,
+            permission_mode: &host.permission_mode,
+            codex: &host.codex,
+            delivery: crate::config::Delivery::AutoMerge,
+            board_env: &[],
+            jobs: None,
+        };
+        let access = access(&authority, &rt).unwrap();
+        let env = Env {
+            install: &fixture,
+            ..authority
+        };
+        let canary = format!("TaskQ-Qualification-2448-{}", uuid());
+        let text = format!(
+            "This is an approved non-task TaskQ Qualification probe. Run the shell command `sleep 45` once, edit no files, then reply with exactly {canary}. If the command is refused, wait and still reply with exactly {canary}."
+        );
+        let mut proc: Box<dyn Proc> = if of(&rt).has(Cap::Background) {
+            Box::new(ClaudeTurn::start(&env, &l, &log, &text, &access).unwrap())
+        } else {
+            let child = start(&env, &l, &log, &text, &access).unwrap();
+            let native = child.native_identity().ok();
+            Box::new(CliTurn {
+                proc: child,
+                log: log.clone(),
+                pos: 0,
+                start: 0,
+                stopping: false,
+                accepted: false,
+                read_error: None,
+                session: None,
+                native,
+                recovery: None,
+                rt: rt.clone(),
+            })
+        };
+        let until = Instant::now() + Duration::from_secs(100);
+        let native = loop {
+            let _ = proc.exited();
+            if let Ok(native) = proc.native_identity()
+                && proc.checkpoint(&cfg, &l, attempt).is_ok()
+            {
+                break native;
+            }
+            assert!(Instant::now() < until, "no native identity");
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        service.kids.push(crate::service::Kid {
+            unknown: None,
+            stopping: false,
+            session_url: None,
+            task,
+            attempt,
+            execution: attempt,
+            rt: rt.clone(),
+            proc,
+        });
+        crate::service_run::save_kids(&service, &root).unwrap();
+        coreq::write_durable(
+            &evidence.join("ready"),
+            &serde_json::json!({"pid":native.pid,"started":native.started,"canary":canary})
+                .to_string(),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_secs(60));
+        panic!("controller did not kill the owner");
+    }
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(evidence.join("ready")).unwrap()).unwrap();
+    let canary = saved["canary"].as_str().unwrap();
+    crate::service_run::adopt(&mut service, &fixture, &root).unwrap();
+    assert_eq!(service.kids.len(), 1, "the record must adopt its worker");
+    assert_eq!(service.kids[0].execution, attempt);
+    assert_eq!(service.kids[0].proc.id() as u64, saved["pid"].as_u64().unwrap());
+    let until = Instant::now() + Duration::from_secs(400);
+    while !service.kids.is_empty() {
+        service.reap_owned();
+        assert!(
+            Instant::now() < until,
+            "native exit not observed: {:?}",
+            service.kids.iter().map(|k| &k.unknown).collect::<Vec<_>>()
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let row = crate::core::executions(task, &crate::board::entries(&b, task).unwrap())
+        .into_iter()
+        .find(|x| x.id == attempt)
+        .unwrap();
+    let session = native_session(&rt, &log).expect("native session receipt");
+    let page = crate::dialogue::worker_transcript(&format!("{rt}:{session}"), &log, None, None)
+        .unwrap();
+    let replied = page["items"].as_array().unwrap().iter().any(|item| {
+        item["role"] == "assistant" && item["text"].as_str().is_some_and(|t| t.contains(canary))
+    });
+    let limits = agent(&rt).unwrap().log_limits(&std::fs::read_to_string(&log).unwrap(), Some(&session), None);
+    let verified = serde_json::json!({"runtime":rt,"pid":saved["pid"],"session":session,"accepted":row.accepted,"release":format!("{:?}",row.release),"replied":replied,"log_windows":limits.len()});
+    std::fs::write(evidence.join("verified"), verified.to_string()).unwrap();
+    assert_eq!(row.release, Some(crate::core::Release::Exit));
+    assert!(replied, "the adopted worker's reply must reach the transcript");
+    std::fs::remove_file(&log).unwrap();
+}
