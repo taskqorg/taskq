@@ -676,6 +676,10 @@ fn six_project_poll_hour_fits_store_budget() {
         let empty = store.storage().unwrap()["total_bytes"].as_u64().unwrap();
         let capture =
             coreq::telemetry::capture::Capture::new(store.clone(), "taskq", "test").unwrap();
+        // This compressed hour measures storage and loss, not a loaded runner's append latency.
+        capture
+            .acknowledge_within(std::time::Duration::from_secs(60))
+            .unwrap();
         let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()));
         let window = crate::telemetry::diagnostic::HEALTH_WINDOW_MS;
         let (first, simulated) = (

@@ -182,6 +182,7 @@ fn passive_writer_lock_releases_only_confirmed_idle_unheld_locks() {
             std::path::PathBuf::from(format!(r"\\.\pipe\taskq-pw-{}", super::super::uuid()));
 
         let (finished, completion) = std::sync::mpsc::channel();
+        let (ready, started) = std::sync::mpsc::channel();
         let server = if matches!(
             case,
             "released-no-client-found"
@@ -199,6 +200,8 @@ fn passive_writer_lock_releases_only_confirmed_idle_unheld_locks() {
             let mode = case.to_string();
             let expected_thread = thread.clone();
             Some(std::thread::spawn(move || -> std::io::Result<()> {
+                // Peer scheduling is fixture setup, outside the client's 200 ms protocol deadline.
+                ready.send(()).unwrap();
                 // The client can refuse before connecting; teardown must still join the peer.
                 #[cfg(unix)]
                 listener.set_nonblocking(true)?;
@@ -294,6 +297,9 @@ fn passive_writer_lock_releases_only_confirmed_idle_unheld_locks() {
             None
         };
 
+        if server.is_some() {
+            started.recv().unwrap();
+        }
         let outcome = release_passive_writer_at(
             &home,
             &project,

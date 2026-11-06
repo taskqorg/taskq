@@ -2263,25 +2263,33 @@ fn probe_gives_up_on_time_when_a_grandchild_keeps_the_pipes() {
         ("fork", format!("{fork}\necho 1.2.3"), None),
     ] {
         let t = std::time::Instant::now();
-        let got = probe_within(
-            "runtime.version",
-            &script(
-                name,
-                &body.replace('\n', if cfg!(windows) { "\r\n" } else { "\n" }),
-            ),
-            &["--version"],
-            std::time::Duration::from_secs(2),
+        let bin = script(
+            name,
+            &body.replace('\n', if cfg!(windows) { "\r\n" } else { "\n" }),
         );
+        // Native startup belongs to the normal success control; hanging children keep the short deadline.
+        let got = if want.is_some() {
+            probe("runtime.version", &bin, &["--version"])
+        } else {
+            probe_within(
+                "runtime.version",
+                &bin,
+                &["--version"],
+                std::time::Duration::from_secs(2),
+            )
+        };
         assert_eq!(
             got.as_ref().map(|(ok, out)| (*ok, out.trim())),
             want.map(|v| (true, v)),
             "{name}"
         );
-        assert!(
-            t.elapsed() < std::time::Duration::from_secs(5),
-            "{name}: {:?}",
-            t.elapsed()
-        );
+        if want.is_none() {
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(5),
+                "{name}: {:?}",
+                t.elapsed()
+            );
+        }
     }
     let began = std::time::Instant::now();
     let outcome = observe_until(began + std::time::Duration::from_millis(100), || {

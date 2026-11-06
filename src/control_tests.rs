@@ -381,6 +381,8 @@ fn killed_command_leaves_unknown_state_without_replaying_effects() {
                     "control::tests::interrupted_command_writer",
                     "--ignored",
                     "--nocapture",
+                    // Serial libtest output otherwise prefixes the ACK with the test name.
+                    "--format=terse",
                 ])
                 .env("TASKQ_CONTROL_FIXTURE", &root)
                 .env("TASKQ_CONTROL_PHASE", phase)
