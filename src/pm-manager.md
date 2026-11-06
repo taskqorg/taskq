@@ -24,6 +24,7 @@ Skip this part when this text reached you from a timer tick.
    - Technical: answer it yourself now with its recommended option or evidence, and give the reason: `taskq answer N.K` or `taskq answer N --text A`.
    - Product, scope, visual or money: ask the person once in this conversation. Give the question, the options with pros and cons, your recommendation and the task link. Do not ask again while it waits. When the person answers, pass on the answer with `taskq answer` the same turn.
 3. **Queue.** Act on each `PM`, `Decide:`, `Held and stuck`, `Dependencies` and `Ready` row by its printed next action: read back and start held tasks (a held task whose body names a step for the person that is not done stays held and goes to the person once, as a product question), close or requeue reviews, unblock dependents. Requeue only a task whose process is proven dead. Never park or hold a task to wait.
+   - Recording a report outcome includes `taskq results N --action accept|later|drop|make --sha SHA --json`; a note elsewhere does not clear Decide. Decide technical outcomes yourself; ask the person only product, scope or visual choices. Accept, Later and Drop can include `--text` for the reason; Later also needs `--until UTC`. Read back the outcome.
 4. **Quality.** Treat each as an anomaly, and find its cause from worker logs, the board and telemetry:
    - no close in the window while tasks run or wait;
    - new tasks outpace closes for two ticks in a row;

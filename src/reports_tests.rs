@@ -129,6 +129,171 @@ fn board() -> (crate::board::Fake, u64, u64, String) {
     (b, claim, n, sha)
 }
 
+// #2520 A1/A3 (R1/R6): outcome reasons survive board projection; old markers still decide without a reason.
+#[test]
+fn result_outcome_reasons_round_trip_and_legacy_markers() {
+    for action in ["accept", "later", "drop"] {
+        let (b, _, n, sha) = board();
+        let args = crate::cli::Args::parse(
+            &[
+                "results",
+                &n.to_string(),
+                "--action",
+                action,
+                "--sha",
+                &sha,
+                "--text",
+                "Already addressed by the accepted plan",
+                "--op-id",
+                "outcome-2520",
+            ]
+            .map(String::from),
+        )
+        .unwrap();
+        assert!(read_cli(Path::new("."), &args).unwrap().is_none());
+        let tail = if action == "later" {
+            "\nuntil 2099-01-01T00:00:00Z"
+        } else {
+            ""
+        };
+        b.raw(
+            n,
+            &format!(
+                "taskq: report-{action} {sha}{tail}\nReason: Already addressed by the accepted plan"
+            ),
+            true,
+            false,
+        );
+        let row = current(&b, n, &sha).unwrap();
+        assert_eq!(
+            row["decision_reason"],
+            "Already addressed by the accepted plan"
+        );
+        if action == "later" {
+            assert_eq!(row["later_until"], "2099-01-01T00:00:00Z");
+        }
+        let (old, _, on, os) = board();
+        old.raw(
+            on,
+            &format!("taskq: report-{action} {os}{tail}"),
+            true,
+            false,
+        );
+        let legacy = current(&old, on, &os).unwrap();
+        assert_eq!(legacy["decision"], row["decision"]);
+        assert_eq!(legacy["later_until"], row["later_until"]);
+        assert!(legacy["decision_reason"].is_null());
+    }
+}
+
+// #2520 A1: repeated decisions must retain the original reason without another board write (R1/R12).
+#[test]
+fn result_outcome_reasons_write_once_and_validate_before_writing() {
+    for ordinary in [false, true] {
+        for action in ["accept", "later", "drop"] {
+            let (b, _, n, sha) = board();
+            if ordinary {
+                let mut state = b.state.borrow_mut();
+                let (_, result) = state
+                    .comments
+                    .iter_mut()
+                    .find(|(_, c)| c.body.starts_with("taskq: result "))
+                    .unwrap();
+                result.body = result.body.lines().next().unwrap().into();
+            }
+            let until = (!ordinary && action == "later").then_some("2099-01-01T00:00:00Z");
+            let reason = "Already addressed by the accepted plan";
+            let run = |text| {
+                owner_act_until(
+                    &b,
+                    Path::new("."),
+                    &json!({}),
+                    n,
+                    &sha,
+                    action,
+                    until,
+                    text,
+                    Some("outcome-2520"),
+                )
+            };
+            let count = b.comments(n).unwrap().len();
+            for invalid in ["first\nsecond", "first\rsecond"] {
+                assert!(run(invalid).is_err());
+                assert_eq!(b.comments(n).unwrap().len(), count);
+            }
+            let written = run(reason).unwrap();
+            assert_eq!(written["report"]["decision_reason"], reason);
+            let comments = b.comments(n).unwrap();
+            assert!(
+                comments
+                    .last()
+                    .unwrap()
+                    .body
+                    .lines()
+                    .any(|line| line == format!("Reason: {reason}"))
+            );
+            assert_eq!(
+                crate::core::op_id(n, &comments.last().unwrap().body),
+                Some("outcome-2520")
+            );
+            assert_eq!(comments.len(), count + 1);
+            assert!(
+                owner_act_until(
+                    &b,
+                    Path::new("."),
+                    &json!({}),
+                    n,
+                    &sha,
+                    if action == "drop" { "accept" } else { "drop" },
+                    until,
+                    reason,
+                    Some("outcome-2520")
+                )
+                .is_err()
+            );
+            assert_eq!(b.comments(n).unwrap().len(), comments.len());
+            for repeated in [
+                reason,
+                "A later note cannot replace the original reason",
+                "",
+            ] {
+                assert_eq!(run(repeated).unwrap()["report"]["decision_reason"], reason);
+                assert_eq!(b.comments(n).unwrap().len(), comments.len());
+            }
+            let row = current(&b, n, &sha).unwrap();
+            assert_eq!(row["decision_reason"], reason);
+            assert_eq!(row["later_until"].as_str(), until);
+            if !ordinary && action == "later" {
+                let repeated = owner_act_until(
+                    &b,
+                    Path::new("."),
+                    &json!({}),
+                    n,
+                    &sha,
+                    action,
+                    Some("2098-01-01T00:00:00Z"),
+                    "Keep the first date",
+                    Some("outcome-2520"),
+                )
+                .unwrap();
+                assert_eq!(repeated["report"]["later_until"].as_str(), until);
+                assert_eq!(b.comments(n).unwrap().len(), comments.len());
+            }
+            let mut cache = Cache::default();
+            cache.collect(&b);
+            let rows = cache.value["reports"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(cache.value["history"].as_array().unwrap());
+            assert!(
+                rows.into_iter()
+                    .any(|r| r["n"] == n && r["decision_reason"] == reason)
+            );
+        }
+    }
+}
+
 // Chain: Product / RC4–RC7 -> report decisions and claims. Risk: Accept hides partial drafts,
 // decided content disappears, or a report correction reopens a completed dependency.
 #[test]
@@ -137,14 +302,14 @@ fn conversations_1977_decisions_keep_history_and_creation_fences() {
     let raw = json!({"create_claim_issue":claim});
     let root = std::env::temp_dir().join(format!("taskq-1977-{}", crate::runtime::uuid()));
     std::fs::create_dir_all(crate::paths::dot(&root)).unwrap();
-    let accepted = owner_act_until(&b, &root, &raw, n, &sha, "accept", None).unwrap();
+    let accepted = owner_act_until(&b, &root, &raw, n, &sha, "accept", None, "", None).unwrap();
     assert_eq!(accepted["report"]["decision"], "accepted");
     assert_eq!(accepted["report"]["read"], true);
     let count = b.comments(n).unwrap().len();
-    owner_act_until(&b, &root, &raw, n, &sha, "accept", None).unwrap();
+    owner_act_until(&b, &root, &raw, n, &sha, "accept", None, "", None).unwrap();
     assert_eq!(b.comments(n).unwrap().len(), count);
     assert_eq!(
-        owner_act_until(&b, &root, &raw, n, &sha, "make", None).unwrap()["report"]["decision"],
+        owner_act_until(&b, &root, &raw, n, &sha, "make", None, "", None).unwrap()["report"]["decision"],
         "accepted"
     );
     let corrected = successor(
@@ -182,6 +347,8 @@ fn conversations_1977_decisions_keep_history_and_creation_fences() {
         on,
         &os,
         "accept",
+        None,
+        "",
         None,
     )
     .unwrap();
@@ -228,11 +395,11 @@ fn ordinary_results_acknowledge_and_reopen_without_reopening_dependencies() {
     }
     assert_eq!(current(&b, n, &sha).unwrap()["read"], false);
     assert_eq!(
-        owner_act_until(&b, &root, &raw, n, &sha, "read", None).unwrap()["report"]["decision"],
+        owner_act_until(&b, &root, &raw, n, &sha, "read", None, "", None).unwrap()["report"]["decision"],
         "none"
     );
     assert_eq!(
-        owner_act_until(&b, &root, &raw, n, &sha, "accept", None).unwrap()["report"]["decision"],
+        owner_act_until(&b, &root, &raw, n, &sha, "accept", None, "", None).unwrap()["report"]["decision"],
         "accepted"
     );
     let opened = successor(
@@ -859,9 +1026,9 @@ fn report_actions_keep_unknowns_and_create_held_drafts_once() {
     let raw = json!({"create_claim_issue":claim});
     let root = std::env::temp_dir().join(format!("taskq-reports-{}", crate::runtime::uuid()));
     std::fs::create_dir_all(&root).unwrap();
-    let run = |action| owner_act_until(&b, &root, &raw, n, &sha, action, None).unwrap();
+    let run = |action| owner_act_until(&b, &root, &raw, n, &sha, action, None, "", None).unwrap();
     assert_eq!(list(&b, 1).unwrap()["reports"][0]["read"], false);
-    assert!(owner_act_until(&b, &root, &raw, n, &"b".repeat(40), "drop", None).is_err());
+    assert!(owner_act_until(&b, &root, &raw, n, &"b".repeat(40), "drop", None, "", None).is_err());
     let opened = run("open");
     assert_eq!(opened["report"]["read"], true);
     assert_eq!(opened["report"]["tasks"].as_array().unwrap().len(), 2);
@@ -876,7 +1043,7 @@ fn report_actions_keep_unknowns_and_create_held_drafts_once() {
     let count = b.comments(n).unwrap().len();
     let now = b.now().unwrap();
     assert!(
-        owner_act_until(&b, &root, &raw, n, &sha, "later", None)
+        owner_act_until(&b, &root, &raw, n, &sha, "later", None, "", None)
             .unwrap_err()
             .contains("--until")
     );
@@ -888,7 +1055,9 @@ fn report_actions_keep_unknowns_and_create_held_drafts_once() {
             n,
             &sha,
             "later",
-            Some(&crate::time::stamp(now))
+            Some(&crate::time::stamp(now)),
+            "",
+            None
         )
         .unwrap_err()
         .contains("future")
@@ -901,7 +1070,9 @@ fn report_actions_keep_unknowns_and_create_held_drafts_once() {
             n,
             &sha,
             "drop",
-            Some(&crate::time::stamp(now + 60))
+            Some(&crate::time::stamp(now + 60)),
+            "",
+            None
         )
         .is_err(),
         "--until only with Later"
@@ -909,11 +1080,12 @@ fn report_actions_keep_unknowns_and_create_held_drafts_once() {
     assert_eq!(b.comments(n).unwrap().len(), count);
     let until = crate::time::stamp(now + 3600);
     assert_eq!(
-        owner_act_until(&b, &root, &raw, n, &sha, "later", Some(&until)).unwrap()["report"]["later_until"],
+        owner_act_until(&b, &root, &raw, n, &sha, "later", Some(&until), "", None).unwrap()["report"]
+            ["later_until"],
         until.as_str()
     );
     assert_eq!(list(&b, 1).unwrap()["reports"][0]["closed"], 45);
-    let missing = owner_act_until(&b, &root, &json!({}), n, &sha, "make", None).unwrap();
+    let missing = owner_act_until(&b, &root, &json!({}), n, &sha, "make", None, "", None).unwrap();
     assert!(
         missing["reason"]
             .as_str()
@@ -1090,7 +1262,7 @@ fn rejected_creation_configuration_never_reserves_the_report() {
         let count = b.comments(n).unwrap().len();
         // a root without taskq.json: the missing key cannot be settled and written back
         let root = std::env::temp_dir().join(format!("taskq-reports-{}", crate::runtime::uuid()));
-        let result = owner_act_until(&b, &root, &invalid, n, &sha, "make", None).unwrap();
+        let result = owner_act_until(&b, &root, &invalid, n, &sha, "make", None, "", None).unwrap();
         assert_eq!(result["receipt"]["outcome"], "rejected");
         assert_eq!(
             b.comments(n).unwrap().len(),
@@ -1098,8 +1270,18 @@ fn rejected_creation_configuration_never_reserves_the_report() {
             "known refusal writes no make-intent"
         );
         assert_eq!(
-            owner_act_until(&b, Path::new("."), &invalid, n, &sha, "drop", None).unwrap()["report"]
-                ["decision"],
+            owner_act_until(
+                &b,
+                Path::new("."),
+                &invalid,
+                n,
+                &sha,
+                "drop",
+                None,
+                "",
+                None
+            )
+            .unwrap()["report"]["decision"],
             "drop"
         );
     }
@@ -1112,14 +1294,14 @@ fn unread_source_and_lost_writes_never_claim_success_or_repeat_create() {
     std::fs::create_dir_all(&root).unwrap();
     let raw = json!({"create_claim_issue":claim});
     let source = b.state.borrow_mut().report_sources.pop().unwrap();
-    assert!(owner_act_until(&b, &root, &raw, n, &sha, "open", None).is_err());
+    assert!(owner_act_until(&b, &root, &raw, n, &sha, "open", None, "", None).is_err());
     assert_eq!(list(&b, 1).unwrap()["reports"][0]["read"], false);
     b.state.borrow_mut().report_sources.push(source);
     mark(&b, n, &sha, "making", &[]).unwrap();
     b.state.borrow_mut().lose_comment_response = true;
-    let lost = owner_act_until(&b, &root, &raw, n, &sha, "make", None).unwrap();
+    let lost = owner_act_until(&b, &root, &raw, n, &sha, "make", None, "", None).unwrap();
     assert_eq!(lost["receipt"]["outcome"], "unknown");
-    let retry = owner_act_until(&b, &root, &raw, n, &sha, "make", None).unwrap();
+    let retry = owner_act_until(&b, &root, &raw, n, &sha, "make", None, "", None).unwrap();
     assert_eq!(retry["receipt"]["outcome"], "unknown");
     assert_eq!(
         b.state.borrow().issues.len(),
@@ -1130,12 +1312,12 @@ fn unread_source_and_lost_writes_never_claim_success_or_repeat_create() {
         list(&b, 1).unwrap()["reports"][0]["pending_decision"],
         "make"
     );
-    let blocked = owner_act_until(&b, &root, &raw, n, &sha, "drop", None).unwrap();
+    let blocked = owner_act_until(&b, &root, &raw, n, &sha, "drop", None, "", None).unwrap();
     assert!(blocked["reason"].is_string());
     assert_eq!(list(&b, 1).unwrap()["reports"].as_array().unwrap().len(), 1);
     let (other, _, on, os) = board();
     other.state.borrow_mut().lose_comment_response = true;
-    assert!(owner_act_until(&other, &root, &raw, on, &os, "drop", None).is_err());
+    assert!(owner_act_until(&other, &root, &raw, on, &os, "drop", None, "", None).is_err());
     assert!(
         list(&other, 1).unwrap()["reports"]
             .as_array()
@@ -1185,12 +1367,12 @@ fn make_intent_fences_drop_and_preserves_receipts_after_final_marker_failure() {
     assert_eq!(failed["receipts"], json!(made));
     assert_eq!(failed["report"]["visible"], true);
     let count = b.state.borrow().issues.len();
-    let retried = owner_act_until(&b, &root, &raw, n, &sha, "make", None).unwrap();
+    let retried = owner_act_until(&b, &root, &raw, n, &sha, "make", None, "", None).unwrap();
     assert_eq!(retried["report"]["tasks_made"], json!(made));
     assert_eq!(b.state.borrow().issues.len(), count);
     let (other, _, on, os) = board();
     other.raw(on, &format!("taskq: report-drop {os}"), true, false);
-    let result = owner_act_until(&other, &root, &raw, on, &os, "make", None).unwrap();
+    let result = owner_act_until(&other, &root, &raw, on, &os, "make", None, "", None).unwrap();
     assert_eq!(result["report"]["decision"], "drop");
     assert_eq!(
         other.state.borrow().issues.len(),

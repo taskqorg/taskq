@@ -40,7 +40,7 @@ pub(crate) const USAGE: &str = "taskq agents
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
  taskq deployed --version V --env E --range A..B [--host H] [--json]
- taskq results [N] [--action open|read|accept|followup|reopen|later|drop|make] [--sha SHA] [--text REASON] [--until UTC] [--page N|--before TIME:N] --json
+ taskq results [N] [--action open|read|accept|followup|reopen|later|drop|make] [--sha SHA] [--text REASON] [--until UTC] [--op-id ID] [--page N|--before TIME:N] --json
  taskq profile [guide|export|tasks|board|actions|watch|health] [--since 24h] | taskq retro
  taskq pm [--every 3m] [--project P..] | taskq pm stop
  taskq wait [--window MIN] [--only L,..]
