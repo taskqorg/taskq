@@ -100,6 +100,16 @@ fn runtime_2522_native_probe_and_fresh_resolution() {
         #[cfg(windows)]
         std::fs::write(&bin, "@echo off\r\necho %*>> \"%TASKQ_HEALTH_CALLS%\"\r\nif not \"%*\"==\"daemon status\" exit /b 91\r\necho not running\r\nexit /b 1\r\n").unwrap();
     }
+    let mut paths = vec![root.join("old"), root.join("current")];
+    #[cfg(windows)]
+    paths.extend(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).filter(|dir| {
+            // Keep the test executable's DLL directories without exposing an installed Claude fallback.
+            !["claude.exe", "claude.cmd", "claude.bat", "claude.com"]
+                .iter()
+                .any(|name| dir.join(name).exists())
+        }),
+    );
     let out = coreq::process::output(
         "qualification.runtime-dependency",
         Command::new(std::env::current_exe().unwrap())
@@ -111,10 +121,7 @@ fn runtime_2522_native_probe_and_fresh_resolution() {
             ])
             .env("TASKQ_HEALTH_ROOT", &root)
             .env("TASKQ_HEALTH_CALLS", root.join("calls"))
-            .env(
-                "PATH",
-                std::env::join_paths([root.join("old"), root.join("current")]).unwrap(),
-            ),
+            .env("PATH", std::env::join_paths(paths).unwrap()),
         std::time::Duration::from_secs(30),
     );
     assert!(out.is_ok(), "{out:?}");
