@@ -314,8 +314,14 @@ mod tests {
             "wake-lock",
             &std::io::Error::from(std::io::ErrorKind::Unsupported),
         );
-        assert!(unsupported.starts_with("service wake unsupported"), "{unsupported}");
-        assert!(!unsupported.contains("check service status"), "{unsupported}");
+        assert!(
+            unsupported.starts_with("service wake unsupported"),
+            "{unsupported}"
+        );
+        assert!(
+            !unsupported.contains("check service status"),
+            "{unsupported}"
+        );
         #[cfg(windows)]
         {
             let invalid = wake_refusal("wake-lock", &std::io::Error::from_raw_os_error(1));
@@ -361,7 +367,12 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         poke(&root).unwrap();
         assert!(
-            sleep_until_poke(&paths, baseline, Instant::now() + Duration::from_secs(2), &mut || {}),
+            sleep_until_poke(
+                &paths,
+                baseline,
+                Instant::now() + Duration::from_secs(2),
+                &mut || {}
+            ),
             "the released lock lets the next poke wake the service"
         );
         fs::remove_dir_all(&root).unwrap();

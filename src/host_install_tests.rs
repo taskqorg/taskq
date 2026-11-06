@@ -1535,16 +1535,13 @@ fn orphaned_receipt_ends_failed_while_any_owning_cursor_keeps_it() {
     };
     save(&install, &p).unwrap();
     receive_initial(&install, &mut p).unwrap();
-    let old = "service wake failed (wake-lock: Incorrect function. (os error 1)); check service status";
+    let old =
+        "service wake failed (wake-lock: Incorrect function. (os error 1)); check service status";
     retain_reason(&install, &p, old).unwrap();
 
     // Every cursor form that may own the receipt keeps it queued.
     assert!(retire_orphans(&install).unwrap().is_empty());
-    fs::rename(
-        install.join(INSTALL_PENDING),
-        install.join(UPGRADE_INTENT),
-    )
-    .unwrap();
+    fs::rename(install.join(INSTALL_PENDING), install.join(UPGRADE_INTENT)).unwrap();
     assert!(
         retire_orphans(&install).unwrap().is_empty(),
         "an upgrade intent owns its receipt"

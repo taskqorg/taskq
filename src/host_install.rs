@@ -376,7 +376,9 @@ pub(super) fn retire_orphans(install: &Path) -> Res<Vec<String>> {
                     "installation ended without its cursor; repeat service install for {root} (last: {last})"
                 ),
                 None => {
-                    format!("installation ended without its cursor; repeat service install for {root}")
+                    format!(
+                        "installation ended without its cursor; repeat service install for {root}"
+                    )
                 }
             };
             let command = CommandReceipt::decode(
