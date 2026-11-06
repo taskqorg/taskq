@@ -7523,7 +7523,9 @@ fn historical_no_host_terminal_repair_requires_local_ownership() {
             ])
             .env("TASKQ_NO_HOST_REPAIR_ROOT", &root)
             .env_remove("COREQ_TRACE_CONTEXT"),
-        std::time::Duration::from_secs(60),
+        // #2515: waits for the child's exit on a stalled Windows runner; the limit only names a hang inside the 900 s
+        // gate and outlasts the child's acknowledgment wait, so a lost acknowledgment reports itself.
+        std::time::Duration::from_secs(300),
     )
     .unwrap();
     assert!(
@@ -7579,10 +7581,11 @@ fn historical_no_host_repair_child() {
             c.root = dir.clone();
             let path = dir.join("taskq.log");
             let (_capture, _guard) = crate::profile::tests::collecting(&dir);
-            // This fixture proves repair ownership, not the collector's disk latency.
+            // This fixture proves repair ownership, not the collector's disk latency. #2478: one commit outlasted the
+            // 3 s default; a flush returns on its acknowledgment, so this limit only names a store that never commits.
             #[cfg(windows)]
             _capture
-                .acknowledge_within(std::time::Duration::from_secs(30))
+                .acknowledge_within(std::time::Duration::from_secs(240))
                 .unwrap();
             let project = if evidence == "foreign-project" {
                 "other/project"

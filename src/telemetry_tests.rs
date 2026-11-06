@@ -523,3 +523,68 @@ fn export_reads_the_store_from_a_read_only_install() {
     drop(store);
     std::fs::remove_dir_all(d).unwrap();
 }
+
+// Chain: §4 Telemetry observations, R12: nested and typed records must retain caller identity without contaminating unrelated work.
+#[test]
+fn observation_contract_inherits_caller_and_explains_missing_values() {
+    use serde_json::json;
+    use tracing_subscriber::prelude::*;
+    let d = dir();
+    let store = std::sync::Arc::new(coreq::telemetry::Store::open(&d.join("db")).unwrap());
+    let capture = coreq::telemetry::capture::Capture::new(store.clone(), "taskq", "test").unwrap();
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()), || {
+        {
+            let _caller = tracing::info_span!(
+                "fixture.caller",
+                project = "fixture/project",
+                task = 2428u64,
+                attempt = 77u64,
+                actor = "worker",
+                entry = 88u64
+            )
+            .entered();
+            let _nested = tracing::info_span!("fixture.nested").entered();
+            for line in [
+                r#"taskq-board {"op":"read","us":1,"outcome":"ok","error":"none","remaining":null,"at_ms":1}"#,
+                r#"taskq-stage {"stage":"build","task":2428,"attempt":77,"rt":"codex","us":1,"outcome":"failed","error":"exit","at_ms":1}"#,
+                r#"taskq-transition {"task":2428,"entry":88,"from":"doing","to":"review","prev_s":null,"rt":"codex","host":null,"at_ms":1}"#,
+                r#"taskq-profile {"op":"service.pass","us":1,"error":"none","at_ms":1}"#,
+            ] {
+                record(Sample::fixture(line).unwrap()).unwrap();
+            }
+        }
+        record(Sample::fixture(r#"taskq-stage {"stage":"claim","task":2428,"attempt":0,"rt":"other","us":1,"outcome":"failed","error":"exit","at_ms":1}"#).unwrap()).unwrap();
+        record(Sample::fixture(r#"taskq-board {"op":"list","us":1,"outcome":"failed","error":"timeout","remaining":null,"at_ms":1}"#).unwrap()).unwrap();
+    });
+    capture.flush().unwrap();
+    let rows = store.export(0, 0, 1024).unwrap();
+    for row in rows["events"].as_array().unwrap() {
+        let v = &row["observation"];
+        if v["kind"] == "method" || v["operation"] == "fixture.caller" {
+            continue;
+        }
+        if v["operation"] == "claim" {
+            assert!(v["attempt"].is_null(), "{v}");
+            assert_eq!(v["unknown"]["attempt"], "no-attempt");
+            continue;
+        }
+        let unrelated = v["operation"] == "list";
+        for (field, expected) in [
+            ("project", json!("fixture/project")),
+            ("task", json!(2428)),
+            ("attempt", json!(77)),
+            ("actor", json!("worker")),
+            ("entry", json!(88)),
+        ] {
+            if unrelated {
+                assert!(v[field].is_null(), "{v}");
+                assert!(v["unknown"][field].is_string(), "{field}: {v}");
+            } else {
+                assert_eq!(v[field], expected, "{field}: {v}");
+            }
+        }
+    }
+    drop(capture);
+    drop(store);
+    std::fs::remove_dir_all(d).unwrap();
+}

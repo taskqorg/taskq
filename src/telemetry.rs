@@ -274,9 +274,16 @@ pub(crate) fn record(sample: Sample) -> std::io::Result<()> {
         if semantic::encoded_size(&original)? > LINE_MAX {
             return Err("telemetry append exceeds 64 KiB".into());
         }
-        semantic::encode(kind, original)
+        let mut value = semantic::encode(kind, original)?;
+        // A failed claim has no attempt; zero remains only the legacy report's in-memory sentinel.
+        if kind == "stage" && value["attempt"] == 0 {
+            value["attempt"] = serde_json::Value::Null;
+            value["unknown"]["attempt"] = serde_json::json!("no-attempt");
+        }
+        Ok(value)
     };
     prepare()
+        .map(|value| coreq::telemetry::shared(&value))
         .and_then(coreq::telemetry::capture::observe)
         .map_err(std::io::Error::other)
 }

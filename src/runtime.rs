@@ -13,6 +13,8 @@ mod launch;
 #[cfg(test)]
 #[path = "runtime/native_process_tests.rs"]
 mod native_fixture;
+mod records;
+pub(crate) use records::settle as settle_records;
 mod table;
 #[cfg(test)]
 pub use native_fixture::{command, start_command, start_file};
@@ -113,6 +115,10 @@ pub trait Proc {
     /// Read-only progress source and current input byte boundary; never an execution verdict.
     fn progress_source(&self) -> Result<(PathBuf, u64), String> {
         Err("native progress source unavailable".into())
+    }
+    /// AgentQ already records this owned run; session hooks must not duplicate it.
+    fn records_agent(&self) -> bool {
+        false
     }
     fn job(&self) -> Option<String> {
         None
@@ -584,6 +590,61 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     }
 }
 
+/// Delegate native/recovered session records to AgentQ; no TaskQ parser or process sampler.
+pub(crate) fn record_session(
+    install: &Path,
+    log: &Path,
+    pos: u64,
+    rt: &str,
+    task: u64,
+    attempt: u64,
+) -> Result<(), String> {
+    use agentq_runtime::agent::{Context, SessionTurn, append_records, session_records};
+    let end = std::fs::metadata(log)
+        .map_err(|_| "native transcript unreadable")?
+        .len();
+    let log = log.to_owned();
+    let rt = rt.to_owned();
+    let now_ms = crate::profile::now_ms().ok_or("clock-unknown")?;
+    records::submit(install, move |store| {
+        use std::io::{Seek, SeekFrom};
+        let mut file = File::open(&log).map_err(|_| "native transcript unreadable")?;
+        if end < pos || file.metadata().map_err(|e| e.to_string())?.len() < end {
+            return Err("native transcript truncated; boundary unknown".into());
+        }
+        file.seek(SeekFrom::Start(pos)).map_err(|e| e.to_string())?;
+        let mut text = String::new();
+        file.take(end - pos)
+            .read_to_string(&mut text)
+            .map_err(|e| e.to_string())?;
+        let key = format!(
+            "{}.{task}.{attempt}.{pos}",
+            usage::sha256(log.as_os_str().as_encoded_bytes())
+        );
+        let report = classify(&rt, &text).ok_or("runtime-unknown")?;
+        let turn = SessionTurn {
+            runtime: of(&rt).agent,
+            session: report.session.as_deref(),
+            scope: &key,
+            key: &key,
+            now_ms,
+            outcome: report.outcome,
+            error: report.error,
+            model: None,
+        };
+        let context = Context {
+            product: "taskq",
+            version: crate::platform::VERSION,
+            project: "other",
+            task: None,
+            route: None,
+            account: "unknown",
+        };
+        let records = session_records(&turn, &context, &text)?;
+        append_records(store, &records)
+    })
+}
+
 /// A usage or quota limit the runtime reported before any work started ([usage limit](docs/design/capacity.md#usage-limit)):
 /// `Some(reset)` with the reported reset (epoch seconds) when known; None after work started or without a limit.
 pub fn usage_limit(log: &Path, rt: &str) -> Option<Option<i64>> {
@@ -1030,6 +1091,9 @@ impl CliTurn {
 }
 
 impl Proc for CliTurn {
+    fn records_agent(&self) -> bool {
+        self.proc.records_agent()
+    }
     fn progress_source(&self) -> Result<(PathBuf, u64), String> {
         if self.accepted {
             Ok((self.log.clone(), self.start))
@@ -2505,16 +2569,20 @@ fn recovery_binding(
         _ => return Err("native attempt log missing or ambiguous; preserve the execution".into()),
     };
     let mut binding = None;
+    let mut offset = 0u64;
     let mut reader = NativeHistory::default();
     let until = observation_deadline(std::time::Duration::from_secs(5));
     loop {
         let complete=reader.lines(&log,|line| {
+            let start = offset;
+            offset += line.len() as u64;
             if !line.trim_start().starts_with('{') {return Ok(());}
-            let v:serde_json::Value=serde_json::from_str(line).map_err(|_|"native attempt record incomplete or invalid")?;
+            let mut v:serde_json::Value=serde_json::from_str(line).map_err(|_|"native attempt record incomplete or invalid")?;
             if v["type"]!="taskq.input" || v["execution"].as_u64()!=Some(x.id) {return Ok(());}
             if v["task"].as_u64()!=Some(task) || v["attempt"].as_u64()!=Some(x.attempt) || v["runtime"]!=x.runtime || v["path"].as_str()!=path.to_str() || v["input"]!=input || !v["native"].is_object() {
                 return Err("native input binding differs from the board execution; inspect original submission".into());
             }
+            v["offset"] = start.into();
             binding=Some(v);Ok(())
         })?;
         if complete {
@@ -2687,6 +2755,9 @@ pub fn recover(
         Ok(Box::new(ClaudeTurn {
             root: root.clone(),
             log,
+            start: binding["offset"]
+                .as_u64()
+                .ok_or("native input boundary missing")?,
             session: if x.id == x.attempt {
                 String::new()
             } else {
@@ -2699,7 +2770,7 @@ pub fn recover(
             announced: false,
             accepted: false,
             history: ClaudeHistory::default(),
-            before: 0,
+            before: binding["native"]["before"].as_u64().unwrap_or(0) as usize,
             mode: "unknown: recovered observer".into(),
             input,
             _input_file: input_file,
@@ -2909,6 +2980,7 @@ pub fn access(env: &Env, rt: &str) -> Result<crate::policy::Effective, StartErro
 }
 
 /// Start the child with its stdout and stderr in the attempt log; `codex-app` starts its handshake child (§ 8).
+#[tracing::instrument(name="runtime.agent",skip_all,fields(task=(l.task>0).then_some(l.task),attempt=(l.attempt>0).then_some(l.attempt),actor=l.role.as_str(),entry=l.execution.or((l.attempt>0).then_some(l.attempt))))]
 pub fn spawn(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
     crate::profile::measure_classified("spawn", || spawn_inner(env, l), StartError::class)
 }
@@ -3145,6 +3217,7 @@ fn stdin_text(rt: &str, text: &str) -> String {
 pub struct ClaudeTurn {
     root: PathBuf,
     log: PathBuf,
+    start: u64,
     session: String,
     id: String,
     announced: bool,
@@ -3756,6 +3829,11 @@ impl ClaudeTurn {
         )
         .map_err(|e| StartError::admission(&e))?;
         let (input, input_file, path) = claude_input(&root, text, Some(l))?;
+        let start = match std::fs::metadata(log) {
+            Ok(meta) => meta.len(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(e) => return Err(e.to_string().into()),
+        };
         bind_input(
             log,
             l,
@@ -3766,6 +3844,7 @@ impl ClaudeTurn {
         let mut turn = Self {
             root,
             log: log.into(),
+            start,
             session: if l.resume.is_some() {
                 l.session.clone()
             } else {
@@ -3893,7 +3972,7 @@ impl Proc for ClaudeTurn {
     }
     fn progress_source(&self) -> Result<(PathBuf, u64), String> {
         if self.accepted {
-            Ok((self.log.clone(), 0))
+            Ok((self.log.clone(), self.start))
         } else {
             Err("native input not accepted".into())
         }
@@ -3942,7 +4021,7 @@ impl Proc for ClaudeTurn {
             .ok_or("Claude original process identity unavailable".into())
     }
     fn input_offset(&self) -> Result<u64, String> {
-        Ok(0)
+        Ok(self.start)
     }
     fn accepted(&mut self) -> Result<bool, String> {
         if self.accepted || self.handed {
@@ -4101,7 +4180,7 @@ impl ClaudeTurn {
             runtime: CLAUDE.into(),
             process: self.native_identity()?,
             execution: r.execution,
-            offset: 0,
+            offset: self.start,
             job: None,
         };
         crate::service_run::checkpoint_kid(&r.install, &r.root, row)

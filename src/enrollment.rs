@@ -100,7 +100,12 @@ pub fn pair(
     let id = installation_id(install)?;
     let value = board.value();
     let schemas: &[&str] = if telemetry {
-        &[SCHEMA, RESOURCES, crate::telemetry_sync::SCHEMA]
+        &[
+            SCHEMA,
+            RESOURCES,
+            crate::telemetry_sync::SCHEMA,
+            coreq::telemetry::OBSERVATION_SCHEMA,
+        ]
     } else {
         &[SCHEMA, RESOURCES]
     };

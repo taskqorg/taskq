@@ -30,6 +30,8 @@ else:
             {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'fixture done'}},
             {'type': 'turn.completed'}],
         'claude': [{'type': 'system', 'subtype': 'init', 'session_id': session},
+            {'type': 'assistant', 'message': {'id': 'invented-call', 'model': 'invented-model',
+                'usage': {'input_tokens': 2, 'cache_read_input_tokens': 3, 'cache_creation_input_tokens': 0, 'output_tokens': 4}}},
             {'type': 'result', 'subtype': 'success', 'result': 'fixture done', 'is_error': False}],
         'antigravity': [{'event': 'init', 'conversation_id': session},
             {'event': 'result', 'result': {'conversation_id': session, 'status': 'SUCCESS', 'response': 'fixture done'}}],

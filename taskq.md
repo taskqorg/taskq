@@ -170,6 +170,10 @@ Mid-work quota waits for verified exit and same-session/account continuation, ne
 Owner weights, quota headroom and host spread: [detail](docs/design/capacity.md#owner-weights-and-quota-headroom); configuration and cutover: [§9](#9-config-and-cutover).
 ### Profiling
 Coreq always records actions; owned methods: bounded opt-in detail. UI/board/agent work; local store, optional sync. Follow [shared profiling](https://github.com/taskqorg/specq/blob/main/engineering/profiling.md); [detail][pf] owns coverage and qualification, recovery proof, selftest capture and limits.
+### Telemetry observations
+CoreQ records TaskQ attempt stages, board calls, queue transitions and service passes as [shared observations](https://github.com/taskqorg/specq/blob/main/engineering/profiling.md#telemetry-contract) in the installation store. CoreQ inherits project, task, attempt, actor and entry; unavailable values are null with reason codes (R12).
+Agent runs and model calls come only from agentq-runtime; TaskQ adds no agent capture. The CoreQ shipper runs beside `telemetry_sync`, under its separately approved `coreq-observation/1` enrollment schema; keep that path, its parser and the CoreQ fixture rule until a later parity-qualified deletion.
+Agent record writes run off supervision; clean exit, Stop and re-exec settle them first, bounded; unavailable commits stay unknown. Recovery keeps each execution's transcript boundary and immutable identity, including resumed turns.
 ### Board request records
 A running service records unrecorded board request counts to telemetry every 4 minutes and at clean end, preserving `taskq profile`'s hour across restart. Clean stop/restart/update handover loses none; any other end (kill, crash, OS signal, power loss) loses at most the last 5 minutes. Record each count once, with no board request; `requests 1h:` log and heartbeat counts stay hourly ([budget](docs/budget-1032.md#counting-format)).
 ### Host link

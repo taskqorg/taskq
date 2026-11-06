@@ -270,7 +270,8 @@ pub(crate) fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let _repeating = tracing::info_span!(
             "service.loop",
             coreq_repeating = true,
-            project = cfg.repo.as_str()
+            project = cfg.repo.as_str(),
+            actor = "service"
         )
         .entered();
         let observe = observes(host.as_ref(), &cfg.root)?;
@@ -332,6 +333,7 @@ struct ProjectLoop<'a> {
     last_hour: Option<BTreeMap<String, u64>>,
     dashq: enrollment::Sender,
     telemetry_sync: telemetry_sync::Sender,
+    observation_shipper: telemetry_sync::Sender,
     policy_exchange: resources::Exchanger,
     pm_exchange: pm::Exchanger,
     reports: reports::Collector,
@@ -420,6 +422,7 @@ impl<'a> ProjectLoop<'a> {
             last_hour: None,
             dashq: Default::default(),
             telemetry_sync: Default::default(),
+            observation_shipper: telemetry_sync::Sender::observations(),
             policy_exchange: Default::default(),
             pm_exchange: Default::default(),
             reports: Default::default(),
@@ -775,6 +778,12 @@ impl<'a> ProjectLoop<'a> {
         {
             log!("{l}");
         }
+        if let Some(l) = self
+            .observation_shipper
+            .tick(&cfg.install, s.snapshot.as_ref(), at)
+        {
+            log!("{l}");
+        }
         // docs/design/shared-resource-controls.md § Host adapter: the same speaker exchanges resource operations
         for l in self
             .policy_exchange
@@ -977,6 +986,10 @@ impl<'a> ProjectLoop<'a> {
             ("dev", f.dev),
             ("connection", json!(self.dashq.outcome)),
             ("telemetry_sync", self.telemetry_sync.status.clone()),
+            (
+                "observation_shipper",
+                self.observation_shipper.status.clone(),
+            ),
             ("telemetry", telemetry::diagnostic::health()),
             (
                 "tidy",
@@ -1565,7 +1578,7 @@ pub(crate) fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     let mut command =
         crate::platform::command(cfg.install.join(platform::tool(&cfg.install).exe_name()));
     command.args(["service", "run"]);
-    coreq::telemetry::capture::before_exec();
+    platform::before_exec();
     let e = command.exec();
     incident::detect(
         "dispatch.reexec",
