@@ -302,7 +302,8 @@ module.exports = execution.module("conversations", {
       recordBytes = new WeakMap(),
       taskBodies = new Map(),
       taskReads = new Map();
-    let taskSelected = null;
+    let taskSelected = null,
+      imagePreview = null;
     let recoveryQueue = [],
       recoveryDrafts = [];
     let owner = { id: "main", detached: [] },
@@ -2689,6 +2690,30 @@ module.exports = execution.module("conversations", {
             : item.attempt
               ? workerPages.get(item.attempt)
               : live || view;
+          const images = (
+              closed
+                ? resident?.items || []
+                : live
+                  ? [...workerPages.values()].flatMap((p) =>
+                      p.opened ? p.items : [],
+                    )
+                  : view?.items || []
+            ).filter((i) => i.image?.src),
+            start = Math.max(
+              0,
+              images.findIndex((i) => api.key(i) === imagePreview),
+            ),
+            previews = new Set();
+          let bytes = 0;
+          for (const i of images.slice(start)) {
+            if (
+              previews.size >= 4 ||
+              bytes + i.image.src.length > 2 * 1024 * 1024
+            )
+              break;
+            previews.add(api.key(i));
+            bytes += i.image.src.length;
+          }
           const name =
               typeof image.name === "string" ? image.name : "Recorded image",
             identity =
@@ -2720,23 +2745,29 @@ module.exports = execution.module("conversations", {
             h("figcaption", null, name),
             reason
               ? h("p", { role: "status" }, reason)
-              : h("img", {
-                  src,
-                  alt: name,
-                  width: image.width,
-                  height: image.height,
-                  loading: "lazy",
-                  decoding: "async",
-                  onError: () => {
-                    imageFailures.set(
-                      identity,
-                      "Image decode failed; recorded source retained",
-                    );
-                    while (imageFailures.size > 24)
-                      imageFailures.delete(imageFailures.keys().next().value);
-                    draw();
-                  },
-                }),
+              : !previews.has(key)
+                ? h(
+                    "button",
+                    { "data-c": "image-preview", "data-image-key": key },
+                    "Show image · four previews at a time",
+                  )
+                : h("img", {
+                    src,
+                    alt: name,
+                    width: image.width,
+                    height: image.height,
+                    loading: "lazy",
+                    decoding: "async",
+                    onError: () => {
+                      imageFailures.set(
+                        identity,
+                        "Image decode failed; recorded source retained",
+                      );
+                      while (imageFailures.size > 24)
+                        imageFailures.delete(imageFailures.keys().next().value);
+                      draw();
+                    },
+                  }),
             typeof image.url === "string" &&
               /^https?:\/\//.test(image.url) &&
               h(
@@ -6472,6 +6503,11 @@ module.exports = execution.module("conversations", {
         if (!action) return false;
         const c = api.current();
         sidebarProjection = null;
+        if (action === "image-preview") {
+          imagePreview = b.dataset.imageKey;
+          draw();
+          return true;
+        }
         if (action === "closed-object") {
           const r = closedViews.get(
             b.dataset.root + "#" + b.dataset.task + "@" + b.dataset.sha,

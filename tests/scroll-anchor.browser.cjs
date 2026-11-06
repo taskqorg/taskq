@@ -751,7 +751,8 @@ const refreshDuringScrolling = async (p, s, at) => {
     box.y + Math.min(box.height / 2, 120),
   );
   await p.mouse.wheel(0, 24);
-  await p.waitForTimeout(30);
+  // mouse.wheel queues native input; the page may receive it after the data unless we observe its arrival.
+  await p.waitForFunction(() => gateProof.last > 0);
   await s.refresh(marker)(p);
   for (let i = 0; i < 3; i++) {
     await p.mouse.wheel(0, i % 2 ? 24 : -24);

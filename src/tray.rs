@@ -2098,7 +2098,9 @@ fn add_submit(
     ) {
         Ok(_) => {}
         Err(ADD_UNAVAILABLE) => {
-            return Err("Add project worker unavailable; prior result unknown; do not retry".into());
+            return Err(
+                "Add project worker unavailable; prior result unknown; do not retry".into(),
+            );
         }
         Err(_) => {
             return Err(

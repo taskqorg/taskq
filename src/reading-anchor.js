@@ -365,12 +365,32 @@ const A = execution
           if (!viewport?.getBoundingClientRect) return;
           let region = regions.get(viewport);
           if (!region) {
-            region = { surface, position: null, image: false, observer: null };
+            region = {
+              surface,
+              position: null,
+              image: false,
+              images: new WeakMap(),
+              observer: null,
+            };
             regions.set(viewport, region);
             if (globalThis.ResizeObserver)
               region.observer = new ResizeObserver(() => {
                 if (gate.moving || !region.position) return;
-                const cause = region.image ? "late-image" : "resize";
+                // An inserted image can change layout before its load event reaches the capture listener.
+                let imageChanged = region.image;
+                for (const img of viewport.querySelectorAll("img")) {
+                  const identity = [
+                    img.currentSrc,
+                    img.naturalWidth,
+                    img.naturalHeight,
+                  ].join(":");
+                  imageChanged ||= region.images.get(img) !== identity;
+                  region.images.set(img, identity);
+                }
+                const cause =
+                  imageChanged && region.position.width === viewport.clientWidth
+                    ? "late-image"
+                    : "resize";
                 region.image = false;
                 if (
                   region.position.width !== viewport.clientWidth ||
@@ -382,6 +402,11 @@ const A = execution
           }
           region.surface = surface;
           region.position = A.snapshot(viewport);
+          for (const img of viewport.querySelectorAll("img"))
+            region.images.set(
+              img,
+              [img.currentSrc, img.naturalWidth, img.naturalHeight].join(":"),
+            );
           region.observer?.observe(viewport);
           for (const child of viewport.children)
             region.observer?.observe(child);
