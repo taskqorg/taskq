@@ -116,7 +116,8 @@ pub fn gitlab_access(
 }
 
 /// Every check id; a heartbeat `doctor` line carries only these.
-pub const IDS: [&str; 10] = [
+pub const IDS: [&str; 11] = [
+    "disk",
     "token-issues",
     "token-contents",
     "token-pulls",
@@ -685,6 +686,15 @@ fn hook_files(home: Option<&Path>) -> Vec<std::path::PathBuf> {
     v
 }
 
+/// `disk` (§ 3 Disk guard): whether this reading admits new attempts on the project's volumes.
+pub fn disk_item(disk: crate::disk::Disk) -> Item {
+    match disk.free_text() {
+        Some(_) if disk.holds() => Item::gap("disk", disk.reason(), disk.next()),
+        Some(free) => Item::ok("disk", free),
+        None => Item::unknown("disk", disk.reason(), disk.next()),
+    }
+}
+
 /// All checks of one board; `latest` is the latest release read once per run.
 pub fn board_items(
     b: &dyn crate::board::Board,
@@ -700,6 +710,7 @@ pub fn board_items(
         .current()
         .unwrap_or_else(|| crate::platform::VERSION.into());
     items.push(version_item(&installed, latest));
+    items.push(disk_item(crate::disk::Disk::read(root)));
     items.push(reports_item(&crate::reports::cached(root), gitlab));
     let path = crate::paths::dot(root).join("status.json");
     items.push(error_item(
@@ -1196,6 +1207,11 @@ pub fn fix(
         ),
         None => match id {
             "version" => format!("run `taskq update` on {host}"),
+            "disk" if status == "unknown" => format!(
+                "on {host}: {}",
+                crate::disk::Disk::Unknown.next()
+            ),
+            "disk" => format!("on {host}: {}", crate::disk::Disk::Free(0).next()),
             "reports" => match reports.and_then(parse_reports) {
                 Some((cause, numbers)) => reports_fix(cause, &numbers, host, gitlab),
                 None => format!("run `taskq doctor` on {host}: its version names no report cause"),

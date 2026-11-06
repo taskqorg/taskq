@@ -275,6 +275,13 @@ fn stable(body: &str) -> Vec<String> {
             if let Some((_, status)) = l.strip_prefix("doctor ").and_then(|s| s.split_once(' ')) {
                 return format!("doctor {status}");
             }
+            // § 3 Disk guard: only a change of what the reading admits forces a write; the bytes travel with the next one
+            if let Some(disk) = l.strip_prefix("disk ").and_then(crate::disk::Disk::parse) {
+                return match disk {
+                    crate::disk::Disk::Unknown => l.to_string(),
+                    d => format!("disk holds {}", d.holds()),
+                };
+            }
             if let Some(mut binary) = l
                 .strip_prefix("binary-evidence ")
                 .and_then(|s| serde_json::from_str::<Value>(s).ok())
@@ -1309,6 +1316,9 @@ pub struct Service<'a> {
     /// Capacity reloaded before each pass (§ 3); an error holds every launch.
     pub cap: Result<Capacity, String>,
     pub gate: Gate,
+    /// § 3 Disk guard reading of this project. `None` only before the service loop's first read: that loop reads
+    /// before every pass, and only a pass launches.
+    pub disk: Option<crate::disk::Disk>,
     /// Monotonic seconds for the gate.
     pub mono: u64,
     /// Won claims the gate holds before launch.
@@ -1890,6 +1900,7 @@ impl<'a> Service<'a> {
             events_since: None,
             cap,
             gate: Gate::default(),
+            disk: None,
             mono: 0,
             held: vec![],
             pending: BTreeSet::new(),
@@ -2291,6 +2302,17 @@ impl<'a> Service<'a> {
                 "unknown",
                 crate::snapshot::ADMISSION_UNKNOWN[1].to_string(),
             ))
+        } else if let Some(d) = self.disk.filter(|d| d.holds()) {
+            // § 3: outside the load gate, so a gate turned off still holds; an unknown reading admits nothing
+            Some(if d == crate::disk::Disk::Unknown {
+                (
+                    "disk",
+                    "unknown",
+                    crate::snapshot::ADMISSION_UNKNOWN[4].to_string(),
+                )
+            } else {
+                ("disk", "load-gate", format!("disk: {}", d.reason()))
+            })
         } else if !self.gate.may_launch(self.mono) {
             let (code, text) = self
                 .gate
@@ -2656,6 +2678,10 @@ impl<'a> Service<'a> {
         if let Some(h) = &self.hold {
             (gate, reasons) = ("held", [vec![("hold", h.clone())], reasons].concat());
         }
+        if let Some(d) = self.disk.filter(|d| d.holds()) {
+            gate = if gate == "unknown" { gate } else { d.gate() };
+            reasons.push(("disk", d.reason()));
+        }
         if let Some((code, text)) = self.refused.clone().filter(|_| self.auto()) {
             gate = if code == "host" {
                 "unknown"
@@ -2760,7 +2786,8 @@ impl<'a> Service<'a> {
             "min_service_version": crate::admission::MIN_SERVICE, "reservations": reservations,
             "gate": gate, "reasons": reasons.iter().map(|(c, t)| json!({"code": c, "text": t})).collect::<Vec<_>>(),
             "cpu_percent": last.and_then(|l| l.2), "memory_available_percent": last.and_then(|l| l.3),
-            "sample_at": last.map(|l| l.1), "sample_age_seconds": last.map(|l| self.mono.saturating_sub(l.0))})
+            "sample_at": last.map(|l| l.1), "sample_age_seconds": last.map(|l| self.mono.saturating_sub(l.0)),
+            "disk_free_bytes": match self.disk { Some(crate::disk::Disk::Free(n)) => Some(n), _ => None }})
     }
 
     /// Handover carries execution identity; only board acceptance establishes delivery.
@@ -3540,6 +3567,7 @@ impl<'a> Service<'a> {
             lines.push(format!("binary-evidence {}", self.binary_evidence()));
         }
         lines.extend(self.selected_line());
+        lines.extend(self.disk.map(crate::disk::Disk::line));
         if !self.machine.is_empty() {
             lines.push(format!("machine {}", self.machine));
         }
