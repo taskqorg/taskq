@@ -1681,6 +1681,7 @@ impl Board for GitHub {
         ))
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn issue(&self, n: u64) -> Result<Issue> {
         Ok(parse_issue(
             &self
@@ -1724,11 +1725,13 @@ impl Board for GitHub {
         String::from_utf8(bytes).map_err(|_| "report source is not UTF-8".into())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> {
         let events = self.api.all(&format!("/issues/{n}/events?per_page=100"))?;
         first_admission(&events)
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {
         Ok(self
             .api
@@ -1738,6 +1741,7 @@ impl Board for GitHub {
             .collect())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn comment(&self, n: u64, body: &str) -> Result<u64> {
         self.api
             .call(
@@ -1750,6 +1754,7 @@ impl Board for GitHub {
             .ok_or("no comment id".into())
     }
 
+    #[tracing::instrument(name="board.entry",skip_all,fields(task=_n,entry=id))]
     fn edit_comment(&self, _n: u64, id: u64, body: &str) -> Result<()> {
         self.api
             .call(
@@ -1770,6 +1775,7 @@ impl Board for GitHub {
             .map(|_| ())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> {
         if !add.is_empty() && self.canonical_labels()? {
             self.ensure_labels(add)?;
@@ -1816,6 +1822,7 @@ impl Board for GitHub {
         Ok(n)
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn edit(&self, n: u64, body: &str) -> Result<()> {
         let reply = self.api.call(
             "PATCH",
@@ -1841,6 +1848,7 @@ impl Board for GitHub {
         Ok(())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn close(&self, n: u64) -> Result<()> {
         self.heartbeat.borrow_mut().take_if(|(_, i)| i.number == n);
         self.forget();
@@ -1853,6 +1861,7 @@ impl Board for GitHub {
             .map(|_| ())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn reopen(&self, n: u64) -> Result<()> {
         self.heartbeat.borrow_mut().take_if(|(_, i)| i.number == n);
         self.forget();
@@ -1878,6 +1887,7 @@ impl Board for GitHub {
         mode == "pr"
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn cancel_publication(&self, n: u64, sha: &str) -> Result<()> {
         let owner = self
             .api
@@ -1961,6 +1971,7 @@ impl Board for GitHub {
         )
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn close_task_prs(&self, n: u64, reason: &str) -> Result<Vec<u64>> {
         let owner = self
             .api
@@ -2012,6 +2023,7 @@ impl Board for GitHub {
     }
 
     // § 7 Result and close verdicts: a pending publication takes the current preset (#1942: was always `pr`)
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn resume_publication(
         &self,
         n: u64,
@@ -2025,6 +2037,7 @@ impl Board for GitHub {
         outcome(self.try_publish(n, sha, mode, title, task_line, Some(root), enqueued))
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> Publish {
         outcome(self.try_publish(n, sha, mode, title, task_line, None, false))
     }

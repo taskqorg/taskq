@@ -1,5 +1,11 @@
 # Profiling detail
 
+## CoreQ observations (contract detail)
+
+TaskQ writes attempt stages, board operations, queue transitions and service passes to the installation CoreQ store under [taskq.md §4](../../taskq.md#telemetry-observations). Caller boundaries declare identity once; CoreQ carries project, task, attempt, actor and entry through nested work. Missing identity remains null with a reason. AgentQ runtime owns agent turn and model-call records; TaskQ delegates recording without a second parser or sampler.
+
+The CoreQ shipper uses the separately approved `coreq-observation/1` schema, the existing enrolled board scope and resource fence. It runs on a background thread beside the unchanged `taskq-telemetry/1` sender. Existing grants are not expanded: a new enrollment approval is required to add the schema. `status.json` exposes `observation_shipper` separately from `telemetry_sync`. CoreQ owns receipts, durable cursor and pruning; missing grants send nothing. Neither path is deleted before a later parity-qualified task.
+
 Implemented detail of the profiling records and of `taskq profile export|tasks|board` (#1147, #1173, #1174). The records are decided in [taskq.md § 4 Profiling](../../taskq.md#profiling); the command, its views and their columns in [§ 5](../../taskq.md#5-commands). Chain check of the views: `export_then_reports` in `src/profile.rs`.
 
 ## Service wakeups

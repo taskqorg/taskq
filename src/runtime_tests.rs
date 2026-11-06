@@ -7242,3 +7242,59 @@ fn a_differing_daemon_starts_no_background_job() {
     assert!(!log.exists(), "no input is bound");
     std::fs::remove_dir_all(&root).ok();
 }
+
+// §4/A3: native session hooks delegate parsing and immutable IDs to AgentQ; old calls and private payload stay out.
+#[test]
+fn session_observations_use_agentq_and_only_the_new_native_bytes() {
+    use tracing_subscriber::prelude::*;
+    let root = std::env::temp_dir().join(format!("taskq-session-observation-{}", uuid()));
+    std::fs::create_dir_all(root.join("telemetry.log")).unwrap();
+    let store = std::sync::Arc::new(
+        coreq::telemetry::Store::open(&root.join("telemetry.log/universal.sqlite3")).unwrap(),
+    );
+    let capture = coreq::telemetry::capture::Capture::new(store.clone(), "taskq", "test").unwrap();
+    let text = |id: &str, tokens: u64| {
+        format!(
+            "{}\n",
+            serde_json::json!({"type":"assistant","message":{"id":id,"model":"invented-model","content":[{"type":"text","text":"private-output"}],"usage":{"input_tokens":tokens,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":1}}})
+        )
+    };
+    let old = text("old", 99);
+    let log = root.join("native.jsonl");
+    std::fs::write(&log, old.clone() + &text("new", 2)).unwrap();
+    tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()), || {
+        let _caller = tracing::info_span!(
+            "fixture.session",
+            project = "fixture/project",
+            task = 2428u64,
+            attempt = 77u64,
+            actor = "reviewer",
+            entry = 88u64
+        )
+        .entered();
+        for _ in 0..2 {
+            record_session(&root, &log, old.len() as u64, "claude", 2428, 77).unwrap();
+        }
+    });
+    let rows = store
+        .export_kinds(&["agent.turn", "agent.call"], 0, 0, 100)
+        .unwrap();
+    assert_eq!(
+        rows["events"].as_array().unwrap().len(),
+        2,
+        "repeated records retain AgentQ immutable IDs"
+    );
+    for row in rows["events"].as_array().unwrap() {
+        let v = &row["observation"];
+        assert_eq!(v["input_tokens"], 2);
+        assert_eq!(v["project"], "fixture/project");
+        assert_eq!(v["actor"], "reviewer");
+        assert_eq!(v["entry"], 88);
+        assert_eq!(v["task"], 2428);
+        assert_eq!(v["attempt"], 77);
+    }
+    assert!(!rows.to_string().contains("private-output"));
+    drop(capture);
+    drop(store);
+    std::fs::remove_dir_all(root).unwrap();
+}

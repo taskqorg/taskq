@@ -109,6 +109,10 @@ pub trait Proc {
     fn progress_source(&self) -> Result<(PathBuf, u64), String> {
         Err("native progress source unavailable".into())
     }
+    /// AgentQ already records this owned run; session hooks must not duplicate it.
+    fn records_agent(&self) -> bool {
+        false
+    }
     fn job(&self) -> Option<String> {
         None
     }
@@ -579,6 +583,51 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     }
 }
 
+/// Delegate native/recovered session records to AgentQ; no TaskQ parser or process sampler.
+pub(crate) fn record_session(
+    install: &Path,
+    log: &Path,
+    pos: u64,
+    rt: &str,
+    task: u64,
+    attempt: u64,
+) -> Result<(), String> {
+    use agentq_runtime::agent::{Context, SessionTurn, append_records, session_records};
+    let text = log_text(log, pos).ok_or("native transcript unreadable")?;
+    let session = native_session(rt, log);
+    let key = format!(
+        "{}.{task}.{attempt}.{pos}",
+        usage::sha256(log.as_os_str().as_encoded_bytes())
+    );
+    let report = classify(rt, &text).ok_or("runtime-unknown")?;
+    let turn = SessionTurn {
+        runtime: of(rt).agent,
+        session: session.as_deref(),
+        scope: &key,
+        key: &key,
+        now_ms: crate::profile::now_ms().ok_or("clock-unknown")?,
+        outcome: report.outcome,
+        error: report.error,
+        model: None,
+    };
+    let context = Context {
+        product: "taskq",
+        version: crate::platform::VERSION,
+        project: "other",
+        task: None,
+        route: None,
+        account: "unknown",
+    };
+    let records = session_records(&turn, &context, &text)?;
+    let store = crate::telemetry::budget(install, "telemetry.sqlite3").and_then(|budget| {
+        coreq::telemetry::Store::open_bounded(
+            &install.join("telemetry.log/universal.sqlite3"),
+            budget,
+        )
+    })?;
+    append_records(&store, &records)
+}
+
 /// A usage or quota limit the runtime reported before any work started ([usage limit](docs/design/capacity.md#usage-limit)):
 /// `Some(reset)` with the reported reset (epoch seconds) when known; None after work started or without a limit.
 pub fn usage_limit(log: &Path, rt: &str) -> Option<Option<i64>> {
@@ -1025,6 +1074,9 @@ impl CliTurn {
 }
 
 impl Proc for CliTurn {
+    fn records_agent(&self) -> bool {
+        self.proc.records_agent()
+    }
     fn progress_source(&self) -> Result<(PathBuf, u64), String> {
         if self.accepted {
             Ok((self.log.clone(), self.start))
@@ -2913,6 +2965,7 @@ pub fn access(env: &Env, rt: &str) -> Result<crate::policy::Effective, StartErro
 }
 
 /// Start the child with its stdout and stderr in the attempt log; `codex-app` starts its handshake child (§ 8).
+#[tracing::instrument(name="runtime.agent",skip_all,fields(task=(l.task>0).then_some(l.task),attempt=(l.attempt>0).then_some(l.attempt),actor=l.role.as_str(),entry=l.execution.or((l.attempt>0).then_some(l.attempt))))]
 pub fn spawn(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
     crate::profile::measure_classified("spawn", || spawn_inner(env, l), StartError::class)
 }

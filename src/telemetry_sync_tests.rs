@@ -561,3 +561,90 @@ fn tick_never_waits_on_the_network() {
     drop(store);
     fs::remove_dir_all(install).unwrap();
 }
+
+// §4/A4: both senders retain their own receipts; CoreQ needs its own grant and must not delay a service pass.
+#[test]
+fn coreq_shipper_runs_beside_legacy_without_expanding_grants() {
+    let (install, store) = setup("parallel", json!([enrollment::SCHEMA, SCHEMA]));
+    append(&store, 2);
+    let mut sender = Sender::observations();
+    sender.tick_with(&install, Some(&snap("o/a")), 1, |_| Box::new(Slow));
+    assert!(sender.job.is_none() && sender.status["state"] == "off");
+    assert!(store.shipper().unwrap()["cursor"].is_null());
+    let path = enrollment::dir(&install).join("connection.json");
+    let mut connection: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    connection["active"]["schemas"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(coreq::telemetry::OBSERVATION_SCHEMA));
+    fs::write(&path, connection.to_string()).unwrap();
+    sender.tick_with(&install, Some(&snap("o/b")), 2, |_| Box::new(Slow));
+    assert!(sender.job.is_none(), "another board never sends");
+    let began = Instant::now();
+    sender.tick_with(&install, Some(&snap("o/a")), 2, |_| Box::new(Slow));
+    assert!(sender.job.is_some() && began.elapsed() < Duration::from_secs(1));
+    let (_, status, _) = sender.job.take().unwrap().join().unwrap();
+    assert_eq!(status["state"], "retrying");
+    assert_eq!(
+        store.shipper().unwrap()["cursor"],
+        0,
+        "unconfirmed receipt never advances"
+    );
+    #[derive(Default)]
+    struct Observations {
+        rows: Vec<Value>,
+    }
+    impl Wire for Observations {
+        fn post(
+            &mut self,
+            _: &str,
+            route: &str,
+            _: Option<&str>,
+            body: &Value,
+        ) -> Result<(u16, Value), String> {
+            assert_eq!(route, "/ingest");
+            let rows = body["records"].as_array().unwrap();
+            for row in rows {
+                assert_eq!(row["schema"], coreq::telemetry::OBSERVATION_SCHEMA);
+            }
+            self.rows.extend(rows.iter().cloned());
+            Ok((
+                200,
+                json!({"protocol":1,"receipts":rows.iter().map(|r|json!({"event_id":r["event_id"],"state":"accepted"})).collect::<Vec<_>>()}),
+            ))
+        }
+        fn now(&self) -> u64 {
+            0
+        }
+        fn sleep(&mut self, _: u64) {}
+        fn show(&mut self, _: &str, _: &str) {}
+    }
+    let mut wire = Observations::default();
+    assert_eq!(
+        observations(&install, &mut wire, &mut Backoff::default()).0["cursor"],
+        2
+    );
+    assert_eq!(wire.rows.len(), 2);
+    for field in ["project", "task", "attempt", "actor", "entry"] {
+        assert!(wire.rows[0]["payload"]["observation"][field].is_null());
+        assert!(wire.rows[0]["payload"]["observation"]["unknown"][field].is_string());
+    }
+    assert_eq!(
+        observations(&install, &mut wire, &mut Backoff::default()).0["backlog_rows"],
+        0
+    );
+    assert_eq!(
+        wire.rows.len(),
+        2,
+        "a fresh job resumes the CoreQ cursor without duplicates"
+    );
+    let mut legacy = Dash::default();
+    assert_eq!(go(&install, &mut legacy).0["state"], "idle");
+    assert_eq!(
+        seqs(&legacy),
+        vec![1, 2],
+        "old path keeps running with its original cursor"
+    );
+    drop(store);
+    fs::remove_dir_all(install).unwrap();
+}

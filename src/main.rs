@@ -353,6 +353,7 @@ fn deps_command(
     ))
 }
 
+#[tracing::instrument(name="taskq.command",skip_all,fields(project=c.cfg.repo.as_str()))]
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
