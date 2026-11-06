@@ -1,0 +1,39 @@
+{
+  "runtime": "codex-app",
+  "launches": 1,
+  "grant": "codex-app: requested -s workspace-write -c sandbox_workspace_write.network_access=true \u00b7 grant full (project) rev 34 by kirs \u00b7 effective full \u00b7 runtime sandbox off, uncontained; the same user can edit the policy",
+  "identity": null,
+  "live_rows": 2,
+  "reads": 12,
+  "status_heartbeat_equal_reads": 12,
+  "unequal": [],
+  "local_rows_with_process_id": 6,
+  "heartbeat_execution_lines": [
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938585,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938586,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938587,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938588,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938589,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938590,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938592,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938593,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938594,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938595,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"no supported native progress event\",\"observed\":1793938596,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"no supported native progress event\",\"observed\":1793938597,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}"
+  ],
+  "launch_epoch": 1793938585,
+  "process": [],
+  "session": "450b0d93cbace5e41e6a69ab0b0084d976cedb3d46a09bd73e04c92ff199396f",
+  "canary": "TaskQ-Qualification-2453-2eeee9cd-0743-48cc-a75e-2261fc113e1c",
+  "native_transcript": "<home>/.codex/sessions/2026/11/06/rollout-2026-11-06T11-16-25-01a1af12-7900-7543-b6a3-dfa3373ba890.jsonl",
+  "taskq_transcript_has_reply": true,
+  "transitions": [
+    "\"waiting\"/\"codex-app\"/\"unknown\"",
+    "\"running\"/\"codex-app\"/\"unknown\""
+  ],
+  "release": "Some(Exit)",
+  "after": null,
+  "canary_in_native_log": true,
+  "scope": "candidate Service with fixture board and native client; no installed service"
+}
