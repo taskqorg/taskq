@@ -170,11 +170,6 @@ pub trait Board {
     }
     /// #1819: drop shortcuts over unchanged board reads; the next list reads the board in full.
     fn forget(&self) {}
-    /// § 8 item 1 dev install: Ok only when `sha`'s `merge_group` CI passed; pending, failed or unknown is Err.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    fn merge_ci_green(&self, sha: &str) -> Result<()> {
-        Err(format!("merge_group CI unknown on {sha}").into())
-    }
     /// #1935 `selftest`: why publication route `mode` cannot finish on this repository's plan; None when no gap is found.
     fn delivery_gap(&self, _mode: &str) -> Result<Option<String>> {
         Ok(None)
@@ -688,9 +683,6 @@ impl Board for Profiled {
     }
     fn forget(&self) {
         self.0.forget()
-    }
-    fn merge_ci_green(&self, sha: &str) -> Result<()> {
-        self.op("read", |b| b.merge_ci_green(sha))
     }
     fn delivery_gap(&self, mode: &str) -> Result<Option<String>> {
         self.op("read", |b| b.delivery_gap(mode))

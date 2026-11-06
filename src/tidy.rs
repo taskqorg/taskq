@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 pub const EVERY: u64 = 3600;
 /// An unowned worktree whose newest file and HEAD commit are this old is removed when clean.
 const UNOWNED_AFTER: u64 = 7 * 86400;
-const CLASSES: [&str; 4] = ["task", "reserved", "unowned", "foreign"];
+const CLASSES: [&str; 3] = ["task", "unowned", "foreign"];
 /// Git lock files of the common dir that skip the pass: another Git command is running or died mid-write.
 const GIT_LOCKS: [&str; 4] = ["index.lock", "HEAD.lock", "packed-refs.lock", "config.lock"];
 /// Git dir state of an operation in progress; the root then stays as it is.
@@ -75,7 +75,6 @@ enum Step {
 enum Class {
     Worker(u64),
     Review(u64),
-    Reserved,
     Unowned,
     Foreign,
 }
@@ -84,7 +83,6 @@ impl Class {
     fn key(self) -> &'static str {
         match self {
             Class::Worker(_) | Class::Review(_) => "task",
-            Class::Reserved => "reserved",
             Class::Unowned => "unowned",
             Class::Foreign => "foreign",
         }
@@ -92,16 +90,13 @@ impl Class {
 }
 
 /// The class of directory `name` under `.worktrees`: `taskq-<N>`, `review-<N>` (also the older `review-<N>-<attempt>`),
-/// `dev-build`, else unowned.
+/// else unowned.
 fn class(name: &str) -> Class {
     let num = |s: &str| {
         (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
             .then(|| s.parse::<u64>().ok())
             .flatten()
     };
-    if name == "dev-build" {
-        return Class::Reserved;
-    }
     if let Some(n) = name.strip_prefix("taskq-").and_then(num) {
         return Class::Worker(n);
     }
@@ -538,7 +533,7 @@ impl Tidy<'_> {
                     Some(self.task(n, it, known, &mut stages, &mut log))
                 }
                 Class::Unowned if !self.external && it.entry.is_some() => self.unowned(it, at),
-                Class::Unowned | Class::Reserved | Class::Foreign => None,
+                Class::Unowned | Class::Foreign => None,
             };
             let refusal = match outcome {
                 Some(Step::Done(line)) => {
@@ -1146,7 +1141,7 @@ pub fn health_line(project: &str, tidy: &Value, now: u64) -> String {
         return format!("{project}: tidy unknown (no report yet)");
     };
     let n = |c: &str, k: &str| tidy[c][k].as_u64().unwrap_or(0);
-    let own = ["task", "reserved", "unowned"];
+    let own = ["task", "unowned"];
     let (k, d, s) = own.iter().fold((0, 0, 0), |(k, d, s), c| {
         (k + n(c, "count"), d + n(c, "dirty"), s + n(c, "bytes"))
     });

@@ -231,8 +231,8 @@ Spawn/resume commands, child environment, brief delivery, app tokens, logs: [run
 Service/tray/runtimes touch only `<root>`, `<install>`, `~/.claude`, `~/.codex`, Antigravity runtime state `~/.gemini/antigravity` and `~/.gemini/antigravity-cli`, read-only credentials `~/.gemini/oauth_creds.json`, OS temp dir, `~/Applications/TaskQ.app` and approved setup targets (§4);
 never Documents, Desktop, Downloads, iCloud, removable or network volumes or other app containers: macOS asks the owner for the service.
 Brief names an existing contract; forbids searching `/` or `~`; tray folder access needs the owner's picker, except bounded agentq readback (§4). **Shared core.** CoreQ owns release/update, launcher/rollback, units, status keys and token primitives; Cargo and JS pin one immutable revision. [Host mapping and cutover](docs/design/host-service.md#shared-core-mapping) own unit names and compatibility. TaskQ-specific rules:
-1. [Channels](https://github.com/taskqorg/specq/blob/main/engineering/release-contract.md#delivery-speed): host.json `channel` `dev|live` (missing: `live`). `dev` builds `X.Y.Z-yymmdd-N` (UTC date; N: that date's host builds from 0) only on demand (`taskq service dev-build`, or a ready task whose dependency closed after the installed commit), from the newest green `main` SHA ([dev install][hs-dev]).
-   `live`: an explicit workflow dispatch on `main` requests release of that event's immutable SHA after exact-source CI, before tags/builds. Main pushes and timers never request releases. Manual `live` and tag pushes remain supported; already published main sources skip, unknown or divergent ancestry refuses.
+1. [Channels](https://github.com/taskqorg/specq/blob/main/engineering/release-contract.md#delivery-speed): every host installs releases, and a host on a local `-` build moves to the latest release.
+   An explicit workflow dispatch on `main` requests release of that event's immutable SHA after exact-source CI, before tags/builds. Main pushes and timers never request releases. Manual `live` and tag pushes remain supported; already published main sources skip, unknown or divergent ancestry refuses.
    One release runs at a time without cancelling active or replacing pending runs (up to 100 queued); excess is visibly cancelled. CI tags the next free `vX.Y.Z`; each OS publishes alone, indexes serialized; runners: [detail][hs].
 2. CLI/service updates serialize under `<install>/update.lock`, then run coreq; new `current` gets the `<install>` allowlist sweep.
 3. An installed service older than `current` re-execs by the launcher. Windows CLI descendants share one Job Object. CLI children and Claude turns with a saved native ID use protected [native handover][ar]; codex-app turns defer it. Pending restart/Stop admits nothing and [waits](docs/design/host-service.md#restart-handover) for no childless attempt.
@@ -269,7 +269,6 @@ Conversations keeps complete task threads, paged attempt logs on demand, local f
 ### [menu]
 [menu]: docs/design/menu.md#contract-detail
 [hs]: docs/design/host-service.md#contract-detail
-[hs-dev]: docs/design/host-service.md#dev-install
 [vf]: https://github.com/taskqorg/specq/blob/main/engineering/verification.md
 [cf]: docs/design/configuration.md#contract-detail
 [ar]: docs/runtime-qualification.md#adapter-recovery-matrix

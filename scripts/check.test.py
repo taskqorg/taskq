@@ -374,20 +374,6 @@ for unpicked in ['taskq: answer\nOwner approves the section 6 edit', 'taskq: ans
     assert 'Shared project bootstrap' not in noted(unpicked), unpicked
 print('PASS approval association preserves revision, attempt, trust and selected-option fences')
 
-# #2210: dev builds are <next patch>-yymmdd-N; N counts the UTC date's builds on the host and restarts each day.
-import datetime
-dev = runpy.run_path(str(Path(__file__).with_name('dev-version.py')))['version']
-cargo, utc = 'version = "4.6.59"\n', datetime.timezone.utc
-day1, day2 = datetime.datetime(2026, 11, 2, 23, 59, tzinfo=utc), datetime.datetime(2026, 11, 3, 0, 0, tzinfo=utc)
-assert dev(cargo, ['4.6.60-dev.1793639858'], day1) == '4.6.60-261102-0'
-assert dev(cargo, ['4.6.60-dev.1793639858', '4.6.60-261102-0'], day1) == '4.6.60-261102-1'
-assert dev(cargo, [f'4.6.60-261102-{n}' for n in range(11)], day1) == '4.6.60-261102-11'
-assert dev(cargo, ['4.6.60-261102-0', '4.6.60-261102-1'], day2) == '4.6.60-261103-0'
-assert dev(cargo, ['4.6.59-261102-4'], day1.astimezone(datetime.timezone(datetime.timedelta(hours=3)))) == '4.6.60-261102-5'
-# #2234: releases take their version from the tag, so a dev build follows the highest release tag above Cargo.toml.
-assert dev(cargo, [], day1, ['v4.6.59', 'v4.6.70', 'v4.6.9', 'v5.0.0-rc1', 'vx']) == '4.6.71-261102-0'
-assert dev('version = "4.7.0"\n', [], day1, ['v4.6.70']) == '4.7.1-261102-0'
-print('PASS dev version counts per UTC day and follows the release tags')
 release_index = runpy.run_path(str(Path(__file__).parents[1] / '.github' / 'release-index.py'))['index']
 fast, latest = release_index('4.7.1', '', {'taskq-4.7.1-linux-x86_64': 'aa', 'taskq-4.7.1-windows-x86_64.exe': 'bb', 'other': 'cc'})
 assert fast == 'aa  taskq-4.7.1-linux-x86_64\nbb  taskq-4.7.1-windows-x86_64.exe\n'

@@ -1509,9 +1509,6 @@ impl Board for GitHub {
     fn kept(&self) -> Option<i64> {
         Open::reused_at(&self.open)
     }
-    fn merge_ci_green(&self, sha: &str) -> Result<()> {
-        Ok(self.merge_ci(sha)?.map(|_| ())?)
-    }
     fn delivery_gap(&self, mode: &str) -> Result<Option<String>> {
         if mode != "pr" {
             return Ok(None);

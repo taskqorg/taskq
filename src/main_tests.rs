@@ -318,9 +318,7 @@ use crate::board::{Board, entries};
 use crate::cli::host_cmd::doctor_hosts_board_json;
 #[cfg(unix)]
 use crate::cli::host_cmd::host_setup;
-use crate::cli::host_cmd::{
-    CapEdit, add_host, cap_changes, channel_cmd, dev_build_cmd, setup_items,
-};
+use crate::cli::host_cmd::{CapEdit, add_host, cap_changes, setup_items};
 use crate::cli::inbox::{
     closed_history, closed_pin, closed_row, closed_session, closed_transcript, inbox,
 };
@@ -1483,48 +1481,10 @@ fn unused_positionals_are_rejected() {
         .all("acceptance"),
         vec!["A", "B"]
     );
-    assert_eq!(
-        parse(&["service", "channel", "dev", "extra"])
-            .err()
-            .unwrap(),
-        "unused positional arguments: extra"
-    );
-    assert_eq!(
-        channel_cmd(&parse(&["service", "channel", "beta"]).unwrap())
-            .err()
-            .unwrap(),
-        "channel must be dev or live"
-    );
-    // #2311: `service dev-build` writes the dev request only on channel dev
-    let install = std::env::temp_dir().join(format!("taskq-dev-build-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&install);
-    fs::create_dir_all(&install).unwrap();
-    let build = parse(&["service", "dev-build"]).unwrap();
-    assert!(
-        dev_build_cmd(&build, &install)
-            .unwrap_err()
-            .starts_with("channel live:"),
-        "live host: refused"
-    );
-    assert!(!platform::dev_request(&install).exists());
-    fs::write(install.join("host.json"), r#"{"channel":"dev"}"#).unwrap();
-    dev_build_cmd(&build, &install).unwrap();
-    assert!(
-        platform::dev_request(&install).exists(),
-        "dev host: request written"
-    );
-    assert_eq!(
-        parse(&["service", "dev-build", "x"]).err().unwrap(),
-        "unused positional arguments: x"
-    );
-    fs::remove_dir_all(&install).unwrap();
     for v in [
         vec!["close", "1", "2"],
         vec!["answer", "1.1", "2.1"],
         vec!["service", "focus", "code", "docs"],
-        vec!["service", "channel"],
-        vec!["service", "channel", "dev"],
-        vec!["service", "channel", "live"],
     ] {
         assert!(parse(&v).is_ok());
     }

@@ -488,7 +488,7 @@ fn master_default_dry_run_and_branch_cleanup_keep_their_protections() {
 }
 
 // Chain: tidy steps 2 and 4 on a temp repo. Defect: reviewer worktrees and `taskq-*` branches of closed tasks
-// that no code removed (Mac survey). Risk protected: removing a dirty, open-stage or foreign worktree, `dev-build`,
+// that no code removed (Mac survey). Risk protected: removing a dirty, open-stage or foreign worktree,
 // or deleting an unmerged branch.
 #[test]
 fn task_worktrees_and_branches_leave_with_their_stage_only() {
@@ -504,7 +504,6 @@ fn task_worktrees_and_branches_leave_with_their_stage_only() {
     add(&["-b", "taskq-2", ".worktrees/taskq-2"]);
     add(&["--detach", ".worktrees/review-3"]);
     add(&["--detach", ".worktrees/review-4-6177396825"]);
-    add(&["--detach", ".worktrees/dev-build"]);
     let foreign = r.base.join("foreign");
     r.sh(
         &r.root,
@@ -537,10 +536,9 @@ fn task_worktrees_and_branches_leave_with_their_stage_only() {
             r.wt("taskq-2"),
             r.wt("review-3"),
             r.wt("review-4-6177396825"),
-            r.wt("dev-build"),
             foreign.exists()
         ),
-        (false, true, false, true, true, true),
+        (false, true, false, true, true),
         "{:?}",
         o.log
     );
@@ -575,11 +573,10 @@ fn task_worktrees_and_branches_leave_with_their_stage_only() {
     );
     assert_eq!(
         (
-            o.report["reserved"]["count"].as_u64(),
             o.report["foreign"]["count"].as_u64(),
             o.report["foreign"]["dirty"].as_u64()
         ),
-        (Some(1), Some(1), Some(1))
+        (Some(1), Some(1))
     );
     assert_eq!(
         (
@@ -604,11 +601,11 @@ fn task_worktrees_and_branches_leave_with_their_stage_only() {
     assert!(!r.wt("review-4-6177396825"));
 
     // #2060 (Mac cs, 55 closed-task worktrees): `workspace: external` still tidies TaskQ's own task worktrees and
-    // `taskq-<N>` branches; dev-build and foreign entries stay, the unmerged branch too
+    // `taskq-<N>` branches; foreign entries stay, the unmerged branch too
     std::fs::remove_file(r.root.join(".worktrees/taskq-2/wip")).unwrap();
     let o = pass(&r.tidy(&b, true));
     assert!(
-        !r.wt("taskq-2") && r.wt("dev-build") && foreign.exists() && branch("taskq-6"),
+        !r.wt("taskq-2") && foreign.exists() && branch("taskq-6"),
         "{:?}",
         o.log
     );
@@ -1180,7 +1177,6 @@ fn windows_path_spellings_compare_alike() {
             class("taskq-12"),
             class("review-12"),
             class("review-12-6177396825"),
-            class("dev-build"),
             class("taskq-+1"),
             class("review-1-x")
         ],
@@ -1188,7 +1184,6 @@ fn windows_path_spellings_compare_alike() {
             Class::Worker(12),
             Class::Review(12),
             Class::Review(12),
-            Class::Reserved,
             Class::Unowned,
             Class::Unowned
         ]
@@ -1201,7 +1196,7 @@ fn health_line_reads_the_tidy_report() {
             "unowned": {"count": 0, "dirty": 0, "bytes": 0}, "foreign": {"count": 4, "dirty": 2, "bytes": 5}});
     assert_eq!(
         health_line("taskq", &t, 1000 + 7200),
-        "taskq: root behind 3; .worktrees 3 (dirty 1, 3.0 GiB); foreign 4 (dirty 2); tidy 2h ok"
+        "taskq: root behind 3; .worktrees 2 (dirty 1, 3.0 GiB); foreign 4 (dirty 2); tidy 2h ok"
     );
     assert_eq!(
         health_line("csgo", &Value::Null, 0),

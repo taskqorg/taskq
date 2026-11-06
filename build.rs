@@ -57,7 +57,7 @@ fn main() {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
     };
     // #1384: a dev/test build reads HEAD only when sources rerun this script, so a commit alone rebuilds nothing;
-    // release builds (CI artifacts, dev-install.sh) still track HEAD and always embed the exact commit.
+    // release builds (CI artifacts) still track HEAD and always embed the exact commit.
     let release = std::env::var("PROFILE").as_deref() == Ok("release");
     for name in [Some("HEAD".into()), git(&["symbolic-ref", "-q", "HEAD"])]
         .into_iter()

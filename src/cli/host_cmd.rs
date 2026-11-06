@@ -1,9 +1,9 @@
-//! Host commands: capacity, resources, permissions, channel, doctor, setup and onboarding (§ 3, § 5, § 6).
+//! Host commands: capacity, resources, permissions, doctor, setup and onboarding (§ 3, § 5, § 6).
 
 use crate::cli::Args;
 use crate::cli::text::one_line;
-use crate::config::{TTL, check_load, ctx, hostname, load};
-use crate::paths::{dot, find_root, project_name, touch};
+use crate::config::{check_load, ctx, hostname, load};
+use crate::paths::{dot, find_root, project_name};
 use crate::runtime::Cap;
 use crate::runtime::accounts;
 use crate::service::{Config, RUNTIMES};
@@ -608,126 +608,6 @@ pub(crate) fn capacity_cmd(a: &Args) -> Res<()> {
     if let Some(reason) = unknown {
         eprintln!("Capacity observation unknown: {reason}");
     }
-    Ok(())
-}
-
-/// § 8 item 1: print the host channel, or write it to host.json and wait for the service to read it back.
-/// § 8 item 1 `service status` line of the dev install; SHAs shortened to 7.
-pub(crate) fn dev_line(dev: &Value) -> String {
-    let sha = |k: &str| {
-        dev[k]
-            .as_str()
-            .map(|s| s.chars().take(7).collect::<String>())
-    };
-    let mut line = format!(
-        "Dev: installed {}",
-        sha("installed").unwrap_or("unknown".into())
-    );
-    if let Some(p) = sha("pending") {
-        line += &format!(
-            " · pending {p}{}",
-            if dev["building"] == true {
-                " (building)"
-            } else {
-                ""
-            }
-        );
-    }
-    if let Some(f) = sha("failed") {
-        line += &format!(" · failed {f}");
-    }
-    if dev["requested"] == true {
-        line += " · requested";
-    }
-    line
-}
-
-/// § 8 item 1 (#2311): request one dev build; the service starts the newest green main SHA on its next pass.
-pub(crate) fn dev_build_cmd(a: &Args, install: &Path) -> Res<()> {
-    if a.pos.len() != 2 || !a.flags.is_empty() {
-        return Err("usage: taskq service dev-build".into());
-    }
-    let channel = platform::channel(install)?;
-    if channel != "dev" {
-        return Err(format!(
-            "channel {channel}: dev builds run only on channel dev (taskq service channel dev)"
-        ));
-    }
-    let request = platform::dev_request(install);
-    fs::create_dir_all(request.parent().unwrap_or(install)).map_err(|e| e.to_string())?;
-    coreq::write_durable(&request, "requested")?;
-    println!(
-        "Dev build requested; the host service starts the newest green main SHA on its next pass"
-    );
-    Ok(())
-}
-
-pub(crate) fn channel_cmd(a: &Args) -> Res<()> {
-    let install = platform::default_install();
-    let me = host::Policy::read(&install)
-        .map(|p| p.me)
-        .unwrap_or_else(|_| std::env::var("TASKQ_HOST").unwrap_or_else(|_| hostname()));
-    let observed = |since: u64| -> Option<String> {
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .ok()?
-            .as_secs();
-        host::projects(&install).ok()?.iter().find_map(|root| {
-            let st: Value =
-                serde_json::from_slice(&fs::read(dot(root).join("status.json")).ok()?).ok()?;
-            (st["host"] == me.as_str()
-                && st["at"].as_u64().is_some_and(|at| {
-                    at >= since && snapshot::live(now as i64 - at as i64, snapshot::ttl(root))
-                }))
-            .then(|| st["channel"].as_str().map(String::from))
-            .flatten()
-        })
-    };
-    let Some(want) = a.pos.get(2) else {
-        println!(
-            "Channel on {me}: {}",
-            platform::channel(&install)
-                .map(String::from)
-                .unwrap_or_else(|e| format!("unknown ({e})"))
-        );
-        println!(
-            "Service: {}",
-            observed(0).unwrap_or_else(|| "unknown (no fresh status)".into())
-        );
-        return Ok(());
-    };
-    if !matches!(want.as_str(), "dev" | "live") {
-        return Err("channel must be dev or live".into());
-    }
-    if std::env::var_os("TASKQ_ATTEMPT").is_some() {
-        return Err("a worker cannot change host policy".into());
-    }
-    let since = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-    resources::locked(&install, || {
-        let path = install.join("host.json");
-        let mut v: Value = serde_json::from_str(
-            &fs::read_to_string(&path).map_err(|e| format!("host.json unknown: {e}"))?,
-        )
-        .map_err(|e| format!("host.json unknown: {e}"))?;
-        v["channel"] = json!(want);
-        host::Policy::parse(v.clone(), &hostname())?;
-        platform::write_atomic(
-            &path,
-            &(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())? + "\n"),
-        )
-    })?;
-    touch(&install.join("poke"));
-    for _ in 0..20 {
-        if observed(since).as_deref() == Some(want.as_str()) {
-            println!("Applied on {me}: channel {want}");
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_secs(1));
-    }
-    println!("Saved; waiting for host service on {me}: channel {want}");
     Ok(())
 }
 
