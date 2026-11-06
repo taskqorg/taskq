@@ -455,6 +455,14 @@ def run_lint(command, timeout=None):
         raise subprocess.CalledProcessError(done.returncode, command)
 
 
+def format_commands(tracked):
+    """The format gate. src/ reaches the crate only through generated instrumentation, so cargo fmt never sees it."""
+    rust = [p for p in tracked if p.endswith('.rs') and not p.startswith('tests/fixtures/')]
+    return [['rustup', 'component', 'add', 'rustfmt', '--toolchain', 'stable'],
+            ['rustfmt', '+stable', '--check', *rust],
+            ['npm', 'run', '-s', 'format:check']]
+
+
 def changes(base):
     args = ['git', 'diff', '--name-only', '-z', base, '--']
     changed = subprocess.check_output(args, cwd=ROOT).decode().split('\0')
@@ -549,6 +557,10 @@ def main():
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])
+            # Linux only: a Windows checkout may hold CRLF, which format:check refuses.
+            if sys.platform == 'linux':
+                for command in format_commands(tracked):
+                    run(command)
             # npm ci removes the documented no-save browser instrument dependency.
             if os.environ.get('RUNNER_OS') is None and any(p.startswith('tests/') and p.endswith('.browser.cjs') for p in paths):
                 run(['npm', 'install', '--no-save', '--package-lock=false', '--ignore-scripts', '--no-audit', '--no-fund', 'playwright@1.64.1'])
