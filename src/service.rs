@@ -6336,7 +6336,10 @@ impl<'a> Service<'a> {
             )
         } else {
             unknown.extend(exhausted);
-            format!("spillover: no primary shown available; {}", unknown.join("; "))
+            format!(
+                "spillover: no primary shown available; {}",
+                unknown.join("; ")
+            )
         }))
     }
 
