@@ -853,6 +853,112 @@ mod tests {
         assert!(!f.b.issue(f.n).unwrap().open);
     }
 
+    // R12/§7: a dependency closing during publication cannot turn an unreadable audit into source-publication authority.
+    #[test]
+    fn dependency_wait_2469_unreadable_publication_log_never_hides_evidence() {
+        let f = Fixture::new();
+        let blocker =
+            f.b.create("Invented prerequisite", "", &["taskq".into()])
+                .unwrap();
+        f.b.state
+            .borrow_mut()
+            .issues
+            .iter_mut()
+            .find(|i| i.number == f.n)
+            .unwrap()
+            .body
+            .push_str(&format!("\nDepends on #{blocker}"));
+        assert!(f.authorize().ok());
+        f.b.state.borrow_mut().before_labels = Some(Box::new(move |b, n| {
+            b.close(blocker).unwrap();
+            b.state.borrow_mut().fail_comment_read = Some((n, 2));
+        }));
+        let receipt = f.initial();
+        assert_eq!(
+            f.b.state.borrow().publications,
+            0,
+            "an unreadable authorization audit cannot select source publication"
+        );
+        assert!(!receipt.ok());
+        assert!(
+            receipt.reason.contains("comment read failed"),
+            "{receipt:?}"
+        );
+        assert_eq!(f.task().state, State::Review);
+        assert!(
+            f.task().publication.is_some(),
+            "the publication intent remains recoverable"
+        );
+        assert_eq!(f.closes(), 0);
+    }
+
+    // §7: reconciliation preserves the candidate, but never renews a revision-bound owner authorization.
+    #[test]
+    fn dependency_wait_2469_evidence_resume_requires_fresh_authorization() {
+        let f = Fixture::new();
+        let blocker =
+            f.b.create("Invented prerequisite", "", &["taskq".into()])
+                .unwrap();
+        f.b.state
+            .borrow_mut()
+            .issues
+            .iter_mut()
+            .find(|i| i.number == f.n)
+            .unwrap()
+            .body
+            .push_str(&format!("\nDepends on #{blocker}"));
+        assert!(f.authorize().ok());
+        assert!(f.initial().ok());
+        let waiting = f.task();
+        assert!(waiting.wait.is_some());
+        f.b.close(blocker).unwrap();
+        assert!(f.resume().ok());
+        let resumed = f.task();
+        assert_eq!(resumed.state, State::Review);
+        assert_eq!(
+            (
+                resumed.result,
+                resumed.publication,
+                resumed.enqueued,
+                resumed.gate
+            ),
+            (
+                waiting.result,
+                waiting.publication,
+                waiting.enqueued,
+                waiting.gate
+            )
+        );
+        let stale = f.resume();
+        assert!(
+            !stale.ok() && stale.reason.contains("authorization outcome changed"),
+            "{stale:?}"
+        );
+        assert_eq!(f.b.state.borrow().publications, 0);
+        let renewed = authorize(
+            &f.b,
+            &f.root,
+            f.n,
+            &f.sha,
+            &f.sha,
+            "https://board.example/evidence.zip",
+            &hash(b"invented evidence"),
+            &Op {
+                id: Some("invented-renewal".into()),
+                revision: Some(core::revision(f.n, &f.log())),
+            },
+            true,
+            true,
+            None,
+            None,
+        );
+        assert!(renewed.ok(), "{renewed:?}");
+        assert!(f.resume().ok());
+        assert_eq!(f.task().state, State::Closed);
+        assert_eq!(f.closes(), 1);
+        assert_eq!(f.b.state.borrow().publications, 0);
+    }
+
     // A2/A3: fail closed at both adapters; stale authorization is never a missing-PR exemption.
     #[test]
     fn evidence_completion_refuses_changed_unknown_and_unapproved_identity() {

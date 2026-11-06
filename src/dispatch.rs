@@ -1473,7 +1473,11 @@ fn close_body(
                     Ok(v) => v,
                     Err(e) => return Receipt::rejected(n, op, e),
                 };
-                return resume_publication(b, cfg, &issue, &t, &entries(b, n).unwrap_or_default());
+                let log = match entries(b, n) {
+                    Ok(log) => log,
+                    Err(e) => return Receipt::rejected(n, op, e),
+                };
+                return resume_publication(b, cfg, &issue, &t, &log);
             }
             if let Some(proof) = crate::evidence::completion(b, &cfg.root, &issue, &t, &log) {
                 return match proof {

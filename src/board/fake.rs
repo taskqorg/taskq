@@ -69,6 +69,7 @@ pub struct FakeState {
     pub lose_comment_response: bool,
     /// The next this many `comments` reads fail.
     pub fail_comment_reads: usize,
+    pub fail_comment_read: Option<(u64, usize)>,
     /// A concurrent writer: this body lands just before the next `comment`.
     pub race: Option<String>,
     /// Concurrent comments land after this task's numbered comment-list read returned its snapshot.
@@ -305,6 +306,18 @@ impl Board for Fake {
         format!("https://board/{repo}/{n}")
     }
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {
+        {
+            let mut st = self.state.borrow_mut();
+            if let Some((task, remaining)) = &mut st.fail_comment_read {
+                if *task == n {
+                    *remaining -= 1;
+                    if *remaining == 0 {
+                        st.fail_comment_read = None;
+                        return Err("comment read failed".into());
+                    }
+                }
+            }
+        }
         if self.state.borrow().fail_comment_reads > 0 {
             self.state.borrow_mut().fail_comment_reads -= 1;
             return Err("comment read failed".into());
