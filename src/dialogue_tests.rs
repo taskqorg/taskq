@@ -63,8 +63,11 @@ fn codex_writer(_: &Path, _: &Request) -> Res<std::process::Command> {
     Ok(c)
 }
 
+/// #2515: a fixed 4 s poll raced the `sh` turn on a stalled Windows merge-queue runner ("turn never ended").
+/// Waits for the turn's own end; the limit only names a turn that truly hangs, inside the 900 s gate.
 fn settle(install: &Path, id: &str, native: &Native) -> Turn {
-    for _ in 0..200 {
+    let hung = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    while std::time::Instant::now() < hung {
         tick(install, now(), native).unwrap();
         let t = turn(install, id).unwrap().unwrap();
         if t.state == "done" {

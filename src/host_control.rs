@@ -412,11 +412,13 @@ fn revision_for(tool: &coreq::Tool) -> Res<String> {
         .map_err(|e| e.to_string())
 }
 fn output(name: &'static str, command: &mut Command) -> Res<std::process::Output> {
-    // ponytail: test runs share a loaded CI runner, where cold PowerShell starts passed 30 s (#1673, #1678 merge_group); product keeps 30 s.
+    // ponytail: test runs share a loaded CI runner, where cold PowerShell starts passed 30 s (#1673, #1678 merge_group)
+    // and 120 s during one runner stall (#2515). A test waits for the exit; its limit only names a hang inside the
+    // 900 s gate. Product keeps 30 s.
     match coreq::process::output(
         name,
         command,
-        Duration::from_secs(if cfg!(test) { 120 } else { 30 }),
+        Duration::from_secs(if cfg!(test) { 300 } else { 30 }),
     ) {
         Ok(output) => Ok(output),
         Err(Failure::Exit(output)) => Err(format!(
