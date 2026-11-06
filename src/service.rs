@@ -27,7 +27,6 @@ pub struct Config {
     pub has: Vec<String>,
     /// Host task-claim mode (§4/§9); manager/owner turns are independent.
     pub claim: crate::host::ClaimMode,
-    pub spillover_grace: u64,
     pub weights: crate::balance::Weights,
     pub allowed_runtimes: Option<Vec<crate::runtime::RuntimeId>>,
     pub auto_reroute: bool,
@@ -347,6 +346,18 @@ fn refusal_admission(code: &str, text: &str) -> (&'static str, String) {
     (code, text.into())
 }
 
+/// Temporary launch spacing as published by a primary: every wording `launch_refusal` and host admission use.
+fn launch_spacing(reason: &str) -> bool {
+    [
+        "launch-interval",
+        "launch spacing",
+        "host launched ",
+        "no load sample since the last host launch",
+    ]
+    .iter()
+    .any(|w| reason.contains(w))
+}
+
 /// R12/§4: task-facing effective availability, published on the existing per-board heartbeat.
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -645,13 +656,16 @@ struct DaemonRead {
     queue: bool,
     /// This project's live, held or waiting jobs under this daemon.
     tasks: BTreeSet<u64>,
+    /// Open tasks that took another runtime because this daemon refused them. They never hold its drain.
+    moved: BTreeSet<u64>,
 }
 
 impl DaemonRead {
     /// The heartbeat line of a daemon that differs from these jobs' grant: public, so no path and no other project.
     fn line(&self) -> Option<String> {
         use crate::runtime::daemon_sandbox::Fit;
-        if self.tasks.is_empty() {
+        let moved: Vec<_> = self.moved.difference(&self.tasks).collect();
+        if self.tasks.is_empty() && moved.is_empty() {
             return None;
         }
         let (pid, reason) = match &self.fit {
@@ -661,7 +675,7 @@ impl DaemonRead {
         };
         Some(format!(
             "daemon-sandbox {}",
-            json!({"bin": crate::runtime::of(&self.rt).bin, "pid": pid, "reason": reason, "tasks": self.tasks})
+            json!({"bin": crate::runtime::of(&self.rt).bin, "pid": pid, "reason": reason, "tasks": self.tasks, "moved": moved})
         ))
     }
 }
@@ -813,8 +827,36 @@ pub(crate) fn refused_card(n: u64, why: &str) -> String {
     ], 1)
 }
 
-/// § 2 ask card of resumed input that failed to launch `failures` times; the input stays for a retry.
+/// § 2 ask card of resumed input refused before submission; absent history needs a fresh attempt.
+const LOST_TRANSCRIPT: &str = "native baseline unavailable: transcript absent";
+
+fn missing_transcript(text: &str) -> bool {
+    let Some((_, reason)) = text.split_once("native baseline unavailable:") else {
+        return false;
+    };
+    let reason = reason.to_ascii_lowercase();
+    [
+        "no such file or directory",
+        "(os error 2)",
+        "(os error 3)",
+        "transcript absent",
+        "transcript missing",
+        "transcript not found",
+    ]
+    .iter()
+    .any(|s| reason.contains(s))
+        || reason.trim().ends_with("transcript unavailable")
+}
+
 pub(crate) fn input_card(n: u64, text: &str, failures: usize) -> String {
+    if missing_transcript(text) {
+        return crate::cli::text::service_card(n,
+            "resume was refused before submission; input and notes stay on the task.",
+            "the native transcript is absent; this session cannot resume.", &[
+                "requeue: fresh attempt - + keeps the existing branch and task notes; - starts a new native session".into(),
+                core::LATER.into(),
+            ], 1);
+    }
     crate::cli::text::service_card(n, &format!("the input is retained; {text}"), &format!("input launch failed {failures} times; input retained."), &[
         "retry the input - + resends the undelivered input in this session; - it may fail the same way".into(),
         core::LATER.into(),
@@ -2929,7 +2971,9 @@ impl<'a> Service<'a> {
 
     /// End a released attempt; only ordinary failures spend the retry budget (§ 2).
     fn gone(&mut self, n: u64, t: &Task, a: u64, args: &[&str], text: &str) -> Result<u64, String> {
-        let text = if args.is_empty() {
+        let rebooted = args.is_empty()
+            && core::project(n, &crate::board::entries(self.board, n)?, false).rebooted(a);
+        let text = if args.is_empty() && !rebooted {
             core::limit_text(n, t, "gone", text)
         } else {
             text.to_string()
@@ -5453,18 +5497,6 @@ impl<'a> Service<'a> {
                 c.body.lines().next()
                     == Some(core::entry("steer", &["quota"], Some(a), "").as_str())
             });
-            if quota
-                && v.projection
-                    .executions
-                    .iter()
-                    .rev()
-                    .find(|x| x.attempt == a)
-                    .is_some_and(|x| x.release == Some(core::Release::NoStart))
-            {
-                self.execution_waits.insert(n,"quota continuation unavailable; recover the original native session without replay or migration".into());
-                pending.insert((n, a));
-                continue;
-            }
             // #1946: a never-started attempt has no session to resume; the reply to its start refusal starts afresh
             let runs: Vec<_> = v
                 .projection
@@ -5476,8 +5508,7 @@ impl<'a> Service<'a> {
                 .iter()
                 .filter(|x| x.through == last && x.release == Some(core::Release::NoStart))
                 .collect();
-            if refused.len() >= core::GONE_MAX as usize {
-                let x = refused.last().unwrap();
+            if let Some(x) = refused.last() {
                 let reason = v
                     .log
                     .iter()
@@ -5489,16 +5520,31 @@ impl<'a> Service<'a> {
                     })
                     .map(|e| core::entry_text(n, &e.body))
                     .unwrap_or("native launch refused");
-                let card = input_card(n, reason, refused.len());
-                self.post(
-                    n,
-                    core::with_fields(
-                        core::entry("ask", &[], Some(a), &card),
-                        Some(&format!("input-retry-{}", x.id)),
-                        None,
-                    ),
-                )?;
-                touched.insert(n);
+                if missing_transcript(reason) || !quota && refused.len() >= core::GONE_MAX as usize
+                {
+                    let card = input_card(n, reason, refused.len());
+                    self.post(
+                        n,
+                        core::with_fields(
+                            core::entry("ask", &[], Some(a), &card),
+                            Some(&format!("input-retry-{}", x.id)),
+                            None,
+                        ),
+                    )?;
+                    touched.insert(n);
+                    continue;
+                }
+            }
+            if quota
+                && v.projection
+                    .executions
+                    .iter()
+                    .rev()
+                    .find(|x| x.attempt == a)
+                    .is_some_and(|x| x.release == Some(core::Release::NoStart))
+            {
+                self.execution_waits.insert(n,"quota continuation unavailable; recover the original native session without replay or migration".into());
+                pending.insert((n, a));
                 continue;
             }
             if !runs.is_empty()
@@ -6311,19 +6357,7 @@ impl<'a> Service<'a> {
             ClaimMode::Labelled => return Err("labelled claim: no host-* label".into()),
             _ => {}
         }
-        let since = v
-            .projection
-            .changes
-            .last()
-            .and_then(|(id, _, _)| v.comments.iter().find(|c| c.id == *id))
-            .map_or(v.issue.created, |c| c.created);
-        if now >= since && now - since >= self.cfg.spillover_grace as i64 {
-            return Ok(Some(format!(
-                "spillover: grace {} s elapsed",
-                self.cfg.spillover_grace
-            )));
-        }
-        let mut reasons = vec![];
+        let mut unknown = vec![];
         let mut exhausted = vec![];
         let mut known = false;
         for host in hosts
@@ -6331,7 +6365,7 @@ impl<'a> Service<'a> {
             .filter(|h| h.trusted && host_name(h).is_some_and(|name| name != self.cfg.me))
         {
             let Some(balance) = Balancing::read(&host.body) else {
-                reasons.push("primary availability unknown: incompatible heartbeat".into());
+                unknown.push("primary availability unknown: incompatible heartbeat".into());
                 continue;
             };
             if balance.mode != "any" {
@@ -6340,7 +6374,7 @@ impl<'a> Service<'a> {
             known = true;
             let name = host_name(host).unwrap();
             if !crate::snapshot::live(now - host.updated, self.cfg.ttl) {
-                reasons.push(format!(
+                unknown.push(format!(
                     "primary {name} availability unknown: stale heartbeat"
                 ));
                 continue;
@@ -6348,29 +6382,33 @@ impl<'a> Service<'a> {
             match balance.available(v) {
                 Ok((rt, _)) => {
                     return Err(format!(
-                        "spillover waits: primary {name} has effective {rt} capacity; grace {} s",
-                        self.cfg.spillover_grace
+                        "spillover waits: primary {name} has effective {rt} capacity"
                     ));
                 }
-                Err(("unknown", reason)) => reasons.push(format!("primary {name}: {reason}")),
+                Err(("unknown", reason)) => unknown.push(format!("primary {name}: {reason}")),
+                Err((_, reason)) if launch_spacing(&reason) => {
+                    return Err(format!(
+                        "spillover waits: primary {name} launch spacing: {reason}"
+                    ));
+                }
                 Err((_, reason)) => exhausted.push(format!("primary {name}: {reason}")),
             }
         }
-        if !known && reasons.is_empty() {
-            reasons.push("primary availability unknown: no primary heartbeat".into());
+        if !known && unknown.is_empty() {
+            unknown.push("primary availability unknown: no primary heartbeat".into());
         }
-        if reasons.is_empty() {
-            Ok(Some(format!(
+        Ok(Some(if unknown.is_empty() {
+            format!(
                 "spillover: zero effective primary availability; {}",
                 exhausted.join("; ")
-            )))
+            )
         } else {
-            Err(format!(
-                "spillover waits: {}; grace {} s",
-                reasons.join("; "),
-                self.cfg.spillover_grace
-            ))
-        }
+            unknown.extend(exhausted);
+            format!(
+                "spillover: no primary shown available; {}",
+                unknown.join("; ")
+            )
+        }))
     }
 
     fn weighted_host(
@@ -6652,7 +6690,7 @@ impl<'a> Service<'a> {
     }
 
     /// One sandbox per daemon: reads each daemon that this project's live, held or claimable `seatbelt` jobs depend on.
-    /// An idle board spawns nothing.
+    /// An idle board spawns nothing; work moved off a daemon keeps it read until the daemon stops refusing or the work ends.
     fn read_daemons(&mut self, views: &[View], me: &str) {
         use crate::runtime::accounts;
         let (mut reads, now) = (vec![], self.board.now().unwrap_or_else(|_| accounts::now()));
@@ -6690,7 +6728,11 @@ impl<'a> Service<'a> {
                     tasks.insert(n);
                 }
             }
-            let active = claimable.then(|| {
+            let moved_off = self
+                .daemon_reads
+                .iter()
+                .any(|r| r.rt == *rt && !r.moved.is_empty());
+            let active = (claimable || moved_off).then(|| {
                 host.active(rt, now)
                     .and_then(|l| accounts::home(rt, &l))
                     .or_else(|| accounts::default_home(rt))
@@ -6701,12 +6743,32 @@ impl<'a> Service<'a> {
             for (home, tasks) in homes {
                 let fit =
                     crate::runtime::daemon_sandbox::read(rt, home.as_deref(), profile.as_deref());
+                let moved =
+                    if crate::runtime::daemon_sandbox::verdict(None, "", &fit, false).is_ok() {
+                        BTreeSet::new()
+                    } else {
+                        let open = |n: &&u64| {
+                            views.iter().any(|v| {
+                                v.issue.number == **n
+                                    && matches!(
+                                        v.projection.task.state,
+                                        State::Ready | State::Doing | State::Review
+                                    )
+                            })
+                        };
+                        self.daemon_reads
+                            .iter()
+                            .filter(|r| r.rt == *rt && r.home == home)
+                            .flat_map(|r| r.moved.iter().filter(open).copied())
+                            .collect()
+                    };
                 reads.push(DaemonRead {
                     rt: rt.clone(),
                     queue: active.as_ref() == Some(&home),
                     home,
                     fit,
                     tasks,
+                    moved,
                 });
             }
         }
@@ -6760,6 +6822,19 @@ impl<'a> Service<'a> {
             &read.fit,
         )
         .err()
+    }
+
+    /// Task `n` took another runtime. When the selection reason names a daemon's refusal, status names `n` under that
+    /// daemon; `ds::wait` stays out, so moved work never holds the drain.
+    fn daemon_moved(&mut self, n: u64, reason: &str) {
+        use crate::runtime::daemon_sandbox as ds;
+        for read in self.daemon_reads.iter_mut().filter(|r| r.queue) {
+            if let Err(wait) = ds::verdict(None, "", &read.fit, false) {
+                if reason.contains(&format!("{}: {wait}", read.rt)) {
+                    read.moved.insert(n);
+                }
+            }
+        }
     }
 
     /// Task `n` selected no runtime. When its refusal names a daemon, it truly waits for that daemon: unpinned work
@@ -6981,6 +7056,8 @@ impl<'a> Service<'a> {
         );
         match r? {
             Some((l, log)) => {
+                // Only a won claim moved the task: another host's or a lost claim says nothing about this daemon.
+                self.daemon_moved(n, reason);
                 let through = l.attempt;
                 self.launch(l, through, log)
             }
@@ -7578,7 +7655,15 @@ impl<'a> Service<'a> {
             return self.beat();
         }
         self.pending_releases.insert((l.task, l.attempt, execution));
-        release_execution(self.board, l.task, l.attempt, execution, "no-start")?;
+        let lost = l.resume.is_some() && missing_transcript(&e.to_string());
+        release_execution_text(
+            self.board,
+            l.task,
+            l.attempt,
+            execution,
+            "no-start",
+            if lost { LOST_TRANSCRIPT } else { "" },
+        )?;
         self.retired(l.task, l.attempt, execution, false, 0);
         self.sync_host();
         if e.reportable {
@@ -7606,6 +7691,7 @@ impl<'a> Service<'a> {
         let log = crate::board::entries(self.board, l.task)
             .map_err(|r| format!("#{} {text}; gone not posted: {r}", l.task))?;
         if l.resume.is_some()
+            && !lost
             && log.iter().any(|e| {
                 t.inbox.contains(&e.id)
                     && e.body.lines().next()
@@ -7641,7 +7727,7 @@ impl<'a> Service<'a> {
                         && x.release == Some(core::Release::NoStart)
                 })
                 .count();
-            if failures >= core::GONE_MAX as usize {
+            if lost || failures >= core::GONE_MAX as usize {
                 let op = format!("input-retry-{execution}");
                 let card = input_card(l.task, &text, failures);
                 self.post(

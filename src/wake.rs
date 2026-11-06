@@ -30,9 +30,21 @@ pub(crate) fn wake_lock(root: &Path) -> Res<coreq::file_lock::Lock> {
         },
         |(class, _)| *class,
     )
-    .map_err(|(class, error)| {
-        format!("service wake failed ({class}: {error}); check service status")
-    })
+    .map_err(|(class, error)| wake_refusal(class, &error))
+}
+
+/// A filesystem without file locks can never grant the wake lock, so retrying or checking the service cannot help.
+/// The lock stays mandatory: a refused poke is never replaced by a lock-free one.
+fn wake_refusal(class: &str, error: &std::io::Error) -> String {
+    // ERROR_INVALID_FUNCTION is what LockFileEx returns from a redirector without byte-range locks.
+    let no_locks = error.kind() == std::io::ErrorKind::Unsupported
+        || (cfg!(windows) && error.raw_os_error() == Some(1));
+    if class == "wake-lock" && no_locks {
+        return format!(
+            "service wake unsupported ({class}: {error}): this filesystem has no file locks; use a checkout on a local disk"
+        );
+    }
+    format!("service wake failed ({class}: {error}); check service status")
 }
 
 #[cfg(windows)]
@@ -288,5 +300,81 @@ pub(crate) fn poll_wait(
         poll
     } else {
         poll * 3
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // #2495: a filesystem without byte-range locks looped on "check service status", which could never help.
+    #[test]
+    fn lock_refusal_names_a_filesystem_without_locks() {
+        let unsupported = wake_refusal(
+            "wake-lock",
+            &std::io::Error::from(std::io::ErrorKind::Unsupported),
+        );
+        assert!(
+            unsupported.starts_with("service wake unsupported"),
+            "{unsupported}"
+        );
+        assert!(
+            !unsupported.contains("check service status"),
+            "{unsupported}"
+        );
+        #[cfg(windows)]
+        {
+            let invalid = wake_refusal("wake-lock", &std::io::Error::from_raw_os_error(1));
+            assert!(invalid.starts_with("service wake unsupported"), "{invalid}");
+            assert!(invalid.contains("wake-lock"), "{invalid}");
+        }
+        let held = wake_refusal(
+            "wake-lock",
+            &std::io::Error::from(std::io::ErrorKind::WouldBlock),
+        );
+        assert!(held.starts_with("service wake failed (wake-lock"), "{held}");
+        let open = wake_refusal(
+            "wake-open",
+            &std::io::Error::from(std::io::ErrorKind::Unsupported),
+        );
+        assert!(open.starts_with("service wake failed (wake-open"), "{open}");
+    }
+
+    #[test]
+    fn poke_wakes_and_a_live_holder_stays_refused() {
+        let root = std::env::temp_dir().join(format!(
+            "taskq-wake-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        poke(&root).unwrap();
+        let path = dot(&root).join("poke");
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        let holder = wake_lock(&root).unwrap();
+        let refused = poke(&root).unwrap_err();
+        assert!(refused.contains("wake-lock"), "{refused}");
+        assert!(!refused.contains("unsupported"), "{refused}");
+        assert_eq!(
+            fs::metadata(&path).unwrap().modified().unwrap(),
+            before,
+            "a refused poke writes nothing"
+        );
+        drop(holder);
+        let paths = [path.clone(), path.clone()];
+        let baseline = poke_times(&paths);
+        std::thread::sleep(Duration::from_millis(20));
+        poke(&root).unwrap();
+        assert!(
+            sleep_until_poke(
+                &paths,
+                baseline,
+                Instant::now() + Duration::from_secs(2),
+                &mut || {}
+            ),
+            "the released lock lets the next poke wake the service"
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 }

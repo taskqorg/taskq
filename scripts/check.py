@@ -465,6 +465,162 @@ def format_commands(tracked):
             ['npm', 'run', '-s', 'format:check']]
 
 
+# docs/testing.md#blast-radius-selection: 'shadow' reports the pick and changes nothing; 'on' narrows pull_request runs.
+RUST_SELECTION = 'shadow'
+CORE_TESTS = ('core::tests', 'service::tests')
+RUST_SHARED = re.compile(r'^(build\.rs|entry\.rs|Cargo\.|rustfmt\.toml|package(-lock)?\.json|taskq\.json|\.github/|scripts/|packaging/|assets/|tests/integration\.rs$'
+                         r'|src/(main|main_tests|core|core_tests|config)\.rs$|src/(runtime|platform|linux_sandbox|windows_sandbox|notify_windows))')
+CONTRACTS = {'taskq.md', 'AGENTS.md', 'CLAUDE.md', PRODUCT_DOC}
+# Explicit edges: these process tests start the binary, so no `use crate::` line reaches them.
+PROCESS_TESTS = {'cli': ('',), 'host': ('host_policy', 'host_restart'), 'host_control': ('host_policy', 'host_restart'), 'policy': ('host_policy', 'resource_policy_contract'),
+                 'reports': ('reports_cli',), 'resources': ('resource_policy_contract',), 'service': ('service_log',), 'service_run': ('service_log',),
+                 'telemetry': ('telemetry_process',), 'telemetry_sync': ('telemetry_process',)}
+MOD_DECL = re.compile(r'((?:#\[[^\]]*\]\s*)*)(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;')
+ROOT_TEST = re.compile(r'#\[test\](?:\s*#\[[^\]]*\])*\s*(?:async\s+)?fn\s+(\w+)')
+
+
+
+def module_tree(root=ROOT):
+    """Source file -> module path, walked from the `mod` lines of src/main.rs and honoring `#[path]`; the crate root is ''."""
+    tree = {}
+
+    def walk(file, path, folder):
+        if not file.is_file():
+            return
+        tree[file.relative_to(root).as_posix()] = path
+        for attrs, name in MOD_DECL.findall(file.read_text(encoding='utf-8')):
+            child = f'{path}::{name}' if path else name
+            named = re.search(r'#\[path\s*=\s*"([^"]+)"\]', attrs)
+            if named:
+                walk(file.parent / named[1], child, file.parent)
+            elif (folder / f'{name}.rs').is_file():
+                walk(folder / f'{name}.rs', child, folder / name)
+            else:
+                walk(folder / name / 'mod.rs', child, folder / name)
+
+    walk(root / 'src/main.rs', '', root / 'src')
+    return tree
+
+
+def test_filters(module, tree):
+    """libtest filters for a module: its tests and each test module under it. Substring matching only ever broadens."""
+    if not module:
+        return set()
+    found = set() if module.rsplit('::', 1)[-1].endswith('tests') else {f'{module}::tests'}
+    for path in tree.values():
+        if path == module or path.startswith(module + '::'):
+            if path.rsplit('::', 1)[-1].endswith('tests'):
+                found.add(path)
+    return found
+
+
+def root_reexports(text):
+    """Names src/main.rs brings to the crate root, so `crate::ctx` still reads as an edge to config."""
+    names = {}
+    for top, body in re.findall(r'^use crate::(\w+)::([^;]+);', text, re.M):
+        for name in re.findall(r'\w+', body):
+            names.setdefault(name, top)
+    return names
+
+
+def blast_radius(paths, root=ROOT):
+    """Tests a change can reach, or {'full': reason}. Unknown or shared impact is always full (R12)."""
+    if not paths:
+        return {'full': 'no changed-file list'}
+    try:
+        tree = module_tree(root)
+        texts = {f: (root / f).read_text(encoding='utf-8') for f in tree}
+    except (OSError, UnicodeError) as error:
+        return {'full': f'module scan failed: {error}'}
+    integration_files = {p.as_posix(): p.read_text(encoding='utf-8') for p in (root / 'tests').glob('*.rs')} if (root / 'tests').is_dir() else {}
+    node_files = [p.read_text(encoding='utf-8') for p in (root / 'tests').glob('*.cjs')] if (root / 'tests').is_dir() else []
+    tops, filters, integration = set(), set(CORE_TESTS), set()
+    for path in paths:
+        if path in CONTRACTS:
+            return {'full': f'contract file {path}'}
+        if RUST_SHARED.match(path):
+            return {'full': f'shared file {path}'}
+        if path in tree:
+            tops.add(tree[path].split('::')[0])
+            filters |= test_filters(tree[path], tree)
+        elif re.fullmatch(r'tests/\w+\.rs', path):
+            integration.add(Path(path).stem)
+        elif re.match(r'tests/[^/]+\.cjs$', path):
+            continue
+        elif path.startswith(('docs/', 'tests/fixtures/', 'tests/golden/', 'src/')) or Path(path).suffix in {'.md', '.txt'}:
+            # Data reaches Rust only by name: a reader's module is the edge. Documents nothing reads carry no Rust impact.
+            name = Path(path).name
+            readers = [f for f, text in texts.items() if name in text]
+            processes = [Path(f).stem for f, text in integration_files.items() if name in text]
+            if readers or processes:
+                for reader in readers:
+                    filters |= test_filters(tree[reader], tree)
+                integration.update(processes)
+            elif not (Path(path).suffix in {'.md', '.txt'} or any(name in text for text in node_files)):
+                return {'full': f'no known reader of {path}'}
+        else:
+            return {'full': f'unknown file {path}'}
+    reexports = root_reexports(texts.get('src/main.rs', ''))
+    for top in sorted(tops):
+        integration.update(PROCESS_TESTS.get(top, ()))
+        names = [re.escape(top)] + [re.escape(n) for n, owner in reexports.items() if owner == top]
+        reach = re.compile(rf'crate::(?:{"|".join(names)})\b|crate::\{{[^}}]*\b{re.escape(top)}\b')
+        for file, text in texts.items():
+            module = tree[file]
+            if module and module != 'tests' and (module.split('::')[0] == top or reach.search(text)):
+                filters |= test_filters(module, tree)
+    # The root `tests` module cannot be filtered: `tests::` is a substring of every test name, so it runs by exact names.
+    exact = sorted(f'tests::{n}' for n in ROOT_TEST.findall(texts.get('src/main_tests.rs', '')))
+    filters = {f for f in filters if f != 'tests' and not f.startswith('tests::')}
+    # A `#[test]` written directly in a module's own file sits outside its `tests` module.
+    for file, text in texts.items():
+        if tree[file] and f'{tree[file]}::tests' in filters and '#[test]' in text:
+            filters.add(f'{tree[file]}::')
+    return {'filters': sorted(filters), 'exact': exact, 'integration': sorted(integration)}
+
+
+def selected_commands(pick):
+    """The cargo argument lists for a pick; an integration filter of '' runs that whole target."""
+    commands = [['--bin', 'taskq', '--', *pick['filters']]]
+    if pick['exact']:
+        commands.append(['--bin', 'taskq', '--', '--exact', *pick['exact']])
+    if pick['integration']:
+        commands.append(['--test', 'integration', *([] if '' in pick['integration'] else ['--', *[f'{m}::' for m in pick['integration']]])])
+    return commands
+
+
+def narrows(mode, event, full_requested, pick):
+    """Only a pull_request run may narrow: the merge queue, dispatches and local gates keep the full suite."""
+    return mode == 'on' and event == 'pull_request' and not full_requested and 'full' not in pick
+
+
+def describe_pick(pick):
+    if 'full' in pick:
+        return f"full ({pick['full']})"
+    processes = ', '.join(m or 'all' for m in pick['integration']) or 'none'
+    return f"{len(pick['filters'])} modules [{', '.join(pick['filters'])}] + {len(pick['exact'])} root tests; integration: {processes}"
+
+
+def shadow_report(pick, full_seconds, env, left):
+    """Time the pick after a passed full run. Bounded by what the budget leaves, so it cannot outlast the job, and it never fails the gate."""
+    left = min(120, left)
+    if 'full' in pick or left < 5:
+        return
+    began = time.monotonic()
+    with tempfile.TemporaryDirectory(prefix='taskq-shadow-') as install:
+        for arguments in selected_commands(pick):
+            try:
+                done = subprocess.run(['cargo', '+stable', 'test', '--locked', *arguments], cwd=ROOT, env={**env, 'TASKQ_INSTALL': install}, capture_output=True, text=True, errors='replace',
+                                      timeout=max(1, left - (time.monotonic() - began)))
+            except (OSError, subprocess.SubprocessError) as error:
+                print(f'Rust selection (shadow): comparison stopped: {type(error).__name__}', flush=True)
+                return
+            if done.returncode:
+                print(f"::warning::Rust selection (shadow) failed after the full suite passed: {' '.join(arguments[:2])}\n{done.stdout[-1500:]}", flush=True)
+    selected = time.monotonic() - began
+    print(f'Rust selection (shadow): full {full_seconds:.1f}s (build included), selected {selected:.1f}s (build reused), difference {full_seconds - selected:.1f}s', flush=True)
+
+
 def changes(base):
     args = ['git', 'diff', '--name-only', '-z', base, '--']
     changed = subprocess.check_output(args, cwd=ROOT).decode().split('\0')
@@ -567,6 +723,7 @@ def main():
         paths, scope = [], 'full'
     if args.plan:
         print('scope='+scope)
+        print('Rust selection:', RUST_SELECTION, describe_pick(blast_radius(paths)), file=sys.stderr)
         return
     reason = args.reason.strip()
     if args.reason and not reason:
@@ -581,6 +738,7 @@ def main():
     print('Selected checks:', scope, '| base:', args.base, flush=True)
     started = time.monotonic()
     result = 'failed'
+    shadow = None
     env = check_environment(os.environ)
 
     def run(command, extra_env=None, environment=None):
@@ -628,7 +786,21 @@ def main():
             with tempfile.TemporaryDirectory(prefix='taskq-tests-') as install:
                 test_env = test_environment(env, install)
                 print('Rust harness threads:', test_env.get('RUST_TEST_THREADS', 'runtime default'), flush=True)
-                run(['cargo', '+stable', 'test', '--locked'] + ([] if scope == 'full' else ['--bin', 'taskq', 'core::tests']), environment=test_env)
+                # docs/testing.md#blast-radius-selection: the pick is printed first, so it survives a failing suite.
+                pick = blast_radius(paths) if scope == 'full' else {'full': f'{scope} scope'}
+                print(f'Rust selection ({RUST_SELECTION}):', describe_pick(pick), flush=True)
+                full_requested = args.full or os.environ.get('CHECK_FULL') == 'true'
+                began_tests = time.monotonic()
+                if scope != 'full':
+                    run(['cargo', '+stable', 'test', '--locked', '--bin', 'taskq', 'core::tests'], environment=test_env)
+                elif narrows(RUST_SELECTION, os.environ.get('GITHUB_EVENT_NAME'), full_requested, pick):
+                    for arguments in selected_commands(pick):
+                        run(['cargo', '+stable', 'test', '--locked', *arguments], environment=test_env)
+                else:
+                    run(['cargo', '+stable', 'test', '--locked'], environment=test_env)
+                    # Only pull_request CI repeats the pick to time it: a local gate and the queue stay as they are.
+                    if RUST_SELECTION == 'shadow' and scope == 'full' and os.environ.get('GITHUB_EVENT_NAME') == 'pull_request' and not full_requested:
+                        shadow = (pick, time.monotonic() - began_tests, test_env)
             if scope == 'full':
                 with tempfile.TemporaryDirectory(prefix='taskq-gate-') as install:
                     run(['cargo', '+stable', 'run', '--locked', '--', 'selftest'], {'TASKQ_SELFTEST_OFFLINE':'1', 'TASKQ_INCIDENT_REPORTS':'off'}, environment=test_environment(env, install))
@@ -650,6 +822,9 @@ def main():
             head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip()
             write_receipt(receipt, {'result': result, 'base': args.base, 'head': head, 'reason': reason,
                                     'at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'elapsed_s': round(time.monotonic() - started, 3)})
+    # After the gate and its budget line, so a comparison can neither fail nor time out a real check.
+    if shadow:
+        shadow_report(*shadow, BUDGET - (time.monotonic() - started))
 
 
 if __name__ == '__main__':

@@ -1068,7 +1068,7 @@ fn ready_rows_name_each_hosts_reason() {
         ("quota", "usage-limit: claude: until 2026-11-03T15:00:00Z"),
         (
             "claim mode",
-            "host: spillover waits: primary mac has effective claude capacity; grace 60 s",
+            "host: spillover waits: primary mac has effective claude capacity",
         ),
         ("scope", "focus: focus p0"),
         ("label", "labels: conflicting run-* labels"),
@@ -2367,6 +2367,7 @@ fn a_daemon_that_differs_from_a_jobs_grant_is_an_anomaly() {
     };
     let differs = r#"daemon-sandbox {"bin":"claude","pid":77,"reason":"daemon runs under another Seatbelt profile","tasks":[5,6]}"#;
     let unknown = r#"daemon-sandbox {"bin":"claude","pid":null,"reason":"daemon status unreadable","tasks":[7]}"#;
+    let moved = r#"daemon-sandbox {"bin":"claude","pid":78,"reason":"daemon runs unconfined, job has a Seatbelt grant","tasks":[],"moved":[8]}"#;
     let cfg = crate::tests::cfg();
     let snap = from_views(
         "board",
@@ -2377,6 +2378,7 @@ fn a_daemon_that_differs_from_a_jobs_grant_is_an_anomaly() {
         &[
             beat("mac", 10, true, differs),
             beat("next", 10, true, unknown),
+            beat("spill", 10, true, moved),
             beat("forged", 10, false, differs),
             beat("old", cfg.ttl + 60, true, differs),
         ],
@@ -2389,6 +2391,8 @@ fn a_daemon_that_differs_from_a_jobs_grant_is_an_anomaly() {
         ),
         "{text}"
     );
+    // #2494 A1: work that took another runtime keeps the row while nothing waits.
+    assert!(text.contains("- host spill · live claude daemon pid 78 sandbox differs from the grant of #8 (moved): daemon runs unconfined, job has a Seatbelt grant · Next: jobs wait until the daemon exits; run `claude daemon status` on spill"), "{text}");
     assert!(
         !text.contains("- host forged · live") && !text.contains("- host old · live"),
         "{text}"

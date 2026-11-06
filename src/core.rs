@@ -392,6 +392,7 @@ pub struct Projection {
     pub deps_intent: Option<u64>,
     pub deps_writer: Option<u64>,
     accepted: Vec<u64>,
+    boot_releases: Vec<u64>,
     /// Accepted answers and steers in board order, across all attempts (§ 2).
     pub notes: Vec<u64>,
     /// Accepted answers in board order, across all attempts (§ 5 `inbox --json`).
@@ -414,7 +415,20 @@ pub struct Answer {
     pub late: bool,
 }
 
+fn rebooted(executions: &[Execution], releases: &[u64], attempt: u64) -> bool {
+    executions
+        .iter()
+        .rev()
+        .find(|x| x.attempt == attempt)
+        .is_some_and(|x| releases.contains(&x.id))
+}
+
 impl Projection {
+    /// §2.10: only the latest execution's first accepted release can waive a gone retry.
+    pub fn rebooted(&self, attempt: u64) -> bool {
+        rebooted(&self.executions, &self.boot_releases, attempt)
+    }
+
     pub fn accepts(&self, id: u64) -> bool {
         self.accepted.contains(&id)
     }
@@ -745,6 +759,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut notes = vec![];
     let mut answers = vec![];
     let mut executions: Vec<Execution> = vec![];
+    let mut boot_releases = vec![];
     let (mut changes, mut queue) = (vec![], vec![]);
     let mut accepted_inputs = vec![];
     let (mut routing_revision, mut reroute, mut routing_writer) = (0, None, None);
@@ -865,7 +880,10 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                 continue;
             }
             let before = t.clone();
-            step(&mut t, &mut resume, e.id, &l, last == 0);
+            let boot = l.kind == "gone"
+                && l.attempt
+                    .is_some_and(|a| rebooted(&executions, &boot_releases, a));
+            step(&mut t, &mut resume, e.id, &l, last == 0, boot);
             // §2.12: only the owning service's quota continuation may deliver to a released reviewer.
             if before.state == State::Review
                 && before.role.as_deref() == Some("reviewer")
@@ -955,6 +973,17 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                     {
                         if proof != Release::NoStart || !x.accepted {
                             x.release = Some(proof);
+                            if proof == Release::Exit
+                                && l.text.lines().next().is_some_and(|line| {
+                                    line.strip_prefix("host booted ")
+                                        .and_then(|s| s.split_once(" after intent "))
+                                        .is_some_and(|(boot, intent)| {
+                                            !boot.is_empty() && !intent.is_empty()
+                                        })
+                                })
+                            {
+                                boot_releases.push(x.id);
+                            }
                             let words: Vec<_> = l
                                 .text
                                 .lines()
@@ -1036,6 +1065,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         answers,
         executions,
         accepted_inputs,
+        boot_releases,
         changes,
         queue,
     }
@@ -1102,7 +1132,7 @@ pub fn conversation(n: u64, entries: &[Entry]) -> Option<String> {
     }
 }
 
-fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool) {
+fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool, rebooted: bool) {
     use State::*;
     if l.attempt.is_some() && l.attempt != t.attempt {
         return; // fencing: a replaced attempt writes nothing
@@ -1269,7 +1299,7 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
             }
         }
         (Doing | Review, "gone", true) => {
-            if !limit(t, resume, GONE_MAX) {
+            if rebooted || !limit(t, resume, GONE_MAX) {
                 if t.state == Review { end(t) } else { ready(t) }
             }
         }
@@ -1305,6 +1335,11 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
                 } else {
                     l.args.first().and_then(|s| s.parse().ok())
                 };
+                if options(card).iter().any(|(n, option, _)| {
+                    Some(*n) == k && option.to_ascii_lowercase().starts_with("requeue:")
+                }) {
+                    *resume = None;
+                }
                 if options(card).iter().any(|(n, option, _)| {
                     Some(*n) == k
                         && approval_sha(option).is_some_and(|sha| {

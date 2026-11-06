@@ -65,7 +65,6 @@ pub struct Policy {
     pub has: Vec<String>,
     /// Task-claim mode (§4/§9).
     pub claim: ClaimMode,
-    pub spillover_grace: u64,
     pub weights: crate::balance::Weights,
     /// `default_runtime`: reviewers and workers without `run-*` run on it (§ 4, § 9).
     pub default_runtime: crate::runtime::RuntimeId,
@@ -81,7 +80,6 @@ impl Policy {
         cfg.me = self.me.clone();
         cfg.has = self.has.clone();
         cfg.claim = self.claim;
-        cfg.spillover_grace = self.spillover_grace;
         cfg.codex = self.codex.clone();
         let overlay = self.overlay(&cfg.root).map(|(_, p)| p);
         cfg.default_runtime = overlay
@@ -157,14 +155,6 @@ impl Policy {
             Value::Null => ClaimMode::Any,
             Value::String(s) => ClaimMode::parse(s).map_err(|e| format!("host.json: {e}"))?,
             _ => return Err("host.json: claim must be a string".into()),
-        };
-        let spillover_grace = if v["spillover_grace"].is_null() {
-            300
-        } else {
-            v["spillover_grace"]
-                .as_u64()
-                .filter(|n| *n <= i64::MAX as u64)
-                .ok_or("host.json: spillover_grace must be nonnegative seconds")?
         };
         let default_runtime = match v["default_runtime"].as_str() {
             _ if v["default_runtime"].is_null() => RuntimeId::Claude,
@@ -281,7 +271,6 @@ impl Policy {
             me,
             has,
             claim,
-            spillover_grace,
             weights,
             default_runtime,
             codex,
@@ -1890,6 +1879,8 @@ pub fn run(install: &Path) -> Res<()> {
     let mut installation_checked: Option<Instant> = None;
     let mut maintenance_result = String::new();
     let mut upgrade_report: Option<bool> = None;
+    let (mut orphans_checked, mut orphans_report): (Option<Instant>, String) =
+        (None, String::new());
     let (mut waits_reported, mut stuck) = (String::new(), None);
     let began = Instant::now();
     let mut hour = (Instant::now(), crate::requests::totals());
@@ -2352,6 +2343,21 @@ pub fn run(install: &Path) -> Res<()> {
                     append_project(install, root, &e);
                 }
             }
+        }
+        if orphans_checked.is_none_or(|at| at.elapsed().as_secs() >= 60) {
+            orphans_checked = Some(Instant::now());
+            let text = match installation::retire_orphans(install) {
+                Ok(retired) if retired.is_empty() => String::new(),
+                Ok(retired) => format!(
+                    "installation ended without its cursor: {}",
+                    retired.join(", ")
+                ),
+                Err(error) => format!("installation receipts not reconciled: {error}"),
+            };
+            if !text.is_empty() && text != orphans_report {
+                log_all(install, &roots, &text);
+            }
+            orphans_report = text;
         }
         // The installer's 300 s wait began before this generation started; a reason not retained retries next tick.
         let late = began.elapsed().as_secs() >= 300;

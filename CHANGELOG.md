@@ -5,7 +5,7 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
-PMs can amend dependencies of held drafts through `taskq deps` (#2456). Owners can authorize evidence-only completion without publishing the tested source (#2468).
+Spillover hosts no longer wait on a timer: an unknown or stale primary releases work at once, a live primary with a free slot or launch spacing still holds it, named in status; `spillover_grace` in host.json is ignored (#2511). PMs can amend dependencies of held drafts through `taskq deps` (#2456). Owners can authorize evidence-only completion without publishing the tested source (#2468).
 
 **Board**: `evidence-authorized` audits bind owner authorization to exact candidate, baseline, attachment SHA-256 and outcome revision. Update every board reader before authorizing; old folds ignore the audit and old reconcilers cannot select the evidence route. Existing results remain unchanged and need explicit authorization; archived clean-source records support checkout-free evidence tasks. Completion records one ordinary `close` receipt, without merge/deploy claims or native replay.
 

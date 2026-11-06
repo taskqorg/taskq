@@ -2139,12 +2139,16 @@ impl Snapshot {
             }
             for d in &h.daemon_sandbox {
                 let bin = cell(&compact(d["bin"].as_str().unwrap_or("runtime"), 40));
-                let tasks = d["tasks"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|n| format!("#{n}"))
-                    .collect::<Vec<_>>()
+                let list = |key: &str, suffix: &'static str| {
+                    d[key]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(move |n| format!("#{n}{suffix}"))
+                        .collect::<Vec<_>>()
+                };
+                let tasks = [list("tasks", ""), list("moved", " (moved)")]
+                    .concat()
                     .join(", ");
                 let reason = cell(&compact(
                     d["reason"].as_str().unwrap_or("no reason reported"),
