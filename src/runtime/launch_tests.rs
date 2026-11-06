@@ -5,6 +5,55 @@ fn python() -> PathBuf {
     which(if cfg!(windows) { "python" } else { "python3" })
 }
 
+// §4/A3: delayed persistence must not recapture another execution's transcript or queue delay.
+#[test]
+fn agentq_delayed_record_excludes_later_turn_bytes() {
+    let root = std::env::temp_dir().join(format!("taskq-agentq-freeze-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let log = root.join("native.log");
+    let mut request = Request::new(&root, &log, "invented input", "taskq");
+    request.command = vec![
+        python().into(),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/runtime-launch.py")
+            .into(),
+    ];
+    request.optimization = agentq_runtime::optimization::Intent::Off;
+    request.env = vec![
+        ("TASKQ_FIXTURE_RT".into(), "claude".into()),
+        (
+            "TASKQ_FIXTURE_RECORD".into(),
+            root.join("request.json").into(),
+        ),
+    ];
+    let adapter = agent("claude").unwrap();
+    let mut run = submit("claude", None, &request).unwrap();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while adapter.poll(&mut run).unwrap() == agentq_runtime::agent::State::Running {
+        assert!(std::time::Instant::now() < until);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let before = adapter.report(&run).unwrap();
+    assert_eq!(before.usage.input, Some(2));
+    writeln!(File::options().append(true).open(&log).unwrap(), "{}",
+        serde_json::json!({"type":"assistant","message":{"id":"next-execution","model":"invented-model","usage":{"input_tokens":100,"output_tokens":1}}})).unwrap();
+    let store = coreq::telemetry::Store::open(&root.join("records.db")).unwrap();
+    run.snapshot(&record_context())
+        .unwrap()
+        .append(&store)
+        .unwrap();
+    let rows = store.export_kinds(&["agent.turn"], 0, 0, 100).unwrap();
+    let input = rows["events"][0]["observation"]["input_tokens"].clone();
+    drop(store);
+    drop(run);
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(
+        input,
+        serde_json::json!(2),
+        "AgentQ record reread a later execution after terminal polling"
+    );
+}
+
 // §8/R9/R12: trait launch and resume retain literal input, host flags, daemon env and native scope.
 #[test]
 fn trait_launch_preserves_input_policy_environment_and_exit() {
@@ -13,6 +62,22 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
         .unwrap()
         .join(format!("taskq-launch-{}", uuid()));
     std::fs::create_dir_all(root.join(".taskq")).unwrap();
+    std::fs::create_dir_all(root.join("telemetry.log")).unwrap();
+    use tracing_subscriber::prelude::*;
+    let store =
+        std::sync::Arc::new(coreq::telemetry::Store::open(&root.join("caller.db")).unwrap());
+    let capture = coreq::telemetry::capture::Capture::new(store.clone(), "taskq", "test").unwrap();
+    let subscriber = tracing_subscriber::registry().with(capture.clone());
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let caller = tracing::info_span!(
+        "fixture.launch",
+        project = "fixture/project",
+        task = 2427u64,
+        attempt = 42u64,
+        actor = "worker",
+        entry = 43u64
+    );
+    let _caller = caller.enter();
     let python = python();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/runtime-launch.py");
     let args = [
@@ -39,6 +104,35 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
         board_env: &vars,
         jobs: Some(2),
     };
+    // The common boundary must bind even refused background/app launches, before adapter selection.
+    let refused = Launch {
+        files: String::new(),
+        execution: Some(88),
+        task: 55,
+        title: "Invented refusal".into(),
+        attempt: 66,
+        role: "reviewer".into(),
+        rt: "codex-app".into(),
+        session: "-".into(),
+        url: String::new(),
+        resume: None,
+    };
+    assert!(
+        spawn(&env, &refused).is_err(),
+        "no operator grant: no launch"
+    );
+    capture.flush().unwrap();
+    let boundaries = store.export_kinds(&["method.start"], 0, 0, 100).unwrap();
+    let boundary = boundaries["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["observation"]["operation"] == "taskq.runtime.agent")
+        .expect("all launch paths need the shared boundary");
+    assert_eq!(boundary["observation"]["task"], 55);
+    assert_eq!(boundary["observation"]["attempt"], 66);
+    assert_eq!(boundary["observation"]["actor"], "reviewer");
+    assert_eq!(boundary["observation"]["entry"], 88);
     let input = format!(
         "literal \"quote\", $HOME, `command`\n{}EOF-CANARY",
         "private-input-".repeat(12000)
@@ -71,10 +165,19 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
             ]);
             assert!(!format!("{:?}", req.host_args).contains("invented-secret"));
             let mut child = native(rt, resume.then_some(l.session.as_str()), &mut req).unwrap();
+            child.install = Some(root.clone());
             let identity = child.native_identity().unwrap();
+            let held = coreq::file_lock::lock(&root.join("taskq-profile.lock")).unwrap();
             let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
             loop {
+                let began = std::time::Instant::now();
                 if let Some(code) = child.exited().unwrap() {
+                    let elapsed = began.elapsed();
+                    drop(held);
+                    assert!(
+                        elapsed < std::time::Duration::from_millis(500),
+                        "terminal polling waited on telemetry: {elapsed:?}"
+                    );
                     assert_ne!(
                         code, 0,
                         "a completed turn stops the deliberately lingering client"
@@ -88,6 +191,10 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
                             .unwrap()
                             .outcome,
                         "ok"
+                    );
+                    assert!(
+                        child.exited().unwrap().is_some(),
+                        "terminal reread must not duplicate records"
                     );
                     break;
                 }
@@ -145,6 +252,66 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
             assert!(child.job().unwrap().starts_with("job-kill:"));
         }
     }
+    assert!(super::super::records::settle(
+        std::time::Duration::from_secs(30)
+    ));
+    let reader =
+        coreq::telemetry::Reader::open(&root.join("telemetry.log/universal.sqlite3")).unwrap();
+    let rows = reader.export_kinds(&["agent.turn"], 0, 0, 100).unwrap();
+    assert_eq!(
+        rows["events"].as_array().unwrap().len(),
+        6,
+        "one AgentQ turn per launch/resume"
+    );
+    for row in rows["events"].as_array().unwrap() {
+        let v = &row["observation"];
+        for (field, want) in [
+            ("project", serde_json::json!("fixture/project")),
+            ("task", serde_json::json!(2427)),
+            ("attempt", serde_json::json!(42)),
+            ("actor", serde_json::json!("worker")),
+            ("entry", serde_json::json!(43)),
+        ] {
+            assert_eq!(v[field], want, "{v}");
+        }
+        if v["runtime"] != "claude" {
+            assert!(
+                v["input_tokens"].is_null() && v["unknown"]["input_tokens"].is_string(),
+                "unreported usage stays unknown"
+            );
+        }
+    }
+    let calls = reader.export_kinds(&["agent.call"], 0, 0, 100).unwrap();
+    assert_eq!(
+        calls["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["observation"]["runtime"] == "claude")
+            .count(),
+        2,
+        "AgentQ captures model calls on launch and resume"
+    );
+    for row in calls["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["observation"]["runtime"] == "claude")
+    {
+        assert_eq!(row["observation"]["input_tokens"], 2);
+        assert_eq!(row["observation"]["output_tokens"], 4);
+        assert_eq!(row["observation"]["entry"], 43);
+    }
+    assert!(
+        !rows.to_string().contains("private-input-")
+            && !rows.to_string().contains("invented-secret")
+    );
+    drop(reader);
+    drop(_caller);
+    drop(caller);
+    drop(_subscriber);
+    drop(capture);
+    drop(store);
     std::fs::remove_dir_all(root).unwrap();
 }
 

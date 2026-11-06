@@ -31,6 +31,10 @@ pub(crate) fn enroll_cmd(c: &Ctx, a: &Args) -> Res<()> {
             "telemetry: {} (local telemetry rows; revoke with taskq enroll without --telemetry or taskq disconnect)",
             telemetry_sync::SCHEMA
         );
+        println!(
+            "observations: {} (CoreQ shipper; same revocation)",
+            coreq::telemetry::OBSERVATION_SCHEMA
+        );
     }
     let conn = enrollment::pair(
         &cfg.install,

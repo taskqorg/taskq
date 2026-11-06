@@ -355,6 +355,7 @@ fn deps_command(
     ))
 }
 
+#[tracing::instrument(name="taskq.command",skip_all,fields(project=c.cfg.repo.as_str()))]
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
@@ -782,6 +783,7 @@ fn application() {
     let r = run(&args);
     // #1351: the command already took effect; hand queued receipts to the writer before the exit flush, which has the same bound.
     telemetry::settle(Duration::from_secs(10));
+    runtime::settle_records(Duration::from_secs(10));
     // § 4 budget: this process's board requests by source, for `taskq profile`
     requests::flush(&requests::source(
         &args,

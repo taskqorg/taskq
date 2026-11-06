@@ -2471,7 +2471,7 @@ pub fn run(install: &Path) -> Res<()> {
                         .current_dir(install)
                         .env_remove("TASKQ_ROOT");
                     crate::requests::flush(crate::requests::SERVICE);
-                    coreq::telemetry::capture::before_exec();
+                    crate::platform::before_exec();
                     let e = command.exec();
                     return Err(format!("host re-exec: {e}"));
                 }
