@@ -353,30 +353,18 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
 /// `Some(reset)` with the reported reset (epoch seconds) when known; None after work started or without a limit.
 pub fn usage_limit(log: &Path, rt: &str) -> Option<Option<i64>> { classify(rt, &log_text(log, 0)?)?.reached }
 
-/// Provider metadata for the latest native turn. AgentQ remains the owner of quota-error classification.
-/// Unknown names/resets stay unknown; prose never invents a weekly or five-hour reset.
+/// Exhausted windows of the latest native turn, read per record by AgentQ. Unknown names/resets stay unknown; prose
+/// never invents a weekly or five-hour reset.
 pub fn quota_windows(log: &Path, rt: &str) -> Vec<(String, Option<i64>)> {
     let Some(events) = events(log,0) else { return vec![] };
     let start = events.iter().rposition(|e| e["type"] == "taskq.rules" && matches!(e["phase"].as_str(),Some("start"|"resume"))).unwrap_or(0);
     let mut windows = vec![];
     for e in &events[start..] {
-        let info = if e["type"] == "rate_limit_event" { &e["rate_limit_info"] } else { &e["quotaLimits"] };
-        let reached = classify(rt, &e.to_string()).and_then(|r| r.reached);
-        if reached.is_some() || e["type"] == "rate_limit_event" && info["status"] == "rejected" {
-            let window = info["rateLimitType"].as_str().filter(|w| w.len() <= 32 && w.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')).unwrap_or("unknown");
-            windows.push((window.into(),info["resetsAt"].as_i64().or(reached.flatten())));
-        }
-        let rates = match e["type"].as_str() {
-            Some("rate_limits") => &e["rate_limits"],
-            Some("event_msg") if matches!(e["payload"]["type"].as_str(),Some("rate_limits"|"token_count")) => &e["payload"]["rate_limits"],
-            _ => continue,
-        };
-        for key in ["primary","secondary"] {
-            let w = &rates[key];
-            if w["used_percent"].as_f64().is_some_and(|v| v >= 100.0) {
-                let name = w["window_minutes"].as_u64().map_or_else(|| "unknown".into(), |m| format!("{m}m"));
-                windows.push((name,w["resets_at"].as_i64()));
-            }
+        let Some(report) = classify(rt, &e.to_string()) else { continue };
+        if let Some(until) = report.reached { windows.push(("unknown".to_string(),until)); }
+        for w in report.limits.into_iter().filter(|w| w.used.is_some_and(|u| u >= 1.0)) {
+            let name = w.window.filter(|n| n.len() <= 32 && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')).unwrap_or_else(|| "unknown".into());
+            windows.push((name,w.resets_at.and_then(|r| i64::try_from(r).ok())));
         }
     }
     windows.sort(); windows.dedup();

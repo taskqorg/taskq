@@ -21,34 +21,35 @@ fn read(install:&Path)->Result<Store,String> {
     Ok(store)
 }
 
-fn observations(events:&[Value])->BTreeMap<String,(usize,f64,Option<i64>)> {
+/// The latest reading per window since the attempt's last start or resume, read per record by AgentQ so each keeps its
+/// `.headroom` event ID. A window without a name or used fraction stays unobserved: unknown, never healthy.
+fn observations(rt:&str,events:&[Value])->BTreeMap<String,(usize,f64,Option<i64>)> {
     let mut rows=BTreeMap::new();
+    let Ok(agent)=super::agent(rt) else {return rows};
     let start=events.iter().rposition(|e|e["type"]=="taskq.rules" && matches!(e["phase"].as_str(),Some("start"|"resume"))).unwrap_or(0);
     for (index,e) in events.iter().enumerate().skip(start) {
-        let rates=match e["type"].as_str() {
-            Some("rate_limits")=>Some(&e["rate_limits"]),
-            Some("event_msg") if matches!(e["payload"]["type"].as_str(),Some("rate_limits"|"token_count"))=>Some(&e["payload"]["rate_limits"]),
-            _=>None,
-        };
-        if let Some(rates)=rates {
-            for key in ["primary","secondary"] {
-                let w=&rates[key];
-                if let Some(used)=w["used_percent"].as_f64().filter(|n|n.is_finite() && (0.0..=100.0).contains(n)) {
-                    let name=w["window_minutes"].as_u64().map_or_else(||key.into(),|n|format!("{n}m"));
-                    rows.insert(name,(index,1.0-used/100.0,w["resets_at"].as_i64()));
-                }
-            }
-        }
-        if e["type"]=="rate_limit_event" {
-            let info=&e["rate_limit_info"];
-            if let (Some(name),Some(used))=(info["rateLimitType"].as_str(),info["utilization"].as_f64().filter(|n|n.is_finite() && (0.0..=1.0).contains(n))) {
-                if !name.is_empty() && name.len()<=40 && name.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'_' || b==b'-') {
-                    rows.insert(name.into(),(index,1.0-used,info["resetsAt"].as_i64()));
-                }
+        for w in unique_names(agent.log_limits(&e.to_string(),None,None)) {
+            let (Some(name),Some(used))=(w.window,w.used.filter(|u|(0.0..=1.0).contains(u))) else {continue};
+            if !name.is_empty() && name.len()<=40 && name.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'_' || b==b'-') {
+                rows.insert(name,(index,1.0-used,w.resets_at.and_then(|r|i64::try_from(r).ok())));
             }
         }
     }
     rows
+}
+
+/// Codex limit groups share window lengths: the second `300m` of one record reads `300m-2`, so it cannot hide an
+/// exhausted sibling. ponytail: a group that leaves a record shifts its siblings' suffixes; the 300 s expiry covers it.
+pub(super) fn unique_names(mut windows:Vec<agentq_runtime::agent::Window>)->Vec<agentq_runtime::agent::Window> {
+    let mut seen=BTreeMap::<String,u32>::new();
+    for w in &mut windows {
+        if let Some(name)=&mut w.window {
+            let count=seen.entry(name.clone()).or_default();
+            *count+=1;
+            if *count>1 {*name=format!("{name}-{count}");}
+        }
+    }
+    windows
 }
 
 pub fn observe(install:&Path,rt:&str,log:&Path,now:i64)->Result<(),String> {observe_in(install,rt,log,now,super::rollout)}
@@ -58,13 +59,13 @@ fn observe_in(install:&Path,rt:&str,log:&Path,now:i64,rollout:impl Fn(&str)->Opt
     let mut source=log.to_path_buf();
     // #2263: `codex exec --json` logs carry no rate limits; the thread's rollout records them in `token_count`.
     // ponytail: rereads the whole rollout each pass; read from a saved offset if rollouts grow large.
-    if super::of(rt).has(Cap::RolloutQuota) && observations(&events).is_empty() {
-        let thread=events.iter().rev().find(|e|e["type"]=="thread.started").and_then(|e|e["thread_id"].as_str()).map(String::from);
+    if super::of(rt).has(Cap::RolloutQuota) && observations(rt,&events).is_empty() {
+        let thread=super::log_text(log,0).and_then(|text|super::classify(rt,&text)).and_then(|r|r.session);
         if let Some(path)=thread.and_then(|t|rollout(&t)) {
             if let Some(rollout)=super::events(&path,0) {events=rollout;source=path;}
         }
     }
-    let rows=observations(&events);
+    let rows=observations(rt,&events);
     if rows.is_empty() {return Ok(());}
     let label=super::accounts::of_log(log);
     let modified=std::fs::metadata(&source).and_then(|m|m.modified()).map_err(|e|e.to_string())?
