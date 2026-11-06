@@ -1426,6 +1426,7 @@ impl Api {
             .then(|| self.etags.borrow().get(&url).map(|(e, _)| e.clone()))
             .flatten();
         let began = std::time::Instant::now();
+        let started = crate::profile::now_ms();
         let mut status = None;
         let result = crate::profile::measure_classified(
             "forge.call",
@@ -1525,7 +1526,7 @@ impl Api {
             },
             Error::class,
         );
-        self.observe_http(op, status, began.elapsed(), result.as_ref().err());
+        self.observe_http(op, status, started, began.elapsed(), result.as_ref().err());
         if mutates {
             shared::forget(self, false);
         }
@@ -1536,6 +1537,7 @@ impl Api {
         &self,
         op: &str,
         status: Option<u16>,
+        started: Option<u64>,
         elapsed: std::time::Duration,
         error: Option<&Error>,
     ) {
@@ -1549,6 +1551,7 @@ impl Api {
             board.as_deref(),
             &self.root,
             status,
+            started,
             elapsed,
             error.map(Error::class),
         );
@@ -1607,6 +1610,7 @@ impl Api {
             .count(op.clone());
         crate::requests::tally(&op, &crate::requests::api_host(&self.root));
         let began = std::time::Instant::now();
+        let started = crate::profile::now_ms();
         #[cfg(test)]
         if let Some(transport) = &self.transport {
             let form = form.map(|f| serde_json::json!({"file": f.file_name().map(|n| n.to_string_lossy().into_owned())}));
@@ -1614,13 +1618,14 @@ impl Api {
             self.observe_http(
                 &op,
                 result.as_ref().ok().map(|r| r.status),
+                started,
                 began.elapsed(),
                 result.as_ref().err(),
             );
             return result.map(|r| r.body.into_bytes());
         }
         let mut cfg = format!(
-            "silent\nshow-error\nfail\nurl = {}\nheader = {}\nheader = \"Expect:\"\nmax-time = 120\n",
+            "silent\nshow-error\nfail\nwrite-out = \"%{{http_code}}\"\nurl = {}\nheader = {}\nheader = \"Expect:\"\nmax-time = 120\n",
             quote(&url),
             quote(&self.credentials.borrow().auth)
         );
@@ -1642,10 +1647,11 @@ impl Api {
         let out = match out {
             Ok(out) => out,
             Err(error) => {
-                self.observe_http(&op, None, began.elapsed(), Some(&error));
+                self.observe_http(&op, None, started, began.elapsed(), Some(&error));
                 return Err(error);
             }
         };
+        let (_, status) = crate::http::status_tail(&out);
         if !out.status.success() {
             let error = Error::curl_exit(
                 out.status.code(),
@@ -1654,11 +1660,11 @@ impl Api {
                     String::from_utf8_lossy(&out.stderr).trim()
                 ),
             );
-            self.observe_http(&op, None, began.elapsed(), Some(&error));
+            self.observe_http(&op, status, started, began.elapsed(), Some(&error));
             return Err(error);
         }
         let result = files.response();
-        self.observe_http(&op, Some(200), began.elapsed(), result.as_ref().err());
+        self.observe_http(&op, status, started, began.elapsed(), result.as_ref().err());
         result
     }
 

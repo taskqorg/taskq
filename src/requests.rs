@@ -686,6 +686,7 @@ pub(crate) fn http_observation(
     board: Option<&str>,
     api: &str,
     status: Option<u16>,
+    started: Option<u64>,
     elapsed: Duration,
     error: Option<&str>,
 ) -> Value {
@@ -695,7 +696,7 @@ pub(crate) fn http_observation(
     }
     let mut value = json!({"product":"taskq","version":crate::platform::VERSION,"kind":"board.request",
         "operation":op.replace(' ', ":").replace('/', ".").replace('*', "other"),"project":board,"route":api_host(api),
-        "host":crate::profile::observation_host().filter(|host| !host.is_empty()),"started_ms":crate::profile::now_ms(),
+        "host":crate::profile::observation_host().filter(|host| !host.is_empty()),"started_ms":started,
         "duration_us":elapsed.as_micros().min(u64::MAX as u128) as u64,"counts":counts,
         "trace":null,"span":null,"outcome":if error.is_some(){"failed"}else{"ok"},"error":error.unwrap_or("none"),
         "unknown":{"trace":"no-action","span":"no-action"}});

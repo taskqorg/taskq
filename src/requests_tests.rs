@@ -593,6 +593,7 @@ fn requests_2431_observations_keep_billing_dimensions_and_unknowns() {
         Some("owner/repo"),
         "https://api.github.com",
         Some(200),
+        Some(123_456),
         Duration::from_millis(1),
         None,
     );
@@ -601,6 +602,7 @@ fn requests_2431_observations_keep_billing_dimensions_and_unknowns() {
         Some("owner/repo"),
         "https://api.github.com",
         Some(304),
+        Some(123_456),
         Duration::from_millis(1),
         None,
     );
@@ -609,12 +611,17 @@ fn requests_2431_observations_keep_billing_dimensions_and_unknowns() {
         Some("owner/repo"),
         "https://api.github.com",
         None,
+        Some(123_456),
         Duration::from_millis(1),
         Some("network"),
     );
     for row in [&first, &unchanged, &missing] {
         coreq::telemetry::Event::new(row.clone()).unwrap();
     }
+    assert_eq!(
+        first["started_ms"], 123_456,
+        "request start, not completion time"
+    );
     assert_eq!(first["counts"]["billed"], 1);
     assert_eq!(unchanged["counts"]["billed"], 0);
     assert_eq!(unchanged["counts"]["not_modified"], 1);

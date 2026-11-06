@@ -127,9 +127,29 @@ fn native_http_child() {
             reply.len()
         )
         .unwrap();
+        drop(socket);
+        listener.set_nonblocking(false).unwrap();
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = vec![];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let mut part = [0; 4096];
+            let count = socket.read(&mut part).unwrap();
+            assert_ne!(count, 0, "incomplete raw request");
+            request.extend_from_slice(&part[..count]);
+        }
+        socket
+            .write_all(
+                b"HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
     });
     phase("http.start");
-    let result = Api::new(base.clone(), base, "private-token").call("POST", "/request", Some(body));
+    let api = Api::new(base.clone(), base, "private-token");
+    let result = api.call("POST", "/request", Some(body));
+    let unchanged = api.raw("/unchanged", None);
     phase("http.returned");
     let joined = server.join();
     phase("http.joined");
@@ -140,6 +160,10 @@ fn native_http_child() {
         result.as_ref().err()
     );
     assert!(result.err().unwrap().text().contains("HTTP 503"));
+    assert!(
+        unchanged.unwrap().is_empty(),
+        "raw response body stays file-backed"
+    );
     assert!(crate::profile::tests::take_report().contains("http5xx:1"));
     phase("capture.qualify");
     let health = coreq::telemetry::capture::qualify().unwrap();
@@ -156,6 +180,16 @@ fn native_http_child() {
                     && r["observation"]["kind"] == "method"
                     && r["observation"]["outcome"] == "ok"
             )
+    );
+    assert!(
+        exported["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["observation"]["kind"] == "board.request"
+                && r["observation"]["counts"]["not_modified"] == 1
+                && r["observation"]["counts"]["billed"] == 0),
+        "native raw 304 is unbilled, never an assumed 200: {exported}"
     );
     assert!(!exported.to_string().contains("private-"));
     assert_eq!(health["lost"], 0);
