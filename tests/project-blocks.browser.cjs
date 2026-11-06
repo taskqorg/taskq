@@ -1,7 +1,7 @@
 // B4 instrument: identical parent/standalone/tray fixtures; browser output is not native or live-board proof.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto'),{chromium}=require('playwright');
 const q=require('../src/project-blocks.js'),fx=require('./fixtures/project-blocks.json'),{display}=require('./fixtures/display-model.json');
-const source=fs.readFileSync('docs/design/menu-next-variants.html','utf8'),css=fs.readFileSync('src/project-blocks.css','utf8'),js=fs.readFileSync('build/web/project-blocks.js','utf8');
+const source=fs.readFileSync('tests/fixtures/design/menu-next-variants.html','utf8'),css=fs.readFileSync('src/project-blocks.css','utf8'),js=fs.readFileSync('build/web/project-blocks.js','utf8');
 const parentCSS=[...source.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');
 const parentFunctions=source.split('\n').filter(l=>/^(const (esc|icon|button|ib)=|function (counts|projectRow|task)\()/.test(l)).join('\n');
 const tray=fs.readFileSync('build/web/tray.html','utf8');
@@ -26,7 +26,7 @@ function geometry(sel){
 function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(el);return {display:s.display,padding:s.padding,font:s.fontSize,lineHeight:s.lineHeight,wrap:s.overflowWrap,width:Math.round(el.getBoundingClientRect().width)};}
 (async()=>{
   const browser=await chromium.launch(require('./browser.cjs')()),evidence=[];
-  const dir='docs/design/evidence/project-blocks';if(process.argv.includes('--evidence'))fs.mkdirSync(dir,{recursive:true});
+  const dir=path.join(require('node:os').tmpdir(),'taskq-project-blocks');if(process.argv.includes('--evidence'))fs.mkdirSync(dir,{recursive:true});
   try{
     for(const theme of fx.themes)for(const font of fx.fonts)for(const width of fx.widths)for(const n of fx.counts){
       const at={theme,font,width,count:n},p=fixture(n),pages=[];

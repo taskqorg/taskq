@@ -54,7 +54,7 @@ Ship the accepted D14 intentions: Plan first, Implement and review, Urgent fix, 
 - Persistent arbitrary stages, per-stage agent assignment and custom retry graphs remain option 3, not hidden prerequisites of option 2. Required new gate/group metadata must satisfy R1 and version compatibility; never parse free-form numbered prose as execution state.
 - Unsupported runtime prompts return to their original session. No invented reply controls or remote-session capabilities.
 
-[Competitor evidence](comparative-workflow-review.md): adopt VibeCrew's readable sequence/checkpoints, Conductor's explicit setup/checks and Moshi/cmux's unified questions. Avoid a private board, always-running AI dispatcher and mandatory pipeline configuration. These products were researched, not installed/tested.
+[Competitor evidence](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/comparative-workflow-review.md): adopt VibeCrew's readable sequence/checkpoints, Conductor's explicit setup/checks and Moshi/cmux's unified questions. Avoid a private board, always-running AI dispatcher and mandatory pipeline configuration. These products were researched, not installed/tested.
 
 ## P2 AI-led authoring
 
@@ -123,7 +123,7 @@ No extra Plans top-level tab, pipeline wizard, graph editor, duplicated counters
 - P-A8: held tasks cannot launch during creation; one milestone reminder never starts work or repeats on unchanged discussion.
 - P-A7: stage titles and reasons have visible separation at 16/20px; compactness never joins words or hides a blocking reason.
 
-[Interactive reference](plans-and-decisions.html) is a local fixture, not a planner, scheduler or board client. Backend acceptance needs model, adapter and native evidence beyond browser tests.
+[Interactive reference](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/plans-and-decisions.html) is a local fixture, not a planner, scheduler or board client. Backend acceptance needs model, adapter and native evidence beyond browser tests.
 
 ## Contract detail
 

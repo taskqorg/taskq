@@ -36,14 +36,14 @@ assert(!q.task(p,{...row,url:'javascript:alert(1)'}).includes('href="javascript:
 assert(!q.task(p,{...row,local_session:false}).includes('codex://'));
 assert(q.task(p,{...row,local_session:false,session_reason:'Codex session opens only on WIN'}).includes('title="Codex session opens only on WIN">Session unavailable'));
 // R6 #1823: a timed park shows its board time on this computer's clock and the reason in both row forms; untimed adds nothing.
-const until='2026-11-05T09:00:00Z',parked='Parked until '+new Date(until).toLocaleString()+': 168 qualified hours<';
+const time=require('../src/relative-time.js'),until='2026-11-05T09:00:00Z',parked='Parked until '+time.local(Date.parse(until))+': 168 qualified hours<';
 for(const compact of [false,true])assert(q.task(p,{...row,state:'later',until,later:'Reason: 168 qualified hours'},false,compact).includes(parked),'timed park, compact '+compact);
 assert(!q.task(p,{...row,state:'later'}).includes('Parked until'),'an untimed park names no time');
 // Chain: R6 / taskq.md § 2 Stages tray row (#1880). Risk: a multi-stage task hides its first open stage, or a row without stages shows one.
 for(const compact of [false,true])assert(q.task(p,{...row,state:'later',stage:{k:3,n:5,done:['A1','A2']}},false,compact).includes('>Stage 3/5<'),'stage k/n, compact '+compact);
 assert(!q.task(p,row).includes('Stage '),'no recorded stage, no stage text');
 assert(!q.task(p,{...row,until,later:'<script>'}).includes('<script>'),'the reason is escaped');
-assert.equal(q.parked({until,later:'Reason: 168 qualified hours'}),'Parked until '+new Date(until).toLocaleString()+': 168 qualified hours','Conversations reads the same text');
+assert.equal(q.parked({until,later:'Reason: 168 qualified hours'}),'Parked until '+time.local(Date.parse(until))+': 168 qualified hours','Conversations reads the same text');
 assert.equal(q.parked({later:'Reason: x'}),'','an untimed park has no text');
 // R6/R12: the native snapshot's unresolved execution must remain visible in every shared task block.
 // § 4 Tray age: the model's age text; unknown names its reason; no `since`, no age.

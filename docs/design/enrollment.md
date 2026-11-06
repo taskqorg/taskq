@@ -2,7 +2,7 @@
 
 Accepted implementation target under [taskq.md](../../taskq.md). Apply [shared connection semantics](https://github.com/taskqorg/specq/blob/main/engineering/product-connections.md) through the coreq linked client and [DashQ C1–C7](https://github.com/taskqorg/dashq/blob/main/docs/design/enrollment.md). Implemented (#913); release qualification below.
 
-`taskq enroll <https-url>`, `taskq connection status` and `taskq disconnect` use the same browser/headless approval, protected credential, projection receipt and revoke lifecycle as AgentQ. No AgentQ installation or Langfuse dependency. The existing service handles delivery; no extra daemon or scheduler. Stable random installation identity survives updates, never derives from hostname; lost identity creates a new installation.
+`taskq enroll <https-url>`, `taskq connection status` and `taskq disconnect` use the same browser/headless approval, protected credential, projection receipt and revoke lifecycle as AgentQ. No AgentQ installation dependency. The existing service handles delivery; no extra daemon or scheduler. Stable random installation identity survives updates, never derives from hostname; lost identity creates a new installation.
 
 Send only a coalesced latest unsent snapshot. Connection state and credentials are durable and excluded from pruning; they contain no authoritative product state. Heartbeat freshness and underlying observation freshness remain separate. Snapshot transport failure never changes primary command success or blocks primary work. C3's accepted credential lifetime exception is confined to observation, never commands or forge access.
 
@@ -39,7 +39,7 @@ Prove an independently installed product can enroll, show a real matching snapsh
 | E5 forged/wrong scope | same chain: another project's board is never sent; capabilities none. Live probe on DashQ 0.9.2 under the `taskqorg/taskq` grant: a `taskqorg/coreq` record is `rejected`, reason `scope`, and its receipt is `unknown_event`; the same record for `taskqorg/taskq` is `projected` | — |
 | E6 schema | `taskq-board/1` projection fixture test | — |
 | E7 disconnect | live macOS and Windows: revoke confirmed, `connection status` none, second disconnect says none; offline disconnect queues the revoke for the service, a repeated disconnect retries it and reports it pending or confirmed, never none; disconnect during pairing cancels it, revokes a staged grant, `enroll` cannot resume it (chain check `disconnect_cancels_pending_pairing`) | — |
-| E8 TaskQ alone | no AgentQ or Langfuse dependency (Cargo.toml) | — |
+| E8 TaskQ alone | no AgentQ dependency (Cargo.toml) | — |
 | E9 upgrade | chain `identity_survives_pruning_and_concurrent_creation` keeps `connection/` through sweep and pruning; installed 4.2.0-dev sweep deletes it until this release | — |
 | E10 UI | DashQ page; not TaskQ | — |
 

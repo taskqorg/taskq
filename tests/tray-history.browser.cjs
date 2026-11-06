@@ -27,7 +27,7 @@ const base={display:require('./fixtures/display-model.json').display,page:'caden
      const target=targets.nth(i);await target.focus();await target.press('Enter');
      const detail=await page.locator('.history-exact').textContent();
      for(const [k,j] of [['completed',0],['failed',1],['ask',2],['blocked',3]])assert(detail.includes(k+' '+(b.missing.length?(b.counts[j]?'≥'+b.counts[j]:'? (0 observed)'):b.counts[j])),detail);
-     assert(detail.includes('[')&&detail.includes(')')&&detail.includes('UTC')||detail.includes('Asia/'),detail);
+     assert(/^\[[A-Z][a-z]{2} [A-Z][a-z]{2} \d{2}, \d{2}:\d{2}, .*\)/.test(detail),detail);
      const newQuantity=b.missing.length||b.incoming_missing?.length?(b.incoming?'≥'+b.incoming:'? (0 observed)'):String(b.incoming);
      assert(detail.includes('new '+newQuantity),detail);
      if(b.counts[2]&&!b.missing.length&&(!H.bins.some(b=>!b.incoming_missing.length)||!b.incoming_missing.length)){

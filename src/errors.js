@@ -1,5 +1,5 @@
 'use strict';
-const {h}=require('preact'),{execution}=require('./ui-runtime.js'),icons=require('./ui-icons.js');
+const {h}=require('preact'),{execution}=require('./ui-runtime.js'),icons=require('./ui-icons.js'),time=require('./relative-time.js');
 module.exports=execution.module('errors',{
  retain:function(S,previous){
   if(!previous)return S;
@@ -13,11 +13,11 @@ module.exports=execution.module('errors',{
    return retained;
   })};
  },
- age:function(p){const seconds=Number.isFinite(p?.age)&&p.age>=0&&Number.isFinite(p?.tasks_age_seconds)&&p.tasks_age_seconds>=0?p.age+p.tasks_age_seconds:null;return seconds===null?'age unknown':seconds<60?Math.floor(seconds)+'s old':seconds<3600?Math.floor(seconds/60)+'m old':Math.floor(seconds/3600)+'h old';},
+ age:function(p){const seconds=Number.isFinite(p?.age)&&p.age>=0&&Number.isFinite(p?.tasks_age_seconds)&&p.tasks_age_seconds>=0?p.age+p.tasks_age_seconds:null;return seconds===null?time.unknown:time.age(seconds)+' ago';},
  cause:function(text,p){
   const limit=/rate limit: board requests paused(?: until ([\dTZ:.-]+))?/i.exec(text);
   if(limit){let server=p?.root||text;try{server=new URL(p?.issues).origin;}catch{}const provider=p?.board_kind==='github'?'GitHub':p?.board_kind==='gitlab'?'GitLab':'Board',until=limit[1],date=until&&new Date(until);
-   return {key:'limit:'+provider+':'+server+':'+(until||'unknown'),text:provider+' limit until '+(date&&!Number.isNaN(+date)?date.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'unknown')};}
+   return {key:'limit:'+provider+':'+server+':'+(until||'unknown'),text:provider+' limit until '+(date&&!Number.isNaN(+date)?time.local(+date):time.unknown)};}
   return {key:text,text};
  },
  rows:function(S,extra=[]){
@@ -26,7 +26,7 @@ module.exports=execution.module('errors',{
   for(const p of S?.projects||[]){
    add(p.error,p);
    if(p.requests?.paused_until)add('rate limit: board requests paused until '+p.requests.paused_until,p);
-   else if(Number.isFinite(p.requests?.remaining)&&p.requests.limit>0&&p.requests.remaining*5<=p.requests.limit)add('Board budget low: '+p.requests.remaining+'/'+p.requests.limit+' until '+(p.requests.reset||'unknown'),p);
+   else if(Number.isFinite(p.requests?.remaining)&&p.requests.limit>0&&p.requests.remaining*5<=p.requests.limit)add('Board budget low: '+p.requests.remaining+'/'+p.requests.limit+' until '+(p.requests.reset?time.utc(Date.parse(p.requests.reset)):time.unknown),p);
    if(!p.error&&p.alive===false)add('Service observation unavailable',p);
    if(!p.error&&p.complete===false)add('Project observation incomplete',p);
    if(p.reports?.complete===false)add(p.reports.reason||(!p.error?'Reports not collected yet':''),p);

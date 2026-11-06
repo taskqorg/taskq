@@ -24,7 +24,7 @@ fn locked<T>(install:&Path,f:impl FnOnce()->Res<T>)->Res<T> {
 }
 pub use crate::platform::agentq_root as root;
 fn targets(runtime:&str)->Res<Vec<String>> {
-    let home=std::env::var_os(if cfg!(windows){"USERPROFILE"}else{"HOME"}).map(PathBuf::from).filter(|p|p.is_absolute()).ok_or("native client home unavailable")?;
+    let home=crate::platform::user_home().filter(|p|p.is_absolute()).ok_or("native client home unavailable")?;
     Ok(vec![root()?.display().to_string(),home.join(crate::runtime::of(runtime).home).display().to_string()])
 }
 fn unknown(reason:impl ToString)->Value {json!({"kind":"unknown","reason":reason.to_string()})}
@@ -127,7 +127,7 @@ fn project(install:&Path,mut state:Value,previous_warning:bool)->Value {
 }
 fn runtimes(install:&Path)->Value {
     let rows=crate::runtime::agents(install);
-    let policy=crate::host::Policy::read_for_hostname(install,crate::hostname);
+    let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname);
     crate::runtime::setup_runtimes().map(|rt|{
         let row=rows.as_array().and_then(|rows|rows.iter().find(|r|r["runtime"]==rt));
         let reason=match (row,&policy){
@@ -135,7 +135,7 @@ fn runtimes(install:&Path)->Value {
             (Some(r),_) if r["login"]!="logged in"=>Some(format!("{}",r["login"].as_str().unwrap_or("login unknown"))),
             (Some(_),Ok(p))=>{
                 let exe=std::env::current_exe().unwrap_or_default();let work=crate::setup::dir(install);
-                let env=crate::runtime::Env{context:"",root:&work,exe:&exe,install,permission_mode:&p.permission_mode,codex:&p.codex,publish:"",board_env:&[],jobs:None};
+                let env=crate::runtime::Env{context:"",root:&work,exe:&exe,install,permission_mode:&p.permission_mode,codex:&p.codex,delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
                 crate::runtime::access(&env,crate::runtime::of(rt).setup).err().map(|e|e.message)
             },_=>Some("runtime unknown".into())
         };
@@ -155,7 +155,7 @@ pub fn start(install:&Path) {
         std::thread::spawn(move||{
             let mut warning=false;
             loop {
-                let mut v=project(&install,detect(),warning);warning=v["warning"]==true;v["host"]=json!(crate::hostname());v["platform"]=json!(std::env::consts::OS);
+                let mut v=project(&install,detect(),warning);warning=v["warning"]==true;v["host"]=json!(crate::config::hostname());v["platform"]=json!(std::env::consts::OS);
                 v["targets"]=crate::runtime::setup_runtimes().map(|rt|(rt.to_string(),json!(targets(rt).ok()))).collect::<serde_json::Map<_,_>>().into();v["runtimes"]=choices.lock().unwrap().clone();
                 *output.lock().unwrap()=v;
                 std::thread::sleep(Duration::from_secs(2));
@@ -187,69 +187,5 @@ pub fn action(install:&Path,action:&str,id:&str,runtime:&str)->Res<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    // #1391 A2: absence, stale/corrupt/denied observations and PID reuse cannot clear a warning as success.
-    #[test]
-    fn detection_requires_fresh_compatible_status_and_native_executable() {
-        // #2011 A1: statuses derive from the fixture agentq publishes (its tests/fixtures/status.json), not a TaskQ-authored shape
-        let published:Value=serde_json::from_str(include_str!("../tests/fixtures/agentq-status.json")).unwrap();
-        let with=|version:&str,at:u64|{let mut s=published.clone();s["version"]=json!(version);s["at"]=json!(at);s};
-        let release=|version:&str|Path::new("/invented/agentq").join("releases").join(version).join(if cfg!(windows){"agentq.exe"}else{"agentq"});
-        let root=Path::new("/invented/agentq");let exe=release("0.9.0");
-        let good=with("0.9.0",100);
-        let check=|launcher,status,process:Res<Option<PathBuf>>|inspect(root,launcher,status,100,|_|process)["kind"].clone();
-        assert_eq!(check(Ok(false),Ok(None),Ok(None)),"shown");
-        assert_eq!(check(Ok(true),Ok(None),Ok(None)),"unknown");
-        assert_eq!(check(Err("denied".into()),Ok(None),Ok(None)),"unknown");
-        assert_eq!(check(Ok(false),Err("corrupt".into()),Ok(None)),"unknown");
-        assert_eq!(check(Ok(true),Ok(Some((good.clone(),90))),Ok(Some(exe.clone()))),"running");
-        assert_eq!(check(Ok(true),Ok(Some((good.clone(),91))),Ok(Some(exe.clone()))),"unknown");
-        assert_eq!(check(Ok(true),Ok(Some((good.clone(),91))),Ok(None)),"stopped","#1702 A2: a disabled service's stale status reads as off");
-        // #1702 A1: installed AgentQ 0.10.0 read as 'unsupported agentq status version or shape'
-        assert_eq!(check(Ok(true),Ok(Some((with("0.10.0",100),0))),Ok(Some(release("0.10.0")))),"running");
-        // #2011 A2: agentq 1.0 read as unsupported; the published fixture itself is a 1.x status
-        let at=published["at"].as_u64().unwrap();let v=published["version"].as_str().unwrap();
-        assert_eq!(inspect(root,Ok(true),Ok(Some((published.clone(),0))),at,|_|Ok(Some(release(v))))["kind"],"running");
-        assert_eq!(inspect(root,Ok(true),Ok(Some((with("0.4.0",100),0))),100,|_|Ok(None))["reason"],"unsupported agentq status version \"0.4.0\"");
-        assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Ok(None)),"stopped");
-        assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Ok(Some("/other/agentq".into()))),"unknown");
-        assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Err("denied".into())),"unknown");
-        assert_eq!(check(Ok(false),Ok(Some((good.clone(),0))),Ok(Some(exe.clone()))),"unknown");
-        let mut cached=inspect(root,Ok(true),Ok(Some((good.clone(),90))),100,|_|Ok(Some(exe.clone())));cached["checked"]=json!(100);
-        assert_eq!(fresh(cached.clone(),100)["kind"],"running");assert_eq!(fresh(cached,101)["kind"],"unknown","cache cannot extend the source deadline");
-        let cached=json!({"kind":"shown","warning":true,"checked":100});assert_eq!(fresh(cached.clone(),105)["kind"],"shown");
-        let stale=fresh(cached,106);assert_eq!(stale["kind"],"unknown");assert_eq!(stale["warning"],true,"slow runtime discovery keeps the previous warning, never fresh health");
-        for bad in [json!({}),with("2.0.0",100),with("1.0",100),with("0.9.0",101)]{assert_eq!(check(Ok(true),Ok(Some((bad,0))),Ok(Some(exe.clone()))),"unknown");}
-    }
-    #[cfg(any(target_os="macos",windows))]
-    #[test]
-    fn native_process_image_matches_creation_identity() {
-        assert_eq!(process(std::process::id()).unwrap().unwrap(),std::env::current_exe().unwrap());
-    }
-    #[test]
-    fn bounded_files_keep_malformed_and_future_observations_unknown() {
-        let dir=std::env::temp_dir().join(format!("taskq-agentq-status-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
-        let path=dir.join("status.json");assert!(status(&path).unwrap().is_none());
-        fs::write(&path,b"{bad").unwrap();assert!(status(&path).is_err());
-        fs::write(&path,vec![b' ';1024*1024+1]).unwrap();assert!(status(&path).unwrap_err().contains("1 MiB"));
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    // #1391 A4: preferences survive restart; only verified running resets an episode, setup records never replay.
-    #[test]
-    fn dismissal_and_setup_recovery_preserve_unknown_effects() {
-        let dir=std::env::temp_dir().join(format!("taskq-agentq-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
-        let shown=project(&dir,json!({"kind":"shown"}),false);assert_eq!(shown["warning"],true);
-        action(&dir,"agentq-dismiss","","").unwrap();assert_eq!(project(&dir,json!({"kind":"shown"}),false)["warning"],false);
-        let u=project(&dir,unknown("read denied"),false);assert_eq!(u["kind"],"unknown");assert_eq!(u["dismissed"],true);
-        let mut p=preferences(&dir).unwrap();p.request=Some("missing-request".into());save(&dir,&p).unwrap();
-        assert_eq!(project(&dir,json!({"kind":"shown"}),false)["kind"],"interrupted");assert!(crate::setup::all(&dir).unwrap().0.is_empty());
-        assert_eq!(project(&dir,json!({"kind":"running"}),false)["warning"],false);assert!(!preferences(&dir).unwrap().dismissed);
-        assert_eq!(project(&dir,json!({"kind":"shown"}),false)["warning"],true);
-        fs::write(dir.join(FILE),"{bad").unwrap();
-        let unreadable=project(&dir,json!({"kind":"running"}),true);assert_eq!(unreadable["kind"],"unknown");assert_eq!(unreadable["warning"],true);
-        assert_eq!(project(&dir,json!({"kind":"running"}),false)["warning"],false,"unknown preferences alone must not invent an absence");assert_eq!(fs::read_to_string(dir.join(FILE)).unwrap(),"{bad");
-        fs::remove_dir_all(dir).unwrap();
-    }
-}
+#[path = "agentq_tests.rs"]
+mod tests;

@@ -47,13 +47,17 @@ assert names('src/x.rs', '#[cfg(test)]\nmod t {\n    fn f() { "claude"; }\n}\nle
 assert names('src/x.rs', '#[cfg(test)]\npub(crate) mod tests {\n"codex";\n}') == []
 # Name-prefixed literals count.
 assert names('src/x.rs', 's.starts_with("claude:")') == ['src/x.rs:1: s.starts_with("claude:")']
-assert names('src/runtime/owner.rs', '".claude.json"') == []
-# #2271: the adapter keeps names as table data, never as a branch; capability lookups pass.
-for path in ['src/runtime.rs', 'src/runtime/owner.rs', 'src/linux_sandbox.rs']:
+assert names('src/runtime/table.rs', 'const C: &str = ".claude.json";') == []
+# #2271: names are table data, never a branch, and the table is no exception to that; capability lookups pass.
+for path in ['src/runtime/table.rs', 'src/runtime.rs', 'src/runtime/owner.rs', 'src/linux_sandbox.rs']:
     for planted in ['if rt == "codex-app" {}', 'if "claude" == rt {}', '"antigravity" => x,', 'matches!(rt, "claude" | "codex")', 'binding["runtime"]!="codex"']:
         assert names(path, planted) == [f'{path}:1: {planted}'], (path, planted)
-    assert names(path, 'Adapter { name: RUNTIMES[1], bin: "codex" }\nif of(rt).has("thread-link") {}\nwhich("claude")') == [], path
-assert names('src/windows_sandbox.rs', '"codex"') == names('src/windows_sandbox/acl.rs', '"claude"') == names('src/linux_sandbox.rs', 'CODEX_HOME') == []
+assert names('src/runtime/table.rs', 'Adapter { name: RUNTIMES[1], bin: "codex" }\nwhich("claude")') == []
+# #2427: only the table holds names; no sandbox file or runtime module is exempt.
+for path in ['src/runtime.rs', 'src/runtime/owner.rs', 'src/windows_sandbox.rs', 'src/windows_sandbox/acl.rs', 'src/linux_sandbox.rs']:
+    for planted in ['which("claude")', 'bin: "codex"', 'tasklist claude.exe', 'env("CODEX_HOME", h)']:
+        assert names(path, planted) == [f'{path}:1: {planted}'], (path, planted)
+    assert names(path, 'if of(rt).has(Cap::ThreadLink) {}') == [], path
 # #1593: a planted bypass in main.rs or a former exception fails, native names included
 for planted in ['if k.runtime=="claude" {}', 'if k.runtime=="antigravity" {}', 'tasklist claude.exe', 'home.join(".claude.json")', 'env("CODEX_HOME", h)', 'env_remove("CODEX_THREAD_ID")']:
     for path in ['src/main.rs', 'src/labels.rs', 'src/host.rs', 'src/setup.rs']:
@@ -493,7 +497,15 @@ with tempfile.TemporaryDirectory(prefix='taskq-lint-gate-') as directory:
                 assert status == 0
             assert run.call_args_list[0].args[0] == command
             assert sum(call.args[0] == command for call in run.call_args_list) == 1
-            assert run.call_count == (6 if status == 0 else 1), run.call_args_list
+            assert run.call_count == (7 if status == 0 else 1), run.call_args_list
             assert sum(call.args[0] == [sys.executable, 'scripts/batch-replay.test.py']
                        for call in run.call_args_list) == (1 if status == 0 else 0)
 print('PASS lint runs first and once; findings stop before tests/builds')
+
+# A1 of #2427: evidence, finished reviews and release records never return to the tree.
+assert check['tree_evidence'](['docs/evidence/1/a.json', 'docs/design/evidence/1/a.png', 'docs/shots/evidence/1/a.png', 'docs/reviews/a.md',
+                               'docs/design/exploration/a.html', 'docs/qualification-1.md', 'docs/release-1.md']) == [
+    'docs/evidence/1/a.json', 'docs/design/evidence/1/a.png', 'docs/shots/evidence/1/a.png', 'docs/reviews/a.md',
+    'docs/design/exploration/a.html', 'docs/qualification-1.md', 'docs/release-1.md']
+assert not check['tree_evidence'](['docs/research/2395.md', 'docs/shots/manifest.json', 'tests/fixtures/usage/windows-oauth-usage.json'])
+print('PASS tree guard refuses evidence paths and keeps research notes and fixtures')

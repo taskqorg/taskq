@@ -6,7 +6,7 @@ Under taskq.md §4/R9, the shared PM composer sends one request and hands dialog
 
 ### Component and publication
 
-`src/pm-composer.js` exports the composer and receipt used by Conversations and the standalone `TaskqPmComposer` browser bundle. Consumers use the release assets unchanged. The release publishes `taskq-V-pm-composer.js`, fixtures and source manifest under `SHA256SUMS`; the manifest pins UTF-8/LF source and fixture hashes. Version 1 uses schema `taskq.pm/1`. A delivery commit is a candidate until its release assets exist; DashQ adoption and live FRA qualification remain separate.
+`src/pm-composer.js` exports the composer and receipt used by Conversations and the standalone `TaskqPmComposer` browser bundle. Consumers use the release assets unchanged. The release publishes `taskq-V-pm-composer.js`, fixtures and source manifest under `SHA256SUMS`; the manifest pins UTF-8/LF source and fixture hashes. Version 1 uses schema `taskq.pm/1`. A delivery commit is a candidate until its release assets exist; DashQ adoption and live host qualification remain separate.
 
 The adapter owns draft persistence and authenticated transport. Persist the exact request before Send. A timeout retains the request; Check delivery submits that same input, never a new op-id. A receipt must match actor, op-id and revision. Accepted means saved for launch; only a native session readback establishes handoff. Conversation replies stay native; the component has no chat backend or telemetry payload.
 
@@ -28,4 +28,4 @@ Each service pass may start one separate exchange thread: minimum spacing 5 seco
 
 ### Verification
 
-Shared fixtures cover typed input, denial/stale/duplicate/timeout, exact receipt correlation and native handoff. Rust dispatch tests use an isolated registered project and substitute the wire/native launcher; they prove adapter wiring, not FRA or native-runtime qualification. A real test-board request/readback and the released asset checksums must be reported separately under R12. Rollback disables PM exchange by revoking its grant, retaining setup identities and native sessions.
+Shared fixtures cover typed input, denial/stale/duplicate/timeout, exact receipt correlation and native handoff. Rust dispatch tests use an isolated registered project and substitute the wire/native launcher; they prove adapter wiring, not native-runtime qualification. A real test-board request/readback and the released asset checksums must be reported separately under R12. Rollback disables PM exchange by revoking its grant, retaining setup identities and native sessions.

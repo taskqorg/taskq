@@ -42,7 +42,7 @@ Defaults, alternatives and overrides follow [shared AI-assisted controls](https:
 
 Before adopting a feature, identify the owner use case, board-visible outcome, existing primitive, authority, failure behavior and shortest UI path.
 Prefer a reviewed AI proposal plus an existing command. Add a new engine only when that cannot satisfy the case.
-Evaluate features through [use cases](use-cases/README.md) and the [comparison/recommendations](design/comparative-workflow-review.md#fit-to-taskq-principles).
+Evaluate features through [use cases](use-cases/README.md) and the [comparison/recommendations](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/comparative-workflow-review.md#fit-to-taskq-principles).
 
 ## Minimum composition
 

@@ -1,5 +1,6 @@
 //! R9/R12: launch preferences request capabilities; only the operator policy grants them.
-use std::{fs,path::{Path,PathBuf}};
+use crate::runtime::Cap;
+use std::{fs,path::Path};
 use serde::{Deserialize,Serialize};
 use serde_json::{json,Value};
 type Res<T> = Result<T,String>;
@@ -15,14 +16,14 @@ pub struct Choice {
 
 fn models_at(path:&Path)->Res<Value> {
     let value:Value=serde_json::from_slice(&fs::read(path).map_err(|_|"Installed model catalog unavailable; use native defaults or refresh Codex")?).map_err(|_|"Installed model catalog unreadable")?;
-    let at=value["fetched_at"].as_str().and_then(crate::board::iso).ok_or("Model catalog time unknown")?;
+    let at=value["fetched_at"].as_str().and_then(crate::time::iso).ok_or("Model catalog time unknown")?;
     let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|"Model catalog clock unknown")?.as_secs() as i64;
     if !(0..=86400).contains(&(now-at)) {return Err("Model catalog stale; refresh Codex before choosing a model".into());}
     let rows=value["models"].as_array().ok_or("Model catalog incomplete")?;
     Ok(Value::Array(rows.iter().filter(|m|m["visibility"]=="list").map(|m|json!({"id":m["slug"],"name":m["display_name"],"efforts":m["supported_reasoning_levels"],"default_effort":m["default_reasoning_level"]})).collect()))
 }
 pub fn catalog(runtime:&str)->Value {
-    let result=if super::of(runtime).has("model-catalog") {super::codex_home().ok_or("Codex home unknown".into()).and_then(|home|models_at(&home.join("models_cache.json")))}
+    let result=if super::of(runtime).has(Cap::ModelCatalog) {super::codex_home().ok_or("Codex home unknown".into()).and_then(|home|models_at(&home.join("models_cache.json")))}
         else {return native_catalog(runtime)};
     match result {Ok(models)=>json!({"models":models,"reason":null}),Err(reason)=>json!({"models":[],"reason":reason})}
 }
@@ -42,9 +43,9 @@ fn native_catalog(runtime:&str)->Value {
 fn read_native_catalog(runtime:&str)->Res<Value> {
     let adapter=super::of(runtime);let bin=super::which(adapter.bin);
     if !bin.is_absolute(){return Err("Native CLI unavailable; model support unknown".into());}
-    let (ok,text)=super::probe("runtime.models",&bin,if adapter.has("remote-control") {&["--help"]}else{&["models"]}).ok_or("Native model catalog read timed out")?;
+    let (ok,text)=super::probe("runtime.models",&bin,if adapter.has(Cap::RemoteControl) {&["--help"]}else{&["models"]}).ok_or("Native model catalog read timed out")?;
     if !ok {return Err("Native model catalog refused; inspect the installed client".into());}
-    native_models(adapter.has("remote-control"),&text)
+    native_models(adapter.has(Cap::RemoteControl),&text)
 }
 fn native_models(aliases:bool,text:&str)->Res<Value> {
     let models=if aliases {
@@ -63,7 +64,7 @@ impl Choice {
     pub fn validate(&self,runtime:&str)->Res<()> {
         if !["","restricted","workspace","full","legacy"].contains(&self.grant_mode.as_str())||!["","inherit","workspace","full"].contains(&self.permission.as_str()) {return Err("Unsupported permission request; draft kept".into());}
         if self.model.is_empty() {return if self.effort.is_empty(){Ok(())}else{Err("Choose a supported model before effort".into())};}
-        let catalog=if super::of(runtime).has("model-catalog") {catalog(runtime)}else{read_native_catalog(runtime)?};
+        let catalog=if super::of(runtime).has(Cap::ModelCatalog) {catalog(runtime)}else{read_native_catalog(runtime)?};
         if let Some(reason)=catalog["reason"].as_str(){return Err(reason.into());}
         let model=catalog["models"].as_array().and_then(|rows|rows.iter().find(|m|m["id"]==self.model)).ok_or_else(||catalog["reason"].as_str().unwrap_or("Selected model unavailable in the installed catalog; no fallback").to_string())?;
         if !model["efforts"].as_array().is_some_and(|rows|rows.iter().any(|e|e["effort"]==self.effort)) {return Err("Selected effort unsupported for this model; no fallback".into());}Ok(())
@@ -77,7 +78,7 @@ impl Choice {
     pub fn access(&self,install:&Path,root:&Path,runtime:&str,mode:&str,args:&[String])->Res<crate::policy::Effective> {
         let mut policy=crate::policy::load(install)?;
         if self.grant_revision!=Some(policy.revision) {return Err("Operator grant changed or freshness unknown; review launch choices again".into());}
-        let home=std::env::var_os("HOME").or_else(||std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("Host home unknown")?;
+        let home=crate::platform::user_home().ok_or("Host home unknown")?;
         let host=crate::policy::Host::here(install,root,&home);
         let original=crate::policy::resolve(&Ok(policy.clone()),&host,runtime,mode,args);
         if self.permission=="full"&&original.mode!="full" {return Err("Full/bypass request requires an existing operator Full grant for this scope".into());}
@@ -97,7 +98,7 @@ impl Choice {
 }
 
 fn worker_defaults(runtime:&str,args:&[String])->String {
-    if !super::of(runtime).has("model-catalog") {return "Native model and effort".into();}
+    if !super::of(runtime).has(Cap::ModelCatalog) {return "Native model and effort".into();}
     let(mut model,mut effort)=("Native model".to_string(),"Native effort".to_string());let mut it=args.iter();
     while let Some(arg)=it.next() {match arg.as_str(){"-m"|"--model"=>{if let Some(value)=it.next(){model=value.clone();}},"-c"|"--config"=>{if let Some(value)=it.next().and_then(|v|v.strip_prefix("model_reasoning_effort=")){effort=value.into();}},value if value.starts_with("--model=")=>model=value[8..].into(),value if value.starts_with("--config=model_reasoning_effort=")=>effort=value[32..].into(),_=>{}}}
     let effort=if effort=="low" {"Light (low)"}else{&effort};format!("{model} · {effort}")
@@ -108,10 +109,10 @@ fn access_view(access:&crate::policy::Effective)->Value {let mut value=access.js
 /// Fresh project-scoped facts, not a saved grant. Host policy/model defaults are read-only here.
 pub fn view(install:&Path,root:&Path,runtime:&str)->Value {
     let result=(||->Res<Value>{
-        let policy=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
+        let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
         let grants=crate::policy::load(install)?;
-        let home=std::env::var_os("HOME").or_else(||std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("Host home unknown")?;
-        let target=if super::of(runtime).has("model-catalog"){super::of(runtime).setup}else{runtime};
+        let home=crate::platform::user_home().ok_or("Host home unknown")?;
+        let target=if super::of(runtime).has(Cap::ModelCatalog){super::of(runtime).setup}else{runtime};
         let effective=crate::policy::resolve(&Ok(grants.clone()),&crate::policy::Host::here(install,root,&home),target,&policy.permission_mode,&policy.codex);
         let worker=worker_defaults(runtime,&policy.codex);
         let requests=["inherit","workspace","full"].into_iter().map(|permission|{
@@ -124,35 +125,5 @@ pub fn view(install:&Path,root:&Path,runtime:&str)->Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    // R9/A4: permission requests only narrow existing authority; neither stale state nor Full requests grant access.
-    #[test]
-    fn requests_narrow_and_preserve_the_operator_store() {
-        let root=std::env::temp_dir().join(format!("taskq-choice-{}",super::super::uuid()));fs::create_dir_all(&root).unwrap();
-        let root=root.canonicalize().unwrap();let file=root.join(crate::policy::FILE);let policy=json!({"revision":7,"grants":[{"runtime":"claude","mode":"full","project":root,"by":"invented operator","at":1}]});fs::write(&file,policy.to_string()).unwrap();
-        let mut choice=Choice{permission:"workspace".into(),grant_mode:"full".into(),grant_revision:Some(7),..Default::default()};
-        let result=choice.access(&root,&root,"claude","dontAsk",&[]);
-        if cfg!(target_os="macos"){let access=result.unwrap();assert_eq!(access.mode,"workspace");assert!(access.profile.is_some());assert!(access.grant.starts_with("full (project)"));}else{assert!(result.is_err(),"unsupported containment refuses");}
-        assert_eq!(fs::read_to_string(&file).unwrap(),policy.to_string());
-        choice.grant_revision=Some(6);assert!(choice.access(&root,&root,"claude","dontAsk",&[]).unwrap_err().contains("grant changed"));
-        choice.grant_revision=Some(7);choice.permission="full".into();let mut narrowed=policy.clone();narrowed["grants"][0]["mode"]=json!("workspace");fs::write(&file,narrowed.to_string()).unwrap();assert!(choice.access(&root,&root,"claude","dontAsk",&[]).unwrap_err().contains("requires an existing"));
-        fs::remove_dir_all(root).unwrap();
-    }
-    // A1/R12: a generic CLI effort flag is not a model-specific catalog.
-    #[test]
-    fn native_catalogs_never_invent_model_effort_pairs() {
-        let aliases=native_models(true,"Provide an alias e.g. 'opus' or 'sonnet'; --effort low medium high xhigh max").unwrap();
-        assert!(aliases["models"].as_array().unwrap().iter().all(|model|model["efforts"]==json!([{"effort":""}])));
-        let native=native_models(false,"gemini-4-argon-low\tGemini 4 Argon (Low)\ninvalid row").unwrap();assert_eq!(native["models"][0]["id"],"gemini-4-argon-low");assert_eq!(native["models"][0]["efforts"],json!([{"effort":"low"}]));assert!(native_models(false,"unreadable output").is_err());
-    }
-
-    // A1/R9: one supported exact choice replaces only model/effort, preserving permission/network requests.
-    #[test]
-    fn explicit_codex_choice_keeps_other_requests() {
-        let choice=Choice{model:"gpt-6.1-sol".into(),effort:"low".into(),..Default::default()};
-        let original=["-s","workspace-write","--model=old","-c","model_reasoning_effort=high","-c","sandbox_workspace_write.network_access=true"].map(String::from);
-        assert_eq!(choice.codex(&original),["-s","workspace-write","-c","sandbox_workspace_write.network_access=true","-m","gpt-6.1-sol","-c","model_reasoning_effort=low"].map(String::from));
-        assert!(!worker_defaults("codex",&["-c".into(),"api_key=invented-secret".into()]).contains("invented-secret"));
-    }
-}
+#[path = "choices_tests.rs"]
+mod tests;

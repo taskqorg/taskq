@@ -1,11 +1,9 @@
 #!/bin/sh
 # Read-only telemetry proof for the host it runs on (#2282; the mac and pds18 proofs reuse it).
 #
-#   scripts/telemetry.sh health [--wait SECONDS]
-#     Legacy import health: installed release, collector health, `profile export` and `profile watch` probes,
-#     then the legacy import errors that taskq.log gains while the script waits (default 150 s, over two
-#     service passes). Verdict FAIL: export fails, an import stall error appears in the window, or the
-#     legacy_offset error ("rewritten or lost") repeats. A recorded recovery gap is disclosed, not a stall.
+#   scripts/telemetry.sh health
+#     Telemetry health: installed release, collector health, `profile export` and `profile watch` probes.
+#     Verdict FAIL: export fails or the watch Board line is unknown.
 #   scripts/telemetry.sh trace N [--since 24h] [--project OWNER/REPO]
 #     Every retained worker, stage and transition observation of task N from `profile export` alone, then
 #     per attempt which lifecycle events are present (spawn, heartbeat, result, exit, slot-hold, slot-release),
@@ -16,7 +14,7 @@
 # Writes nothing outside a temporary file; never runs board commands. Exit: 0 PASS, 1 FAIL, 2 unknown or usage.
 set -u
 
-usage() { sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 unix() { command -v cygpath >/dev/null 2>&1 && cygpath -u "$1" || printf '%s\n' "$1"; }
 
 if [ -n "${TASKQ_INSTALL:-}" ]; then I=$(unix "$TASKQ_INSTALL")
@@ -45,49 +43,21 @@ release() {
   else echo "contains $FIX: unknown (tag v$v or $FIX not in this clone)"; fi
 }
 
-# Legacy import errors, from src/telemetry.rs. Stall: the import cannot advance. Offset: the legacy_offset refusal.
-STALL='legacy taskq.log exceeds migration bound|legacy import full|legacy telemetry record truncated|legacy telemetry exceeds migration bound|telemetry append exceeds 64 KiB'
-OFFSET='legacy taskq.log rewritten or lost; retained SQLite history kept'
-REBASE='re-baselined with recorded gap'
-
 health() {
-  wait=150
-  while [ $# -gt 0 ]; do case $1 in --wait) wait=$2; shift 2;; *) usage;; esac; done
-  fail=""; unknown=""
+  [ $# -eq 0 ] || usage
+  fail=""
   release
   "$T" profile health 2>&1 | tr -d '\r' | grep -E '^(CLI|Service) telemetry|^Telemetry store'
   if "$T" profile export --since 30m >"$TMP" 2>&1; then
-    rows=$(($(wc -l <"$TMP") - 1))
-    gaps=$(head -n 1 "$TMP" | "$PY" -I -c 'import json,sys; l=json.loads(sys.stdin.readline())["sources"]["legacy"]; print(l.get("import_gaps",0), l.get("state","?"), l.get("samples","?"))')
-    set -- $gaps
-    echo "export --since 30m: ok, $rows rows; legacy source $2, $3 samples, recorded recovery gaps $1"
+    echo "export --since 30m: ok, $(($(wc -l <"$TMP") - 1)) rows"
   else
     echo "export --since 30m: FAILED: $(tr -d '\r' <"$TMP" | head -n 1)"; fail="$fail export"
   fi
   board=$("$T" profile watch --since 1h 2>&1 | tr -d '\r' | grep '^Board:')
   echo "watch: ${board:-Board: line missing}"
-  case $board in *"exceeds migration bound"*|*"rewritten or lost"*|*"import full"*) fail="$fail watch";; esac
-  log="$I/taskq.log"
-  if [ ! -f "$log" ]; then
-    echo "taskq.log: missing; window unknown"; unknown="$unknown log"
-  else
-    before=$(wc -c <"$log" | tr -d ' ')
-    echo "taskq.log: $before bytes; watching ${wait}s"
-    sleep "$wait"
-    after=$(wc -c <"$log" | tr -d ' ')
-    if [ "$after" -ge "$before" ]; then tail -c +"$((before + 1))" "$log" >"$TMP"; scope="$((after - before)) new bytes"
-    else cp "$log" "$TMP"; scope="rotated in window, whole kept file"; fi
-    tr -d '\r' <"$TMP" >"$TMP.n" && mv "$TMP.n" "$TMP"
-    stall=$(grep -aEc "$STALL" "$TMP"); offset=$(grep -aFc "$OFFSET" "$TMP"); rebase=$(grep -aFc "$REBASE" "$TMP")
-    echo "window ($scope): stall errors $stall, legacy_offset errors $offset, re-baselines $rebase"
-    grep -aE "$STALL|$OFFSET|$REBASE" "$TMP" | sort | uniq -c | sed 's/^/  /' | head -n 10
-    [ "$stall" -gt 0 ] && fail="$fail stall"
-    [ "$offset" -gt 1 ] && fail="$fail repeated-legacy_offset"
-    [ "$rebase" -gt 1 ] && fail="$fail repeated-re-baseline"
-  fi
+  case $board in *unknown*|"") fail="$fail watch";; esac
   if [ -n "$fail" ]; then echo "verdict: FAIL ($(echo $fail))"; return 1; fi
-  if [ -n "$unknown" ]; then echo "verdict: unknown ($(echo $unknown))"; return 2; fi
-  echo "verdict: PASS (no stalled legacy import, no repeated legacy_offset error)"
+  echo "verdict: PASS (export and watch read the store)"
 }
 
 trace() {
@@ -113,9 +83,7 @@ for line in sys.stdin:
     rows.append(o)
 rows.sort(key=lambda o: o.get("started_ms") or 0)
 def utc(ms): return datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S") if ms else "unknown-time"
-print("window: since %s; universal %s rows, legacy %s rows, legacy recorded gaps %s" % (since,
-      header["sources"]["universal"].get("samples"), header["sources"]["legacy"].get("samples"),
-      header["sources"]["legacy"].get("import_gaps", 0)))
+print("window: since %s; universal %s rows" % (since, header["sources"]["universal"].get("samples")))
 if not rows:
     print("task %d: no observation in window" % task); print("verdict: unknown (nothing retained)"); sys.exit(2)
 print("UTC | project | kind | role | event | attempt | host | runtime | pid | outcome | reason")

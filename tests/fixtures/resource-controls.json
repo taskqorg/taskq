@@ -923,9 +923,9 @@
     {
      "type": "check",
      "status": "view",
-     "headline": "Legacy guard · Fixed limits · Load gate: Unknown: sample 3 min old",
+     "headline": "Legacy guard · Fixed limits · Load gate: Unknown: sample 3m ago",
      "has": [
-      "last sample 3 min ago",
+      "last sample 3m ago",
       "Also blocked: host maximum"
      ],
      "not": [

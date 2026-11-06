@@ -52,4 +52,4 @@ Share vector geometry, data and palette; calibrate SF/Segoe ink and actual OS sl
 
 Counter order is Ready+Blocked / Ask / Work; history remains oldest-left/newest-right. Keep I1/I2 exact 1–99 and 99+, hidden-zero space reclamation and native slot widening from #1789. The older snapshot’s fixed square and 9+/+ wording are not adopted.
 
-Implementation checks and remaining native gaps: [#1931 evidence](evidence/1931/README.md).
+Implementation checks and remaining native gaps: [#1931 evidence](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1931/README.md).

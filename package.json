@@ -2,11 +2,14 @@
   "name": "taskq-ui",
   "private": true,
   "scripts": {
-    "build": "node scripts/build-web.cjs && node scripts/design-sources.cjs"
+    "build": "node scripts/build-web.cjs && node scripts/design-sources.cjs",
+    "format": "prettier --write \"src/**/*.{js,css}\" \"tests/*.cjs\" \"scripts/*.cjs\"",
+    "format:check": "prettier --check \"src/**/*.{js,css}\" \"tests/*.cjs\" \"scripts/*.cjs\""
   },
   "devDependencies": {
     "acorn": "8.19.0",
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "prettier": "3.9.10"
   },
   "dependencies": {
     "@preact/signals": "2.11.3",

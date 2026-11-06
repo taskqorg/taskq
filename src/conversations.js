@@ -19,7 +19,7 @@ module.exports=execution.module('conversations',{
  copy:function(text,event){const doc=event.currentTarget.ownerDocument,active=doc.activeElement,range=active?.selectionStart==null?null:[active.selectionStart,active.selectionEnd],selection=doc.getSelection(),ranges=selection?Array.from({length:selection.rangeCount},(_,i)=>selection.getRangeAt(i).cloneRange()):[],field=doc.createElement('textarea');field.value=text;field.style.cssText='position:fixed;left:-10000px;top:0';doc.body.append(field);let ok=false;try{field.select();ok=doc.execCommand('copy');}catch{}finally{field.remove();active?.focus({preventScroll:true});if(range)active.setSelectionRange(...range);else if(selection){selection.removeAllRanges();for(const r of ranges)selection.addRange(r);}}event.currentTarget.textContent=ok?'Copied':'Copy unavailable';},
  block:function(item,content,attrs={}){const machine=!['owner','user','answer','question'].includes(item.role),text=item.result??item.text??item.image?.url??item.image?.src??'';
   const recorded=time.value(item.updated),source=attrs['data-reading-key']||attrs['data-key']||attrs['data-event'];
-  const facts=[item.attempt?'Attempt '+item.attempt:null,item.session?'Session '+item.session:machine?'Session unknown':null,item.host?'Host '+item.host:null,machine?'Model '+(item.model||'unknown'):null,machine?'Runtime version '+(item.version||'unknown'):null,machine?'Effort '+(item.effort||'unknown'):null,'Exact time '+(recorded===null?'unknown':new Date(recorded).toISOString()),'Source '+(source||'unknown')].filter(Boolean).join(' · ');
+  const facts=[item.attempt?'Attempt '+item.attempt:null,item.session?'Session '+item.session:machine?'Session unknown':null,item.host?'Host '+item.host:null,machine?'Model '+(item.model||'unknown'):null,machine?'Runtime version '+(item.version||'unknown'):null,machine?'Effort '+(item.effort||'unknown'):null,'Exact time '+(recorded===null?time.unknown:time.utc(recorded)),'Source '+(source||'unknown')].filter(Boolean).join(' · ');
   return h('article',{...attrs,key:attrs['data-reading-key']||attrs['data-key']||attrs.key||attrs['data-event'],class:'dialogue-item '+(item.role||'event')+' '+(attrs.class||''),'data-time':time.value(item.updated)??undefined},h('div',{class:'history-block-head'},h('p',{class:'meta'},item.label||item.role||'Event',time.stamp(item.updated,'Recorded event','Timestamp unavailable')),machine&&h('span',{class:'block-model'},item.model||'Model unknown'),h('button',{type:'button',class:'copy-block','aria-label':'Copy block',onClick:e=>module.exports.copy(String(text),e)},icons.icon('copy'))),content,facts&&h('details',{class:'block-details','data-view-key':'block:'+String(attrs['data-reading-key']||attrs['data-key']||attrs['data-event']||item.attempt||'')},h('summary',null,'Details'),h('p',null,facts)));
  },
  chronological:function(items){return items.map((item,index)=>({item,index,at:time.value(item.updated)})).sort((a,b)=>(a.at??Infinity)-(b.at??Infinity)||a.index-b.index).map(x=>x.item);},
@@ -238,7 +238,7 @@ module.exports=execution.module('conversations',{
     return h('div',{class:'dialogue-status'},h('p',{class:'meta'},'Status · '+watchText),
      h('div',{class:'dialogue-status-body'},
       h('dl',null,
-       watching?[row('Prompt',w.prompt),row('Every',w.every+' minutes'),row('Events',(w.events||[]).join(', ')||'none'),row('Last watch dispatch',time.stamp(w.last_turn,'Watch dispatched')),row('Next scheduled turn',time.stamp(w.next_due,'Next scheduled turn')),row('Last outcome',w.last_outcome||'none')]:row('Watch',watchText),
+       watching?[row('Prompt',w.prompt),row('Every',w.every+' minutes'),row('Events',(w.events||[]).join(', ')||'none'),row('Last watch dispatch',time.stamp(w.last_turn,'Watch dispatched')),row('Next scheduled turn',time.stamp(w.next_due,'Next scheduled turn',undefined,true,true)),row('Last outcome',w.last_outcome||'none')]:row('Watch',watchText),
        row('Latest turn',t?[t.state+' · '+(t.outcome||(t.state==='done'?'outcome unknown':'outcome pending'))+' · ',time.stamp(t.at,'Turn submitted')]:time.stamp(null,'Turn submitted',s?'No turn timestamp in the status record':v?.statusReason||'Turn status unavailable')),
        row('Original turn input',t?.input||'No queued reply input'),
        t?.prior_outcome&&row('Prior refusal',t.prior_outcome),
@@ -262,7 +262,7 @@ module.exports=execution.module('conversations',{
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
-   // #1918 A6: consecutive tool calls fold into one collapsible line (docs/design/conversations-usability-review.md#tool-collapse-1918);
+   // #1918 A6: consecutive tool calls fold into one collapsible line;
    // a message ends the group. `current`: the worker runs, so the last group names its latest step live.
    steps:function(items,current,render,setup=null){
     const out=[],tool=item=>api.nativeItem(item,'Tool');

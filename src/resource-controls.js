@@ -1,5 +1,5 @@
 'use strict';
-const ui=require('./ui-runtime.js');
+const ui=require('./ui-runtime.js'),time=require('./relative-time.js');
 const execution=ui.execution;
 
 const {scopes,freshness,policy,gate,age,usage,applied,headline,fields,edited,problem,changes,review,fresh,status,step,render,input,mount,workFields,freshWork,workStatus,workStep,workRender,mountWork,replayWork,replay}=execution.module("resource-controls",{
@@ -25,17 +25,17 @@ policy:function(group) {
 gate:function(group, now) {
     const p = scopes(group).observation, f = freshness(group, now);
     if (!p) return 'Unknown: no capacity status';
-    if (!f.fresh) return 'Unknown: status ' + (f.status == null ? 'missing' : age(f.status) + ' old');
+    if (!f.fresh) return 'Unknown: status ' + (f.status == null ? 'missing' : age(f.status) + ' ago');
     const g = p.effective_policy && p.effective_policy.load_gate, bs = (p.blockers || []);
     if (bs.some(b => b.code === 'config')) return 'Unknown: invalid config';
     if (g && g.enabled === false) return 'Off';
     if (!g) return 'Unknown: gate not reported';
-    if (f.sample == null || f.sample > FRESH) return 'Unknown: ' + (f.sample == null ? 'no sample yet' : 'sample ' + age(f.sample) + ' old');
+    if (f.sample == null || f.sample > FRESH) return 'Unknown: ' + (f.sample == null ? 'no sample yet' : 'sample ' + age(f.sample) + ' ago');
     if (bs.some(b => b.code === 'sample' || b.knowledge === 'unknown')) return 'Unknown: ' + bs.filter(b => b.code === 'sample' || b.knowledge === 'unknown').map(b => BLOCKERS[b.code] || BLOCKERS.unknown).join(', ');
     const held = bs.filter(b => GATE.includes(b.code));
     return held.length ? 'Waiting: ' + [...new Set(held.map(b => BLOCKERS[b.code]))].join(', ') : 'Ready';
   },
-age:function(s) { return s < 120 ? s + ' s' : s < 7200 ? Math.round(s / 60) + ' min' : s < 172800 ? Math.round(s / 3600) + ' h' : Math.round(s / 86400) + ' d'; },
+age:function(s) { return time.age(s); },
 usage:function(group, now) {
     const p = scopes(group).observation, fresh = freshness(group, now).fresh;
     return ((p && p.runtime_usage) || []).map(u => {

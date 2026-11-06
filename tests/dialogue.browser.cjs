@@ -69,7 +69,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   assert.deepEqual([m.prompt,m.every,m.events],['Check the board as the project rules say',5,['close','ask']],'events keep D6 order');
   const watch={prompt:m.prompt,every:5,events:['close','ask'],last_turn:null,last_outcome:null,next_due:Date.UTC(2026,9,23,10,5),seen:{}};
   status['claude-1665']={...status['claude-1665'],watch};await receipt(m,{state:'accepted',value:watch});
-  for(const text of [/Status · watch every 5 min/,/Prompt\s+Check the board/,/Every\s+5 minutes/,/Events\s+close, ask/,/Last watch dispatch\s+Time unknown/,/Next scheduled turn\s+\S/,/Last outcome\s+none/])assert.match(await details.innerText(),text);
+  for(const text of [/Status · watch every 5 min/,/Prompt\s+Check the board/,/Every\s+5 minutes/,/Events\s+close, ask/,/Last watch dispatch\s+\? unavailable/,/Next scheduled turn\s+\S/,/Last outcome\s+none/])assert.match(await details.innerText(),text);
   await page.locator('[data-w-field=every]').fill('15');await page.locator('[data-c=watch]').click();m=await action('watch');assert.equal(m.every,15,'Save watch edits the same watch');
   await receipt(m,{state:'unknown',reason:'every must be at least 5 minutes'});assert.match(await page.locator('.conversation-status').innerText(),/every must be at least 5 minutes/);
   await capture('status-watch-dark-16');

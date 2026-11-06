@@ -1,6 +1,6 @@
 # Standalone agentq onboarding
 
-Design for #1184, extending [setup](setup-and-project-locations.md) and [menu](menu-product.md) MP7. The owner requested a yellow tray warning when agentq is absent, a cache-cost explanation and one OK to start an install session. These are product targets, not shipped behavior. The owner accepted this design on 2026-10-20 (#1184); this document grants no installation or runtime permission.
+Design for #1184, extending [setup](setup-and-project-locations.md) and [menu](menu-product.md) MP7. The owner requested a yellow tray warning when agentq is absent, a cache-cost explanation and one OK to start an install session. These are product targets, not shipped behavior. The owner accepted this design (#1184); this document grants no installation or runtime permission.
 
 ## Choices
 

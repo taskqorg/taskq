@@ -46,7 +46,7 @@ WKWebView has no such port, so `--store` writes an adopted bundle whose page tri
 
 ## Where display logic still lives
 
-Baseline for 174 commits touching web files in `src/`, 2026-10-05 to 2026-11-04, measured by diff hunk rather than by file because `tray.rs` holds inline tests:
+Baseline for 174 commits touching web files in `src/`, measured by diff hunk rather than by file because `tray.rs` holds inline tests:
 
 | Commit also changed | Commits | Bundle-only with this design |
 | --- | --- | --- |

@@ -74,6 +74,7 @@ printf '![](docs/shots/popover-dark-%s.png)\n' project-16 conversations-owner-18
 printf 'target/\n' > .gitignore
 git add -A && git commit -qm v1.2.3 && git tag v1.2.3
 fails=0
+export TASKQ_SHOTS_PREVIEW="$t/preview"
 ok() { echo "ok   $1"; }
 no() { echo "FAIL $1"; fails=1; }
 run() { # run update.sh, keep stdout in out and stderr in err; returns its exit code
@@ -93,7 +94,7 @@ run v1.2.3 --publish
 m=docs/shots/manifest.json
 if [ "$rc" = 0 ] && grep -q '"ref": "v1.2.3"' $m && grep -q '"binaryOrigin": "build"' $m && grep -q '"scale": "2"' $m &&
    [ -f docs/shots/popover-dark-conversations-question-18.png ] && [ -f docs/shots/icon-summary-run-dark.png ] &&
-   [ -f docs/shots/evidence/1.2.3/page-checks.json ] && docs/shots/check.sh 2>/dev/null; then ok 'publish writes images, manifest and preview'
+   [ -f "$t/preview/1.2.3/page-checks.json" ] && [ ! -e docs/shots/evidence ] && docs/shots/check.sh 2>/dev/null; then ok 'publish writes images, manifest and preview'
 else no "publish: exit $rc $(cat "$t/err")"; fi
 if grep -q 'GH_TOKEN\|TASKQ_ROOT' "$t/capture-env" || grep -qi service "$t/calls" || grep -q '^gh ' "$t/calls"; then
   no 'capture environment: board token, project root, service command or gh call seen'

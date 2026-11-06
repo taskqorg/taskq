@@ -1,7 +1,7 @@
 # UI implementation acceptance
 
 [Shared process](https://github.com/taskqorg/specq/blob/main/design/implementation-fidelity.md) · [rendering rules](rendering-contract.md).
-Historical release review: [4.1.9 audit](release-4.1.9-ui-audit.md). No current release is accepted against this target yet.
+Historical release review: [4.1.9 audit](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/release-4.1.9-ui-audit.md). No current release is accepted against this target yet.
 
 ## Workflow
 
@@ -10,9 +10,9 @@ Historical release review: [4.1.9 audit](release-4.1.9-ui-audit.md). No current 
 3. Reviewer checks functionality/data first, sizing/navigation second, natural-size rendering third; findings use the F5 fields.
 4. Polish, owner review, freeze and acceptance follow [F6](https://github.com/taskqorg/specq/blob/main/design/implementation-fidelity.md#f6-build-polish-accept); native evidence qualifies the implementation.
 
-Use [synthetic expected fixtures](ui-acceptance-fixtures.json) for histogram, sizing-boundary and lattice checks; these are inputs, not native proof.
+Use [synthetic expected fixtures](../../tests/fixtures/ui-acceptance-fixtures.json) for histogram, sizing-boundary and lattice checks; these are inputs, not native proof.
 Use [report template](ui-acceptance-report.md). Keep reports per candidate; do not overwrite failing evidence. Fixed items link replacement evidence.
-Reports: [4.2.0 candidate on macOS](evidence/g8-macos/report.md).
+Reports: [4.2.0 candidate on macOS](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/g8-macos/report.md).
 
 ## Feature ledger
 
@@ -37,7 +37,7 @@ Builder completes the ledger per [F6](https://github.com/taskqorg/specq/blob/mai
 | Plans | four editable recipes, held creation, explicit start, dependencies and partial retry | UC-03/06/07, D06/D08/D14, G2/G5 |
 | Auto resources | shared host admission, optional caps, fresh load, wait reasons, effective readback | UC-04/12, D03, G3 |
 | Delivery | separate commit/push/PR/merge policy, candidate revision and checks, publication receipt | UC-14, D04, G4 |
-| Remote PM | project routing, opt-in watch, source-numbered answers, media and gateway recovery | UC-17, RM-A1–RM-A9 |
+| Remote PM | project routing, opt-in watch, source-numbered answers, media and gateway recovery | UC-17 |
 | Agents | probes, accounts, versions, disabled runtimes, effective policy/source | M9, P-A1–P-A10 |
 | Services | freshness, logs/folder, incidents + disclosure/consent, Resources | M-A10–M-A12 |
 | Emergency / recovery | named host, owned-process stop, durable hold, preserved work, selected fenced restart | E-A1–E-A9 |

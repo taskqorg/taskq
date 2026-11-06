@@ -1,16 +1,10 @@
 # Worktree tidy and root freshness
 
-Owner decision 2026-10-23 (W2 + P2): TaskQ owns `<root>/.worktrees` and the Git worktree registry of each root in `<install>/projects`. It tidies them once an hour, fast-forwards the root only on the [origin default branch](#origin-default-branch), never resets, and only reports worktrees it does not own. [taskq.md § 4 step 2](../../taskq.md#4-service) links here; where this note differs, taskq.md wins.
+Owner decision (W2 + P2): TaskQ owns `<root>/.worktrees` and the Git worktree registry of each root in `<install>/projects`. It tidies them once an hour, fast-forwards the root only on the [origin default branch](#origin-default-branch), never resets, and only reports worktrees it does not own. [taskq.md § 4 step 2](../../taskq.md#4-service) links here; where this note differs, taskq.md wins.
 
 ## Why
 
-Before this decision the service removed only clean `.worktrees/taskq-<N>` of closed tasks on the attempt host (§ 7 close). A Mac survey on 2026-10-23 found:
-
-- reviewer worktrees `.worktrees/review-<N>` 3 to 8 days old that no code removes;
-- worktrees of a root without a service (csgo: 9, two weeks old);
-- 16 registry entries whose directory is gone, and 17 `taskq-*` branches without a worktree in one root;
-- about 28 GB under `.worktrees` across four roots;
-- root checkouts 99 and 322 commits behind `origin/main`.
+Without this the root keeps reviewer worktrees no code removes, registry entries whose directory is gone, branches without a worktree, and a checkout far behind `origin/main`.
 
 Workers are not affected by a stale root: they branch from a fetched `origin/main` (§ 7 rule 2) and read the contract at that commit (#1479). People, the PM and sessions opened in the root are affected.
 
@@ -72,4 +66,4 @@ The project log gets one line per removal, refusal and root move; a refusal line
 - An unowned clean worktree older than 7 days is removed, its branch kept; `dev-build` and foreign entries are never touched.
 - A clean or unrelated-dirty root on the default branch reaches `origin/<default>` within one hour, with or without `refs/remotes/origin/HEAD`; a diverged root, another branch, an unknown default or an overwrite conflict changes nothing and shows `stale <reason>`.
 - No command in the pass can lose uncommitted work or unmerged commits (tests on a temp repo cover each refusal).
-- macOS, Windows and Linux (FRA) roots behave the same.
+- macOS, Windows and Linux roots behave the same.

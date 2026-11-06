@@ -123,14 +123,15 @@ if [ -z "$publish" ]; then
 fi
 # Staged replacement: images first, the manifest last; check.sh catches an interrupted swap and
 # `git checkout -- docs/shots` restores the committed set.
+preview="${TASKQ_SHOTS_PREVIEW:-${TMPDIR:-/tmp}/taskq-shots-preview}/$version"
 rm -rf docs/shots/.next && cp -R "$stage" docs/shots/.next || fail publish 'cannot copy the stage into docs/shots/.next'
 swap() {
   for f in docs/shots/.next/*.png; do mv -f "$f" docs/shots/ || return 1; done
   for f in docs/shots/*.png; do [ -e "$stage/${f##*/}" ] || rm -f "$f" || return 1; done
-  mv -f docs/shots/.next/manifest.json docs/shots/manifest.json && rm -rf docs/shots/.next "docs/shots/evidence/$version" &&
-    mkdir -p docs/shots/evidence && cp -R "$tmp/preview" "docs/shots/evidence/$version"
+  mv -f docs/shots/.next/manifest.json docs/shots/manifest.json && rm -rf docs/shots/.next "$preview" &&
+    mkdir -p "$preview" && cp -R "$tmp/preview/." "$preview"
 }
 rc=0; { swap 2>>"$log" && quiet docs/shots/check.sh; } || rc=$?
 [ "$rc" != 1 ] || { echo "update.sh: publish: docs/shots is partly replaced; run git checkout -- docs/shots and retry (log: $log)" >&2; exit 1; }
-echo "update.sh: docs/shots updated to $version ($origin, $commit) in $(( $(date +%s) - start )) s from capture start; preview docs/shots/evidence/$version"
+echo "update.sh: docs/shots updated to $version ($origin, $commit) in $(( $(date +%s) - start )) s from capture start; preview $preview"
 rm -rf "$tmp"

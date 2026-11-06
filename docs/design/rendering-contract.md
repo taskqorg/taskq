@@ -45,7 +45,7 @@ Apply [F3](https://github.com/taskqorg/specq/blob/main/design/implementation-fid
 
 ## R-UI4 Cadence data
 
-- Follow [approved decisions](../reviews/visual-decisions.md) and [I1–I6](icon-summary.md). Current task counters remain separate from event counts.
+- Follow [approved decisions](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/reviews/visual-decisions.md) and [I1–I6](icon-summary.md). Current task counters remain separate from event counts.
 - All four surfaces share the selected period (default 24 hours). Exactly six equal source bins for every period, oldest left; presets use epoch-aligned whole bins of period / 6, newest containing now. Exact custom [start,end) bounds stay fixed.
 - Deduplicate by board, event identity and kind before binning. Preserve closed, failed, ask and blocked counts and missing-source information.
 - The canonical renderer uses stack A from I3/I4: Completed, New, Ask, Failed, one shared quantitative scale. I3 owns first-admission provenance, missing-series coverage and compatibility; retries are not arrivals. Native qualification remains separate (R12).

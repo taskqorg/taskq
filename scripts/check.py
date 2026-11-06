@@ -31,34 +31,35 @@ def selection(paths):
     return 'full'
 
 
-# docs/runtime-qualification.md#runtime-adapters: only these files may name a runtime
-ADAPTER_EXCEPTIONS = {'src/runtime.rs', 'src/linux_sandbox.rs', 'src/windows_sandbox.rs'}
-# Runtime names, bare or name-prefixed, and the native names only the adapter may know (#1593).
+# docs/runtime-qualification.md#runtime-adapters: the one data table that holds runtime names as values.
+RUNTIME_TABLE = 'src/runtime/table.rs'
+# Runtime names, bare or name-prefixed, and the native names only the table may know (#1593).
 RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app|antigravity)(:[^"]*)?"|claude\.exe|\.claude\.json|CODEX_HOME|CODEX_THREAD_ID')
 TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(pub(\([\w:]+\))?\s+)?mod\s+\w+\s*\{')
-# #2271: inside the adapter a runtime name is table data or its own code path, never a branch: code asks the
+# #2271: a runtime name is table data, never a branch, in the table too: code asks the
 # adapter's capabilities (`of(rt).has(..)`) instead of comparing or matching a name.
 _NAMES = r'"(claude|codex|codex-app|antigravity|agy)"'
 RUNTIME_BRANCH = re.compile(rf'(==|!=)\s*{_NAMES}|{_NAMES}\s*(==|!=|=>|\|)|matches!\([^)]*{_NAMES}')
 
 
 def runtime_names(path, text):
-    """Runtime name literals, bare or name-prefixed, in non-test Rust outside the runtime adapter and the named exceptions;
-    inside the adapter, runtime-name branches."""
+    """Runtime name literals, bare or name-prefixed, in non-test Rust outside the data table;
+    runtime-name branches in all non-test Rust."""
     if path.endswith('_tests.rs'):
         return []
-    adapter = path in ADAPTER_EXCEPTIONS or path.startswith(('src/runtime/', 'src/windows_sandbox/'))
-    pattern = RUNTIME_BRANCH if adapter else RUNTIME_NAME
+    table = path == RUNTIME_TABLE
+    patterns = [RUNTIME_BRANCH] if table else [RUNTIME_NAME, RUNTIME_BRANCH]
     # Blank only `#[cfg(test)] mod x { .. }` bodies, keeping line numbers; other code stays scanned.
     # ponytail: a module ends at its first column-0 `}`; an early end only adds hits, never hides one
     for m in reversed(list(TEST_MOD.finditer(text))):
         close = text.find('\n}', m.end())
         end = len(text) if close < 0 else close + 2
         text = text[:m.start()] + re.sub(r'[^\n]', ' ', text[m.start():end]) + text[end:]
-    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(text.splitlines(), 1) if pattern.search(line)]
+    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(text.splitlines(), 1) if any(p.search(line) for p in patterns)]
 
 
 # docs/design/rule-ids.md#contract-detail: rule IDs, the rule-change gate and coverage.
+OUTSIDE_TREE = re.compile(r'^docs/(design/(evidence|review-evidence|exploration)/|evidence/|shots/evidence/|reviews/|qualification-|release-)')
 RULE_DOCS = ('taskq.md', 'docs/design/menu.md', PRODUCT_DOC)
 RULE_TESTS = ('src', 'tests', 'scripts')
 TEST_PATH = re.compile(r'^(src/.*\.rs|tests/.*|scripts/.*\.test\.py)$')
@@ -379,6 +380,11 @@ CONTRACT_LINT_SHA256 = 'f88032eb1210b9fadd98ee250c7371a732a6c7837c3917c026b97490
 LINT_LIMIT = 128 * 1024
 
 
+def tree_evidence(paths):
+    """Tracked paths that belong outside the tree: evidence, finished reviews and release records (docs/testing.md)."""
+    return [p for p in paths if OUTSIDE_TREE.match(p)]
+
+
 def main_checkout(root):
     """The main checkout of a linked worktree, read from its `.git` file; None for anything else."""
     try:
@@ -526,6 +532,9 @@ def main():
             print('+', ' '.join(lint), flush=True)
             run_lint(lint, BUDGET - (time.monotonic() - started))
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
+        tracked = subprocess.check_output(['git', 'ls-files'], cwd=ROOT, text=True, encoding='utf-8').splitlines()
+        if tree_evidence(tracked):
+            raise SystemExit('evidence belongs outside the tree (docs/testing.md#visual-evidence):\n' + '\n'.join(tree_evidence(tracked)))
         run([sys.executable, 'scripts/check.test.py'])
         run([sys.executable, 'scripts/batch-replay.test.py'])
         run([sys.executable, 'scripts/live-probe.test.py'])
@@ -536,7 +545,7 @@ def main():
             raise SystemExit(failed)
         found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))]
         if found:
-            raise SystemExit('runtime name outside the runtime adapter or runtime-name branch (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
+            raise SystemExit('runtime name outside the data table or runtime-name branch (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])

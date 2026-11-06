@@ -1,0 +1,178 @@
+{
+  "core.Gate": [
+    "required",
+    "approved",
+    "stale"
+  ],
+  "core.State": [
+    "ready",
+    "waiting",
+    "doing",
+    "review",
+    "ask",
+    "later",
+    "failed",
+    "closed",
+    "held"
+  ],
+  "core.Task": {
+    "state": "string",
+    "attempt": "integer",
+    "role": "string",
+    "session": "string",
+    "retries": "integer",
+    "card": "string",
+    "result": "string",
+    "inbox": [
+      "integer"
+    ],
+    "publication": "string",
+    "enqueued": "string",
+    "gate": "string",
+    "pick": [
+      "integer"
+    ],
+    "blocker": "string",
+    "until": "string",
+    "stages": [
+      "string"
+    ]
+  },
+  "config.Delivery": [
+    "auto-merge",
+    "review-pr",
+    "direct"
+  ],
+  "runtime.RuntimeId": [
+    "claude",
+    "codex",
+    "codex-app",
+    "antigravity"
+  ],
+  "resources.State": {
+    "grants": {
+      "x": {
+        "actor_id": "string",
+        "installation_id": "string",
+        "generation": "integer",
+        "project_ids": [
+          "string"
+        ],
+        "runtime_ids": [
+          "string"
+        ],
+        "host_policy": "boolean",
+        "project_limits": "boolean",
+        "expires_at": "integer",
+        "revoked": "boolean",
+        "by": "string",
+        "at": "integer"
+      }
+    },
+    "projects": {
+      "x": {
+        "root": "string",
+        "revision": "string",
+        "policy": {},
+        "since": "integer"
+      }
+    },
+    "ops": {
+      "x": {
+        "bound": {},
+        "receipt": {},
+        "expires_at": "integer",
+        "saved_at": "integer",
+        "writing": "boolean",
+        "sent": "boolean"
+      }
+    }
+  },
+  "policy.Policy": {
+    "revision": "integer",
+    "grants": [
+      {
+        "runtime": "string",
+        "mode": "string",
+        "project": "string",
+        "by": "string",
+        "at": "integer"
+      }
+    ]
+  },
+  "admission.Host": {
+    "launched": "integer",
+    "services": {
+      "x": {
+        "version": "string",
+        "at": "integer",
+        "held": [
+          [
+            "integer"
+          ]
+        ],
+        "requested": [
+          [
+            "integer"
+          ]
+        ]
+      }
+    }
+  },
+  "host.Queues": {
+    "restart": "integer",
+    "projects": [
+      {
+        "project": "string",
+        "ready": "integer",
+        "spawn": "integer",
+        "waiting": "integer",
+        "reason": "string",
+        "tasks": {
+          "1": "string"
+        }
+      }
+    ]
+  },
+  "snapshot.ExecutionStatus": {
+    "progress": {},
+    "task": "integer",
+    "attempt": "integer",
+    "id": "integer",
+    "through": "integer",
+    "state": "string",
+    "reason": "string"
+  },
+  "telemetry.WorkerEvent": {
+    "at_ms": "integer",
+    "project": "string",
+    "host": "string",
+    "runtime": "string",
+    "role": "string",
+    "event": "string",
+    "task": "integer",
+    "attempt": "integer",
+    "pid": "integer",
+    "outcome": "string",
+    "reason": "string"
+  },
+  "runtime.usage.Window": {
+    "name": "string",
+    "used": "integer",
+    "reset": "integer"
+  },
+  "runtime.usage.Fleet": {
+    "at": "integer",
+    "policy": {},
+    "rows": [
+      "string"
+    ],
+    "error": "string"
+  },
+  "labels.Routing": {
+    "labels": [
+      "string"
+    ],
+    "prefer": "string"
+  }
+}

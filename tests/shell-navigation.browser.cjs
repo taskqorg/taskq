@@ -123,7 +123,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
   assert.equal(await workspace.getByText('Open recorded session',{exact:true}).count(),1,'C-A8: open only the supplied verified target');
   assert.match(await workspace.locator('.content').innerText(),/opens only on other-host/);
   // R6 #1823: a timed park has no session (core end() clears it) and still lists its local time and reason.
-  const park=await workspace.locator('.content article',{hasText:'Invented timed park'}).innerText(),until=await workspace.evaluate(()=>new Date('2026-11-05T09:00:00Z').toLocaleString());
+  const park=await workspace.locator('.content article',{hasText:'Invented timed park'}).innerText(),until=require('../src/relative-time.js').local(Date.parse('2026-11-05T09:00:00Z'));
   assert(park.includes('Parked until '+until+': 168 qualified hours'),park);assert(!/Attempt|Verified session/.test(park),'a park invents no attempt or session target');
   await workspace.getByText('Open recorded session',{exact:true}).click();assert.equal(await workspace.evaluate(()=>messages.filter(m=>m.a==='open').at(-1).url),'codex://threads/fixture-thread');
   await workspace.locator('[data-a=back]').click();assert.equal(await workspace.evaluate(()=>document.activeElement.dataset.route),'sessions');

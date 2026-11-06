@@ -30,7 +30,7 @@ Sizes below are a reproducible exported-API probe, not complete apps, runtime be
 
 Probe uses esbuild 0.28.2, browser conditions, ES2022, ESM, minification, retained exports and gzip level 9. Versions: Nano Stores 1.5.5; Preact 11.0.1; Signals 2.11.3; Wouter Preact 3.13.0; Solid 1.9.17; Solid Router 1.0.0; TanStack Solid Query 5.104.5. These are research inputs, not dependency selections or compatibility qualification. The existing release build is not minified; its eventual raw artifact must be measured separately.
 
-Exact probe imports and output are in [app-foundation-size-evidence.json](app-foundation-size-evidence.json). All imports remain exported to avoid an empty tree-shaken bundle. There is no UI fixture or emitted JSX in the probe; application code, compiler output, existing CoreQ, shared assets and persistence plugins are excluded. Installation used `--ignore-scripts`; no project package or lock file changed.
+Exact probe imports and output are in [app-foundation-size-evidence.json](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/app-foundation-size-evidence.json). All imports remain exported to avoid an empty tree-shaken bundle. There is no UI fixture or emitted JSX in the probe; application code, compiler output, existing CoreQ, shared assets and persistence plugins are excluded. Installation used `--ignore-scripts`; no project package or lock file changed.
 
 ## Selected architecture (A3)
 

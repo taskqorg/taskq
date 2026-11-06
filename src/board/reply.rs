@@ -1,5 +1,5 @@
 //! § 5 human replies: board-sized transport, one final command, no input length cap.
-use super::{Board, Comment, Result};
+use super::{Board, Comment, Error, Reason, Result};
 use crate::core::{self, Entry};
 
 const PART: usize = 60_000; // UTF-8 bytes, leaving room below GitHub's comment limit for the envelope.
@@ -57,7 +57,7 @@ pub fn log(n: u64, comments: &[Comment]) -> Result<Vec<Entry>> {
         let notice = lines.next().unwrap_or_default();
         let marker = lines.next().unwrap_or_default();
         if !c.edited && matches!(command, Some("answer" | "steer" | "requeue")) && notice.starts_with("Long reply: ") && marker.starts_with("<!-- taskq-reply") {
-            let bad = || format!("reply at comment {} is incomplete or changed; inspect taskq inbox {n} and the board", c.id);
+            let bad = || Error::new(Reason::Invalid, format!("reply at comment {} is incomplete or changed; inspect taskq inbox {n} and the board", c.id));
             let words: Vec<_> = marker.strip_prefix(MARKER).and_then(|m| m.strip_suffix(" -->")).ok_or_else(bad)?.split_whitespace().collect();
             if words.len() != 2 { return Err(bad()); }
             let (hash, count) = (words[0], words[1].parse::<usize>().map_err(|_| bad())?);

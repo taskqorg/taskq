@@ -1,36 +1,36 @@
 Anomalies:
 - [invented-project #2 Invented task 2](https://github.com/invented/project/issues/2) · owning host heartbeat stale or time unknown · Next: Inspect the owning host heartbeat and service status; preserve execution.
   Task: runtime codex · host mac · attempt 5 · execution 10
-  Heartbeat: stale · board host heartbeat · 1970-01-01T02:41:39Z · age 5m · owning host heartbeat stale or time unknown
-  Executor: active · owning-host execution observation · 1970-01-01T02:46:40Z · age <1m
-  Progress: quiet · native execution events (native timestamp or append mtime lower bound) · 1970-01-01T02:46:30Z · age <1m · last event 1970-01-01T02:46:30Z · no pending tool; quiet work is not failure
+  Heartbeat: stale · board host heartbeat · 5m ago · 1970-01-01 02:41 UTC · owning host heartbeat stale or time unknown
+  Executor: active · owning-host execution observation · <1m ago · 1970-01-01 02:46 UTC
+  Progress: quiet · native execution events (native timestamp or append mtime lower bound) · <1m ago · 1970-01-01 02:46 UTC · last event 1970-01-01 02:46 UTC · no pending tool; quiet work is not failure
 - [invented-project #3 Invented task 3](https://github.com/invented/project/issues/3) · owning host heartbeat missing or ambiguous · Next: Inspect the owning host heartbeat and service status; preserve execution.
   Task: runtime codex · host mac · attempt 5 · execution 10
-  Heartbeat: unknown · board host heartbeat · unknown · age unknown · owning host heartbeat missing or ambiguous
-  Executor: active · owning-host execution observation · 1970-01-01T02:46:40Z · age <1m
-  Progress: unknown · native execution events · 1970-01-01T02:46:30Z · age <1m · last event unknown · native progress record invalid
+  Heartbeat: unknown · board host heartbeat · ? unavailable · owning host heartbeat missing or ambiguous
+  Executor: active · owning-host execution observation · <1m ago · 1970-01-01 02:46 UTC
+  Progress: unknown · native execution events · <1m ago · 1970-01-01 02:46 UTC · last event ? unavailable · native progress record invalid
 - [invented-project #4 Invented task 4](https://github.com/invented/project/issues/4) · native progress record invalid · Next: Inspect the owning session and native progress source; preserve execution. · fix [taskq#2262](https://github.com/taskqorg/taskq/issues/2262)
   Task: runtime codex · host mac · attempt 5 · execution 10
-  Heartbeat: fresh · board host heartbeat · 1970-01-01T02:46:30Z · age <1m · matching host/attempt ownership lease observed; progress is separate
-  Executor: active · owning-host execution observation · 1970-01-01T02:46:40Z · age <1m
-  Progress: unknown · native execution events · 1970-01-01T02:46:30Z · age <1m · last event unknown · native progress record invalid
+  Heartbeat: fresh · board host heartbeat · <1m ago · 1970-01-01 02:46 UTC · matching host/attempt ownership lease observed; progress is separate
+  Executor: active · owning-host execution observation · <1m ago · 1970-01-01 02:46 UTC
+  Progress: unknown · native execution events · <1m ago · 1970-01-01 02:46 UTC · last event ? unavailable · native progress record invalid
 - [invented-project #5 Invented task 5](https://github.com/invented/project/issues/5) · tool progress overdue; preserve execution and inspect owning session · Next: Inspect the pending tool in the owning session; preserve execution.
   Task: runtime codex · host mac · attempt 5 · execution 10
-  Heartbeat: fresh · board host heartbeat · 1970-01-01T02:46:30Z · age <1m · matching host/attempt ownership lease observed; progress is separate
-  Executor: active · owning-host execution observation · 1970-01-01T02:46:40Z · age <1m
-  Progress: overdue · native execution events · 1970-01-01T02:46:30Z · age <1m · last event 1970-01-01T02:26:40Z · tool progress overdue; preserve execution and inspect owning session
+  Heartbeat: fresh · board host heartbeat · <1m ago · 1970-01-01 02:46 UTC · matching host/attempt ownership lease observed; progress is separate
+  Executor: active · owning-host execution observation · <1m ago · 1970-01-01 02:46 UTC
+  Progress: overdue · native execution events · <1m ago · 1970-01-01 02:46 UTC · last event 1970-01-01 02:26 UTC · tool progress overdue; preserve execution and inspect owning session
 - [invented-project #6 Invented task 6](https://github.com/invented/project/issues/6) · current executor unknown; inspect execution health · Next: Inspect the owning session and native progress source; preserve execution. · fix [taskq#2262](https://github.com/taskqorg/taskq/issues/2262)
   Task: runtime codex · host mac · attempt 5 · execution 10
-  Heartbeat: fresh · board host heartbeat · 1970-01-01T02:46:30Z · age <1m · matching host/attempt ownership lease observed; progress is separate
-  Executor: unknown · owning-host execution observation · 1970-01-01T02:46:40Z · age <1m
-  Progress: unknown · native execution events · 1970-01-01T02:46:30Z · age <1m · last event unknown · native progress record invalid
+  Heartbeat: fresh · board host heartbeat · <1m ago · 1970-01-01 02:46 UTC · matching host/attempt ownership lease observed; progress is separate
+  Executor: unknown · owning-host execution observation · <1m ago · 1970-01-01 02:46 UTC
+  Progress: unknown · native execution events · <1m ago · 1970-01-01 02:46 UTC · last event ? unavailable · native progress record invalid
 - [invented-project #7 Invented task 7](https://github.com/invented/project/issues/7) · input recorded; awaiting execution, no current native work confirmed · Next: Inspect input acceptance on the owning host; do not resubmit. · fix [taskq#2262](https://github.com/taskqorg/taskq/issues/2262)
   Task: runtime codex · host mac · attempt 5 · execution unknown
-  Heartbeat: fresh · board host heartbeat · 1970-01-01T02:46:30Z · age <1m · matching host/attempt ownership lease observed; progress is separate
-  Executor: awaiting execution · board input projection · 1970-01-01T02:46:40Z · age <1m
-  Progress: unknown · native execution events · unknown · age unknown · last event unknown · matching execution progress missing
+  Heartbeat: fresh · board host heartbeat · <1m ago · 1970-01-01 02:46 UTC · matching host/attempt ownership lease observed; progress is separate
+  Executor: awaiting execution · board input projection · <1m ago · 1970-01-01 02:46 UTC
+  Progress: unknown · native execution events · ? unavailable · last event ? unavailable · matching execution progress missing
 - [invented-project #8 Invented task 8](https://github.com/invented/project/issues/8) · execution progress observation missing or stale · Next: Inspect the owning session and native progress source; preserve execution.
   Task: runtime codex · host mac · attempt 5 · execution 10
-  Heartbeat: fresh · board host heartbeat · 1970-01-01T02:46:30Z · age <1m · matching host/attempt ownership lease observed; progress is separate
-  Executor: active · owning-host execution observation · 1970-01-01T02:46:40Z · age <1m
-  Progress: quiet · native execution events (native timestamp or append mtime lower bound) · 1970-01-01T02:41:39Z · age 5m · last event 1970-01-01T02:41:39Z · no pending tool; quiet work is not failure
+  Heartbeat: fresh · board host heartbeat · <1m ago · 1970-01-01 02:46 UTC · matching host/attempt ownership lease observed; progress is separate
+  Executor: active · owning-host execution observation · <1m ago · 1970-01-01 02:46 UTC
+  Progress: quiet · native execution events (native timestamp or append mtime lower bound) · 5m ago · 1970-01-01 02:41 UTC · last event 1970-01-01 02:41 UTC · no pending tool; quiet work is not failure

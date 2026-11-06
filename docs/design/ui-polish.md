@@ -16,7 +16,7 @@ Current taskq.md and explicit owner decisions override historical snapshots. Cur
 
 The #1928 owner note distinguishes an approved queued review as `merge queue · CI`. Use the existing queue receipt and publication detail, including CI progress when known; otherwise show progress as unknown. Keep canonical `state: review`, counters, ordering and service polling unchanged. Native session and read-only progress are separate adapter-supplied targets; older adapters' recorded `session_url` remains compatible without synthesizing a URL.
 
-[Implementation evidence for #1928](evidence/1928/README.md) records source/browser results and the remaining native and sandbox qualification gaps.
+[Implementation evidence for #1928](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1928/README.md) records source/browser results and the remaining native and sandbox qualification gaps.
 
 ## Requirement destinations
 
@@ -49,7 +49,7 @@ Every row is required. The named check is an existing entry to extend, not an as
 | UX30-23 | Every existing capability and newer feature is mapped, retained and regression-checked | [docs/design/ui-polish-capabilities.md](../../docs/design/ui-polish-capabilities.md) | #1924 | S01–S24 plus extended ledger; [scripts/check.py](../../scripts/check.py) |
 | UX30-24 | Integrated native macOS/Windows proof packet, with exact provenance and unresolved gaps, for independent owner review | [docs/design/ui-polish.md](../../docs/design/ui-polish.md) | #1932 + #1933 | S01–S24; [docs/design/ui-acceptance.md](../../docs/design/ui-acceptance.md) |
 
-[Relative-time implementation evidence](evidence/1930/README.md) records source/provider checks, the two-engine matrix and separate native gaps.
+[Relative-time implementation evidence](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1930/README.md) records source/provider checks, the two-engine matrix and separate native gaps.
 
 ## Shared ownership and dependency order
 

@@ -77,7 +77,7 @@ Ordinary single-click numbered answers and consequential-effect review are prese
 After a meaningful planning milestone, remind once when the held plan can start: “Ready to start when you say.” Track the plan revision/milestone; do not repeat on every reply, after dismissal, or while blocked. A reminder never starts work. An updated plan may earn a new reminder only after another completed milestone.
 
 Option 1 needs authoritative card/attempt binding and duplicate-operation handling in the board model. No claim that forge APIs offer a multi-write transaction. Created-only tasks must remain visibly held; current ready issue creation cannot implement that promise alone. [Q2/P2](plans-and-decisions.md).
-Prefer existing `later` for held tasks if safe creation/start can be qualified. Source `add --later` currently creates a `taskq`/ready issue before appending `later` (`src/main.rs`); that ordering leaves a potential admission window. Qualify creation before eligibility (for example, establish the hold before exposing the task label), partial-write recovery and all writers. No race reproduction or fix is claimed here.
+Prefer existing `later` for held tasks if safe creation/start can be qualified. Source `add --later` currently creates a `taskq`/ready issue before appending `later` (`src/cli/task_cmd.rs`); that ordering leaves a potential admission window. Qualify creation before eligibility (for example, establish the hold before exposing the task label), partial-write recovery and all writers. No race reproduction or fix is claimed here.
 
 ## D09 Bootstrap, standard reports and observation
 
@@ -156,9 +156,9 @@ Resolve gates in implementation specs/models. Escalate only a discovered product
 
 Record selection as `Dxx.option` with any changed constraint; preserve IDs. Accepting this document's structure does not approve every recommendation.
 After selection, update the owning spec/default and this status; retain alternatives under advanced routes where supported. Unsupported alternatives show a limitation instead of fake controls.
-Re-run [scenario review](scenario-review.md) for affected cases. Runtime release still needs contract/model, adapter and platform evidence.
+Re-run [scenario review](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/scenario-review.md) for affected cases. Runtime release still needs contract/model, adapter and platform evidence.
 
 ## Accepted follow-up decisions
 
-- Icon and fixed Summary use the [approved six-bin SVG](../reviews/visual-decisions.md). Custom and its editor/schema are removed; saved Custom resolves to Summary ([compatibility](custom-icon.md)).
+- Icon and fixed Summary use the [approved six-bin SVG](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/reviews/visual-decisions.md). Custom and its editor/schema are removed; saved Custom resolves to Summary ([compatibility](custom-icon.md)).
 - Continue independent valid branches after a failure; hold dependants. Monetary budgets are deferred until reliable usage attribution. Real five-repository inputs remain required for qualification.

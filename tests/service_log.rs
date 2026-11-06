@@ -12,7 +12,7 @@ fn service_run_start_error_is_one_stamped_line() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
     assert_eq!(err.lines().count(), 1, "{err}");
-    let (at, text) = err.trim_end().split_once(' ').unwrap();
-    assert!(at.len() == 20 && at.ends_with('Z') && at.as_bytes()[10] == b'T', "{err}");
+    let (at, text) = err.trim_end().split_once(" UTC ").unwrap();
+    assert!(at.len() == 16 && at.as_bytes()[10] == b' ' && at.as_bytes()[13] == b':', "{err}");
     assert!(text.starts_with("Error: ") && text.contains(" Next: "), "{err}");
 }

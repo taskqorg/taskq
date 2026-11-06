@@ -1,12 +1,12 @@
 'use strict';
-const {execution}=require('./ui-runtime.js');
+const {execution}=require('./ui-runtime.js'),time=require('./relative-time.js');
 const {h}=require('preact');
 // #1819/#1918: the tray applies its shared pending operations to the one snapshot before any window reads it
 // (docs/design/menu.md#shared-pending-operations-1819). A window keeps no overlay: a row shows only the board's state
 // or its op-id readback, plus the operation's line while it is sending, failed or not applied.
 const PHASES={sending:'Sending',failed:'Failed',mismatch:'Not applied'};
 const api=execution.module('sync-view',{
-clock:function(ms){const d=new Date(ms);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');},
+clock:function(ms,now){return time.clock(ms,now);},
 // One line for a row's operation: phase, then its reason.
 line:function(o){return o?(PHASES[o.phase]||o.phase)+(o.reason?': '+o.reason:''):'';},
 // 'Data from HH:MM' while a board read is older than two polls or missing; null while every read is fresh.
@@ -19,7 +19,7 @@ stale:function(S){
     if(p.alive!==true||!Number.isFinite(age)){missing=true;continue;}
     if(Number.isFinite(interval)&&age>2*interval){const at=(S.now-age)*1000;oldest=oldest===null?at:Math.min(oldest,at);}
   }
-  return oldest!==null?'Data from '+api.clock(oldest):missing?'Data from: unknown':null;
+  return oldest!==null?'Data from '+api.clock(oldest,S.now*1000):missing?'Data from: unknown':null;
 },
 // A row's operation as shown in every window; only a failed one offers Retry, which resends the same operation.
 row:function(o){return o?h('p',{class:'meta sync '+o.phase,role:'status'},api.line(o),o.phase==='failed'&&h('button',{class:'compact-action','data-a':'sync-retry','data-root':o.root,'data-id':o.id},'Retry')):null;},

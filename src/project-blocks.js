@@ -2,6 +2,7 @@
 const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 const copyLabel=require('./copy-label.js');
+const time=require('./relative-time.js');
 
 const {link,counters,summary,aggregate,task,handle,timing}=execution.module("project-blocks",{
 link:function(href,text,label,session=false){
@@ -26,8 +27,8 @@ summary:function(p,selected=null,open=null){
   },
 aggregate:function(all,selected=null){return '<section class="tqp" aria-label="All projects">'+counters(all.counts,'','All projects',all.partial||[],selected,all.open)+'</section>';},
 timing:function(value,now=Date.now()/1000){
-    const boundary=n=>Number.isSafeInteger(n)&&n>0&&n<=now,duration=(start,end)=>{if(!boundary(start)||!Number.isFinite(end)||end<start||end>now)return 'Unknown';const mins=Math.floor((end-start)/60),h=Math.floor(mins/60),d=Math.floor(h/24);return d?d+'d'+(h%24)+'h':h?h+'h'+(mins%60)+'m':mins+'m';};
-    const stamp=n=>boundary(n)?new Date(n*1000).toISOString():'unknown',started=value?.started,completed=value?.completed===true||value?.closed!=null,total=started===false?'Not started':duration(value?.first,completed?value?.closed:now),count=started===false?'N/A':started===true&&Number.isSafeInteger(value?.changes)&&value.changes>=0?String(value.changes):'Unknown',current=duration(value?.current,now);
+    const boundary=n=>Number.isSafeInteger(n)&&n>0&&n<=now,duration=(start,end)=>{if(!boundary(start)||!Number.isFinite(end)||end<start||end>now)return time.unknown;return time.age(end-start);};
+    const stamp=n=>boundary(n)?time.local(n*1000,now*1000):time.unknown,started=value?.started,completed=value?.completed===true||value?.closed!=null,total=started===false?'Not started':duration(value?.first,completed?value?.closed:now),count=started===false?'N/A':started===true&&Number.isSafeInteger(value?.changes)&&value.changes>=0?String(value.changes):'Unknown',current=duration(value?.current,now);
     const detail='Total elapsed since first worker ownership: '+total+' (first '+stamp(value?.first)+'; '+(completed?'closed '+stamp(value.closed):'through now')+'). Actual state changes after first work: '+count+'. Current-state elapsed: '+current+' (since '+stamp(value?.current)+').';
     return {detail,html:'<span class="task-timing" aria-hidden="true"><span class="timing-total">'+esc(total)+'</span><span class="timing-changes">'+icon('rotate-cw')+esc(count)+'</span><span class="timing-current">'+esc(current)+'</span></span>'};
   },
@@ -90,7 +91,7 @@ const root=globalThis;
   // Consumer adapter owns placement/routes; component emits navigation only, never task operations.
 
   // R6 #1823: a timed park names its UTC board time on this computer's clock, with the reason; plain text, callers escape.
-  const {parkedText}=execution.module("project-blocks",{parkedText:row => row.until?'Parked until '+new Date(row.until).toLocaleString()+(row.later?': '+row.later.replace(/^Reason: /,''):''):''});
+  const {parkedText}=execution.module("project-blocks",{parkedText:row => row.until?'Parked until '+time.local(Date.parse(row.until))+(row.later?': '+row.later.replace(/^Reason: /,''):''):''});
   const {destinations}=execution.module('project-blocks',{
    destinations:function(t){
     // Older consumer adapters supply one session_url; classify its recorded target without inventing a URL.

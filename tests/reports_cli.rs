@@ -18,8 +18,8 @@ fn reports_list_and_open_use_collected_data_without_board_credentials() {
         assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));
         serde_json::from_slice::<Value>(&out.stdout).unwrap()
     };
-    assert_eq!(run(&["reports","--json"])["reports"][0]["n"],12);
-    assert_eq!(run(&["reports","12","--sha",&sha,"--json"])["report"]["body"],"Invented report body");
+    assert_eq!(run(&["results","--json"])["reports"][0]["n"],12);
+    assert_eq!(run(&["results","12","--sha",&sha,"--json"])["report"]["body"],"Invented report body");
     assert_eq!(run(&["results","--json"])["reports"].as_array().unwrap().len(),2);
     assert_eq!(run(&["results","13","--sha",&sha,"--json"])["report"]["kind"],"task");
     assert_eq!(std::fs::read_to_string(&status).unwrap(),snapshot,"opening does not acknowledge read or decide a report");
@@ -32,6 +32,6 @@ fn reports_list_and_open_use_collected_data_without_board_credentials() {
         assert!(events.iter().any(|e|e["observation"]["operation"].as_str().is_some_and(|s|s.ends_with(op))&&e["observation"]["duration_us"].is_number()),"{op} must record committed load time without opt-in method profiling");
     }
     std::fs::write(&status,"corrupt").unwrap();
-    let unknown=run(&["reports","--json"]);assert_eq!(unknown["complete"],false);assert!(unknown["reason"].is_string());
+    let unknown=run(&["results","--json"]);assert_eq!(unknown["complete"],false);assert!(unknown["reason"].is_string());
     let _=std::fs::remove_dir_all(root);
 }

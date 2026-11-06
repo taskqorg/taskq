@@ -1,10 +1,11 @@
 //! Antigravity owner sessions: original AgentQ I/O, exact native identity and no submission replay.
+use crate::runtime::Cap;
 use super::owner::{Launched,request_access,spec};
 use crate::setup::Request;
 use std::{fs,io::Write,path::Path,time::Duration};
 use serde_json::{json,Value};
 type Res<T> = Result<T,String>;
-pub fn handles(runtime:&str)->bool {super::of(runtime).has("stream-input")}
+pub fn handles(runtime:&str)->bool {super::of(runtime).has(Cap::StreamInput)}
 pub fn log(own:&Path)->std::path::PathBuf {own.join("native.jsonl")}
 fn input(own:&Path,text:&str)->Res<()> {
     let mut file=fs::OpenOptions::new().create(true).append(true).open(log(own)).map_err(|_|"Native input log unavailable")?;
@@ -50,9 +51,9 @@ fn arguments(r:&Request)->Vec<String> {
 }
 pub fn command(own:&Path,r:&Request,resume:bool)->Res<std::process::Command> {
     let install=own.parent().and_then(Path::parent).ok_or("Owner installation unknown")?;
-    let policy=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
+    let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
     let root=r.root.as_deref().map_or(own,Path::new);let exe=std::env::current_exe().map_err(|_|"Owner executable unknown")?;
-    let env=super::Env{context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,publish:"",board_env:&[],jobs:None};
+    let env=super::Env{context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
     let access=request_access(&env,&r.runtime,r)?;
     if !matches!(access.mode.as_str(),"workspace"|"full") {return Err("Antigravity owner sessions require a Workspace or Full operator grant".into());}
     let mut command=super::cli(&r.runtime,&access,&env)?;
@@ -65,7 +66,7 @@ pub fn command(own:&Path,r:&Request,resume:bool)->Res<std::process::Command> {
     super::agent(&r.runtime)?.command(command,&selected)
 }
 fn native_source(session:&str)->Res<()> {
-    let home=std::env::var_os("HOME").or_else(||std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from).ok_or("Native home unknown")?;
+    let home=crate::platform::user_home().ok_or("Native home unknown")?;
     if ["ANTIGRAVITY_HOME","ANTIGRAVITY_APP_DATA_DIR"].iter().any(|key|std::env::var_os(key).is_some()){return Err("Custom Antigravity state mapping unqualified; no input sent".into());}
     readable_source(&home.join(".gemini/antigravity-cli/conversations").join(format!("{session}.db")))
 }
@@ -134,37 +135,5 @@ pub fn accepted(own:&Path,r:&Request,turn:&crate::dialogue::Turn)->Res<bool> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    // A3/A5/R12: stream identity, intent vs acceptance, completion and lost-release recovery remain distinct.
-    #[test]
-    fn native_stream_fences_identity_and_unknown_release() {
-        let session_id="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-        let text=format!("{}\n{}\n",json!({"event":"init","conversation_id":session_id}),json!({"event":"result","result":{"conversation_id":session_id,"status":"SUCCESS","response":"literal response"}}));
-        assert_eq!(session("antigravity",&text).unwrap().as_deref(),Some(session_id));assert_eq!(outcome("antigravity",&text),"success");assert!(session("antigravity",&(text+&json!({"conversationId":"foreign-conversation"}).to_string())).is_err());
-        let root=std::env::temp_dir().join(format!("taskq-owner-stream-{}",super::super::uuid()));fs::create_dir_all(&root).unwrap();
-        let r:Request=serde_json::from_value(json!({"schema":2,"id":"invented","created":1,"host":"invented","platform":"invented","client":"invented","runtime":"antigravity","targets":[],"brief":"invented","state":"launched","session":session_id})).unwrap();
-        let current=coreq::process::identity(std::process::id()).unwrap().unwrap();let identity=json!({"pid":current.pid,"started":current.started});fs::write(root.join("native-process.json"),json!({"identity":identity}).to_string()).unwrap();assert_eq!(holder(&root,&r),Ok(true));
-        fs::write(root.join("turn.json"),json!({"state":"done","outcome":"unknown: interrupted submission"}).to_string()).unwrap();assert!(holder(&root,&r).unwrap_err().contains("unverified"));
-        fs::write(log(&root),format!("{}\n",json!({"event":"init","conversation_id":session_id}))).unwrap();let turn=crate::dialogue::Turn{stream_offset:Some(0),stream_written:true,..Default::default()};assert_eq!(accepted(&root,&r,&turn),Ok(false));
-        writeln!(fs::OpenOptions::new().append(true).open(log(&root)).unwrap(),"{}",json!({"event":"step_update","step_update":{"conversation_id":session_id,"step_type":"user_input","state":"DONE"}})).unwrap();assert_eq!(accepted(&root,&r,&turn),Ok(true));
-        fs::remove_dir_all(root).unwrap();
-    }
-    // Native #2165 reproduction: agy ignored a missing --conversation and returned a new ID. Refuse before spawn/input.
-    #[test]
-    fn missing_native_state_and_wrong_startup_never_receive_input() {
-        let root=std::env::temp_dir().join(format!("taskq-owner-refusal-{}",super::super::uuid()));fs::create_dir_all(&root).unwrap();
-        assert!(readable_source(&root.join("missing.db")).unwrap_err().contains("resume refused before input"));
-        fs::write(root.join("invalid.db"),b"invented invalid native state").unwrap();assert!(readable_source(&root.join("invalid.db")).is_err());
-        #[cfg(unix)] {
-            use std::process::{Command,Stdio};
-            input(&root,&"invented long retained input".repeat(700000)).unwrap();
-            let offset=fs::metadata(log(&root)).unwrap().len();
-            writeln!(fs::OpenOptions::new().append(true).open(log(&root)).unwrap(),"{}",json!({"event":"init","conversation_id":"foreign-native-session"})).unwrap();
-            let marker=root.join("input-received");let mut child=Command::new("sh").args(["-c","if read input; then touch \"$1\"; fi","fixture"]).arg(&marker).stdin(Stdio::piped()).spawn().unwrap();
-            assert!(ready(&root,"antigravity","expected-native-session",offset,&mut child).unwrap_err().contains("different session"));drop(child.stdin.take());assert!(child.wait().unwrap().success());assert!(!marker.exists());
-        }
-        fs::remove_dir_all(root).unwrap();
-    }
-
-}
+#[path = "owner_stream_tests.rs"]
+mod tests;

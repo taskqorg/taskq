@@ -24,8 +24,8 @@ npm run build
 node docs/design/evidence/1348/capture.cjs
 ```
 
-[Measurements and source identity](evidence/1348/observations.json) accompany
-the [capture instrument](evidence/1348/capture.cjs). The instrument is research,
+[Measurements and source identity](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/observations.json) accompany
+the [capture instrument](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/capture.cjs). The instrument is research,
 not a new CI gate. It ignores outbound bridge messages; no action is applied.
 The fixed browser viewport does not reproduce native content-fit resizing.
 Do not infer a native whitespace or clipping defect from that viewport.
@@ -109,11 +109,11 @@ binding-contract violation.
 
 | Finding | Evidence and criterion | Observation | Proposed fix |
 |---|---|---|---|
-| F1 · navigation target gap; UI01 specifies the remedy | [Project at top](evidence/1348/project-dark-16.png), [after scroll](evidence/1348/project-scrolled-dark-16.png); UI01, shared stable adaptation | Back moves from y=39.59 to y=-1050.41 when content scrolls 1090 px. Home remains accessible, but returning to the previous route requires scrolling or keyboard recovery. | Put Back and route identity in the fixed header; preserve existing history, scroll and disclosure restoration (UI02). |
-| F2 · proposal gap | [Header and Back](evidence/1348/settings-dark-16.png); UI05 | At 16 px text, header targets are 27.59 px high and Back 30 px; Home is 25.64 px wide. They fail proposed 32×32. They do not automatically fail WCAG AA. | Add minimum hit dimensions without enlarging glyphs; reflow header actions if necessary. Keep emergency and close separate. |
-| F3 · density target gap | [Project top](evidence/1348/project-dark-16.png), [bottom](evidence/1348/project-scrolled-dark-16.png); UI04/UI11 | Two Board links have the same destination; the lower full-width link adds a row after all tasks. Project name also appears in h1 and the adjacent summary. | Keep Board beside identity; consolidate the identity heading with the summary and remove the repeated bottom link. |
-| F4 · empty-group target gap | [Home](evidence/1348/home-dark-16.png); UI12 | With no ask/failed/service faults, Attention still occupies a header row with All, followed by no attention items. | Omit the empty Home group; retain explicit “no questions or failures” when opening Attention directly. |
-| F5 · proposal gap | [Doing filter](evidence/1348/filter-light-20.png); UI25–UI28 | Counter click opens one state; `taskFilter` is scalar and this route has zero checkboxes. Doing and Ready cannot be selected together. Existing single-state behavior is not a contract defect. | Add the approved, clearly labelled view-filter group; retain counter shortcuts and show selection/result count. |
+| F1 · navigation target gap; UI01 specifies the remedy | [Project at top](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/project-dark-16.png), [after scroll](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/project-scrolled-dark-16.png); UI01, shared stable adaptation | Back moves from y=39.59 to y=-1050.41 when content scrolls 1090 px. Home remains accessible, but returning to the previous route requires scrolling or keyboard recovery. | Put Back and route identity in the fixed header; preserve existing history, scroll and disclosure restoration (UI02). |
+| F2 · proposal gap | [Header and Back](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/settings-dark-16.png); UI05 | At 16 px text, header targets are 27.59 px high and Back 30 px; Home is 25.64 px wide. They fail proposed 32×32. They do not automatically fail WCAG AA. | Add minimum hit dimensions without enlarging glyphs; reflow header actions if necessary. Keep emergency and close separate. |
+| F3 · density target gap | [Project top](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/project-dark-16.png), [bottom](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/project-scrolled-dark-16.png); UI04/UI11 | Two Board links have the same destination; the lower full-width link adds a row after all tasks. Project name also appears in h1 and the adjacent summary. | Keep Board beside identity; consolidate the identity heading with the summary and remove the repeated bottom link. |
+| F4 · empty-group target gap | [Home](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/home-dark-16.png); UI12 | With no ask/failed/service faults, Attention still occupies a header row with All, followed by no attention items. | Omit the empty Home group; retain explicit “no questions or failures” when opening Attention directly. |
+| F5 · proposal gap | [Doing filter](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/filter-light-20.png); UI25–UI28 | Counter click opens one state; `taskFilter` is scalar and this route has zero checkboxes. Doing and Ready cannot be selected together. Existing single-state behavior is not a contract defect. | Add the approved, clearly labelled view-filter group; retain counter shortcuts and show selection/result count. |
 
 F1 is produced by `src/tray-app.js` `draw()`: Back is inside `.content`.
 F2 follows `.head button` padding and missing minimum dimensions in `src/tray.html`.
@@ -123,17 +123,17 @@ F5 follows `filteredTasks()` and `navigate()`'s scalar filter.
 The resize grip is 18×18; UI06 exception applicability and pointer overlap were
 not evaluated, so this is an inspection item rather than an asserted AA failure.
 
-![Home, dark 16 px](evidence/1348/home-dark-16.png)
+![Home, dark 16 px](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/home-dark-16.png)
 
-![Project, dark 16 px](evidence/1348/project-dark-16.png)
+![Project, dark 16 px](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/project-dark-16.png)
 
-![Project after scrolling, dark 16 px](evidence/1348/project-scrolled-dark-16.png)
+![Project after scrolling, dark 16 px](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/project-scrolled-dark-16.png)
 
-![Settings and header controls, dark 16 px](evidence/1348/settings-dark-16.png)
+![Settings and header controls, dark 16 px](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/settings-dark-16.png)
 
-![Project, light 20 px](evidence/1348/project-light-20.png)
+![Project, light 20 px](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/project-light-20.png)
 
-![Single-state filter, light 20 px](evidence/1348/filter-light-20.png)
+![Single-state filter, light 20 px](https://github.com/taskqorg/taskq/blob/96064118e637ea8d7347edc4ca50c5c5da186757/docs/design/evidence/1348/filter-light-20.png)
 
 ## Coverage and remaining evidence
 

@@ -42,29 +42,6 @@ Run the affected check during development; freeze and run the selected merge gat
 
 Paid/model probes require explicit owner approval under §7 and the existing fixture/grant boundary (R9). A rerun trigger does not grant that approval. Missing approval or prerequisites leaves the native claim unknown; no automatic Full fallback, login, model/effort change or production mutation. This documentation task performs no paid probe or other-host operation.
 
-## Mac evidence index
-
-This index reconciles existing evidence; it does not requalify old clients against the current release. Follow immutable source links before reusing a cell. Missing exact artifact or environment identity narrows the claim rather than filling it by inference.
-
-| Immutable source / record | Qualified boundary | Limits / invalidation |
-|---|---|---|
-| [Native background acceptance](#native-background-acceptance-2026-10-14), Claude 2.1.299; tasks #995/#1001 | Mac worker/reviewer ask and same-session continuation, operator read/write/check, registered Remote Control, deferred restart and stop-marker observation | Historical client/configuration only; newer 2.1.301 recovery schema and cold restart need their own receipts |
-| [Recorded candidate evidence](#recorded-candidate-evidence-2026-10-14), Codex CLI 0.159.3; app daemon 0.162.1 with CLI handshake 0.159.3 | Operator same-session continuation; app deferred restart preserves start/end writes | Session IDs retained below; not an immutable artifact hash or complete current permission/lifecycle qualification |
-| [PR #1265](https://github.com/taskqorg/taskq/pull/1265), TaskQ `506a1ae14fc02f1d2b722d6a973fbd504b2ee3aa` / 4.6.18; signed artifact SHA-256 `85c408341710fc47eb57a939887065572c5b4f1f996c8ce1eae2c3618b40ec57` | Six-project Workspace own-project/Git writes; denied foreign-project, descendant, install and runtime-config writes; six-root Stop 7.338s, one unit/generation and 600s healthy marker | Recorded operator proof, not a new native-client flow or all recovery cells; runtime model/effort unchanged. Exact client identities not supplied by that PR: unknown |
-| [#1231 integration](qualification-1231.md), prepared source above; integrated `7006084c9ed68db8734e8587ee936b9c5d2e82d0`, CoreQ `5fb10926bbca0fdb042342dc5dc6ac3cc4e5a56f` | Preserved host/telemetry/permission implementation and source/process checks | Changed publication path has separate acceptance; no activation claim |
-| [#1232 repair](qualification-1232.md), host blob `56908c5bcc63aef944452bfae0b5827663532d1d`, service blob `cd8e1da85e8a733d78ac5225b7f32a5484ccc438` | Inventory wake regression before FAIL / after PASS; pending worker/reviewer progress with fake board/children; unchanged handoff process chain | Native bootstrap failed before submission; native retirement and installed queue progression unknown |
-| [#1233 handoff](release-1233.md), candidate `902c2b8ce7e39006fa259a56d5ddfc3972358b58`, release merge `bf41d2f673951a6d19e81c39a8d72ad9cf9daf77` / 4.6.19 | Exact-source CI and bounded outside-service activation/rollback procedure; outside-service isolated resume fixture passed | Preparation/publication is not activation. Running artifact, native retirement and installed progression require operator receipts |
-
-Disabled/unqualified cells remain unknown even when the adapter exists: current Mac codex-app full cold recovery/descendant cancellation, Claude cold continuation and any role/permission/client combination without matching native evidence. Non-Mac records remain historical references; this Mac-only task neither refreshes nor enables them. Unsupported clients remain unsupported, not PASS.
-
-### Heartbeat, lease and execution receipts
-
-Board read on 2026-10-19: [Mac heartbeat #722](https://github.com/taskqorg/taskq/issues/722) was **OPEN**, reported 4.6.18, service `18535c594451`, board body `at 1792377530`, lease `#1149 6258465645` and the same execution/input ID in `running` with `native execution observed; termination pending`. This proves the observed lease projection, not a closed-heartbeat pass, current service artifact identity or eventual termination. No heartbeat state was changed to manufacture proof.
-
-The prior execution has [accepted input](https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258443934) for `6258441955` and [released exit](https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258454435) before the replacement spawn `6258465645`. These are durable board receipts; independent native PID/creation-token/log evidence was not retained in this report, so native exit remains unqualified here. The current execution is still running at observation, not an exit success. Existing `execution_heartbeat_is_fenced_visible_and_never_reopens_terminal`, `acceptance_readback_retries_evidence_and_keeps_the_native_handle` and `terminal_reviewer_records_native_error_and_releases_lease` protect adapter semantics; they do not replace native proof.
-
-Preserve [PR #1267 at `3a19ecc3d96f39db81a1f9c25c65cd84f432d5a6`](https://github.com/taskqorg/taskq/blob/3a19ecc3d96f39db81a1f9c25c65cd84f432d5a6/docs/qualification-1146.md): its historical incident coverage, closed-heartbeat state, native termination and expired-lease-to-gone proof remain unknown. [#1131's original result](https://github.com/taskqorg/taskq/issues/1131#issuecomment-6177471608) left live A3 open; [#1146 cancellation](https://github.com/taskqorg/taskq/issues/1146#issuecomment-6257467376) explicitly claimed no historical success or gate waiver. Current execution ownership requires native termination/release, not the former expiry-to-gone inference (§3). These historical gaps cannot be repaired by a source test, issue closure or a new synthetic attempt.
-
 ## Supported clients
 
 | Client | Worker and reviewer | Operator | Platform and boundary |
@@ -97,13 +74,11 @@ Tested is not deployed: normal PR review, green merge-result CI and the existing
 
 The rows below describe capability coverage, not an always-run platform gate. Select only cells invalidated by the change under [R12](../taskq.md#r12-unverified-means-unknown), [TaskQ test selection](testing.md) and [SpecQ Testing](https://github.com/taskqorg/specq/blob/main/engineering/testing.md#run-policy-by-stage). A documentation edit does not rerun native clients. Shared changes with unknown impact broaden to the full relevant source suite and affected native cells before exposing the risk. Linux Claude requires native qualification before enabling it there. A missing binary/login is blocked, never a pass. Claude Desktop has no adapter; Remote Control does not qualify a Desktop runtime.
 
-Historical platform records below qualify only their recorded configuration. They do not authorize another-machine operation, permission expansion or adoption on the current release.
-
 | Platform | Codex CLI | Claude CLI | codex-app |
 |---|---|---|---|
 | macOS | Worker, reviewer, operator; start and resume | Same roles; native background lifecycle and Remote Control | Explicit worker/reviewer only |
 | Windows | Same CLI roles; native permissions and process lifetime | Same roles; native background lifecycle and Remote Control | Explicit worker/reviewer; restart and cancellation unqualified |
-| Linux | Same CLI roles; sandbox/network and process lifetime | Required before adoption; currently not installed on FRA | Unsupported |
+| Linux | Same CLI roles; sandbox/network and process lifetime | Required before adoption | Unsupported |
 
 ## Feature matrix
 
@@ -163,178 +138,9 @@ For an owned fixture selected by `TASKQ_QUALIFY_ROOT`, set `TASKQ_INSTALL` to it
 
 Claude worker/reviewer #969 includes a rejected first result (missing reproducible fixture), a repaired worker result, independent reviewer execution and resumed reviewer input. Controller compared all four pinned bodies against actual worker/reviewer start and continuation messages. The rejection is evidence that review applied the rules; closing the issue alone is not that evidence.
 
-## Recorded candidate evidence (2026-10-14)
-
-| Path | Client / session | Observed result |
-|---|---|---|
-| macOS operator, Claude | Claude Code 2.1.296; `4caa4089-e70f-4b7f-a152-7e734f214af6` | Read/copy/command check; append/check on the same session; host-disabled continuation refused before spawn. Four pinned bodies compared in both inputs. |
-| macOS operator, Codex | CLI 0.159.3; `01a1385b-5d56-7381-b88a-b6c4f26e82fd` | Same chain passed. Actual policy workspace-write + network enabled; four pinned bodies compared in both inputs. |
-| macOS app, deferred restart | CLI handshake 0.159.3 / app daemon 0.162.1; `01a1385f-473e-7260-98b3-0fe740288ab2` | Actual app tool wrote a start marker, waited, then wrote the end marker. Calling the real reexec guard mid-turn kept restart pending and preserved the turn through completion. Input contained all four pinned bodies; network remained disabled. No app restart. |
-| Windows operator, Codex | CLI 0.162.1; `01a1385d-216b-7a52-a1e0-fb21bc9529cf` | Blocked before command execution: native sandbox setup could not validate read/execute ACLs on an in-use `node_repl.exe` (OS error 32). No sandbox downgrade and no interruption of that process. |
-| Windows operator, Claude, denied | Claude Code 2.1.296; `53a5aa18-cb00-4676-b82d-c032d201844a` | Read succeeded; native dontAsk denied Bash/PowerShell. Agent reported the refusal, left output absent and did not bypass it. This failed attempt remains recorded; the explicitly approved fixture-only grant was then qualified below. |
-
-| Windows operator, Claude, granted | Claude Code 2.1.296; `94d56415-6922-4de5-97a3-30339954110a` | With owner-approved Bash/PowerShell permission only in the disposable project: read/copy/command, same-session append/check, disabled-runtime refusal all passed. Controller compared all four pinned bodies in both actual inputs. |
-
-The one-off app restart probe was removed after answering its development question; the existing process handover chain retains the regression case. The two redundant command/retro-constructor tests were removed; missing-log behavior moved into the existing retro chain. The ignored operator chain is the sole new retained live test. Windows deterministic checks passed (122 binary + 5 policy); macOS passed (125 binary + 5 policy). Offline selftest passed 53 golden traces and command formats; offline mode does not qualify board connectivity.
-
-## Claude Remote Control probe (2026-10-14)
-
-The owner requested Remote Control by default so local CLI sessions can appear in Claude. Native user setting `remoteControlAtStartup=true` was already present on macOS; it was enabled and read back on Windows without restarting existing sessions. Project settings cannot enable this setting; see [native Remote Control](https://code.claude.com/docs/en/remote-control#enable-remote-control-for-all-sessions).
-
-- Claude 2.1.296 interactive `--remote-control`: connected, returned a remote session URL and wrote a `bridge-session` record to its actual transcript.
-- Native background `claude --bg --remote-control` on 2.1.299: returned an owned background ID, answered the qualification prompt, and its native logs reported Remote Control active with a remote URL. The native updater advanced the installed CLI between these probes.
-- Without any Remote Control flag, both an interactive launch and `claude --bg` on 2.1.299 auto-connected from the user setting. Their native `/remote-control` status panels confirmed existing remote sessions and URLs. Auto-connect did not print the same announcement or transcript record as the explicit flag, so absence of either alone cannot prove disconnection.
-- TaskQ-style `-p --output-format stream-json` on 2.1.296: both explicit `--remote-control` and per-run `remoteControlAtStartup=true` completed the prompt but created no `bridge-session` record. Repeating the explicit flag on 2.1.299 also produced zero bridge-session records. Exit zero did not prove remote registration.
-
-No Remote Control flag was added to TaskQ's print-mode adapter. Native interactive/background connection is qualified; The initial probe did not qualify TaskQ integration. The native adapter qualification below supersedes that limitation; web/app visibility remains separate from native registration.
-
-## Native background acceptance (2026-10-14)
-
-One live chain, three real hosts; normal CI still skips paid agent runs. Temporary role/lifetime probes were removed after collecting evidence; the existing operator chain and service continuation/restart chains retain the regression coverage. `TASKQ_QUALIFY_ROOT` selects an explicitly owned, already trusted qualification directory; archive its previous request logs before a repeat. Native trust/account failures are prerequisites, not permission to bypass them.
-
-| Host / client | Worker and independent reviewer | Operator | Native lifetime / Remote Control |
-|---|---|---|---|
-| macOS / Claude 2.1.299 | [#995](https://github.com/taskqorg/taskq/issues/995), then [#1001](https://github.com/taskqorg/taskq/issues/1001) with answer after the asking turn stopped: both roles start, ask, retain the attempt and native session, resume and execute the supplied expected-failure/passing probes | Read/copy/command, same-ID append/check, disabled-runtime refusal passed | Registered native remote URLs; restart stayed pending during a real sleeping command; native stop prevented its later marker write |
-| Windows / Claude 2.1.299 | [#996](https://github.com/taskqorg/taskq/issues/996): both roles start, ask, resume and independently execute probes; native `py` absent, Python 3.12.10 used and reported | Same operator chain passed with the approved fixture-only grants | Registered native remote URLs; same deferred-restart/cancellation marker scenario passed using `python` |
-| Linux FRA / Codex 0.162.0 | [#997](https://github.com/taskqorg/taskq/issues/997): both roles start, ask, resume the same attempt/session, execute probes, and publish separate task-fit/quality evidence | Same chain passed with workspace-write and network enabled, including disabled-runtime refusal | Existing CLI process adapter; no Claude Remote Control claim |
-| Linux WSL / Claude 2.1.299 | [#1050](qualification-1050.md): owner-approved Full grant on a WSL test root only; candidate `4086fee` updated from 4.1.11; one research worker and a Claude reviewer on `wsl` closed [#1097](https://github.com/taskqorg/taskq/issues/1097) | Not tested | Restart stayed pending (`waits for #1097`) during a live sleeping worker, re-exec after close; restricted presets, code tasks and non-WSL Linux not qualified |
-
-The controller compared all four pinned specq bodies against **each actual start and resume input** of both roles on all three qualified paths. macOS #1001 sessions: worker `76302b27-299f-4cf0-bca6-d7aa50e4f979`, reviewer `6f7f59bd-4911-4c7f-91d9-02bbda9fe0ee`; Windows #996: `11e69922-c85c-4eca-8053-f76e5a99d7c7` / `794b2388-0365-4f3b-a41a-8a640965c9c6`; Linux #997: `01a1388f-3272-7553-abea-522725664624` / `01a13890-283d-7b23-a79b-f2be73165e84`. The probes intentionally fail before and pass after; agents must report that distinction without changing the supplied fixture. Research closure qualifies this scenario, not CI or publication of new code.
-
-Native edge cases found and fixed: `--bg` owns the UUID; passing options on resume can copy the session; stop acknowledgement precedes actual process exit; startup can lack a PID; Windows restore briefly reports a temporary UUID until native status appears. TaskQ preserves the background ID, waits for restored identity, reads actual turn completion, waits for owned process exit, and never accepts a copied continuation unless the attempt has handed in (#2221). It streams the matching native transcript into the existing attempt log. Changed saved permission mode refuses continuation instead of silently replacing the session.
-
-### Integration with access presets
-
-Candidate `5297419` includes main through `c6d46bd` (access presets). Native Claude start and resume use the same effective permission mode and Seatbelt wrapper as the other adapters. A changed saved native permission mode refuses continuation. macOS operator passed again under the default TaskQ Seatbelt wrapper with native dontAsk and the approved fixture Bash/Write grant: session `d321a639-71a2-4e19-aca8-3758a3398354`, actual edit/check and same-ID continuation. Model suite: 139 + 5 passed; selftest: 65 traces, formats and live board read passed. Windows/Linux repeat uses an explicitly owner-approved Full grant only in each isolated fixture installation; it does not qualify restricted enforcement or change working installations. The earlier worker/reviewer and cancellation evidence above predates these access presets. Final operator repetitions passed on Windows Claude 2.1.299 (`258379ed-c802-40f8-abdf-4df67b188d8b`, 51 s) and Linux Codex 0.162.0 (`01a138a7-3eed-7b33-a742-ceeb0f3d5b40`, 33 s), including same-ID continuation and disabled-runtime refusal. Windows model checks: 134 + 5; Linux: 118 + 5. Both OS actually refused before launch without a matching grant. Windows native Full additionally required its interactive disclaimer; the owner-approved test accepted it without changing default mode. Initial harness failures (wrong install/PATH and stale request artifacts) were corrected only in the isolated environment; none count as a pass. Temporary board credential copies were removed after the runs.
-
-### Remaining adoption limits
-
-This matrix is complete as an inventory, not all-green acceptance. Q4 outage/invalid-input cases, Q5 negative sandbox boundaries (outside writes, symlinks, Git common-dir, network denial), hard service/client crash and interrupted-launch recovery, and actual web/mobile/Desktop list readback remain unqualified. The native restart probe verifies deferral, not a full installed-version upgrade. Windows Codex workspace-write remains blocked by the previously recorded native ACL error. Native Remote Control registration does not prove Desktop integration, permanent connectivity or an OS sandbox. Production adoption must retain these distinctions; Linux Claude is qualified only for the #1050 WSL Full-grant scenario.
-
-### Linux constrained launch investigation (2026-10-14)
-
-Codex 0.162.0 on `hermes-fra1`, working TaskQ `4.2.0-dev.1791952400`; no TaskQ grant or project configuration changed. Windows deferred by the owner.
-
-| Boundary | Actual evidence | Result |
-|---|---|---|
-| Native Codex `workspace-write`, start/resume | Session `01a138cd-7bc4-7ad0-8eb2-717287eb1236`: both turns executed the fixture, wrote/read output, and received `EROFS` for the external canary; controller verified unchanged canary and same session. Four pinned specq bodies were supplied on both inputs by the probe, not TaskQ. | Native baseline only; not TaskQ acceptance |
-| Entire CLI inside `codex sandbox` | Explicit profile allowed workspace/state writes and denied outside/policy/config writes. Real inner CLI session `01a138cc-d61c-7751-918b-8c5c83646055` could not execute tools: the outer sandbox masks `/tmp/codex-daemon-1000` with mode `000`, while the inner sandbox requires an owned `0700` directory. | Refused; no Full retry |
-| Entire CLI inside system `bubblewrap` | Disposable runner `hermes-isolated-721881a5724b.service`; bwrap 0.9.0 failed before the CLI with `setting up uid map: Permission denied`. Kernel audit recorded AppArmor `unprivileged_userns` denial for `setpcap` and `uid_map`. | Host enforcement prerequisite blocked; no AppArmor/ACL change |
-
-The newly installed probe-only `bubblewrap` package was removed: its PATH presence would replace Codex's previously working bundled helper. Native `codex sandbox -P :read-only --include-managed-config -- /usr/bin/true` passed again afterward. Working services were not restarted. TaskQ's Linux admission refusal remains: do not convert the native baseline into a protected policy-store claim, or enable a preset without the complete boundary. These probes do not qualify Claude, network denial, symlink escapes or production adoption.
-
-### Linux TaskQ constrained acceptance (2026-10-14)
-
-Supersedes the TaskQ launch blocker above, not the other platform limits. Candidate `9c7f62d80694210ad7198573de55dedb00fbb132`, build `4.2.0-dev.1791956000`, Codex CLI 0.162.0 on FRA. Root-owned `taskq-sandbox` and private bwrap 0.9.0-1ubuntu0.3 have mode 0755 and no setid/file capabilities; only the helper's AppArmor profile was loaded. Global `apparmor_restrict_unprivileged_userns=1` and the pre-existing native Codex bwrap profile remain unchanged. No system/PATH bwrap was installed. Helper and fixture CLI SHA-256: `247c037977a67a0a5f207afc0f3187c9e76f374c3bce447b7da264bde11eae93`.
-
-| Real TaskQ path | Native sessions | Observed acceptance |
-|---|---|---|
-| Restricted worker / reviewer | `01a138ed-5a1d-7db2-9ddc-66923e0dc297` / `01a138ed-b328-79a0-956e-76efe654a1ee` | Both execute commands on start and same-ID resume; project writes and all five negative canaries denied |
-| Workspace worker / reviewer | `01a138ee-1d76-7a11-931a-ed2dbc040598` / `01a138ee-8219-76d2-8b57-541552305efb` | Both execute commands on start and same-ID resume; project writes succeed; outside, installation-policy directory, project config, symlink and child writes denied; controller reads all canaries unchanged |
-| Revoked continuation | All four sessions above | Fixture grant removed after completion; production adapter refuses next continuation before spawn; original fixture grant restored |
-| Workspace operator | `01a138ee-ba08-7b53-abb3-f36adbaf78c5` | Real read/copy/check, same-ID append/check and disabled-runtime continuation refusal |
-
-The controller compared all four pinned specq bodies with all eight actual worker/reviewer inputs. Every role/mode reported the injected empty-case regression (`expected=0`, `candidate=9`) despite exit 0, distinguished it from passing active/repeated cases, and stated evidence limits. This proves application for the supplied scenario, not universal rule obedience. The role check calls the production spawn/resume adapter; it does not repeat board claim/ask/result/close lifecycle qualification.
-
-Retained checks: ignored `live_linux_boundary_matrix` with `TASKQ_QUALIFY_SANDBOX=read-only|workspace-write`, plus existing `live_operator_matrix`. Role fixture uses `TASKQ_QUALIFY_ROOT`, `TASKQ_INSTALL`, `TASKQ_QUALIFY_EXE`; provide a disposable registered root, existing `.codex`, native login/config and an explicit fixture-only project grant. Operator fixture additionally needs its temporary board credential; remove it after the run. Paid checks are manual, not per-commit CI. Linux runner journals: `hermes-isolated-9c0d44f58a61.service` (both role modes, 95 s), `hermes-isolated-0dcd6ad4b338.service` (operator, 51 s). Linux release checks: 127 + 5 + 1; macOS: 148 + 5 + 1. Both selftests passed 69 traces/formats; only macOS additionally read the live board.
-
-Working serverq/dashq/agentq/taskq services retained PIDs 1391794/1391815/1391839/1391866, config hashes and no policy file; gateway PID 204574, zero restarts. No Full, working grant, queue activation or service restart. Initial DNS mount and missing fixture Git-directory failures were corrected and repeated; neither counts as acceptance. The private `/run` now preserves only the canonical DNS file read-only.
-
-Still unqualified here: Linux Claude (not installed), Windows constrained mode (owner deferred), Git common-dir probes, hard crash/recovery and production queue adoption. Native Codex sandbox prerequisites must already work on the host. The sandbox permits normal provider transport and documented state/cache writes; it is not a per-project account or a complete network isolation boundary.
-
-
-### Linux network and nested-launcher acceptance (2026-10-14)
-
-Extends the same ignored role matrix; no production code, launcher, AppArmor or permission change. Six real Codex 0.162.0 sessions, each start and same-ID continuation (12 turns):
-
-| Preset / native network request | Worker / reviewer sessions | Observations |
-|---|---|---|
-| Workspace / true | `01a138fd-dc4b-78f2-b7a2-1dd4456a6a49` / `01a138fe-50a3-7433-92c9-5c5580b2abf9` | TCP IPv4 and IPv6 socket with IPv4-mapped loopback reach the owned server; server independently records each unique token |
-| Workspace / false | `01a138ff-18b7-7fa1-8baa-a3a1965d64ba` / `01a138ff-927f-7153-b06e-cb71575311fa` | Both socket families return EPERM; server records no negative-case token; ordinary project write succeeds |
-| Restricted / false | `01a13900-60c6-7ac3-98d1-4a313c7a3a15` / `01a13901-2725-7691-9ce1-9d29a789d3a9` | Same network denial; project writes also denied |
-
-Each actual agent command invokes the installed root-owned launcher again, requesting Workspace and native network access with no Full flag, and instructs nested Codex to write the outside canary. All 12 invocations refuse at the trusted-helper ownership guard inside the inherited user namespace, before nested Codex starts; independent outside/policy/config canaries remain unchanged. This qualifies refusal of this nested-entry bypass route. Successful nested operation and all conceivable alternative escape routes are not claimed. Assert the specific guard diagnostic, not just a nonzero exit.
-
-Run the existing ignored `live_linux_boundary_matrix` with `(TASKQ_QUALIFY_SANDBOX, TASKQ_QUALIFY_NETWORK)` = `(workspace-write,true)`, `(workspace-write,false)`, `(read-only,false)`; default network request is true. The matrix owns an ephemeral loopback TCP listener and receipts; timeout alone never qualifies denial. Native network-off is a command sandbox restriction: provider transport and MCP processes are outside that network guarantee. No whole-CLI network-off, UDP traffic or public destination qualification is inferred.
-
-Runner `hermes-isolated-ae11c5ab0d09.service`: success, 266 s, no OOM. Test artifact SHA-256 `57d4485f1127d7e78dce81b4a0453c3a32fca28f36d42ee9903a89be03b7b2de`; production helper retains its earlier hash. Linux deterministic checks: 127 + 5 + 1; 69 offline traces/formats pass. Working TaskQ project hashes, four service PIDs and absence of a working policy store remain unchanged; no Full, additional working grant, config edit or TaskQ restart. Gateway PID changed from 204574 to 1566248 (active since 05:59:08 UTC, NRestarts=0) during the run; this test issued no gateway operation, and its cause is unknown.
-
-### Windows constrained prerequisite repeat (2026-10-14)
-
-Owner closed Codex; its app/node_repl processes disappeared. Windows 24H2 build 26100.4484, standalone Codex CLI 0.162.1; bundled CLI 0.162.0-alpha.17.2, existing sandbox service from app 26.1007.2314.0. No Full or working TaskQ grant/config/update/restart.
-
-| Native boundary / context | Actual observation | Qualification |
-|---|---|---|
-| Existing elevated backend from SSH | Runner pipe-in timeout, standalone and bundled CLI | Failed prerequisite |
-| Unelevated command profile | `cmd.exe` writes project; outside canary outside system temp and project `.codex` remain unchanged. Private temp avoids the built-in workspace profile's ambient temp write exception. | Command/file probe only |
-| Whole CLI / PowerShell inside restricted token from SSH | Both exit 0xC0000142; API turn cannot start | Failed prerequisite |
-| Ordinary interactive user via owned temporary task, RunLevel Limited | Both backends launch isolated `codex --version`; outer profile and native workspace-write stay enabled, with no Full. A separate launcher state avoids blocking the CLI's own state writes. | Process startup only |
-| Real CLI turn inside the boundary | Session `01a13946-96c8-7901-ae1c-5a3e079b8390` starts but fails workspace routing discovery before any agent command. Model refresh and MCP HTTPS requests also fail. Existing auth file has a valid access-token lifetime; no device login. Control curl HTTPS fails with Schannel SEC_E_NO_CREDENTIALS (0x8009030E) under both legacy backends. | Agent work/start-resume chain remains blocked; not a TaskQ adapter pass |
-| Explicit native MXC probe | `native MXC is unavailable on this executor`, exit 1 | Failed prerequisite |
-
-The [official Windows sandbox guide](https://learn.chatgpt.com/docs/windows/windows-sandbox#mxc-compatibility) names builds 26100.9278 / 26200.9278 as MXC compatibility minima, with required capabilities also subject to rollout/policy. Updating Windows permits a new MXC probe; it does not prove availability or fix the observed legacy HTTPS failure. Applying an OS update/reboot while work runs is outside this repeat's authorization. An isolated CLI TLS fix is a separate dependency decision, not permission to disable TLS validation or downgrade sandboxing.
-
-TaskQ Windows Restricted/Workspace admission remains refused until the complete production adapter chain passes; no new enforcement path was shipped from partial evidence. Retained no new tests or mechanism: temporary diagnostics answered prerequisites only. Owned scheduled task and copied auth/config removed after completion. Working services retain PIDs 22516/9832/35404/27504/28064/33804 and initial project hashes; #988/#989 retain attempts 6160769561/6160834193 and PIDs 6832/35088. Working `worker-policy.json` remains absent. Local evidence: `%LOCALAPPDATA%/Temp/taskq-windows-restricted-20261014/project/real-native.{out,err,exit}`, `native-network.{out,err,exit}`, `elevated-interactive.{out,err,exit}`.
-
-### Windows CLI TLS investigation (2026-10-14)
-
-Owner selected a TaskQ-scoped TLS fix without an OS update. Stock Codex 0.162.1 already has one usable transport path: `CODEX_CA_CERTIFICATE` selects Rustls in the shared custom-CA HTTP builder; HTTP and Responses WebSocket paths retain native roots and add the PEM certificates. Source: [tag rust-v0.162.1](https://github.com/openai/codex/tree/rust-v0.162.1), commit `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`, `codex-rs/http-client/src/custom_ca.rs`, `login/src/auth/default_client.rs`, `websocket-client/src/lib.rs`. The narrow automatic TLS fallback does not cover SEC_E_NO_CREDENTIALS and is not enabled on every default API path. No CLI fork or global TLS setting needed for this experiment.
-
-Exported 54 nonexpired self-issued certificates already in the signed-in user's Windows Root store, excluding its Disallowed store; no new root installed. PEM SHA256 `62c8cd6ee951228f126eec08aaecc225299096b3d59689e1bddae1684381150c`. The disposable launcher profile marked the PEM read-only; no independent PEM-write probe was run. Environment override existed only in the owned diagnostic task. No existing CA override was changed in a working project. This is a trust-store snapshot, not proof of Schannel-equivalent trust, revocation or automatic root retrieval: stock HTTP dependencies also enable Rustls WebPKI roots. Production adoption must resolve that trust-policy difference, not infer equivalence from the three negative probes.
-
-| Chain | Observed result | Qualification |
-|---|---|---|
-| Reqwest 0.12.28 transport control outside sandbox | Schannel reaches chatgpt.com; Rustls completes TLS and receives HTTP 403 | Transport only; HTTP 403 is not API acceptance |
-| Same probe inside native `unelevated` boundary | Schannel fails SEC_E_NO_CREDENTIALS; Rustls without exported roots fails UnknownIssuer; Rustls with the existing-root PEM completes TLS and receives HTTP 403 | TLS workaround proved for this boundary |
-| Certificate rejection with the PEM | Expired, wrong-host and self-signed badssl endpoints rejected, inside and outside the boundary | Date, name and issuer checks retained; revocation untested |
-| Stock CLI start and continuation inside the boundary | Native session `01a13a91-e5ad-7a32-a1ac-40b9fbde0a4c`; both turns receive model output and complete with exit 0 | API/start/resume transport proved; not successful agent work |
-| Allowed edit/read and forbidden-write attempts by that agent | Inner native workspace-write tools fail before execution with `CreateRestrictedToken failed: 87`; patch also fails. Proof file absent; both controller-read canaries unchanged | Tool chain blocked; unchanged canaries do not prove filesystem denial |
-| Native `elevated` repeat | Setup refuses runtime ACL validation on a busy app `node_repl.exe`; app agents are active again | Prerequisite blocked; no process stopped or setup bypassed |
-
-Outer named profile and inner workspace-write stayed enabled; no Full or unsandboxed retry. Separate launcher state and original inner CLI home retained. TaskQ's Windows adapter remains unqualified/refused: restoring TLS does not resolve nested token creation, shared runtime setup, or qualify worker/reviewer rules, tools, network denial and nested-launcher containment. No production integration or new persistent test shipped. Follow-up must fix/qualify the native execution path before adopting this child-only CA setting; never use a writable project PEM or overwrite an owner's explicit CA policy.
-
-Owned task and temporary profile/PEM removed when idle. Working project configuration hashes, service PIDs and versions match this repeat's initial readback. Working `worker-policy.json` now exists, unlike the previous repeat; this investigation never wrote it and has no initial hash to qualify preservation of its contents. Logs: `%USERPROFILE%/taskq-tls-probe-20261014/{tls-*,tls-ca-*,agent-start.*,agent-resume.*}`. Stock CLI SHA256 `dd13bdb162a184fa04039488b234a8258ef9b76f84e926c505d5742b19249a6a`. Development probe SHA256 `80393d78ddca3098801e287c9927da412c417ef292b90e0b49175b6902da6468`; exact Reqwest 0.12.28, explicit `use_rustls_tls()` and `add_root_certificate`; no disabled certificate validation, proxy or client identity.
-
-### Windows nested native sandbox and platform TLS candidate (2026-10-14)
-
-Windows Workspace start/resume and its direct bootstrap currently refuse before preparation: no binary digest is qualified for the complete containment boundary. Historical hashes below are provenance, not active trust. The retained candidate supersedes the PEM workaround, not a working-installation migration. Its earlier isolated repeats used an explicit project Workspace grant with network enabled; they did not authorize Full or a production migration. Unknown rows below remain unknown.
-
-The native fix is [windows-codex.patch](runtime/windows-codex.patch), against [Codex rust-v0.162.1](https://github.com/openai/codex/tree/rust-v0.162.1), source commit `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`. Reapplying `WRITE_RESTRICTED` to the inherited write-restricted token produces Win32 error 87. Removing that flag changes read restrictions, so the patch instead duplicates an inherited token only when its nonempty restricting SID set is contained in the requested set and it retains no privilege other than `SeChangeNotifyPrivilege`. A narrower request refuses. Actual SDK AccessCheck probes preserved read=true/write=false; a broader capability request did not grant its added write capability. See [CreateRestrictedToken semantics](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-createrestrictedtoken).
-
-TaskQ's native control home lives under protected `windows-native/state`, separate from the active `CODEX_HOME`. Outer launcher and inner tools share its capability mappings; the owner process prepares canonical workspace aliases for subdirectory commands. The bootstrap accepts bounded exec arguments, rechecks project authority and binary hashes, then restores the original runtime home. Changing child environment or clearing TASKQ_ATTEMPT never changes its inherited token. Existing runtime settings/auth and project `.codex` remain read-only. This is a same-user write boundary, with the indirect-execution limitations in §8 Access; it does not isolate user accounts or promise broad read denial.
-
-HTTP and default Responses WebSocket TLS use the existing Windows platform verifier, not a root export or disabled validation. Explicit owner CA/client-identity paths remain intact. Controlled Reqwest 0.12.28 probes both outside and inside the unelevated boundary reached chatgpt.com (HTTP 200) and rejected expired, wrong-name, self-signed and revoked certificates. [Windows platform verification](https://docs.rs/rustls-platform-verifier/0.7.0/rustls_platform_verifier/) uses OS trust/revocation APIs; this was stricter than the Schannel control, which accepted the revoked endpoint. These probes are not proof of every enterprise CA, offline revocation condition or separate helper transport.
-
-Private dependency provenance:
-
-- Patched main `codex.exe`: SHA256 `af65880153a66852d72edf1d2a22faf191abeee2ad3d9cd6e8ee1d59183b8cc4`, version 0.162.1, Windows GNU rustc 1.99.0. Build from the pinned tag plus the patch with `cargo build --locked -p codex-cli --bin codex`; the tag's lock metadata lists local packages as 0.0.0 while its workspace is 0.162.1. Before building, normalize only source-less workspace package versions to 0.162.1; preserve every external package/version/source. This is metadata repair, not a dependency update. Debug profile disables debug info and incremental compilation; one build job, BelowNormal priority.
-- Reproduced candidate main `codex.exe`: SHA256 `147d030711776227e5fe2fc5cab378601997deeace6555058474df30d41686bb`,415430144 bytes. Same pinned source/patch and GNU1.99 toolchain; two clean builds differ only in COFF temporary import-library names/order and checksum. On Mac, installed LLVM22.1.8 `rust-objcopy --strip-all` produces identical full artifacts from both. COFF/DWARF removal and96 bytes of trailing `.text` alignment padding (zero to INT3) are accounted for separately from the unchanged virtual code/data payloads and addresses. The product enforcement keeps only the original qualified hash; this candidate digest is not accepted. Keep the exact processed bytes unchanged when transferred: do not strip again on Windows. Independent native Windows qualification must pass before adding this candidate to the product pins; the TaskQ boundary/operator matrix remains mandatory before release or deployment. No stock/version-only match or permission change.
-- Official **same-version** npm `@openai/codex-win32-x64` MSVC `codex-code-mode-host.exe`: SHA256 `9f865a748c984492ca9b69aac75680e4954f31311c43ec33ddbdae0ed77bd4bd`. GNU helper build is unavailable because rusty_v8 has no Windows GNU archive. The official helper forwards native tool calls to the patched main CLI; model, effort and code mode were retained. Candidate files live in the operator-owned installation's `windows-native/` and are never downloaded/replaced automatically. No main executable digest is currently trusted. This mixed private/official dependency bundle is not the stock CLI and is not a generally distributed release.
-
-Retained proof is one ignored `windows_sandbox::tests::live_windows_boundary_matrix`, using the production `runtime::spawn` and existing rule loader. It needs an isolated TASKQ_INSTALL, TASKQ_QUALIFY_ROOT, native Python path TASKQ_QUALIFY_PYTHON, runtime login and explicit fixture-only project grant. Invoke `cargo test --locked windows_sandbox::tests::live_windows_boundary_matrix -- --ignored --exact --nocapture --test-threads=1` in the interactive Windows user session. The test owns canaries/junction only in that fixture. It verifies native completion rather than the retired process's exit code: existing TaskQ completion handling can terminate a lingering process after `turn.completed`. Native `turn.failed`, missing commands or missing effects still fail. No paid matrix per commit; the existing update-preservation chain additionally protects `windows-native/state` from sweep deletion.
-
-The boundary fixture also checks native `DeleteFileW`, rename and atomic `MoveFileExW(REPLACE_EXISTING)`, comparing content digests and file identities after every denied operation, plus successful in-workspace write/rename/delete. The ignored `windows_sandbox::tests::native_security_without_model` reuses that fixture with a controller-owned fake home, exact source/dependency hashes and the actual SDK private desktop/restricted token. It exercises preparation, Low bootstrap and rollback without a model turn; a development dependency digest supplied to this test never changes product pins. GNU test staging needs its native WebView2 loader beside both executables. Ordinary native tests cover identity/ACL conflict, reparse refusal, open owner handles and label/DACL rollback; null unprotected label-only SACL normalizes to absent mandatory label, with other control flags still compared. These proofs do not replace worker same-session continuation, reviewer/operator start+resume or CRLF SQLite/native acceptance. New Windows security code remains unqualified until those checks pass for the exact private artifact; do not adopt a candidate from version/prototype results.
-
-| Observed chain | Result and limit |
-|---|---|
-| TaskQ worker start + same-session continuation | Passed, `01a13b24-8db0-7003-8f2f-944825d061d4` |
-| TaskQ reviewer start + same-session continuation | Passed, `01a13b25-283e-7211-a7ae-fa9786584ffa`; entire live matrix 93.68 s |
-| Rule delivery + application, all four turns | Controller matched full pinned bodies in each native user input, not log labels. Both agents compared active/repeated/empty behavior and detected the injected empty=9 regression on continuation despite command exit 0 |
-| Allowed/denied effects, all four turns | Project write/readback passed; outside, installation, project `.codex`, active runtime config and junction-target writes denied with errno 13 **and native Win32 5**. Child write denied, ACL mutation exited 5, subsequent write denied; every controller-owned canary unchanged |
-| Nested launcher request for wider writable roots | Actual TaskQ bootstrap refused the unsupported config before a model launch; this proves the argument/authority guard, separately from the filesystem-denial probes |
-| Grant removal after each role | Production spawn refused continuation before launching another agent; fixture grant restored by controller |
-| Whole-process network-off / Restricted / narrower native read-only / Elevated / MXC | Unqualified; narrower/network-off admission refuses. No fallback to Full |
-| Working queue/publication, Windows Claude and codex-app enforcement | Not exercised by this candidate; no claim that this standalone Codex path fixes those runtimes |
-
-Initial development failures were not passes: missing code-mode host, checking a retired process's exit instead of native completion, and selecting a normal executable rather than the test harness. The final harness was verified by its listed test identity with required adjacent DLLs before the four-turn run. Source/binaries and evidence reside only in owned isolated installations; the working app and services were left running.
-
-Admission controls read back through the actual TaskQ `service permissions` path also refused read-only, Restricted, network-off, missing helper and changed helper in the idle isolated installation. Requested files and grant were restored between probes. Final deterministic checks after rebasing on current main passed: macOS 159 + 5 + 1; Windows 155 + 5 + 1 + 1 (paid matrices ignored). Selftest passed 69 traces/formats on both; macOS read the live board, Windows used explicit offline mode. Initial Windows diagnostic-suite failures came from an archive build embedding revision `unknown`; restoring the public Git metadata and invalidating that build script fixed them without changing or weakening tests. The paid four-turn result precedes that rebase; the standalone Codex adapter/rule path stayed the same.
-
-Preservation readback: working `worker-policy.json` and native auth hashes match the initial snapshot. Working service versions/PIDs/project configs and global Codex config changed independently during qualification, so their snapshot is **not** evidence of unchanged installations. This work wrote only its isolated candidate/fixture and did not signal working services/app agents or change their rights. The app still had live processes. Owned scheduled probes were removed only when idle; temporary login/config copies were removed and fixture admission disabled after qualification.
-
 ## Runtime adapters
 
-Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `codex`, `antigravity`, `codex-app`) is one `crate::runtime::Adapter` in `src/runtime.rs`, found by `crate::runtime::of(name)`.
+Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `codex`, `antigravity`, `codex-app`) is one `crate::runtime::Adapter`, data only, in the table `src/runtime/table.rs`, found by `crate::runtime::of(name)`.
 
 - The adapter owns everything that differs by runtime: launch and resume, the command line, policy and sandbox arguments, the session link, process identity, auth and login hints.
 - The runtime module keeps that code; other modules ask the adapter (binary, client name, home, CLI child, Remote Control session, app turn, Codex family, setup access) and never compare runtime names.
@@ -342,8 +148,8 @@ Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `cod
 - Owner sessions (`service setup`, tray AI requests, `retro`) launch, link and get Claude trust through `crate::runtime::owner`; `src/setup.rs` keeps only the request state machine.
 - `crate::runtime::session_link` is the only session-link resolver and `crate::runtime::open_link` the only opener; `thread_url`, `plain_thread`, `remote_url` and `link_ok` are the only link builder and checks.
 - Kid adoption (`crate::runtime::adopt`), handover waits (`handover_waits`), the worker default runtime (`preferred`) and the Claude process lookup go through the adapter.
-- Allowed exceptions: the sandbox files (`src/linux_sandbox.rs`, `src/windows_sandbox*`) and tests.
-- `scripts/check.py` refuses, anywhere else in non-test Rust including `src/main.rs`, a runtime name literal and the native names `claude.exe`, `.claude.json`, `CODEX_HOME` and `CODEX_THREAD_ID`.
+- Only the table and tests hold those names; no sandbox file or runtime module is exempt.
+- `scripts/check.py` refuses, in all other non-test Rust, a runtime name literal and the native names `claude.exe`, `.claude.json`, `CODEX_HOME` and `CODEX_THREAD_ID`; it refuses a branch on a runtime name everywhere, the table included.
 - New runtime policy changes update the golden admission traces; existing pin, grant and ownership protections remain binding.
 
 ## Contract detail
@@ -354,10 +160,10 @@ Moved verbatim from `taskq.md` (#1179) to keep the contract under its R8 size bo
 The child's environment drops `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` and adds `TASKQ_TASK`, `TASKQ_ATTEMPT`,
 `TASKQ_ROLE`. GitHub service-spawned children also receive the host board token as `GH_TOKEN` and `GITHUB_TOKEN`, overriding inherited values. With `sccache` on the service `PATH` and no inherited `RUSTC_WRAPPER`, Claude children and Codex children without a sandbox also receive `RUSTC_WRAPPER` (Claude background turns through their settings `env`) ([build cache](testing.md#build-cache)). Briefs go through stdin, never a shell (`codex-app`: the `queue` argument, still no shell; the app turn resolves its own effective permissions and environment; handshake options alone are not a grant or qualification, so its brief prefixes each taskq command with `env TASKQ_*=..`, on Windows the PowerShell form `$env:TASKQ_*='..'; & '<taskq>'`). The app runs while its process is listed: macOS `lsappinfo` `com.openai.codex`, Windows `tasklist /APPS` package `OpenAI.Codex_`; rollouts are under `CODEX_HOME`, else the home folder's `.codex`. Codex app turns/resumes inherit the app's host login environment: `gh` there needs the host's durable token as its keyring login or `GH_TOKEN`/`GITHUB_TOKEN`, provisioned by the owner (never `gh auth login`); taskq does not inject it through queue, briefs, argv or logs. A turn that finds no token, or would need a device login, sends a worker `ask` naming the missing token. Its network comes from the Codex config of the project root (owner-provisioned `.codex/config.toml` permissions), not from the handshake's `-s`/`-c` ([live evidence](runtime-qualification.md#codex-app-environment)). Live app-turn qualification is per OS; a handshake check alone does not qualify it (R12). Logs: `<root>/.taskq/<T|R><N>-<attempt>.log`.
 **Claude background turns.** Native `agents --json --all` plus the matching transcript determine completion, never launcher exit or PID alone. Stop only the owned idle turn after its new response is recorded; keep its conversation for continuation. Unknown state remains live/unknown; completion must be newer than launch, including repeated identical input. Resume waits for confirmed stop and must retain the native ID; a copy is an error, never a new attempt. Native saved permissions persist on resume; changed permissions require a new attempt. Legacy print-mode attempts finish and resume unchanged. An active background turn with a saved native identity passes service re-exec through the protected handover record; the new image only observes the original job, session and input token, never resubmits. A turn without that identity does not defer re-exec: it runs on, and the next image reads its execution from the board as unknown until observed (§ 3). Existing jobs are not restarted. Remote Control is requested by default, subject to native trust/account/policy; its actual remote ID is distinct from the local UUID, so missing registration is unknown, never a fabricated link.
-Rule delivery follows the [current contract detail](#rule-delivery-contract-detail). Earlier qualification above does not prove the current delivery behavior.
+Rule delivery follows the [current contract detail](#rule-delivery-contract-detail).
 
 1. Windows releases use MSVC's static WebView2 loader; GNU `service install` copies the loaded `WebView2Loader.dll` beside release and launcher first.
-2. `taskq update` and service step 7 run the coreq update. A new `current` then gets one allowlist sweep of the rest of `<install>` and a `~/.local/bin/taskq` v3 python shim. Kept: `releases/` of `current`, `previous`, the running version and each `projects` root's `status.json` version (its service and live children), `current`, `previous`, `projects`, `token`, `gitlab-token`, `installation-id`, `connection/` ([DashQ connection](design/enrollment.md)), `worker-policy.json`, `windows-native/`, the launcher, `WebView2Loader.dll`, `*.log`, `tray*`, `capacity/`, `resources/`, `TaskQ-*.xml`, `*.tmp`. A file in use stays until a later update.
+2. `taskq update` and service step 7 run the coreq update. A new `current` then gets one allowlist sweep of the rest of `<install>`. Kept: `releases/` of `current`, `previous`, the running version and each `projects` root's `status.json` version (its service and live children), `current`, `previous`, `projects`, `token`, `gitlab-token`, `installation-id`, `connection/` ([DashQ connection](design/enrollment.md)), `worker-policy.json`, `windows-native/`, the launcher, `WebView2Loader.dll`, `*.log`, `tray*`, `capacity/`, `resources/`, `TaskQ-*.xml`, `*.tmp`. A file in use stays until a later update.
 3. At step 7, an installed service whose running version is older than `current` logs `current is <v>; restarting` and re-execs through the launcher without downloading or running selftest. The service re-execs; live CLI children and Claude background turns with a saved native identity pass to the new image through the protected native handover record (adapter recovery matrix). Only an active codex-app or operator turn defers re-exec until it ends; the restart request remains pending. Every other child runs on from its release folder: a Claude turn without a saved native identity and an unreleased recorded process pass to the next image as board executions or records. Windows: exit 75 once no codex-app or operator turn is active; live children run on in their own kill-on-close job, whose handle each child holds, and the next image reopens it by name; the coreq launcher restarts the service. A pending restart skips update checks, logs `restart to <current> waits for #<N>, ..` once per changed set and lists it in `status.json` `restart_waits` (null when none) and `service status` `Restart: waits for ..` (past 600 s: `Restart: host incident: pending over 600 s; waits for ..`).
 
 Linked from `taskq.md` [§ 8](../taskq.md#8-runtimes-and-deployment); this text binds like the contract (R8, R13).
@@ -441,18 +247,6 @@ Boot proof (#1386): a host boot strictly later than an execution's intent commen
 
 Closed-task worktrees (#1549): `.worktrees/taskq-<N>` of a closed task waits only on this host's unreleased executions, named by its host name or its OS hostname (executions written before the `hosts` mapping); another host's process never runs in this host's folder. Cleanup applies the boot proof above to those executions, then removes the worktree by the ordinary dirty rule. An execution it cannot release keeps the worktree with one line `#<N> worktree kept: execution <id> on <host> termination unknown; stop its process or reboot this host`. The service logs a kept or unconfirmed-removal line only when it differs from the last line for that task in `<root>/.taskq/cleanup`, a cache (R1), so a restart with the same outcome logs nothing; `taskq cleanup` always prints every line.
 
-### Input-cache retention review fix (#1223)
-
-The §4 Data pruner now keeps the newest 50 input files plus files with a live Claude turn's shared lock. Starts, resumes and operator turns hold that lock in their process adapter; dropping the adapter releases it. Shared locks allow Claude to read the input on Windows. Unreadable or un-lockable files are preserved.
-
-- Before: `cargo test --locked input_cache_is_bounded_and_live_files_stay` failed with 55 files retained instead of 51.
-- After: the same check passes: the oldest locked input stays, old inactive inputs go, and releasing the lock leaves 50 files on the next prune.
-- `claude_large_input_stays_out_of_argv` additionally checks that the production helper holds its input lock while the payload remains readable, and releases it on drop. No existing assertion or golden trace was removed.
-- macOS sandbox run: `cargo test --locked` reached 206 passing unit tests, 2 ignored live tests, and 2 host-test failures. `host_memory_reads_on_this_host` and `seatbelt_keeps_workers_out_of_the_policy_store` cannot run here: direct `sysctl kern.memorystatus_vm_pressure_level` and `sandbox-exec` probes both report `Operation not permitted`. This is not a passing canonical gate.
-- `cargo run -- selftest` passed 72 golden traces, command formats and a live board read; profiling append remained unknown. The Windows native transport probe above was not repeated for this retention change; Windows lock/read behavior still requires target-platform verification.
-
-Amended R13: §4 Data and the linked §8 Rule delivery detail. The stale description that resumes pass `--settings` now agrees with §8: only a new Claude session installs the compaction hook.
-
 ### App lease
 
 - **App lease.** A `codex-app` (§ 8) submission remains owned until native termination or a `task_complete` with the same native turn id as its exact submitted input, after its captured rollout baseline. Another turn, application disappearance or logout is not termination proof. Missing, truncated or ambiguous history stays unknown. An uncertain queue response is never resubmitted; later matching native evidence may resolve it. Cancellation retains ownership while the turn may run; late task writes remain fenced. Updates and re-execs wait for active app turns (§ 8 step 3).
@@ -480,211 +274,6 @@ Historical status prevention (R6, §3/§4): `historical_unaccepted_exit_reports_
 
 Historical resume remains unsupported by the current execution protocol: the original Exit is immutable, acceptance is absent and that older CLI launch has no native input binding. Closing its writer alone cannot authorize a new execution. The unresolved decision is a scoped native refusal proof receipt permitting same-attempt/session recovery, or an owner-ended attempt followed by a new native session with the old history preserved. Neither option has been applied; no native acceptance may be fabricated and no unknown input may be replayed. The status fix exposes this ownership-versus-health distinction immediately rather than relying on an age threshold or a PM comment.
 
-### Historical writer refusal: decision draft for #2143
-
-**Approved conditional design; not implemented recovery or contract detail.** Source request:
-[#2143, final steer](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6561990402).
-The [owner selected option 1](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6562359732):
-the immediate blocked-status candidate `518daf54` under R6, §3, §4 and M3.13,
-plus the conditional protocol below. Its first step is attributable historical
-proof; approval does not supply missing evidence or authorize changing original
-receipts, controlling the app, or implementing a weaker recovery exception.
-
-The historical target is `taskqorg/agentq#190`, attempt `6560385070`, execution
-`6561176475`, input boundary `6561174165`, host `mac`, runtime `codex`, native
-thread `01a197da-5a44-7042-92c5-4db61865df0b`. These are the reported historical
-identities, not a fresh live read. Existing evidence has Exit without acceptance
-and no launch input binding. It does not yet satisfy the proof below.
-
-#### Proposed contract delta
-
-- **R1 and §3 Recovery:** permit one additional immutable board observation of
-  attributable pre-submission refusal for an exact execution already released
-  Exit. Keep that Exit and `accepted: false`; add a separate refusal-proof fact.
-  It resolves only that execution's input uncertainty, never its task state,
-  ownership lease, session, delivery cursor or another external side effect.
-- **R8 and §2 Executable behavioral model:** add the receipt projection and the
-  trace below before adapters. The §2 task transition table stays unchanged;
-  this is an execution observation like `accepted` and `released`.
-- **§3 and §4:** allow the normal same-attempt continuation retry to pass this
-  one input fence only after receipt readback. Count a proved refusal toward
-  the existing two-refusal bound. Retain every other unresolved-execution,
-  capacity, focus, load, policy and current-attempt check. No eager launch.
-- **§8 Compatibility:** require compatible services on every host serving this
-  board before emitting or consuming the new observation. Old hosts ignore its
-  kind and retain the input fence; mixed admission cannot safely proceed.
-  Do not downgrade while a live continuation depends on the new proof.
-- **R2/R9/R11/R12/R13 remain unchanged:** same attempt and native session only;
-  no grant/runtime/model/limit change, forced lock release, cancellation, restart,
-  owner attestation substituting for native evidence, or fabricated acceptance.
-
-Proposed wire form, emitted only by the owning service after native verification:
-
-```text
-taskq: input-refused 6561176475 attempt 6560385070
-<one canonical JSON proof object described below>
-op-id: input-refused-6561176475
-```
-
-The proof object's required fields and trust sources are:
-
-| Fields | Required source and verification |
-|---|---|
-| `version: 1`, `repo`, `task`, `attempt`, `execution`, `through`, `host`, `runtime`, `session` | Fresh trusted board intent, original assignment and inbox boundary; all must match the target above, with no intervening attempt replacement |
-| `release_comment` | First immutable trusted Exit receipt for this exact execution; verify it remains Exit and no `accepted` observation exists |
-| `account` | Original TaskQ account label from the native launch record, never credentials or inferred current default |
-| `process_identity`, `launch_record_sha256`, `log_sha256`, `log_start`, `log_end` | Preserved contemporaneous service/native launch evidence must bind this execution, account and thread to one CLI invocation and its complete output segment; verify PID creation identity and native process-tree termination, not PID absence alone |
-| `client_sha256`, `adapter_sha`, `verifier_sha` | Exact client and verifier source with native qualification of this refusal occurring before session creation/input submission; version strings alone do not qualify |
-| `proof: "codex-pre-session-active-writer"`, `exit_code` | Complete original output from the bound invocation: nonzero native exit, matching `Failed to create session` and `thread/resume` active-writer errors for the exact thread, with no session/turn events, other output, gaps or truncation |
-
-The service reads existing evidence without resuming a thread or acquiring its
-writer. It must show that the refused invocation never reached input submission;
-the absence of a user message in current history is insufficient. When original
-input binding is missing, a complete contemporaneous launch/output linkage is
-mandatory. Timestamps, matching error text or a newly written manifest alone
-cannot supply it. Hashes protect readback consistency, not authenticity.
-The board trusts the same service author as existing native receipts; the service
-trusts preserved native launch/output evidence, never a worker's assertion.
-Public receipts contain identities and digests only, no input text, credentials
-or private filesystem paths. Retain original artifacts under existing recovery
-retention; do not introduce another journal or rewrite old records.
-
-The pure projection validates schema, exact intent/attempt/cursor, Exit, absence
-of acceptance, and uniqueness. A duplicate proof is idempotent. A different proof
-for the same execution is conflicting evidence and holds admission. A later
-acceptance also holds admission as a contradiction; do not discard either fact.
-The native verifier validates the artifact claims before writing the observation.
-Unknown evidence at either boundary refuses the receipt and any retry.
-
-#### Proposed golden trace (not an executed test)
-
-| Event or observation | Expected projection and admission |
-|---|---|
-| Original spawn accepted and released; answer `6561174165`; executing `6561176475`; released Exit without acceptance | Doing; delivered cursor stays before the answer; ownership retained; blocked/nonrunning immediately |
-| Completed/idle history; app writer remains held, or its lock disappears | No change; no delivery and no new execution |
-| Unbound refusal text, missing launch linkage, truncated output, zero/signal exit, wrong account/thread/execution, or active turn events | No proof receipt; fence remains |
-| Exact verified `input-refused` receipt reads back | Exit unchanged; acceptance false; refusal proof attached only to `6561176475`; cursor unchanged; existing retry policy may consider one continuation |
-| Duplicate same receipt; stale/edited/foreign receipt | Duplicate changes nothing; invalid receipt ignored; never another native call from receipt retry |
-| App still refuses the normal continuation | Record the new execution separately; bounded no-start handling; never stop its writer |
-| Same-session continuation accepts the retained cumulative input once | Advance delivered cursor only from that new execution's native acceptance; duplicate delivery request sends nothing |
-| Acceptance appears for the old refused execution, conflicting proof, or another unresolved execution | Contradiction/unknown remains fenced; no continuation or replacement |
-
-After approval, implement this trace in the existing execution fixtures and run
-the normal gate plus exact-source isolated native qualification. Do not call
-this draft a passing golden trace or an installed-service qualification.
-
-#### Concrete decision and historical feasibility
-
-1. **Approve status and conditional native proof (recommended).** Approve the
-   R6/§3/§4/M3.13 candidate and the R1/R8/§2/§3/§4/§8 delta above. First gather
-   existing attributable evidence for the exact historical invocation read-only.
-   If any required field cannot be established, report it and keep #190 fenced;
-   approval never supplies missing proof. If proof qualifies, preserve its old
-   Exit and permit only the normal same-session continuation after all gates.
-   Gain: a narrowly testable recovery path. Cost: new protocol/cutover work, with
-   no promise that #190's old artifacts can meet its requirements.
-2. **Approve status only.** Approve R6/§3/§4/M3.13, reject the legacy delta and
-   retain #190's fence. Gain: immediate honest reporting with no new recovery
-   authority. Cost: historical delivery remains unresolved.
-
-Existing replay fails because `executing` requires every earlier input to be
-accepted or confirmed no-start; Exit does not meet either condition. Requeue or
-an owner-ended attempt changes task state but cannot resolve the old input's
-external side effect, even in a new session (§3/R11/R12). Closing or archiving
-only the old thread after any active turn finishes can release its writer; it
-does not resolve acceptance. #158's archive finding and #1664's owner-turn
-refusal do not grant a cross-client unlock or replay exception. Therefore this
-draft does not offer an owner-ended replacement as an already permitted repair.
-
-#### Original-source verification after read-scope approval
-
-[Owner answer `6562451325`](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6562451325)
-authorized reading the exact original AgentQ launch/recovery/output/client
-artifacts. No AgentQ task work or state write was performed.
-
-The original attempt log is 898,297 bytes, SHA-256
-`0f3739918c58b12716f66b3b6844bbddee141e26f8ae41846cc426cb28d2a88a`.
-Its prior turn completes at line 71. A resume rules record occupies bytes
-896798–897788; the three native active-writer refusal lines occupy
-897788–898297, at `2026-11-01T17:11:21Z`. They name the expected native thread
-and include both required pre-session errors. There are no session/turn events
-after that resume marker. The original account record names `default`.
-
-This confirms the reported failure, but does not meet the approved receipt's
-attribution requirements: the file has no `taskq.input` or native launch binding
-and no marker for execution `6561176475`. The owning project's protected native
-recovery store has no row for that execution. Its current #190 row belongs to
-attempt `6562400888`, PID `47019` with its distinct native creation identity.
-The old PID/creation identity, original complete process-bound output range and
-original client artifact digest cannot be reconstructed from the old log or
-that current row. Three retained input files contain the pending answer text;
-none binds itself to that old execution. Do not select one by timestamp or
-matching content. The current client version is not the old artifact's digest.
-
-Fresh board readback also changes the recovery target: owner/PM requeue
-`6561958633` ended the original attempt, followed by spawns `6561967939` and
-`6562400888`. The last has native acceptance `6562402263`; local complete status
-reports its actual Codex child, and its log starts native session
-`01a19878-6576-7a81-9c51-e674909a0b40`. The original Exit `6561179427` is unchanged;
-no native acceptance or refusal-proof receipt was added for `6561176475`.
-The current work is a replacement, not proof of delivery of the old input or
-proof that this patch recovered it. This investigation did not cause those
-board transitions and does not retroactively qualify their safety.
-
-The approved protocol requires the same current attempt as well as complete
-native proof. Both conditions fail for this historical execution. No legacy
-importer or alternative attestation is implemented. Concrete safe action now:
-follow the existing replacement attempt; do not send the original pending answer
-again, resume the old thread, or release its writer to try to repair that old
-execution. Its unknown acceptance and immutable evidence remain preserved.
-This is the explicit unsupported historical case allowed by the selected
-conditional option, not a claim of successful same-session recovery.
-
-The original AgentQ root was read with its existing dirty `agentq/hooks.rs` on
-`main`; this worker neither edits nor checks out that tree. Preservation hashes
-of the original log, native history, dirty file and three candidate inputs are
-kept locally for final readback. Existing source regressions protect unbound
-refusal, active-turn, unknown output and duplicate binding; a signal-termination
-case additionally requires Exit/unknown, never inferred no-start.
-Before the signal guard, the same service regression failed with `Some(NoStart)`
-instead of `Some(Exit)` for exit sentinel `-1`. After requiring a positive native
-exit code, that regression passes with every prior refusal/unknown/active/duplicate
-case retained. A signal or zero code cannot supply the native refusal proof.
-
-| Adapter | Existing evidence | What it proves | Missing boundary and smallest change | Unknown and recovery action |
-|---|---|---|---|---|
-| Codex CLI | Board spawn/continuation; attempt log `thread.started`; owned child `try_wait`; native turn events; `kids` on Unix re-exec | Accepted board intent; session identity; owned child exit; attributable turn outcome | Launch checkpoint now binds the captured PID/creation identity to the exact execution and retries failed persistence while retaining the handle. Controlled macOS cold restart and released-row reconciliation are source-qualified; native client cancellation, descendants and per-OS readback remain unqualified | Crash between spawn and identity persistence remains unknown. Query the recorded native session/process; retain capacity and request operator verification if ownership/termination cannot be established. Direct-child exit alone proves nothing about arbitrary descendants or external effects |
-| Claude background | `claude.launch` output after launch; later `thread.started`; native agents state (owned native jobs state fallback when CLI detail is absent) and session transcript; immutable input-file token in native user input | Native job/session identity, exact-input acceptance and attributable terminal state when readback is available | A synced `taskq.input` record now binds execution to input before submission; uncertain launch retains the handle and input. In-memory recovery finds the exact input in native history. Cold reconstruction and protected process-identity recovery are source-qualified. Unix re-exec hands a turn with a saved native identity to the new image (#1407); a controlled macOS subprocess check with a fake native CLI covers no resubmission, kept result and exact Exit after native exit. Installed client re-exec, cold-restart and exit cases remain unqualified | Missing job, launcher timeout or lost response is unknown, not no-start; a refusal (nonzero exit code, no ID, stderr) is no-start. Find the original token in the native transcript and read that job/turn; never create a new job merely to recover observation |
-| Codex App | Handshake thread in attempt log; native rollout; exact input-file token and native turn ID; in-memory rollout baseline | Thread identity; acceptance/completion of the matching turn when the rollout is available | The attempt log now binds execution/input before submission and thread/baseline before queueing; uncertain submission retains `AppTurn`. Cold reconstruction, cancellation and native qualification remain open | Missing app/rollout, failed queue response and unsupported cancellation stay unknown. Inspect the original native turn; request operator verification if native cancellation/readback cannot establish the outcome |
-
-Codex App cancellation contract: on macOS, use the existing parent desktop IPC socket only after exact input/turn readback. Validate same-user protected directory/socket, discover the current owner, and address `thread-follower-interrupt-turn` version 4 to that owner with the exact expected turn. Require matching request/method/owner/turn in its reply. Bound connect and all reads/writes together to 10 seconds, one frame to 1 MiB and total received bytes to 4 MiB. Missing/changed owner, null interruption, malformed/oversized response or timeout preserves unknown; never fall back to the independent daemon or resend the work. Request acknowledgment is not exit; release still needs the matching native terminal. Windows remains unsupported pending named-pipe qualification.
-
-Codex App input evidence: the installed desktop records the user item as `event_msg/item_completed`, with `item.type=UserMessage`, exact text content, thread ID and turn ID. The reader must accept this native shape as well as the earlier `user_message` event. Require the saved thread/root identity and complete submitted text (native UserMessage may append exactly one LF); a response item or final answer alone is not acceptance. Conflicting thread/turn, repeated matching input or malformed evidence remains unknown. A matching `turn_aborted` is terminal cancellation (nonzero outcome), separate from successful `task_complete`; another turn's abort cannot release this execution. Conflicting terminal outcomes remain unknown. The existing completion-count baseline still counts only `task_complete`; exact-input identity binds aborted turns.
-
-Codex App control qualification: the installed shared daemon 0.163.0 returned `notLoaded` and `interrupted` for the same thread/turn that the desktop 0.162.0-alpha.17.2 reported as `active`/`inProgress`. This was a read-only comparison, not an interrupt request. Shared history visibility does not establish live execution ownership; terminal status from a different server cannot release the execution. The native child process exposed no named Unix or TCP listener in that probe. The parent desktop process does own `<CODEX_HOME>/ipc/ipc.sock`; a subsequent read-only `thread-owner-discovery` request returned an owner client for the exact current thread. Installed desktop code exposes a versioned `thread-follower-interrupt-turn` request with `expectedTurnId`, distinct from the shared App Server socket. This private IPC capability is not a stable public API; qualification is scoped to the recorded desktop version and cases below. Official App Server schemas offer interruption and paginated history, but an integrated route to the desktop owner still needs exact-turn control, restart, stale-owner, response-loss and terminal-readback qualification. Do not substitute the shared daemon, resume the thread there, or infer termination from `notLoaded`. Queue routing, owner identity, cancellation and paginated readback must be qualified together before replacing rollout observation. The macOS adapter now sends bounded exact-turn cancellation through that parent IPC route. Deterministic transport cases cover owner/turn mismatch, partial frames, malformed and oversized replies, cumulative receive limits, timeout/disconnect and unprotected or symlink endpoints. It retains its observer and reservation until matching native terminal readback. Other platforms refuse unsupported cancellation. Source transport evidence does not qualify actual App cancellation or installed readiness.
-
-Codex App native lifecycle qualification: a dedicated macOS CLI handshake opened in the installed desktop, then `codex queue` delivered one exact marker prompt and produced one matching completed turn. A later bounded output-only turn tested parent IPC control: an unknown owner was refused, the previous turn ID returned no interruption, and the exact active turn ID returned itself and produced `turn_aborted`; desktop readback then reported the same turn interrupted and the thread idle. No tools were called. Inherited runtime settings were gpt-6.1-sol/high for all three turns; no model, effort, auth or grant override was supplied. The initial owner-discovery timeout after opening the idle thread did not dispatch anything; a later read succeeded before the single queue call. Native records used `item_completed/UserMessage`, exposing the old reader's missing acceptance. Candidate cold readback now recovers the completed and aborted submissions without resending. The fourth output-only input was queued once after the interruption. CLI acknowledgment preceded native acceptance because the desktop had paused its message queue. The owner clicked Resume on that existing message; no resubmission occurred. Native UserMessage added one trailing LF. Exact/one-LF/changed-content/duplicate-input fixtures pass. The production TaskQ adapter then matched turn `01a1459f-27be-7641-9f52-8208ad13cabc`, discovered its current owner, requested exact-turn cancellation and observed matching `turn_aborted` in0.15s. Independent desktop readback reported `interrupted` and an idle thread. This qualifies product cancellation of this no-tools macOS App turn; native restart, response-loss/reconnect, owned-tool cleanup, Windows and full installed service cases remain required.
-
-Codex CLI launcher qualification: the installed macOS npm entrypoint launches a separate native process and forwards SIGINT/SIGTERM/SIGHUP, but cannot forward SIGKILL. An owned `codex exec --json -` probe held stdin open without sending a prompt. Killing only its Node launcher left the same native child alive, reparented to PID 1. Closing the probe's stdin then ended that child; no model turn or tools ran. Launcher PID exit therefore cannot establish native executor termination. Unix launch now resolves the native executable from the selected installed Codex package before applying the existing sandbox and arguments; missing/unknown package layouts refuse rather than fall back to a script. Native executable entrypoints remain direct. No model, permission or version setting changes. The macOS 0.159.3 no-prompt probe passed with the resolved native PID and observed exit. This qualifies the packaging/control boundary only, not a model turn or service crash. Windows retains its existing adapter pending its own qualification; native tool descendants and outer sandbox lifecycle remain separate required cases.
-
-Native cold-owner qualification: macOS Codex 0.159.3 passed two no-prompt cases using the actual resolved native executor, a killed owner subprocess, protected checkpoint, cold adoption and service terminal acknowledgment. One case cancels the original live process after adoption; the other observes its exit before adoption. Lost terminal acknowledgment retains the handle and recovery record until board readback succeeds. Acceptance remains unknown and the receipt is Exit, never no-start; a launch callback rejects any resubmission. Transient zombie identity failure remains unknown until native absence can be observed. This uses a fake board and source service owner, not an installed TaskQ service, model/tool work or descendant qualification.
-
-Linux control qualification: the CoreQ pidfd chain rejects a mismatched creation identity without touching the child, terminates the matching child, and refuses a later signal after exit. The full CoreQ suite and TaskQ cold-restart chain (live, ended, cancel) ran on Linux ARM64 6.12.76-linuxkit in an isolated offline container. FRA kernel 6.8.0-142-generic also passed a separate Python pidfd capability probe as its runtime user against an owned sleep process; this is kernel-capability evidence only, not compiled TaskQ/CoreQ or installed-host acceptance. No PID-only fallback or descendant-exit claim follows from these checks.
-
-Protected recovery records now require `executor-v1` after the header's service PID/creation identity. Older unversioned records are preserved and refused: they may identify a launcher rather than its executor, even when the stored PID is absent. The marker declares the writer's recovery contract; it is not native termination evidence. The existing exact board/process checks still apply. Legacy reconciliation and compatible deployment/rollback remain stage 7 gates; no automatic relabeling or destructive migration.
-
-Source owners: `runtime.rs` (`rules_line`, `turn_input`, `ClaudeTurn::start`, `AppTurn`, `codex_thread`), `main.rs::reexec`, `service.rs::{launch,adopt}`. Native schemas and process-tree guarantees remain unqualified until stage 3. A local before/after marker cannot distinguish a crash before submission from one after native acceptance. Automatic no-start requires definitive pre-submission failure or independently sound native evidence, never a post-crash marker. A final board write whose acknowledgment was lost is reconciled by the same operation ID; a missing final write requires native evidence again.
-
-Claude Code 2.1.301 schema boundary: native job IDs are eight hex characters; session IDs are UUIDs. `agents --json --all` can omit `pid` and `status`: these fields come from a separate live-session registry. A missing optional field is not exit evidence. `done`, `blocked` and `failed` can describe work while the process remains alive. Native `stop` acknowledges a kill request before process exit; the request can leave `done` unchanged, and even a `stopped` row needs independent exit observation. The source adapter accepts short job IDs, observes sessions without `status`, refuses unknown states and requires process readback before successful completion, requesting native stop while that process remains live. Without a previously observed process, exit remains unknown. In-memory original-input lookup is source-tested for lost launch responses, including known-job continuation. Native `state.json` intent locates candidates without reading unrelated transcripts; only the matching native user message establishes acceptance. Known-session continuation uses its recorded input boundary. The lookup accepts one exact matching native input among its candidates in the canonical project and rejects duplicate matches and preserves unknown for copied conversations, duplicates, invalid/incomplete histories or unreadable candidates. Acceptance is separate from copied log rows and exit. #2221: a hand-in this attempt wrote after its execution began is board evidence that the execution took its input. With it, recovery adopts the one candidate that holds this exact input, a copied conversation included, and a terminal row without a process counts as exit when no process was ever recorded; without it, both stay unknown. Native locator records are limited to 1 MiB and share an 8-MiB discovery budget. One native candidate is selected before scanning; ambiguous candidates remain unknown. A large unrelated transcript is skipped. Matching history advances through the shared 8-MiB-per-pass cursor. The first matched turn keeps its own terminal/final text; later unrelated turns cannot replace that outcome. Installed restart reconstruction, failed-job recovery and cold continuation remain stage 3 gates; source fixtures do not qualify this client.
-
-Claude process recovery uses the same protected `kids` record, with runtime `claude` and offset zero. Capture the PID and OS creation identity from the selected native job; keep that first identity immutable for the execution. Retry a failed checkpoint while retaining the observer. On restart validate exact board ownership and the original input, then restore the saved identity without recapturing its PID. A terminal native work state plus disappearance/change of that saved process incarnation can prove process exit; a missing identity, conflicting live PID or unreadable OS identity stays unknown. The record itself proves neither acceptance nor exit. Native stop still targets the verified job, with a separate exit readback. The capture-to-persistence crash window and owned-descendant qualification remain open.
-
-Cold input recovery uses the trusted board identity: new worker/reviewer input paths are `inputs/execution-<task>-<attempt>-<execution>.txt` under the canonical project root. Creation is exclusive; finding a file cannot authorize another submit or prove no-start. Recovery locks that original file and accepts only log locators whose task/attempt/execution/runtime/path/input match the board-derived reference. Native session/thread metadata remains a locator, never task authority; acceptance and completion require the exact input in native history. Older random-name bindings remain preserved and explicitly require legacy reconciliation. This derives identity instead of adding another journal or task store.
-
-The service reconstructs Claude/App observers only for one unresolved local execution without an existing handle or an in-memory pending launch. It rechecks board ownership before adoption. Recovery has a separate callback from launch: it cannot submit, handshake, queue or change permissions. Missing or inconsistent input evidence preserves the reservation and exposes its specific error in status; observation may retry on the next pass. Foreign, released or ambiguous executions are not adopted. App readback validates native session metadata (canonical project and thread; no copied-session marker), exact input and matching turn completion. For native UserMessage items, accept the complete submitted text or that text with exactly one transport-appended LF; preserve all other whitespace and content. Legacy user_message remains byte-exact. Duplicate matches remain ambiguous and cannot establish ownership. Native acceptance clears a lost queue-response error, without queueing again. Source chains cover these rules, exclusive input creation, corrupted/legacy bindings and lock retention. Full native cold-restart qualification remains open. Claude restores its original process identity from the protected record when present; a missing checkpoint remains unknown. macOS App cancellation is qualified for the dedicated no-tools turn below; descendants and other platforms remain unqualified.
-
-Windows App control uses the same parent IPC framing, owner discovery and exact-turn validation as macOS. Its fixed local endpoint is `\\.\pipe\codex-ipc`. The client checks the pipe server's native user token against its own user, uses identification-only security quality of service, and refuses remote/invalid endpoints. The client handle uses byte/nonblocking mode; deadline-bound polling handles partial reads, partial/zero writes and busy connection attempts without overlapped background I/O, reader threads or a helper process. Native writes use at most4096 bytes per call: a target-host kernel probe returned success with zero bytes for a1-MiB write to an empty4-KiB pipe, then accepted4096 bytes immediately. ReadFile keeps native pending distinct from EOF; standard Rust File reads flatten ERROR_NO_DATA into EOF. Neither adaptation changes protocol payload/volume limits or the total deadline. Unsupported mode or peer/token readback stays an explicit cancellation error. [Windows pipe modes](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-type-read-and-wait-modes) specify the immediate-return semantics; this is synchronous bounded polling, not overlapped I/O. The existing total deadline and frame/wire limits apply to the complete exchange. A matching interruption acknowledgment never replaces native terminal readback. Source and installed qualification remain distinct.
-
 ### Unified status and heartbeat
 
 One status protocol uses existing transports: aggregate cross-host observations in the host/project heartbeat, local projections in `status.json`, and durable state/terminal entries in the trusted task log. Per-execution status identifies the attempt and input boundary; running/waiting includes a fixed reason and last observation. Terminal success/failure/cancellation is attributable to the exact execution. A release acknowledges native termination, while result/review retain their task meaning. A later heartbeat cannot reopen a terminal execution. Readback is the acknowledgment; retry the same message identity, not execution.
@@ -701,7 +290,7 @@ The service aims to publish at most 60 s between periodic observations and wakes
 | Runtime/service | Native job/turn APIs, existing attempt logs and input locks | Dropped observation on uncertain submission; implicit replay; unmatched adoption with execution ID 0 | Each recovery-matrix row at each crash boundary, on the native client |
 | Host/coreq service | One owner, shared capacity, explicit project registry, OS adapters | Project unit install/stop paths after verified host migration; unobserved detached lifecycle commands | Correct command scope and persisted outcome after UI exit; update/drain/rollback |
 | Coreq capture | Shared automatic instrumentation, context, typed outcomes, bounded process calls, existing protected writer | New framework or second collector; TaskQ legacy live writer and duplicate observations | First vertical slice through the same live writer used at release; new-handler coverage; loss and budgets |
-| TaskQ profile/report | Historical decoding and read-only legacy analysis | Live writes to `telemetry.sqlite3`; six-operation catalog as a coverage claim | All semantic record kinds preserved or mapped explicitly; mixed historical/new report parity |
+| TaskQ profile/report | Semantic reports over the universal store | Any read or write of `telemetry.sqlite3`; six-operation catalog as a coverage claim | All semantic record kinds preserved or mapped explicitly |
 | UI/read model | One snapshot and receipt format | Per-surface state/command logic; accepted-as-completed reporting | Same action/effect through CLI and tray; native input/window/resize/paint evidence |
 
 Data ownership: board comments are task truth; `host.json`, project registry and grants are owner policy; focus and command receipts preserve desired state and acknowledged actions; native identity enables recovery but grants no authority; `status.json`, capacity and delivery caches are derived views; inputs/rule caches are rebuildable only while unresolved input identity is preserved; telemetry/history is bounded observation. Do not delete policy or receipts merely because they are not task truth.
@@ -736,31 +325,19 @@ These acceptance limits apply to the measured shared-boundary fixture and must a
 | Memory | At most 32 MiB additional resident memory per instrumented process, including queues/cache | Peak additional normal 5.14 MiB; detailed 5.72 MiB | Saturated queues, multiple processes and protected IPC |
 | Detail | At most 60 s and 256 admitted method calls per selection; bounded events and visible truncation | Exactly 256 method terminals, 1000 action terminals, zero lost | Live selector, expiry, CPU and memory under pressure |
 | Flush/required receipts | Existing 3 s shared flush deadline; never acknowledge an uncommitted receipt | Flush below 1 ms at the end of this small fixture | Storage faults, contention and emergency-command policy |
-| Retained telemetry | At most 30 days in a 1 GiB budget: 384 MiB store, 64 MiB WAL, 64 MiB legacy share, 512 MiB reserve | Universal fixture below 1.6 MiB; idle six-project day under 1/30 of the store cap | Combined legacy/DB/WAL/SHM/log/metadata allocation, staging and migration |
+| Retained telemetry | At most 30 days in a 1 GiB budget: 384 MiB store, 64 MiB WAL, 64 MiB peer share, 512 MiB reserve | Universal fixture below 1.6 MiB; idle six-project day under 1/30 of the store cap | Combined peer/DB/WAL/SHM/log/metadata allocation and staging |
 
 Normal capture adds about 25 percent CPU to this deliberately tiny compute fixture; it is not free. The absolute per-boundary budget must be multiplied by the actual action rate. High-frequency internal detail remains off; frequent meaningful UI activity coalesces with counts. The maximum age is not a promise to retain 30 days under capacity pressure: export exposes pruning and unknown intervals. Recalibrate using the same fixture after shared-writer integration and report regressions before changing limits.
 
-## Native Claude lifecycle boundary probe
-
-Claude Code 2.1.301, macOS 27.0.1: one token-only job under the existing trusted TaskQ root, inherited model settings, no agent tools called. Native state was `done` with `status: idle` and a live PID. `claude stop` returned success while native creation-identity readback still found that same process. Later native readback confirmed its absence while the job remained `done`. The primary checkout status stayed unchanged. This proves that neither work state nor stop acknowledgment establishes exit, and that waiting specifically for `stopped` can hang. The candidate adapter also recovered this actual job with its launch identity deliberately omitted, using the original input and previously captured PID; it observed acceptance and exit without another model dispatch. Native listings included a deleted descendant worktree, which is excluded by exact canonical-root matching. An unrelated broken native-project link no longer hides the selected transcript. This qualifies the observed boundary and adapter readback, not service-crash reconstruction: cold restart, full task/review flow, descendants, continuation and the other platform/client rows remain open.
-
-### Windows exact-process control evidence
-
-Disposable source snapshot `416a0cd7b403beb095ae10ce7b7ac55a9b13bbfb`: CoreQ111 unit tests/6 ignored and all existing integration chains pass; TaskQ303 unit tests/15 ignored plus13 integration tests pass. The shared native chain refuses a mismatched creation identity without stopping the child, requests termination of the matching process, reads native exit, and refuses another request against the terminated incarnation. The identity chain also keeps Child alive after wait and verifies that exit259 is terminal.
-
-A separately hash-verified ignored-fixture change enabled the existing no-prompt Codex test on Windows and routed its stop through CoreQ. The installed `codex-cli0.162.0-alpha.17.2`, at the exact executable path observed in the running desktop installation, remained waiting for stdin, received an identity-bound stop and had native exit confirmed in0.14s. No input/model/tool task, service, board, grant, auth or model setting changed. macOS passed the same native fixture in0.17s. Full Windows suite evidence names the earlier manifested snapshot; the later runtime source hash qualifies the ignored native fixture, not a second full-suite snapshot. This proves one known native process, not Windows sandbox/launcher descendants, cold service reconstruction or a full model turn.
-
-### Windows native execution scope
+## Windows native execution scope
 
 The production launch boundary creates one Windows Job Object in the global kernel namespace, starts its child suspended, assigns it before user code can run, then resumes its verified primary thread. Use no breakaway flag; set kill-on-close (#2266): owned descendants inherit the job and survive service interruption while the launcher's duplicated handle keeps the job open, and Windows terminates every member once the last handle closes. The existing protected `kids` row adds `job-kill:<UUID>` for Codex; rows written before #2266 carry `job-global:<UUID>` (no kill-on-close). No second store, daemon or process journal. Old rows remain readable but cannot authorize Windows CLI adoption without that scope. Existing readers reject the extra column rather than silently treat it as a process-only record.
 
 Cold reconstruction requires exact board execution ownership, original PID/creation identity and the saved job token. Query the native job's active-process count; launcher exit alone stays pending while members remain. Reopen and terminate the saved native job rather than rediscover a tree by PID. CLI polling returns pending while an acknowledged stop awaits native exit; failed control/readback remains an explicit error and retains the observer. A Windows job stop is not resent after its acknowledgment. A stop acknowledgment is not exit: observe zero active members, root termination and signaled handles for the observed members before release. Retain those handles while termination is pending: native accounting can reach zero before process wait handles signal. Membership observation accepts at most4096 native process IDs; incomplete/oversized/unreadable lists remain unknown. Remove signaled handles, not an unbounded history. The global namespace permits the same user to reopen the scope from another Windows session without enabling privileges; session-local records are unsupported and preserved. Missing job plus a live original root, unreadable scope or conflicting membership stays unknown. Job names disappear after the last open handle closes even if associated processes survive. Before resume, duplicate a query/terminate job handle into the original process so a live executor preserves the name across service loss. A missing `job-kill` scope with the original root gone proves exit: no handle remained, so kill-on-close ended every member; the service adopts it as ended and writes the ordinary Exit release, so another host can admit the task. A missing `job-global` scope never establishes exit; retain its reservation and require native reconciliation (a reboot proves exit). One row that cannot be adopted is logged and kept with its reservation; it never stops the project loop. Exact trusted board Exit may retire a stale record after confirming no live scope contradicts that already-recorded proof. Existing identity-only Windows rows require explicit legacy reconciliation. Retire/replace protected rows only after scope-aware exit readback. Setup failures before native resume are no-start only after confirmed child cleanup; otherwise retain the observer and report uncertainty.
 
-The target-host regression first proved the defect: production launcher exit returned `Some(0)` while its known descendant was still live. It confirmed cleanup of the exact descendant before failing. The Windows native API documentation supports job lifetime across handle loss while members run, inherited membership, aggregate observation and scope termination. Native sandbox/nested-job compatibility, cold owner reconstruction, old-row refusal and full installed execution remain qualification gates.
+Native Windows scope qualification remains partial. The native chain qualifies warm group observation/cancellation, unrelated-job preservation, failed terminal-receipt retry and protected-record cleanup. With the observer lost after the root exits, the chain verifies explicit unknown, preserved recovery evidence and no release or replay; fixture-only exact descendant cleanup is not product recovery. Installed Codex0.162.0-alpha.17.2 passes both owner-loss cases without a prompt/model: recover and cancel its still-live original process, or retain unknown when it ended and the addressable Job disappeared. No launcher or owner exception is required for the plan's explicit unknown outcome. Windows304 source units and13 integrations pass on that recorded candidate; full installed TaskQ, remaining native client/tool/continuation cases and stages4–7 remain open.
 
-Native Windows scope qualification remains partial. The original descendant regression proved false release before the fix. The corrected native chain now qualifies warm group observation/cancellation, unrelated-job preservation, failed terminal-receipt retry and protected-record cleanup. With the observer lost after the root exits, the chain verifies explicit unknown, preserved recovery evidence and no release or replay; fixture-only exact descendant cleanup is not product recovery. Installed Codex0.162.0-alpha.17.2 passes both owner-loss cases without a prompt/model: recover and cancel its still-live original process, or retain unknown when it ended and the addressable Job disappeared. The earlier failed assertions required automatic release beyond the agreed recovery contract; their logs remain historical evidence. No launcher or owner exception is required for the plan's explicit unknown outcome. Windows304 source units and13 integrations pass on that recorded candidate; full installed TaskQ, remaining native client/tool/continuation cases and stages4–7 remain open.
-
-Windows native errors are captured at each handle-creation/open call before invoking an automatically instrumented helper. The target-host regression installs a tracing subscriber that changes Win32 last-error on method entry: the old helper incorrectly returned123 instead of the originating5. Capture-before-entry preserves the original error; telemetry cannot replace the dependency diagnosis.
+Windows native errors are captured at each handle-creation/open call before invoking an automatically instrumented helper. Telemetry cannot replace the dependency diagnosis.
 
 ## GUI eligibility (contract detail)
 

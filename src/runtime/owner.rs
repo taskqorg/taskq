@@ -1,5 +1,6 @@
 //! Owner sessions (§ 8): how a setup or project request launches, links and gets trusted per runtime. Only this
 //! adapter knows the native argv, output and refusals; `setup` keeps the request state machine.
+use crate::runtime::{CLAUDE_CONFIG, Cap};
 use crate::setup::{dir, Request};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ pub enum Launched { Job { job: String, session: Option<String>, url: Option<Stri
 
 pub(crate) fn supported(runtime:&str)->bool {
     let a=super::of(runtime);
-    super::owner_stream::handles(runtime) || a.has("remote-control") || a.has("sandbox-args") && a.has("cli") && cfg!(any(target_os="macos",windows))
+    super::owner_stream::handles(runtime) || a.has(Cap::RemoteControl) || a.has(Cap::SandboxArgs) && a.has(Cap::Cli) && cfg!(any(target_os="macos",windows))
 }
 
 pub(super) fn request_access(env:&super::Env,runtime:&str,r:&Request)->Res<crate::policy::Effective> {
@@ -28,7 +29,7 @@ fn choice_args(spec:&mut agentq_runtime::agent::NativeSpec,r:&Request) {
 /// The request's runtime adapter (§ 8 table).
 pub fn launch(own: &Path, r: &Request) -> Launched {
     if super::owner_stream::handles(&r.runtime){return super::owner_stream::launch(own,r);}
-    if super::of(&r.runtime).has("thread-link") { codex_launch(own, r) } else { claude_launch(own, r) }
+    if super::of(&r.runtime).has(Cap::ThreadLink) { codex_launch(own, r) } else { claude_launch(own, r) }
 }
 
 /// An owner session's AgentQ `agent` turn (§ 8 Spawn and resume); `base` loses TaskQ's attempt variables first.
@@ -51,10 +52,10 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
     if super::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let codex = crate::host::Policy::read_for_hostname(install, crate::hostname).map_or(vec![], |p| p.codex);
+    let codex = crate::host::Policy::read_for_hostname(install, crate::config::hostname).map_or(vec![], |p| p.codex);
     let codex=r.choice.as_ref().map_or_else(||codex.clone(),|choice|choice.codex(&codex));
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: "", codex: &codex, delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
     let access = match request_access(&env,a.setup,r) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
@@ -100,10 +101,10 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
     if super::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
+    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[], jobs: None };
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
     let access = match request_access(&env,&r.runtime,r) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
@@ -160,17 +161,17 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let a = super::of(&r.runtime);
     let session = r.session.as_deref().filter(|s| super::plain_thread(s)).ok_or("native session unknown; open it in its runtime")?;
     if !super::which(a.bin).is_absolute() { return Err(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
-    if a.has("thread-link") {return Err("App-owned Codex input must use its native queue; CLI resume refused".into());}
+    if a.has(Cap::ThreadLink) {return Err("App-owned Codex input must use its native queue; CLI resume refused".into());}
     release_idle(r)?;
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
+    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let codex = policy.map_or(vec![], |p| p.codex);
     // the same folder and grant as the launch, so the turn resumes where the session started
     let workdir = r.root.as_deref().map_or(own, Path::new);
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
-    let access = request_access(&env, if a.has("sandbox-args") { a.setup } else { &r.runtime },r)?;
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
+    let access = request_access(&env, if a.has(Cap::SandboxArgs) { a.setup } else { &r.runtime },r)?;
     let mut c = super::cli(&r.runtime, &access, &env)?;
     let mut spec = spec(&mut c, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
         "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string()]);
@@ -202,8 +203,8 @@ pub(crate) fn app_submit(own:&Path,r:&Request,input:&str)->Res<()> {
     let session=r.session.as_deref().filter(|s|super::plain_thread(s)).ok_or("native App session unknown")?;
     let install=own.parent().and_then(Path::parent).ok_or("owner installation unknown")?;
     let root=r.root.as_deref().map_or(own,Path::new);let exe=std::env::current_exe().map_err(|_|"owner executable unknown")?;
-    let policy=crate::host::Policy::read_for_hostname(install,crate::hostname)?;
-    let env=super::Env {context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,publish:"",board_env:&[],jobs:None};
+    let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
+    let env=super::Env {context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
     request_access(&env,super::of(&r.runtime).setup,r)?;
     super::app_queue(session,input)
 }
@@ -216,7 +217,7 @@ pub(crate) fn app_observe(own:&Path,r:&Request,t:&crate::dialogue::Turn)->Res<cr
 /// D3: Claude lists a session someone has open; Codex refuses the second writer itself, so its check is the turn.
 pub fn holder(_own: &Path, r: &Request) -> Res<bool> {
     if super::owner_stream::handles(&r.runtime){return super::owner_stream::holder(_own,r);}
-    if super::of(&r.runtime).has("thread-link") { return Ok(false); }
+    if super::of(&r.runtime).has(Cap::ThreadLink) { return Ok(false); }
     Ok(holds(&claude_rows()?, r) == Hold::Other)
 }
 
@@ -236,7 +237,7 @@ fn holds(rows: &[serde_json::Value], r: &Request) -> Hold {
 }
 
 fn claude_rows() -> Res<Vec<serde_json::Value>> {
-    let (ok, out) = super::probe("runtime.agents", &super::which("claude"), &["agents", "--json"]).ok_or("Claude agents unavailable or timed out")?;
+    let (ok, out) = super::probe("runtime.agents", &super::which(super::of(super::CLAUDE).bin), &["agents", "--json"]).ok_or("Claude agents unavailable or timed out")?;
     if !ok { return Err(format!("claude agents: {}", out.trim())); }
     serde_json::from_str(&out).map_err(|e| format!("claude agents: {e}"))
 }
@@ -244,7 +245,7 @@ fn claude_rows() -> Res<Vec<serde_json::Value>> {
 /// D3: Claude resumes only a stopped session, so the turn stops the idle launched job first and reads its release back.
 fn release_idle(r: &Request) -> Res<()> {
     let job = match holds(&claude_rows()?, r) { Hold::Free => return Ok(()), Hold::Other => return Err(open_in(&r.runtime)), Hold::Own => r.job.as_deref().unwrap_or_default() };
-    let (ok, out) = super::probe("runtime.stop", &super::which("claude"), &["stop", job]).ok_or("Claude stop unavailable or timed out; state unknown")?;
+    let (ok, out) = super::probe("runtime.stop", &super::which(super::of(super::CLAUDE).bin), &["stop", job]).ok_or("Claude stop unavailable or timed out; state unknown")?;
     if !ok { return Err(format!("claude stop: {}", out.trim())); }
     if holds(&claude_rows()?, r) == Hold::Free { Ok(()) } else { Err("Claude session still open after stop; state unknown".into()) }
 }
@@ -255,7 +256,7 @@ pub fn open_in(runtime: &str) -> String { format!("open in {runtime}; close it t
 /// D5: the outcome only from the runtime's end record (Claude `result`, Codex `turn.completed`/`turn.failed`); exit alone is unknown.
 pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
     if super::owner_stream::handles(runtime){return super::owner_stream::outcome(runtime,out);}
-    let codex = super::of(runtime).has("thread-link");
+    let codex = super::of(runtime).has(Cap::ThreadLink);
     if codex && format!("{out}{err}").contains("already has an active writer") { return open_in(runtime); }
     for v in out.lines().rev().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
         match (codex, v["type"].as_str()) {
@@ -277,8 +278,8 @@ pub fn transcript_for(install:&Path,r:&Request)->Res<PathBuf> {
 
 pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
     let a = super::of(runtime);
-    if !a.has("thread-link") && !a.has("remote-control") { return Err(format!("runtime {runtime:?}: no retained native transcript file; view unknown")); }
-    if a.has("thread-link") {
+    if !a.has(Cap::ThreadLink) && !a.has(Cap::RemoteControl) { return Err(format!("runtime {runtime:?}: no retained native transcript file; view unknown")); }
+    if a.has(Cap::ThreadLink) {
         codex_transcript_in(&super::codex_home().ok_or("transcript unknown: no home folder")?, session)
     } else {
         super::claude_transcript_in(&super::claude_home().ok_or("transcript unknown: no home folder")?, session)
@@ -342,20 +343,10 @@ pub fn claude_key(p: &Path) -> String { crate::platform::plain_path(p).display()
 /// The owner step for an untrusted folder that works while other Claude sessions run (#1555): Claude saves its own trust.
 pub fn trust_step(folder: &str) -> String { format!("Next: run `claude` in {folder} and accept its trust prompt; other Claude sessions keep running") }
 
-/// `service install` (#1555): the new root's trust, read only; nothing when trusted or Claude has no config here.
-pub fn trust_gap(home: &Path, root: &Path) -> Vec<String> {
-    let key = claude_key(root);
-    match trust_state(home, root) {
-        Ok(None | Some(true)) => vec![],
-        Ok(Some(false)) => vec![format!("Trust: {key} not trusted; Claude workers cannot start here"), trust_step(&key)],
-        Err(e) => vec![format!("Trust: {key} unknown (Claude config unreadable: {e})")],
-    }
-}
-
 /// Whether this host has a claude binary a worker launch would find (#2417).
-pub fn claude_installed() -> bool { super::which("claude").is_absolute() }
+pub fn claude_installed() -> bool { super::which(super::of(super::CLAUDE).bin).is_absolute() }
 
-/// Whether Claude trusts `root` per `<home>/.claude.json`, read only: `None` without a Claude config (#1555, #2300).
+/// Whether Claude trusts `root` per its config file in `<home>`, read only: `None` without a Claude config (#1555, #2300).
 pub fn trust_state(home: &Path, root: &Path) -> Result<Option<bool>, String> {
     let v: serde_json::Value = match fs::read_to_string(home.join(CLAUDE_CONFIG)) {
         Ok(t) => serde_json::from_str(&t).map_err(|e| e.to_string())?,
@@ -367,7 +358,7 @@ pub fn trust_state(home: &Path, root: &Path) -> Result<Option<bool>, String> {
 }
 
 /// Onboarding trust (#1546): `<install>/setup` and every registered root get `hasTrustDialogAccepted` in
-/// `<home>/.claude.json`. Nothing trusted yet changes only while no Claude runs, after a backup; gap lines only.
+/// Claude's config file in `<home>`. Nothing trusted yet changes only while no Claude runs, after a backup; gap lines only.
 pub fn trust(install: &Path, home: &Path, claude_pids: impl FnOnce() -> Res<Vec<String>>) -> Res<Vec<String>> {
     let roots = fs::read_to_string(install.join("projects")).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(String::new()) } else { Err(format!("project registry unreadable: {e}")) })?;
     let keys: Vec<String> = std::iter::once(dir(install)).chain(roots.lines().filter(|l| !l.trim().is_empty()).map(PathBuf::from)).map(|p| claude_key(&p)).collect();
@@ -387,9 +378,9 @@ pub(crate) fn registered_trust_with(install: &Path, root: &Path, config: Option<
     if !crate::host::projects(install)?.contains(&root) { return Err("trust setup: root is not registered".into()); }
     let home = match config {
         Some(p) => p.to_path_buf(),
-        None => PathBuf::from(std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok_or("trust setup: host home unknown")?),
+        None => crate::platform::user_home().ok_or("trust setup: host home unknown")?,
     };
-    // A selected CLAUDE_CONFIG_DIR stores .claude.json inside that directory.
+    // A selected CLAUDE_CONFIG_DIR stores the config file inside that directory.
     let key = claude_key(&root);
     let mut keys = vec![key.clone()];
     if cfg!(windows) { keys.push(key.replace('/', "\\")); }
@@ -398,14 +389,14 @@ pub(crate) fn registered_trust_with(install: &Path, root: &Path, config: Option<
 
 /// Host registration/startup prepares the default config; selected account configs are checked at launch.
 pub(crate) fn registered_host_trust(install: &Path, root: &Path) -> Res<Vec<String>> {
-    if !super::which("claude").is_file() { return Ok(vec![]); }
+    if !super::which(super::of(super::CLAUDE).bin).is_file() { return Ok(vec![]); }
     let config = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
     registered_trust(install, root, config.as_deref())
 }
 
 fn trust_keys(home: &Path, keys: &[String], claude_pids: impl FnOnce() -> Res<Vec<String>>, automatic: bool) -> Res<Vec<String>> {
     let _guard = TRUST_WRITE.lock().map_err(|_| "Claude trust writer unavailable")?;
-    let _file_lock = coreq::file_lock::try_lock(&home.join(".claude.json.taskq-lock")).map_err(|e| format!("Claude trust writer busy: {e}"))?;
+    let _file_lock = coreq::file_lock::try_lock(&home.join(format!("{CLAUDE_CONFIG}.taskq-lock"))).map_err(|e| format!("Claude trust writer busy: {e}"))?;
     let path = home.join(CLAUDE_CONFIG);
     let text = match fs::read_to_string(&path) { Ok(t) => Some(t), Err(e) if e.kind() == std::io::ErrorKind::NotFound => None, Err(e) => return Err(format!("Claude config unreadable: {e}")) };
     let (next, changed) = trusted(text.as_deref(), &keys)?;
@@ -419,12 +410,12 @@ fn trust_keys(home: &Path, keys: &[String], claude_pids: impl FnOnce() -> Res<Ve
     }
     if let Some(t) = &text {
         let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
-        let backup = home.join(format!(".claude.json.bak-onboard-{ms}"));
+        let backup = home.join(format!("{CLAUDE_CONFIG}.bak-onboard-{ms}"));
         // copy keeps the config's owner-only mode; a plain write would leave it world-readable
         fs::copy(&path, &backup).map_err(|e| format!("Claude config backup: {e}; trust unchanged"))?;
         lines.push(format!("Backup: {}", backup.display()));
     }
-    let tmp = home.join(".claude.json.onboard-tmp");
+    let tmp = home.join(format!("{CLAUDE_CONFIG}.onboard-tmp"));
     let mut open = fs::OpenOptions::new();
     open.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -457,7 +448,7 @@ pub(crate) fn trusted(text: Option<&str>, keys: &[String]) -> Res<(String, Vec<S
 /// Running Claude processes of this user's machine; an unreadable list is an error, never none (R12).
 pub fn claude_pids() -> Res<Vec<String>> {
     let out = if cfg!(windows) {
-        crate::platform::command("tasklist").args(["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"]).output()
+        crate::platform::command("tasklist").args(["/FI", format!("IMAGENAME eq {}", super::CLAUDE_EXE).as_str(), "/FO", "CSV", "/NH"]).output()
     } else {
         // ponytail: process name `claude` (native installs); an npm `node` Claude is missed, match the command line if one shows up
         crate::platform::command("pgrep").args(["-x", super::of(super::OWNER).bin]).output()
@@ -465,124 +456,15 @@ pub fn claude_pids() -> Res<Vec<String>> {
     let text = String::from_utf8_lossy(&out.stdout);
     if cfg!(windows) {
         if !out.status.success() { return Err(format!("tasklist exit {:?}", out.status.code())); }
-        return Ok(text.lines().filter_map(|l| l.split("\",\"").nth(1).filter(|_| l.starts_with("\"claude.exe\"")).map(String::from)).collect());
+        return Ok(text.lines().filter_map(|l| l.split("\",\"").nth(1).filter(|_| l.starts_with(&format!("\"{}\"", super::CLAUDE_EXE))).map(String::from)).collect());
     }
     match out.status.code() { Some(0) => Ok(text.split_whitespace().map(String::from).collect()), Some(1) => Ok(vec![]), c => Err(format!("pgrep exit {c:?}")) }
 }
 
-/// Claude's config file in the user's home: project trust lives there.
-pub const CLAUDE_CONFIG: &str = ".claude.json";
 pub(crate) const MISSING: &str = "runtime missing:";
 pub(crate) const LOGIN: &str = "sign-in needed:";
 pub(crate) const ACCESS: &str = "access refused:";
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    // A5: a warm directory memo avoids entry scans once its stamps settle, but tree changes still reveal ambiguity and lost paths refuse.
-    #[test]
-    fn codex_path_memo_revalidates_tree_and_never_substitutes_lost_source() {
-        let root=std::env::temp_dir().join(format!("taskq-source-paths-{}",super::super::uuid()));
-        let dir=root.join("sessions/2026/11/05");fs::create_dir_all(&dir).unwrap();let session=super::super::uuid();let file=format!("rollout-invented-{session}.jsonl");let path=dir.join(&file);fs::write(&path,"invented").unwrap();
-        std::thread::sleep(STAMP_SETTLE+std::time::Duration::from_millis(100));
-        assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);
-        assert_eq!(crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().get("path_cache_hits").copied()),Some(1));
-        let duplicate=root.join("sessions/2026/11/06");fs::create_dir_all(&duplicate).unwrap();fs::write(duplicate.join(&file),"invented").unwrap();
-        assert!(codex_transcript_in(&root,&session).unwrap_err().contains("multiple"));
-        fs::remove_file(&path).unwrap();assert!(codex_transcript_in(&root,&session).unwrap_err().contains("lost"));
-        // Revalidating a different session must not erase this session's accepted-path fence.
-        let other=super::super::uuid();fs::write(duplicate.join(format!("rollout-invented-{other}.jsonl")),"invented").unwrap();
-        codex_transcript_in(&root,&other).unwrap();
-        assert!(codex_transcript_in(&root,&session).unwrap_err().contains("lost"));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    /// Puts a directory back on an exact stamp, as a change within one filesystem clock tick leaves it.
-    fn restore_stamp(dir:&Path,at:std::time::SystemTime){
-        #[cfg(windows)] let handle={use std::os::windows::fs::OpenOptionsExt;fs::OpenOptions::new().access_mode(0x100).custom_flags(0x0200_0000).open(dir).unwrap()};// FILE_WRITE_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS
-        #[cfg(not(windows))] let handle=fs::File::open(dir).unwrap();
-        handle.set_modified(at).unwrap();assert_eq!(fs::metadata(dir).unwrap().modified().unwrap(),at,"fixture must keep the stamp unchanged");
-    }
-
-    // #2415 R12: a tree change in the clock tick of a just-recorded stamp keeps that stamp, so a fresh stamp proves nothing.
-    // Forcing the collision makes the Windows race deterministic: unfixed, the memo returned Ok for the duplicate.
-    #[test]
-    fn colliding_directory_stamps_never_hide_a_duplicate_or_replace_a_source() {
-        let root=std::env::temp_dir().join(format!("taskq-source-collision-{}",super::super::uuid()));
-        let month=root.join("sessions/2026/11");let dir=month.join("05");fs::create_dir_all(&dir).unwrap();
-        let session=super::super::uuid();let file=format!("rollout-invented-{session}.jsonl");let path=dir.join(&file);fs::write(&path,"invented").unwrap();
-        assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);
-        assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);
-        assert_eq!(crate::profile::LAST_SOURCE_WORK.with(|c|c.borrow().get("path_cache_hits").copied()),None,"a fresh stamp is no scan proof");
-        let stamp=fs::metadata(&month).unwrap().modified().unwrap();
-        let duplicate=month.join("06");fs::create_dir_all(&duplicate).unwrap();fs::write(duplicate.join(&file),"invented").unwrap();restore_stamp(&month,stamp);
-        assert!(codex_transcript_in(&root,&session).unwrap_err().contains("multiple"),"duplicate stays unknown under colliding stamps");
-        // Removing the duplicate keeps the accepted source; a replacement after losing it never substitutes.
-        fs::remove_dir_all(&duplicate).unwrap();restore_stamp(&month,stamp);
-        assert_eq!(codex_transcript_in(&root,&session).unwrap(),path);
-        fs::remove_file(&path).unwrap();let moved=month.join("07");fs::create_dir_all(&moved).unwrap();fs::write(moved.join(&file),"invented").unwrap();restore_stamp(&month,stamp);
-        assert!(codex_transcript_in(&root,&session).unwrap_err().contains("lost"),"a replaced source stays refused");
-        assert!(codex_transcript_in(&root,&super::super::uuid()).unwrap_err().contains("unavailable"),"a missing source stays unknown");
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    // R12 / #2022: Windows owner reads must resolve the same native homes as worker recovery, including overrides.
-    #[test]
-    fn owner_transcripts_use_native_homes() {
-        let root = std::env::temp_dir().join(format!("taskq-owner-homes-{}", super::super::uuid()));
-        fs::create_dir_all(&root).unwrap();
-        for overrides in [false, true] {
-            let mut c = std::process::Command::new(std::env::current_exe().unwrap());
-            c.args(["--exact", "runtime::owner::tests::owner_transcript_home_fixture", "--ignored", "--nocapture"])
-                .env("TASKQ_TRANSCRIPT_FIXTURE", &root).env_remove("CLAUDE_CONFIG_DIR").env_remove("CODEX_HOME")
-                .env_remove("HOME").env("USERPROFILE", &root);
-            if !cfg!(windows) { c.env("HOME", &root); }
-            if overrides { c.env("CLAUDE_CONFIG_DIR", root.join("override-claude")).env("CODEX_HOME", root.join("override-codex")); }
-            let out = coreq::process::output("owner.transcript-homes", &mut c, std::time::Duration::from_secs(30)).unwrap();
-            assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        }
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    #[ignore = "isolated home-resolution subprocess"]
-    fn owner_transcript_home_fixture() {
-        let root = PathBuf::from(std::env::var_os("TASKQ_TRANSCRIPT_FIXTURE").expect("owned fixture root"));
-        let session = "11111111-2222-4333-8444-555555555555";
-        for runtime in ["claude", "codex"] {
-            let home = if runtime == "claude" { super::super::claude_home() } else { super::super::codex_home() }.unwrap();
-            assert!(home.starts_with(&root));
-            let relative = if runtime == "claude" { format!("projects/invented/{session}.jsonl") }
-                else { format!("sessions/2026/10/31/rollout-invented-{session}.jsonl") };
-            let path = home.join(relative);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, "invented transcript\n").unwrap();
-            assert_eq!(transcript(runtime, session).unwrap(), path);
-            assert!(transcript(runtime, "../../escape").is_err());
-            assert!(transcript(runtime, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee").is_err());
-            let duplicate = home.join(if runtime == "claude" { format!("projects/duplicate/{session}.jsonl") }
-                else { format!("sessions/2026/10/30/rollout-duplicate-{session}.jsonl") });
-            fs::create_dir_all(duplicate.parent().unwrap()).unwrap();
-            fs::write(&duplicate, "invented duplicate\n").unwrap();
-            assert!(transcript(runtime, session).is_err(), "ambiguous native identity must stay unknown");
-            assert_eq!(fs::read_to_string(&path).unwrap(), "invented transcript\n");
-        }
-    }
-
-    // #1749: the idle job TaskQ launched must not refuse the next Send; any other open writer still does (D3 one writer).
-    #[test]
-    fn only_the_idle_launched_job_is_released() {
-        let r: Request = serde_json::from_value(json!({"schema": 1, "id": "c1", "created": 0, "host": "mac", "platform": "macos", "client": "tray", "runtime": "claude",
-            "targets": [], "brief": "", "state": "launched", "job": "aa11", "session": "s1"})).unwrap();
-        // Real `claude agents --json` shape: an idle launched job still reports `state` `working` (#1762).
-        let row = |id: &str, kind: &str, status: &str| json!({"id": id, "kind": kind, "sessionId": "s1", "status": status, "state": "working"});
-        assert_eq!(holds(&[], &r), Hold::Free);
-        assert_eq!(holds(&[json!({"sessionId": "s2", "kind": "interactive"})], &r), Hold::Free);
-        assert_eq!(holds(&[row("aa11", "background", "idle")], &r), Hold::Own);
-        assert_eq!(holds(&[row("aa11", "background", "busy")], &r), Hold::Other, "a working job is a writer");
-        assert_eq!(holds(&[row("bb22", "background", "idle")], &r), Hold::Other, "another job holds");
-        assert_eq!(holds(&[row("aa11", "background", "idle"), json!({"sessionId": "s1", "kind": "interactive", "status": "idle"})], &r), Hold::Other, "an open terminal holds");
-    }
-}
+#[path = "owner_tests.rs"]
+mod tests;

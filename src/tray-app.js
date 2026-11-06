@@ -6,6 +6,7 @@ const shell=require('./app-shell.js');
 const {h,Fragment}=require('preact');
 const {icon,button}=require('./ui-icons.js');
 const syncView=require('./sync-view.js');
+const time=require('./relative-time.js');
 
 const {createState,create}=execution.module("tray",{
 createState:function(snapshot=null){return {open:null,dashboard:null,popup:null,manualSize:null,agentqRuntime:null,agentqError:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
@@ -270,12 +271,12 @@ incident:function(p,top=false){
     p.alive&&i&&i.state==='sent'&&i.url&&h('a',{class:'project',href:i.url,'data-url':i.url},'Open incident ↗'));
 },
 incidentNotice:function(p){return p.incident_notice?h('details',{class:'group incident-notice','data-view-key':'incident:'+p.root},h('summary',null,'Incident reports: notice ',h('span',{class:'meta'},p.name)),h('div',{class:'body'},'Reports stay local until you choose.'),h('div',{class:'body meta'},'Destination: '+p.incident_repo+' on GitHub (public). Posting account: unknown here; verify the github.com account used by this project before enabling.'),h('div',{class:'body meta'},'Only sanitized fault codes, fingerprint, report ID, release, revision, contract, board/runtime/OS classes, source site and evidence codes are sent. No project, task, user, session, token or raw error text.'),h('div',{class:'body meta'},'Offline or unsupported login: keep a local JSON report. After confirming the destination and posting account, set incident_reports to true in taskq.json to enable, or false to opt out. TASKQ_INCIDENT_REPORTS=off also disables reporting.')):'';},
-service:function(p,host=true){return h('details',{class:'group service','data-view-key':'service:'+p.root},api.disclosure('activity',[host?'Service ':'Project ',h('span',{class:'meta'},p.name+(host?'':' · '+(p.age==null?'status unknown':p.age_text+' old')))]),host&&api.hostService(),incident(p),
+service:function(p,host=true){return h('details',{class:'group service','data-view-key':'service:'+p.root},api.disclosure('activity',[host?'Service ':'Project ',h('span',{class:'meta'},p.name+(host?'':' · '+(p.age==null?'status unknown':p.age_text+' ago')))]),host&&api.hostService(),incident(p),
   p.log?h('button',{class:'project','data-a':'log','data-root':p.root},icon('file-text'),'Open log'):h('div',{class:'body meta'},'Log path unknown'),
   h('button',{class:'project','data-a':'folder','data-root':p.root},'Open folder'),
   ports.workspace?[api.lifecycleControl(p),api.lifecycleControl(p,'stop'),api.lifecycleControl(p,'uninstall')]:api.operationLauncher('service',p.root,'Review service operations…'));},
 hostService:function(){const s=view.S?.service;return h('div',{class:'body meta',role:'status'},'Host service: '+(s?.state==='running'?'running · PID '+s.pid+(s.fresh?' · fresh observation':' · stale observation'):s?.state==='exited'?'recorded process exited; worker outcomes separate':'unknown')+(s?.reason?': '+s.reason:''));},
-when:function(t,tz){return new Date(t*1000).toLocaleString([],{timeZone:tz==='UTC'?'UTC':undefined,dateStyle:'short',timeStyle:'short'})+' '+(tz==='UTC'?'UTC':zone);},
+when:function(t,tz){return tz==='UTC'?time.utc(t*1000):time.local(t*1000);},
 local:function(t,tz){const d=new Date(t*1000);return (tz==='UTC'?d.toISOString():new Date(d-d.getTimezoneOffset()*60000).toISOString()).slice(0,16);},
 custom:function(){
   const d=view.draft;
@@ -285,7 +286,7 @@ history:function(){
   const H=view.S.history,rows=H.bins,n=rows.length;
   const kinds=['completed','new','ask','failed','blocked'],colors=['work','new','ask','failed','ready'];
   const values=b=>[b.counts[0],b.incoming??0,b.counts[2],b.counts[1],b.counts[3]],missing=(b,k)=>b.missing.length||(k===1&&(b.incoming_missing?.length??1));
-  const identity=b=>b.start+'/'+b.end,stamp=t=>new Date(t*1000).toLocaleString([],{timeZone:H.tz==='UTC'?'UTC':undefined,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',...(Number.isInteger(t)?{}:{fractionalSecondDigits:3})})+' '+(H.tz==='UTC'?'UTC':zone),quantity=(count,missing)=>missing?(count?'≥'+count:'? (0 observed)'):String(count);
+  const identity=b=>b.start+'/'+b.end,stamp=t=>when(t,H.tz),quantity=(count,missing)=>missing?(count?'≥'+count:'? (0 observed)'):String(count);
   const selected=Math.max(0,rows.findIndex(b=>identity(b)===view.historyBin));
   const incomplete=rows.some(b=>b.missing.length||b.incoming_missing?.length),tot=kinds.map((_,k)=>rows.reduce((a,b)=>a+values(b)[k],0)),partial=kinds.map((_,k)=>rows.some(b=>missing(b,k)));
   const detail=b=>'['+stamp(b.start)+', '+stamp(b.end)+') · '+kinds.map((k,i)=>k+' '+quantity(values(b)[i],missing(b,i))).join(', ')+(b.ongoing?' · ongoing':'')+(b.missing.length||b.incoming_missing?.length?' · incomplete: '+[...b.missing,...(b.incoming_missing||[])].join(', '):'');
@@ -379,7 +380,7 @@ agents:function(){
     h('div',{class:'body meta'},'Tray '+(view.S.version||'version unknown')+' · service '+(grouped(local.map(p=>p.version||'version unknown'))||'none on this host')),rows,
     // #1702 A3: a remote host's only source here is its board heartbeat (freshness); client, sign-in, account and access read unknown with the missing source
     remote.length>0&&api.heading('Other computers','network'),remote.map(n=>{const beat=view.S.projects.flatMap(p=>Array.isArray(p.hosts)?p.hosts:[]).find(x=>x?.name===n);
-      return h('details',{class:'group remote-agents','data-view-key':'agents:'+n},api.disclosure('network',n+' · '+(beat?.age_text?'heartbeat '+beat.age_text+' old':beat?'heartbeat age unknown':'heartbeat unknown: no host row')+' · clients unknown'),
+      return h('details',{class:'group remote-agents','data-view-key':'agents:'+n},api.disclosure('network',n+' · '+(beat?.age_text?'heartbeat '+beat.age_text+' ago':beat?'heartbeat age unknown':'heartbeat unknown: no host row')+' · clients unknown'),
         ['claude','codex','antigravity','codex-app'].map(rt=>h('div',{class:'body meta'},runtimeName(rt)+' · unknown: '+n+' heartbeat publishes no client version, sign-in, account or access')),
         h('div',{class:'body meta'},'Source: board heartbeat only; no runtime-client or access probe of '+n+' reaches this host.'));}),
     api.heading('Project access','shield'),api.accessFacts(),
@@ -394,14 +395,14 @@ accessFacts:function(){
       return h('details',{class:'access','data-view-key':'access:'+p.root+':'+rt},api.disclosure('shield',runtimeName(rt)+' · '+(p.alive!==true?'at capture: ':'')+state),
         h('div',{class:'body meta'},!a?'Unknown: no runtime access in status.json':runtimeName(rt)+': '+(a.refused?'refused: '+a.refused:'requested '+(a.requested||'unknown')+' · saved grant '+(a.grant||'none')+' · applied '+(a.effective||'unknown')+(a.enforcement?' · '+a.enforcement:''))));
     })):h('div',{class:'body meta'},'Access unknown for '+p.name+': no access in status.json'),
-    h('div',{class:'body meta'},'Applied at the last service pass · '+(p.age==null?'age unknown':p.age_text+' old')))),
+    h('div',{class:'body meta'},'Applied at the last service pass · '+(p.age==null?time.unknown:p.age_text+' ago')))),
     !local.length&&h('div',{class:'body meta'},'Access unknown: no project on this host'));
 },
 about:function(){
   const S=view.S,up=S.projects.find(p=>p.update&&p.update!==p.version),versions=new Map();
   for(const p of S.projects)versions.set(p.version||'version unknown',[...(versions.get(p.version||'version unknown')||[]),p]);
   // R31: equal versions form one group; installed, running and available versions stay apart
-  return f(api.heading('Versions and updates','info'),h('div',{class:'body'},'Tray installed '+(S.version||'version unknown')+' · '+S.host),S.ui&&h('div',{class:'body meta'},'Interface '+S.ui.bundle+' · '+(S.ui.source==='adopted'?'adopted':'built in')+(S.ui.check_error?' · Last check failed: '+S.ui.check_error:'')),S.ui&&h('button',{class:'project','data-a':'ui-check'},'Check for interface update'),[...versions].map(([v,ps])=>h('details',{class:'group','data-view-key':'version:'+v},api.disclosure('info',['Service '+v,h('span',{class:'meta'},' · '+ps.length+' project'+(ps.length===1?'':'s'))]),ps.map(p=>h('div',{class:'body meta'},p.name+' · '+(p.age==null?'status unknown':p.age_text+' old'))))),
+  return f(api.heading('Versions and updates','info'),h('div',{class:'body'},'Tray installed '+(S.version||'version unknown')+' · '+S.host),S.ui&&h('div',{class:'body meta'},'Interface '+S.ui.bundle+' · '+(S.ui.source==='adopted'?'adopted':'built in')+(S.ui.check_error?' · Last check failed: '+S.ui.check_error:'')),S.ui&&h('button',{class:'project','data-a':'ui-check'},'Check for interface update'),[...versions].map(([v,ps])=>h('details',{class:'group','data-view-key':'version:'+v},api.disclosure('info',['Service '+v,h('span',{class:'meta'},' · '+ps.length+' project'+(ps.length===1?'':'s'))]),ps.map(p=>h('div',{class:'body meta'},p.name+' · '+(p.age==null?'status unknown':p.age_text+' ago'))))),
     h('div',{class:'body meta',role:'status'},up?'Update available: '+up.update:S.projects.some(p=>p.alive===true)?'No newer version reported':'Update check unknown'),update());
 },
 setup:function(){
@@ -428,7 +429,7 @@ projects:function(){
       p.issues?h('a',{class:'compact-action',href:p.issues,'data-url':p.issues,title:'Open '+p.name+' board','aria-label':'Open '+p.name+' board'},icon(p.board_kind)):button('link','Board unavailable: registered board missing',{disabled:true}),
       button('folder',p.root?'Open '+p.name+' project folder on this computer':'Project folder unavailable: registered root missing',{'data-a':'folder','data-root':p.root,disabled:!p.root,class:'compact-action'}))),
     mode(p)!=='run'&&h('div',{class:'body meta'},modeText(p)||'Intake unknown'),
-    h('details',{'data-view-key':'project-settings:'+p.root},api.disclosure('focus','Intake details'),h('div',{class:'body meta'},modeText(p)||'Configured intake unknown'),h('div',{class:'body meta'},'You asked: '+(p.request||'not recorded')),h('div',{class:'body meta'},'Readback: '+(p.age==null?'status unknown':p.age_text+' old')),api.operationLauncher('admission',p.root,'Review project admission…')))):h('div',{class:'body meta'},'No projects yet'),addProject());
+    h('details',{'data-view-key':'project-settings:'+p.root},api.disclosure('focus','Intake details'),h('div',{class:'body meta'},modeText(p)||'Configured intake unknown'),h('div',{class:'body meta'},'You asked: '+(p.request||'not recorded')),h('div',{class:'body meta'},'Readback: '+(p.age==null?'status unknown':p.age_text+' ago')),api.operationLauncher('admission',p.root,'Review project admission…')))):h('div',{class:'body meta'},'No projects yet'),addProject());
 },
 controls:function(){
   const run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
@@ -446,7 +447,7 @@ runningAgents:function(compact=false){
     const elapsed=Number.isFinite(p.age)&&p.age>=0&&Number.isFinite(p.tasks_age_seconds)&&p.tasks_age_seconds>=0?p.age+p.tasks_age_seconds:null;
     const fresh=p.complete===true&&p.tasks_live===true&&Number.isFinite(p.observed);
     const read=Array.isArray(p.tasks)&&p.tasks.every(t=>t?.executions==null||Array.isArray(t.executions));
-    const stale=fresh&&read?null:(!read?'missing host/task data':!p.complete?'partial board snapshot':elapsed===null?'missing task observation':'stale task observation')+' ('+(p.name||p.root)+')'+(elapsed===null?' · age unknown':' · '+Math.round(elapsed)+'s old');
+    const stale=fresh&&read?null:(!read?'missing host/task data':!p.complete?'partial board snapshot':elapsed===null?'missing task observation':'stale task observation')+' ('+(p.name||p.root)+')'+(elapsed===null?' · '+time.unknown:' · '+Math.round(elapsed)+'s old');
     partial ||= !fresh||!Array.isArray(p.hosts)||!Array.isArray(p.tasks);
     if(stale)sources.add(stale);
     if(!Array.isArray(p.hosts))sources.add((p.name||'Project')+': host observations missing');
@@ -489,7 +490,7 @@ runningAgents:function(compact=false){
   // R17: CPU and memory with units and age; slots, reservations and board tasks stay apart
   const facts=[capFresh&&Number.isFinite(load?.cpu_percent)&&Number.isFinite(load?.memory_available_percent)&&latest.sample_age_text?'CPU '+Math.round(load.cpu_percent)+'% busy · memory '+Math.round(load.memory_available_percent)+'% available · sampled '+latest.sample_age_text+' ago':'CPU and memory: no sample; sampled only while the load gate is on'];
   if(capFresh&&occupied){
-    facts.push('Occupied slots: '+(Object.entries(cap).map(([rt,n])=>rt+' '+n).join(' · ')||'0')+' · '+latest.age_text+' old');
+    facts.push('Occupied slots: '+(Object.entries(cap).map(([rt,n])=>rt+' '+n).join(' · ')||'0')+' · '+latest.age_text+' ago');
     const reserved=new Map();let known=local.length>0;
     for(const p of local){
       if(p.alive!==true||p.complete!==true||p.tasks_live!==true||!Array.isArray(p.capacity?.reservations)){known=false;continue;}
@@ -524,7 +525,7 @@ runningAgents:function(compact=false){
   const out=[],sorted=[...hosts.values()].sort((a,b)=>a.name.localeCompare(b.name));
   const numberWidth=Math.max(3,...sorted.flatMap(host=>{const t=totals(host);return [sum(t),...t.values()].map(n=>value(n,known(host),host.reasons.size>0).length);}))+'ch';
   for(const host of sorted){
-    const unknown=!known(host),here=host.name===view.S.host,age=host.age!==null&&host.age>=0&&host.age_text?' · '+host.age_text+' old':' · age unknown',why=[...host.reasons].join('; '),t=totals(host),partial=partialHost(host),total=value(sum(t),!unknown,partial),warnings=here?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
+    const unknown=!known(host),here=host.name===view.S.host,age=host.age!==null&&host.age>=0&&host.age_text?' · '+host.age_text+' ago':' · '+time.unknown,why=[...host.reasons].join('; '),t=totals(host),partial=partialHost(host),total=value(sum(t),!unknown,partial),warnings=here?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
     const runtimes=[...host.counts].sort(([a],[b])=>a.localeCompare(b));
     out.push(h('details',{class:'host-line','data-view-key':'host:'+host.name,key:'host:'+host.name},
       h('summary',{class:'host-breakdown',title:'Heartbeat'+age},h('strong',{class:'host-name'},host.name),
@@ -541,13 +542,13 @@ runningAgents:function(compact=false){
   const short=new Map(names.map(n=>{let k=3;while(k<n.length&&names.some(o=>o!==n&&o.slice(0,k)===n.slice(0,k)))k++;return [n,n.slice(0,k)];}));
   const warn=host=>host.name===view.S.host?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
   const text=host=>{const age=host.age!==null&&host.age>=0?host.age_text:'',busy=[...totals(host)].filter(([,n])=>n>0);
-   return [host.name,...(host.retained?['Last known',host.age_text+' old']:[]),...(!known(host)?['runs unknown',...(age?[age+' old']:[]),...(host.reasons.size?[[...host.reasons].join('; ')]:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):[host.reasons.size?'no confirmed running agents':'idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
+   return [host.name,...(host.retained?['Last known',host.age_text+' ago']:[]),...(!known(host)?['runs unknown',...(age?[age+' ago']:[]),...(host.reasons.size?[[...host.reasons].join('; ')]:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):[host.reasons.size?'no confirmed running agents':'idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
   // UX30-06: host totals precede runtime totals; only nonconflicting fresh hosts establish a minimum.
   const overall=new Map([['Codex',0],['Claude',0],['Antigravity',0]]);let anyKnown=false,uncertain=!sorted.length||view.S.projects.some(p=>!p.error&&(p.complete!==true||p.tasks_live!==true));
   for(const host of sorted){const t=totals(host);for(const rt of t.keys())if(!overall.has(rt))overall.set(rt,0);uncertain ||= !known(host)||partialHost(host);if(!known(host))continue;anyKnown=true;for(const [rt,n] of t)overall.set(rt,overall.get(rt)+n);}
   const chip=host=>{const shown=value(sum(totals(host)),known(host),partialHost(host)),label=text(host)+' · Total running agents: '+shown,w=warn(host);
     return h('span',{class:'host-chip'+(!known(host)?' unknown':''),'data-host':host.name,role:'img','aria-label':label,title:label,key:host.name},h('strong',null,short.get(host.name)),h('span',{class:'host-number'},shown),
-      (!known(host)||host.retained)&&host.age_text&&h('span',{class:'meta'},(host.retained?'Last known · ':'')+host.age_text+' old'),w.length>0&&h('span',{class:'host-warning',title:'Sign-in: '+w.join(' · '),'aria-label':'Sign-in: '+w.join(' · ')},icon('circle-alert')));};
+      (!known(host)||host.retained)&&host.age_text&&h('span',{class:'meta'},(host.retained?'Last known · ':'')+host.age_text+' ago'),w.length>0&&h('span',{class:'host-warning',title:'Sign-in: '+w.join(' · '),'aria-label':'Sign-in: '+w.join(' · ')},icon('circle-alert')));};
   const retained=sorted.some(host=>host.retained);
   const completeness=anyKnown&&[...overall.values()].some(n=>n>0)?'Partial':'Unknown';
   const explanation='All observed hosts · running agents'+(retained?' · Last known; current execution unknown':uncertain?' · '+completeness+': confirmed counts are lower bounds; additional agents unknown. '+[...sorted.filter(host=>!known(host)||host.reasons.size).map(host=>host.name+' · '+(host.age_text||'age unknown')+' · '+[...host.reasons].join('; ')),...sources].join('; '):' · complete fresh observations');
@@ -979,7 +980,7 @@ const cutover='https://github.com/taskqorg/taskq/blob/main/taskq.md#9-config-and
 
 // Capacity (taskq.md § 4): the shared resource controls (docs/design/shared-resource-controls.md) over the tray's
 // taskq.resources/1 projection; this adapter only maps an operation onto `service capacity` and its receipt
-const workPageFor=p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('p',{role:'status'},'Legacy capacity editor unavailable; refresh host status.');
+const workPageFor=p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('p',{role:'status'},'Capacity editor unavailable; refresh host status.');
 const resourceCards=new Map(),resourceRequests=new Map(),resourcePayloads=new Map();
 
 // Balancing (menu M12): the shared editor over this host's projects; only the explicitly selected ones change

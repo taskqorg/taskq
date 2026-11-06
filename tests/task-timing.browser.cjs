@@ -12,8 +12,8 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
   if(surface==='tray'){await page.locator('.tqp-counts [data-state=doing]').first().click();}
   else if(width<700)await page.getByRole('button',{name:'List',exact:true}).click();
   const row=page.locator('.task-target[data-task="7"]').first();await row.waitFor();assert(await row.isVisible());
-  assert.deepEqual((await row.locator('.task-timing>span').allTextContents()).map(t=>t.trim()),['2h18m','7','7m']);
-  assert.match(await row.getAttribute('aria-description'),/first 2023-11-14T19:55:20.000Z/);await row.focus();assert.equal(await row.evaluate(e=>e===document.activeElement),true);
+  assert.deepEqual((await row.locator('.task-timing>span').allTextContents()).map(t=>t.trim()),['2h','7','7m']);
+  assert.match(await row.getAttribute('aria-description'),/first [A-Z][a-z]{2} Nov 1[45], \d{2}:\d{2}/);await row.focus();assert.equal(await row.evaluate(e=>e===document.activeElement),true);
   assert.equal(await row.locator('.task-timing [tabindex],.task-timing button,.task-timing a').count(),0);
   const geometry=await row.evaluate(e=>{const r=e.getBoundingClientRect(),title=e.querySelector('.tqp-task-title'),head=e.querySelector('.tqp-task-head');return {overflow:document.documentElement.scrollWidth>innerWidth,clipped:[...e.querySelectorAll('.task-timing>span')].some(n=>{const b=n.getBoundingClientRect();return b.left<r.left-1||b.right>r.right+1;}),title:title.textContent,full:title.getBoundingClientRect().width>=r.width-10,headHeight:head.getBoundingClientRect().height};});
   assert.equal(geometry.overflow,false);assert.equal(geometry.clipped,false);assert(geometry.full);assert.equal(geometry.title,task.title);

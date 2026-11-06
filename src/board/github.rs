@@ -1,6 +1,6 @@
 //! GitHub issues (taskq.md § 1, § 2, § 7): REST v3 on github.com or a GitHub Enterprise host, owner-installed token.
 
-use super::{Api, Board, image_name, Comment, Issue, Kind, Publish, Result, encode, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
+use super::{Api, Board, Error, Reason, image_name, Comment, Issue, Kind, Publish, Result, encode, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
 use serde_json::{Value, json};
 
 pub const KIND: Kind = Kind {
@@ -29,7 +29,7 @@ fn api(host: &str, repo: &str, token: &str) -> Api {
 }
 
 /// The repository plan refuses branch rules: GitHub answers 403 "Upgrade to GitHub Pro" on a private Free repository.
-fn plan_gap(e: &str) -> bool { e.contains("HTTP 403") && e.contains("Upgrade to GitHub Pro") }
+fn plan_gap(e: &Error) -> bool { e.reason() == Reason::PlanGap }
 
 const PLAN: &str = "this private repository's GitHub plan has no branch rules or merge queue";
 
@@ -182,7 +182,7 @@ impl GitHub {
                 return Err("no access to the repository".into());
             }
             if !page["nodes"].is_array() {
-                return Err(format!("GraphQL open issues: {}", v["errors"]));
+                return Err(format!("GraphQL open issues: {}", v["errors"]).into());
             }
             out.extend(page["nodes"].as_array().into_iter().flatten().map(|n| parse_issue(&json!({
                 "number": n["number"], "title": n["title"], "body": n["body"], "updated_at": n["updatedAt"], "created_at": n["createdAt"], "state": "open",
@@ -205,10 +205,10 @@ impl GitHub {
         let status = self.api.call("GET", &format!("/commits/{sha}/status"), None)?.json()?;
         let statuses = status["total_count"].as_u64().unwrap_or(0);
         if runs.is_empty() && statuses == 0 {
-            return Err(format!("no CI on {sha}"));
+            return Err(format!("no CI on {sha}").into());
         }
         if let Some(r) = runs.iter().find(|r| r["status"] != "completed") {
-            return Err(format!("CI {} pending on {sha}", s(r, "name")));
+            return Err(format!("CI {} pending on {sha}", s(r, "name")).into());
         }
         if let Some(r) = runs.iter().find(|r| !matches!(r["conclusion"].as_str(), Some("success" | "neutral" | "skipped"))) {
             return Ok(Some(format!("CI {} {} on {sha}", s(r, "name"), s(r, "conclusion"))));
@@ -216,7 +216,7 @@ impl GitHub {
         match status["state"].as_str() {
             _ if statuses == 0 => Ok(None),
             Some("success") => Ok(None),
-            Some("pending") => Err(format!("CI pending on {sha}")),
+            Some("pending") => Err(format!("CI pending on {sha}").into()),
             st => Ok(Some(format!("CI {} on {sha}", st.unwrap_or("unknown")))),
         }
     }
@@ -271,7 +271,13 @@ impl GitHub {
         let v = self.api.call("POST", &format!("{}/graphql", self.api.root), Some(json!({"query": query, "variables": variables})))?.json()?;
         if let Some(e) = v["errors"].as_array().filter(|e| !e.is_empty()) {
             // #1820: type and message become a surfaced publication reason; raw JSON hid it.
-            return Err(format!("publication GraphQL: {}", e.iter().map(|e| format!("{} {}", s(e, "type"), s(e, "message")).trim().to_string()).collect::<Vec<_>>().join("; ")));
+            let reason = e.iter().map(|e| match (s(e, "type").as_str(), s(e, "message")) {
+                ("UNPROCESSABLE", m) if m.contains("Pull request has merge conflicts") => Reason::MergeConflict,
+                ("UNPROCESSABLE", m) if m.contains("already in the queue") => Reason::AlreadyQueued,
+                ("UNPROCESSABLE", _) => Reason::Refused,
+                _ => Reason::Other,
+            }).find(|r| *r != Reason::Other).unwrap_or(Reason::Other);
+            return Err(Error::new(reason, format!("publication GraphQL: {}", e.iter().map(|e| format!("{} {}", s(e, "type"), s(e, "message")).trim().to_string()).collect::<Vec<_>>().join("; "))));
         }
         if !v["data"].is_object() { return Err("publication GraphQL data unknown".into()); }
         Ok(v["data"].clone())
@@ -279,7 +285,7 @@ impl GitHub {
 
     /// § 7: qualify the merge result, never substitute green checks on the original head.
     /// Err: pending or unknown; `Ok(Err)`: the merge result's CI failed; `Ok(Ok)`: green, plus a note on ignored push failures.
-    fn merge_ci(&self, sha: &str) -> Result<Result<String>> {
+    fn merge_ci(&self, sha: &str) -> Result<std::result::Result<String, String>> {
         *self.ci.borrow_mut()=None;
         if !hex40(sha) { return Err("merge result SHA unknown".into()); }
         let v = self.api.call("GET", &format!("/actions/runs?event=merge_group&head_sha={sha}&per_page=100"), None)?.json()?;
@@ -289,7 +295,7 @@ impl GitHub {
             if let Some(r) = group.iter().find(|r| r["status"] == "completed") {
                 return Ok(Err(format!("merge_group CI {} {} on merge result {sha}", s(r, "name"), s(r, "conclusion"))));
             }
-            return Err(format!("merge_group CI not green on merge result {sha}"));
+            return Err(format!("merge_group CI not green on merge result {sha}").into());
         }
         // #1343: the post-merge push runs on main retest the same tree and held close ~7 minutes; only merge_group Actions suites count.
         // #1413: a failed push run never holds close; the close receipt names it.
@@ -352,14 +358,14 @@ impl GitHub {
             let reason = p["timelineItems"]["nodes"][0]["reason"].as_str().ok_or("queue entry missing; removal reason unknown")?;
             let lower = reason.to_lowercase();
             // #1489: GitHub records the merge removal before the merged flag; reread next pass, never ask.
-            if lower.contains("merged") { return Err(format!("merge queue removed PR as {reason}; merged state not read back yet")); }
+            if lower.contains("merged") { return Err(format!("merge queue removed PR as {reason}; merged state not read back yet").into()); }
             if lower.contains("failed") || lower.contains("failure") { return Ok(Publish::Failed(format!("merge queue removed PR: {reason}"))); }
             if !["conflict", "base branch", "out of date"].iter().any(|s| lower.contains(s)) { return Ok(Publish::Blocked(format!("merge queue removed PR: {reason}"))); }
             // #1820: a conflict removal is final only while the PR still conflicts; a clean PR (the conflicting entry ahead left) re-enqueues below.
             match p["mergeable"].as_str() {
                 Some("MERGEABLE") => {},
                 Some("CONFLICTING") => return Ok(conflict()),
-                _ => return Err(format!("merge queue removed PR #{number} as {reason}; mergeability not computed yet")),
+                _ => return Err(format!("merge queue removed PR #{number} as {reason}; mergeability not computed yet").into()),
             }
         }
         if p["mergeable"] == "CONFLICTING" { return Ok(conflict()); }
@@ -369,14 +375,14 @@ impl GitHub {
         }
         // #1372: GitHub refuses to enqueue a conflicting head; only the worker can fix it, so retrying each pass never helps.
         match self.graphql("mutation($id: ID!, $sha: GitObjectID!) { enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $sha}) { mergeQueueEntry { id } } }", json!({"id": id, "sha": sha})) {
-            Err(e) if e.contains("UNPROCESSABLE") && e.contains("Pull request has merge conflicts") => return Ok(conflict()),
+            Err(e) if e.reason() == Reason::MergeConflict => return Ok(conflict()),
             // #1820: any other refusal (a required check still running) waits with its reason; a failed head check requeues instead of waiting forever.
-            Err(e) if e.contains("UNPROCESSABLE") && !e.contains("already in the queue") => {
-                let refused = format!("merge queue did not admit PR #{number}: {}", e.trim_start_matches("publication GraphQL: UNPROCESSABLE "));
+            Err(e) if e.reason() == Reason::Refused => {
+                let refused = format!("merge queue did not admit PR #{number}: {}", e.text().trim_start_matches("publication GraphQL: UNPROCESSABLE "));
                 return match self.ci(sha) {
                     Ok(Some(fail)) => Ok(Publish::Failed(format!("{refused}; {fail}"))),
-                    Ok(None) => Err(refused),
-                    Err(wait) => Err(format!("{refused}; {wait}")),
+                    Ok(None) => Err(refused.into()),
+                    Err(wait) => Err(format!("{refused}; {wait}").into()),
                 };
             }
             r => { r?; }
@@ -408,7 +414,7 @@ impl GitHub {
         };
         let read = |args: &[&str]| -> Result<String> {
             let out = git(args)?;
-            if !out.status.success() { return Err(format!("private fallback `git {}` failed: {}: {}; worktree kept", args.join(" "), out.status, String::from_utf8_lossy(&out.stderr).trim())); }
+            if !out.status.success() { return Err(format!("private fallback `git {}` failed: {}: {}; worktree kept", args.join(" "), out.status, String::from_utf8_lossy(&out.stderr).trim()).into()); }
             String::from_utf8(out.stdout).map(|s| s.trim().to_string()).map_err(|_| "private fallback Git output unknown".into())
         };
         let common = read(&["rev-parse", "--git-common-dir"])?;
@@ -463,11 +469,11 @@ impl GitHub {
         }
         let status = match self.api.call("GET", &format!("/compare/main...{sha}"), None) {
             // #2047: the result is in no repository this board reads; an unreadable named PR blocks by name at once
-            Err(e) if e.contains("HTTP 404") => return match unread {
+            Err(e) if e.status() == Some(404) => return match unread {
                 Some((name, e)) => Ok(Publish::Blocked(format!("publication PR {name} unreachable: {e}"))),
                 // #2061 A4: one stable reason per result, so the service logs it once, naming the repository
                 None => Err(format!("result {sha} not found in {} (compare HTTP 404); the result names no task PR of another repository",
-                    self.api.repo().rsplit_once("/repos/").map_or("the board repository", |x| x.1))),
+                    self.api.repo().rsplit_once("/repos/").map_or("the board repository", |x| x.1)).into()),
             },
             r => r?.json()?["status"].as_str().unwrap_or_default().to_string(),
         };
@@ -489,7 +495,7 @@ impl GitHub {
             self.publish_in(&status, Some(&pr), task, root, enqueued)
         });
         let named = |e: String| if e.contains(&name) { e } else { format!("{name}: {e}") };
-        Ok(match r.map_err(named)? {
+        Ok(match r.map_err(|e| e.map_text(&named))? {
             Publish::Done(t) => Publish::Done(if t.ends_with("already on main") { format!("{t} of {repo}") } else { t.replacen(&format!("merged #{p}"), &format!("merged #{p} in {repo}"), 1) }),
             Publish::Pending(e) => Publish::Pending(named(e)),
             Publish::Waiting(e) => Publish::Waiting(named(e)),
@@ -593,7 +599,7 @@ impl GitHub {
         let head = prs[0]["head"]["sha"].as_str().ok_or("PR head SHA unknown")?;
         if head != sha { return Ok(head_moved(&prs[0]["number"], head, sha)); }
         // #1935: no queue and no protection on this plan; a person merges, the merged-PR reconcile above closes
-        if manual { return Err(format!("PR #{} {}: {PLAN}; merge it: {}", prs[0]["number"], super::MANUAL_MERGE, s(&prs[0], "html_url"))); }
+        if manual { return Err(format!("PR #{} {}: {PLAN}; merge it: {}", prs[0]["number"], super::MANUAL_MERGE, s(&prs[0], "html_url")).into()); }
         if queue { return self.queue(&prs[0], sha, enqueued); }
         match self.api.call("GET", "", None)?.json()?["private"].as_bool() {
             Some(true) => {},
@@ -616,12 +622,12 @@ impl GitHub {
                 "variables": { "id": prs[0]["node_id"] },
             })))?.json()?;
             if ready["data"]["markPullRequestReadyForReview"]["pullRequest"]["isDraft"] != false {
-                return Err(format!("#{p} is still a draft: {}", ready["errors"]));
+                return Err(format!("#{p} is still a draft: {}", ready["errors"]).into());
             }
         }
         self.observe_publication(&prs[0],None);
         let merged = match self.api.call("PUT", &format!("/pulls/{p}/merge"), Some(json!({ "merge_method": "squash", "sha": sha, "commit_title": format!("{title} (#{p})"), "commit_message": task_line }))) {
-            Err(e) if e.contains("HTTP 405") || e.contains("HTTP 409") => return Err("main moved or merge unavailable; service will reread the private fallback".into()),
+            Err(e) if matches!(e.status(), Some(405 | 409)) => return Err("main moved or merge unavailable; service will reread the private fallback".into()),
             r => r?,
         };
         let back = self.api.call("GET", &format!("/pulls/{p}"), None)?.json()?;
@@ -635,7 +641,7 @@ impl GitHub {
         if back["merged"] == true {
             if let Ok(merged) = merged.json() { self.publication_ancestry(&s(&merged, "sha"), mode); }
         }
-        if back["merged"] == true { self.observe_publication(&back,Some((&s(&back,"merge_commit_sha"),"private_exact_sha",sha))); Ok(Publish::Done(format!("merged #{p} as {}; exact-SHA CI green on {sha}", s(&back, "merge_commit_sha")))) } else { Err(format!("#{p} not merged yet")) }
+        if back["merged"] == true { self.observe_publication(&back,Some((&s(&back,"merge_commit_sha"),"private_exact_sha",sha))); Ok(Publish::Done(format!("merged #{p} as {}; exact-SHA CI green on {sha}", s(&back, "merge_commit_sha")))) } else { Err(format!("#{p} not merged yet").into()) }
     }
 }
 
@@ -703,8 +709,8 @@ fn patch_id(compare: &Value) -> Option<[u8; 20]> {
 }
 
 /// #2047: GitHub refuses to show this token the PR or its repository; retrying never changes it.
-fn unreachable(e: &str) -> bool {
-    ["HTTP 401", "HTTP 403", "HTTP 404"].iter().any(|c| e.contains(c)) && !e.contains("rate limit")
+fn unreachable(e: &Error) -> bool {
+    matches!(e.status(), Some(401 | 403 | 404)) && e.reason() != Reason::RateLimited
 }
 
 /// #2047: the PR links of the newest `result` of task `n` and of the `publish` entries after it, in log order;
@@ -740,7 +746,7 @@ impl Board for GitHub {
     fn take_publication_evidence(&self) -> Vec<crate::readiness::Publication> { self.evidence.take() }
     fn forget(&self) { *self.open.borrow_mut() = None; }
     fn kept(&self) -> Option<i64> { Open::reused_at(&self.open) }
-    fn merge_ci_green(&self, sha: &str) -> Result<()> { self.merge_ci(sha)?.map(|_| ()) }
+    fn merge_ci_green(&self, sha: &str) -> Result<()> { Ok(self.merge_ci(sha)?.map(|_| ())?) }
     fn delivery_gap(&self, mode: &str) -> Result<Option<String>> {
         if mode != "pr" { return Ok(None); }
         match self.main_rules() {
@@ -753,7 +759,7 @@ impl Board for GitHub {
         use crate::check::Probe;
         let rules = match self.main_rules() {
             Err(e) if plan_gap(&e) => return Probe::Gap(format!("{PLAN} (HTTP 403); each PR {}", super::MANUAL_MERGE)),
-            Err(e) => return Probe::Unknown(e),
+            Err(e) => return Probe::Unknown(e.into()),
             Ok(v) => v,
         };
         if rules.as_array().is_some_and(|r| r.iter().any(|r| r["type"] == "merge_queue")) { return Probe::Ok; }
@@ -762,7 +768,7 @@ impl Board for GitHub {
             Ok(Some(true)) if self.strict_main() => Probe::Ok,
             Ok(Some(true)) => Probe::Gap("this private repository has no merge queue and no strict main protection".into()),
             Ok(None) => Probe::Unknown("repository visibility unknown".into()),
-            Err(e) => Probe::Unknown(e),
+            Err(e) => Probe::Unknown(e.into()),
         }
     }
     /// #2194: one `per_page=1` read of issues, commits (Contents: Read) and pulls, then for issues and pulls one write
@@ -772,10 +778,10 @@ impl Board for GitHub {
         use crate::check::Probe;
         let probe = |method: &str, path: &str, body: Option<Value>, ok: u16| match self.api.refresh().and_then(|_| self.api.call(method, path, body)) {
             Ok(_) => Probe::Ok,
-            Err(e) => match crate::health::http_status(&e) {
+            Err(e) => match e.status() {
                 Some(s) if s == ok => Probe::Ok,
                 Some(s @ (401 | 403 | 404)) => Probe::Gap(format!("{} HTTP {s}", if method == "GET" { "read" } else { "write" })),
-                _ => Probe::Unknown(e),
+                _ => Probe::Unknown(e.into()),
             },
         };
         // an empty repository answers 409 to a reader that may read it
@@ -831,15 +837,6 @@ impl Board for GitHub {
         Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(|v| (parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0))).collect())
     }
 
-    fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> {
-        let mut rows = std::collections::BTreeMap::new();
-        for label in ["research", "docs"] {
-            for v in self.api.all(&format!("/issues?state=closed&labels=taskq,{label}&per_page=100"))? {
-                if v.get("pull_request").is_none() { let i=parse_issue(&v); rows.insert(i.number, (i, iso(&s(&v,"closed_at")).unwrap_or(0))); }
-            }
-        }
-        Ok(rows.into_values().collect())
-    }
 
     fn source(&self, path: &str, sha: &str) -> Result<String> {
         use base64::{Engine, engine::general_purpose::STANDARD};
@@ -878,7 +875,7 @@ impl Board for GitHub {
         for l in remove {
             // percent-encode: a label like `q-/../..` must not walk the API path
             match self.api.call("DELETE", &format!("/issues/{n}/labels/{}", encode(l)), None) {
-                Err(e) if e.contains("HTTP 404") => {}
+                Err(e) if e.status() == Some(404) => {}
                 r => {
                     r?;
                 }
@@ -941,7 +938,7 @@ impl Board for GitHub {
             let pr = self.api.call("GET", &format!("{}/repos/{repo}/pulls/{p}", self.api.root), None)
                 .and_then(|r| r.json()).map_err(|e| format!("publication PR {name} unreachable; verify merge before cancelling: {e}"))?;
             if pr["head"]["sha"].as_str().ok_or_else(|| format!("{name} cancellation head unknown"))? != sha { return Ok(()); }
-            return self.dequeue(pr["node_id"].as_str().ok_or_else(|| format!("{name} cancellation PR id unknown"))?).map_err(|e| format!("{name}: {e}"));
+            return self.dequeue(pr["node_id"].as_str().ok_or_else(|| format!("{name} cancellation PR id unknown"))?).map_err(|e| e.map_text(|t| format!("{name}: {t}")));
         }
         // #2347: a result with no task PR, open or merged, has nothing in publication; only a merged one needs a look first
         if prs.is_empty() {
@@ -967,7 +964,7 @@ impl Board for GitHub {
                 self.comment(p, &format!("{marker}: {reason}\nBranch `taskq-{n}` kept. Task: {}", self.url(n)))?;
             }
             let back = self.api.call("PATCH", &format!("/pulls/{p}"), Some(json!({ "state": "closed" })))?.json()?;
-            if back["state"] != "closed" || back["merged"] == true { return Err(format!("PR #{p} close not read back")); }
+            if back["state"] != "closed" || back["merged"] == true { return Err(format!("PR #{p} close not read back").into()); }
             closed.push(p);
         }
         Ok(closed)
@@ -1031,7 +1028,7 @@ impl Board for GitHub {
         // the contents API carries files up to 1 MB inline; the blob API reads larger ones by sha
         let meta = self.api.call("GET", &format!("/contents/{}?ref={sha}", file.split('/').map(encode).collect::<Vec<_>>().join("/")), None)?.json()?;
         let blob = self.api.call("GET", &format!("/git/blobs/{}", s(&meta, "sha")), None)?.json()?;
-        base64::engine::general_purpose::STANDARD.decode(s(&blob, "content").replace('\n', "")).map_err(|e| format!("image {url}: {e}"))
+        base64::engine::general_purpose::STANDARD.decode(s(&blob, "content").replace('\n', "")).map_err(|e| Error::new(Reason::Invalid, format!("image {url}: {e}")))
     }
 }
 
@@ -1046,7 +1043,7 @@ impl GitHub {
         let file = format!("{n}/{digest}-{}", image_name(path));
         let parent = match self.api.call("GET", &format!("/git/ref/{git_ref}"), None) {
             Ok(r) => Some(s(&r.json()?["object"], "sha")),
-            Err(e) if e.contains("HTTP 404") => None,
+            Err(e) if e.status() == Some(404) => None,
             Err(e) => return Err(e),
         };
         let blob = self.api.call("POST", "/git/blobs", Some(json!({"content": base64::engine::general_purpose::STANDARD.encode(&bytes), "encoding": "base64"})))?.json()?;
@@ -1104,237 +1101,13 @@ fn first_admission(events: &[Value]) -> Result<Option<(u64, i64)>> {
 }
 
 #[cfg(test)]
-mod admission_tests {
-    use super::*;
-    #[test]
-    fn earliest_label_event_is_the_only_arrival() {
-        let mut events = json!([{"id":9,"event":"labeled","action":"add","label":{"name":"taskq"},"created_at":"2026-10-30T12:01:00Z"},{"id":3,"event":"labeled","action":"add","label":{"name":"taskq"},"created_at":"2026-10-30T12:00:00Z"},{"id":2,"event":"unlabeled","action":"remove","label":{"name":"taskq"},"created_at":"2026-10-30T11:59:00Z"}]);
-        assert_eq!(first_admission(events.as_array().unwrap()).unwrap(), Some((3, iso("2026-10-30T12:00:00Z").unwrap())));
-        events[1]["created_at"] = Value::Null;
-        assert!(first_admission(events.as_array().unwrap()).is_err());
-        assert_eq!(first_admission(&[]).unwrap(), None);
-    }
-
-    // #1960 defect: a deleted label's events (label null) failed the source on every pass.
-    // Chain: §4 admission records. Risk kept: a deleted label invents or hides a `taskq` admission.
-    #[test]
-    fn deleted_label_events_admit_nothing() {
-        let deleted = json!([{"id":5,"event":"labeled","label":null,"created_at":"2026-10-05T10:00:00Z"},{"id":6,"event":"unlabeled","label":null,"created_at":"2026-10-05T11:00:00Z"}]);
-        assert_eq!(first_admission(deleted.as_array().unwrap()).unwrap(), None);
-        let mut events = deleted.as_array().unwrap().clone();
-        events.push(json!({"id":7,"event":"labeled","label":{"name":"taskq"},"created_at":"2026-10-06T10:00:00Z"}));
-        assert_eq!(first_admission(&events).unwrap(), Some((7, iso("2026-10-06T10:00:00Z").unwrap())));
-    }
-}
+#[path = "github_admission_tests.rs"]
+mod admission_tests;
 
 #[cfg(test)]
-mod token_tests {
-    use super::*;
-
-    // #2352/R12: a lagging full list must not undo a confirmed own heartbeat and bill another PATCH each poll.
-    // Keep periodic renewal and fresh newer board edits; this fixture substitutes HTTP, not native traffic.
-    #[test]
-    fn lagging_lists_do_not_repeat_confirmed_heartbeats() {
-        use std::{cell::Cell, rc::Rc};
-        use crate::board::{Reply, operation};
-        let start = iso("2026-11-04T12:00:00Z").unwrap();
-        let clock = Rc::new(Cell::new(start));
-        let written = Rc::new(Cell::new(start - 30));
-        let listing = Rc::new(Cell::new(0));
-        let (now, beat, mode) = (clock.clone(), written.clone(), listing.clone());
-        let mut api = api("github.com", "o/r", "invented-token");
-        api.transport = Some(Box::new(move |method, url, _| {
-            let updated = if method == "PATCH" { beat.set(now.get()); beat.get() }
-                else if mode.get() == 1 { beat.get() } else if mode.get() == 2 { now.get() }
-                else { beat.get().min(now.get() - 180).max(start - 30) };
-            let text = if mode.get() == 0 { "beat" } else { "board edit" };
-            let row = json!({"number":7,"title":"taskq host win","body":"beat","state":"open",
-                "updated_at":stamp(updated),"created_at":stamp(start - 3600),"author_association":"OWNER",
-                "labels":[{"name":"taskq-host"}]});
-            let body = if method == "PATCH" { row } else if mode.get() == 3 {
-                json!({"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}})
-            } else {
-                assert!(url.ends_with("/graphql"), "{method} {url}");
-                json!({"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false,"endCursor":null},
-                    "nodes":[{"number":7,"title":"taskq host win","body":text,"updatedAt":stamp(updated),
-                        "createdAt":stamp(start - 3600),"authorAssociation":"OWNER","labels":{"nodes":[{"name":"taskq-host"}]}}]}}}})
-            };
-            Ok(Reply {status:200,headers:vec![],body:body.to_string(),operation:operation(method)})
-        }));
-        let h = GitHub {api,rules:Default::default(),open:Default::default(),heartbeat:Default::default(),evidence:Default::default(),ci:Default::default()};
-        let mut writes = 0;
-        for pass in 0..60 {
-            clock.set(start + pass * 60);
-            h.forget(); // a busy board or an expired kept lease forces a full list
-            let list = h.issues(None).unwrap();
-            if clock.get() - list[0].updated >= 100 { h.edit(7,"beat").unwrap(); writes += 1; }
-            assert!(clock.get() - written.get() < 300, "renewal retains the lease");
-        }
-        assert!(writes <= 30, "confirmed writes must survive list lag: {writes} PATCHes/h");
-        eprintln!("lagging full lists: {writes} PATCHes/h; lease renewal retained");
-        for mode in [1, 2] {
-            listing.set(mode); h.forget();
-            assert_eq!(h.issues(None).unwrap()[0].body,"board edit","equal/newer edits win");
-        }
-        listing.set(3); h.forget();
-        assert!(h.issues(None).unwrap().is_empty(),"absent heartbeats are never reinserted");
-        listing.set(0);
-        h.api.generation.set(h.api.generation.get()+1); h.forget();
-        assert!(h.issues(None).unwrap()[0].updated < written.get(),"another credential cannot use the write");
-        for close in [true, false] {
-            h.edit(7,"beat").unwrap();
-            if close { h.close(7).unwrap(); } else { h.reopen(7).unwrap(); }
-            assert!(h.issues(None).unwrap()[0].updated < written.get(),"close/reopen invalidates the write");
-        }
-    }
-
-
-    // #1840 A2: a known repository-access refusal has a plain cause; other failures retain their diagnostic.
-    #[test]
-    fn repository_access_failure_is_plain() {
-        for (kind, expected) in [("NOT_FOUND", "no access to the repository"), ("FORBIDDEN", "GraphQL open issues:")] {
-            let mut api = api("github.com", "o/r", "invented-token");
-            api.transport = Some(Box::new(move |_, _, _| Ok(super::super::Reply {status:200, headers:vec![], operation:"read",
-                body:json!({"errors":[{"type":kind,"message":"invented refusal"}]}).to_string()})));
-            let board = GitHub {api, rules:Default::default(), open:Default::default(), heartbeat:Default::default(),evidence:Default::default(),ci:Default::default()};
-            assert!(board.open_issues().unwrap_err().starts_with(expected));
-        }
-    }
-
-    // #1840 A3 / section 9: one opened board uses the next credential on the wire, with no restart or login fallback.
-    #[test]
-    fn next_read_uses_replaced_host_token() {
-        use std::{io::{Read, Write}, net::TcpListener, time::{Duration, Instant}};
-        let dir = std::env::temp_dir().join(format!("taskq-rotate-{}", crate::runtime::uuid()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("token"), "invented-first-token").unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let root = format!("http://{}", listener.local_addr().unwrap());
-        let server = std::thread::spawn(move || {
-            for name in ["first", "second"] {
-                let until = Instant::now() + Duration::from_secs(60);
-                let mut socket = loop {
-                    match listener.accept() {
-                        Ok((socket, _)) => break socket,
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            assert!(Instant::now() < until, "board read never reached the local fixture");
-                            std::thread::sleep(Duration::from_millis(10));
-                        }
-                        Err(e) => panic!("fixture accept: {e}"),
-                    }
-                };
-                socket.set_nonblocking(false).unwrap();
-                socket.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
-                let mut bytes = vec![];
-                while !bytes.windows(4).any(|w| w == b"\r\n\r\n") {
-                    let mut part = [0; 4096];
-                    let n = socket.read(&mut part).unwrap();
-                    assert!(n > 0 && bytes.len() + n <= 65536, "invalid fixture request");
-                    bytes.extend_from_slice(&part[..n]);
-                }
-                assert!(String::from_utf8_lossy(&bytes).to_ascii_lowercase().contains(&format!("authorization: bearer invented-{name}-token")));
-                let body = json!({"number":1,"title":name,"state":"open","author_association":"OWNER"}).to_string();
-                write!(socket,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
-            }
-        });
-        // Keep the production credential lookup, Kind::open and GitHub adapter; substitute only the HTTP endpoint.
-        let kind = super::super::Kind { api: |root, repo, token| Api::new(root.into(),format!("{root}/repos/{repo}"),token), ..KIND };
-        let board = kind.open(&root, "o/r", None, &crate::platform::tool(&dir)).unwrap();
-        std::fs::write(crate::requests::user_file(&dir, &root, "invented-first-token"), "kept-login").unwrap();
-        assert_eq!(board.me().as_deref(), Ok("kept-login"), "the kept login answers without GET /user");
-        let first = board.issue(1).map(|issue| issue.title);
-        let old_pause = crate::requests::pause_file(&dir, &root, "invented-first-token");
-        std::fs::write(&old_pause, (super::super::wall() + 60).to_string()).unwrap();
-        std::fs::write(dir.join("replacement"), "invented-second-token").unwrap();
-        std::fs::remove_file(dir.join("token")).unwrap();
-        std::fs::rename(dir.join("replacement"), dir.join("token")).unwrap();
-        let second = board.issue(1).map(|issue| issue.title);
-        let joined = server.join();
-        std::fs::remove_file(dir.join("token")).unwrap();
-        let missing = board.issue(1).err();
-        assert!(old_pause.exists(), "rotation preserves the old credential's pause");
-        std::fs::remove_dir_all(dir).unwrap();
-        assert_eq!(first.as_deref(), Ok("first"));
-        assert_eq!(second.as_deref(), Ok("second"));
-        assert!(joined.is_ok(), "replacement credential was not observed on the wire");
-        assert_eq!(missing.as_deref(), Some(TOKEN_ERROR));
-    }
-
-    // Chain: host credential -> service board and worker environment. Risk: login fallback or mismatched errors.
-    #[test]
-    fn service_and_workers_share_the_host_credential_and_missing_token_error() {
-        let dir = std::env::temp_dir().join(format!("taskq-token-{}", crate::runtime::uuid()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let tool = crate::platform::tool(&dir);
-        for contents in [None, Some(" \n")] {
-            if let Some(contents) = contents { std::fs::write(dir.join("token"), contents).unwrap(); }
-            let service = KIND.open("github.com", "o/r", None, &tool).err().unwrap();
-            assert_eq!(service, TOKEN_ERROR);
-            assert_eq!(KIND.worker_env(&tool, "github.com").unwrap_err(), service);
-        }
-        std::fs::write(dir.join("token"), "existing-owner-token\n").unwrap();
-        let env = KIND.worker_env(&tool, "github.com").unwrap();
-        assert_eq!(env, vec![("GH_TOKEN".into(), "existing-owner-token".into()), ("GITHUB_TOKEN".into(), "existing-owner-token".into())]);
-        assert!(KIND.open("github.com", "o/r", None, &tool).is_ok());
-        std::fs::remove_file(dir.join("token")).unwrap();
-        std::fs::create_dir(dir.join("token")).unwrap();
-        assert_eq!(KIND.worker_env(&tool, "github.com").unwrap_err(), TOKEN_ERROR);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-}
+#[path = "github_token_tests.rs"]
+mod token_tests;
 
 #[cfg(test)]
-mod image_tests {
-    use super::*;
-
-    // Chain: §7 Result and close verdicts: the patch-id of a merged head (#1820) is Git's own `git patch-id --stable`.
-    // Risk: a home-made hash that drops what Git keeps (context, file names, modes) closes a task on another patch.
-    #[test]
-    fn patch_id_is_gits_stable_patch_id() {
-        let hex = |id: [u8; 20]| id.iter().map(|b| format!("{b:02x}")).collect::<String>();
-        let modified = json!({"filename": "src/a.rs", "status": "modified", "patch": "@@ -1,2 +1,2 @@
- fn a() {
--old();
-+new();"});
-        let added = json!({"filename": "b.txt", "status": "added", "patch": "@@ -0,0 +1 @@
-+hi"});
-        // expected: `git patch-id --stable` over the same diffs as `git diff` prints them
-        assert_eq!(patch_id(&json!({"files": [modified]})).map(hex).as_deref(), Some("ee8eda765c6017d8c75984d367ee840dff07151a"));
-        assert_eq!(patch_id(&json!({"files": [added, modified]})).map(hex).as_deref(), Some("91a982717c3ffcb3a0c0b1404c10f5ecfada4861"));
-        assert_eq!(patch_id(&json!({"files": [{"filename": "x.png", "status": "added"}]})), None, "an omitted patch is unknown");
-        assert_eq!(patch_id(&json!({"files": []})), None);
-    }
-
-    // Chain: § 2 visual evidence on GitHub (#1782). Risk: the load check or the app copy reads a URL outside this
-    // repository's commit-pinned evidence, or a relative link passes as an image.
-    #[test]
-    fn github_evidence_urls_are_absolute_and_commit_pinned() {
-        let (root, base) = ("https://api.github.com", "https://api.github.com/repos/o/r");
-        let sha = "0123456789abcdef0123456789abcdef01234567";
-        let url = raw_url(root, base, sha, "1782/abc-front.png");
-        assert_eq!(url, format!("https://github.com/o/r/raw/{sha}/1782/abc-front.png"));
-        assert_eq!(raw_path(root, base, &url), Some((sha, "1782/abc-front.png")));
-        assert_eq!(raw_path(root, base, "https://github.com/o/r/raw/taskq-evidence/1782/a.png"), None, "branch, not commit");
-        assert_eq!(raw_path(root, base, &format!("https://github.com/o/x/raw/{sha}/a.png")), None, "other repository");
-        assert_eq!(raw_path(root, base, &format!("https://github.com/o/r/raw/{sha}/../a.png")), None);
-        assert_eq!(raw_path(root, base, "/uploads/x/a.png"), None, "relative link");
-        let ghe = ("https://ghe.example/api/v3", "https://ghe.example/api/v3/repos/o/r");
-        assert_eq!(raw_url(ghe.0, ghe.1, sha, "1/a.png"), format!("https://ghe.example/o/r/raw/{sha}/1/a.png"));
-    }
-
-    // Chain: § 2 visual evidence videos on GitHub (#1844). Defect: GitHub raw serves an MP4 as a download, so csgo#415's
-    // videos never played from the task. Risk: a jsDelivr URL of another repository, a branch or Enterprise is load-checked.
-    #[test]
-    fn github_public_videos_link_the_commit_pinned_file_through_jsdelivr() {
-        let (root, base) = ("https://api.github.com", "https://api.github.com/repos/o/r");
-        let sha = "0123456789abcdef0123456789abcdef01234567";
-        let url = cdn_url(base, sha, "1844/abc-run.mp4");
-        assert_eq!(url, format!("https://cdn.jsdelivr.net/gh/o/r@{sha}/1844/abc-run.mp4"));
-        assert_eq!(raw_path(root, base, &url), Some((sha, "1844/abc-run.mp4")));
-        assert_eq!(raw_path(root, base, "https://cdn.jsdelivr.net/gh/o/r@taskq-evidence/1844/a.mp4"), None, "branch, not commit");
-        assert_eq!(raw_path(root, base, &format!("https://cdn.jsdelivr.net/gh/o/rx@{sha}/a.mp4")), None, "other repository");
-        let ghe = ("https://ghe.example/api/v3", "https://ghe.example/api/v3/repos/o/r");
-        assert_eq!(raw_path(ghe.0, ghe.1, &cdn_url(ghe.1, sha, "1/a.mp4")), None, "jsDelivr cannot reach Enterprise");
-    }
-}
+#[path = "github_image_tests.rs"]
+mod image_tests;

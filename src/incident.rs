@@ -34,9 +34,6 @@ fn closed_pipe(msg: &str) -> bool {
 thread_local!(static ACTIVE: Cell<bool> = const { Cell::new(false) });
 #[cfg(test)]
 thread_local!(static DETECTED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
-#[cfg(test)]
-pub fn take_detected() -> Vec<String> { DETECTED.with(|v| std::mem::take(&mut *v.borrow_mut())) }
-
 fn version(s: &str) -> bool {
     s.len() <= 64 && s.split_once('-').map_or(s, |p| p.0).split('.').count() == 3
         && s.split_once('-').map_or(s, |p| p.0).split('.').all(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
@@ -47,7 +44,8 @@ fn site(s: &str) -> bool {
     if s == "dep" { return true; }
     let Some((file, line)) = s.rsplit_once(':') else { return false };
     let Some(name) = file.strip_prefix("src/").and_then(|f| f.strip_suffix(".rs")) else { return false };
-    ["main", "board/mod", "board/github", "board/gitlab", "core", "labels", "operator", "platform", "runtime", "service", "tray", "incident"].contains(&name)
+    (["main", "cli", "config", "http", "paths", "wake", "service_run", "board/mod", "board/github", "board/gitlab", "core", "labels", "operator", "platform", "runtime", "service", "tray", "incident"].contains(&name)
+        || name.starts_with("cli/") || name.starts_with("tray/"))
         && line.parse::<u32>().is_ok_and(|n| n > 0)
 }
 
@@ -71,7 +69,7 @@ fn now() -> u64 {
 }
 
 fn context(root: &Path) -> Option<(Value, Option<bool>)> {
-    let v: Value = serde_json::from_slice(&fs::read(root.join("taskq.json")).ok()?).ok()?;
+    let v = crate::config::ProjectFile::of(root).read().ok()?;
     let setting = match v.get("incident_reports") {
         None => None,
         Some(Value::Bool(b)) => Some(*b),
@@ -106,7 +104,7 @@ pub fn detect(code: &str, site: &str, runtime: &str, fields: &[&str], evidence: 
     {
         if ACTIVE.replace(true) { return; }
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let Ok(root) = crate::find_root() else { return };
+            let Ok(root) = crate::paths::find_root() else { return };
             let Some((v, setting)) = context(&root) else { return };
             let tool = crate::platform::tool(&crate::platform::default_install());
             if coreq::incident::disabled(&tool, setting) { return; }
@@ -120,10 +118,10 @@ pub fn detect(code: &str, site: &str, runtime: &str, fields: &[&str], evidence: 
                 coreq::incident::send(&tool, &root, setting, github_com, &f)
             } else { unsafe_outcome(&f) };
             out.path = out.path.and_then(|p| p.strip_prefix(&root).ok().map(Path::to_path_buf));
-            let _ = fs::create_dir_all(crate::dot(&root));
+            let _ = fs::create_dir_all(crate::paths::dot(&root));
             let mut local = out.json();
             local["profile"] = json!({"command": "taskq profile", "at_ms": out.at.saturating_mul(1000)});
-            let _ = crate::platform::write_atomic(&crate::dot(&root).join("incident.json"), &local.to_string());
+            let _ = crate::platform::write_atomic(&crate::paths::dot(&root).join("incident.json"), &local.to_string());
         }));
         ACTIVE.set(false);
     }
@@ -154,11 +152,11 @@ pub fn install_panic_hook() {
             let msg = info.payload_as_str().unwrap_or("");
             if closed_pipe(msg) && !crate::host::active() { crate::platform::exit(141); } // consumer closed the pipe: no TaskQ defect (§ 4)
             #[cfg(not(test))]
-            if let Ok(root) = crate::find_root() {
+            if let Ok(root) = crate::paths::find_root() {
                 use std::io::Write;
                 let at = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
-                let _ = fs::create_dir_all(crate::dot(&root));
-                let _ = fs::OpenOptions::new().create(true).append(true).open(crate::dot(&root).join("cli-errors.log"))
+                let _ = fs::create_dir_all(crate::paths::dot(&root));
+                let _ = fs::OpenOptions::new().create(true).append(true).open(crate::paths::dot(&root).join("cli-errors.log"))
                     .and_then(|mut f| writeln!(f, "panic at {at}: {msg}"));
             }
             let class = panic_class(msg);
@@ -179,7 +177,7 @@ pub fn status(root: &Path) -> Value {
     if coreq::incident::disabled(&crate::platform::tool(&crate::platform::default_install()), setting) {
         return json!({"state": "disabled"});
     }
-    fs::read(crate::dot(root).join("incident.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null)
+    fs::read(crate::paths::dot(root).join("incident.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null)
 }
 
 /// The project's board name and whether it is github.com, where posting may reuse the board token.
@@ -211,19 +209,12 @@ pub fn line(v: &Value) -> String {
     let state = v["state"].as_str().unwrap_or("none");
     if matches!(state, "none" | "disabled") { return format!("Incidents: {state}"); }
     if !matches!(state, "sent" | "local" | "unsupported-auth") { return "Incidents: unknown".into(); }
-    let age = crate::age(now().saturating_sub(v["at"].as_u64().unwrap_or(now())) as i64);
+    let age = crate::time::age(now().saturating_sub(v["at"].as_u64().unwrap_or(now())) as i64);
     let reason = v["reason"].as_str().map(|r| format!(" ({r})")).unwrap_or_default();
     let dest = v["url"].as_str().or_else(|| v["path"].as_str()).map(|s| format!(" · {s}")).unwrap_or_default();
     format!("Incident: {state} {} {age}{reason}{dest} · profile: `taskq profile`", v["fault"].as_str().unwrap_or("unknown"))
 }
 
 #[cfg(test)]
-fn report(tool: &coreq::Tool, root: &Path, setting: Option<bool>, f: &Fault, net: Option<&mut dyn Transport>) -> Outcome {
-    if coreq::incident::disabled(tool, setting) { return coreq::incident::report(tool, root, setting, f, None); }
-    if !safe(f) { return unsafe_outcome(f); }
-    coreq::incident::report(tool, root, setting, f, net)
-}
-
-#[cfg(test)]
 #[path = "incident_tests.rs"]
-mod tests;
+pub(crate) mod tests;
