@@ -5,6 +5,55 @@ fn python() -> PathBuf {
     which(if cfg!(windows) { "python" } else { "python3" })
 }
 
+// §4/A3: delayed persistence must not recapture another execution's transcript or queue delay.
+#[test]
+fn agentq_delayed_record_excludes_later_turn_bytes() {
+    let root = std::env::temp_dir().join(format!("taskq-agentq-freeze-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let log = root.join("native.log");
+    let mut request = Request::new(&root, &log, "invented input", "taskq");
+    request.command = vec![
+        python().into(),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/runtime-launch.py")
+            .into(),
+    ];
+    request.optimization = agentq_runtime::optimization::Intent::Off;
+    request.env = vec![
+        ("TASKQ_FIXTURE_RT".into(), "claude".into()),
+        (
+            "TASKQ_FIXTURE_RECORD".into(),
+            root.join("request.json").into(),
+        ),
+    ];
+    let adapter = agent("claude").unwrap();
+    let mut run = submit("claude", None, &request).unwrap();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while adapter.poll(&mut run).unwrap() == agentq_runtime::agent::State::Running {
+        assert!(std::time::Instant::now() < until);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let before = adapter.report(&run).unwrap();
+    assert_eq!(before.usage.input, Some(2));
+    writeln!(File::options().append(true).open(&log).unwrap(), "{}",
+        serde_json::json!({"type":"assistant","message":{"id":"next-execution","model":"invented-model","usage":{"input_tokens":100,"output_tokens":1}}})).unwrap();
+    let store = coreq::telemetry::Store::open(&root.join("records.db")).unwrap();
+    run.record(&record_context(), &store)
+        .unwrap()
+        .recorded
+        .unwrap();
+    let rows = store.export_kinds(&["agent.turn"], 0, 0, 100).unwrap();
+    let input = rows["events"][0]["observation"]["input_tokens"].clone();
+    drop(store);
+    drop(run);
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(
+        input,
+        serde_json::json!(2),
+        "AgentQ record reread a later execution after terminal polling"
+    );
+}
+
 // §8/R9/R12: trait launch and resume retain literal input, host flags, daemon env and native scope.
 #[test]
 fn trait_launch_preserves_input_policy_environment_and_exit() {
@@ -118,9 +167,17 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
             let mut child = native(rt, resume.then_some(l.session.as_str()), &mut req).unwrap();
             child.install = Some(root.clone());
             let identity = child.native_identity().unwrap();
+            let held = coreq::file_lock::lock(&root.join("taskq-profile.lock")).unwrap();
             let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
             loop {
+                let began = std::time::Instant::now();
                 if let Some(code) = child.exited().unwrap() {
+                    let elapsed = began.elapsed();
+                    drop(held);
+                    assert!(
+                        elapsed < std::time::Duration::from_millis(500),
+                        "terminal polling waited on telemetry: {elapsed:?}"
+                    );
                     assert_ne!(
                         code, 0,
                         "a completed turn stops the deliberately lingering client"
@@ -195,6 +252,9 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
             assert!(child.job().unwrap().starts_with("job-kill:"));
         }
     }
+    assert!(super::super::records::settle(
+        std::time::Duration::from_secs(30)
+    ));
     let reader =
         coreq::telemetry::Reader::open(&root.join("telemetry.log/universal.sqlite3")).unwrap();
     let rows = reader.export_kinds(&["agent.turn"], 0, 0, 100).unwrap();

@@ -3719,6 +3719,7 @@ fn uncertain_background_launch_retains_its_bound_input() {
         assert_eq!(record["input"], input);
         assert!(!written.contains("private task body"));
         let mut turn = ClaudeTurn {
+            start: 0,
             root: root.clone(),
             log: log.clone(),
             session: l.session.clone(),
@@ -3976,6 +3977,7 @@ fn claude_lost_reply_recovers_only_its_unique_input() {
             std::fs::write(&b, "x".repeat(8 * 1024 * 1024 + 1)).unwrap();
         }
         let mut turn = ClaudeTurn {
+            start: 0,
             root: root.clone(),
             log: root.join("attempt.log"),
             session: if matches!(case, "resume" | "old") || shared {
@@ -4135,6 +4137,7 @@ fn native_claude_lost_reply_readback() {
     let log = evidence.join("candidate-readback.log");
     File::create(&log).unwrap();
     let mut turn = ClaudeTurn {
+        start: 0,
         root,
         log,
         session: String::new(),
@@ -4293,6 +4296,7 @@ fn handed_in_copy_job_is_adopted_and_exits_without_recorded_process() {
     ];
     // The § 4 recovery shape: saved session from the binding, no job id, no recorded process.
     let mut t = ClaudeTurn {
+        start: 0,
         root: root.clone(),
         log: root.join("attempt.log"),
         session: saved.clone(),
@@ -4397,6 +4401,7 @@ fn resumed_claude_job_without_process_or_input_is_lost_after_the_accept_deadline
     let session = uuid();
     let (input, lock, _) = claude_input(&root, "answered resume body", None).unwrap();
     let mut t = ClaudeTurn {
+        start: 0,
         root: root.clone(),
         log: root.join("attempt.log"),
         session: session.clone(),
@@ -4470,6 +4475,7 @@ fn resumed_claude_job_without_process_or_input_is_lost_after_the_accept_deadline
         (true, Some("lost-input"), Ok(Some(-1)))
     );
     let mut fresh = ClaudeTurn {
+        start: 0,
         resumed: None,
         lost: None,
         done: false,
@@ -4507,6 +4513,7 @@ fn recovered_worktree_claude_job_is_accepted_and_reports_progress() {
     std::fs::write(root.join("projects/a").join(format!("{session}.jsonl")),line(serde_json::json!({"type":"user","message":{"content":input}}))
             +&line(serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}))).unwrap();
     let mut t = ClaudeTurn {
+        start: 0,
         root: root.clone(),
         log: root.join("attempt.log"),
         session: session.clone(),
@@ -4583,6 +4590,7 @@ fn claude_cold_identity_survives_checkpoint_failure_and_process_exit() {
         .spawn()
         .unwrap();
     let mut t = ClaudeTurn {
+        start: 0,
         root: root.clone(),
         log,
         session: l.session.clone(),
@@ -4922,6 +4930,7 @@ fn claude_image_child() {
         std::fs::write(root.join("native-pid"), pid.to_string()).unwrap();
         agents("working", Some(pid));
         let turn = ClaudeTurn {
+            start: 0,
             root: root.clone(),
             log,
             session: String::new(),
@@ -5052,6 +5061,7 @@ fn claude_records_carry_their_own_process() {
     let mut first = Command::new("sleep").arg("30").spawn().unwrap();
     let mut second = Command::new("sleep").arg("30").spawn().unwrap();
     let turn = |task: u64, id: &str| ClaudeTurn {
+        start: 0,
         root: root.clone(),
         log: root.join(format!("{task}.log")),
         session: String::new(),
@@ -5151,6 +5161,7 @@ fn recovered_claude_job_on_a_new_process_resolves() {
     )
     .unwrap();
     let turn = |accepted: bool, session: &str| ClaudeTurn {
+        start: 0,
         root: root.clone(),
         log: root.join("1592.log"),
         session: session.into(),
@@ -5259,6 +5270,7 @@ fn exited_process_resolves_from_board_exit_at_handover() {
     child.kill().unwrap();
     child.wait().unwrap();
     let turn = ClaudeTurn {
+        start: 0,
         root: root.clone(),
         log: root.join("attempt.log"),
         session: String::new(),
@@ -5359,6 +5371,7 @@ fn claude_native_state_requires_exit_evidence() {
     let log = root.join("attempt.log");
     File::create(&log).unwrap();
     let mut t = ClaudeTurn {
+        start: 0,
         root: root.clone(),
         log,
         session: uuid(),
@@ -5533,6 +5546,7 @@ fn claude_handed_in_job_stopped_by_the_service_exits_ok_and_real_failures_stay_f
     let live = coreq::process::identity(std::process::id()).unwrap();
     let session = uuid();
     let turn = |handed: bool, native: Option<coreq::process::Identity>| ClaudeTurn {
+        start: 0,
         root: root.clone(),
         log: log.clone(),
         session: session.clone(),
@@ -7245,6 +7259,86 @@ fn a_differing_daemon_starts_no_background_job() {
 
 // §4/A3: native session hooks delegate parsing and immutable IDs to AgentQ; old calls and private payload stay out.
 #[test]
+fn claude_recovered_observations_keep_resume_boundaries() {
+    let root = std::env::temp_dir().join(format!("taskq-resume-records-{}", uuid()));
+    std::fs::create_dir_all(root.join(".taskq")).unwrap();
+    std::fs::create_dir_all(root.join("telemetry.log")).unwrap();
+    let log = attempt_log(&root, "worker", 2428, 77);
+    for (execution, tokens) in [(77, 2), (88, 3)] {
+        let l = Launch {
+            files: String::new(),
+            execution: Some(execution),
+            task: 2428,
+            title: String::new(),
+            attempt: 77,
+            role: "worker".into(),
+            rt: "claude".into(),
+            session: uuid(),
+            url: String::new(),
+            resume: (execution != 77).then(|| "continue".into()),
+        };
+        let start = std::fs::metadata(&log).map_or(0, |m| m.len());
+        let (input, lock, path) = claude_input(&root, "invented input", Some(&l)).unwrap();
+        bind_input(
+            &log,
+            &l,
+            &path,
+            &input,
+            serde_json::json!({"session":l.session,"before":0}),
+        )
+        .unwrap();
+        writeln!(File::options().append(true).open(&log).unwrap(), "{}",
+            serde_json::json!({"type":"assistant","message":{"id":format!("call-{execution}"),"model":"invented-model","usage":{"input_tokens":tokens,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}})).unwrap();
+        drop(lock);
+        let x = crate::core::Execution {
+            id: execution,
+            attempt: 77,
+            through: execution,
+            host: "fixture".into(),
+            runtime: "claude".into(),
+            accepted: true,
+            release: None,
+            usage_hold: None,
+        };
+        for _ in 0..2 {
+            let recovered = recover(&root, &root, 2428, &x).unwrap();
+            let offset = recovered.input_offset().unwrap();
+            assert_eq!(
+                offset, start,
+                "restart must retain this execution's copied-log boundary"
+            );
+            let held = coreq::file_lock::lock(&root.join("taskq-profile.lock")).unwrap();
+            let began = std::time::Instant::now();
+            record_session(&root, &log, offset, "claude", 2428, 77).unwrap();
+            let elapsed = began.elapsed();
+            drop(held);
+            assert!(
+                elapsed < std::time::Duration::from_millis(500),
+                "session handoff waited on telemetry: {elapsed:?}"
+            );
+        }
+    }
+    assert!(records::settle(std::time::Duration::from_secs(30)));
+    let reader =
+        coreq::telemetry::Reader::open(&root.join("telemetry.log/universal.sqlite3")).unwrap();
+    let rows = reader.export_kinds(&["agent.turn"], 0, 0, 100).unwrap();
+    let turns = rows["events"].as_array().unwrap();
+    assert_eq!(
+        turns.len(),
+        2,
+        "ask/resume and restart keep one immutable record per execution"
+    );
+    let mut tokens: Vec<_> = turns
+        .iter()
+        .map(|v| v["observation"]["input_tokens"].as_u64().unwrap())
+        .collect();
+    tokens.sort();
+    assert_eq!(tokens, [2, 3], "old calls never enter the resumed turn");
+    drop(reader);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn session_observations_use_agentq_and_only_the_new_native_bytes() {
     use tracing_subscriber::prelude::*;
     let root = std::env::temp_dir().join(format!("taskq-session-observation-{}", uuid()));
@@ -7276,6 +7370,7 @@ fn session_observations_use_agentq_and_only_the_new_native_bytes() {
             record_session(&root, &log, old.len() as u64, "claude", 2428, 77).unwrap();
         }
     });
+    assert!(records::settle(std::time::Duration::from_secs(30)));
     let rows = store
         .export_kinds(&["agent.turn", "agent.call"], 0, 0, 100)
         .unwrap();
