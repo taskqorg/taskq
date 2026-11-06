@@ -1,0 +1,36 @@
+{
+  "runtime": "claude",
+  "launches": 1,
+  "grant": "claude: requested --permission-mode dontAsk \u00b7 grant none (taskq.json is a request) \u00b7 effective legacy \u00b7 taskq seatbelt, policy store not writable",
+  "identity": "Identity { pid: 84184, started: \"1793937155-547474\" }",
+  "live_rows": 4,
+  "reads": 6,
+  "status_heartbeat_equal_reads": 6,
+  "unequal": [],
+  "local_rows_with_process_id": 5,
+  "heartbeat_execution_lines": [
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938567,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938569,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"no supported native progress event\",\"observed\":1793938570,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"clock\":\"native timestamp or append mtime lower bound\",\"status\":\"quiet\",\"last_event\":1793938571,\"deadline\":null,\"overdue_since\":null,\"tool_since\":null,\"pending_tools\":0,\"reason\":\"no pending tool; quiet work is not failure\",\"observed\":1793938571,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"clock\":\"native timestamp or append mtime lower bound\",\"status\":\"quiet\",\"last_event\":1793938571,\"deadline\":null,\"overdue_since\":null,\"tool_since\":null,\"pending_tools\":0,\"reason\":\"no pending tool; quiet work is not failure\",\"observed\":1793938573,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"clock\":\"native timestamp or append mtime lower bound\",\"status\":\"quiet\",\"last_event\":1793938574,\"deadline\":null,\"overdue_since\":null,\"tool_since\":null,\"pending_tools\":0,\"reason\":\"no pending tool; quiet work is not failure\",\"observed\":1793938576,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"worker process observed\"}"
+  ],
+  "launch_epoch": 1793938566,
+  "process": [
+    "Identity { pid: 84184, started: \"1793937155-547474\" } ps=Fri Nov  6 10:52:35 2026     claude bg-spare"
+  ],
+  "session": "6edceee7af397a08698944aadded314cbfdc80a7b64d6250b2eef2725a05e085",
+  "canary": "TaskQ-Qualification-2453-8cc21a5c-7920-4c1d-80b0-c0f2127871b7",
+  "native_transcript": "<home>/.claude/projects/-Users-kirs-Projects-taskq/5565d6be-028e-4176-a431-a66850adc8ed.jsonl",
+  "taskq_transcript_has_reply": true,
+  "transitions": [
+    "\"waiting\"/\"claude\"/\"unknown\"",
+    "\"running\"/\"claude\"/\"unknown\"",
+    "\"running\"/\"claude\"/\"quiet\""
+  ],
+  "release": "Some(Exit)",
+  "after": null,
+  "canary_in_native_log": true,
+  "scope": "candidate Service with fixture board and native client; no installed service"
+}
