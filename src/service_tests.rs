@@ -6742,8 +6742,8 @@ fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {
 // Chain: slow native children -> bounded observation round -> honest heartbeat -> fair next round.
 #[test]
 fn slow_observations_defer_without_releasing_and_rotate_fairly() {
-    // Windows file reads and scheduling can consume 10ms before the first fixture poll.
-    const POLL_MS: u64 = if cfg!(windows) { 100 } else { 10 };
+    // File reads and scheduling can consume 10ms before the first fixture poll on a loaded host.
+    const POLL_MS: u64 = 100;
     struct Slow {
         task: u64,
         calls: Rc<RefCell<Vec<u64>>>,

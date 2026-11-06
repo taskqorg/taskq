@@ -130,3 +130,5 @@ TASKQ_ARCHIVAL_SOURCE=/path/to/retained-canonical.zip TASKQ_ARCHIVAL_EVIDENCE=/p
 ```
 
 It checks both fixed SHA-256 values and candidate source bytes without owner authorization, board writes, native launches or source publication. The candidate Git objects must already be available. Passing this checkpoint does not establish official reader rollout or authorize closing #2463 (§7).
+
+The native-observation fairness fixture uses its existing Windows 100ms pass on every host. A loaded Mac gate reached the second round without polling a child under the former 10ms fixture budget. Slow fixture polls still take 2.5 times that pass; the one-child-per-round, deferred-unknown, fair rotation and retained-ownership assertions remain. The production 20s native-pass budget is unchanged.
