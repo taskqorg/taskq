@@ -7,6 +7,8 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
+const WIRE: u64 = 1;
+
 thread_local! { static PREFER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 pub(crate) fn prefer(value: bool) {
     PREFER.set(value);
@@ -44,56 +46,98 @@ fn sign(api: &Api, bytes: &[u8]) -> ring::hmac::Tag {
         bytes,
     )
 }
-fn request(api: &Api, value: Value) -> Option<Result<Value>> {
+fn request(api: &Api, value_of_request: Value) -> Option<Result<Value>> {
     if !preferred() || crate::host::active() {
         return None;
     }
-    let install = api.install.as_ref()?;
-    Some((|| {
+    api.proxy_listed.set(None);
+    if !api.local_reader {
+        disclose("local sharing unsupported for this board");
+        return None;
+    }
+    let Some(install) = api.install.as_ref() else {
+        disclose("local installation unavailable");
+        return None;
+    };
+    let result = (|| -> Result<Value> {
         let status = crate::host::service_status(install);
-        let address = match status["state"].as_str() {
-            Some("running") => {
-                let path = endpoint(install, &api.base);
-                let value = crate::data::json(&path)?.ok_or("live service has no local board reader; upgrade at the next authorized rollout")?;
-                if value["schema"] != 1 || value["board"] != api.base || value["pid"] != status["pid"] || value["started"] != status["started"] {
-                    return Err("local board reader owner differs from the running service".into());
-                }
-                value["address"].as_str().ok_or("local board reader address missing")?.parse::<SocketAddr>().map_err(io)?
-            }
-            Some("exited") => return Ok(Value::Null),
-            _ if !install.join("service").try_exists().map_err(io)? => return Ok(Value::Null),
-            _ => return Err("local service ownership unknown; direct board fallback refused".into()),
-        };
-        if !address.ip().is_loopback() { return Err("local board reader is not loopback".into()); }
+        if status["state"] != "running" || status["fresh"] != true {
+            return Err("local service absent, stale or ownership unknown".into());
+        }
+        let value = crate::data::json(&endpoint(install, &api.base))?
+            .ok_or("local service has no board reader (older service or startup failure)")?;
+        if value["schema"] != 1 || value["wire"] != WIRE {
+            return Err("local board reader wire incompatible".into());
+        }
+        if value["board"] != api.base
+            || value["pid"] != status["pid"]
+            || value["started"] != status["started"]
+        {
+            return Err("local board reader owner differs from the running service".into());
+        }
+        let address = value["address"]
+            .as_str()
+            .ok_or("local board reader address missing")?
+            .parse::<SocketAddr>()
+            .map_err(io)?;
+        if !address.ip().is_loopback() {
+            return Err("local board reader is not loopback".into());
+        }
         api.refresh()?;
         let mut stream = TcpStream::connect_timeout(&address, HTTP_WAIT).map_err(io)?;
         connection(&stream)?;
-        let payload = value.to_string();
-        let wire = json!({"request":payload,"proof":sign(api, payload.as_bytes()).as_ref()});
+        let payload = value_of_request.to_string();
+        let wire =
+            json!({"wire":WIRE,"request":payload,"proof":sign(api, payload.as_bytes()).as_ref()});
         writeln!(stream, "{wire}").map_err(io)?;
         let mut line = String::new();
         BufReader::new(stream).read_line(&mut line).map_err(io)?;
         let reply: Value = serde_json::from_str(&line).map_err(io)?;
-        if !reply["error"].is_null() { return Err(serde_json::from_value(reply["error"].clone()).map_err(io)?); }
-        if !reply["listed"].is_null() { api.proxy_listed.set(reply["listed"].as_i64()); }
-        let mut budget=api.credentials.borrow().budget.borrow_mut().clone();
-        budget.remaining=reply["budget"]["remaining"].as_u64();
-        budget.limit=reply["budget"]["limit"].as_u64();
-        budget.reset=reply["budget"]["reset"].as_i64();
-        budget.resource=reply["budget"]["resource"].as_str().map(String::from);
-        budget.unknown=reply["budget"]["unknown"].as_str().map(String::from);
-        *api.credentials.borrow().budget.borrow_mut()=budget;
+        if reply["wire"] != WIRE {
+            return Err("local board reply wire incompatible".into());
+        }
+        if let Some(reason) = reply["unavailable"].as_str() {
+            return Err(format!("local board reader unavailable: {reason}").into());
+        }
+        if !reply["error"].is_null() {
+            return Ok(reply);
+        }
+        api.proxy_listed.set(reply["listed"].as_i64());
+        let mut budget = api.credentials.borrow().budget.borrow_mut().clone();
+        budget.remaining = reply["budget"]["remaining"].as_u64();
+        budget.limit = reply["budget"]["limit"].as_u64();
+        budget.reset = reply["budget"]["reset"].as_i64();
+        budget.resource = reply["budget"]["resource"].as_str().map(String::from);
+        budget.unknown = reply["budget"]["unknown"].as_str().map(String::from);
+        *api.credentials.borrow().budget.borrow_mut() = budget;
         *api.clock.borrow_mut() = reply["clock"].as_i64().ok_or("local board clock missing")?;
-        api.unchanged.set(reply["unchanged"].as_bool().ok_or("local board read status missing")?);
+        api.unchanged.set(
+            reply["unchanged"]
+                .as_bool()
+                .ok_or("local board read status missing")?,
+        );
         Ok(reply)
-    })()).and_then(|result| match result {
-        Ok(Value::Null) => { disclose(); None }
-        other => Some(other),
-    })
+    })();
+    match result {
+        Ok(reply) if !reply["error"].is_null() => Some(Err(serde_json::from_value(
+            reply["error"].clone(),
+        )
+        .unwrap_or_else(io))),
+        Ok(reply) => Some(Ok(reply)),
+        Err(error) => {
+            disclose(&error.text());
+            None
+        }
+    }
 }
-fn disclose() {
-    static SAID: std::sync::Once = std::sync::Once::new();
-    SAID.call_once(|| eprintln!("Board reads: direct (local service absent)"));
+pub(super) fn disclose(reason: &str) {
+    thread_local! { static LAST: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) }; }
+    LAST.with(|last| {
+        if *last.borrow() != reason {
+            eprintln!("Board reads: direct ({reason})");
+            *last.borrow_mut() = reason.to_string();
+        }
+    });
 }
 
 pub(super) fn raw(
@@ -102,7 +146,7 @@ pub(super) fn raw(
     url: &str,
     body: Option<&Value>,
 ) -> Option<Result<Reply>> {
-    if method != "GET" && !read_query(method, url, body) {
+    if method != "GET" || body.is_some() {
         return None;
     }
     request(
@@ -117,7 +161,10 @@ pub(super) fn issues(api: &Api, since: Option<i64>, tasks: bool) -> Option<Resul
         .map(|r| r.and_then(|r| serde_json::from_value(r["issues"].clone()).map_err(io)))
 }
 
-fn answer(board: &dyn Board, api: &Api, wire: Value) -> Result<Value> {
+fn answer(api: &Api, wire: Value) -> Result<Value> {
+    if wire["wire"] != WIRE {
+        return Err("local board request wire incompatible".into());
+    }
     api.refresh()?;
     let payload = wire["request"]
         .as_str()
@@ -141,7 +188,7 @@ fn answer(board: &dyn Board, api: &Api, wire: Value) -> Result<Value> {
                 Some(v["since"].as_i64().ok_or("local list since invalid")?)
             };
             let tasks = v["tasks"].as_bool().ok_or("local list filter invalid")?;
-            json!({"issues":if tasks { board.tasks(since.ok_or("task-list since missing")?)? } else { board.issues(since)? },"listed":board.now()?})
+            json!({"issues":super::shared::snapshot(api, since, tasks)?,"listed":api.proxy_listed.get()})
         }
         Some("request") => {
             let method = v["method"].as_str().ok_or("local request method missing")?;
@@ -153,10 +200,14 @@ fn answer(board: &dyn Board, api: &Api, wire: Value) -> Result<Value> {
                     "local board reader accepts only GET without a body",
                 ));
             }
-            json!({"reply":api.call(method, url, body.cloned())?})
+            match api.call(method, url, body.cloned()) {
+                Ok(reply) => json!({"reply":reply}),
+                Err(error) => json!({"error":error}),
+            }
         }
         _ => return Err("local board request kind invalid".into()),
     };
+    result["wire"] = json!(WIRE);
     result["clock"] = if result["listed"].is_null() {
         json!(*api.clock.borrow())
     } else {
@@ -175,7 +226,7 @@ pub(super) fn register(
     tool: &coreq::Tool,
     api: &Api,
 ) -> Result<()> {
-    if api.poll.is_none() {
+    if api.poll.is_none() || !api.local_reader {
         return Ok(());
     }
     static SERVING: OnceLock<Mutex<std::collections::BTreeSet<std::path::PathBuf>>> =
@@ -188,60 +239,77 @@ pub(super) fn register(
     if serving.contains(&path) {
         return Ok(());
     }
+    let root = crate::paths::find_root()?;
     let listener = TcpListener::bind("127.0.0.1:0").map_err(io)?;
     let owner = coreq::process::identity(std::process::id())
         .map_err(io)?
         .ok_or("local board owner identity unknown")?;
-    let address = listener.local_addr().map_err(io)?;
-    let record = json!({"schema":1,"board":api.base,"pid":owner.pid,"started":owner.started,"address":address.to_string()});
+    let record = json!({"schema":1,"wire":WIRE,"board":api.base,"pid":owner.pid,"started":owner.started,"address":listener.local_addr().map_err(io)?.to_string()});
+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    std::fs::write(&temporary, record.to_string()).map_err(io)?;
+    std::fs::rename(&temporary, &path).map_err(io)?;
     let (name, host, repo, tool) = (
         name.to_string(),
         host.to_string(),
         repo.to_string(),
         tool.clone(),
     );
-    let root = crate::paths::find_root()?;
     let dispatch = tracing::dispatcher::get_default(Clone::clone);
-    let (ready, started) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
+    let started = std::thread::Builder::new()
         .name("taskq-board-reader".into())
         .spawn(move || {
-            tracing::dispatcher::with_default(&dispatch, || {
-                crate::host::enter(&root, &tool.install);
-                let board = super::kind(&name).and_then(|kind| {
-                    Ok((
-                        (kind.board)(kind.http(&host, &repo, &tool)?),
-                        kind.http(&host, &repo, &tool)?,
-                    ))
-                });
-                let _ = ready.send(board.as_ref().map(|_| ()).map_err(Clone::clone));
-                let Ok((board, api)) = board else { return };
-                for stream in listener.incoming() {
-                    let Ok(mut stream) = stream else { break };
-                    let result = (|| {
-                        connection(&stream)?;
-                        let mut line = String::new();
-                        BufReader::new(stream.try_clone().map_err(io)?)
-                            .read_line(&mut line)
-                            .map_err(io)?;
-                        answer(
-                            board.as_ref(),
-                            &api,
-                            serde_json::from_str(&line).map_err(io)?,
-                        )
-                    })();
-                    let wire = result.unwrap_or_else(|e| json!({"error":e}));
-                    let _ = writeln!(stream, "{wire}");
+            for stream in listener.incoming() {
+                let stream = match stream {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        crate::platform::log(&format!("local board listener stopped: {error}"));
+                        break;
+                    }
+                };
+                let (name, host, repo, tool, root, dispatch) = (
+                    name.clone(),
+                    host.clone(),
+                    repo.clone(),
+                    tool.clone(),
+                    root.clone(),
+                    dispatch.clone(),
+                );
+                if let Err(error) = std::thread::Builder::new()
+                    .name("taskq-board-read".into())
+                    .spawn(move || {
+                        tracing::dispatcher::with_default(&dispatch, || {
+                            crate::host::enter(&root, &tool.install);
+                            let api =
+                                super::kind(&name).and_then(|kind| kind.http(&host, &repo, &tool));
+                            if let Err(error) = serve(stream, api) {
+                                crate::platform::log(&error.text());
+                            }
+                        });
+                    })
+                {
+                    crate::platform::log(&format!("local board connection unavailable: {error}"));
                 }
-            })
-        })
-        .map_err(io)?;
-    started.recv().map_err(io)??;
-    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-    std::fs::write(&temporary, record.to_string()).map_err(io)?;
-    std::fs::rename(&temporary, &path).map_err(io)?;
+            }
+        });
+    if let Err(error) = started {
+        let _ = std::fs::remove_file(&path);
+        return Err(io(error));
+    }
     serving.insert(path);
     Ok(())
+}
+fn serve(mut stream: TcpStream, api: Result<Api>) -> Result<()> {
+    connection(&stream)?;
+    let result = (|| {
+        let mut line = String::new();
+        BufReader::new(stream.try_clone().map_err(io)?)
+            .read_line(&mut line)
+            .map_err(io)?;
+        answer(&api?, serde_json::from_str(&line).map_err(io)?)
+    })();
+    let reply =
+        result.unwrap_or_else(|error: Error| json!({"wire":WIRE,"unavailable":error.text()}));
+    writeln!(stream, "{reply}").map_err(io)
 }
 
 #[cfg(test)]

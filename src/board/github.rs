@@ -35,7 +35,9 @@ fn api(host: &str, repo: &str, token: &str) -> Api {
     } else {
         format!("https://{host}/api/v3")
     };
-    Api::new(root.clone(), format!("{root}/repos/{repo}"), token)
+    let mut api = Api::new(root.clone(), format!("{root}/repos/{repo}"), token);
+    api.local_reader = true;
+    api
 }
 
 /// The repository plan refuses branch rules: GitHub answers 403 "Upgrade to GitHub Pro" on a private Free repository.
@@ -46,7 +48,6 @@ fn plan_gap(e: &Error) -> bool {
 const PLAN: &str = "this private repository's GitHub plan has no branch rules or merge queue";
 
 pub struct GitHub {
-    pub(super) shared_listed: std::cell::Cell<Option<i64>>,
     evidence: std::cell::RefCell<Vec<crate::readiness::Publication>>,
     ci: std::cell::RefCell<Option<(String, Option<u64>, Option<u64>)>>,
     pub(super) api: Api,
@@ -54,7 +55,7 @@ pub struct GitHub {
     /// Keyed by repository API too: a task PR in another repository reads that repository's rules (#2047).
     rules: std::cell::RefCell<Option<(u64, String, Result<Value>)>>,
     /// The last open-issue list, reused while the changed-since probe finds nothing new (#1819, #1968).
-    open: std::cell::RefCell<Option<Open>>,
+    pub(super) open: std::cell::RefCell<Option<Open>>,
     /// A confirmed own heartbeat survives lagging list refreshes, scoped to the credential generation.
     heartbeat: std::cell::RefCell<Option<(u64, Issue)>>,
 }
@@ -68,7 +69,6 @@ impl GitHub {
             heartbeat: Default::default(),
             evidence: Default::default(),
             ci: Default::default(),
-            shared_listed: Default::default(),
         }
     }
 }
@@ -76,13 +76,13 @@ impl GitHub {
 pub(super) struct Open {
     at: std::time::Instant,
     /// The board clock when the list was read (#2083): a kept heartbeat is never newer than the board at this time.
-    listed: i64,
+    pub(super) listed: i64,
     /// The last `issues(None)` returned this list without reading it.
-    reused: bool,
-    list: Vec<Issue>,
+    pub(super) reused: bool,
+    pub(super) list: Vec<Issue>,
     /// `updated` of every `taskq` issue the list accounts for, closed ones the relisting probe saw too; its maximum is the
     /// probe's `since`.
-    known: std::collections::HashMap<u64, i64>,
+    pub(super) known: std::collections::HashMap<u64, i64>,
 }
 
 fn task(i: &Issue) -> bool {
@@ -253,28 +253,56 @@ impl GitHub {
     /// of three hosts changed every reply and billed each pass. Heartbeats, held drafts and other open issues come from
     /// the full list, read at least every [`OPEN_REUSE`]; `views` relists a kept heartbeat that turns stale (§ 3).
     fn open_unchanged(&self) -> Result<Vec<Issue>> {
-        let seen = match Open::probe(&self.open, |since| {
-            let url = format!(
-                "/issues?state=all&labels={}&sort=updated&direction=desc&per_page=100&since={}",
-                crate::service::TASK_LABEL,
-                stamp(since)
-            );
-            let Value::Array(rows) = self.api.call("GET", &url, None)?.json()? else {
-                return Err("invalid board list: expected array".into());
-            };
-            Ok((
-                rows.iter()
-                    .filter(|v| v.get("pull_request").is_none())
-                    .map(parse_issue)
-                    .collect(),
-                rows.len() < 100,
-            ))
+        self.poll_open(&mut vec![], false)
+    }
+    fn task_changes(&self, since: i64) -> Result<(Vec<Issue>, bool)> {
+        let url = format!(
+            "/issues?state=all&labels={}&sort=updated&direction=desc&per_page=100&since={}",
+            crate::service::TASK_LABEL,
+            stamp(since)
+        );
+        let rows = self.api.all(&url)?;
+        Ok((
+            rows.iter()
+                .filter(|v| v.get("pull_request").is_none())
+                .map(parse_issue)
+                .collect(),
+            rows.len() < 100,
+        ))
+    }
+    pub(super) fn poll_open(&self, changes: &mut Vec<Issue>, force: bool) -> Result<Vec<Issue>> {
+        let prior = self
+            .open
+            .borrow()
+            .as_ref()
+            .map(|o| o.known.values().max().copied().unwrap_or(0));
+        let mut probed = false;
+        let mut seen = match Open::probe(&self.open, |since| {
+            probed = true;
+            let (observed, whole) = self.task_changes(since)?;
+            changes.extend(observed.clone());
+            Ok((observed, whole))
         }) {
-            Ok(list) => return Ok(list),
+            Ok(list) if !force => return Ok(list),
+            Ok(_) => changes.clone(),
             Err(seen) => seen,
         };
+        if !probed && let Some(since) = prior {
+            let (observed, _) = self.task_changes(since)?;
+            changes.extend(observed.clone());
+            seen = observed;
+        }
         // a failed list keeps nothing: the next pass reads in full
-        let mut list = self.open_issues()?;
+        let mut list = if self.api.root == "https://api.github.com" {
+            self.open_issues()?
+        } else {
+            self.api
+                .all("/issues?state=open&per_page=100")?
+                .iter()
+                .filter(|v| v.get("pull_request").is_none())
+                .map(parse_issue)
+                .collect()
+        };
         if let Some((_, written)) = self
             .heartbeat
             .borrow()
@@ -1510,13 +1538,21 @@ impl Board for GitHub {
         self.evidence.take()
     }
     fn forget(&self) {
+        if let Some((_, issue)) = self
+            .heartbeat
+            .borrow()
+            .as_ref()
+            .filter(|(generation, _)| *generation != self.api.generation.get())
+        {
+            super::shared::clear_confirmation(&self.api, issue.number);
+        }
         super::shared::forget(&self.api, true);
         *self.open.borrow_mut() = None;
     }
     fn kept(&self) -> Option<i64> {
-        self.shared_listed
+        self.api
+            .proxy_listed
             .get()
-            .or(self.api.proxy_listed.get())
             .or_else(|| Open::reused_at(&self.open))
     }
     fn merge_ci_green(&self, sha: &str) -> Result<()> {
@@ -1865,6 +1901,7 @@ impl Board for GitHub {
             *self.heartbeat.borrow_mut() = Some((self.api.generation.get(), issue.clone()));
         }
         if let Some(issue) = issue {
+            super::shared::patch(&self.api, &issue);
             Open::patch(&self.open, issue);
         }
         Ok(())
@@ -1873,6 +1910,7 @@ impl Board for GitHub {
     #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn close(&self, n: u64) -> Result<()> {
         self.heartbeat.borrow_mut().take_if(|(_, i)| i.number == n);
+        super::shared::clear_confirmation(&self.api, n);
         self.forget();
         self.api
             .call(
@@ -1886,6 +1924,7 @@ impl Board for GitHub {
     #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn reopen(&self, n: u64) -> Result<()> {
         self.heartbeat.borrow_mut().take_if(|(_, i)| i.number == n);
+        super::shared::clear_confirmation(&self.api, n);
         self.forget();
         self.api
             .call(

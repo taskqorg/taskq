@@ -3,7 +3,7 @@ use crate::board::Board;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-const MONTH: i64 = 30 * 86400;
+pub(crate) const MONTH: i64 = 30 * 86400;
 const EVENT_READS: usize = 5;
 /// #2083: the longest between admission scans of every issue (§ 4 budget).
 const FULL_SCAN: i64 = 1800;

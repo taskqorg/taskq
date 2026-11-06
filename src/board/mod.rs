@@ -1091,7 +1091,9 @@ impl Kind {
         let schema = label_schema(schema)?;
         let api = self.http(host, repo, tool)?;
         *api.label_schema.borrow_mut() = schema;
-        local::register(self.name, host, repo, tool, &api)?;
+        if let Err(error) = local::register(self.name, host, repo, tool, &api) {
+            local::disclose(&format!("local reader startup failed: {error}"));
+        }
         Ok(Box::new(Profiled((self.board)(api))))
     }
 
@@ -1113,7 +1115,9 @@ impl Kind {
         }
         api.install = Some(tool.install.clone());
         if crate::host::active() {
-            let (cfg, _) = crate::config::load(&crate::paths::find_root()?)?;
+            let root = crate::paths::find_root()?;
+            let (cfg, _) = crate::config::load(&root)?;
+            api.pokes = Some([root.join(".taskq/poke"), tool.install.join("poke")]);
             api.poll = Some(std::time::Duration::from_secs(cfg.poll));
         }
         Ok(api)
@@ -1127,6 +1131,8 @@ type Transport = Box<dyn Fn(&str, &str, Option<Value>) -> Result<Reply>>;
 pub struct Api {
     install: Option<std::path::PathBuf>,
     poll: Option<std::time::Duration>,
+    pokes: Option<[std::path::PathBuf; 2]>,
+    local_reader: bool,
     proxy_listed: std::cell::Cell<Option<i64>>,
     /// `https://api.github.com/repos/o/r`, `https://host/api/v4/projects/o%2Fr`
     base: String,
@@ -1250,6 +1256,8 @@ impl Api {
         Api {
             install: None,
             poll: None,
+            pokes: None,
+            local_reader: false,
             proxy_listed: Default::default(),
             base,
             root,
