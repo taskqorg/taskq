@@ -1,0 +1,1 @@
+¥This is an approved non-task TaskQ Qualification probe. Reply with exactly TaskQ-Qualification-2427-145e44a9-f9b4-4e51-bf9e-758ef94e7c22. Do no work, edit no files, run no commands and make no taskq or board writes. Read this turn's input file if the launcher refers to it; use no other tools.
