@@ -73,6 +73,7 @@ mod transcript;
 mod tray;
 #[cfg(any(target_os = "macos", windows))]
 mod ui_bundle;
+mod waits;
 mod wake;
 #[cfg(windows)]
 mod windows_sandbox;
@@ -397,6 +398,40 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         return Err("--revision names one task".into());
     }
     match cmd {
+        "classify" | "wait-ready" | "wait" if cmd != "wait" || a.pos.len() > 1 => {
+            let allowed = match cmd {
+                "classify" => vec!["actor"],
+                "wait" => vec!["kind", "blocker"],
+                _ => vec!["evidence"],
+            };
+            if a.pos.len() != 2
+                || a.flags.iter().any(|(key, v)| {
+                    v.len() != 1
+                        || !(allowed.contains(&key.as_str())
+                            || ["revision", "op-id", "json"].contains(&key.as_str()))
+                })
+            {
+                return Err("reconciliation requires one task, its documented flags, --revision and --op-id".into());
+            }
+            let n = a.num(1)?;
+            let wait = if cmd == "wait-ready" {
+                dispatch::current(b, n)?
+                    .1
+                    .wait
+                    .map(|w| w.id.to_string())
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let args = match cmd {
+                "classify" => vec![a.need("actor")?],
+                "wait" => vec![a.need("kind")?, a.need("blocker")?],
+                _ => std::iter::once(wait.as_str())
+                    .chain(a.one("evidence"))
+                    .collect(),
+            };
+            emit(&[dispatch::act(b, root, n, cmd, &args, "", &op)], json)
+        }
         "results" => {
             let value = match reports::read_cli(root, a)? {
                 Some(value) => value,

@@ -1,3 +1,23 @@
+    // Chain: §2.26/§2.27/R6: CLI routing must reach the writer, and a lost wait-ready reply must not forward proof twice.
+    #[test]
+    fn dependency_wait_2469_cli_routes_and_retries_without_replay() {
+        let c=Ctx{cfg:cfg(),raw:json!({}),board:Box::new(Fake::default())};let b=c.board.as_ref();
+        let n=b.create("consumer","",&["taskq".into()]).unwrap();let m=b.create("proof","",&["taskq".into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker codex:invented win").unwrap();
+        let question=b.comment(n,&format!("taskq: ask attempt {a}\nProblem: proof needed")).unwrap();
+        let run=|words:&[&str]| {let words=words.iter().map(|w|w.to_string()).collect::<Vec<_>>();command(&c,&words[0],&Args::parse(&words)?)};
+        let n=n.to_string();let revision=question.to_string();let blocker=format!("#{m}");
+        run(&["classify",&n,"--actor","pm","--revision",&revision,"--op-id","cli-classify"]).unwrap();
+        run(&["wait",&n,"--kind","evidence","--blocker",&blocker,"--revision",&revision,"--op-id","cli-wait"]).unwrap();
+        let proof=b.comment(m,"Invented proof with exact candidate identity").unwrap();let evidence=format!("{m}.{proof}");
+        let ready=["wait-ready",&n,"--evidence",&evidence,"--revision",&revision,"--op-id","cli-ready"];
+        run(&ready).unwrap();let count=b.comments(n.parse().unwrap()).unwrap().len();run(&ready).unwrap();
+        assert_eq!(b.comments(n.parse().unwrap()).unwrap().len(),count);
+        assert_eq!(core::revision(n.parse().unwrap(),&entries(b,n.parse().unwrap()).unwrap()),question);
+        assert!(fold(n.parse().unwrap(),&entries(b,n.parse().unwrap()).unwrap(),false).wait.is_none());
+        assert!(Args::parse(&["wait".into(),"--window".into(),"1".into()]).is_ok(),"bare wait retains observation syntax");
+    }
+
 // Chain: § 7 rule 3 worker park (#1486, #1823). Risk: a worker parks without a blocker or time (no automatic exit), an
 // owner park starts needing one, or a malformed time reaches the board.
 #[test]

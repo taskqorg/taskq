@@ -193,7 +193,12 @@ const { link, counters, summary, aggregate, task, handle, timing } =
     },
     task: function (p, row, global = false, compact = false) {
       // Closed has no counter (#1476) but notification cards still name it.
-      const name = row.state_name ?? row.state,
+      const name =
+          row.action?.actor === "dependency" && row.state === "ask"
+            ? "Blocked"
+            : row.action?.actor === "pm" && row.state === "ask"
+              ? "PM action"
+              : (row.state_name ?? row.state),
         [mark, kind] =
           row.state === "closed"
             ? row.merged
@@ -285,7 +290,61 @@ const { link, counters, summary, aggregate, task, handle, timing } =
             : "") +
           "</span>"
         : "";
+      const action = row.action,
+        attention = row.attention;
+      const routing =
+        action && row.state === "ask"
+          ? '<small role="status">' +
+            esc(
+              (action.actor === "dependency"
+                ? "Blocked on " + action.blocker + " (" + action.kind + ")"
+                : action.actor === "unknown"
+                  ? "Action ownership unknown"
+                  : action.actor + " action") +
+                " · " +
+                (action.responsible || "unknown") +
+                ": " +
+                action.next,
+            ) +
+            "</small>"
+          : "";
+      const flagged =
+        attention?.flagged === true
+          ? '<small role="status">Attention: total ' +
+            esc(
+              attention.total_s == null
+                ? "unknown"
+                : time.age(attention.total_s),
+            ) +
+            " · current " +
+            esc(
+              attention.current_s == null
+                ? "unknown"
+                : time.age(attention.current_s),
+            ) +
+            " · transitions " +
+            esc(attention.transitions ?? "unknown") +
+            " · retries " +
+            esc(row.retries ?? "unknown") +
+            " · roots " +
+            esc(
+              attention.graph === "unknown"
+                ? "unknown"
+                : (attention.roots || []).map((r) => r.ref).join(", ") ||
+                    "none",
+            ) +
+            " · downstream " +
+            esc(
+              (attention.downstream || []).map((r) => r.ref).join(", ") ||
+                "none",
+            ) +
+            " · " +
+            esc(attention.responsible + ": " + attention.next) +
+            "</small>"
+          : "";
       const parked =
+        routing +
+        flagged +
         (row.stage
           ? '<small class="tqp-stage" title="First open stage of the Acceptance items">Stage ' +
             esc(row.stage.k) +

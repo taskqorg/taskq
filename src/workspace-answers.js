@@ -248,7 +248,18 @@ const { create } = execution.module("workspace.answers", {
       // The answer card owns the slot's descendants; Preact renders the slot without children.
       answerSlot: function (t) {
         return t.state === "ask"
-          ? h("div", { "data-answer": t.key, key: "answer:" + t.key })
+          ? t.action?.actor === "dependency"
+            ? h(
+                "p",
+                { role: "status" },
+                "Blocked on " +
+                  t.action.blocker +
+                  " (" +
+                  t.action.kind +
+                  "). PM: " +
+                  t.action.next,
+              )
+            : h("div", { "data-answer": t.key, key: "answer:" + t.key })
           : null;
       },
       answerNotices: function (board, task) {

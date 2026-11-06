@@ -112,6 +112,20 @@ const plain = (x) => JSON.parse(JSON.stringify(x));
       "",
       state + " must not mount an answer card",
     );
+  const blocked = call("answerSlot", {
+    state: "ask",
+    key: "task",
+    action: {
+      actor: "dependency",
+      blocker: "#2468",
+      kind: "completion",
+      next: "service rechecks completion",
+    },
+  });
+  assert(
+    blocked.includes("Blocked on #2468") && !blocked.includes("data-answer="),
+    "dependency metadata never mounts owner choices or sends an answer",
+  );
   assert(
     call("answerSlot", { state: "ask", key: "task" }).includes("data-answer"),
   );

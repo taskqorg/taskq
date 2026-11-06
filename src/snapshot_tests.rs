@@ -1,5 +1,235 @@
 use super::*;
 
+// R6/A3-A6: one projection routes owner/PM/dependencies; comments cannot hide age or trigger execution.
+#[test]
+fn dependency_wait_2469_status_attention_is_observation_only() {
+    let b = crate::board::Fake::default();
+    let cfg = crate::tests::cfg();
+    let make = |n: u64, actor: &str, body: &str, wait: bool| {
+        let mut bodies = vec![
+            "taskq: spawn worker codex:invented win".to_string(),
+            "taskq: accepted 1 attempt 1".into(),
+            format!("taskq: ask {actor} attempt 1\nProblem: PM action is only prose"),
+        ];
+        if wait {
+            bodies.push("taskq: wait completion #5".into());
+        }
+        bodies.extend((0..20).map(|_| "Unrelated repeated comment".to_string()));
+        let comments = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| board::Comment {
+                id: i as u64 + 1,
+                body: body.clone(),
+                created: if i == 0 {
+                    90
+                } else if i == 1 {
+                    100
+                } else if i == 2 {
+                    200
+                } else {
+                    3700
+                },
+                trusted: true,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let log = comments
+            .iter()
+            .map(|c| core::Entry {
+                id: c.id,
+                body: c.body.clone(),
+                edited: false,
+            })
+            .collect::<Vec<_>>();
+        View {
+            issue: board::Issue {
+                number: n,
+                title: format!("Invented task {n}"),
+                body: body.into(),
+                trusted: true,
+                ..Default::default()
+            },
+            projection: core::project(n, &log, false),
+            log,
+            comments,
+            blockers: if wait {
+                vec![crate::service::Blocker {
+                    dep: core::Dep { repo: None, n: 5 },
+                    url: b.url(5),
+                    reason: "open".into(),
+                }]
+            } else {
+                vec![]
+            },
+        }
+    };
+    let views = vec![
+        make(1, "owner", "", false),
+        make(2, "pm", "", false),
+        make(3, "", "", false),
+        make(4, "pm", "", true),
+        make(5, "owner", "", false),
+        make(6, "pm", "Depends on #4", false),
+    ];
+    let before = b.state.borrow().comments.len();
+    let exact = from_views("board", &b, &cfg, 3700, &views, &[]);
+    assert_eq!(
+        exact.tasks[0].attention["flagged"], false,
+        "strictly over one hour"
+    );
+    let snap = from_views("board", &b, &cfg, 3701, &views, &[]);
+    let text = snap.text(&cfg, &json!({})).unwrap();
+    let owner = text
+        .split("Owner (answer N.M):")
+        .nth(1)
+        .unwrap()
+        .split("\n\n")
+        .next()
+        .unwrap();
+    assert!(owner.contains("#1 ") && owner.contains("#5 "));
+    assert!(!owner.contains("#2 ") && !owner.contains("#3 ") && !owner.contains("#4 "));
+    assert!(
+        text.contains("PM action")
+            && text.contains("action ownership unknown")
+            && text.contains("Dependencies:")
+            && text.contains("Attention:")
+    );
+    let wait = &snap.tasks.iter().find(|r| r.n == 4).unwrap().json();
+    assert_eq!(wait["action"]["actor"], "dependency");
+    assert_eq!(wait["action"]["status"], "blocked");
+    assert_eq!(wait["action"]["blocker_url"], b.url(5));
+    assert_eq!(wait["attention"]["total_s"], 3601);
+    assert_eq!(wait["attention"]["current_s"], 3501);
+    assert_eq!(wait["attention"]["transitions"], 1);
+    assert_eq!(wait["attention"]["roots"][0]["ref"], "#5");
+    assert_eq!(wait["attention"]["downstream"][0]["ref"], "#6");
+    assert_eq!(wait["retries"], 0);
+    assert_eq!(b.state.borrow().comments.len(), before);
+    assert_eq!(b.state.borrow().publications, 0);
+    let mut missing = views;
+    missing[0].comments[1].created = 0;
+    let unknown = from_views("board", &b, &cfg, 3701, &missing, &[]).tasks[0]
+        .attention
+        .clone();
+    assert!(unknown["total_s"].is_null() && unknown["flagged"].is_null());
+}
+
+// R6: count actual transitions separately from retries; attention is strict at ten.
+#[test]
+fn dependency_wait_2469_attention_counts_transitions_not_comments() {
+    let b = crate::board::Fake::default();
+    let mut bodies = vec![
+        "taskq: spawn worker codex:invented win".to_string(),
+        "taskq: accepted 1 attempt 1".into(),
+    ];
+    for _ in 0..5 {
+        bodies.extend([
+            "taskq: ask pm attempt 1\nProblem: invented technical choice".into(),
+            "taskq: answer\nContinue the same attempt".into(),
+        ]);
+    }
+    let read = |bodies: &Vec<String>| {
+        let log = bodies
+            .iter()
+            .enumerate()
+            .map(|(i, body)| core::Entry {
+                id: i as u64 + 1,
+                body: body.clone(),
+                edited: false,
+            })
+            .collect::<Vec<_>>();
+        let comments = log
+            .iter()
+            .map(|e| board::Comment {
+                id: e.id,
+                body: e.body.clone(),
+                created: 100 + e.id as i64,
+                trusted: true,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let v = View {
+            issue: board::Issue {
+                number: 1,
+                ..Default::default()
+            },
+            projection: core::project(1, &log, false),
+            log,
+            comments,
+            blockers: vec![],
+        };
+        from_views("board", &b, &crate::tests::cfg(), 200, &[v], &[]).tasks[0]
+            .attention
+            .clone()
+    };
+    assert_eq!(read(&bodies)["transitions"], 10);
+    assert_eq!(read(&bodies)["flagged"], false);
+    bodies.push("taskq: ask pm attempt 1\nProblem: next technical choice".into());
+    assert_eq!(read(&bodies)["transitions"], 11);
+    assert_eq!(read(&bodies)["flagged"], true);
+}
+
+// R6/R12: ordinary held/dependency rows need real actions; completed edges are not blockers, cycles stay unknown.
+#[test]
+fn dependency_wait_2469_ordinary_rows_and_root_coverage() {
+    let b = crate::board::Fake::default();
+    let held = Row {
+        n: 1,
+        task: Task {
+            state: State::Held,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert_eq!(held.action()["next"], "taskq start 1");
+    let mut waiting = Row {
+        n: 2,
+        brief: "Depends on #3\nDepends on #999".into(),
+        task: Task {
+            state: State::Waiting,
+            ..Default::default()
+        },
+        deps: vec![crate::service::Blocker {
+            dep: core::Dep { repo: None, n: 3 },
+            url: b.url(3),
+            reason: "unknown: unavailable".into(),
+        }],
+        ..Default::default()
+    };
+    assert_eq!(waiting.action()["status"], "unknown");
+    waiting.deps[0].reason = "open".into();
+    assert_eq!(waiting.action()["status"], "blocked");
+    let leaf = Row {
+        n: 3,
+        ..Default::default()
+    };
+    let mut rows = vec![held, waiting, leaf];
+    crate::waits::attention(&mut rows, 1000, &b);
+    assert_eq!(
+        rows[1].attention["roots"],
+        json!([{"ref":"#3","url":b.url(3)}]),
+        "unverified #999 is not invented as a blocker"
+    );
+    assert_eq!(rows[1].attention["graph"], "unknown");
+    assert!(
+        rows[1].attention["reason"]
+            .as_str()
+            .unwrap()
+            .contains("graph coverage unknown")
+    );
+    rows[2].brief = "Depends on #2\nDepends on #4".into();
+    rows.push(Row {
+        n: 4,
+        ..Default::default()
+    });
+    crate::waits::attention(&mut rows, 1000, &b);
+    assert_eq!(
+        rows[1].attention["graph"], "unknown",
+        "a leaf does not hide a cycle"
+    );
+}
+
 fn exec() -> crate::core::Execution {
     crate::core::Execution {
         id: 7,
@@ -235,6 +465,8 @@ fn remote_codex_reads_starting_until_accepted() {
         ..Default::default()
     };
     let mut r = Row {
+        attention: Value::Null,
+        wait_url: None,
         heartbeat: Value::Null,
         worker: None,
         workers: vec![],
@@ -304,6 +536,8 @@ fn codex_thread_links_only_on_its_host_else_dashq_progress() {
         ..Default::default()
     };
     let row = |host: &str| Row {
+        attention: Value::Null,
+        wait_url: None,
         heartbeat: Value::Null,
         worker: None,
         workers: vec![],
@@ -474,6 +708,8 @@ fn stuck_flags_each_state_from_two_hours_and_never_a_moving_task() {
 #[test]
 fn stuck_row_prints_one_line_and_json_age() {
     let row = |n, stuck| Row {
+        attention: Value::Null,
+        wait_url: None,
         heartbeat: Value::Null,
         worker: None,
         workers: vec![],
@@ -485,6 +721,7 @@ fn stuck_row_prints_one_line_and_json_age() {
         url: format!("u{n}"),
         task: Task {
             state: State::Ask,
+            action_owner: Some("owner".into()),
             ..Default::default()
         },
         revision: 0,
@@ -1059,6 +1296,7 @@ fn cli_and_page_model_agree_on_one_board() {
         url: format!("https://github.com/o/r/issues/{n}"),
         task: Task {
             state,
+            action_owner: (state == State::Ask).then(|| "owner".into()),
             ..Default::default()
         },
         since: Some(now - ago),
@@ -1239,6 +1477,8 @@ fn every_wait_producer_maps_to_a_spec_named_owner_text() {
     // status text and row JSON: owner text only in the row, raw reason kept in --json
     let raw = cases[11].0;
     let row = Row {
+        attention: Value::Null,
+        wait_url: None,
         heartbeat: Value::Null,
         worker: None,
         workers: vec![],
@@ -1641,6 +1881,7 @@ fn stale_heartbeats_block_reuses_shared_health_and_clears() {
         url: "q9".into(),
         task: Task {
             state: State::Ask,
+            action_owner: Some("owner".into()),
             card: Some("Problem: owner choice\n1. keep ★\n2. change".into()),
             ..Default::default()
         },

@@ -1,18 +1,18 @@
 //! The `inbox` and `wait` readers (§ 5).
 
-use crate::Res;
-use crate::board::{Board, entries};
+use crate::board::{entries, Board};
 use crate::config::load;
-use crate::core::{Entry, State, fold};
+use crate::core::{fold, Entry, State};
 use crate::dispatch::deps_open;
 use crate::paths::dot;
 use crate::service::Config;
 use crate::snapshot::in_scope;
+use crate::Res;
 use crate::{
     board, core, dispatch, display, platform, readiness, reply_files, reports, runtime, service,
     snapshot, transcript,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -93,9 +93,23 @@ pub(crate) fn inbox_json(b: &dyn Board, root: &Path, me: &str, n: u64) -> Res<Va
         .iter()
         .max_by_key(|e| e.id)
         .map(|e| json!({"id": e.id, "at": at(e.id).map(|c| c.created)}));
+    let deps = if let Some(w) = &t.wait {
+        format!("Depends on {}", w.blocker)
+    } else if t.state == State::Waiting {
+        core::dep_body(&issue.body, t)
+    } else {
+        String::new()
+    };
+    let action = crate::waits::action(
+        t,
+        n,
+        p.revision,
+        &service::blockers(b, &deps, None, &mut Default::default()),
+    );
     Ok(
         json!({"schema": 1, "task": n, "title": issue.title, "url": b.url(n), "open": issue.open, "state": t.state.name(), "revision": p.revision,
-        "source_readiness": readiness::source(n,&b.url(n),&log), "card": t.card, "result": t.result, "attempt": attempt, "last": last, "answers": answers}),
+        "source_readiness": readiness::source(n,&b.url(n),&log), "action":action,
+        "card": t.card, "result": t.result, "attempt": attempt, "last": last, "answers": answers}),
     )
 }
 
@@ -151,12 +165,11 @@ pub(crate) fn closed_row(
             })
             .last();
         (
-            json!(
-                t.publication
-                    .as_deref()
-                    .and_then(|p| p.lines().next())
-                    .map(|l| l.trim_start_matches("Changed:").trim())
-            ),
+            json!(t
+                .publication
+                .as_deref()
+                .and_then(|p| p.lines().next())
+                .map(|l| l.trim_start_matches("Changed:").trim())),
             json!(pr.map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))),
         )
     });

@@ -1019,10 +1019,17 @@ pub fn views_asked(
                 Some(&open),
                 deps,
             )
+        } else if let Some(w) = &projection.task.wait {
+            blockers(
+                board,
+                &format!("Depends on {}", w.blocker),
+                Some(&open),
+                deps,
+            )
         } else {
             vec![]
         };
-        if !blockers.is_empty() {
+        if ready && !blockers.is_empty() {
             projection.task.state = State::Waiting;
         }
         if held {
@@ -5163,7 +5170,13 @@ impl<'a> Service<'a> {
         let mut waiting = BTreeMap::new();
         for v in views.iter().filter(|v| {
             v.projection.task.publication.is_some()
-                && v.projection.task.state == State::Review
+                && (v.projection.task.state == State::Review
+                    || v.projection.task.state == State::Ask
+                        && v.projection
+                            .task
+                            .wait
+                            .as_ref()
+                            .is_some_and(|w| w.kind == "completion"))
                 && !touched.contains(&v.issue.number)
         }) {
             let n = v.issue.number;

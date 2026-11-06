@@ -1474,7 +1474,7 @@ const SANDBOX_CHECKS: &str = "Host tests blocked by the worker sandbox: record s
 
 fn ask(q: &impl std::fmt::Display, n: u64) -> String {
     format!(
-        "`{q} ask {n} --text \"Done: <checked or not started>\nProblem: <decision and user effect>\" --option \"<label> - + <gain>; - <cost>\".. --recommend K [--link URL]`"
+        "`{q} ask {n} --actor owner --text \"Done: <checked or not started>\nProblem: <decision and user effect>\" --option \"<label> - + <gain>; - <cost>\".. --recommend K [--link URL]`"
     )
 }
 

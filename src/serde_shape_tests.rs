@@ -44,6 +44,12 @@ fn model() -> Value {
         blocker: some(),
         until: some(),
         stages: vec!["x".into()],
+        action_owner: some(),
+        wait: Some(crate::core::TaskWait {
+            id: 1,
+            kind: "completion".into(),
+            blocker: "#1".into(),
+        }),
     };
     let resources = crate::resources::State {
         grants: BTreeMap::from([(
