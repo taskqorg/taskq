@@ -6,7 +6,9 @@ const MINUTE: i64 = 60;
 const HOUR: i64 = 3600;
 const DAY: i64 = 86400;
 const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 /// An unknown time; never `0:00`, `now` or an empty cell.
 pub const UNKNOWN: &str = "? unavailable";
@@ -37,7 +39,10 @@ pub fn left(secs: i64) -> String {
 /// Exact time across hosts, in board comments, logs and public text: `2026-11-05 14:30 UTC`.
 pub fn utc(t: i64) -> String {
     let c = Civil::of(t);
-    format!("{:04}-{:02}-{:02} {:02}:{:02} UTC", c.year, c.month, c.day, c.hour, c.minute)
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02} UTC",
+        c.year, c.month, c.day, c.hour, c.minute
+    )
 }
 
 /// Exact time for one viewer on this host's clock: `Thu Nov 05, 14:30`, with the year when it is not the current one.
@@ -47,20 +52,39 @@ pub fn local(t: i64, now: i64) -> String {
 
 fn local_at(t: i64, now: i64, offset: i64) -> String {
     let (c, current) = (Civil::of(t + offset), Civil::of(now + offset));
-    let year = if c.year == current.year { String::new() } else { format!(" {:04}", c.year) };
-    format!("{} {} {:02}{year}, {:02}:{:02}", c.weekday(), MONTHS[c.month as usize - 1], c.day, c.hour, c.minute)
+    let year = if c.year == current.year {
+        String::new()
+    } else {
+        format!(" {:04}", c.year)
+    };
+    format!(
+        "{} {} {:02}{year}, {:02}:{:02}",
+        c.weekday(),
+        MONTHS[c.month as usize - 1],
+        c.day,
+        c.hour,
+        c.minute
+    )
 }
 
 /// For machines: RFC 3339 in UTC. Never read a display form back; `iso` reads this one.
 pub fn stamp(t: i64) -> String {
     let c = Civil::of(t);
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", c.year, c.month, c.day, c.hour, c.minute, c.second)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        c.year, c.month, c.day, c.hour, c.minute, c.second
+    )
 }
 
 /// `2026-10-12T10:00:00Z`, with optional fraction or `+00:00`; UTC only, as both boards send.
 pub fn iso(s: &str) -> Option<i64> {
     let n = |a: usize, b: usize| s.get(a..b).and_then(|x| x.parse::<i64>().ok());
-    Some(days(n(0, 4)?, n(5, 7)?, n(8, 10)?) * DAY + n(11, 13)? * HOUR + n(14, 16)? * MINUTE + n(17, 19)?)
+    Some(
+        days(n(0, 4)?, n(5, 7)?, n(8, 10)?) * DAY
+            + n(11, 13)? * HOUR
+            + n(14, 16)? * MINUTE
+            + n(17, 19)?,
+    )
 }
 
 /// A machine time read from a record, written for people.
@@ -73,8 +97,17 @@ pub fn http_date(s: &str) -> Option<i64> {
     let w: Vec<&str> = s.split_whitespace().collect();
     let mon = *w.get(2)?;
     let m = MONTHS.iter().position(|x| *x == mon)? as i64 + 1;
-    let t: Vec<i64> = w.get(4)?.split(':').map(|x| x.parse().ok()).collect::<Option<_>>()?;
-    Some(days(w.get(3)?.parse().ok()?, m, w.get(1)?.parse().ok()?) * DAY + t.first()? * HOUR + t.get(1)? * MINUTE + t.get(2)?)
+    let t: Vec<i64> = w
+        .get(4)?
+        .split(':')
+        .map(|x| x.parse().ok())
+        .collect::<Option<_>>()?;
+    Some(
+        days(w.get(3)?.parse().ok()?, m, w.get(1)?.parse().ok()?) * DAY
+            + t.first()? * HOUR
+            + t.get(1)? * MINUTE
+            + t.get(2)?,
+    )
 }
 
 /// Days since the epoch of a civil date (Hinnant).
@@ -109,7 +142,15 @@ impl Civil {
         let day = doy - (153 * mp + 2) / 5 + 1;
         let month = if mp < 10 { mp + 3 } else { mp - 9 };
         let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
-        Civil { days, year, month, day, hour: r / HOUR, minute: r % HOUR / MINUTE, second: r % MINUTE }
+        Civil {
+            days,
+            year,
+            month,
+            day,
+            hour: r / HOUR,
+            minute: r % HOUR / MINUTE,
+            second: r % MINUTE,
+        }
     }
 
     /// The epoch day was a Thursday.

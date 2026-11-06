@@ -6,78 +6,77 @@ macro_rules! log {
 }
 
 mod admission;
-mod draft_deps;
+#[cfg(any(target_os = "macos", windows, test))]
+mod agentq;
+mod balance;
+mod board;
 mod check;
 mod cli;
 mod config;
-#[cfg(any(target_os="macos",windows,test))]
-mod agentq;
+mod control;
+mod conversations;
+mod core;
+mod data;
+mod deploy;
+mod dialogue;
+mod dispatch;
+mod display;
+mod doctor;
+mod draft_deps;
+mod enrollment;
+mod evidence;
+mod external_slots;
+mod health;
 mod host;
 mod host_control;
-mod external_slots;
-mod board;
-mod core;
-mod control;
-mod data;
-mod doctor;
-mod health;
 mod http;
-mod deploy;
-mod dispatch;
-mod evidence;
-mod display;
-mod enrollment;
+#[cfg(any(target_os = "macos", windows))]
+mod icon;
 mod incident;
 mod incoming;
 mod labels;
-mod balance;
-mod link;
-mod recipe;
-mod requests;
-mod reply_files;
-mod platform;
-mod service_versions;
-mod readiness;
-mod policy;
-mod resources;
-mod paths;
-mod pm;
 mod lifecycle;
-mod recovery;
+mod link;
 #[cfg(target_os = "linux")]
 mod linux_sandbox;
-#[cfg(windows)]
-mod windows_sandbox;
+mod messages;
+#[cfg(any(target_os = "macos", windows))]
+mod notify;
+mod paths;
+#[cfg(any(target_os = "macos", windows, test))]
+mod pending;
+mod platform;
+mod pm;
+mod policy;
 mod profile;
-mod telemetry;
-mod telemetry_sync;
-mod time;
-mod tidy;
-mod tools;
+mod readiness;
+mod recipe;
+mod recovery;
+mod reply_files;
+mod reports;
+mod requests;
+mod resources;
 mod runtime;
 mod service;
 mod service_run;
-mod wake;
+mod service_versions;
 mod setup;
-mod dialogue;
-mod transcript;
-mod messages;
-mod conversations;
 mod snapshot;
-mod reports;
 mod summary;
-#[cfg(any(target_os = "macos", windows))]
-mod icon;
-#[cfg(any(target_os = "macos", windows))]
-mod notify;
+mod telemetry;
+mod telemetry_sync;
+mod tidy;
+mod time;
+mod tools;
+mod transcript;
 #[cfg(any(target_os = "macos", windows))]
 mod tray;
 #[cfg(any(target_os = "macos", windows))]
 mod ui_bundle;
-#[cfg(any(target_os = "macos", windows, test))]
-mod pending;
+mod wake;
+#[cfg(windows)]
+mod windows_sandbox;
 
-use crate::cli::{Args, help, pm_instructions};
 use crate::cli::connection::{connection_status, enroll_cmd};
 use crate::cli::handin::{ask_cmd, later_cmd, result_cmd};
 use crate::cli::host_cmd::{accounts_cli, balance_cli, doctor_cmd};
@@ -85,8 +84,11 @@ use crate::cli::inbox::{inbox, inbox_json, wait};
 #[cfg(target_os = "macos")]
 use crate::cli::service_cmd::bundled_tray;
 use crate::cli::status_cmd::{cleanup_lines, status_all, status_cmd};
-use crate::cli::task_cmd::{add_cmd, claim_issue_cmd, deployed_cmd, gate_task, issue_cmd, reroute, run_recipe, start_tasks};
+use crate::cli::task_cmd::{
+    add_cmd, claim_issue_cmd, deployed_cmd, gate_task, issue_cmd, reroute, run_recipe, start_tasks,
+};
 use crate::cli::text::{close_check, formats_selftest, media_links, task_text};
+use crate::cli::{Args, help, pm_instructions};
 use crate::config::{Ctx, ctx, load};
 use crate::dispatch::{Op, Receipt, answer_picks, close_checked};
 use crate::paths::{find_root, needs_checkout, project_name};
@@ -104,38 +106,67 @@ fn emit(rs: &[Receipt], json: bool) -> Res<()> {
             (false, false) => eprintln!("{}", r.text()),
         }
     }
-    if rs.iter().all(Receipt::ok) { Ok(()) } else { Err(String::new()) } // already shown: exit 1 quietly
+    if rs.iter().all(Receipt::ok) {
+        Ok(())
+    } else {
+        Err(String::new())
+    } // already shown: exit 1 quietly
 }
 
 fn json_output(text: &str, file: Option<&str>) -> Res<()> {
-    if let Some(path) = file { platform::write_atomic(Path::new(path), text).map_err(|e| format!("JSON file write failed: {e}")) }
-    else { println!("{text}"); Ok(()) }
+    if let Some(path) = file {
+        platform::write_atomic(Path::new(path), text)
+            .map_err(|e| format!("JSON file write failed: {e}"))
+    } else {
+        println!("{text}");
+        Ok(())
+    }
 }
 
 fn golden_selftest(traces: &str, published: bool) -> Res<usize> {
     let result = core::golden(traces);
     if published && result.is_err() {
-        incident::detect("invariant.golden", concat!("src/main.rs:", line!()), "none", &["fold.json"], &["golden:mismatch"]);
+        incident::detect(
+            "invariant.golden",
+            concat!("src/main.rs:", line!()),
+            "none",
+            &["fold.json"],
+            &["golden:mismatch"],
+        );
     }
     result
 }
 
 /// Applies `--diagnose` and its limits before the command runs.
 fn diagnose(a: &Args) -> Res<()> {
-    if let Some(selector)=a.one("diagnose") {
-        let milliseconds=a.one("diagnose-ms").unwrap_or("60000").parse::<u64>().map_err(|_|"invalid --diagnose-ms")?;
-        let limit=a.one("diagnose-limit").unwrap_or("256").parse::<u64>().map_err(|_|"invalid --diagnose-limit")?;
-        telemetry::diagnostic::select(selector,Duration::from_millis(milliseconds),limit)?;
-    } else if a.one("diagnose-ms").is_some() || a.one("diagnose-limit").is_some() {return Err("diagnostic limits require --diagnose".into());}
+    if let Some(selector) = a.one("diagnose") {
+        let milliseconds = a
+            .one("diagnose-ms")
+            .unwrap_or("60000")
+            .parse::<u64>()
+            .map_err(|_| "invalid --diagnose-ms")?;
+        let limit = a
+            .one("diagnose-limit")
+            .unwrap_or("256")
+            .parse::<u64>()
+            .map_err(|_| "invalid --diagnose-limit")?;
+        telemetry::diagnostic::select(selector, Duration::from_millis(milliseconds), limit)?;
+    } else if a.one("diagnose-ms").is_some() || a.one("diagnose-limit").is_some() {
+        return Err("diagnostic limits require --diagnose".into());
+    }
     Ok(())
 }
 
-#[tracing::instrument(name="run",skip_all)]
+#[tracing::instrument(name = "run", skip_all)]
 fn run(argv: &[String]) -> Res<()> {
     let mut a = Args::parse(argv)?;
     telemetry::diagnostic::poll(&platform::default_install());
     diagnose(&a)?;
-    if a.pos.is_empty() || a.pos.first().is_some_and(|s| s == "help") || a.pos.iter().any(|s| s == "-h") || a.flags.contains_key("help") {
+    if a.pos.is_empty()
+        || a.pos.first().is_some_and(|s| s == "help")
+        || a.pos.iter().any(|s| s == "-h")
+        || a.flags.contains_key("help")
+    {
         println!("{}", help(a.flags.contains_key("json"))?);
         return Ok(());
     }
@@ -282,58 +313,134 @@ fn run(argv: &[String]) -> Res<()> {
 /// Writes one command's receipts: to `--json-file` when given, else through `emit`.
 pub(crate) fn respond(a: &Args, rs: &[Receipt], json: bool) -> Res<()> {
     if let Some(path) = a.one("json-file") {
-        json_output(&rs.iter().map(Receipt::json).collect::<Vec<_>>().join("\n"), Some(path))?;
-        if rs.iter().all(Receipt::ok) { Ok(()) } else { Err(String::new()) }
-    } else { emit(rs, json) }
+        json_output(
+            &rs.iter().map(Receipt::json).collect::<Vec<_>>().join("\n"),
+            Some(path),
+        )?;
+        if rs.iter().all(Receipt::ok) {
+            Ok(())
+        } else {
+            Err(String::new())
+        }
+    } else {
+        emit(rs, json)
+    }
 }
 
 /// Keep a present empty dependency list: it is the explicit clear operation (§1).
-fn deps_command(b:&dyn board::Board,root:&Path,a:&Args,op:&Op,authorized:bool)->Res<Receipt> {
-    for (flag,values) in &a.flags {
-        if !["board","deps","op-id","revision","json"].contains(&flag.as_str()) || values.len()!=1 {return Err(format!("deps: unsupported or repeated --{flag}"));}
+fn deps_command(
+    b: &dyn board::Board,
+    root: &Path,
+    a: &Args,
+    op: &Op,
+    authorized: bool,
+) -> Res<Receipt> {
+    for (flag, values) in &a.flags {
+        if !["board", "deps", "op-id", "revision", "json"].contains(&flag.as_str())
+            || values.len() != 1
+        {
+            return Err(format!("deps: unsupported or repeated --{flag}"));
+        }
     }
-    Ok(draft_deps::amend(b,root,a.num(1)?,a.need("board")?,a.one("deps").ok_or("--deps is required")?,op,authorized))
+    Ok(draft_deps::amend(
+        b,
+        root,
+        a.num(1)?,
+        a.need("board")?,
+        a.one("deps").ok_or("--deps is required")?,
+        op,
+        authorized,
+    ))
 }
 
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
-    if matches!(cmd, "later" | "failed" | "steer") || cmd == "requeue" && dispatch::agent() || (cmd == "answer" && !a.pos.get(1).is_some_and(|p| p.contains('.'))) {
-        if a.all("file").is_empty() || !text.trim().is_empty() { task_text(cmd, text)?; }
+    if matches!(cmd, "later" | "failed" | "steer")
+        || cmd == "requeue" && dispatch::agent()
+        || (cmd == "answer" && !a.pos.get(1).is_some_and(|p| p.contains('.')))
+    {
+        if a.all("file").is_empty() || !text.trim().is_empty() {
+            task_text(cmd, text)?;
+        }
     }
-    if cmd == "add" && a.flags.contains_key("later") { task_text("later", text)?; }
-    if matches!(cmd, "ask" | "result" | "requeue" | "later" | "failed" | "steer" | "answer" | "pick") {
+    if cmd == "add" && a.flags.contains_key("later") {
+        task_text("later", text)?;
+    }
+    if matches!(
+        cmd,
+        "ask" | "result" | "requeue" | "later" | "failed" | "steer" | "answer" | "pick"
+    ) {
         let given = [a.all("option"), a.all("checks"), a.all("link")].concat();
         media_links(&[vec![text], given.iter().map(String::as_str).collect()].concat())?;
     }
-    let revision = a.one("revision").map(|r| r.parse::<u64>().map_err(|_| format!("bad --revision {r}"))).transpose()?;
-    let mut op = Op { id: a.one("op-id").map(String::from), revision };
-    if op.id.as_deref().is_some_and(|i| i.is_empty() || i.contains(char::is_whitespace)) {
+    let revision = a
+        .one("revision")
+        .map(|r| r.parse::<u64>().map_err(|_| format!("bad --revision {r}")))
+        .transpose()?;
+    let mut op = Op {
+        id: a.one("op-id").map(String::from),
+        revision,
+    };
+    if op
+        .id
+        .as_deref()
+        .is_some_and(|i| i.is_empty() || i.contains(char::is_whitespace))
+    {
         return Err("--op-id: one word".into());
     }
     let json = a.flags.contains_key("json");
     let emit = |rs: &[Receipt], json: bool| respond(a, rs, json);
-    if revision.is_some() && (cmd == "close" && a.pos.len() > 2 || cmd == "answer" && a.pos.len() > 2) {
+    if revision.is_some()
+        && (cmd == "close" && a.pos.len() > 2 || cmd == "answer" && a.pos.len() > 2)
+    {
         return Err("--revision names one task".into());
     }
     match cmd {
         "results" => {
-            let value=match reports::read_cli(root,a)? {
-                Some(value)=>value,
-                None=>reports::act_with_reason(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"),a.one("text").unwrap_or(""),a.one("until"))?
+            let value = match reports::read_cli(root, a)? {
+                Some(value) => value,
+                None => reports::act_with_reason(
+                    b,
+                    root,
+                    &c.raw,
+                    a.num(1)?,
+                    a.need("sha")?,
+                    a.one("action").unwrap_or("open"),
+                    a.one("text").unwrap_or(""),
+                    a.one("until"),
+                )?,
             };
-            println!("{value}"); Ok(())
+            println!("{value}");
+            Ok(())
         }
         "unpin" => {
-            if a.flags.iter().any(|(k,v)| !["host","revision","op-id","json"].contains(&k.as_str()) || v.len()!=1) {return Err("unpin accepts --host, --revision, --op-id and --json once each".into());}
-            emit(&[dispatch::unpin(b,a.num(1)?,a.need("host")?,&op,dispatch::agent()).wake(root)],json)
+            if a.flags.iter().any(|(k, v)| {
+                !["host", "revision", "op-id", "json"].contains(&k.as_str()) || v.len() != 1
+            }) {
+                return Err(
+                    "unpin accepts --host, --revision, --op-id and --json once each".into(),
+                );
+            }
+            emit(
+                &[
+                    dispatch::unpin(b, a.num(1)?, a.need("host")?, &op, dispatch::agent())
+                        .wake(root),
+                ],
+                json,
+            )
         }
         "reroute" => {
-            if dispatch::agent() { return Err("only the owner or PM can reroute strict task pins".into()); }
+            if dispatch::agent() {
+                return Err("only the owner or PM can reroute strict task pins".into());
+            }
             emit(&reroute(b, root, a.need("from")?, a.need("to")?)?, json)
         }
         "labels" => {
-            let mut names = labels::FIXED.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            let mut names = labels::FIXED
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>();
             names.extend(b.issues(None)?.into_iter().flat_map(|i| i.labels));
             b.ensure_labels(&names)?;
             println!("Label catalog verified for {}", project_name(root));
@@ -341,44 +448,138 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "add" | "finding" => add_cmd(c, cmd, a, &mut op),
         "deps" => {
-            let authorized=["TASKQ_ATTEMPT","TASKQ_TASK","TASKQ_ROLE","TASKQ_SERVICE"].iter().all(|key|std::env::var_os(key).is_none());
-            emit(&[deps_command(b,root,a,&op,authorized)?],json)
+            let authorized = ["TASKQ_ATTEMPT", "TASKQ_TASK", "TASKQ_ROLE", "TASKQ_SERVICE"]
+                .iter()
+                .all(|key| std::env::var_os(key).is_none());
+            emit(&[deps_command(b, root, a, &op, authorized)?], json)
         }
         "gate" => emit(&[gate_task(b, root, a.num(1)?, &op)], json),
         "start" => emit(&start_tasks(b, root, &a.pos[1..], &op)?, json),
         "evidence" => {
-            let owner=["TASKQ_ATTEMPT","TASKQ_TASK","TASKQ_ROLE","TASKQ_SERVICE"].iter().all(|k|std::env::var_os(k).is_none());
-            emit(&[evidence::authorize(b,root,a.num(1)?,a.need("sha")?,a.need("baseline")?,a.need("url")?,a.need("sha256")?,&op,owner,a.one("readers-current")==Some("yes"),a.one("source-record"))],json)
+            let owner = ["TASKQ_ATTEMPT", "TASKQ_TASK", "TASKQ_ROLE", "TASKQ_SERVICE"]
+                .iter()
+                .all(|k| std::env::var_os(k).is_none());
+            emit(
+                &[evidence::authorize(
+                    b,
+                    root,
+                    a.num(1)?,
+                    a.need("sha")?,
+                    a.need("baseline")?,
+                    a.need("url")?,
+                    a.need("sha256")?,
+                    &op,
+                    owner,
+                    a.one("readers-current") == Some("yes"),
+                    a.one("source-record"),
+                )],
+                json,
+            )
         }
-        "approve" => emit(&[dispatch::approve(b, root, a.num(1)?, a.one("sha"), &op, dispatch::agent())], json),
+        "approve" => emit(
+            &[dispatch::approve(
+                b,
+                root,
+                a.num(1)?,
+                a.one("sha"),
+                &op,
+                dispatch::agent(),
+            )],
+            json,
+        ),
         "recipe" => {
             let name = a.pos.get(1).ok_or("recipe name missing")?;
-            emit(&run_recipe(b, root, &c.raw, name, a.need("run")?, a.one("goal"), a.flags.contains_key("start"))?, json)
+            emit(
+                &run_recipe(
+                    b,
+                    root,
+                    &c.raw,
+                    name,
+                    a.need("run")?,
+                    a.one("goal"),
+                    a.flags.contains_key("start"),
+                )?,
+                json,
+            )
         }
         "ask" => ask_cmd(c, a, &op),
         "answer" if a.pos.get(1).is_some_and(|p| p.contains('.')) => {
             emit(&answer_picks(b, cfg, &a.pos[1..], &op)?, json)
         }
-        "pick" => emit(&[dispatch::pm_pick(b, root, a.pos.get(1).ok_or("N.K missing")?, text, &op)?], json),
+        "pick" => emit(
+            &[dispatch::pm_pick(
+                b,
+                root,
+                a.pos.get(1).ok_or("N.K missing")?,
+                text,
+                &op,
+            )?],
+            json,
+        ),
         "answer" => {
-            if a.all("file").is_empty(){emit(&dispatch::answer_text(b, cfg, a.num(1)?, a.need("text")?, &op)?, json)}
-            else{emit(&[dispatch::act_files(b,root,a.num(1)?,cmd,text,&op,&a.all("file"))],json)}
+            if a.all("file").is_empty() {
+                emit(
+                    &dispatch::answer_text(b, cfg, a.num(1)?, a.need("text")?, &op)?,
+                    json,
+                )
+            } else {
+                emit(
+                    &[dispatch::act_files(
+                        b,
+                        root,
+                        a.num(1)?,
+                        cmd,
+                        text,
+                        &op,
+                        &a.all("file"),
+                    )],
+                    json,
+                )
+            }
         }
         "result" => result_cmd(c, a, &op),
         "requeue" => {
             let n = a.num(1)?;
-            emit(&[dispatch::act_files(b,root,n,cmd,text,&op,&a.all("file"))],json)
+            emit(
+                &[dispatch::act_files(
+                    b,
+                    root,
+                    n,
+                    cmd,
+                    text,
+                    &op,
+                    &a.all("file"),
+                )],
+                json,
+            )
         }
         "later" => later_cmd(c, a, &op),
         "steer" | "failed" => {
             let n = a.num(1)?;
-            emit(&[dispatch::act_files(b,root,n,cmd,if a.all("file").is_empty(){a.need("text")?}else{text},&op,&a.all("file"))],json)
+            emit(
+                &[dispatch::act_files(
+                    b,
+                    root,
+                    n,
+                    cmd,
+                    if a.all("file").is_empty() {
+                        a.need("text")?
+                    } else {
+                        text
+                    },
+                    &op,
+                    &a.all("file"),
+                )],
+                json,
+            )
         }
         "close" => {
             let mut out = vec![];
             for i in 1..a.pos.len() {
                 let n = a.num(i)?;
-                out.push(close_checked(b, cfg, n, text, &op, &|issue, t| close_check(text, issue, t, b.defer_publication(cfg.delivery.mode()))));
+                out.push(close_checked(b, cfg, n, text, &op, &|issue, t| {
+                    close_check(text, issue, t, b.defer_publication(cfg.delivery.mode()))
+                }));
             }
             emit(&out, json)
         }
@@ -386,25 +587,49 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "enroll" => enroll_cmd(c, a),
         "connection" if a.pos.get(1).is_some_and(|p| p == "status") => connection_status(c),
         "disconnect" => {
-            println!("{}", enrollment::disconnect(&cfg.install)?.as_deref().unwrap_or("connection: none"));
+            println!(
+                "{}",
+                enrollment::disconnect(&cfg.install)?
+                    .as_deref()
+                    .unwrap_or("connection: none")
+            );
             Ok(())
         }
         "status" => status_cmd(c, a),
         "cleanup" => {
             needs_checkout(root, "cleanup")?;
-            for l in cleanup_lines(b, cfg, a) { println!("{l}"); }
+            for l in cleanup_lines(b, cfg, a) {
+                println!("{l}");
+            }
             Ok(())
         }
         "issue" => issue_cmd(c, a, &op),
         "deployed" => deployed_cmd(c, a),
         "claim-issue" => claim_issue_cmd(c, a),
         "inbox" => {
-            if a.flags.contains_key("json") { println!("{}", inbox_json(b, root, &cfg.me, a.num(1)?)?); } else { println!("{}", inbox(b, root, a.num(1)?)?); }
+            if a.flags.contains_key("json") {
+                println!("{}", inbox_json(b, root, &cfg.me, a.num(1)?)?);
+            } else {
+                println!("{}", inbox(b, root, a.num(1)?)?);
+            }
             Ok(())
         }
         "wait" => {
-            let w = a.one("window").map(|w| w.parse().map_err(|_| "bad --window")).transpose()?.unwrap_or(10);
-            for l in wait(b, cfg, w, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>())? {
+            let w = a
+                .one("window")
+                .map(|w| w.parse().map_err(|_| "bad --window"))
+                .transpose()?
+                .unwrap_or(10);
+            for l in wait(
+                b,
+                cfg,
+                w,
+                &a.all("only")
+                    .iter()
+                    .flat_map(|x| x.split(','))
+                    .map(String::from)
+                    .collect::<Vec<_>>(),
+            )? {
                 println!("{l}");
             }
             Ok(())
@@ -413,23 +638,35 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     }
 }
 
-#[tracing::instrument(name="application",skip_all)]
+#[tracing::instrument(name = "application", skip_all)]
 fn application() {
     #[cfg(windows)]
     if std::env::args().nth(1).as_deref() == Some("__windows-security-restore") {
-        if let Err(e) = windows_sandbox::restore(&std::env::args().skip(2).collect::<Vec<_>>()) { eprintln!("{e}"); crate::platform::exit(1); }
+        if let Err(e) = windows_sandbox::restore(&std::env::args().skip(2).collect::<Vec<_>>()) {
+            eprintln!("{e}");
+            crate::platform::exit(1);
+        }
         return;
     }
     #[cfg(windows)]
     if std::env::args().nth(1).as_deref() == Some("__windows-codex") {
-        if let Err(e) = windows_sandbox::run(&std::env::args().skip(2).collect::<Vec<_>>()) { eprintln!("{e}"); crate::platform::exit(1); }
+        if let Err(e) = windows_sandbox::run(&std::env::args().skip(2).collect::<Vec<_>>()) {
+            eprintln!("{e}");
+            crate::platform::exit(1);
+        }
         return;
     }
     #[cfg(target_os = "linux")]
-    if std::env::current_exe().ok().is_some_and(|p| p == Path::new(linux_sandbox::HELPER)) {
+    if std::env::current_exe()
+        .ok()
+        .is_some_and(|p| p == Path::new(linux_sandbox::HELPER))
+    {
         match linux_sandbox::run(&std::env::args().skip(1).collect::<Vec<_>>()) {
             Ok(code) => crate::platform::exit(code),
-            Err(e) => { eprintln!("{e}"); crate::platform::exit(1); }
+            Err(e) => {
+                eprintln!("{e}");
+                crate::platform::exit(1);
+            }
         }
     }
     incident::install_panic_hook();
@@ -437,32 +674,56 @@ fn application() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     // `<install>/taskq` is the launcher: it runs the current release (coreq.md § Launcher).
     let install = platform::default_install();
-    let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok());
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.canonicalize().ok());
     let t = platform::tool(&install);
     // #2049 A1: Windows tasks start the GUI launcher `<install>/taskqw.exe`; it runs every command windowless.
-    let gui = exe.as_deref().and_then(Path::file_name).is_some_and(|f| f.eq_ignore_ascii_case(t.gui_exe_name()));
+    let gui = exe
+        .as_deref()
+        .and_then(Path::file_name)
+        .is_some_and(|f| f.eq_ignore_ascii_case(t.gui_exe_name()));
     if exe.as_deref().is_some_and(|e| t.is_launcher(e)) && t.current().is_some() {
-        if gui { coreq::launcher::launch(&t, &args); }
+        if gui {
+            coreq::launcher::launch(&t, &args);
+        }
         // #1566: CoreQ's Windows launcher ends a CLI call through `ExitProcess`, the TLS-teardown hang `platform::exit` avoids.
         // M15: the launcher is the Windows app. No arguments on its own console (Explorer, Start menu, taskbar pin) opens
         // TaskQ without a console window; the tray runs in this process, so its exe path, and the pins keyed by it,
         // stay the same across updates. ponytail: a launcher an update could not rewrite runs its older tray until the
         // tray's version check ends it.
         #[cfg(windows)]
-        if args.is_empty() && platform::own_console() { args = vec!["tray".into(), "--open".into()]; }
+        if args.is_empty() && platform::own_console() {
+            args = vec!["tray".into(), "--open".into()];
+        }
         #[cfg(windows)]
-        if args.first().map(String::as_str) != Some("tray") && !(args.first().map(String::as_str) == Some("service") && args.get(1).map(String::as_str) == Some("run")) {
+        if args.first().map(String::as_str) != Some("tray")
+            && !(args.first().map(String::as_str) == Some("service")
+                && args.get(1).map(String::as_str) == Some("run"))
+        {
             let v = coreq::launcher::pick(&t, false).unwrap_or_else(|e| platform::die(&e));
-            let status = platform::console_command(t.release_exe(&v)).args(&args).env(t.env("INSTALL"), &t.install).status();
-            platform::exit(status.map_or_else(|e| platform::die(&format!("start {v}: {e}")), |s| s.code().unwrap_or(1)));
+            let status = platform::console_command(t.release_exe(&v))
+                .args(&args)
+                .env(t.env("INSTALL"), &t.install)
+                .status();
+            platform::exit(status.map_or_else(
+                |e| platform::die(&format!("start {v}: {e}")),
+                |s| s.code().unwrap_or(1),
+            ));
         }
         #[cfg(not(windows))]
         coreq::launcher::launch(&t, &args);
         #[cfg(windows)]
-        if args.first().map(String::as_str) != Some("tray") { coreq::launcher::launch(&t, &args); }
+        if args.first().map(String::as_str) != Some("tray") {
+            coreq::launcher::launch(&t, &args);
+        }
     }
     #[cfg(target_os = "macos")]
-    if args.is_empty()&&exe.as_deref().is_some_and(|exe|bundled_tray(exe,&install)) {
+    if args.is_empty()
+        && exe
+            .as_deref()
+            .is_some_and(|exe| bundled_tray(exe, &install))
+    {
         profile::init(&install);
         if let Err(e) = cli::service_cmd::tray(install, None, false, &[], None) {
             platform::die(&e);
@@ -474,7 +735,10 @@ fn application() {
     // #1351: the command already took effect; hand queued receipts to the writer before the exit flush, which has the same bound.
     telemetry::settle(Duration::from_secs(10));
     // § 4 budget: this process's board requests by source, for `taskq profile`
-    requests::flush(&requests::source(&args, std::env::var("TASKQ_ROLE").ok().as_deref()));
+    requests::flush(&requests::source(
+        &args,
+        std::env::var("TASKQ_ROLE").ok().as_deref(),
+    ));
     if let Err(e) = r {
         if e.is_empty() {
             crate::platform::exit(1);
@@ -483,10 +747,9 @@ fn application() {
     }
 }
 
-
-#[cfg(test)]
-#[path = "main_tests.rs"]
-pub(crate) mod tests;
 #[cfg(test)]
 #[path = "serde_shape_tests.rs"]
 mod serde_shape_tests;
+#[cfg(test)]
+#[path = "main_tests.rs"]
+pub(crate) mod tests;

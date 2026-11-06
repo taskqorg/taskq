@@ -1,46 +1,427 @@
 // A1-A5/R9: real bundle, invented IPC receipts; protects retained choices and no replay, not native launch proof.
-const fs=require('node:fs'),assert=require('node:assert/strict'),path=require('node:path'),{chromium}=require('playwright');
-const choice={model:'gpt-6.1-sol',effort:'low',permission:'inherit',grant_mode:'full',grant_revision:7};
-const facts={grant_revision:7,access:{grant:'full (project) rev 7 by invented operator',effective:'full',enforcement:'uncontained by TaskQ',refused:null},worker_defaults:'gpt-6.1-sol · Light (low)',catalog:{models:[{id:'gpt-6.1-sol',name:'GPT-6.1 Sol',efforts:[{effort:'low'},{effort:'high'}],default_effort:'low'}]}};
-const state={font:18,theme:'dark',host:'Invented host',projects:[{root:'fixture-alpha',name:'Alpha',alive:true,complete:true,tasks:[]},{root:'fixture-beta',name:'Beta',alive:true,complete:true,tasks:[]}],messages:{complete:true,entries:[]},ai:{runtime:{id:'claude',available:true,choices:[{id:'claude',name:'Claude Code',available:true},{id:'codex',name:'Codex',available:true},{id:'antigravity',name:'Antigravity',available:false,reason:'Visible owner-session adapter unsupported'}]},launch_choices:{'fixture-beta':{codex:facts,claude:{...facts,catalog:{models:[]}}},'fixture-alpha':{codex:facts,claude:{...facts,catalog:{models:[]}}}}},conversations:{complete:true,items:[],launch_defaults:{root:'fixture-beta',runtime:'codex',choice}}};
-(async()=>{const browser=await chromium.launch(require('./browser.cjs')());try{
- const page=await browser.newPage({viewport:{width:1000,height:760}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.exposeFunction('saveDraft',async m=>{let c=state.conversations.items.find(c=>c.id===m.conversation);if(!c){c={id:m.conversation,revision:0,files:[],archived:false};state.conversations.items.push(c);}Object.assign(c,m.draft);c.revision++;state.conversations.launch_defaults={root:c.root,runtime:c.runtime,choice:c.choice};await page.evaluate(r=>taskq.receive({conversationReceipt:r}),{id:m.id,state:'accepted',snapshot:state.conversations});});
- async function boot(){await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await page.evaluate(()=>{window.sent=[];window.saving=0;window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='conversation-action'&&m.action==='save'){saving++;saveDraft(m).finally(()=>saving--);}}};});await page.evaluate(s=>taskq.receive(s),state);await page.evaluate(()=>taskq.receive({open:{page:'conversations'}}));}
- const drain=()=>page.waitForFunction(()=>saving===0&&!document.querySelector('.conversation-status')?.textContent.includes('Saving'));
- await boot();await page.locator('[data-c=new]').click();await drain();
- const current=()=>state.conversations.items.at(-1);
- assert.equal(current().root,'fixture-beta','New restores previous project');assert.equal(current().runtime,'codex','New restores previous runtime');assert.deepEqual(current().choice,choice);
- const input=page.locator('[data-c-field=text]');await input.fill('Keep manager draft and files');await input.dispatchEvent('select');await drain();
- const runtime=page.locator('[data-c-field=runtime]');await runtime.focus();assert.equal(await runtime.getAttribute('aria-label'),'Runtime');await runtime.press('c');await runtime.press('Enter');await drain();assert.equal(current().runtime,'claude','native select supports keyboard selection');await runtime.press('c');await runtime.press('Enter');await drain();assert.equal(current().runtime,'codex','native select supports keyboard selection');assert.equal(await page.locator('.manager-runtime .ui-icon svg').count(),1,'selected provider icon exists');
- await page.locator('[data-view-key^="conversation-info:"]>summary').click();
- assert.equal(await page.locator('[data-c-field=model]').inputValue(),'gpt-6.1-sol');assert.equal(await page.locator('[data-c-field=effort]').inputValue(),'low');
- await page.locator('[data-c-field=permission]').selectOption('workspace');await drain();
- assert.equal(current().choice.permission,'workspace');assert.match(await page.locator('.manager-access').innerText(),/full.*project/);assert.match(await page.locator('.manager-access').innerText(),/new workers/i);
- await runtime.selectOption('claude');await drain();assert.equal(current().choice.model,'','switch never transfers another runtime model');assert.equal(await input.inputValue(),'Keep manager draft and files');
- await runtime.selectOption('codex');await drain();assert.equal(current().choice.model,'gpt-6.1-sol','switch back restores explicit selection');
- await runtime.selectOption('antigravity');await drain();assert.match(await page.locator('.conversation-detail').innerText(),/unsupported/i);assert.equal(await page.locator('[data-c=send]').isDisabled(),true);assert.equal(await input.inputValue(),'Keep manager draft and files');
- await runtime.selectOption('codex');await drain();
- for(const width of [1000,420]){await page.setViewportSize({width,height:760});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no horizontal scroll at '+width);const dir=process.env.TASKQ_EVIDENCE_2165;if(dir){fs.mkdirSync(dir,{recursive:true});await page.screenshot({path:path.join(dir,'launch-'+width+'.png')});}}
- if(process.env.TASKQ_NATIVE_2165){const preview=structuredClone(state);const c=preview.conversations.items.at(-1);c.choice.permission='full';preview.conversations.navigation={selected:c.id,list:'recent'};fs.writeFileSync(process.env.TASKQ_NATIVE_2165,fs.readFileSync('build/web/workspace.html','utf8').replace('</body>',`<script>window.ipc={postMessage:()=>{}};taskq.receive(${JSON.stringify(preview).replaceAll('<','\\u003c')});taskq.receive({open:{page:'conversations'}});setTimeout(()=>{document.querySelector('[data-view-key^="conversation-info:"]').open=true},0);</script></body>`));}
- state.ai.runtime.choices.find(r=>r.id==='antigravity').available=true;state.ai.launch_choices['fixture-beta'].antigravity={...facts,catalog:{models:[{id:'gemini-4-argon-low',name:'Gemini 4 Argon (Low)',efforts:[{effort:'low'}],default_effort:'low'}]}};await page.evaluate(s=>taskq.receive(s),state);await runtime.selectOption('antigravity');await drain();await page.locator('[data-c-field=model]').selectOption('gemini-4-argon-low');await drain();assert.equal(current().choice.effort,'low');assert.equal(await page.locator('.manager-runtime .ui-icon svg').count(),1);await runtime.selectOption('codex');await drain();
- facts.grant_revision=8;await page.evaluate(s=>taskq.receive(s),state);assert.match(await page.locator('.conversation-detail').innerText(),/grant changed|review launch/i);assert.equal(await page.locator('[data-c=send]').isDisabled(),true,'stale grant never dispatches');
- await page.locator('[data-c=launch-refresh]').click();await drain();assert.equal(current().choice.grant_revision,8,'explicit review refreshes fence');
- await page.locator('[data-c=new]').click();await drain();assert.equal(current().runtime,'codex');assert.equal(current().root,'fixture-beta');assert.equal(current().choice.permission,'workspace');
- await boot();await page.locator('[data-c=new]').click();await drain();assert.equal(current().choice.grant_revision,8,'restart restores exact saved choices');
- assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0,'switching, review, New and recovery never launch or replay');
- // A1/A4/A5: pre-choice drafts must expose defaults and grant review without a runtime switch or implicit migration.
- const legacy={id:'legacy-unsent',revision:4,title:'Retained legacy draft',root:'fixture-beta',runtime:'codex',text:'Keep exact legacy input',caret:[2,5],scroll:0,archived:false,files:[{id:'retained-file',name:'retained.txt',mime:'text/plain',bytes:4,hash:'a'.repeat(64)}]};
- state.conversations.items.push(legacy);state.conversations.navigation={selected:legacy.id,list:'recent'};
- await boot();await page.locator('[data-view-key^="conversation-info:"]>summary').click();
- assert.equal(await page.locator('[data-c-field=model]').count(),1,'legacy unsent draft exposes Model without switching runtime');
- assert.equal(await page.locator('[data-c-field=model]').inputValue(),'');assert.equal(await page.locator('[data-c-field=effort]').inputValue(),'');assert.equal(await page.locator('[data-c-field=permission]').inputValue(),'inherit');
- assert.match(await page.locator('.manager-access').innerText(),/Grant: full.*Effective: full/);
- assert.equal(legacy.choice,undefined,'rendering defaults never persists a choice or grant fence');
- for(const width of [1000,420]){await page.setViewportSize({width,height:760});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'legacy draft has no horizontal scroll at '+width);const dir=process.env.TASKQ_EVIDENCE_2165;if(dir)await page.screenshot({path:path.join(dir,'legacy-'+width+'.png')});}
- await page.locator('[data-c=launch-refresh]').click();await drain();
- assert.deepEqual(legacy.choice,{model:'',effort:'',permission:'inherit',grant_mode:'full',grant_revision:8},'only explicit review binds current grant without changing native defaults');
- assert.equal(legacy.runtime,'codex');assert.equal(legacy.root,'fixture-beta');assert.equal(legacy.text,'Keep exact legacy input');assert.equal(legacy.files[0].id,'retained-file');assert.equal(legacy.sent,undefined);assert.equal(legacy.request,undefined);
- assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send'||m.action==='reply'||m.action==='reconcile').length),0,'legacy restoration and grant review never dispatch or reconcile input');
- assert.deepEqual(errors,[]);console.log('manager launch persistence, switching, stale grant, legacy restore and normal/narrow layout PASS (invented IPC)');
-}finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+const fs = require("node:fs"),
+  assert = require("node:assert/strict"),
+  path = require("node:path"),
+  { chromium } = require("playwright");
+const choice = {
+  model: "gpt-6.1-sol",
+  effort: "low",
+  permission: "inherit",
+  grant_mode: "full",
+  grant_revision: 7,
+};
+const facts = {
+  grant_revision: 7,
+  access: {
+    grant: "full (project) rev 7 by invented operator",
+    effective: "full",
+    enforcement: "uncontained by TaskQ",
+    refused: null,
+  },
+  worker_defaults: "gpt-6.1-sol · Light (low)",
+  catalog: {
+    models: [
+      {
+        id: "gpt-6.1-sol",
+        name: "GPT-6.1 Sol",
+        efforts: [{ effort: "low" }, { effort: "high" }],
+        default_effort: "low",
+      },
+    ],
+  },
+};
+const state = {
+  font: 18,
+  theme: "dark",
+  host: "Invented host",
+  projects: [
+    {
+      root: "fixture-alpha",
+      name: "Alpha",
+      alive: true,
+      complete: true,
+      tasks: [],
+    },
+    {
+      root: "fixture-beta",
+      name: "Beta",
+      alive: true,
+      complete: true,
+      tasks: [],
+    },
+  ],
+  messages: { complete: true, entries: [] },
+  ai: {
+    runtime: {
+      id: "claude",
+      available: true,
+      choices: [
+        { id: "claude", name: "Claude Code", available: true },
+        { id: "codex", name: "Codex", available: true },
+        {
+          id: "antigravity",
+          name: "Antigravity",
+          available: false,
+          reason: "Visible owner-session adapter unsupported",
+        },
+      ],
+    },
+    launch_choices: {
+      "fixture-beta": {
+        codex: facts,
+        claude: { ...facts, catalog: { models: [] } },
+      },
+      "fixture-alpha": {
+        codex: facts,
+        claude: { ...facts, catalog: { models: [] } },
+      },
+    },
+  },
+  conversations: {
+    complete: true,
+    items: [],
+    launch_defaults: { root: "fixture-beta", runtime: "codex", choice },
+  },
+};
+(async () => {
+  const browser = await chromium.launch(require("./browser.cjs")());
+  try {
+    const page = await browser.newPage({
+        viewport: { width: 1000, height: 760 },
+      }),
+      errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.exposeFunction("saveDraft", async (m) => {
+      let c = state.conversations.items.find((c) => c.id === m.conversation);
+      if (!c) {
+        c = { id: m.conversation, revision: 0, files: [], archived: false };
+        state.conversations.items.push(c);
+      }
+      Object.assign(c, m.draft);
+      c.revision++;
+      state.conversations.launch_defaults = {
+        root: c.root,
+        runtime: c.runtime,
+        choice: c.choice,
+      };
+      await page.evaluate((r) => taskq.receive({ conversationReceipt: r }), {
+        id: m.id,
+        state: "accepted",
+        snapshot: state.conversations,
+      });
+    });
+    async function boot() {
+      await page.setContent(
+        fs.readFileSync("build/web/workspace.html", "utf8"),
+      );
+      await page.evaluate(() => {
+        window.sent = [];
+        window.saving = 0;
+        window.ipc = {
+          postMessage: (text) => {
+            const m = JSON.parse(text);
+            sent.push(m);
+            if (m.a === "conversation-action" && m.action === "save") {
+              saving++;
+              saveDraft(m).finally(() => saving--);
+            }
+          },
+        };
+      });
+      await page.evaluate((s) => taskq.receive(s), state);
+      await page.evaluate(() =>
+        taskq.receive({ open: { page: "conversations" } }),
+      );
+    }
+    const drain = () =>
+      page.waitForFunction(
+        () =>
+          saving === 0 &&
+          !document
+            .querySelector(".conversation-status")
+            ?.textContent.includes("Saving"),
+      );
+    await boot();
+    await page.locator("[data-c=new]").click();
+    await drain();
+    const current = () => state.conversations.items.at(-1);
+    assert.equal(
+      current().root,
+      "fixture-beta",
+      "New restores previous project",
+    );
+    assert.equal(current().runtime, "codex", "New restores previous runtime");
+    assert.deepEqual(current().choice, choice);
+    const input = page.locator("[data-c-field=text]");
+    await input.fill("Keep manager draft and files");
+    await input.dispatchEvent("select");
+    await drain();
+    const runtime = page.locator("[data-c-field=runtime]");
+    await runtime.focus();
+    assert.equal(await runtime.getAttribute("aria-label"), "Runtime");
+    await runtime.press("c");
+    await runtime.press("Enter");
+    await drain();
+    assert.equal(
+      current().runtime,
+      "claude",
+      "native select supports keyboard selection",
+    );
+    await runtime.press("c");
+    await runtime.press("Enter");
+    await drain();
+    assert.equal(
+      current().runtime,
+      "codex",
+      "native select supports keyboard selection",
+    );
+    assert.equal(
+      await page.locator(".manager-runtime .ui-icon svg").count(),
+      1,
+      "selected provider icon exists",
+    );
+    await page.locator('[data-view-key^="conversation-info:"]>summary').click();
+    assert.equal(
+      await page.locator("[data-c-field=model]").inputValue(),
+      "gpt-6.1-sol",
+    );
+    assert.equal(
+      await page.locator("[data-c-field=effort]").inputValue(),
+      "low",
+    );
+    await page.locator("[data-c-field=permission]").selectOption("workspace");
+    await drain();
+    assert.equal(current().choice.permission, "workspace");
+    assert.match(
+      await page.locator(".manager-access").innerText(),
+      /full.*project/,
+    );
+    assert.match(
+      await page.locator(".manager-access").innerText(),
+      /new workers/i,
+    );
+    await runtime.selectOption("claude");
+    await drain();
+    assert.equal(
+      current().choice.model,
+      "",
+      "switch never transfers another runtime model",
+    );
+    assert.equal(await input.inputValue(), "Keep manager draft and files");
+    await runtime.selectOption("codex");
+    await drain();
+    assert.equal(
+      current().choice.model,
+      "gpt-6.1-sol",
+      "switch back restores explicit selection",
+    );
+    await runtime.selectOption("antigravity");
+    await drain();
+    assert.match(
+      await page.locator(".conversation-detail").innerText(),
+      /unsupported/i,
+    );
+    assert.equal(await page.locator("[data-c=send]").isDisabled(), true);
+    assert.equal(await input.inputValue(), "Keep manager draft and files");
+    await runtime.selectOption("codex");
+    await drain();
+    for (const width of [1000, 420]) {
+      await page.setViewportSize({ width, height: 760 });
+      assert.equal(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth > innerWidth,
+        ),
+        false,
+        "no horizontal scroll at " + width,
+      );
+      const dir = process.env.TASKQ_EVIDENCE_2165;
+      if (dir) {
+        fs.mkdirSync(dir, { recursive: true });
+        await page.screenshot({
+          path: path.join(dir, "launch-" + width + ".png"),
+        });
+      }
+    }
+    if (process.env.TASKQ_NATIVE_2165) {
+      const preview = structuredClone(state);
+      const c = preview.conversations.items.at(-1);
+      c.choice.permission = "full";
+      preview.conversations.navigation = { selected: c.id, list: "recent" };
+      fs.writeFileSync(
+        process.env.TASKQ_NATIVE_2165,
+        fs
+          .readFileSync("build/web/workspace.html", "utf8")
+          .replace(
+            "</body>",
+            `<script>window.ipc={postMessage:()=>{}};taskq.receive(${JSON.stringify(preview).replaceAll("<", "\\u003c")});taskq.receive({open:{page:'conversations'}});setTimeout(()=>{document.querySelector('[data-view-key^="conversation-info:"]').open=true},0);</script></body>`,
+          ),
+      );
+    }
+    state.ai.runtime.choices.find((r) => r.id === "antigravity").available =
+      true;
+    state.ai.launch_choices["fixture-beta"].antigravity = {
+      ...facts,
+      catalog: {
+        models: [
+          {
+            id: "gemini-4-argon-low",
+            name: "Gemini 4 Argon (Low)",
+            efforts: [{ effort: "low" }],
+            default_effort: "low",
+          },
+        ],
+      },
+    };
+    await page.evaluate((s) => taskq.receive(s), state);
+    await runtime.selectOption("antigravity");
+    await drain();
+    await page
+      .locator("[data-c-field=model]")
+      .selectOption("gemini-4-argon-low");
+    await drain();
+    assert.equal(current().choice.effort, "low");
+    assert.equal(
+      await page.locator(".manager-runtime .ui-icon svg").count(),
+      1,
+    );
+    await runtime.selectOption("codex");
+    await drain();
+    facts.grant_revision = 8;
+    await page.evaluate((s) => taskq.receive(s), state);
+    assert.match(
+      await page.locator(".conversation-detail").innerText(),
+      /grant changed|review launch/i,
+    );
+    assert.equal(
+      await page.locator("[data-c=send]").isDisabled(),
+      true,
+      "stale grant never dispatches",
+    );
+    await page.locator("[data-c=launch-refresh]").click();
+    await drain();
+    assert.equal(
+      current().choice.grant_revision,
+      8,
+      "explicit review refreshes fence",
+    );
+    await page.locator("[data-c=new]").click();
+    await drain();
+    assert.equal(current().runtime, "codex");
+    assert.equal(current().root, "fixture-beta");
+    assert.equal(current().choice.permission, "workspace");
+    await boot();
+    await page.locator("[data-c=new]").click();
+    await drain();
+    assert.equal(
+      current().choice.grant_revision,
+      8,
+      "restart restores exact saved choices",
+    );
+    assert.equal(
+      await page.evaluate(() => sent.filter((m) => m.action === "send").length),
+      0,
+      "switching, review, New and recovery never launch or replay",
+    );
+    // A1/A4/A5: pre-choice drafts must expose defaults and grant review without a runtime switch or implicit migration.
+    const legacy = {
+      id: "legacy-unsent",
+      revision: 4,
+      title: "Retained legacy draft",
+      root: "fixture-beta",
+      runtime: "codex",
+      text: "Keep exact legacy input",
+      caret: [2, 5],
+      scroll: 0,
+      archived: false,
+      files: [
+        {
+          id: "retained-file",
+          name: "retained.txt",
+          mime: "text/plain",
+          bytes: 4,
+          hash: "a".repeat(64),
+        },
+      ],
+    };
+    state.conversations.items.push(legacy);
+    state.conversations.navigation = { selected: legacy.id, list: "recent" };
+    await boot();
+    await page.locator('[data-view-key^="conversation-info:"]>summary').click();
+    assert.equal(
+      await page.locator("[data-c-field=model]").count(),
+      1,
+      "legacy unsent draft exposes Model without switching runtime",
+    );
+    assert.equal(await page.locator("[data-c-field=model]").inputValue(), "");
+    assert.equal(await page.locator("[data-c-field=effort]").inputValue(), "");
+    assert.equal(
+      await page.locator("[data-c-field=permission]").inputValue(),
+      "inherit",
+    );
+    assert.match(
+      await page.locator(".manager-access").innerText(),
+      /Grant: full.*Effective: full/,
+    );
+    assert.equal(
+      legacy.choice,
+      undefined,
+      "rendering defaults never persists a choice or grant fence",
+    );
+    for (const width of [1000, 420]) {
+      await page.setViewportSize({ width, height: 760 });
+      assert.equal(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth > innerWidth,
+        ),
+        false,
+        "legacy draft has no horizontal scroll at " + width,
+      );
+      const dir = process.env.TASKQ_EVIDENCE_2165;
+      if (dir)
+        await page.screenshot({
+          path: path.join(dir, "legacy-" + width + ".png"),
+        });
+    }
+    await page.locator("[data-c=launch-refresh]").click();
+    await drain();
+    assert.deepEqual(
+      legacy.choice,
+      {
+        model: "",
+        effort: "",
+        permission: "inherit",
+        grant_mode: "full",
+        grant_revision: 8,
+      },
+      "only explicit review binds current grant without changing native defaults",
+    );
+    assert.equal(legacy.runtime, "codex");
+    assert.equal(legacy.root, "fixture-beta");
+    assert.equal(legacy.text, "Keep exact legacy input");
+    assert.equal(legacy.files[0].id, "retained-file");
+    assert.equal(legacy.sent, undefined);
+    assert.equal(legacy.request, undefined);
+    assert.equal(
+      await page.evaluate(
+        () =>
+          sent.filter(
+            (m) =>
+              m.action === "send" ||
+              m.action === "reply" ||
+              m.action === "reconcile",
+          ).length,
+      ),
+      0,
+      "legacy restoration and grant review never dispatch or reconcile input",
+    );
+    assert.deepEqual(errors, []);
+    console.log(
+      "manager launch persistence, switching, stale grant, legacy restore and normal/narrow layout PASS (invented IPC)",
+    );
+  } finally {
+    await browser.close();
+  }
+})().catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
+});
