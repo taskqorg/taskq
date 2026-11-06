@@ -1,189 +1,993 @@
-'use strict';
-const readingAnchor=require('./reading-anchor.js');
-const ui=require('./ui-runtime.js'),{execution}=ui,{h}=require('preact');
-const replyFiles=require('./reply-files.js'),time=require('./relative-time.js'),copyLabel=require('./copy-label.js');
-const {create}=execution.module('workspace.answers',{
-create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed,steer,read=(p,t)=>t,historyText}){
- const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={},steers={};
- const api=execution.module('workspace.answers.instance',{
-display:function(r){return copyLabel.task(view.S?.projects.find(p=>p.issues===r.board)?.name||'Board',r.op.task);},
-project:function(board,root=view.answer?.board===board?view.answer.root:null){const matches=view.S?.projects.filter(p=>p.issues===board&&(!root||p.root===root))||[];return matches.length===1?matches[0]:null;},
-answerCapability:function(board,row){const p=api.project(board);return {manage:true,files:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board',composer,project:view.S?.projects.find(p=>p.issues===board)?.name,paged:composer&&(row?.question?.text||row?.card||'').length>32768};},
-// #1662 A3: the workspace's shared composer reads and drives the mounted card; the card keeps draft, op and receipt
-answerCompose:function(board,row){return component().compose(row,saved[board+'#'+row.n]||component().fresh(row),answerCapability(board,row));},
-answerInput:function(board,n,text,caret){if(text==null&&JSON.stringify(saved[board+'#'+n]?.caret)===JSON.stringify(caret))return;answerCards.get(board+'/'+n)?.ui.input(board,n,text,caret);},
-answerAct:function(board,n,type){answerCards.get(board+'/'+n)?.ui.act(board,n,type);},
-answerSetFiles:function(board,n,files){const row={n},prior=saved[board+'#'+n];if(!prior)return;if(!answerCards.get(board+'/'+n)?.ui.files(board,n,files))save(board,row,{...prior,files});draw();},
-answerFiles:function(board,n,files){if(!saved[board+'#'+n]){const row=api.project(board)?.tasks.find(t=>t.n===n);if(!row)return;save(board,row,component().fresh(row));}replyFiles.read(files,file=>{const current=saved[board+'#'+n]?.files||[];if(file.pending||current.some(f=>f.id===file.id))api.answerSetFiles(board,n,[...current.filter(f=>f.id!==file.id),file]);});},
-answerFileReceipt:function(r){replyFiles.settle(r.id);if(r.state!=='accepted')replyFiles.refuse(r.kind);for(const [key,local]of Object.entries(saved))if(local.files?.some(f=>f.id===r.id)){const at=key.lastIndexOf('#');api.answerSetFiles(key.slice(0,at),Number(key.slice(at+1)),local.files.map(f=>f.id===r.id?r.state==='accepted'?r.file:{...f,pending:false,error:r.reason}:f));}},
-fileControls:function(board,n,disabled){return replyFiles.controls(saved[board+'#'+n]?.files||[],disabled,files=>api.answerFiles(board,n,files),id=>api.answerSetFiles(board,n,(saved[board+'#'+n]?.files||[]).filter(f=>f.id!==id)));},
-fileEvents:function(board,n,disabled){return replyFiles.events(files=>api.answerFiles(board,n,files),disabled);},
+"use strict";
+const readingAnchor = require("./reading-anchor.js");
+const ui = require("./ui-runtime.js"),
+  { execution } = ui,
+  { h } = require("preact");
+const replyFiles = require("./reply-files.js"),
+  time = require("./relative-time.js"),
+  copyLabel = require("./copy-label.js");
+const { create } = execution.module("workspace.answers", {
+  create: function (
+    view,
+    {
+      menu,
+      document,
+      send,
+      draw,
+      defer = ui.defer,
+      cancel = ui.cancel,
+      composer = false,
+      changed,
+      steer,
+      read = (p, t) => t,
+      historyText,
+    },
+  ) {
+    const answerRequests = new Map(),
+      answerCards = new Map(),
+      answerFeedback = new Map(),
+      saved = {},
+      steers = {};
+    const api = execution.module("workspace.answers.instance", {
+      display: function (r) {
+        return copyLabel.task(
+          view.S?.projects.find((p) => p.issues === r.board)?.name || "Board",
+          r.op.task,
+        );
+      },
+      project: function (
+        board,
+        root = view.answer?.board === board ? view.answer.root : null,
+      ) {
+        const matches =
+          view.S?.projects.filter(
+            (p) => p.issues === board && (!root || p.root === root),
+          ) || [];
+        return matches.length === 1 ? matches[0] : null;
+      },
+      answerCapability: function (board, row) {
+        const p = api.project(board);
+        return {
+          manage: true,
+          files: true,
+          answer: !!p && p.alive && p.complete === true,
+          reason: "Project status is unavailable or stale; check the board",
+          composer,
+          project: view.S?.projects.find((p) => p.issues === board)?.name,
+          paged:
+            composer && (row?.question?.text || row?.card || "").length > 32768,
+        };
+      },
+      // #1662 A3: the workspace's shared composer reads and drives the mounted card; the card keeps draft, op and receipt
+      answerCompose: function (board, row) {
+        return component().compose(
+          row,
+          saved[board + "#" + row.n] || component().fresh(row),
+          answerCapability(board, row),
+        );
+      },
+      answerInput: function (board, n, text, caret) {
+        if (
+          text == null &&
+          JSON.stringify(saved[board + "#" + n]?.caret) ===
+            JSON.stringify(caret)
+        )
+          return;
+        answerCards.get(board + "/" + n)?.ui.input(board, n, text, caret);
+      },
+      answerAct: function (board, n, type) {
+        answerCards.get(board + "/" + n)?.ui.act(board, n, type);
+      },
+      answerSetFiles: function (board, n, files) {
+        const row = { n },
+          prior = saved[board + "#" + n];
+        if (!prior) return;
+        if (!answerCards.get(board + "/" + n)?.ui.files(board, n, files))
+          save(board, row, { ...prior, files });
+        draw();
+      },
+      answerFiles: function (board, n, files) {
+        if (!saved[board + "#" + n]) {
+          const row = api.project(board)?.tasks.find((t) => t.n === n);
+          if (!row) return;
+          save(board, row, component().fresh(row));
+        }
+        replyFiles.read(files, (file) => {
+          const current = saved[board + "#" + n]?.files || [];
+          if (file.pending || current.some((f) => f.id === file.id))
+            api.answerSetFiles(board, n, [
+              ...current.filter((f) => f.id !== file.id),
+              file,
+            ]);
+        });
+      },
+      answerFileReceipt: function (r) {
+        replyFiles.settle(r.id);
+        if (r.state !== "accepted") replyFiles.refuse(r.kind);
+        for (const [key, local] of Object.entries(saved))
+          if (local.files?.some((f) => f.id === r.id)) {
+            const at = key.lastIndexOf("#");
+            api.answerSetFiles(
+              key.slice(0, at),
+              Number(key.slice(at + 1)),
+              local.files.map((f) =>
+                f.id === r.id
+                  ? r.state === "accepted"
+                    ? r.file
+                    : { ...f, pending: false, error: r.reason }
+                  : f,
+              ),
+            );
+          }
+      },
+      fileControls: function (board, n, disabled) {
+        return replyFiles.controls(
+          saved[board + "#" + n]?.files || [],
+          disabled,
+          (files) => api.answerFiles(board, n, files),
+          (id) =>
+            api.answerSetFiles(
+              board,
+              n,
+              (saved[board + "#" + n]?.files || []).filter((f) => f.id !== id),
+            ),
+        );
+      },
+      fileEvents: function (board, n, disabled) {
+        return replyFiles.events(
+          (files) => api.answerFiles(board, n, files),
+          disabled,
+        );
+      },
 
-answerReceipt:function(r){
-  const key=r.root+'#'+r.id,request=answerRequests.get(key);
-  const previous=answerFeedback.get(key);
-  if(!request&&previous?.state!=='unknown')return;
-  const item=request||previous;
-  api.answerRefusal(r.state);
-  answerFeedback.set(key,{board:item.board,op:item.op,about:item.about,state:r.state,reason:r.reason,next:r.next,answered:r.answered,...(r.note?{note:true}:{})});
-  const local=saved[item.board+'#'+item.op.task];
-  if(local?.op?.id===r.id)save(item.board,{n:item.op.task},{...local,receipt:{state:r.state,reason:r.reason,next:r.next,answered:r.answered,...(r.note?{note:true}:{})},...(r.state==='accepted'&&(item.op.text||item.op.files?.length)?{draft:'',files:[]}:{})});
-  if(item.op.action==='steer'&&r.state==='accepted')steers[item.board+'#'+item.op.task]='';
-  // M3: an accepted answer gets a 6 s overlay toast and joins Answered, which keeps the newest 20
-  if(r.state==='accepted'){
-    const answered=[...answerFeedback].filter(([,x])=>x.state==='accepted');
-    if(answered.length>20)answerFeedback.delete(answered[0][0]);
-    view.toast=key;defer(()=>{if(view.toast===key){view.toast=null;draw();}},6000);
-  }
-  if(request){
-    cancel(request.timer);answerRequests.delete(key);
-    request.resolve({state:r.state,reason:r.reason,next:r.next,...(r.note?{note:true}:{})});
-  }else answerCards.get(item.board+'/'+item.op.task)?.ui.receiveReceipt(item.board,r.id,r);
-  draw();
+      answerReceipt: function (r) {
+        const key = r.root + "#" + r.id,
+          request = answerRequests.get(key);
+        const previous = answerFeedback.get(key);
+        if (!request && previous?.state !== "unknown") return;
+        const item = request || previous;
+        api.answerRefusal(r.state);
+        answerFeedback.set(key, {
+          board: item.board,
+          op: item.op,
+          about: item.about,
+          state: r.state,
+          reason: r.reason,
+          next: r.next,
+          answered: r.answered,
+          ...(r.note ? { note: true } : {}),
+        });
+        const local = saved[item.board + "#" + item.op.task];
+        if (local?.op?.id === r.id)
+          save(
+            item.board,
+            { n: item.op.task },
+            {
+              ...local,
+              receipt: {
+                state: r.state,
+                reason: r.reason,
+                next: r.next,
+                answered: r.answered,
+                ...(r.note ? { note: true } : {}),
+              },
+              ...(r.state === "accepted" &&
+              (item.op.text || item.op.files?.length)
+                ? { draft: "", files: [] }
+                : {}),
+            },
+          );
+        if (item.op.action === "steer" && r.state === "accepted")
+          steers[item.board + "#" + item.op.task] = "";
+        // M3: an accepted answer gets a 6 s overlay toast and joins Answered, which keeps the newest 20
+        if (r.state === "accepted") {
+          const answered = [...answerFeedback].filter(
+            ([, x]) => x.state === "accepted",
+          );
+          if (answered.length > 20) answerFeedback.delete(answered[0][0]);
+          view.toast = key;
+          defer(() => {
+            if (view.toast === key) {
+              view.toast = null;
+              draw();
+            }
+          }, 6000);
+        }
+        if (request) {
+          cancel(request.timer);
+          answerRequests.delete(key);
+          request.resolve({
+            state: r.state,
+            reason: r.reason,
+            next: r.next,
+            ...(r.note ? { note: true } : {}),
+          });
+        } else
+          answerCards
+            .get(item.board + "/" + item.op.task)
+            ?.ui.receiveReceipt(item.board, r.id, r);
+        draw();
+      },
+      answerRefusal: function (state) {
+        switch (state) {
+          case "rejected":
+            execution.action("workspace.answer.refused.rejected", () => {})();
+            break;
+          case "failed":
+            execution.action("workspace.answer.refused.failed", () => {})();
+            break;
+          case "stale":
+            execution.action("workspace.answer.refused.stale", () => {})();
+            break;
+          case "partial":
+            execution.action("workspace.answer.refused.partial", () => {})();
+            break;
+          case "unknown":
+            execution.action("workspace.answer.refused.unknown", () => {})();
+            break;
+        }
+      },
+      answerReadback: function () {
+        for (const [key, r] of answerRequests) {
+          const p = api.project(r.board, r.root),
+            t =
+              p &&
+              p.complete === true &&
+              p.tasks.find((t) => t.n === r.op.task);
+          if (
+            r.reconciled ||
+            r.op.action ||
+            !t ||
+            (t.state === "ask" && t.revision === r.op.revision)
+          )
+            continue;
+          r.reconciled = true;
+          send({ a: "answer", root: r.root, board: r.board, op: r.op });
+        }
+      },
+      // The answer card owns the slot's descendants; Preact renders the slot without children.
+      answerSlot: function (t) {
+        return t.state === "ask"
+          ? h("div", { "data-answer": t.key, key: "answer:" + t.key })
+          : null;
+      },
+      answerNotices: function (board, task) {
+        // M3: receipts follow Attention or their project's task rows, never above them; accepted ones collapse into Answered, newest first
+        // #1662 A1/A4: a receipt names its question and answer in plain words; operation id and revision stay behind a disclosure
+        const { line } = execution.module("workspace.answers.notices", {
+          line: ([key, r], role) =>
+            r.answered
+              ? h(
+                  "div",
+                  { class: "body", role, key },
+                  api.display(r) + " · " + won(r) + " ",
+                  h(
+                    "a",
+                    {
+                      href: r.board + "/" + r.op.task,
+                      "data-url": r.board + "/" + r.op.task,
+                    },
+                    "Board ↗",
+                  ),
+                  h(
+                    "button",
+                    {
+                      "data-a": "answer-dismiss",
+                      "data-key": key,
+                      "aria-label": "Dismiss " + api.display(r) + " receipt",
+                      title: "Dismiss",
+                    },
+                    "×",
+                  ),
+                )
+              : h(
+                  "div",
+                  {
+                    class: "body" + (FAILED.includes(r.state) ? " alert" : ""),
+                    role,
+                    key,
+                  },
+                  api.display(r) +
+                    (r.about ? " " + r.about : "") +
+                    " · " +
+                    (STATE[r.state] || r.state) +
+                    (r.reason
+                      ? ": " +
+                        (r.reason === CONFLICT
+                          ? "an earlier answer with this operation is still pending with different content"
+                          : r.reason)
+                      : "") +
+                    (r.next ? " · " + r.next : "") +
+                    " ",
+                  h(
+                    "a",
+                    {
+                      href: r.board + "/" + r.op.task,
+                      "data-url": r.board + "/" + r.op.task,
+                    },
+                    "Board ↗",
+                  ),
+                  ["unknown", "failed", "partial"].includes(r.state) &&
+                    h(
+                      "button",
+                      { "data-a": "answer-retry", "data-key": key },
+                      r.state === "failed" && r.reason !== CONFLICT
+                        ? "Send again"
+                        : "Check delivery",
+                    ),
+                  h(
+                    "details",
+                    { class: "ids", "data-view-key": "receipt:" + key },
+                    h("summary", null, "Details"),
+                    "Operation " +
+                      r.op.id +
+                      " · question revision " +
+                      r.op.revision +
+                      (r.reason === CONFLICT ? " · bridge: " + r.reason : ""),
+                  ),
+                  !answerRequests.has(key) &&
+                    h(
+                      "button",
+                      {
+                        "data-a": "answer-dismiss",
+                        "data-key": key,
+                        "aria-label": "Dismiss " + api.display(r) + " receipt",
+                        title: "Dismiss",
+                      },
+                      "×",
+                    ),
+                ),
+        });
+        // #1785: in its own thread an answer that won shows above the Steer composer, and steer receipts show in it
+        const shown = [...answerFeedback].filter(
+          ([, r]) =>
+            (!board || r.board === board) &&
+            (task == null ||
+              (r.op.task === task &&
+                !r.answered &&
+                r.op.action !== "steer" &&
+                (!saved[board + "#" + task]?.op ||
+                  saved[board + "#" + task].op.id === r.op.id))) &&
+            !view.S.projects.some(
+              (p) =>
+                p.issues === r.board &&
+                p.tasks.some((t) => t.n === r.op.task && t.state === "ask"),
+            ),
+        );
+        if (task != null) return shown.slice(-1).map((x) => line(x, "status"));
+        const answered = shown
+          .filter(([, r]) => r.state === "accepted")
+          .reverse();
+        return [
+          shown
+            .filter(([, r]) => r.state !== "accepted")
+            .map((x) => line(x, "status")),
+          answered.length > 0 &&
+            h(
+              "details",
+              { class: "group answered", "data-view-key": "answered" },
+              h(
+                "summary",
+                null,
+                "Answered" + counter(answered.length, "muted", "Answered"),
+              ),
+              answered.map((x) => line(x, null)),
+            ),
+        ];
+      },
+      // #1785 A1: a question another actor answered first names that answer, never revisions or CLI advice;
+      // the status row's `answered` (§ 5 late answer) names it before this client sends anything
+      answerWon: function (board, t) {
+        const r =
+          t.state === "ask"
+            ? null
+            : [...answerFeedback.values()]
+                .filter(
+                  (r) => r.board === board && r.op.task === t.n && r.answered,
+                )
+                .at(-1) ||
+              (t.answered && { answered: t.answered });
+        return r
+          ? h("p", { class: "body answered", role: "status" }, won(r))
+          : null;
+      },
+      // #1918 A5: the conversation is append-only: every answered question stays as it was asked, read-only, then its
+      // answer line, in board order; an open question follows as the live card
+      answerHistory: function (t, root) {
+        const block = require("./conversations.js").block;
+        return (t.history || []).map(({ question: q, answered: a }, i) => {
+          const source = a?.source || {},
+            key = source.question ?? a?.revision ?? (t.history_start || 0) + i,
+            answerKey = source.id ?? key;
+          if (source.kind && !q)
+            return block(
+              {
+                role: source.role || "event",
+                label: "Task " + source.kind,
+                text: a.text,
+                updated: time.seconds(a.at),
+                attempt: source.attempt,
+                session: source.session,
+              },
+              h(
+                "div",
+                { class: "conversation-text" },
+                require("./reports.js").body(
+                  a.text,
+                  readingAnchor.key("event", t.n, source.id),
+                ),
+              ),
+              {
+                "data-event": String(source.id),
+                "data-reading-key": readingAnchor.key("event", t.n, source.id),
+              },
+            );
+          const row = {
+            n: t.n,
+            title: t.title,
+            url: t.url,
+            state: "closed",
+            revision: key,
+            question: { choices: [], evidence: [], ...q },
+          };
+          const files =
+            (a?.files || []).length > 0 &&
+            h(
+              "ul",
+              { class: "conversation-files" },
+              a.files.map((f) =>
+                h(
+                  "li",
+                  { key: f.url },
+                  h(
+                    "a",
+                    { href: f.url, target: "_blank", rel: "noreferrer" },
+                    f.name || f.url,
+                  ),
+                ),
+              ),
+            );
+          const receipt =
+              a?.read === true
+                ? h(
+                    "span",
+                    { class: "note-read", "aria-label": "Read by worker" },
+                    " · Read",
+                  )
+                : null,
+            paged = !!historyText && (q?.text || "").length > 32768;
+          return [
+            q &&
+              block(
+                {
+                  role: "question",
+                  label:
+                    source.role === "reviewer"
+                      ? "Reviewer question"
+                      : "Worker question",
+                  text: q.text,
+                  updated:
+                    source.asked_at != null
+                      ? time.seconds(source.asked_at)
+                      : q.updated,
+                  session: source.session,
+                  attempt: source.attempt,
+                },
+                [
+                  paged && historyText(row, q.text, "history-" + key, root),
+                  h("div", {
+                    ref: (el) => api.readingAnchors(el, row),
+                    dangerouslySetInnerHTML: {
+                      __html: component().render(
+                        "history:" + t.n + ":" + key,
+                        row,
+                        component().fresh(row),
+                        {
+                          answer: false,
+                          manage: false,
+                          composer: true,
+                          paged,
+                          reason: "Recorded question",
+                          project: view.S?.projects.find((p) => p.root === root)
+                            ?.name,
+                        },
+                      ),
+                    },
+                  }),
+                ],
+                {
+                  key: "asked:" + key,
+                  class: "thread-card asked",
+                  "data-question": key,
+                  "data-reading-key": readingAnchor.key("question", t.n, key),
+                  "aria-label":
+                    "Question " +
+                    key +
+                    " of " +
+                    copyLabel.task(
+                      view.S?.projects.find((p) => p.root === root)?.name ||
+                        "Board",
+                      t.n,
+                    ),
+                },
+              ),
+            source.kind === "ask"
+              ? null
+              : block(
+                  {
+                    role: "answer",
+                    label: q
+                      ? "Answered by " + (a?.by || "Author unknown")
+                      : a?.by || "Author unknown",
+                    text: a?.text,
+                    updated: a?.at != null ? time.seconds(a.at) : a?.updated,
+                  },
+                  [
+                    h(
+                      "div",
+                      { class: "conversation-text" },
+                      a?.text
+                        ? require("./reports.js").body(
+                            a.text,
+                            readingAnchor.key("answer", t.n, answerKey),
+                          )
+                        : files
+                          ? ""
+                          : "Answer text unavailable",
+                    ),
+                    files,
+                    receipt,
+                  ],
+                  {
+                    key: "answered:" + answerKey,
+                    "data-event": String(answerKey),
+                    "data-reading-key": readingAnchor.key(
+                      "answer",
+                      t.n,
+                      answerKey,
+                    ),
+                    class: "body answered",
+                  },
+                ),
+          ];
+        });
+      },
+      readingAnchors: function (el, t) {
+        if (el)
+          for (const [i, node] of [
+            ...el.querySelectorAll(
+              ".qac-done,.qac-problem,.qac-detail,.qac-context>summary,.qac-images,.qac-evidence,.qac-text,[data-choice]",
+            ),
+          ].entries())
+            node.dataset.readingKey = readingAnchor.key(
+              "report",
+              "question",
+              t.n,
+              t.revision,
+              i,
+            );
+      },
+      // ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
+      answerSteerComposer: function (board, t) {
+        const key = board + "#" + t.n,
+          local = saved[key],
+          text = steers[key] ?? local?.draft ?? "",
+          files = local?.files || [];
+        if (!steer || t.state === "ask") return null;
+        const x = t.executions?.find((x) => x.attempt === t.attempt),
+          working =
+            t.state === "doing" &&
+            t.role === "worker" &&
+            !!t.attempt &&
+            x?.state === "running",
+          p = api.project(board),
+          available = working && p?.alive && p.complete === true;
+        if (!working && !text.trim() && !files.length)
+          return h(
+            "p",
+            { class: "meta" },
+            t.state === "review"
+              ? "Reviewer input is read-only. Open the board for decisions."
+              : "This attempt has ended or is unavailable. No worker message will be sent.",
+          );
+        const changed =
+          !!local?.steerAttempt && local.steerAttempt !== t.attempt;
+        const r = local?.op?.action === "steer" ? local.receipt : null,
+          sending = r?.state === "sending",
+          unknown = r?.state === "unknown",
+          disabled = !available || sending || unknown;
+        const reason = changed
+          ? "Worker attempt changed. Draft kept; edit it to address the current worker."
+          : !available
+            ? "Worker input is unavailable for this attempt. Draft and files kept."
+            : !r
+              ? "Message goes to this worker through the board; delivery does not prove it was consumed."
+              : r.state === "accepted"
+                ? "Message saved on the board; worker consumption is unconfirmed."
+                : (STATE[r.state] || r.state) +
+                  (r.reason ? ": " + r.reason : "") +
+                  (r.next ? " · " + r.next : "");
+        const problem = replyFiles.problem(files),
+          receiptKey = p?.root + "#" + local?.op?.id;
+        return h(
+          "section",
+          {
+            class: "answer-composer",
+            "aria-label": "Steer " + copyLabel.task(p?.name || "Board", t.n),
+          },
+          steer({
+            text,
+            disabled,
+            id: "steer-draft",
+            field: "steer",
+            label: "Message the worker",
+            placeholder: "Tell the working agent what to change",
+            reason: problem || reason,
+            ...api.fileEvents(board, t.n, disabled),
+            files: api.fileControls(board, t.n, disabled),
+            tools: h(
+              "div",
+              { class: "conversation-tools composer-bottom" },
+              h(
+                "button",
+                {
+                  "data-a": "answer-steer",
+                  "data-board": board,
+                  "data-task": t.n,
+                  class: "primary-action",
+                  disabled:
+                    disabled ||
+                    changed ||
+                    !!problem ||
+                    (!text.trim() && !files.length),
+                },
+                "Send",
+              ),
+              unknown &&
+                h(
+                  "button",
+                  { "data-a": "answer-retry", "data-key": receiptKey },
+                  "Check delivery",
+                ),
+            ),
+            onInput: (e) => {
+              steers[key] = e.currentTarget.value;
+              save(board, t, {
+                ...(saved[key] || component().fresh(t)),
+                draft: e.currentTarget.value,
+                caret: [
+                  e.currentTarget.selectionStart,
+                  e.currentTarget.selectionEnd,
+                ],
+                steerAttempt: t.attempt,
+              });
+              draw();
+            },
+          }),
+        );
+      },
+      answerSteer: function (board, t) {
+        const key = board + "#" + t.n,
+          text = (steers[key] ?? saved[key]?.draft ?? "").trim();
+        if (
+          saved[key]?.op?.action === "steer" &&
+          ["sending", "unknown"].includes(saved[key]?.receipt?.state)
+        )
+          return answerSend(board, saved[key].op);
+        if (
+          t.state !== "doing" ||
+          t.role !== "worker" ||
+          !t.executions?.some(
+            (x) => x.attempt === t.attempt && x.state === "running",
+          ) ||
+          (saved[key]?.steerAttempt && saved[key].steerAttempt !== t.attempt)
+        )
+          return Promise.resolve(null);
+        const files = saved[key]?.files || [];
+        if ((!text && !files.length) || replyFiles.problem(files))
+          return Promise.resolve(null);
+        steers[key] = text;
+        const op = {
+          id: "steer-" + t.n + "-" + Date.now().toString(36),
+          task: t.n,
+          revision: t.revision,
+          action: "steer",
+          text,
+          ...(files.length ? { files: JSON.parse(JSON.stringify(files)) } : {}),
+        };
+        save(board, t, {
+          ...saved[key],
+          draft: text,
+          op,
+          receipt: { state: "sending" },
+        });
+        return answerSend(board, op);
+      },
+      answerToast: function () {
+        const r = view.toast && answerFeedback.get(view.toast);
+        return r
+          ? h(
+              "div",
+              { class: "toast", role: "status" },
+              api.display(r) +
+                " · " +
+                (r.note
+                  ? "task note saved"
+                  : r.answered
+                    ? "already answered"
+                    : {
+                        start: "started",
+                        stop: "stopped",
+                        later: "parked",
+                        retry: "requeued",
+                        steer: "steer sent",
+                      }[r.op.action] || "answer accepted") +
+                " ",
+              h(
+                "a",
+                {
+                  href: r.board + "/" + r.op.task,
+                  "data-url": r.board + "/" + r.op.task,
+                },
+                "Board ↗",
+              ),
+              h(
+                "button",
+                {
+                  "data-a": "toast-dismiss",
+                  "aria-label": "Dismiss",
+                  title: "Dismiss",
+                },
+                "×",
+              ),
+            )
+          : null;
+      },
+      mountAnswers: function () {
+        for (const [key, c] of answerCards)
+          if (!c.el.isConnected) {
+            c.ui.update([]);
+            answerCards.delete(key);
+          }
+        for (const slot of menu.querySelectorAll("[data-answer]")) {
+          const key = slot.dataset.answer,
+            at = key.lastIndexOf("/"),
+            p = api.project(key.slice(0, at)),
+            row = p?.tasks.find((t) => t.n === Number(key.slice(at + 1)));
+          if (!row) continue;
+          const t = read(p, {
+            ...row,
+            key,
+            url: row.url || p.issues + "/" + row.n,
+          });
+          if (t.body_lazy) continue;
+          let card = answerCards.get(t.key);
+          if (!card) {
+            const el = document.createElement("div");
+            card = {
+              el,
+              ui: component().mount(el, {
+                capability: answerCapability,
+                send: answerSend,
+                load: load,
+                save: save,
+              }),
+            };
+            answerCards.set(t.key, card);
+          }
+          if (card.el.parentNode !== slot) slot.append(card.el);
+          card.ui.update([{ board: p.issues, row: t }]);
+          api.readingAnchors(card.el, t);
+          for (const d of slot.querySelectorAll("details")) {
+            const key = "answer:" + t.key + ":" + d.className;
+            if (d.dataset.viewKey !== key) d.dataset.viewKey = key;
+          }
+        }
+      },
+      answerSend: function (board, op) {
+        const kept = saved[board + "#" + op.task];
+        const p = api.project(
+          board,
+          kept?.op?.id === op.id ? kept.projectRoot : undefined,
+        );
+        if (!p) {
+          api.answerRefusal("rejected");
+          return Promise.resolve({
+            state: "rejected",
+            reason: "Project is no longer registered",
+            next: "Select a registered project, then send again",
+          });
+        }
+        const key = p.root + "#" + op.id;
+        if (answerRequests.has(key)) return answerRequests.get(key).promise;
+        let resolve;
+        const promise = new Promise((r) => (resolve = r));
+        const timer = defer(() => {
+          answerReceipt({
+            root: p.root,
+            id: op.id,
+            state: "unknown",
+            reason: "No bridge receipt received",
+            next: "Check delivery with the same operation",
+          });
+        }, 30000);
+        answerRequests.set(key, {
+          promise,
+          resolve,
+          timer,
+          board,
+          op,
+          root: p.root,
+        });
+        answerFeedback.set(key, {
+          board,
+          op,
+          about: kept?.op?.id === op.id ? kept.about : undefined,
+          state: "sending",
+          reason: "",
+        });
+        send({
+          a: "answer",
+          root: p.root,
+          board,
+          op,
+          local: saved[board + "#" + op.task],
+        });
+        return promise;
+      },
 
-},
-answerRefusal:function(state){
-  switch(state){
-   case 'rejected':execution.action('workspace.answer.refused.rejected',()=>{})();break;
-   case 'failed':execution.action('workspace.answer.refused.failed',()=>{})();break;
-   case 'stale':execution.action('workspace.answer.refused.stale',()=>{})();break;
-   case 'partial':execution.action('workspace.answer.refused.partial',()=>{})();break;
-   case 'unknown':execution.action('workspace.answer.refused.unknown',()=>{})();break;
-  }
-},
-answerReadback:function(){
-  for(const [key,r] of answerRequests){
-    const p=api.project(r.board,r.root),t=p&&p.complete===true&&p.tasks.find(t=>t.n===r.op.task);
-    if(r.reconciled||r.op.action||!t||(t.state==='ask'&&t.revision===r.op.revision))continue;
-    r.reconciled=true;send({a:'answer',root:r.root,board:r.board,op:r.op});
-  }
-},
-// The answer card owns the slot's descendants; Preact renders the slot without children.
-answerSlot:function(t){return t.state==='ask'?h('div',{'data-answer':t.key,key:'answer:'+t.key}):null;},
-answerNotices:function(board,task){
-  // M3: receipts follow Attention or their project's task rows, never above them; accepted ones collapse into Answered, newest first
-  // #1662 A1/A4: a receipt names its question and answer in plain words; operation id and revision stay behind a disclosure
-  const {line}=execution.module("workspace.answers.notices",{line:([key,r],role)=>r.answered?h('div',{class:'body',role,key},api.display(r)+' · '+won(r)+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss '+api.display(r)+' receipt',title:'Dismiss'},'×')):h('div',{class:'body'+(FAILED.includes(r.state)?' alert':''),role,key},api.display(r)+(r.about?' '+r.about:'')+' · '+(STATE[r.state]||r.state)+(r.reason?': '+(r.reason===CONFLICT?'an earlier answer with this operation is still pending with different content':r.reason):'')+(r.next?' · '+r.next:'')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),['unknown','failed','partial'].includes(r.state)&&h('button',{'data-a':'answer-retry','data-key':key},r.state==='failed'&&r.reason!==CONFLICT?'Send again':'Check delivery'),h('details',{class:'ids','data-view-key':'receipt:'+key},h('summary',null,'Details'),'Operation '+r.op.id+' · question revision '+r.op.revision+(r.reason===CONFLICT?' · bridge: '+r.reason:'')),!answerRequests.has(key)&&h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss '+api.display(r)+' receipt',title:'Dismiss'},'×'))});
-  // #1785: in its own thread an answer that won shows above the Steer composer, and steer receipts show in it
-  const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&(task==null||r.op.task===task&&!r.answered&&r.op.action!=='steer'&&(!saved[board+'#'+task]?.op||saved[board+'#'+task].op.id===r.op.id))&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
-  if(task!=null)return shown.slice(-1).map(x=>line(x,'status'));
-  const answered=shown.filter(([,r])=>r.state==='accepted').reverse();
-  return [shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,'status')),answered.length>0&&h('details',{class:'group answered','data-view-key':'answered'},h('summary',null,'Answered'+counter(answered.length,'muted','Answered')),answered.map(x=>line(x,null)))];
-},
-// #1785 A1: a question another actor answered first names that answer, never revisions or CLI advice;
-// the status row's `answered` (§ 5 late answer) names it before this client sends anything
-answerWon:function(board,t){
-  const r=t.state==='ask'?null:[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.answered).at(-1)||(t.answered&&{answered:t.answered});
-  return r?h('p',{class:'body answered',role:'status'},won(r)):null;
-},
-// #1918 A5: the conversation is append-only: every answered question stays as it was asked, read-only, then its
-// answer line, in board order; an open question follows as the live card
-answerHistory:function(t,root){
-  const block=require('./conversations.js').block;
-  return (t.history||[]).map(({question:q,answered:a},i)=>{
-   const source=a?.source||{},key=source.question??a?.revision??((t.history_start||0)+i),answerKey=source.id??key;
-   if(source.kind&&!q)return block({role:source.role||'event',label:'Task '+source.kind,text:a.text,updated:time.seconds(a.at),attempt:source.attempt,session:source.session},h('div',{class:'conversation-text'},require('./reports.js').body(a.text,readingAnchor.key('event',t.n,source.id))),{'data-event':String(source.id),'data-reading-key':readingAnchor.key('event',t.n,source.id)});
-   const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:key,question:{choices:[],evidence:[],...q}};
-   const files=(a?.files||[]).length>0&&h('ul',{class:'conversation-files'},a.files.map(f=>h('li',{key:f.url},h('a',{href:f.url,target:'_blank',rel:'noreferrer'},f.name||f.url))));
-   const receipt=a?.read===true?h('span',{class:'note-read','aria-label':'Read by worker'},' · Read'):null,paged=!!historyText&&(q?.text||'').length>32768;
-   return [q&&block({role:'question',label:source.role==='reviewer'?'Reviewer question':'Worker question',text:q.text,updated:source.asked_at!=null?time.seconds(source.asked_at):q.updated,session:source.session,attempt:source.attempt},[paged&&historyText(row,q.text,'history-'+key,root),h('div',{ref:el=>api.readingAnchors(el,row),dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,paged,reason:'Recorded question',project:view.S?.projects.find(p=>p.root===root)?.name})}})],{key:'asked:'+key,class:'thread-card asked','data-question':key,'data-reading-key':readingAnchor.key('question',t.n,key),'aria-label':'Question '+key+' of '+copyLabel.task(view.S?.projects.find(p=>p.root===root)?.name||'Board',t.n)}),
-    source.kind==='ask'?null:block({role:'answer',label:q?'Answered by '+(a?.by||'Author unknown'):a?.by||'Author unknown',text:a?.text,updated:a?.at!=null?time.seconds(a.at):a?.updated},[h('div',{class:'conversation-text'},a?.text?require('./reports.js').body(a.text,readingAnchor.key('answer',t.n,answerKey)):(files?'':'Answer text unavailable')),files,receipt],{key:'answered:'+answerKey,'data-event':String(answerKey),'data-reading-key':readingAnchor.key('answer',t.n,answerKey),class:'body answered'})];
-  });
-},
-readingAnchors:function(el,t){if(el)for(const [i,node]of [...el.querySelectorAll('.qac-done,.qac-problem,.qac-detail,.qac-context>summary,.qac-images,.qac-evidence,.qac-text,[data-choice]')].entries())node.dataset.readingKey=readingAnchor.key('report','question',t.n,t.revision,i);},
-// ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
-answerSteerComposer:function(board,t){
-  const key=board+'#'+t.n,local=saved[key],text=steers[key]??local?.draft??'',files=local?.files||[];
-  if(!steer||t.state==='ask')return null;
-  const x=t.executions?.find(x=>x.attempt===t.attempt),working=t.state==='doing'&&t.role==='worker'&&!!t.attempt&&x?.state==='running',p=api.project(board),available=working&&p?.alive&&p.complete===true;
-  if(!working&&!text.trim()&&!files.length)return h('p',{class:'meta'},t.state==='review'?'Reviewer input is read-only. Open the board for decisions.':'This attempt has ended or is unavailable. No worker message will be sent.');
-  const changed=!!local?.steerAttempt&&local.steerAttempt!==t.attempt;
-  const r=local?.op?.action==='steer'?local.receipt:null,sending=r?.state==='sending',unknown=r?.state==='unknown',disabled=!available||sending||unknown;
-  const reason=changed?'Worker attempt changed. Draft kept; edit it to address the current worker.':!available?'Worker input is unavailable for this attempt. Draft and files kept.':!r?'Message goes to this worker through the board; delivery does not prove it was consumed.':r.state==='accepted'?'Message saved on the board; worker consumption is unconfirmed.':(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'')+(r.next?' · '+r.next:'');
-  const problem=replyFiles.problem(files),receiptKey=p?.root+'#'+local?.op?.id;
-  return h('section',{class:'answer-composer','aria-label':'Steer '+copyLabel.task(p?.name||'Board',t.n)},steer({text,disabled,id:'steer-draft',field:'steer',label:'Message the worker',placeholder:'Tell the working agent what to change',reason:problem||reason,...api.fileEvents(board,t.n,disabled),files:api.fileControls(board,t.n,disabled),
-   tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:disabled||changed||!!problem||!text.trim()&&!files.length},'Send'),unknown&&h('button',{'data-a':'answer-retry','data-key':receiptKey},'Check delivery')),
-   onInput:e=>{steers[key]=e.currentTarget.value;save(board,t,{...(saved[key]||component().fresh(t)),draft:e.currentTarget.value,caret:[e.currentTarget.selectionStart,e.currentTarget.selectionEnd],steerAttempt:t.attempt});draw();}}));
-},
-answerSteer:function(board,t){
-  const key=board+'#'+t.n,text=(steers[key]??saved[key]?.draft??'').trim();
-  if(saved[key]?.op?.action==='steer'&&['sending','unknown'].includes(saved[key]?.receipt?.state))return answerSend(board,saved[key].op);
-  if(t.state!=='doing'||t.role!=='worker'||!t.executions?.some(x=>x.attempt===t.attempt&&x.state==='running')||saved[key]?.steerAttempt&&saved[key].steerAttempt!==t.attempt)return Promise.resolve(null);
-  const files=saved[key]?.files||[];
-  if(!text&&!files.length||replyFiles.problem(files))return Promise.resolve(null);
-  steers[key]=text;
-  const op={id:'steer-'+t.n+'-'+Date.now().toString(36),task:t.n,revision:t.revision,action:'steer',text,...(files.length?{files:JSON.parse(JSON.stringify(files))}:{})};
-  save(board,t,{...saved[key],draft:text,op,receipt:{state:'sending'}});
-  return answerSend(board,op);
-},
-answerToast:function(){
-  const r=view.toast&&answerFeedback.get(view.toast);
-  return r?h('div',{class:'toast',role:'status'},api.display(r)+' · '+(r.note?'task note saved':r.answered?'already answered':{start:'started',stop:'stopped',later:'parked',retry:'requeued',steer:'steer sent'}[r.op.action]||'answer accepted')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),h('button',{'data-a':'toast-dismiss','aria-label':'Dismiss',title:'Dismiss'},'×')):null;
-},
-mountAnswers:function(){
-  for(const [key,c]of answerCards)if(!c.el.isConnected){c.ui.update([]);answerCards.delete(key);}
-  for(const slot of menu.querySelectorAll('[data-answer]')){
-    const key=slot.dataset.answer,at=key.lastIndexOf('/'),p=api.project(key.slice(0,at)),row=p?.tasks.find(t=>t.n===Number(key.slice(at+1)));
-    if(!row)continue;
-    const t=read(p,{...row,key,url:row.url||p.issues+'/'+row.n});if(t.body_lazy)continue;
-    let card=answerCards.get(t.key);
-    if(!card){const el=document.createElement('div');card={el,ui:component().mount(el,{capability:answerCapability,send:answerSend,load:load,save:save})};answerCards.set(t.key,card);}
-    if(card.el.parentNode!==slot)slot.append(card.el);
-    card.ui.update([{board:p.issues,row:t}]);
-    api.readingAnchors(card.el,t);
-    for(const d of slot.querySelectorAll('details')){const key='answer:'+t.key+':'+d.className;if(d.dataset.viewKey!==key)d.dataset.viewKey=key;}
-  }
-
-},
-answerSend:function(board,op){
-  const kept=saved[board+'#'+op.task];
-  const p=api.project(board,kept?.op?.id===op.id?kept.projectRoot:undefined);
-  if(!p){api.answerRefusal('rejected');return Promise.resolve({state:'rejected',reason:'Project is no longer registered',next:'Select a registered project, then send again'});}
-  const key=p.root+'#'+op.id;
-  if(answerRequests.has(key))return answerRequests.get(key).promise;
-  let resolve;
-  const promise=new Promise(r=>resolve=r);
-  const timer=defer(()=>{answerReceipt({root:p.root,id:op.id,state:'unknown',reason:'No bridge receipt received',next:'Check delivery with the same operation'});},30000);
-  answerRequests.set(key,{promise,resolve,timer,board,op,root:p.root});
-  answerFeedback.set(key,{board,op,about:kept?.op?.id===op.id?kept.about:undefined,state:'sending',reason:''});
-  send({a:'answer',root:p.root,board,op,local:saved[board+'#'+op.task]});
-  return promise;
-},
-
-recovery:function(){return saved;},
-restoreRecovery:function(locals){
- for(const key of Object.keys(locals||{})){delete saved[key];delete steers[key];const at=key.lastIndexOf('#'),id=key.slice(0,at)+'/'+key.slice(at+1),card=answerCards.get(id);if(card){card.ui.update([]);card.el.remove();answerCards.delete(id);}}
- api.hydrate(locals);
-},
-steerCaret:function(board,n,caret){const local=saved[board+'#'+n];if(local&&JSON.stringify(local.caret)!==JSON.stringify(caret))save(board,{n},{...local,caret});},
-bounds:function(){return {controllers:answerCards.size,protectedSources:Object.keys(saved).length,protectedBytes:new TextEncoder().encode(JSON.stringify(saved)).length};},
-load:function(board,row){return saved[board+'#'+row.n];},
-save:function(board,row,local){const prior=saved[board+'#'+row.n],projectRoot=prior?.op?.id&&prior.op.id===local.op?.id?prior.projectRoot:api.project(board)?.root;saved[board+'#'+row.n]=JSON.parse(JSON.stringify({...local,projectRoot}));send({a:'answer-local',key:board+'#'+row.n,local:saved[board+'#'+row.n]});changed?.();},
-hydrate:function(locals){
- for(const [key,local] of Object.entries(locals||{}))if(!Object.hasOwn(saved,key)&&local&&typeof local.draft==='string'){
-  saved[key]={...local,confirmClose:false};
-  if(local.op&&['sending','unknown'].includes(local.receipt?.state))saved[key].receipt={state:'unknown',reason:'Workspace reopened; delivery needs readback',next:'Check delivery with the same operation'};
-  const board=key.slice(0,key.lastIndexOf('#')),root=api.project(board,local.projectRoot)?.root||local.projectRoot;
-  if(local.op&&root&&saved[key].receipt)answerFeedback.set(root+'#'+local.op.id,{board,op:local.op,about:local.about,...saved[key].receipt});
- }
-},
-retry:function(key){const r=answerFeedback.get(key);if(r)ui.effect('workspace.answer.reconcile',()=>answerSend(r.board,r.op),()=>{});},
-startPending:function(board,t){return [...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&r.op.revision===t.revision&&r.op.action==='start'&&!['failed','stale','rejected'].includes(r.state));},
-dismiss:function(key){answerFeedback.delete(key);if(view.toast===key)view.toast=null;draw();}
- });
- const {answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,answerSend,load,save}=api;
- // #1699 A4: the bridge's retained correlation guard (tray.rs ActionQueue::submit), named in user terms
- const CONFLICT='Correlation id is already pending for a different request';
- const won=r=>'Answered by '+(r.answered.by||'another client')+': '+r.answered.text+(r.state==='accepted'&&r.reason?' · '+r.reason:'');
- // #1861: red only for a real failure; a race that ends in a valid board state reads plain.
- const FAILED=['rejected','unknown','failed','partial'];
- const STATE={sending:'sending',accepted:'accepted',rejected:'not accepted',stale:'task changed; action not sent',unknown:'delivery unknown',failed:'not sent',partial:'partly applied'};
- const component=()=>require('./answer-card.js');
- const {tasks,unique,counter}=execution.module('workspace.answers.helpers',{
- tasks:p=>(p.tasks||[]).map(t=>({...t,key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n})),
- unique:ts=>[...new Map(ts.map(t=>[t.key,t])).values()],counter:(n)=>' · '+n
- });
- return api;
-}
+      recovery: function () {
+        return saved;
+      },
+      restoreRecovery: function (locals) {
+        for (const key of Object.keys(locals || {})) {
+          delete saved[key];
+          delete steers[key];
+          const at = key.lastIndexOf("#"),
+            id = key.slice(0, at) + "/" + key.slice(at + 1),
+            card = answerCards.get(id);
+          if (card) {
+            card.ui.update([]);
+            card.el.remove();
+            answerCards.delete(id);
+          }
+        }
+        api.hydrate(locals);
+      },
+      steerCaret: function (board, n, caret) {
+        const local = saved[board + "#" + n];
+        if (local && JSON.stringify(local.caret) !== JSON.stringify(caret))
+          save(board, { n }, { ...local, caret });
+      },
+      bounds: function () {
+        return {
+          controllers: answerCards.size,
+          protectedSources: Object.keys(saved).length,
+          protectedBytes: new TextEncoder().encode(JSON.stringify(saved))
+            .length,
+        };
+      },
+      load: function (board, row) {
+        return saved[board + "#" + row.n];
+      },
+      save: function (board, row, local) {
+        const prior = saved[board + "#" + row.n],
+          projectRoot =
+            prior?.op?.id && prior.op.id === local.op?.id
+              ? prior.projectRoot
+              : api.project(board)?.root;
+        saved[board + "#" + row.n] = JSON.parse(
+          JSON.stringify({ ...local, projectRoot }),
+        );
+        send({
+          a: "answer-local",
+          key: board + "#" + row.n,
+          local: saved[board + "#" + row.n],
+        });
+        changed?.();
+      },
+      hydrate: function (locals) {
+        for (const [key, local] of Object.entries(locals || {}))
+          if (
+            !Object.hasOwn(saved, key) &&
+            local &&
+            typeof local.draft === "string"
+          ) {
+            saved[key] = { ...local, confirmClose: false };
+            if (
+              local.op &&
+              ["sending", "unknown"].includes(local.receipt?.state)
+            )
+              saved[key].receipt = {
+                state: "unknown",
+                reason: "Workspace reopened; delivery needs readback",
+                next: "Check delivery with the same operation",
+              };
+            const board = key.slice(0, key.lastIndexOf("#")),
+              root =
+                api.project(board, local.projectRoot)?.root ||
+                local.projectRoot;
+            if (local.op && root && saved[key].receipt)
+              answerFeedback.set(root + "#" + local.op.id, {
+                board,
+                op: local.op,
+                about: local.about,
+                ...saved[key].receipt,
+              });
+          }
+      },
+      retry: function (key) {
+        const r = answerFeedback.get(key);
+        if (r)
+          ui.effect(
+            "workspace.answer.reconcile",
+            () => answerSend(r.board, r.op),
+            () => {},
+          );
+      },
+      startPending: function (board, t) {
+        return [...answerFeedback.values()].some(
+          (r) =>
+            r.board === board &&
+            r.op.task === t.n &&
+            r.op.revision === t.revision &&
+            r.op.action === "start" &&
+            !["failed", "stale", "rejected"].includes(r.state),
+        );
+      },
+      dismiss: function (key) {
+        answerFeedback.delete(key);
+        if (view.toast === key) view.toast = null;
+        draw();
+      },
+    });
+    const {
+      answerCapability,
+      answerReceipt,
+      answerReadback,
+      answerSlot,
+      answerNotices,
+      answerToast,
+      mountAnswers,
+      answerSend,
+      load,
+      save,
+    } = api;
+    // #1699 A4: the bridge's retained correlation guard (tray.rs ActionQueue::submit), named in user terms
+    const CONFLICT =
+      "Correlation id is already pending for a different request";
+    const won = (r) =>
+      "Answered by " +
+      (r.answered.by || "another client") +
+      ": " +
+      r.answered.text +
+      (r.state === "accepted" && r.reason ? " · " + r.reason : "");
+    // #1861: red only for a real failure; a race that ends in a valid board state reads plain.
+    const FAILED = ["rejected", "unknown", "failed", "partial"];
+    const STATE = {
+      sending: "sending",
+      accepted: "accepted",
+      rejected: "not accepted",
+      stale: "task changed; action not sent",
+      unknown: "delivery unknown",
+      failed: "not sent",
+      partial: "partly applied",
+    };
+    const component = () => require("./answer-card.js");
+    const { tasks, unique, counter } = execution.module(
+      "workspace.answers.helpers",
+      {
+        tasks: (p) =>
+          (p.tasks || []).map((t) => ({
+            ...t,
+            key: p.issues + "/" + t.n,
+            url: t.url || p.issues + "/" + t.n,
+          })),
+        unique: (ts) => [...new Map(ts.map((t) => [t.key, t])).values()],
+        counter: (n) => " · " + n,
+      },
+    );
+    return api;
+  },
 });
-module.exports={create};
+module.exports = { create };

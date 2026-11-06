@@ -1,133 +1,341 @@
 //! Optional agentq onboarding (taskq.md § 4): bounded native readback, host preference and shared setup requests.
-use std::{fs, io::Read, path::{Path,PathBuf}, sync::{Arc,Mutex,OnceLock}, time::{Duration,SystemTime}};
-use serde::{Deserialize,Serialize};
-use serde_json::{Value,json};
 use crate::Res;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::{
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, SystemTime},
+};
 
-const FILE:&str="tray-agentq.json";
-#[derive(Default,Deserialize,Serialize,PartialEq)]
+const FILE: &str = "tray-agentq.json";
+#[derive(Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct Preferences { schema:u8, dismissed:bool, warning:bool, request:Option<String> }
-fn preferences(install:&Path)->Res<Preferences> {
+struct Preferences {
+    schema: u8,
+    dismissed: bool,
+    warning: bool,
+    request: Option<String>,
+}
+fn preferences(install: &Path) -> Res<Preferences> {
     match crate::data::json(&install.join(FILE))? {
-        None=>Ok(Preferences{schema:1,..Default::default()}),
-        Some(v)=>{let p:Preferences=serde_json::from_value(v).map_err(|e|format!("{FILE}: {e}; kept"))?;
-            if p.schema!=1 || p.request.as_ref().is_some_and(|id|!crate::resources::id(id)){return Err(format!("{FILE}: unsupported record; kept"));} Ok(p)}
+        None => Ok(Preferences {
+            schema: 1,
+            ..Default::default()
+        }),
+        Some(v) => {
+            let p: Preferences =
+                serde_json::from_value(v).map_err(|e| format!("{FILE}: {e}; kept"))?;
+            if p.schema != 1
+                || p.request
+                    .as_ref()
+                    .is_some_and(|id| !crate::resources::id(id))
+            {
+                return Err(format!("{FILE}: unsupported record; kept"));
+            }
+            Ok(p)
+        }
     }
 }
-fn save(install:&Path,p:&Preferences)->Res<()> {
-    crate::platform::write_atomic(&install.join(FILE),&serde_json::to_string(p).map_err(|e|e.to_string())?).map_err(|e|format!("{FILE}: {e}"))?;
-    if preferences(install)?!=*p {return Err(format!("{FILE}: readback changed"));} Ok(())
+fn save(install: &Path, p: &Preferences) -> Res<()> {
+    crate::platform::write_atomic(
+        &install.join(FILE),
+        &serde_json::to_string(p).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| format!("{FILE}: {e}"))?;
+    if preferences(install)? != *p {
+        return Err(format!("{FILE}: readback changed"));
+    }
+    Ok(())
 }
-fn locked<T>(install:&Path,f:impl FnOnce()->Res<T>)->Res<T> {
-    let _lock=coreq::file_lock::try_lock(&install.join("tray-agentq.lock")).map_err(|e|format!("agentq preference busy: {e}"))?; f()
+fn locked<T>(install: &Path, f: impl FnOnce() -> Res<T>) -> Res<T> {
+    let _lock = coreq::file_lock::try_lock(&install.join("tray-agentq.lock"))
+        .map_err(|e| format!("agentq preference busy: {e}"))?;
+    f()
 }
 pub use crate::platform::agentq_root as root;
-fn targets(runtime:&str)->Res<Vec<String>> {
-    let home=crate::platform::user_home().filter(|p|p.is_absolute()).ok_or("native client home unavailable")?;
-    Ok(vec![root()?.display().to_string(),home.join(crate::runtime::of(runtime).home).display().to_string()])
+fn targets(runtime: &str) -> Res<Vec<String>> {
+    let home = crate::platform::user_home()
+        .filter(|p| p.is_absolute())
+        .ok_or("native client home unavailable")?;
+    Ok(vec![
+        root()?.display().to_string(),
+        home.join(crate::runtime::of(runtime).home)
+            .display()
+            .to_string(),
+    ])
 }
-fn unknown(reason:impl ToString)->Value {json!({"kind":"unknown","reason":reason.to_string()})}
-fn exists(path:&Path)->Res<bool> {
-    match fs::metadata(path) {Ok(m) if m.is_file()=>Ok(true),Ok(_)=>Err("expected a regular file".into()),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>match fs::symlink_metadata(path){Ok(_)=>Err("launcher is a dangling link".into()),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(false),Err(e)=>Err(e.to_string())},Err(e)=>Err(e.to_string())}
+fn unknown(reason: impl ToString) -> Value {
+    json!({"kind":"unknown","reason":reason.to_string()})
 }
-fn status(path:&Path)->Res<Option<(Value,u64)>> {
-    if !crate::messages::plain(path)?{return Ok(None);}
-    if !fs::metadata(path).map_err(|e|e.to_string())?.is_file(){return Err("status is not a regular file".into());}
-    let f=match fs::File::open(path){Ok(f)=>f,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(None),Err(e)=>return Err(e.to_string())};
-    let age=f.metadata().and_then(|m|m.modified()).map_err(|e|e.to_string())?.elapsed().map_err(|_|"status timestamp is in the future")?.as_secs();
-    let mut bytes=Vec::new();f.take(1024*1024+1).read_to_end(&mut bytes).map_err(|e|e.to_string())?;
-    if bytes.len()>1024*1024{return Err("status exceeds 1 MiB".into());}
-    Ok(Some((serde_json::from_slice(&bytes).map_err(|e|format!("malformed status: {e}"))?,age)))
+fn exists(path: &Path) -> Res<bool> {
+    match fs::metadata(path) {
+        Ok(m) if m.is_file() => Ok(true),
+        Ok(_) => Err("expected a regular file".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match fs::symlink_metadata(path) {
+            Ok(_) => Err("launcher is a dangling link".into()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.to_string()),
+        },
+        Err(e) => Err(e.to_string()),
+    }
 }
-fn now()->u64 {SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0,|d|d.as_secs())}
-fn inspect(root:&Path,launcher:Res<bool>,status:Res<Option<(Value,u64)>>,clock:u64,process:impl FnOnce(u32)->Res<Option<PathBuf>>)->Value {
-    let (launcher,status)=match (launcher,status){(Ok(l),Ok(s))=>(l,s),(Err(e),_)|(_,Err(e))=>return unknown(e)};
-    let Some((s,age))=status else{return if launcher{unknown("installed launcher; service status missing")}else{json!({"kind":"shown"})}};
-    let version=s["version"].as_str().unwrap_or("");
-    let parts:Vec<_>=version.split('.').collect();
+fn status(path: &Path) -> Res<Option<(Value, u64)>> {
+    if !crate::messages::plain(path)? {
+        return Ok(None);
+    }
+    if !fs::metadata(path).map_err(|e| e.to_string())?.is_file() {
+        return Err("status is not a regular file".into());
+    }
+    let f = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    let age = f
+        .metadata()
+        .and_then(|m| m.modified())
+        .map_err(|e| e.to_string())?
+        .elapsed()
+        .map_err(|_| "status timestamp is in the future")?
+        .as_secs();
+    let mut bytes = Vec::new();
+    f.take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("status exceeds 1 MiB".into());
+    }
+    Ok(Some((
+        serde_json::from_slice(&bytes).map_err(|e| format!("malformed status: {e}"))?,
+        age,
+    )))
+}
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+fn inspect(
+    root: &Path,
+    launcher: Res<bool>,
+    status: Res<Option<(Value, u64)>>,
+    clock: u64,
+    process: impl FnOnce(u32) -> Res<Option<PathBuf>>,
+) -> Value {
+    let (launcher, status) = match (launcher, status) {
+        (Ok(l), Ok(s)) => (l, s),
+        (Err(e), _) | (_, Err(e)) => return unknown(e),
+    };
+    let Some((s, age)) = status else {
+        return if launcher {
+            unknown("installed launcher; service status missing")
+        } else {
+            json!({"kind":"shown"})
+        };
+    };
+    let version = s["version"].as_str().unwrap_or("");
+    let parts: Vec<_> = version.split('.').collect();
     // #1702: 0.10.0 failed the old 0.5–0.9 bound; #2011: 1.x keeps the shape agentq publishes (tests/fixtures/agentq-status.json)
-    let n:Vec<u32>=parts.iter().map_while(|p|p.parse().ok()).collect();
-    let compatible=parts.len()==3 && n.len()==3 && ((n[0]==0 && n[1]>=5) || n[0]==1);
-    let Some(at)=s["at"].as_u64() else{return unknown("status observation time missing")};
-    let Some(pid)=s["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).filter(|p|*p>0 && *p<=i32::MAX as u32) else{return unknown("status process identity missing")};
-    if !compatible {return unknown(format!("unsupported agentq status version {version:?}"));}
-    if s["project"]!="host" {return unknown("unsupported agentq status shape: project is not host");}
-    if !launcher {return unknown("status exists without the known launcher");}
-    if at>clock {return unknown("agentq status timestamp is in the future");}
-    if age>90 || clock-at>90 {
+    let n: Vec<u32> = parts.iter().map_while(|p| p.parse().ok()).collect();
+    let compatible = parts.len() == 3 && n.len() == 3 && ((n[0] == 0 && n[1] >= 5) || n[0] == 1);
+    let Some(at) = s["at"].as_u64() else {
+        return unknown("status observation time missing");
+    };
+    let Some(pid) = s["pid"]
+        .as_u64()
+        .and_then(|p| u32::try_from(p).ok())
+        .filter(|p| *p > 0 && *p <= i32::MAX as u32)
+    else {
+        return unknown("status process identity missing");
+    };
+    if !compatible {
+        return unknown(format!("unsupported agentq status version {version:?}"));
+    }
+    if s["project"] != "host" {
+        return unknown("unsupported agentq status shape: project is not host");
+    }
+    if !launcher {
+        return unknown("status exists without the known launcher");
+    }
+    if at > clock {
+        return unknown("agentq status timestamp is in the future");
+    }
+    if age > 90 || clock - at > 90 {
         // A disabled service leaves its last status behind: an absent recorded process reads as off, anything else stays unknown.
-        return match process(pid) {Ok(None)=>json!({"kind":"stopped","reason":"agentq off or unreachable · last status is stale and its process is absent"}),_=>unknown("agentq status stale")};
+        return match process(pid) {
+            Ok(None) => {
+                json!({"kind":"stopped","reason":"agentq off or unreachable · last status is stale and its process is absent"})
+            }
+            _ => unknown("agentq status stale"),
+        };
     }
     match process(pid) {
-        Ok(None)=>json!({"kind":"stopped","reason":"agentq installed · service stopped (fresh status, recorded process absent)"}),
-        Ok(Some(image))=>{
-            let expected=root.join("releases").join(version).join(if cfg!(windows){"agentq.exe"}else{"agentq"});
-            let same=if cfg!(windows){image.to_string_lossy().replace('\\',"/").eq_ignore_ascii_case(&expected.to_string_lossy().replace('\\',"/"))}else{image==expected};
-            if same {json!({"kind":"running","version":version,"valid_until":at.saturating_add(90).min(clock.saturating_add(90-age))})} else {unknown("reported PID belongs to another executable")}
-        },Err(e)=>unknown(e)
+        Ok(None) => {
+            json!({"kind":"stopped","reason":"agentq installed · service stopped (fresh status, recorded process absent)"})
+        }
+        Ok(Some(image)) => {
+            let expected = root.join("releases").join(version).join(if cfg!(windows) {
+                "agentq.exe"
+            } else {
+                "agentq"
+            });
+            let same = if cfg!(windows) {
+                image
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .eq_ignore_ascii_case(&expected.to_string_lossy().replace('\\', "/"))
+            } else {
+                image == expected
+            };
+            if same {
+                json!({"kind":"running","version":version,"valid_until":at.saturating_add(90).min(clock.saturating_add(90-age))})
+            } else {
+                unknown("reported PID belongs to another executable")
+            }
+        }
+        Err(e) => unknown(e),
     }
 }
-fn process(pid:u32)->Res<Option<PathBuf>> {
-    let before=coreq::process::identity(pid).map_err(|e|format!("process identity unknown: {e}"))?;
-    let Some(before)=before else{return Ok(None)};
-    let image=image(pid)?;
-    if coreq::process::identity(pid).map_err(|e|e.to_string())?!=Some(before){return Err("process identity changed during readback".into());} Ok(Some(image))
+fn process(pid: u32) -> Res<Option<PathBuf>> {
+    let before =
+        coreq::process::identity(pid).map_err(|e| format!("process identity unknown: {e}"))?;
+    let Some(before) = before else {
+        return Ok(None);
+    };
+    let image = image(pid)?;
+    if coreq::process::identity(pid).map_err(|e| e.to_string())? != Some(before) {
+        return Err("process identity changed during readback".into());
+    }
+    Ok(Some(image))
 }
-#[cfg(target_os="macos")]
-fn image(pid:u32)->Res<PathBuf> {
-    #[link(name="proc")]
-    unsafe extern "C" {fn proc_pidpath(pid:i32,buffer:*mut libc::c_void,buffersize:u32)->i32;}
-    let mut buffer=[0u8;4096];
+#[cfg(target_os = "macos")]
+fn image(pid: u32) -> Res<PathBuf> {
+    #[link(name = "proc")]
+    unsafe extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut libc::c_void, buffersize: u32) -> i32;
+    }
+    let mut buffer = [0u8; 4096];
     // SAFETY: native read-only query into a correctly sized caller-owned buffer.
-    let n=unsafe{proc_pidpath(pid as i32,buffer.as_mut_ptr().cast(),buffer.len() as u32)};
-    if n<=0{return Err(format!("process executable unknown: {}",std::io::Error::last_os_error()));}
+    let n = unsafe { proc_pidpath(pid as i32, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if n <= 0 {
+        return Err(format!(
+            "process executable unknown: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
     use std::os::unix::ffi::OsStringExt;
-    let end=buffer.iter().position(|b|*b==0).unwrap_or(n as usize);
-    Ok(PathBuf::from(std::ffi::OsString::from_vec(buffer[..end].to_vec())))
+    let end = buffer.iter().position(|b| *b == 0).unwrap_or(n as usize);
+    Ok(PathBuf::from(std::ffi::OsString::from_vec(
+        buffer[..end].to_vec(),
+    )))
 }
 #[cfg(windows)]
-fn image(pid:u32)->Res<PathBuf> {
-    #[link(name="kernel32")]
-    unsafe extern "system" {fn OpenProcess(access:u32,inherit:i32,pid:u32)->*mut std::ffi::c_void;fn QueryFullProcessImageNameW(process:*mut std::ffi::c_void,flags:u32,name:*mut u16,size:*mut u32)->i32;fn CloseHandle(handle:*mut std::ffi::c_void)->i32;}
+fn image(pid: u32) -> Res<PathBuf> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut std::ffi::c_void;
+        fn QueryFullProcessImageNameW(
+            process: *mut std::ffi::c_void,
+            flags: u32,
+            name: *mut u16,
+            size: *mut u32,
+        ) -> i32;
+        fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+    }
     // SAFETY: query-only process handle; closed on every path after successful open.
     unsafe {
-        let handle=OpenProcess(0x1000,0,pid);if handle.is_null(){return Err(format!("process executable unknown: {}",std::io::Error::last_os_error()));}
-        let mut buffer=vec![0u16;32768];let mut size=buffer.len() as u32;
-        let result=QueryFullProcessImageNameW(handle,0,buffer.as_mut_ptr(),&mut size);
-        let error=std::io::Error::last_os_error();CloseHandle(handle);
-        if result==0{return Err(format!("process executable unknown: {error}"));}
+        let handle = OpenProcess(0x1000, 0, pid);
+        if handle.is_null() {
+            return Err(format!(
+                "process executable unknown: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        let mut buffer = vec![0u16; 32768];
+        let mut size = buffer.len() as u32;
+        let result = QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size);
+        let error = std::io::Error::last_os_error();
+        CloseHandle(handle);
+        if result == 0 {
+            return Err(format!("process executable unknown: {error}"));
+        }
         use std::os::windows::ffi::OsStringExt;
-        Ok(PathBuf::from(std::ffi::OsString::from_wide(&buffer[..size as usize])))
+        Ok(PathBuf::from(std::ffi::OsString::from_wide(
+            &buffer[..size as usize],
+        )))
     }
 }
-#[cfg(not(any(target_os="macos",windows)))]
-fn image(_:u32)->Res<PathBuf>{Err("native agentq executable probe unavailable".into())}
-fn detect()->Value {
-    let clock=now();
-    let mut state=match root(){Ok(r)=>inspect(&r,exists(&r.join(if cfg!(windows){"agentq.exe"}else{"agentq"})),status(&r.join("status.json")),clock,process),Err(e)=>unknown(e)};
-    state["checked"]=json!(clock);state
+#[cfg(not(any(target_os = "macos", windows)))]
+fn image(_: u32) -> Res<PathBuf> {
+    Err("native agentq executable probe unavailable".into())
 }
-fn project(install:&Path,mut state:Value,previous_warning:bool)->Value {
-    let result=locked(install,||{
-        let mut p=preferences(install)?;let old=serde_json::to_value(&p).unwrap();
-        if state["kind"]=="running" {p.dismissed=false;p.warning=false;p.request=None;}
-        else if state["kind"]=="shown" {p.warning=true;}
-        if serde_json::to_value(&p).unwrap()!=old {save(install,&p)?;}
-        state["dismissed"]=json!(p.dismissed);state["warning"]=json!(p.warning&&!p.dismissed);
-        if let Some(id)=p.request {
-            match crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json"))){
-                Ok(r)=>{let s=crate::setup::view(&r);state["kind"]=json!(match s["kind"].as_str(){Some("starting"|"launched")=>"setting-up",Some("interrupted")=>"interrupted",_=>"failed"});state["setup"]=s;},
-                Err(e)=>{state["setup"]=unknown(e);state["kind"]=json!("interrupted");}
-            }
-        } Ok(())
-    });
-    if let Err(e)=result {state["kind"]=json!("unknown");state["reason"]=json!(e);state["warning"]=json!(previous_warning);}
+fn detect() -> Value {
+    let clock = now();
+    let mut state = match root() {
+        Ok(r) => inspect(
+            &r,
+            exists(&r.join(if cfg!(windows) {
+                "agentq.exe"
+            } else {
+                "agentq"
+            })),
+            status(&r.join("status.json")),
+            clock,
+            process,
+        ),
+        Err(e) => unknown(e),
+    };
+    state["checked"] = json!(clock);
     state
 }
-fn runtimes(install:&Path)->Value {
-    let rows=crate::runtime::agents(install);
-    let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname);
+fn project(install: &Path, mut state: Value, previous_warning: bool) -> Value {
+    let result = locked(install, || {
+        let mut p = preferences(install)?;
+        let old = serde_json::to_value(&p).unwrap();
+        if state["kind"] == "running" {
+            p.dismissed = false;
+            p.warning = false;
+            p.request = None;
+        } else if state["kind"] == "shown" {
+            p.warning = true;
+        }
+        if serde_json::to_value(&p).unwrap() != old {
+            save(install, &p)?;
+        }
+        state["dismissed"] = json!(p.dismissed);
+        state["warning"] = json!(p.warning && !p.dismissed);
+        if let Some(id) = p.request {
+            match crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json"))) {
+                Ok(r) => {
+                    let s = crate::setup::view(&r);
+                    state["kind"] = json!(match s["kind"].as_str() {
+                        Some("starting" | "launched") => "setting-up",
+                        Some("interrupted") => "interrupted",
+                        _ => "failed",
+                    });
+                    state["setup"] = s;
+                }
+                Err(e) => {
+                    state["setup"] = unknown(e);
+                    state["kind"] = json!("interrupted");
+                }
+            }
+        }
+        Ok(())
+    });
+    if let Err(e) = result {
+        state["kind"] = json!("unknown");
+        state["reason"] = json!(e);
+        state["warning"] = json!(previous_warning);
+    }
+    state
+}
+fn runtimes(install: &Path) -> Value {
+    let rows = crate::runtime::agents(install);
+    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname);
     crate::runtime::setup_runtimes().map(|rt|{
         let row=rows.as_array().and_then(|rows|rows.iter().find(|r|r["runtime"]==rt));
         let reason=match (row,&policy){
@@ -143,46 +351,93 @@ fn runtimes(install:&Path)->Value {
     }).collect::<Vec<_>>().into()
 }
 /// A single background probe at the existing 2 s cadence; renders never run a CLI or read credentials.
-static CACHE:OnceLock<Arc<Mutex<Value>>>=OnceLock::new();
-pub fn start(install:&Path) {
-    CACHE.get_or_init(||{
-        let cache=Arc::new(Mutex::new(unknown("agentq readback pending")));let output=cache.clone();let install=install.to_path_buf();
+static CACHE: OnceLock<Arc<Mutex<Value>>> = OnceLock::new();
+pub fn start(install: &Path) {
+    CACHE.get_or_init(|| {
+        let cache = Arc::new(Mutex::new(unknown("agentq readback pending")));
+        let output = cache.clone();
+        let install = install.to_path_buf();
         // #1591: the runtime probe (about 1 s, longer under load) runs on its own thread so it never delays the readback stamp
-        let choices=Arc::new(Mutex::new(Value::Null));
-        {let choices=choices.clone();let install=install.clone();std::thread::spawn(move||loop{
-            let rows=runtimes(&install);*choices.lock().unwrap()=rows;std::thread::sleep(Duration::from_secs(300));
-        });}
-        std::thread::spawn(move||{
-            let mut warning=false;
+        let choices = Arc::new(Mutex::new(Value::Null));
+        {
+            let choices = choices.clone();
+            let install = install.clone();
+            std::thread::spawn(move || {
+                loop {
+                    let rows = runtimes(&install);
+                    *choices.lock().unwrap() = rows;
+                    std::thread::sleep(Duration::from_secs(300));
+                }
+            });
+        }
+        std::thread::spawn(move || {
+            let mut warning = false;
             loop {
-                let mut v=project(&install,detect(),warning);warning=v["warning"]==true;v["host"]=json!(crate::config::hostname());v["platform"]=json!(std::env::consts::OS);
-                v["targets"]=crate::runtime::setup_runtimes().map(|rt|(rt.to_string(),json!(targets(rt).ok()))).collect::<serde_json::Map<_,_>>().into();v["runtimes"]=choices.lock().unwrap().clone();
-                *output.lock().unwrap()=v;
+                let mut v = project(&install, detect(), warning);
+                warning = v["warning"] == true;
+                v["host"] = json!(crate::config::hostname());
+                v["platform"] = json!(std::env::consts::OS);
+                v["targets"] = crate::runtime::setup_runtimes()
+                    .map(|rt| (rt.to_string(), json!(targets(rt).ok())))
+                    .collect::<serde_json::Map<_, _>>()
+                    .into();
+                v["runtimes"] = choices.lock().unwrap().clone();
+                *output.lock().unwrap() = v;
                 std::thread::sleep(Duration::from_secs(2));
             }
-        });cache
+        });
+        cache
     });
 }
-fn fresh(mut state:Value,clock:u64)->Value {
-    if state.is_null(){return state;}
-    let recent=state["checked"].as_u64().is_some_and(|t|clock>=t&&clock-t<=5);
-    let running=state["kind"]=="running";
-    if !recent || running&&!state["valid_until"].as_u64().is_some_and(|t|clock<=t) {
-        state["kind"]=json!("unknown");state["reason"]=json!("agentq readback pending or stale; Check again");
-    } state
+fn fresh(mut state: Value, clock: u64) -> Value {
+    if state.is_null() {
+        return state;
+    }
+    let recent = state["checked"]
+        .as_u64()
+        .is_some_and(|t| clock >= t && clock - t <= 5);
+    let running = state["kind"] == "running";
+    if !recent || running && !state["valid_until"].as_u64().is_some_and(|t| clock <= t) {
+        state["kind"] = json!("unknown");
+        state["reason"] = json!("agentq readback pending or stale; Check again");
+    }
+    state
 }
-pub fn snapshot()->Value {CACHE.get().map(|c|fresh(c.lock().unwrap().clone(),now())).unwrap_or(Value::Null)}
+pub fn snapshot() -> Value {
+    CACHE
+        .get()
+        .map(|c| fresh(c.lock().unwrap().clone(), now()))
+        .unwrap_or(Value::Null)
+}
 /// No installer here: the click's id fences transport retries in the existing setup writer.
-pub fn action(install:&Path,action:&str,id:&str,runtime:&str)->Res<()> {
-    locked(install,||{
-        let mut p=preferences(install)?;
-        if action=="agentq-dismiss" {p.dismissed=true;save(install,&p)?;return Ok(());}
-        if action!="agentq-setup" || !crate::resources::id(id) || !crate::runtime::setup_runtimes().any(|rt|rt==runtime){return Err("invalid agentq setup request".into());}
-        let choices=snapshot();
-        if !choices["runtimes"].as_array().is_some_and(|rows|rows.iter().any(|r|r["runtime"]==runtime && r["eligible"]==true)){return Err("Selected setup runtime unavailable; check Agents and its access grant".into());}
+pub fn action(install: &Path, action: &str, id: &str, runtime: &str) -> Res<()> {
+    locked(install, || {
+        let mut p = preferences(install)?;
+        if action == "agentq-dismiss" {
+            p.dismissed = true;
+            save(install, &p)?;
+            return Ok(());
+        }
+        if action != "agentq-setup"
+            || !crate::resources::id(id)
+            || !crate::runtime::setup_runtimes().any(|rt| rt == runtime)
+        {
+            return Err("invalid agentq setup request".into());
+        }
+        let choices = snapshot();
+        if !choices["runtimes"].as_array().is_some_and(|rows| {
+            rows.iter()
+                .any(|r| r["runtime"] == runtime && r["eligible"] == true)
+        }) {
+            return Err(
+                "Selected setup runtime unavailable; check Agents and its access grant".into(),
+            );
+        }
         // Save the reference first: a crash before/after submission is unknown, never an automatic second install.
-        p.request=Some(id.into());save(install,&p)?;
-        crate::setup::agentq(install,id,runtime,targets(runtime)?)?;Ok(())
+        p.request = Some(id.into());
+        save(install, &p)?;
+        crate::setup::agentq(install, id, runtime, targets(runtime)?)?;
+        Ok(())
     })
 }
 

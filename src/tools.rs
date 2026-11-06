@@ -18,9 +18,24 @@ pub struct Need {
 /// The table of docs/design/host-service.md § Host tools; a new tool, flag or API use raises its minimum here and there.
 /// Runtime CLI rows come from their adapters (`runtime::clis`).
 pub const TOOLS: [Need; 3] = [
-    Need { tool: "curl", min: "7.55.0", needs: "update, board API and rules download", fix: "install or update curl (https://curl.se/download.html)" },
-    Need { tool: "git", min: "2.17.0", needs: "worktrees, tidy, recovery and project seed", fix: "install or update Git (https://git-scm.com/downloads)" },
-    Need { tool: "gh", min: "2.5.1", needs: "GitHub workers: gh pr create, gh pr checks --watch --interval", fix: "install or update GitHub CLI (https://cli.github.com)" },
+    Need {
+        tool: "curl",
+        min: "7.55.0",
+        needs: "update, board API and rules download",
+        fix: "install or update curl (https://curl.se/download.html)",
+    },
+    Need {
+        tool: "git",
+        min: "2.17.0",
+        needs: "worktrees, tidy, recovery and project seed",
+        fix: "install or update Git (https://git-scm.com/downloads)",
+    },
+    Need {
+        tool: "gh",
+        min: "2.5.1",
+        needs: "GitHub workers: gh pr create, gh pr checks --watch --interval",
+        fix: "install or update GitHub CLI (https://cli.github.com)",
+    },
 ];
 
 /// This host's tools and whether each is required: curl always (update); git with a known project (taskq.md § 8: a
@@ -29,16 +44,35 @@ pub const TOOLS: [Need; 3] = [
 fn needs(github: Option<bool>, default_runtime: Option<&str>) -> Vec<(Need, bool)> {
     let [curl, git, gh] = TOOLS;
     let mut v = vec![(curl, true), (git, github.is_some())];
-    if github != Some(false) { v.push((gh, github == Some(true))); }
+    if github != Some(false) {
+        v.push((gh, github == Some(true)));
+    }
     let main = default_runtime.map(|rt| crate::runtime::of(rt).bin);
-    v.extend(crate::runtime::clis().map(|a| (Need { tool: a.bin, min: a.min, needs: a.client, fix: a.update }, main == Some(a.bin))));
+    v.extend(crate::runtime::clis().map(|a| {
+        (
+            Need {
+                tool: a.bin,
+                min: a.min,
+                needs: a.client,
+                fix: a.update,
+            },
+            main == Some(a.bin),
+        )
+    }));
     v
 }
 
 /// The command line of `cmd` for a diagnostic: program file name, then its arguments.
 fn shown(cmd: &Command) -> String {
-    let program = Path::new(cmd.get_program()).file_name().unwrap_or(cmd.get_program()).to_string_lossy().into_owned();
-    std::iter::once(program).chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned())).collect::<Vec<_>>().join(" ")
+    let program = Path::new(cmd.get_program())
+        .file_name()
+        .unwrap_or(cmd.get_program())
+        .to_string_lossy()
+        .into_owned();
+    std::iter::once(program)
+        .chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned()))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Runs an external tool call: its stdout, else the command and its error, with the exit status and stderr of a
@@ -48,8 +82,21 @@ pub fn run(name: &'static str, cmd: &mut Command, budget: Duration) -> Result<Ve
     match coreq::process::output(name, cmd, budget) {
         Ok(o) => Ok(o.stdout),
         Err(coreq::process::Failure::Exit(o)) => {
-            let err = String::from_utf8_lossy(&o.stderr).lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("; ");
-            Err(format!("`{line}` failed: {}: {}", o.status, if err.is_empty() { "no error output" } else { &err }))
+            let err = String::from_utf8_lossy(&o.stderr)
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect::<Vec<_>>()
+                .join("; ");
+            Err(format!(
+                "`{line}` failed: {}: {}",
+                o.status,
+                if err.is_empty() {
+                    "no error output"
+                } else {
+                    &err
+                }
+            ))
         }
         Err(e) => Err(format!("`{line}` failed: {e}")),
     }
@@ -74,29 +121,52 @@ fn below(found: &str, min: &str) -> bool {
 fn probe(bin: &Path) -> Command {
     let mut probe = crate::platform::command(bin);
     probe.arg("--version");
-    if let Some(dir) = bin.parent().filter(|dir| dir.is_absolute()) { probe.current_dir(dir); }
+    if let Some(dir) = bin.parent().filter(|dir| dir.is_absolute()) {
+        probe.current_dir(dir);
+    }
     probe
 }
 
 /// `<tool> --version` through `bin`: the found version, or the failed command with its error (never empty).
 fn version(tool: &str, bin: &Path) -> Result<String, String> {
     let cmd = format!("`{tool} --version`");
-    let out = crate::platform::output("tool.version", &mut probe(bin), Duration::from_secs(10)).map_err(|e| format!("{cmd} failed: {e}"))?;
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no output");
+    let out = crate::platform::output("tool.version", &mut probe(bin), Duration::from_secs(10))
+        .map_err(|e| format!("{cmd} failed: {e}"))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let first = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("no output");
     if !out.status.success() {
         return Err(format!("{cmd} failed: {}: {first}", out.status));
     }
-    text.split_whitespace().find(|w| parts(w).first().is_some()).map(String::from).ok_or(format!("{cmd} printed no version: {first}"))
+    text.split_whitespace()
+        .find(|w| parts(w).first().is_some())
+        .map(String::from)
+        .ok_or(format!("{cmd} printed no version: {first}"))
 }
 
 /// One tool's row: Ok(`<tool>: <found> (minimum <min>) PASS` or not installed, optional), else Err naming the tool,
 /// found version, minimum and fix. An installed optional tool below its minimum fails too: taskq or a worker may run it.
 pub fn check(need: &Need, bin: &Path, required: bool) -> Result<String, String> {
     let (tool, min) = (need.tool, need.min);
-    let fail = |found: String| format!("{tool}: {found}; minimum {min} for {}; fix: {}", need.needs, need.fix);
+    let fail = |found: String| {
+        format!(
+            "{tool}: {found}; minimum {min} for {}; fix: {}",
+            need.needs, need.fix
+        )
+    };
     if !bin.is_absolute() && !bin.is_file() {
-        return if required { Err(fail("not installed".into())) } else { Ok(format!("{tool}: not installed (optional)")) };
+        return if required {
+            Err(fail("not installed".into()))
+        } else {
+            Ok(format!("{tool}: not installed (optional)"))
+        };
     }
     match version(tool, bin) {
         Err(e) => Err(fail(format!("version unknown ({e})"))),
@@ -108,30 +178,59 @@ pub fn check(need: &Need, bin: &Path, required: bool) -> Result<String, String> 
 
 /// Whether any project registered on this host, or `root`, uses a GitHub board; unknown without either.
 pub fn github(install: &Path, root: Option<&Path>) -> Option<bool> {
-    let roots: Vec<_> = root.map(Path::to_path_buf).into_iter().chain(crate::host::projects(install).unwrap_or_default()).collect();
-    let boards: Vec<String> = roots.iter().filter_map(|r| crate::config::ProjectFile::of(r).read().ok())
-        .map(|v| v["board"].as_str().unwrap_or("github").to_string()).collect();
+    let roots: Vec<_> = root
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(crate::host::projects(install).unwrap_or_default())
+        .collect();
+    let boards: Vec<String> = roots
+        .iter()
+        .filter_map(|r| crate::config::ProjectFile::of(r).read().ok())
+        .map(|v| v["board"].as_str().unwrap_or("github").to_string())
+        .collect();
     (!boards.is_empty()).then(|| boards.iter().any(|b| b == "github"))
 }
 
 /// Every tool row of this host: (line, failed). Not needed tools (gh on a GitLab-only host) are left out.
 pub fn rows(install: &Path, root: Option<&Path>) -> Vec<(String, bool)> {
-    let default_runtime = crate::host::Policy::read(install).ok().map(|p| p.default_runtime.name());
-    let selected = default_runtime.and_then(|rt| crate::labels::select(&[], false, rt, |candidate| {
-        crate::runtime::missing_cli(candidate).map_or_else(|| Ok(candidate.to_string()), |why| Err(("capability", why)))
-    }).ok().map(|(rt, _)| rt));
+    let default_runtime = crate::host::Policy::read(install)
+        .ok()
+        .map(|p| p.default_runtime.name());
+    let selected = default_runtime.and_then(|rt| {
+        crate::labels::select(&[], false, rt, |candidate| {
+            crate::runtime::missing_cli(candidate)
+                .map_or_else(|| Ok(candidate.to_string()), |why| Err(("capability", why)))
+        })
+        .ok()
+        .map(|(rt, _)| rt)
+    });
     let github = github(install, root);
-    needs(github, selected.as_deref().or(default_runtime)).into_iter().map(|(n, req)| {
-        match check(&n, &crate::runtime::which(n.tool), req) { Ok(l) => (l, false), Err(l) => (l, true) }
-    }).collect()
+    needs(github, selected.as_deref().or(default_runtime))
+        .into_iter()
+        .map(
+            |(n, req)| match check(&n, &crate::runtime::which(n.tool), req) {
+                Ok(l) => (l, false),
+                Err(l) => (l, true),
+            },
+        )
+        .collect()
 }
 
 /// The owner steps for each failing tool (install, onboard, update, service start); empty when all pass.
 pub fn gaps(install: &Path, root: Option<&Path>) -> Vec<String> {
-    rows(install, root).into_iter().filter(|r| r.1).flat_map(|(l, _)| {
-        let (what, fix) = l.split_once("; fix: ").unwrap_or((&l, "see docs/design/host-service.md#host-tools"));
-        [format!("Tool: {what}"), format!("Next: {fix}; `taskq selftest` fails until then")]
-    }).collect()
+    rows(install, root)
+        .into_iter()
+        .filter(|r| r.1)
+        .flat_map(|(l, _)| {
+            let (what, fix) = l
+                .split_once("; fix: ")
+                .unwrap_or((&l, "see docs/design/host-service.md#host-tools"));
+            [
+                format!("Tool: {what}"),
+                format!("Next: {fix}; `taskq selftest` fails until then"),
+            ]
+        })
+        .collect()
 }
 
 #[cfg(test)]

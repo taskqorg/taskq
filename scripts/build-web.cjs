@@ -1,34 +1,151 @@
 // Standard JS bundles; no parser changes product source.
-'use strict';
-const fs=require('node:fs'),path=require('node:path'),esbuild=require('esbuild');
-const root=path.resolve(__dirname,'..');
-const out=path.resolve(process.argv[2]||path.join(root,'build/web'));
-const lock=fs.readFileSync(path.join(root,'Cargo.lock'),'utf8');
-const revisions=lock.split('[[package]]').filter(p=>/^name = "coreq(?:-instrument)?"$/m.test(p)).map(p=>p.match(/^source = "git\+https:\/\/github.com\/taskqorg\/coreq\?[^"#]+#([a-f0-9]{40})"$/m)?.[1]);
-const dependency=JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).dependencies['@taskq/coreq'];
-if(revisions.length!==2||revisions[0]!==revisions[1]||dependency!=='https://codeload.github.com/taskqorg/coreq/tar.gz/'+revisions[0])throw Error('Cargo/instrumenter/JS must pin the same CoreQ revision');
+"use strict";
+const fs = require("node:fs"),
+  path = require("node:path"),
+  esbuild = require("esbuild");
+const root = path.resolve(__dirname, "..");
+const out = path.resolve(process.argv[2] || path.join(root, "build/web"));
+const lock = fs.readFileSync(path.join(root, "Cargo.lock"), "utf8");
+const revisions = lock
+  .split("[[package]]")
+  .filter((p) => /^name = "coreq(?:-instrument)?"$/m.test(p))
+  .map(
+    (p) =>
+      p.match(
+        /^source = "git\+https:\/\/github.com\/taskqorg\/coreq\?[^"#]+#([a-f0-9]{40})"$/m,
+      )?.[1],
+  );
+const dependency = JSON.parse(
+  fs.readFileSync(path.join(root, "package.json"), "utf8"),
+).dependencies["@taskq/coreq"];
+if (
+  revisions.length !== 2 ||
+  revisions[0] !== revisions[1] ||
+  dependency !==
+    "https://codeload.github.com/taskqorg/coreq/tar.gz/" + revisions[0]
+)
+  throw Error("Cargo/instrumenter/JS must pin the same CoreQ revision");
 
-fs.mkdirSync(out,{recursive:true});
-require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'check-web.cjs'),out],{stdio:'inherit'});
-const components={'answer-card':'TaskqAnswerCard','resource-controls':'TaskqResources','project-blocks':'TaskqProjectBlocks','finding-composer':'TaskqFindingComposer','task-controls':'TaskqTaskControls','pm-composer':'TaskqPmComposer','task-workspace':'TaskqTaskWorkspace'};
-for(const [name,globalName] of Object.entries(components))esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',globalName,outfile:path.join(out,name+'.js'),target:'es2022'});
-for(const name of ['tray-guard','workspace-entry'])esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',outfile:path.join(out,name+'.js'),target:'es2022'});
+fs.mkdirSync(out, { recursive: true });
+require("node:child_process").execFileSync(
+  process.execPath,
+  [path.join(__dirname, "check-web.cjs"), out],
+  { stdio: "inherit" },
+);
+const components = {
+  "answer-card": "TaskqAnswerCard",
+  "resource-controls": "TaskqResources",
+  "project-blocks": "TaskqProjectBlocks",
+  "finding-composer": "TaskqFindingComposer",
+  "task-controls": "TaskqTaskControls",
+  "pm-composer": "TaskqPmComposer",
+  "task-workspace": "TaskqTaskWorkspace",
+};
+for (const [name, globalName] of Object.entries(components))
+  esbuild.buildSync({
+    entryPoints: [path.join(root, "src", name + ".js")],
+    bundle: true,
+    platform: "browser",
+    format: "iife",
+    globalName,
+    outfile: path.join(out, name + ".js"),
+    target: "es2022",
+  });
+for (const name of ["tray-guard", "workspace-entry"])
+  esbuild.buildSync({
+    entryPoints: [path.join(root, "src", name + ".js")],
+    bundle: true,
+    platform: "browser",
+    format: "iife",
+    outfile: path.join(out, name + ".js"),
+    target: "es2022",
+  });
 // One task workspace stylesheet: the tray embeds it and the release publishes the same file (docs/design/task-workspace.md).
-fs.writeFileSync(path.join(out,'task-workspace.css'),['task-workspace','answer-card','project-blocks','resource-controls','app-shell','task-dashboard'].map(name=>fs.readFileSync(path.join(root,'src',name+'.css'),'utf8')).join('\n'));
-let html=fs.readFileSync(path.join(root,'src/tray.html'),'utf8').replace('{{TASK_WORKSPACE_CSS}}',fs.readFileSync(path.join(out,'task-workspace.css'),'utf8'));
-html=html.replace('{{GUARD_JS}}',()=>fs.readFileSync(path.join(out,'tray-guard.js'),'utf8').replaceAll('</script','<\/script'));
-fs.writeFileSync(path.join(out,'tray-entry.js'),fs.readFileSync(path.join(out,'task-workspace.js'),'utf8')+';\n'+fs.readFileSync(path.join(root,'src/tray-entry.js'),'utf8'));
-for(const name of ['tray','workspace']){
- const page=html.replace('{{APP_JS}}',()=>fs.readFileSync(path.join(out,name+'-entry.js'),'utf8').replaceAll('</script','<\/script')).replace('class="menu" role="menu"','class="menu'+(name==='workspace'?' workspace':'')+'"').replace('</head>',name==='workspace'?'<style>'+fs.readFileSync(path.join(root,'src/conversations.css'),'utf8')+'</style></head>':'</head>');
- if(/\{\{[A-Z_]+\}\}/.test(page))throw Error('Unresolved web asset');
- fs.writeFileSync(path.join(out,name+'.html'),page);
+fs.writeFileSync(
+  path.join(out, "task-workspace.css"),
+  [
+    "task-workspace",
+    "answer-card",
+    "project-blocks",
+    "resource-controls",
+    "app-shell",
+    "task-dashboard",
+  ]
+    .map((name) =>
+      fs.readFileSync(path.join(root, "src", name + ".css"), "utf8"),
+    )
+    .join("\n"),
+);
+let html = fs
+  .readFileSync(path.join(root, "src/tray.html"), "utf8")
+  .replace(
+    "{{TASK_WORKSPACE_CSS}}",
+    fs.readFileSync(path.join(out, "task-workspace.css"), "utf8"),
+  );
+html = html.replace("{{GUARD_JS}}", () =>
+  fs
+    .readFileSync(path.join(out, "tray-guard.js"), "utf8")
+    .replaceAll("</script", "<\/script"),
+);
+fs.writeFileSync(
+  path.join(out, "tray-entry.js"),
+  fs.readFileSync(path.join(out, "task-workspace.js"), "utf8") +
+    ";\n" +
+    fs.readFileSync(path.join(root, "src/tray-entry.js"), "utf8"),
+);
+for (const name of ["tray", "workspace"]) {
+  const page = html
+    .replace("{{APP_JS}}", () =>
+      fs
+        .readFileSync(path.join(out, name + "-entry.js"), "utf8")
+        .replaceAll("</script", "<\/script"),
+    )
+    .replace(
+      'class="menu" role="menu"',
+      'class="menu' + (name === "workspace" ? " workspace" : "") + '"',
+    )
+    .replace(
+      "</head>",
+      name === "workspace"
+        ? "<style>" +
+            fs.readFileSync(path.join(root, "src/conversations.css"), "utf8") +
+            "</style></head>"
+        : "</head>",
+    );
+  if (/\{\{[A-Z_]+\}\}/.test(page)) throw Error("Unresolved web asset");
+  fs.writeFileSync(path.join(out, name + ".html"), page);
 }
 // Bundle identity for the embedded copy and a bundle-only publication (docs/design/ui-bundle.md#contract-detail).
-let bundle=process.env.TASKQ_UI_VERSION;
-if(!bundle){const commit=require('node:child_process').spawnSync('git',['log','-1','--format=%ct-%H'],{cwd:root,encoding:'utf8'}).stdout?.trim().match(/^(\d+)-([0-9a-f]{12})/);bundle=commit?commit[1]+'-'+commit[2]:'0-unknown';}
-if(!/^\d+-[0-9a-z]{1,40}$/.test(bundle))throw Error('Invalid UI bundle version '+bundle);
-const bridge=Number(fs.readFileSync(path.join(root,'src/ui-bridge.txt'),'utf8').trim());
-if(!Number.isSafeInteger(bridge)||bridge<1)throw Error('Invalid UI bridge version');
-const files={};
-for(const file of ['tray.html','workspace.html','operations.json']){const bytes=fs.readFileSync(path.join(out,file));files[file]={sha256:require('node:crypto').createHash('sha256').update(bytes).digest('hex'),size:bytes.length};}
-fs.writeFileSync(path.join(out,'manifest.json'),JSON.stringify({schema:1,bundle,bridge,files},null,1)+'\n');
+let bundle = process.env.TASKQ_UI_VERSION;
+if (!bundle) {
+  const commit = require("node:child_process")
+    .spawnSync("git", ["log", "-1", "--format=%ct-%H"], {
+      cwd: root,
+      encoding: "utf8",
+    })
+    .stdout?.trim()
+    .match(/^(\d+)-([0-9a-f]{12})/);
+  bundle = commit ? commit[1] + "-" + commit[2] : "0-unknown";
+}
+if (!/^\d+-[0-9a-z]{1,40}$/.test(bundle))
+  throw Error("Invalid UI bundle version " + bundle);
+const bridge = Number(
+  fs.readFileSync(path.join(root, "src/ui-bridge.txt"), "utf8").trim(),
+);
+if (!Number.isSafeInteger(bridge) || bridge < 1)
+  throw Error("Invalid UI bridge version");
+const files = {};
+for (const file of ["tray.html", "workspace.html", "operations.json"]) {
+  const bytes = fs.readFileSync(path.join(out, file));
+  files[file] = {
+    sha256: require("node:crypto")
+      .createHash("sha256")
+      .update(bytes)
+      .digest("hex"),
+    size: bytes.length,
+  };
+}
+fs.writeFileSync(
+  path.join(out, "manifest.json"),
+  JSON.stringify({ schema: 1, bundle, bridge, files }, null, 1) + "\n",
+);

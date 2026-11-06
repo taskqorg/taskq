@@ -45,7 +45,9 @@ pub fn mode(n: &Value, root: &str, kind: &str) -> &'static str {
 
 /// Page action `{kind, value, root?}`: a host mode, or a project override (`inherit` removes it). False: refused.
 pub fn set(n: &mut Value, m: &Value) -> bool {
-    let Some(kind) = m["kind"].as_str().filter(|k| KINDS.contains(k)) else { return false };
+    let Some(kind) = m["kind"].as_str().filter(|k| KINDS.contains(k)) else {
+        return false;
+    };
     if !n.is_object() {
         *n = json!({});
     }
@@ -68,21 +70,44 @@ pub fn set(n: &mut Value, m: &Value) -> bool {
 
 /// M14 local presentation metadata, never a task/decision operation. IDs bind to exact displayed events.
 pub fn inbox_set(n: &mut Value, m: &Value) -> bool {
-    let Some(action) = m["action"].as_str().filter(|a| ["read", "clear"].contains(a)) else { return false };
-    let Some(ids) = m["ids"].as_array().filter(|ids| !ids.is_empty()) else { return false };
-    if ids.iter().any(|id| id.as_str().is_none_or(|id| id.len()>4096 || serde_json::from_str::<Vec<Value>>(id).is_err())) { return false }
-    if !n.is_object() { *n=json!({}); }
-    if !n["inbox"].is_object() { n["inbox"]=json!({}); }
+    let Some(action) = m["action"]
+        .as_str()
+        .filter(|a| ["read", "clear"].contains(a))
+    else {
+        return false;
+    };
+    let Some(ids) = m["ids"].as_array().filter(|ids| !ids.is_empty()) else {
+        return false;
+    };
+    if ids.iter().any(|id| {
+        id.as_str()
+            .is_none_or(|id| id.len() > 4096 || serde_json::from_str::<Vec<Value>>(id).is_err())
+    }) {
+        return false;
+    }
+    if !n.is_object() {
+        *n = json!({});
+    }
+    if !n["inbox"].is_object() {
+        n["inbox"] = json!({});
+    }
     for id in ids {
-        let id=id.as_str().unwrap();
-        if n["inbox"][id]!="cleared" { n["inbox"][id]=json!(if action=="clear" {"cleared"} else {"read"}); }
+        let id = id.as_str().unwrap();
+        if n["inbox"][id] != "cleared" {
+            n["inbox"][id] = json!(if action == "clear" { "cleared" } else { "read" });
+        }
     }
     true
 }
 
 /// True when any kind of any project may post a banner: the first such setting asks the OS for permission.
 pub fn wants_banner(n: &Value, roots: &[String]) -> bool {
-    KINDS.iter().any(|k| ["banner", "sound"].contains(&host(n, k)) || roots.iter().any(|r| ["banner", "sound"].contains(&mode(n, r, k))))
+    KINDS.iter().any(|k| {
+        ["banner", "sound"].contains(&host(n, k))
+            || roots
+                .iter()
+                .any(|r| ["banner", "sound"].contains(&mode(n, r, k)))
+    })
 }
 
 /// One OS notification. `n` is None for a burst summary (a click opens the project). `id` carries what a click needs.
@@ -98,7 +123,10 @@ pub struct Post {
 }
 
 pub fn label(kind: &str) -> &'static str {
-    crate::display::NOTIFY.iter().find(|k| k.0 == kind).map_or("Event", |k| k.1)
+    crate::display::NOTIFY
+        .iter()
+        .find(|k| k.0 == kind)
+        .map_or("Event", |k| k.1)
 }
 
 /// Events of the tray's projects (`root`, `name`, `tasks`, `events` lines `[time, kind, attempt, n, outcome?]`) after each
@@ -118,12 +146,26 @@ pub fn due(n: &mut Value, ps: &[Value], now: i64, bursts: &mut Bursts) -> Vec<Po
     }
     let mut out = vec![];
     for p in ps {
-        let Some(root) = p["root"].as_str() else { continue };
-        let tasks: serde_json::Map<String, Value> = p["tasks"].as_array().into_iter().flatten()
-            .filter_map(|t| Some((t["n"].as_u64()?.to_string(), json!(t["title"].as_str()?)))).collect();
+        let Some(root) = p["root"].as_str() else {
+            continue;
+        };
+        let tasks: serde_json::Map<String, Value> = p["tasks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| Some((t["n"].as_u64()?.to_string(), json!(t["title"].as_str()?))))
+            .collect();
         let known = std::mem::replace(&mut n["titles"][root], json!(tasks));
         let lines: Vec<&Value> = p["events"].as_array().into_iter().flatten().collect();
-        let line = |e: &Value| format!("{} #{} {} {}", e[0], e[3], e[1].as_str().unwrap_or(""), e[2].as_str().unwrap_or(""));
+        let line = |e: &Value| {
+            format!(
+                "{} #{} {} {}",
+                e[0],
+                e[3],
+                e[1].as_str().unwrap_or(""),
+                e[2].as_str().unwrap_or("")
+            )
+        };
         let Some(cursor) = n["cursor"][root].as_str().map(String::from) else {
             n["cursor"][root] = json!(now.to_string());
             continue;
@@ -132,8 +174,15 @@ pub fn due(n: &mut Value, ps: &[Value], now: i64, bursts: &mut Bursts) -> Vec<Po
         let start = match lines.iter().rposition(|e| line(e) == cursor) {
             Some(i) => i + 1,
             None => {
-                let t: i64 = cursor.split(' ').next().and_then(|t| t.parse().ok()).unwrap_or(i64::MAX);
-                lines.iter().position(|e| e[0].as_i64().is_some_and(|x| x > t)).unwrap_or(lines.len())
+                let t: i64 = cursor
+                    .split(' ')
+                    .next()
+                    .and_then(|t| t.parse().ok())
+                    .unwrap_or(i64::MAX);
+                lines
+                    .iter()
+                    .position(|e| e[0].as_i64().is_some_and(|x| x > t))
+                    .unwrap_or(lines.len())
             }
         };
         let new = &lines[start..];
@@ -181,7 +230,10 @@ pub fn due(n: &mut Value, ps: &[Value], now: i64, bursts: &mut Bursts) -> Vec<Po
         for (e, m, _) in singles {
             let num = e[3].as_u64();
             let key = num.map(|x| x.to_string()).unwrap_or_default();
-            let title = n["titles"][root][&key].as_str().or(known[&key].as_str()).map(String::from);
+            let title = n["titles"][root][&key]
+                .as_str()
+                .or(known[&key].as_str())
+                .map(String::from);
             // § 7: a close names its outcome, never a bare `Closed` (#1800)
             let head = match (num, e[4].as_str()) {
                 (Some(x), Some(o)) => format!("{name}#{x} closed: {o}"),
@@ -193,15 +245,35 @@ pub fn due(n: &mut Value, ps: &[Value], now: i64, bursts: &mut Bursts) -> Vec<Po
                 Some(t) => format!("{head} {t}"),
                 None => head,
             };
-            out.push(Post { root: root.into(), n: num, title: format!("{name} · {}", label(e[1].as_str().unwrap_or(""))), body, sound: m == "sound", id: json!({"root": root, "n": num, "k": e[1], "t": title, "e": line(e)}).to_string() });
+            out.push(Post {
+                root: root.into(),
+                n: num,
+                title: format!("{name} · {}", label(e[1].as_str().unwrap_or(""))),
+                body,
+                sound: m == "sound",
+                id: json!({"root": root, "n": num, "k": e[1], "t": title, "e": line(e)})
+                    .to_string(),
+            });
         }
         for (first, kinds, last) in sums {
-            let sound = shown.iter().any(|(t, m)| (first..=last).contains(t) && *m == "sound");
-            let counts: Vec<String> = KINDS.iter().filter_map(|k| {
-                let c = kinds.iter().filter(|x| x == k).count();
-                (c > 0).then(|| format!("{c} {}", label(k).to_lowercase()))
-            }).collect();
-            out.push(Post { root: root.into(), n: None, title: format!("{name} · {} events", kinds.len()), body: counts.join(", "), sound, id: json!({"root": root, "sum": first}).to_string() });
+            let sound = shown
+                .iter()
+                .any(|(t, m)| (first..=last).contains(t) && *m == "sound");
+            let counts: Vec<String> = KINDS
+                .iter()
+                .filter_map(|k| {
+                    let c = kinds.iter().filter(|x| x == k).count();
+                    (c > 0).then(|| format!("{c} {}", label(k).to_lowercase()))
+                })
+                .collect();
+            out.push(Post {
+                root: root.into(),
+                n: None,
+                title: format!("{name} · {} events", kinds.len()),
+                body: counts.join(", "),
+                sound,
+                id: json!({"root": root, "sum": first}).to_string(),
+            });
         }
     }
     out.extend(stale_grant(n, ps));
@@ -226,14 +298,31 @@ pub fn stale_grant(n: &mut Value, ps: &[Value]) -> Option<Post> {
         return None;
     }
     n["stale_grant"] = json!(true);
-    Some(Post { root: String::new(), n: None, title: "taskq · Screen Recording grant is stale".into(), body: STALE_GRANT.into(), sound: false, id: json!({"stale_grant": true}).to_string() })
+    Some(Post {
+        root: String::new(),
+        n: None,
+        title: "taskq · Screen Recording grant is stale".into(),
+        body: STALE_GRANT.into(),
+        sound: false,
+        id: json!({"stale_grant": true}).to_string(),
+    })
 }
 
 /// The owner step for an Accessibility or App Data grant that reads `missing` or `stale` (#1845); `bin` is `<install>/taskq`.
 pub fn grant_step(key: &str, state: &str, bin: &str) -> String {
-    let pane = if key == "app_data" { "App Data" } else { "Accessibility" };
-    let remove = if state == "stale" { "select taskq, remove it (-), then " } else { "" };
-    format!("System Settings > Privacy & Security > {pane}: {remove}add {bin} with + and switch it on.")
+    let pane = if key == "app_data" {
+        "App Data"
+    } else {
+        "Accessibility"
+    };
+    let remove = if state == "stale" {
+        "select taskq, remove it (-), then "
+    } else {
+        ""
+    };
+    format!(
+        "System Settings > Privacy & Security > {pane}: {remove}add {bin} with + and switch it on."
+    )
 }
 
 /// One notice per Accessibility or App Data episode (#1845 A2), like `stale_grant`: the first status that reads the
@@ -244,27 +333,51 @@ pub fn grant_notices(n: &mut Value, ps: &[Value]) -> Vec<Post> {
     }
     let mut out = vec![];
     for (key, _) in crate::platform::GRANTS {
-        let bad = ps.iter().find(|p| matches!(p["gui"]["grants"][key].as_str(), Some("missing" | "stale")));
+        let bad = ps
+            .iter()
+            .find(|p| matches!(p["gui"]["grants"][key].as_str(), Some("missing" | "stale")));
         let Some(p) = bad else {
-            if let Some(g) = n["grants"].as_object_mut() { g.remove(key); }
+            if let Some(g) = n["grants"].as_object_mut() {
+                g.remove(key);
+            }
             continue;
         };
         if n["grants"][key] == true {
             continue;
         }
-        if !n["grants"].is_object() { n["grants"] = json!({}); }
+        if !n["grants"].is_object() {
+            n["grants"] = json!({});
+        }
         n["grants"][key] = json!(true);
         let state = p["gui"]["grants"][key].as_str().unwrap_or_default();
-        let pane = if key == "app_data" { "App Data" } else { "Accessibility" };
+        let pane = if key == "app_data" {
+            "App Data"
+        } else {
+            "Accessibility"
+        };
         let body = grant_step(key, state, p["gui"]["binary"].as_str().unwrap_or("taskq"));
-        out.push(Post { root: String::new(), n: None, title: format!("taskq · {pane} grant is {state}"), body, sound: false, id: json!({"grant": key}).to_string() });
+        out.push(Post {
+            root: String::new(),
+            n: None,
+            title: format!("taskq · {pane} grant is {state}"),
+            body,
+            sound: false,
+            id: json!({"grant": key}).to_string(),
+        });
     }
     out
 }
 
 /// `Send test`: one sample of `kind` (its host mode decides the sound).
 pub fn sample(n: &Value, kind: &str, now: i64) -> Post {
-    Post { root: String::new(), n: None, title: format!("taskq · {}", label(kind)), body: "taskq#1 Sample task".into(), sound: host(n, kind) == "sound", id: json!({"test": kind, "at": now}).to_string() }
+    Post {
+        root: String::new(),
+        n: None,
+        title: format!("taskq · {}", label(kind)),
+        body: "taskq#1 Sample task".into(),
+        sound: host(n, kind) == "sound",
+        id: json!({"test": kind, "at": now}).to_string(),
+    }
 }
 
 /// OS permission as the Settings page shows it: `allowed`, `blocked`, `not asked`, `asking` (the OS prompt is open),
@@ -302,7 +415,10 @@ mod os {
     fn refresh() {
         let Some(c) = center() else { return };
         let block = RcBlock::new(|s: NonNull<UNNotificationSettings>| {
-            STATUS.store(unsafe { s.as_ref() }.authorizationStatus().0 as i64, Ordering::Relaxed);
+            STATUS.store(
+                unsafe { s.as_ref() }.authorizationStatus().0 as i64,
+                Ordering::Relaxed,
+            );
         });
         c.getNotificationSettingsWithCompletionHandler(&block);
     }
@@ -343,7 +459,10 @@ mod os {
             }
             refresh();
         });
-        c.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound, &block);
+        c.requestAuthorizationWithOptions_completionHandler(
+            UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
+            &block,
+        );
     }
 
     /// Posts only when allowed: blocked or unknown posts nothing and falls back to no other channel.
@@ -359,7 +478,11 @@ mod os {
         if p.sound {
             content.setSound(Some(&UNNotificationSound::defaultSound()));
         }
-        let req = UNNotificationRequest::requestWithIdentifier_content_trigger(&NSString::from_str(&p.id), &content, None);
+        let req = UNNotificationRequest::requestWithIdentifier_content_trigger(
+            &NSString::from_str(&p.id),
+            &content,
+            None,
+        );
         c.addNotificationRequest_withCompletionHandler(&req, None);
         true
     }
@@ -375,14 +498,29 @@ mod os {
         unsafe impl UNUserNotificationCenterDelegate for Delegate {
             // the tray is an accessory app: show banners while it is frontmost too
             #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
-            fn will_present(&self, _c: &UNUserNotificationCenter, n: &UNNotification, done: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>) {
+            fn will_present(
+                &self,
+                _c: &UNUserNotificationCenter,
+                n: &UNNotification,
+                done: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
+            ) {
                 let sound = n.request().content().sound().is_some();
-                let o = UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List;
-                done.call((if sound { o | UNNotificationPresentationOptions::Sound } else { o },));
+                let o = UNNotificationPresentationOptions::Banner
+                    | UNNotificationPresentationOptions::List;
+                done.call((if sound {
+                    o | UNNotificationPresentationOptions::Sound
+                } else {
+                    o
+                },));
             }
 
             #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
-            fn did_receive(&self, _c: &UNUserNotificationCenter, r: &UNNotificationResponse, done: &block2::DynBlock<dyn Fn()>) {
+            fn did_receive(
+                &self,
+                _c: &UNUserNotificationCenter,
+                r: &UNNotificationResponse,
+                done: &block2::DynBlock<dyn Fn()>,
+            ) {
                 if let Some(f) = CLICK.get().and_then(|f| f.lock().ok()) {
                     f(r.notification().request().identifier().to_string());
                 }
@@ -408,7 +546,9 @@ mod os {
     }
 
     pub fn open_settings() {
-        let _ = crate::platform::command("open").arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension").spawn();
+        let _ = crate::platform::command("open")
+            .arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+            .spawn();
     }
 }
 
