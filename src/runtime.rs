@@ -1668,7 +1668,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
              - `{q} requeue {n} --text \"<why it cannot be done>\"`.\n{formats}",
             ask = ask(&q, n),
             gap = format!(
-                "hand in once `{q} ask {n} --text \"Done: not started\nProblem: host gap: the worker sandbox cannot write the shared .git (<exact git error>); the service or owner must create .worktrees/taskq-{n}\"` with no option (an owner action, § 7 rule 2)"
+                "hand in once `{q} ask {n} --actor owner --text \"Done: not started\nProblem: host gap: the worker sandbox cannot write the shared .git (<exact git error>); the service or owner must create .worktrees/taskq-{n}\"` with no option (an owner action, § 7 rule 2)"
             ),
             formats = FORMATS,
             url = l.url,

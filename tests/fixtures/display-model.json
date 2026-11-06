@@ -178,6 +178,14 @@
             "later"
           ],
           "verdict": null,
+          "action": {
+            "actor": "service",
+            "status": "ready",
+            "responsible": "service",
+            "next": "follow the current task stage"
+          },
+          "attention": null,
+          "retries": 0,
           "since": 199940,
           "created": null,
           "steps": [],
@@ -212,6 +220,14 @@
             "later"
           ],
           "verdict": null,
+          "action": {
+            "actor": "owner",
+            "status": "ready",
+            "responsible": "owner",
+            "next": "taskq inbox 9; answer the current question at revision 0"
+          },
+          "attention": null,
+          "retries": 0,
           "since": 191000,
           "created": null,
           "steps": [],
@@ -249,6 +265,14 @@
             "later"
           ],
           "verdict": null,
+          "action": {
+            "actor": "service",
+            "status": "ready",
+            "responsible": "service",
+            "next": "follow the current task stage"
+          },
+          "attention": null,
+          "retries": 0,
           "since": 199970,
           "created": null,
           "steps": [],
@@ -285,6 +309,14 @@
             "later"
           ],
           "verdict": null,
+          "action": {
+            "actor": "service",
+            "status": "ready",
+            "responsible": "service",
+            "next": "follow the current task stage"
+          },
+          "attention": null,
+          "retries": 0,
           "since": 199700,
           "created": null,
           "steps": [],
@@ -319,6 +351,14 @@
             "later"
           ],
           "verdict": null,
+          "action": {
+            "actor": "service",
+            "status": "ready",
+            "responsible": "service",
+            "next": "follow the current task stage"
+          },
+          "attention": null,
+          "retries": 0,
           "since": 192800,
           "created": null,
           "steps": [],
@@ -352,6 +392,14 @@
             "retry"
           ],
           "verdict": null,
+          "action": {
+            "actor": "service",
+            "status": "ready",
+            "responsible": "service",
+            "next": "follow the current task stage"
+          },
+          "attention": null,
+          "retries": 0,
           "since": 199400,
           "created": null,
           "steps": [],
@@ -385,6 +433,14 @@
             "start"
           ],
           "verdict": null,
+          "action": {
+            "actor": "pm",
+            "status": "ready",
+            "responsible": "pm",
+            "next": "taskq start 2"
+          },
+          "attention": null,
+          "retries": 0,
           "since": 110000,
           "created": null,
           "steps": [],
