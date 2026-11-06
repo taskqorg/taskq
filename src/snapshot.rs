@@ -11,6 +11,32 @@ use std::collections::{BTreeMap, HashMap};
 
 pub const SCHEMA: u64 = 1;
 
+/// A5: accepted spawns include reviewer attempts, which do not change the folded state.
+pub(crate) fn attempts(
+    projection: &core::Projection,
+    comments: &[board::Comment],
+    role: &str,
+) -> Vec<Value> {
+    comments
+        .iter()
+        .filter(|c| projection.accepts(c.id))
+        .filter_map(|c| {
+            let mut words = c
+                .body
+                .lines()
+                .next()?
+                .trim()
+                .strip_prefix("taskq:")?
+                .split_whitespace();
+            if words.next() != Some("spawn") || words.next() != Some(role) {
+                return None;
+            }
+            let session = format!("{} {}", words.next()?, words.next()?);
+            Some(json!({"attempt":c.id,"session":session,"role":role,"started":c.created}))
+        })
+        .collect()
+}
+
 /// #1591 the one freshness rule (§ 3 lease, § 4 status, R6) for CLI, tray and menu: an observation `age` seconds old
 /// is live within the project ttl, else stale; a negative age (clock skew) is stale.
 pub fn live(age: i64, ttl: i64) -> bool {
@@ -927,10 +953,8 @@ pub fn from_views(
         worker: std::iter::once(&v.projection.task).chain(v.projection.changes.iter().rev().map(|(_,_,t)|t))
             .find(|t|t.role.as_deref()==Some("worker") && t.attempt.is_some() && t.session.is_some())
             .map(|t|json!({"attempt":t.attempt,"session":t.session,"role":"worker"})),
-        workers: v.projection.changes.iter().filter(|(id,_,t)|t.role.as_deref()==Some("worker")&&t.attempt==Some(*id))
-            .map(|(id,_,t)|json!({"attempt":id,"session":t.session,"role":"worker","started":v.comments.iter().find(|c|c.id==*id).map(|c|c.created)})).collect(),
-        reviewers: v.projection.changes.iter().filter(|(id,_,t)|t.role.as_deref()==Some("reviewer")&&t.attempt==Some(*id))
-            .map(|(id,_,t)|json!({"attempt":id,"session":t.session,"role":"reviewer","started":v.comments.iter().find(|c|c.id==*id).map(|c|c.created)})).collect(),
+        workers: attempts(&v.projection, &v.comments, "worker"),
+        reviewers: attempts(&v.projection, &v.comments, "reviewer"),
         n: v.issue.number,
         conversation: core::conversation(v.issue.number,&v.log).map(|id| json!({"id":id,"brief":v.issue.body,"verdict":v.projection.changes.iter().rev().find_map(|(id,_,_)|v.log.iter().find(|e|e.id==*id && ["taskq: result ","taskq: close","taskq: publish"].iter().any(|prefix|e.body.starts_with(prefix))).and_then(|e|e.body.split_once('\n').map(|(_,text)|core::verdict(v.issue.number,&v.log,text))))})),
         title: v.issue.title.clone(),

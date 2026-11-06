@@ -382,7 +382,14 @@ const closedTask = (extra = {}) => ({
   close: "Completed",
   brief: "Recorded task brief",
   history: rows,
-  workers: [worker(1), worker(2), worker(3)],
+  // Exact closed-row attempt shape: runtime and host are derived from the recorded session.
+  workers: [1, 2, 3].map((attempt) => ({
+    attempt,
+    role: "worker",
+    session: "claude:fixture-" + attempt + " fixture-host",
+    started: at(attempt * 100),
+  })),
+  reviewers: live.reviewers,
   ...extra,
 });
 const closedThread = async (browser, boardReply) => {
@@ -437,10 +444,16 @@ const closedThread = async (browser, boardReply) => {
       "Worker 1",
       "Worker 2",
       "Worker 3",
+      "Reviewer 9",
       "Which route should the worker keep?",
       "Owner message between attempts",
     ])
       assert(text.includes(shown), "a closed thread lists " + shown);
+    assert.deepEqual(
+      await order(p),
+      [100, 160, 200, 250, 300, 350].map((seconds) => at(seconds) * 1000),
+      "closed attempts, questions and answers interleave by their source times",
+    );
     assert.deepEqual(
       await transcripts(p),
       [],

@@ -179,14 +179,16 @@ pub(crate) fn closed_row(
             .map(|(q, a)| json!({"question":q.as_deref().map(snapshot::question),"answered":a}))
             .collect::<Vec<_>>()
         });
-    let workers = log.as_ref().ok().map(|log| {
-        core::project(i.number, log, false)
-            .changes
-            .into_iter()
-            .filter(|(id, _, t)| t.role.as_deref() == Some("worker") && t.attempt == Some(*id))
-            .map(|(id, _, t)| json!({"attempt":id,"role":"worker","session":t.session}))
-            .collect::<Vec<_>>()
-    });
+    let attempts = |role| {
+        log.as_ref()
+            .ok()
+            .zip(comments.as_ref().ok())
+            .map(|(log, comments)| {
+                snapshot::attempts(&core::project(i.number, log, false), comments, role)
+            })
+    };
+    let workers = attempts("worker");
+    let reviewers = attempts("reviewer");
     let timing = log
         .as_ref()
         .ok()
@@ -215,7 +217,7 @@ pub(crate) fn closed_row(
         )
     });
     let close = log.is_ok().then(|| display::close_outcome(verdict, next));
-    json!({"n": i.number,"revision":log.as_ref().ok().map(|log|core::revision(i.number,log)), "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "source_readiness": log.as_ref().map_or_else(|_|readiness::unavailable(i.number,&b.url(i.number),"task log unavailable"),|log|readiness::source(i.number,&b.url(i.number),log)), "timing":timing,"history":history,"workers":workers,"brief":i.body,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err().map(|e| e.text())})
+    json!({"n": i.number,"revision":log.as_ref().ok().map(|log|core::revision(i.number,log)), "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "source_readiness": log.as_ref().map_or_else(|_|readiness::unavailable(i.number,&b.url(i.number),"task log unavailable"),|log|readiness::source(i.number,&b.url(i.number),log)), "timing":timing,"history":history,"workers":workers,"reviewers":reviewers,"brief":i.body,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err().map(|e| e.text())})
 }
 
 pub(crate) fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {
