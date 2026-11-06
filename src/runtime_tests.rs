@@ -6632,9 +6632,6 @@ fn compaction_resends_header_and_index_only_to_claude() {
     // Risk: a worker reads another launch's TASKQ_* (install, task, attempt), or an operator session gets an attempt.
     let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
     let mut worker = want("7", "42", "worker");
-    worker["AGENTQ_OPTIMIZATION"] = std::env::var("AGENTQ_OPTIMIZATION")
-        .unwrap_or("inherit".into())
-        .into();
     worker["AGENTQ_LAUNCHER"] = "taskq".into();
     if let Some(p) = build_cache_for("claude", &access(&env, "claude").unwrap(), &env) {
         worker["RUSTC_WRAPPER"] = p.to_string_lossy().into();
