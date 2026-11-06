@@ -795,6 +795,12 @@ fn queued_focus_actions_keep_context_and_refuse_overflow_without_blocking() {
                 .contains("different request"),
             "an id cannot be repurposed while pending"
         );
+        assert!(crate::telemetry::settle(Duration::from_secs(30)));
+        // Keep the observed receipt beyond page one, as Windows instrumentation can do.
+        let noise: Vec<_> = (0..1024)
+            .map(|_| coreq::telemetry::Event::new(json!({"product":"taskq","version":"fixture","operation":"fixture.noise","kind":"operation","trace":"fixture","span":"fixture","started_ms":1000,"outcome":"ok","error":"none"})).unwrap())
+            .collect();
+        store.append(&noise).unwrap();
         let snapshot = crate::control::snapshot(&root, &mut None, &mut None).unwrap();
         assert_eq!(snapshot.command["applied_receipt"], applied);
         let status = json!({"focus_command":snapshot.command,"focus":snapshot.focus,"tasks":[],"complete":true});
@@ -834,18 +840,22 @@ fn queued_focus_actions_keep_context_and_refuse_overflow_without_blocking() {
         worker.join().unwrap();
         assert!(crate::data::focus(&root).unwrap().is_empty());
         assert!(crate::telemetry::settle(Duration::from_secs(30)));
-        let page = store.export(0, 0, 1024).unwrap();
-        let rows: Vec<_> = page["events"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|r| &r["observation"])
-            .collect();
-        let receipts: Vec<_> = rows
-            .iter()
-            .copied()
-            .filter(|r| r["source"] == "command")
-            .collect();
+        let (mut rows, mut after) = (Vec::new(), 0);
+        loop {
+            let page = store.export(0, after, 1024).unwrap();
+            rows.extend(
+                page["events"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| r["observation"].clone()),
+            );
+            after = page["next"].as_i64().unwrap();
+            if page["more"] == false {
+                break;
+            }
+        }
+        let receipts: Vec<_> = rows.iter().filter(|r| r["source"] == "command").collect();
         assert_eq!(
             receipts.len(),
             3,
