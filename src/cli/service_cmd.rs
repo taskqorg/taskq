@@ -368,6 +368,19 @@ pub(crate) fn lifecycle_scope(value: &Value) -> String {
     }
     lines.join("\n")
 }
+/// The installation rows of `service status`: a known state keeps its name beside its reason (R6).
+pub(crate) fn install_rows(installation: &Value) -> Vec<String> {
+    let state = installation["state"].as_str().unwrap_or("unknown");
+    let mut rows = Vec::new();
+    if let Some(id) = installation["id"].as_str() {
+        rows.push(format!("Install: {id} {state}"));
+    }
+    if let Some(reason) = installation["reason"].as_str() {
+        rows.push(format!("Install: {state} ({reason})"));
+    }
+    rows
+}
+
 pub(crate) fn service_report(a: &Args) -> Res<()> {
     let install = platform::default_install();
     let service = host::service_status(&install);
@@ -439,20 +452,16 @@ pub(crate) fn service_report(a: &Args) -> Res<()> {
             }
         }
         if let Some(reason) = restart["reason"].as_str() {
-            println!("{title}: unknown ({reason})");
+            let state = match title {
+                "Install" => restart["state"].as_str().unwrap_or("unknown"),
+                _ => "unknown",
+            };
+            println!("{title}: {state} ({reason})");
         }
-        if a.one("request").is_none()
-            && let Some(id) = installation["id"].as_str()
-        {
-            println!(
-                "Install: {id} {}",
-                installation["state"].as_str().unwrap_or("unknown")
-            );
-        }
-        if a.one("request").is_none()
-            && let Some(reason) = installation["reason"].as_str()
-        {
-            println!("Install: unknown ({reason})");
+        if a.one("request").is_none() {
+            for row in install_rows(&installation) {
+                println!("{row}");
+            }
         }
         if let Err(error) = &registry {
             println!("Projects: unknown ({error})");

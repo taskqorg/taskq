@@ -1890,6 +1890,8 @@ pub fn run(install: &Path) -> Res<()> {
     let mut installation_checked: Option<Instant> = None;
     let mut maintenance_result = String::new();
     let mut upgrade_report: Option<bool> = None;
+    let (mut orphans_checked, mut orphans_report): (Option<Instant>, String) =
+        (None, String::new());
     let (mut waits_reported, mut stuck) = (String::new(), None);
     let began = Instant::now();
     let mut hour = (Instant::now(), crate::requests::totals());
@@ -2352,6 +2354,21 @@ pub fn run(install: &Path) -> Res<()> {
                     append_project(install, root, &e);
                 }
             }
+        }
+        if orphans_checked.is_none_or(|at| at.elapsed().as_secs() >= 60) {
+            orphans_checked = Some(Instant::now());
+            let text = match installation::retire_orphans(install) {
+                Ok(retired) if retired.is_empty() => String::new(),
+                Ok(retired) => format!(
+                    "installation ended without its cursor: {}",
+                    retired.join(", ")
+                ),
+                Err(error) => format!("installation receipts not reconciled: {error}"),
+            };
+            if !text.is_empty() && text != orphans_report {
+                log_all(install, &roots, &text);
+            }
+            orphans_report = text;
         }
         // The installer's 300 s wait began before this generation started; a reason not retained retries next tick.
         let late = began.elapsed().as_secs() >= 300;

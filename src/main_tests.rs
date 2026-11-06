@@ -548,6 +548,10 @@ fn wakeup_context_refuses_partial_or_busy_input() {
     writer.unlock().unwrap();
     writer.try_lock_shared().unwrap();
     assert!(poke(&root).unwrap_err().contains("wake-lock"));
+    assert!(
+        !poke(&root).unwrap_err().contains("unsupported"),
+        "a lock held by a live service stays an ordinary refusal"
+    );
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         context,
