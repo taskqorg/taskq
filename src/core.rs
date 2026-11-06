@@ -883,7 +883,18 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             let boot = l.kind == "gone"
                 && l.attempt
                     .is_some_and(|a| rebooted(&executions, &boot_releases, a));
-            step(&mut t, &mut resume, e.id, &l, last == 0, boot);
+            if matches!(t.state, State::Held | State::Ready)
+                && l.kind == "close"
+                && l.attempt.is_none()
+                && l.args.is_empty()
+                && executions.is_empty()
+                && crate::display::draft_successor(n, l.text).is_some()
+            {
+                end(&mut t);
+                t.state = State::Closed;
+            } else {
+                step(&mut t, &mut resume, e.id, &l, last == 0, boot);
+            }
             // §2.12: only the owning service's quota continuation may deliver to a released reviewer.
             if before.state == State::Review
                 && before.role.as_deref() == Some("reviewer")

@@ -367,6 +367,99 @@ use crate::{
     runtime, service, snapshot, telemetry,
 };
 use board::Fake;
+
+// §1/R3/R12: drop a duplicate without publication; prior work and unreadable successors must stay protected.
+#[test]
+fn duplicate_draft_close_accepts_refuses_and_repeats() {
+    for held in [false, true] {
+        let c = Ctx {
+            cfg: cfg(),
+            raw: json!({}),
+            board: Box::new(Fake::default()),
+        };
+        let b = c.board.as_ref();
+        let n = b
+            .create(
+                "duplicate",
+                "## Acceptance\nA1. old",
+                &[if held { "q-held" } else { "taskq" }.into()],
+            )
+            .unwrap();
+        if held {
+            b.comment(n, "taskq: hold").unwrap();
+        }
+        let m = b.create("successor", "", &["taskq".into()]).unwrap();
+        let run = |text: &str| {
+            let words = [
+                "close".into(),
+                n.to_string(),
+                "--text".into(),
+                text.into(),
+                "--op-id".into(),
+                "duplicate-2497".into(),
+            ];
+            command(&c, "close", &Args::parse(&words).unwrap())
+        };
+        let before = b.comments(n).unwrap().len();
+        for text in [
+            "none".into(),
+            "replaced by #+9999".into(),
+            format!("replaced by #{n}"),
+            "replaced by #9999".into(),
+        ] {
+            assert!(run(&text).is_err(), "invalid duplicate close: {text}");
+            assert!(b.issue(n).unwrap().open);
+            assert_eq!(b.comments(n).unwrap().len(), before);
+        }
+        let text = format!("replaced by #{m}");
+        run(&text).expect("never-started duplicate must close without a review verdict");
+        assert!(!b.issue(n).unwrap().open);
+        let log = entries(b, n).unwrap();
+        assert_eq!(fold(n, &log, false).state, State::Closed);
+        assert_eq!(
+            log.iter()
+                .filter(|e| core::kind(n, &e.body) == "close")
+                .count(),
+            1
+        );
+        let comments = b.comments(n).unwrap().len();
+        run(&text).unwrap();
+        assert_eq!(
+            b.comments(n).unwrap().len(),
+            comments,
+            "same op id must not write again"
+        );
+    }
+    for requeued in [false, true] {
+        let c = Ctx {
+            cfg: cfg(),
+            raw: json!({}),
+            board: Box::new(Fake::default()),
+        };
+        let b = c.board.as_ref();
+        let n = b.create("started", "", &["taskq".into()]).unwrap();
+        let m = b.create("successor", "", &["taskq".into()]).unwrap();
+        b.comment(n, "taskq: spawn worker codex:invented win")
+            .unwrap();
+        if requeued {
+            b.comment(n, "taskq: requeue").unwrap();
+        }
+        let before = b.comments(n).unwrap().len();
+        let words = [
+            "close".into(),
+            n.to_string(),
+            "--text".into(),
+            format!("replaced by #{m}"),
+            "--op-id".into(),
+            "refused-2497".into(),
+        ];
+        for _ in 0..2 {
+            assert!(command(&c, "close", &Args::parse(&words).unwrap()).is_err());
+            assert!(b.issue(n).unwrap().open);
+            assert_eq!(b.comments(n).unwrap().len(), before);
+        }
+    }
+}
 use dispatch::close_one;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
