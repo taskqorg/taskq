@@ -81,11 +81,11 @@ else: sys.exit(2)
     assert not (root/'lock').exists()
     print('PASS read failure preserves index and releases owned lock')
     (root/'lock').mkdir()
-    # The unavailable lock makes 60 separate Python-stub launches; Windows process startup
-    # exceeded the old 10s wrapper. Keep the retry count and every no-write/no-steal assertion.
+    # Sixty Python-stub launches exceeded 10s on Windows and a loaded Mac; keep the existing
+    # 60s fixture bound, retry count and every no-write/no-steal assertion on both platforms.
     (root/'lock-attempts').write_text('')
     started = time.monotonic()
-    assert start('macos-aarch64', LOCK_WAIT='0').wait(timeout=60 if os.name == 'nt' else 10) != 0
+    assert start('macos-aarch64', LOCK_WAIT='0').wait(timeout=60) != 0
     assert len((root/'lock-attempts').read_text().splitlines()) == 60
     print(f'Unavailable lock: 60 attempts in {time.monotonic()-started:.2f}s')
     assert (root/'lock').exists()
