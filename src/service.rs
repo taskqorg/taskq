@@ -657,13 +657,16 @@ struct DaemonRead {
     queue: bool,
     /// This project's live, held or waiting jobs under this daemon.
     tasks: BTreeSet<u64>,
+    /// Open tasks that took another runtime because this daemon refused them. They never hold its drain.
+    moved: BTreeSet<u64>,
 }
 
 impl DaemonRead {
     /// The heartbeat line of a daemon that differs from these jobs' grant: public, so no path and no other project.
     fn line(&self) -> Option<String> {
         use crate::runtime::daemon_sandbox::Fit;
-        if self.tasks.is_empty() {
+        let moved: Vec<_> = self.moved.difference(&self.tasks).collect();
+        if self.tasks.is_empty() && moved.is_empty() {
             return None;
         }
         let (pid, reason) = match &self.fit {
@@ -673,7 +676,7 @@ impl DaemonRead {
         };
         Some(format!(
             "daemon-sandbox {}",
-            json!({"bin": crate::runtime::of(&self.rt).bin, "pid": pid, "reason": reason, "tasks": self.tasks})
+            json!({"bin": crate::runtime::of(&self.rt).bin, "pid": pid, "reason": reason, "tasks": self.tasks, "moved": moved})
         ))
     }
 }
@@ -6637,7 +6640,7 @@ impl<'a> Service<'a> {
     }
 
     /// One sandbox per daemon: reads each daemon that this project's live, held or claimable `seatbelt` jobs depend on.
-    /// An idle board spawns nothing.
+    /// An idle board spawns nothing; work moved off a daemon keeps it read until the daemon stops refusing or the work ends.
     fn read_daemons(&mut self, views: &[View], me: &str) {
         use crate::runtime::accounts;
         let (mut reads, now) = (vec![], self.board.now().unwrap_or_else(|_| accounts::now()));
@@ -6675,7 +6678,11 @@ impl<'a> Service<'a> {
                     tasks.insert(n);
                 }
             }
-            let active = claimable.then(|| {
+            let moved_off = self
+                .daemon_reads
+                .iter()
+                .any(|r| r.rt == *rt && !r.moved.is_empty());
+            let active = (claimable || moved_off).then(|| {
                 host.active(rt, now)
                     .and_then(|l| accounts::home(rt, &l))
                     .or_else(|| accounts::default_home(rt))
@@ -6686,12 +6693,32 @@ impl<'a> Service<'a> {
             for (home, tasks) in homes {
                 let fit =
                     crate::runtime::daemon_sandbox::read(rt, home.as_deref(), profile.as_deref());
+                let moved =
+                    if crate::runtime::daemon_sandbox::verdict(None, "", &fit, false).is_ok() {
+                        BTreeSet::new()
+                    } else {
+                        let open = |n: &&u64| {
+                            views.iter().any(|v| {
+                                v.issue.number == **n
+                                    && matches!(
+                                        v.projection.task.state,
+                                        State::Ready | State::Doing | State::Review
+                                    )
+                            })
+                        };
+                        self.daemon_reads
+                            .iter()
+                            .filter(|r| r.rt == *rt && r.home == home)
+                            .flat_map(|r| r.moved.iter().filter(open).copied())
+                            .collect()
+                    };
                 reads.push(DaemonRead {
                     rt: rt.clone(),
                     queue: active.as_ref() == Some(&home),
                     home,
                     fit,
                     tasks,
+                    moved,
                 });
             }
         }
@@ -6745,6 +6772,19 @@ impl<'a> Service<'a> {
             &read.fit,
         )
         .err()
+    }
+
+    /// Task `n` took another runtime. When the selection reason names a daemon's refusal, status names `n` under that
+    /// daemon; `ds::wait` stays out, so moved work never holds the drain.
+    fn daemon_moved(&mut self, n: u64, reason: &str) {
+        use crate::runtime::daemon_sandbox as ds;
+        for read in self.daemon_reads.iter_mut().filter(|r| r.queue) {
+            if let Err(wait) = ds::verdict(None, "", &read.fit, false) {
+                if reason.contains(&format!("{}: {wait}", read.rt)) {
+                    read.moved.insert(n);
+                }
+            }
+        }
     }
 
     /// Task `n` selected no runtime. When its refusal names a daemon, it truly waits for that daemon: unpinned work
@@ -6966,6 +7006,8 @@ impl<'a> Service<'a> {
         );
         match r? {
             Some((l, log)) => {
+                // Only a won claim moved the task: another host's or a lost claim says nothing about this daemon.
+                self.daemon_moved(n, reason);
                 let through = l.attempt;
                 self.launch(l, through, log)
             }
