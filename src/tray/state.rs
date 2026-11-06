@@ -59,6 +59,7 @@ impl TrayState {
             overflow: Vec::new(),
             capture_errors: Vec::new(),
             checkpoint_complete: false,
+            checkpoint_deadline: None,
             adding: Value::Null,
             add_generation: 0,
             moved: false,
@@ -288,10 +289,10 @@ impl TrayState {
             Event::UserEvent(Ev::Views(message)) => self.views_message(message),
             Event::UserEvent(Ev::Ipc(m)) => self.ipc(m, target),
             Event::UserEvent(Ev::Added(generation, v)) => self.added(generation, v),
-            Event::UserEvent(Ev::Shot | Ev::Shot2) if self.web.failed => {}
+            Event::UserEvent(Ev::Shot | Ev::Shot2(_)) if self.web.failed => {}
             // snapshot mode: per step push a state, wait for layout, capture, next
             Event::UserEvent(Ev::Shot) => self.shot(flow),
-            Event::UserEvent(Ev::Shot2) => self.shot2(),
+            Event::UserEvent(Ev::Shot2(step)) if self.step == step => self.shot2(),
             _ => {}
         }
     }

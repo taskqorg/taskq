@@ -915,6 +915,12 @@ async function sharedTaskPins(browser) {
           }),
         { m, value },
       );
+    await page.waitForFunction(() =>
+      sent.some(
+        (m) =>
+          m.a === "completed" && m.task === 3001 && !m.transcript && !m.board,
+      ),
+    );
     let request = await page.evaluate(() => {
       const i = sent.findIndex((m) => m.a === "completed" && m.task === 3001);
       return sent.splice(i, 1)[0];
@@ -939,9 +945,7 @@ async function sharedTaskPins(browser) {
     );
     await page.locator("[data-c=closed-object]").click();
     await metadata(3001);
-    await page
-      .locator('[data-c=worker-attempt][data-attempt="30010"]')
-      .click();
+    await page.locator('[data-c=worker-attempt][data-attempt="30010"]').click();
     request = await take(3001);
     assert.equal(request.attempt, 30010);
     assert.equal(request.closed, true);

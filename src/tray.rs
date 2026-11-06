@@ -123,7 +123,7 @@ enum Ev {
     Evaluated(u64, u64, &'static str),
     Click(Rect),
     Shot,
-    Shot2,
+    Shot2(usize),
     /// Add project: the generation fences a late picker or install result.
     Added(u64, Value),
     Answer(Value),
@@ -3042,6 +3042,7 @@ struct TrayState {
     overflow: Vec<String>,
     capture_errors: Vec<String>,
     checkpoint_complete: bool,
+    checkpoint_deadline: Option<Instant>,
     adding: Value,
     add_generation: u64,
     moved: bool,
