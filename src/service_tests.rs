@@ -11290,6 +11290,21 @@ fn focus_and_needs_choose_tasks() {
     assert_eq!(task(&b, win).state, State::Doing);
 }
 
+// The shared TCC log has no result on the first pass. Risk: a grants read tied to the 300 s capture keeps that reading a
+// whole period. Protection: grants refresh every pass while the capture waits its period.
+#[test]
+fn gui_grants_refresh_every_pass_between_captures() {
+    let b = Fake::default();
+    let c = cfg("mac");
+    let mut s = service(&b, &c, Default::default());
+    let at = std::time::Instant::now();
+    s.gui_checked = Some(at);
+    s.grants.insert("earlier".into(), "stale".into());
+    crate::service_run::refresh_gui(&mut s, std::path::Path::new("/i"));
+    assert_eq!(s.gui_checked, Some(at), "the capture waits its period");
+    assert!(!s.grants.contains_key("earlier"));
+}
+
 // Chain: § 4 needs-gui routing (#1124). Risk: a gui task starts on a sandboxed runtime or an unprobed host, or waits silently.
 #[test]
 fn needs_gui_goes_only_to_a_probed_full_access_runtime() {
