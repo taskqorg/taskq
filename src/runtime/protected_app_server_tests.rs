@@ -305,6 +305,27 @@ impl Drop for Fixture {
         let _ = fs::remove_dir_all(&self.dir);
     }
 }
+/// docs/testing.md: a worker sandbox refuses writes to any `.codex/config.toml`, which `Fixture::new` needs.
+/// Only that exact refusal skips, by name on stderr; CI never skips, so a denial there still fails.
+fn sandbox_blocked(test: &str) -> bool {
+    if std::env::var_os("GITHUB_ACTIONS").is_some() {
+        return false;
+    }
+    let dir = std::env::temp_dir().join(format!("taskq-protected-probe-{}", runtime::uuid()));
+    fs::create_dir_all(dir.join(".codex")).unwrap();
+    let denied = fs::write(dir.join(".codex/config.toml"), b"# invented probe")
+        .is_err_and(|e| e.kind() == std::io::ErrorKind::PermissionDenied);
+    let _ = fs::remove_dir_all(&dir);
+    if denied {
+        use std::io::Write;
+        writeln!(
+            std::io::stderr(),
+            "sandbox-blocked: {test}: writing .codex/config.toml: Operation not permitted"
+        )
+        .unwrap();
+    }
+    denied
+}
 impl Fixture {
     fn new() -> Self {
         let dir = std::env::temp_dir().join(format!("taskq-protected-{}", runtime::uuid()));
@@ -364,6 +385,9 @@ impl Fixture {
 // Risk: accepting a copied receipt, task text or default grant as protected project authority.
 #[test]
 fn protected_authority_refuses_missing_tampered_stale_and_unknown() {
+    if sandbox_blocked("protected_authority_refuses_missing_tampered_stale_and_unknown") {
+        return;
+    }
     let f = Fixture::new();
     let p = f.plan().unwrap();
     assert_eq!(p.authority["saved"]["grant"]["by"], "invented-operator");
@@ -437,6 +461,9 @@ fn protected_authority_refuses_missing_tampered_stale_and_unknown() {
 // Risk: rejecting approved host config, losing model/effort/account, or forwarding an unsupported override.
 #[test]
 fn protected_workspace_network_host_request_retains_authority_and_config() {
+    if sandbox_blocked("protected_workspace_network_host_request_retains_authority_and_config") {
+        return;
+    }
     let f = Fixture::new();
     let args = [
         "-s",
@@ -550,6 +577,9 @@ fn protected_sandbox_refusal_names_query_and_result_without_paths() {
 // Risk: rejecting the workspace or accepting nonexistent outside markers as containment evidence.
 #[test]
 fn protected_sandbox_queries_use_existing_trusted_objects() {
+    if sandbox_blocked("protected_sandbox_queries_use_existing_trusted_objects") {
+        return;
+    }
     let f = Fixture::new();
     let p = f.plan().unwrap();
     let paths = query_paths(&f.dir, &p);
@@ -599,6 +629,10 @@ fn protected_sandbox_queries_use_existing_trusted_objects() {
 // Risk: treating ENOENT as enforcement or accepting a changed path before input delivery.
 #[test]
 fn protected_sandbox_query_identities_refuse_missing_changed_and_racing_paths() {
+    if sandbox_blocked("protected_sandbox_query_identities_refuse_missing_changed_and_racing_paths")
+    {
+        return;
+    }
     for index in 1..5 {
         let f = Fixture::new();
         let p = f.plan().unwrap();
@@ -682,6 +716,9 @@ fn protected_sandbox_query_identities_refuse_missing_changed_and_racing_paths() 
 // Risk: restarting a supervisor replays an AssetQ operation or a stale PID is treated as live authority.
 #[test]
 fn protected_interruption_never_replays_and_unknown_identity_refuses() {
+    if sandbox_blocked("protected_interruption_never_replays_and_unknown_identity_refuses") {
+        return;
+    }
     let mut f = Fixture::new();
     let p = f.plan().unwrap();
     let id = coreq::process::Identity {
@@ -817,6 +854,9 @@ fn protected_interruption_never_replays_and_unknown_identity_refuses() {
 // R9 A3: the canonical grant writer and launch input gate cannot race a revocation.
 #[test]
 fn protected_grant_writer_shares_the_input_authority_lock() {
+    if sandbox_blocked("protected_grant_writer_shares_the_input_authority_lock") {
+        return;
+    }
     let f = Fixture::new();
     let held = resources::acquire(&f.dir, resources::WAIT).unwrap();
     let before = fs::read(f.dir.join(policy::FILE)).unwrap();
@@ -847,6 +887,9 @@ fn protected_grant_writer_shares_the_input_authority_lock() {
 // Chain: R11 §8 — update retention includes the external adapter until whole-turn release, even if launch is unknown.
 #[test]
 fn protected_unknown_launch_retains_its_release_until_slot_release() {
+    if sandbox_blocked("protected_unknown_launch_retains_its_release_until_slot_release") {
+        return;
+    }
     let f = Fixture::new();
     fs::create_dir(f.root.join(".taskq")).unwrap();
     fs::write(

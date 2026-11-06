@@ -485,7 +485,8 @@ def test_environment(environment, install):
     env = dict(environment)
     # Windows process fixtures spawn peers inside each harness case. Bound oversubscription,
     # preserving their own concurrency and wall-clock deadlines and an explicit runner override.
-    if sys.platform == 'win32':
+    # The Mac host shares its CPUs with the running service and its workers.
+    if sys.platform in ('win32', 'darwin'):
         env.setdefault('RUST_TEST_THREADS', str(min(4, os.cpu_count() or 1)))
     for key in ('TASKQ_TASK', 'TASKQ_ATTEMPT', 'TASKQ_ROLE', 'TASKQ_ROOT', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID',
                 'CLAUDE_CODE_SESSION_ID', 'COREQ_TRACE_CONTEXT', 'GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'TASKQ_INCIDENT_REPORTS'):
