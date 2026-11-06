@@ -509,3 +509,9 @@ assert check['tree_evidence'](['docs/evidence/1/a.json', 'docs/design/evidence/1
     'docs/design/exploration/a.html', 'docs/qualification-1.md', 'docs/release-1.md']
 assert not check['tree_evidence'](['docs/research/2395.md', 'docs/shots/manifest.json', 'tests/fixtures/usage/windows-oauth-usage.json'])
 print('PASS tree guard refuses evidence paths and keeps research notes and fixtures')
+assert check['format_commands'](['entry.rs', 'src/a.rs', 'tests/fixtures/b.rs', 'src/a.js'])[1:] == [
+    ['rustfmt', '+stable', '--check', 'entry.rs', 'src/a.rs'], ['npm', 'run', '-s', 'format:check']]
+main_source = Path(__file__).with_name('check.py').read_text(encoding='utf-8')
+build, gate = main_source.index("run(['npm', 'run', 'build'])"), main_source.index('in format_commands(tracked):')
+assert build < main_source.index("if sys.platform == 'linux':") < gate
+print('PASS format gate runs on Linux after the build, covers tracked Rust and keeps fixtures byte-exact')
