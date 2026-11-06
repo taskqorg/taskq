@@ -190,13 +190,31 @@ pub fn token_items(repo: &str, gitlab: bool, access: &[(&'static str, Probe)]) -
 }
 
 /// `version`: the installed version against the latest release.
-pub fn version_item(installed: &str, latest: &Result<String, String>) -> Item {
+pub fn version_item(
+    installed: &str,
+    latest: &Result<String, String>,
+    channel: Result<&str, String>,
+) -> Item {
     match latest {
-        Ok(l) if coreq::update::newer(l, installed) => Item::gap(
-            "version",
-            format!("installed {installed} is behind the latest release {l}"),
-            "run `taskq update`",
-        ),
+        Ok(l) if coreq::update::newer(l, installed) => {
+            let text = format!("installed {installed} is behind the latest release {l}");
+            match channel {
+                Ok(channel) => Item::gap(
+                    "version",
+                    text,
+                    if channel == "dev" {
+                        "run `taskq service dev-build`"
+                    } else {
+                        "run `taskq update`"
+                    },
+                ),
+                Err(e) => Item::unknown(
+                    "version",
+                    format!("{text}; channel unknown: {}", short(&e)),
+                    "check host.json, then run `taskq doctor`",
+                ),
+            }
+        }
         Ok(l) => Item::ok(
             "version",
             format!("installed {installed}, latest release {l}"),
@@ -709,7 +727,11 @@ pub fn board_items(
     let installed = crate::platform::tool(install)
         .current()
         .unwrap_or_else(|| crate::platform::VERSION.into());
-    items.push(version_item(&installed, latest));
+    items.push(version_item(
+        &installed,
+        latest,
+        crate::platform::channel(install),
+    ));
     items.push(disk_item(crate::disk::Disk::read(root)));
     items.push(reports_item(&crate::reports::cached(root), gitlab));
     let path = crate::paths::dot(root).join("status.json");
@@ -1206,7 +1228,7 @@ pub fn fix(
             grant(name, false)
         ),
         None => match id {
-            "version" => format!("run `taskq update` on {host}"),
+            "version" => format!("run `taskq doctor` on {host} and the version command it names"),
             "disk" if status == "unknown" => {
                 format!("on {host}: {}", crate::disk::Disk::Unknown.next())
             }

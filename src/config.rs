@@ -142,7 +142,6 @@ pub(crate) fn project_config_value(root: &Path, v: Value) -> Res<(Config, Value)
         limits,
         has: vec![],
         claim: host::ClaimMode::Any,
-        spillover_grace: 300,
         weights: BTreeMap::new(),
         allowed_runtimes: None,
         auto_reroute: false,
