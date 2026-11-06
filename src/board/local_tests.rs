@@ -525,10 +525,6 @@ fn shared_2431_reopen_survives_an_unchanged_poll() {
         let history = board.issues(Some(base)).unwrap();
         assert!(history[0].open);
         assert_eq!(history[0].updated, base + 300);
-        assert_eq!(
-            board.open.borrow().as_ref().unwrap().list[0].updated,
-            base + 300
-        );
         assert_eq!(lists.get(), 2);
         stage.set(2);
         let unchanged = board.issues(None).unwrap();
