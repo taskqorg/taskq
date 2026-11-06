@@ -1,1039 +1,322 @@
-"use strict";
-const ui = require("./ui-runtime.js"),
-  copyLabel = require("./copy-label.js");
-const execution = ui.execution;
-const replyFiles = require("./reply-files.js");
+'use strict';
+const ui=require('./ui-runtime.js'),copyLabel=require('./copy-label.js');
+const execution=ui.execution;
+const replyFiles=require('./reply-files.js');
 
-const {
-  fresh,
-  textProblem,
-  status,
-  step,
-  render,
-  compose,
-  receipt,
-  mount,
-  replay,
-} = execution.module("answer-card", {
-  fresh: function (row) {
-    return { draft: "", bound: row.revision, op: null, receipt: null };
+const {fresh,textProblem,status,step,render,compose,receipt,mount,replay}=execution.module("answer-card",{
+fresh:function(row) { return {draft: '', bound: row.revision, op: null, receipt: null}; },
+textProblem:function(q, text, files) {
+    if(q?.resultDate){const at=new Date(text+'T12:00:00Z');return /^\d{4}-\d{2}-\d{2}$/.test(text)&&Number.isFinite(+at)&&at.toISOString().slice(0,10)===text&&at>Date.now()?null:'Choose a future revisit date';}
+    if(q?.resultReason && (text.trim().length===0 || [...text.trim()].length>180 || /[\r\n]/.test(text))) return 'Give a one-line reason, at most 180 characters';
+    return replyFiles.problem(files)|| (text.trim() || files?.length ? null : 'Type an answer');
   },
-  textProblem: function (q, text, files) {
-    if (q?.resultDate) {
-      const at = new Date(text + "T12:00:00Z");
-      return /^\d{4}-\d{2}-\d{2}$/.test(text) &&
-        Number.isFinite(+at) &&
-        at.toISOString().slice(0, 10) === text &&
-        at > Date.now()
-        ? null
-        : "Choose a future revisit date";
-    }
-    if (
-      q?.resultReason &&
-      (text.trim().length === 0 ||
-        [...text.trim()].length > 180 ||
-        /[\r\n]/.test(text))
-    )
-      return "Give a one-line reason, at most 180 characters";
-    return (
-      replyFiles.problem(files) ||
-      (text.trim() || files?.length ? null : "Type an answer")
-    );
-  },
-  status: function (row, local, cap) {
+status:function(row, local, cap) {
     const q = row.question;
-    if (row.resultDecision && local.bound !== row.revision) return "stale";
-    if (
-      row.resultDecision &&
-      row.state === "closed" &&
-      q?.parsed &&
-      row.repeatable &&
-      local.receipt?.state === "accepted" &&
-      cap?.answer
-    )
-      return "actionable";
+    if(row.resultDecision && local.bound!==row.revision) return 'stale';
+    if(row.resultDecision && row.state==='closed' && q?.parsed && row.repeatable && local.receipt?.state==='accepted' && cap?.answer) return 'actionable';
     // a receipt belongs to the question it answered; one in flight or unknown holds across refreshes, an answered one
     // stays beside its task after the question is gone
-    if (
-      local.op &&
-      local.receipt &&
-      (HELD.includes(local.receipt.state) ||
-        local.op.revision === row.revision ||
-        !q)
-    )
-      return local.receipt.state;
-    if (
-      !manageable(row, cap) &&
-      (!q ||
-        !q.parsed ||
-        !cap ||
-        !cap.answer ||
-        !(row.resultDecision
-          ? row.state === "closed"
-          : ["ask", "review"].includes(row.state)))
-    )
-      return "read-only";
-    if (
-      local.bound !== row.revision &&
-      (local.draft.trim() || local.files?.length)
-    )
-      return "changed";
-    return "actionable";
+    if (local.op && local.receipt && (HELD.includes(local.receipt.state) || local.op.revision === row.revision || !q)) return local.receipt.state;
+    if (!manageable(row, cap) && (!q || !q.parsed || !cap || !cap.answer || !(row.resultDecision ? row.state==='closed' : ['ask', 'review'].includes(row.state)))) return 'read-only';
+    if (local.bound !== row.revision && (local.draft.trim()||local.files?.length)) return 'changed';
+    return 'actionable';
   },
-  step: function (row, local, cap, ev, newId) {
-    const st = status(row, local, cap),
-      l = { ...local };
-    const { start } = execution.module("answer-card.step", {
-      start: (payload, revision = row.revision) => {
-        l.op = { id: newId(), task: row.n, revision, ...payload };
-        if (payload.text != null && l.files?.length)
-          l.op.files = JSON.parse(JSON.stringify(l.files));
-        // #1662 A4: the receipt names the question and the answer it carries, kept apart from the immutable op
-        l.about = about(row, payload);
-        l.bound = row.revision;
-        l.receipt = { state: "sending" };
-        return { local: l, send: l.op };
-      },
-    });
+step:function(row, local, cap, ev, newId) {
+    const st = status(row, local, cap), l = {...local};
+    const {start}=execution.module("answer-card.step",{start:(payload, revision = row.revision) => {
+      l.op = {id: newId(), task: row.n, revision, ...payload};
+      if(payload.text!=null&&l.files?.length)l.op.files=JSON.parse(JSON.stringify(l.files));
+      // #1662 A4: the receipt names the question and the answer it carries, kept apart from the immutable op
+      l.about = about(row, payload);
+      l.bound = row.revision;
+      l.receipt = {state: 'sending'};
+      return {local: l, send: l.op};
+    }});
     switch (ev.type) {
-      case "files":
-        l.files = ev.files;
-        return { local: l, send: null };
-      case "input":
+      case 'files':
+        l.files=ev.files;
+        return {local:l,send:null};
+      case 'input':
         // A changed question keeps the draft's source revision; Send records its literal intent as a note.
-        if (st !== "changed") l.bound = row.revision;
+        if (st !== 'changed') l.bound = row.revision;
         l.draft = ev.text;
-        return { local: l, send: null };
-      case "choose": {
-        if (!LIVE.includes(st) || l.files?.length) return { local, send: null };
-        const c = row.question.choices.find((x) => x.id === ev.id);
-        if (!c || c.consequential) return { local, send: null };
-        if (row.resultDecision && c.local) return { local: l, send: null };
-        if (row.resultDecision && c.reason)
-          return {
-            local: {
-              ...l,
-              intent: c.reason,
-              ...(c.reason === "later" && !l.draft
-                ? {
-                    draft: new Date(Date.now() + 7 * 86400000)
-                      .toISOString()
-                      .slice(0, 10),
-                  }
-                : {}),
-            },
-            send: null,
-          };
-        return start({ choice: c.id });
+        return {local: l, send: null};
+      case 'choose': {
+        if (!LIVE.includes(st)||l.files?.length) return {local, send: null};
+        const c = row.question.choices.find(x => x.id === ev.id);
+        if (!c || c.consequential) return {local, send: null};
+        if(row.resultDecision && c.local) return {local:l,send:null};
+        if(row.resultDecision && c.reason) return {local:{...l,intent:c.reason,...(c.reason==='later'&&!l.draft?{draft:new Date(Date.now()+7*86400000).toISOString().slice(0,10)}:{})},send:null};
+        return start({choice: c.id});
       }
-      case "submit":
-        if (
-          row.resultDecision &&
-          (!(row.question.resultReason || row.question.resultDate) || !l.intent)
-        )
-          return { local, send: null };
-        if (
-          !cap ||
-          !cap.answer ||
-          !LIVE.includes(st) ||
-          textProblem(draftQuestion(row, cap), l.draft, l.files)
-        )
-          return { local, send: null };
+      case 'submit':
+        if(row.resultDecision && (!(row.question.resultReason||row.question.resultDate) || !l.intent)) return {local,send:null};
+        if (!cap || !cap.answer || !LIVE.includes(st) || textProblem(draftQuestion(row, cap), l.draft,l.files)) return {local, send: null};
         // an unparsed fallback card takes a requeue reason; a parsed owner action without options takes a text answer
-        return start(
-          fallback(row, cap)
-            ? { action: "requeue", text: l.draft.trim() }
-            : { text: l.draft.trim() },
-          st === "changed" && !fallback(row, cap) ? l.bound : row.revision,
-        );
-      case "cancel-result":
-        return row.resultDecision && LIVE.includes(st)
-          ? { local: { ...l, intent: null }, send: null }
-          : { local, send: null };
-      case "requeue":
-        if (
-          !manageable(row, cap) ||
-          !LIVE.includes(st) ||
-          textProblem(REQUEUE, l.draft, l.files)
-        )
-          return { local, send: null };
-        return start({ action: "requeue", text: l.draft.trim() });
-      case "later":
-      case "close":
-        if (!manageable(row, cap) || !LIVE.includes(st))
-          return { local, send: null };
-        return start(
-          ev.type === "later" ? { action: "later" } : { action: "close" },
-        );
-      case "receipt":
-        if (!l.op || ev.opId !== l.op.id) return { local, send: null };
-        l.receipt = {
-          state: [
-            "accepted",
-            "rejected",
-            "stale",
-            "unknown",
-            "failed",
-            "partial",
-          ].includes(ev.state)
-            ? ev.state
-            : "unknown",
-          reason: ev.reason,
-          next: ev.next,
-          ...(ev.note ? { note: true } : {}),
-        };
-        if (ev.state === "accepted" && (l.op.text || l.op.files?.length)) {
-          l.draft = "";
-          l.files = [];
-        }
-        if (ev.state === "accepted" && l.intent === "later") l.intent = null;
-        return { local: l, send: null };
-      case "retry":
+        return start(fallback(row, cap) ? {action: 'requeue', text: l.draft.trim()} : {text: l.draft.trim()}, st === 'changed' && !fallback(row, cap) ? l.bound : row.revision);
+      case 'cancel-result':
+        return row.resultDecision&&LIVE.includes(st)?{local:{...l,intent:null},send:null}:{local,send:null};
+      case 'requeue':
+        if (!manageable(row, cap) || !LIVE.includes(st) || textProblem(REQUEUE, l.draft,l.files)) return {local, send: null};
+        return start({action: 'requeue', text: l.draft.trim()});
+      case 'later':
+      case 'close':
+        if (!manageable(row, cap) || !LIVE.includes(st)) return {local, send: null};
+        return start(ev.type === 'later' ? {action: 'later'} : {action: 'close'});
+      case 'receipt':
+        if (!l.op || ev.opId !== l.op.id) return {local, send: null};
+        l.receipt = {state: ['accepted', 'rejected', 'stale', 'unknown', 'failed', 'partial'].includes(ev.state) ? ev.state : 'unknown', reason: ev.reason, next: ev.next, ...(ev.note?{note:true}:{})};
+        if (ev.state === 'accepted' && (l.op.text||l.op.files?.length)) {l.draft='';l.files=[];}
+        if (ev.state === 'accepted' && l.intent==='later') l.intent=null;
+        return {local: l, send: null};
+      case 'retry':
         // uncertain, unsent or partial delivery reconciles with the same id and payload, never a new one
-        return RETRY.includes(st)
-          ? { local: { ...l, receipt: { state: "sending" } }, send: l.op }
-          : { local, send: null };
+        return RETRY.includes(st) ? {local: {...l, receipt: {state: 'sending'}}, send: l.op} : {local, send: null};
       default:
-        return { local, send: null };
+        return {local, send: null};
     }
   },
-  render: function (board, row, local, cap) {
-    const q = row.question || {
-        text: row.card || "",
-        parsed: false,
-        choices: [],
-        evidence: [],
-      },
-      st = status(row, local, cap);
-    const id = "qac-" + String(board).replace(/[^\w-]/g, "_") + "-" + row.n,
-      live = LIVE.includes(st),
-      own = !(cap && cap.composer);
-    const taskName = copyLabel.task(cap && cap.project, row.n),
-      what = local.op
-        ? taskName + " " + (local.about || about(row, local.op))
-        : "";
-    let h =
-      '<section class="qac" data-qac-state="' +
-      st +
-      '" aria-labelledby="' +
-      id +
-      '-t">';
-    h +=
-      '<p class="qac-head" id="' +
-      id +
-      '-t"><span class="qac-mark" aria-hidden="true">?</span> <a href="' +
-      href(row.url) +
-      '" target="_blank" rel="noopener">' +
-      esc(taskName) +
-      "</a> " +
-      esc(row.title) +
-      "</p>";
-    if (own && cap?.files && st !== "read-only")
-      h += replyFiles.markup(local.files, !live);
+render:function(board, row, local, cap) {
+    const q = row.question || {text: row.card || '', parsed: false, choices: [], evidence: []}, st = status(row, local, cap);
+    const id = 'qac-' + String(board).replace(/[^\w-]/g, '_') + '-' + row.n, live = LIVE.includes(st), own = !(cap && cap.composer);
+    const taskName = copyLabel.task(cap && cap.project, row.n), what = local.op ? taskName + ' ' + (local.about || about(row, local.op)) : '';
+    let h = '<section class="qac" data-qac-state="' + st + '" aria-labelledby="' + id + '-t">';
+    h += '<p class="qac-head" id="' + id + '-t"><span class="qac-mark" aria-hidden="true">?</span> <a href="' + href(row.url) + '" target="_blank" rel="noopener">' + esc(taskName) + '</a> ' + esc(row.title) + '</p>';
+    if(own&&cap?.files&&st!=='read-only')h+=replyFiles.markup(local.files,!live);
     if (manageable(row, cap)) {
-      h += cap?.paged
-        ? images(q)
-        : q.parsed
-          ? lines(q) + images(q)
-          : '<pre class="qac-text">' +
-            esc(q.text || row.card || "No question text supplied") +
-            "</pre>";
-      if (own)
-        h += q.parsed
-          ? '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="2" aria-label="Your answer" placeholder="What you did"' +
-            (live ? "" : " readonly") +
-            ">" +
-            esc(local.draft) +
-            '</textarea><button type="submit"' +
-            (live && !textProblem(q, local.draft, local.files)
-              ? ""
-              : " disabled") +
-            ">Send</button>" +
-            hint(id, live && textProblem(q, local.draft, local.files)) +
-            "</form>"
-          : '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' +
-            (live ? "" : " readonly") +
-            ">" +
-            esc(local.draft) +
-            '</textarea><button type="submit"' +
-            (live && !textProblem(REQUEUE, local.draft, local.files)
-              ? ""
-              : " disabled") +
-            ">Requeue</button>" +
-            hint(id, live && textProblem(REQUEUE, local.draft, local.files)) +
-            "</form>";
+      h += cap?.paged?images(q):q.parsed ? lines(q) + images(q) : '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';
+      if (own) h += q.parsed ? '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="2" aria-label="Your answer" placeholder="What you did"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(q, local.draft,local.files) ? '' : ' disabled') + '>Send</button>' + hint(id, live && textProblem(q, local.draft,local.files)) + '</form>'
+        : '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(REQUEUE, local.draft,local.files) ? '' : ' disabled') + '>Requeue</button>' + hint(id, live && textProblem(REQUEUE, local.draft,local.files)) + '</form>';
       // an owner action answers with text above; its requeue reason is the same draft, sent as an action
-      h +=
-        '<div class="qac-choices">' +
-        (q.parsed && own
-          ? '<button type="button" data-qac="requeue"' +
-            (live && !textProblem(REQUEUE, local.draft, local.files)
-              ? ""
-              : " disabled") +
-            ">Requeue</button>"
-          : "") +
-        '<button type="button" data-qac="later"' +
-        (live ? "" : " disabled") +
-        '>Later</button><button type="button" data-qac="close"' +
-        (live ? "" : " disabled") +
-        ">Close without publishing</button></div>";
-      h += receipt(
-        st,
-        local.receipt && local.receipt.reason,
-        row.url,
-        id,
-        local.receipt && local.receipt.next,
-        !!(local.op && local.op.action),
-        what,
-        local.receipt?.note,
-      );
+      h += '<div class="qac-choices">' + (q.parsed && own ? '<button type="button" data-qac="requeue"' + (live && !textProblem(REQUEUE, local.draft,local.files) ? '' : ' disabled') + '>Requeue</button>' : '') + '<button type="button" data-qac="later"' + (live ? '' : ' disabled') + '>Later</button><button type="button" data-qac="close"' + (live ? '' : ' disabled') + '>Close without publishing</button></div>';
+      h += receipt(st, local.receipt && local.receipt.reason, row.url, id, local.receipt && local.receipt.next, !!(local.op && local.op.action), what, local.receipt?.note);
       h += retry(st, local.receipt && local.receipt.reason);
-      return h + "</section>";
+      return h + '</section>';
     }
-    if (!q.parsed)
-      return (
-        h +
-        (cap?.paged ? "" : '<pre class="qac-text">' + esc(q.text) + "</pre>") +
-        receipt(
-          st,
-          st === "read-only"
-            ? "This card has no answer form here"
-            : local.receipt && local.receipt.reason,
-          row.url,
-          id,
-          null,
-          false,
-          what,
-        ) +
-        retry(st, local.receipt && local.receipt.reason) +
-        "</section>"
-      );
-    h += (cap?.paged ? "" : lines(q)) + images(q);
-    if (q.choices.length)
-      h += '<div class="qac-choices" role="group" aria-label="Choices">';
+    if (!q.parsed) return h + (cap?.paged?'':'<pre class="qac-text">' + esc(q.text) + '</pre>') + receipt(st, st === 'read-only' ? 'This card has no answer form here' : local.receipt && local.receipt.reason, row.url, id, null, false, what) +
+      retry(st, local.receipt && local.receipt.reason) + '</section>';
+    h += (cap?.paged?'':lines(q)) + images(q);
+    if (q.choices.length) h += '<div class="qac-choices" role="group" aria-label="Choices">';
     for (const c of q.choices) {
-      const off = !live || c.consequential || !!local.files?.length,
-        why = c.consequential
-          ? "Answer on the board: this choice closes or publishes the task, or approves its result"
-          : local.files?.length
-            ? "Send files with a text reply, or remove them to choose an option"
-            : "";
+      const off = !live || c.consequential || !!local.files?.length, why = c.consequential ? 'Answer on the board: this choice closes or publishes the task, or approves its result' : local.files?.length?'Send files with a text reply, or remove them to choose an option':'';
       // #1787: the button shows N. and the label; the detail follows in full, never cut; a card without one keeps its whole text
-      const name = c.label == null ? c.text : c.label,
-        said = [c.detail ? id + "-o" + c.id : "", why ? id + "-c" + c.id : ""]
-          .filter(Boolean)
-          .join(" ");
-      h +=
-        '<button type="button" data-qac="choose" data-choice="' +
-        c.id +
-        '"' +
-        (off ? " disabled" : "") +
-        (said ? ' aria-describedby="' + said + '"' : "") +
-        '><span class="qac-number">' +
-        c.id +
-        ".</span> <span>" +
-        esc(label(name)) +
-        (c.recommended
-          ? ' <span class="qac-star" role="img" aria-label="Recommended">★</span>'
-          : "") +
-        "</span></button>";
+      const name = c.label == null ? c.text : c.label, said = [c.detail ? id + '-o' + c.id : '', why ? id + '-c' + c.id : ''].filter(Boolean).join(' ');
+      h += '<button type="button" data-qac="choose" data-choice="' + c.id + '"' + (off ? ' disabled' : '') + (said ? ' aria-describedby="' + said + '"' : '') + '><span class="qac-number">' + c.id + '.</span> <span>' + esc(label(name)) +
+        (c.recommended ? ' <span class="qac-star" role="img" aria-label="Recommended">★</span>' : '') + '</span></button>';
       // § 2: a button cannot hold an anchor; a link in the label opens beside it, one in the detail inside the detail
-      for (const m of String(name).matchAll(LINK))
-        h +=
-          '<a class="qac-link" href="' +
-          href(m[2]) +
-          '" target="_blank" rel="noopener">' +
-          esc(m[1]) +
-          " ↗</a>";
-      if (c.detail)
-        h +=
-          '<span class="qac-detail" id="' +
-          id +
-          "-o" +
-          c.id +
-          '">' +
-          linked(c.detail) +
-          "</span>";
-      if (why)
-        h +=
-          '<span class="qac-why" id="' +
-          id +
-          "-c" +
-          c.id +
-          '">' +
-          esc(why) +
-          ' <a href="' +
-          href(row.url) +
-          '" target="_blank" rel="noopener">board ↗</a></span>';
+      for (const m of String(name).matchAll(LINK)) h += '<a class="qac-link" href="' + href(m[2]) + '" target="_blank" rel="noopener">' + esc(m[1]) + ' ↗</a>';
+      if (c.detail) h += '<span class="qac-detail" id="' + id + '-o' + c.id + '">' + linked(c.detail) + '</span>';
+      if (why) h += '<span class="qac-why" id="' + id + '-c' + c.id + '">' + esc(why) + ' <a href="' + href(row.url) + '" target="_blank" rel="noopener">board ↗</a></span>';
     }
-    if (q.choices.length) h += "</div>";
+    if (q.choices.length) h += '</div>';
     // § 2: the PM's pick sits beside the worker's star; it is a view, never an answer
-    if (row.pick)
-      h +=
-        '<p class="qac-pick"><span class="qac-muted">PM</span> ' +
-        esc(row.n) +
-        "." +
-        esc(row.pick.id) +
-        ": " +
-        esc(row.pick.reason) +
-        "</p>";
-    if (own && (st !== "read-only" || local.draft)) {
-      const bad = textProblem(q, local.draft, local.files);
+    if (row.pick) h += '<p class="qac-pick"><span class="qac-muted">PM</span> ' + esc(row.n) + '.' + esc(row.pick.id) + ': ' + esc(row.pick.reason) + '</p>';
+    if (own && (st !== 'read-only' || local.draft)) {
+      const bad = textProblem(q, local.draft,local.files);
       // Q1: Other answer opens a compact field; a kept draft keeps it open; an owner action without options has only this field
-      h +=
-        '<details class="qac-other"' +
-        (local.draft || local.files?.length || !q.choices.length
-          ? " open"
-          : "") +
-        "><summary>" +
-        (q.choices.length ? "Other answer" : "Answer") +
-        '</summary><form class="qac-text-form" data-qac="submit"><textarea id="' +
-        id +
-        '-d" data-qac="input" rows="2" aria-label="Your answer" placeholder="' +
-        (q.choices.length ? "Or type an answer" : "What you did") +
-        '"' +
-        (live ? "" : " readonly") +
-        ">" +
-        esc(local.draft) +
-        "</textarea>" +
-        '<button type="submit"' +
-        (live && !bad ? "" : " disabled") +
-        ">Send</button>" +
-        hint(id, live && bad) +
-        "</form></details>";
+      h += '<details class="qac-other"' + (local.draft || local.files?.length || !q.choices.length ? ' open' : '') + '><summary>' + (q.choices.length ? 'Other answer' : 'Answer') + '</summary><form class="qac-text-form" data-qac="submit"><textarea id="' + id + '-d" data-qac="input" rows="2" aria-label="Your answer" placeholder="' + (q.choices.length ? 'Or type an answer' : 'What you did') + '"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea>' +
+        '<button type="submit"' + (live && !bad ? '' : ' disabled') + '>Send</button>' + hint(id, live && bad) + '</form></details>';
     }
-    const reason =
-      st === "read-only"
-        ? (cap && cap.reason) || "Answering is not available here"
-        : local.receipt && local.receipt.reason;
-    h += receipt(
-      st,
-      reason,
-      row.url,
-      id,
-      local.receipt && local.receipt.next,
-      false,
-      what,
-      local.receipt?.note,
-    );
+    const reason = st === 'read-only' ? (cap && cap.reason) || 'Answering is not available here' : local.receipt && local.receipt.reason;
+    h += receipt(st, reason, row.url, id, local.receipt && local.receipt.next, false, what, local.receipt?.note);
     h += retry(st, local.receipt && local.receipt.reason);
     // #1787: evidence links stay behind Details; Done, Problem and images show above
-    const links = q.evidence.filter((e) => !e.image);
-    if (links.length)
-      h +=
-        '<details class="qac-context"><summary>Evidence</summary><p class="qac-evidence">' +
-        links
-          .map(
-            (e) =>
-              '<a href="' +
-              href(e.url) +
-              '" target="_blank" rel="noopener">' +
-              esc(e.label) +
-              "</a>",
-          )
-          .join(" · ") +
-        "</p></details>";
-    return h + "</section>";
+    const links = q.evidence.filter(e => !e.image);
+    if (links.length) h += '<details class="qac-context"><summary>Evidence</summary><p class="qac-evidence">' +
+      links.map(e => '<a href="' + href(e.url) + '" target="_blank" rel="noopener">' + esc(e.label) + '</a>').join(' · ') + '</p></details>';
+    return h + '</section>';
   },
-  compose: function (row, local, cap) {
+compose:function(row, local, cap) {
     // What a shared composer shows for one card: null when the card takes no free text here
-    const q = row.question || {},
-      st = status(row, local, cap),
-      text = !!(cap && cap.answer) && (fallback(row, cap) || !!q.parsed);
+    const q = row.question || {}, st = status(row, local, cap), text = !!(cap && cap.answer) && (fallback(row, cap) || !!q.parsed);
     if (!text) return null;
     const live = LIVE.includes(st);
-    const refusal =
-      local.receipt &&
-      ["rejected", "failed", "stale", "partial", "unknown"].includes(st)
-        ? [local.receipt.reason, local.receipt.next].filter(Boolean).join(" · ")
-        : "";
-    return {
-      draft: local.draft,
-      files: local.files || [],
-      caret: local.caret,
-      state: st,
-      live,
-      reason: refusal,
-      problem: live
-        ? textProblem(draftQuestion(row, cap), local.draft, local.files)
-        : LABELS[st],
-      send: fallback(row, cap) ? "Requeue" : "Send",
-      choices: !!(q.choices && q.choices.length),
-      requeue:
-        manageable(row, cap) && !fallback(row, cap)
-          ? live
-            ? textProblem(REQUEUE, local.draft, local.files) || ""
-            : LABELS[st]
-          : null,
-    };
+    const refusal = local.receipt && ['rejected','failed','stale','partial','unknown'].includes(st) ? [local.receipt.reason,local.receipt.next].filter(Boolean).join(' · ') : '';
+    return {draft: local.draft, files:local.files||[], caret: local.caret, state: st, live, reason:refusal, problem: live ? textProblem(draftQuestion(row, cap), local.draft,local.files) : LABELS[st],
+      send: fallback(row, cap) ? 'Requeue' : 'Send', choices: !!(q.choices && q.choices.length), requeue: manageable(row, cap) && !fallback(row, cap) ? live ? textProblem(REQUEUE, local.draft,local.files) || '' : LABELS[st] : null};
   },
-  receipt: function (st, reason, url, id, next, action, what, note) {
-    if (st === "actionable")
-      return (
-        '<p class="qac-receipt" id="' +
-        id +
-        '-r" role="status" aria-live="polite">' +
-        esc(reason || "") +
-        "</p>"
-      );
-    return (
-      '<p class="qac-receipt qac-' +
-      st +
-      '" id="' +
-      id +
-      '-r" role="status" aria-live="polite">' +
-      (what && st !== "read-only"
-        ? '<span class="qac-what">' + esc(what) + "</span> · "
-        : "") +
-      esc(
-        st === "accepted" && note
-          ? "Task note saved on the board"
-          : st === "accepted" && action
-            ? "Action accepted on the board"
-            : LABELS[st],
-      ) +
-      (reason ? ": " + esc(plain(reason)) : "") +
-      (next ? ". " + esc(next) : "") +
-      (["read-only", "unknown", "partial"].includes(st)
-        ? ' <a href="' +
-          href(url) +
-          '" target="_blank" rel="noopener">Open on board ↗</a>'
-        : "") +
-      "</p>"
-    );
+receipt:function(st, reason, url, id, next, action, what, note) {
+    if (st === 'actionable') return '<p class="qac-receipt" id="' + id + '-r" role="status" aria-live="polite">' + esc(reason || '') + '</p>';
+    return '<p class="qac-receipt qac-' + st + '" id="' + id + '-r" role="status" aria-live="polite">' + (what && st !== 'read-only' ? '<span class="qac-what">' + esc(what) + '</span> · ' : '') + esc(st === 'accepted' && note ? 'Task note saved on the board' : st === 'accepted' && action ? 'Action accepted on the board' : LABELS[st]) + (reason ? ': ' + esc(plain(reason)) : '') +
+      (next ? '. ' + esc(next) : '') + (['read-only', 'unknown', 'partial'].includes(st) ? ' <a href="' + href(url) + '" target="_blank" rel="noopener">Open on board ↗</a>' : '') + '</p>';
   },
-  mount: function (el, adapter) {
-    const { apply, paint, markup } = execution.module("answer-card.mount", {
-      markup: function () {
-        return [...cards]
-          .map(
-            ([k, c]) =>
-              '<div data-qac-key="' +
-              esc(k) +
-              '">' +
-              render(
-                c.board,
-                c.row,
-                locals.get(k),
-                adapter.capability(c.board, c.row),
-              ) +
-              "</div>",
-          )
-          .join("");
-      },
-      apply: function (k, ev) {
-        const { board, row } = cards.get(k),
-          cap = adapter.capability(board, row),
-          r = step(row, locals.get(k), cap, ev, newId);
-        locals.set(k, r.local);
-        adapter.save?.(board, row, r.local);
-        if (ev.type !== "input") paint();
-        if (r.send)
-          ui.effect(
-            "answer.send",
-            () => adapter.send(board, r.send),
-            (x) => {
-              if (cards.has(k))
-                apply(k, { type: "receipt", opId: r.send.id, ...x });
-            },
-          );
-        else if (ev.type === "input") {
-          const s = el.querySelector(
-              '[data-qac-key="' + CSS.escape(k) + '"] button[type=submit]',
-            ),
-            cap2 = adapter.capability(board, row);
-          const live = LIVE.includes(status(row, r.local, cap2)),
-            bad = textProblem(
-              draftQuestion(row, cap2),
-              r.local.draft,
-              r.local.files,
-            );
-          if (s) s.disabled = !!bad || !live;
-          const rq = el.querySelector(
-            '[data-qac-key="' + CSS.escape(k) + '"] [data-qac=requeue]',
-          );
-          if (rq)
-            rq.disabled =
-              !live || !!textProblem(REQUEUE, r.local.draft, r.local.files);
-          // #1456: a disabled button states why; a state other than live already says so in the receipt
-          const h = s && s.parentNode.querySelector(".qac-hint");
-          if (h) h.textContent = (live && bad) || "";
-          // the live textarea already shows this draft: a refresh with the same rows must not rebuild it
-          painted = markup();
-        }
-      },
-      paint: function () {
-        const a = document.activeElement,
-          focus =
-            a && el.contains(a)
-              ? {
-                  k: a.closest("[data-qac-key]")?.dataset.qacKey,
-                  sel:
-                    a.dataset.qac === "input"
-                      ? "textarea"
-                      : a.dataset.choice
-                        ? '[data-choice="' + a.dataset.choice + '"]'
-                        : '[data-qac="' + a.dataset.qac + '"]',
-                  s: a.selectionStart,
-                  e: a.selectionEnd,
-                }
-              : null;
-        const scroll = el.scrollTop,
-          open = new Set(
-            [...el.querySelectorAll("details[open]")].map(
-              (d) =>
-                d.closest("[data-qac-key]")?.dataset.qacKey + " " + d.className,
-            ),
-          );
-        const html = markup();
-        // an unchanged card keeps its nodes: focus, caret, open details and an in-progress edit stay untouched
-        if (html === painted) return;
-        el.innerHTML = painted = html;
-        for (const d of el.querySelectorAll("details"))
-          if (
-            open.has(
-              d.closest("[data-qac-key]").dataset.qacKey + " " + d.className,
-            )
-          )
-            d.open = true;
-        el.scrollTop = scroll;
-        for (const [k, local] of locals)
-          if (Array.isArray(local.caret) && local.caret.length === 2) {
-            const input = el.querySelector(
-              '[data-qac-key="' + CSS.escape(k) + '"] textarea',
-            );
-            input?.setSelectionRange(...local.caret);
-          }
-        const t =
-          focus &&
-          focus.k &&
-          el.querySelector(
-            '[data-qac-key="' + CSS.escape(focus.k) + '"] ' + focus.sel,
-          );
-        if (t) {
-          t.focus();
-          if (focus.s != null && t.setSelectionRange)
-            t.setSelectionRange(focus.s, focus.e);
-        }
-      },
-    });
+mount:function(el, adapter) {
+const {apply,paint,markup}=execution.module("answer-card.mount",{
+markup:function() {
+      return [...cards].map(([k, c]) => '<div data-qac-key="' + esc(k) + '">' + render(c.board, c.row, locals.get(k), adapter.capability(c.board, c.row)) + '</div>').join('');
+    },
+apply:function(k, ev) {
+      const {board, row} = cards.get(k), cap = adapter.capability(board, row), r = step(row, locals.get(k), cap, ev, newId);
+      locals.set(k, r.local);
+      adapter.save?.(board, row, r.local);
+      if (ev.type !== 'input') paint();
+      if (r.send) ui.effect('answer.send',()=>adapter.send(board,r.send),x=>{if(cards.has(k))apply(k,{type:'receipt',opId:r.send.id,...x});});
+      else if (ev.type === 'input') {
+        const s = el.querySelector('[data-qac-key="' + CSS.escape(k) + '"] button[type=submit]'), cap2 = adapter.capability(board, row);
+        const live = LIVE.includes(status(row, r.local, cap2)), bad = textProblem(draftQuestion(row, cap2), r.local.draft,r.local.files);
+        if (s) s.disabled = !!bad || !live;
+        const rq = el.querySelector('[data-qac-key="' + CSS.escape(k) + '"] [data-qac=requeue]');
+        if (rq) rq.disabled = !live || !!textProblem(REQUEUE, r.local.draft,r.local.files);
+        // #1456: a disabled button states why; a state other than live already says so in the receipt
+        const h = s && s.parentNode.querySelector('.qac-hint');
+        if (h) h.textContent = live && bad || '';
+        // the live textarea already shows this draft: a refresh with the same rows must not rebuild it
+        painted = markup();
+      }
+    },
+paint:function() {
+      const a = document.activeElement, focus = a && el.contains(a) ? {k: a.closest('[data-qac-key]')?.dataset.qacKey, sel: a.dataset.qac === 'input' ? 'textarea' : a.dataset.choice ? '[data-choice="' + a.dataset.choice + '"]' : '[data-qac="' + a.dataset.qac + '"]', s: a.selectionStart, e: a.selectionEnd} : null;
+      const scroll = el.scrollTop, open = new Set([...el.querySelectorAll('details[open]')].map(d => d.closest('[data-qac-key]')?.dataset.qacKey + ' ' + d.className));
+      const html = markup();
+      // an unchanged card keeps its nodes: focus, caret, open details and an in-progress edit stay untouched
+      if (html === painted) return;
+      el.innerHTML = painted = html;
+      for (const d of el.querySelectorAll('details')) if (open.has(d.closest('[data-qac-key]').dataset.qacKey + ' ' + d.className)) d.open = true;
+      el.scrollTop = scroll;
+      for(const [k,local] of locals)if(Array.isArray(local.caret)&&local.caret.length===2){const input=el.querySelector('[data-qac-key="'+CSS.escape(k)+'"] textarea');input?.setSelectionRange(...local.caret);}
+      const t = focus && focus.k && el.querySelector('[data-qac-key="' + CSS.escape(focus.k) + '"] ' + focus.sel);
+      if (t) { t.focus(); if (focus.s != null && t.setSelectionRange) t.setSelectionRange(focus.s, focus.e); }
+    }
+});
 
-    const locals = new Map(),
-      cards = new Map();
+    const locals = new Map(), cards = new Map();
     let painted = null;
-    const newId =
-      adapter.newId ||
-      (() =>
-        root.crypto && root.crypto.randomUUID
-          ? root.crypto.randomUUID()
-          : "qac-" +
-            Date.now().toString(36) +
-            Math.random().toString(36).slice(2));
+    const newId = adapter.newId || (() => (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID() : 'qac-' + Date.now().toString(36) + Math.random().toString(36).slice(2)));
 
-    ui.listen(el, "click", (e) => {
-      const b = e.target.closest("button[data-qac]"),
-        k = b && b.closest("[data-qac-key]")?.dataset.qacKey;
-      if (k && !b.disabled)
-        apply(
-          k,
-          b.dataset.qac === "choose"
-            ? { type: "choose", id: Number(b.dataset.choice) }
-            : b.dataset.qac === "remove-file"
-              ? {
-                  type: "files",
-                  files: (locals.get(k).files || []).filter(
-                    (f) => f.id !== b.dataset.file,
-                  ),
-                }
-              : { type: b.dataset.qac },
-        );
+
+    ui.listen(el,'click', e => {
+      const b = e.target.closest('button[data-qac]'), k = b && b.closest('[data-qac-key]')?.dataset.qacKey;
+      if (k && !b.disabled) apply(k, b.dataset.qac === 'choose' ? {type: 'choose', id: Number(b.dataset.choice)} : b.dataset.qac==='remove-file'?{type:'files',files:(locals.get(k).files||[]).filter(f=>f.id!==b.dataset.file)}:{type: b.dataset.qac});
     });
-    const add = (k, files) => {
-      if (
-        !k ||
-        !adapter.capability(cards.get(k).board, cards.get(k).row).files ||
-        !LIVE.includes(
-          status(
-            cards.get(k).row,
-            locals.get(k),
-            adapter.capability(cards.get(k).board, cards.get(k).row),
-          ),
-        )
-      )
-        return;
-      replyFiles.read(files, (file) => {
-        if (
-          cards.has(k) &&
-          (file.pending || locals.get(k).files?.some((f) => f.id === file.id))
-        )
-          apply(k, {
-            type: "files",
-            files: [
-              ...(locals.get(k).files || []).filter((f) => f.id !== file.id),
-              file,
-            ],
-          });
-      });
-    };
-    ui.listen(el, "change", (e) => {
-      if (e.target.dataset.qac === "files") {
-        add(e.target.closest("[data-qac-key]")?.dataset.qacKey, [
-          ...e.target.files,
-        ]);
-      }
+    const add=(k,files)=>{if(!k||!adapter.capability(cards.get(k).board,cards.get(k).row).files||!LIVE.includes(status(cards.get(k).row,locals.get(k),adapter.capability(cards.get(k).board,cards.get(k).row))))return;replyFiles.read(files,file=>{if(cards.has(k)&&(file.pending||locals.get(k).files?.some(f=>f.id===file.id)))apply(k,{type:'files',files:[...(locals.get(k).files||[]).filter(f=>f.id!==file.id),file]});});};
+    ui.listen(el,'change',e=>{if(e.target.dataset.qac==='files'){add(e.target.closest('[data-qac-key]')?.dataset.qacKey,[...e.target.files]);}});
+    ui.listen(el,'paste',e=>{if(e.clipboardData?.files.length){e.preventDefault();add(e.target.closest('[data-qac-key]')?.dataset.qacKey,[...e.clipboardData.files]);}});
+    ui.listen(el,'dragover',e=>e.preventDefault());
+    ui.listen(el,'drop',e=>{if(e.dataTransfer?.files.length){e.preventDefault();add(e.target.closest('[data-qac-key]')?.dataset.qacKey,[...e.dataTransfer.files]);}});
+    ui.listen(el,'submit', e => { e.preventDefault(); const k = e.target.closest('[data-qac-key]')?.dataset.qacKey; if (k) apply(k, {type: 'submit'}); });
+    ui.listen(el,'keydown', e => { if (e.target.dataset.qac === 'input' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); const k = e.target.closest('[data-qac-key]')?.dataset.qacKey; if(k) apply(k, {type: 'submit'}); } });
+    for(const event of ['select','keyup','click'])ui.listen(el,event,e=>{
+      const k=e.target.dataset.qac==='input'&&e.target.closest('[data-qac-key]')?.dataset.qacKey;
+      if(k&&adapter.save){const c=cards.get(k),local={...locals.get(k),caret:[e.target.selectionStart,e.target.selectionEnd]};locals.set(k,local);adapter.save(c.board,c.row,local);}
     });
-    ui.listen(el, "paste", (e) => {
-      if (e.clipboardData?.files.length) {
-        e.preventDefault();
-        add(e.target.closest("[data-qac-key]")?.dataset.qacKey, [
-          ...e.clipboardData.files,
-        ]);
-      }
-    });
-    ui.listen(el, "dragover", (e) => e.preventDefault());
-    ui.listen(el, "drop", (e) => {
-      if (e.dataTransfer?.files.length) {
-        e.preventDefault();
-        add(e.target.closest("[data-qac-key]")?.dataset.qacKey, [
-          ...e.dataTransfer.files,
-        ]);
-      }
-    });
-    ui.listen(el, "submit", (e) => {
-      e.preventDefault();
-      const k = e.target.closest("[data-qac-key]")?.dataset.qacKey;
-      if (k) apply(k, { type: "submit" });
-    });
-    ui.listen(el, "keydown", (e) => {
-      if (
-        e.target.dataset.qac === "input" &&
-        e.key === "Enter" &&
-        !e.shiftKey &&
-        !e.isComposing &&
-        e.keyCode !== 229
-      ) {
-        e.preventDefault();
-        const k = e.target.closest("[data-qac-key]")?.dataset.qacKey;
-        if (k) apply(k, { type: "submit" });
-      }
-    });
-    for (const event of ["select", "keyup", "click"])
-      ui.listen(el, event, (e) => {
-        const k =
-          e.target.dataset.qac === "input" &&
-          e.target.closest("[data-qac-key]")?.dataset.qacKey;
-        if (k && adapter.save) {
-          const c = cards.get(k),
-            local = {
-              ...locals.get(k),
-              caret: [e.target.selectionStart, e.target.selectionEnd],
-            };
-          locals.set(k, local);
-          adapter.save(c.board, c.row, local);
-        }
-      });
-    ui.listen(el, "input", (e) => {
-      const k =
-        e.target.dataset.qac === "input" &&
-        e.target.closest("[data-qac-key]")?.dataset.qacKey;
-      if (k) apply(k, { type: "input", text: e.target.value });
-    });
-    return execution.module("answer-card.mount.controller", {
-      files(board, n, files) {
-        const k = key(board, { n });
-        if (!cards.has(k)) return false;
-        apply(k, { type: "files", files });
-        return true;
-      },
+    ui.listen(el,'input', e => { const k = e.target.dataset.qac === 'input' && e.target.closest('[data-qac-key]')?.dataset.qacKey; if (k) apply(k, {type: 'input', text: e.target.value}); });
+    return execution.module("answer-card.mount.controller",{
+      files(board,n,files){const k=key(board,{n});if(!cards.has(k))return false;apply(k,{type:'files',files});return true;},
       receiveReceipt(board, opId, reply) {
-        for (const [k, card] of cards)
-          if (card.board === board && locals.get(k)?.op?.id === opId) {
-            apply(k, { ...reply, type: "receipt", opId });
-          }
+        for (const [k, card] of cards) if (card.board === board && locals.get(k)?.op?.id === opId) {
+          apply(k, {...reply, type: 'receipt', opId});
+        }
       },
       // #1662 A3: an adapter whose capability has `composer` owns text entry in its shared composer and drives the card here;
       // text null records only the caret
       input(board, n, text, caret) {
-        const k = key(board, { n });
+        const k = key(board, {n});
         if (!cards.has(k)) return;
-        if (text != null && text !== locals.get(k).draft)
-          apply(k, { type: "input", text });
-        if (caret) {
-          const c = cards.get(k),
-            local = { ...locals.get(k), caret };
-          locals.set(k, local);
-          adapter.save?.(c.board, c.row, local);
-        }
+        if (text != null && text !== locals.get(k).draft) apply(k, {type: 'input', text});
+        if (caret) { const c = cards.get(k), local = {...locals.get(k), caret}; locals.set(k, local); adapter.save?.(c.board, c.row, local); }
       },
-      act(board, n, type) {
-        const k = key(board, { n });
-        if (
-          cards.has(k) &&
-          ["submit", "requeue", "cancel-result"].includes(type)
-        )
-          apply(k, { type });
-      },
+      act(board, n, type) { const k = key(board, {n}); if (cards.has(k) && ['submit', 'requeue', 'cancel-result'].includes(type)) apply(k, {type}); },
       // rows: [{board, row}] of open questions; a row that left keeps no state
       update(rows) {
         cards.clear();
-        for (const c of rows) {
-          const k = key(c.board, c.row);
-          cards.set(k, c);
-          if (!locals.has(k))
-            locals.set(k, adapter.load?.(c.board, c.row) || fresh(c.row));
-        }
+        for (const c of rows) { const k = key(c.board, c.row); cards.set(k, c); if (!locals.has(k)) locals.set(k, adapter.load?.(c.board, c.row) || fresh(c.row)); }
         for (const k of [...locals.keys()]) if (!cards.has(k)) locals.delete(k);
         paint();
       },
     });
   },
-  replay: function (fx, capability) {
-    let row = fx.rows[0],
-      local = fresh(row),
-      n = 0;
-    const sent = [],
-      out = [];
+replay:function(fx, capability) {
+    let row = fx.rows[0], local = fresh(row), n = 0;
+    const sent = [], out = [];
     for (const ev of fx.events || []) {
-      if (ev.type === "refresh") {
-        row = fx.rows[ev.row];
-        continue;
-      }
-      if (ev.type === "check") {
-        out.push({
-          status: status(row, local, capability(fx.board, row)),
-          html: render(fx.board, row, local, capability(fx.board, row)),
-          sent: sent.slice(),
-          draft: local.draft,
-        });
-        continue;
-      }
-      const r = step(
-        row,
-        local,
-        capability(fx.board, row),
-        ev.type === "receipt"
-          ? { ...ev, opId: sent[sent.length - 1] && sent[sent.length - 1].id }
-          : ev,
-        () => "op-" + ++n,
-      );
+      if (ev.type === 'refresh') { row = fx.rows[ev.row]; continue; }
+      if (ev.type === 'check') { out.push({status: status(row, local, capability(fx.board, row)), html: render(fx.board, row, local, capability(fx.board, row)), sent: sent.slice(), draft: local.draft}); continue; }
+      const r = step(row, local, capability(fx.board, row), ev.type === 'receipt' ? {...ev, opId: sent[sent.length - 1] && sent[sent.length - 1].id} : ev, () => 'op-' + ++n);
       local = r.local;
       if (r.send) sent.push(r.send);
     }
     return out;
-  },
+  }
 });
 // TaskQ shared answer card (docs/design/answer-card.md). Source: https://github.com/taskqorg/taskq src/answer-card.js,
 // MIT, published with each TaskQ release as taskq-<version>-answer-card.js and listed in SHA256SUMS; never edit a copy.
 // Input: one status --json task row whose `question` is TaskQ's canonical parse, plus the adapter's capability.
 // The component has no network client, parser, credentials or task state machine: `send` is the adapter's.
-const root = globalThis;
-const STATES = [
-  "actionable",
-  "changed",
-  "sending",
-  "accepted",
-  "stale",
-  "rejected",
-  "failed",
-  "partial",
-  "unknown",
-  "read-only",
-];
-// failed: the bridge refused before dispatch, nothing reached the board; partial: a two-step action stopped after its first
-const LABELS = {
-  actionable: "Waiting for your answer",
-  sending: "Sending…",
-  accepted: "Answer accepted on the board",
-  changed: "Question updated; Send saves your draft as a task note",
-  stale: "Question updated; action not sent",
-  rejected: "Answer not accepted",
-  failed: "Not sent: nothing reached the board",
-  partial: "Partly applied: check the board",
-  unknown: "Delivery unknown: check the board",
-  "read-only": "Read only",
-};
-const LIVE = ["actionable", "changed", "rejected", "failed", "stale"],
-  HELD = ["sending", "unknown", "failed", "partial"],
-  RETRY = ["unknown", "failed", "partial"];
-const REQUEUE = { limits: { lines: 1, chars: 232 } };
-const { esc } = execution.module("answer-card", {
-  esc: (s) =>
-    String(s == null ? "" : s).replace(
-      /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[c],
-    ),
-});
-const { key } = execution.module("answer-card", {
-  key: (board, row) => board + "#" + row.n,
-});
-// only web links: card text is worker-written
-const { href } = execution.module("answer-card", {
-  href: (u) => (/^https?:\/\//i.test(u || "") ? esc(u) : "#"),
-});
-// § 2 card links `[label](url)`: anchors show only the label
-const LINK = /\[([^\]]*)\]\(([^)\s]*)\)/g;
-const { label } = execution.module("answer-card", {
-  label: (s) => String(s == null ? "" : s).replace(LINK, "$1"),
-});
-const { linked } = execution.module("answer-card", {
-  linked: (s) => {
-    const p = String(s == null ? "" : s).split(LINK);
+const root=globalThis;
+  const STATES = ['actionable', 'changed', 'sending', 'accepted', 'stale', 'rejected', 'failed', 'partial', 'unknown', 'read-only'];
+  // failed: the bridge refused before dispatch, nothing reached the board; partial: a two-step action stopped after its first
+  const LABELS = {actionable: 'Waiting for your answer', sending: 'Sending…', accepted: 'Answer accepted on the board',
+    changed: 'Question updated; Send saves your draft as a task note', stale: 'Question updated; action not sent', rejected: 'Answer not accepted', failed: 'Not sent: nothing reached the board',
+    partial: 'Partly applied: check the board', unknown: 'Delivery unknown: check the board', 'read-only': 'Read only'};
+  const LIVE = ['actionable', 'changed', 'rejected', 'failed', 'stale'], HELD = ['sending', 'unknown', 'failed', 'partial'], RETRY = ['unknown', 'failed', 'partial'];
+  const REQUEUE = {limits: {lines: 1, chars: 232}};
+  const {esc}=execution.module("answer-card",{esc:s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]))});
+  const {key}=execution.module("answer-card",{key:(board, row) => board + '#' + row.n});
+  // only web links: card text is worker-written
+  const {href}=execution.module("answer-card",{href:u => /^https?:\/\//i.test(u || '') ? esc(u) : '#'});
+  // § 2 card links `[label](url)`: anchors show only the label
+  const LINK = /\[([^\]]*)\]\(([^)\s]*)\)/g;
+  const {label}=execution.module("answer-card",{label:s => String(s == null ? '' : s).replace(LINK, '$1')});
+  const {linked}=execution.module("answer-card",{linked:s => {
+    const p = String(s == null ? '' : s).split(LINK);
     let h = esc(p[0]);
-    for (let i = 1; i < p.length; i += 3)
-      h +=
-        '<a href="' +
-        href(p[i + 1]) +
-        '" target="_blank" rel="noopener">' +
-        esc(p[i]) +
-        "</a>" +
-        esc(p[i + 2]);
+    for (let i = 1; i < p.length; i += 3) h += '<a href="' + href(p[i + 1]) + '" target="_blank" rel="noopener">' + esc(p[i]) + '</a>' + esc(p[i + 2]);
     return h;
-  },
-});
+  }});
 
-// Local state of one card: draft and the revision it was written against, the one operation in flight and its receipt.
+  // Local state of one card: draft and the revision it was written against, the one operation in flight and its receipt.
 
-// Free text the TaskQ `answer N --text` limits accept; null: sendable.
 
-// § 2 visual evidence: ask images stay in view as thumbnails that open full size; without the app's copy, the link
-// Visual choice (#1787): one image per option, image K captioned K.
-const { images } = execution.module("answer-card", {
-  images: (q) => {
-    const im = (q.evidence || []).filter((e) => e.image),
-      n = (q.choices || []).length,
-      each = n >= 2 && im.length === n;
-    return im.length
-      ? '<p class="qac-images">' +
-          im
-            .map(
-              (e, i) =>
-                (each ? '<span class="qac-shot">' : "") +
-                '<a href="' +
-                href(e.url) +
-                '" target="_blank" rel="noopener" title="Open ' +
-                esc(e.label) +
-                ' full size">' +
-                (/^data:image\/(png|jpeg|gif|webp);base64,/.test(e.src || "")
-                  ? '<img class="qac-thumb" src="' +
-                    esc(e.src) +
-                    '" alt="' +
-                    esc(e.label) +
-                    '">'
-                  : esc(e.label) + " ↗") +
-                "</a>" +
-                (each
-                  ? '<span class="qac-caption">' + (i + 1) + ".</span></span>"
-                  : ""),
-            )
-            .join("") +
-          "</p>"
-      : "";
-  },
-});
-// One render (#1787): the Done and Problem lines, each after its icon, in full
-const { lines } = execution.module("answer-card", {
-  lines: (q) =>
-    (q.done
-      ? '<p class="qac-done"><span class="qac-icon" role="img" aria-label="Done">✓</span> ' +
-        linked(q.done) +
-        "</p>"
-      : "") +
-    '<p class="qac-problem"><span class="qac-icon" role="img" aria-label="Problem">⚑</span> ' +
-    linked(q.problem) +
-    "</p>",
-});
-const { manageable } = execution.module("answer-card", {
-  manageable: (row, cap) =>
-    row.state === "ask" &&
-    cap &&
-    cap.answer &&
-    cap.manage &&
-    !(row.question && row.question.choices && row.question.choices.length),
-});
-// The tray fallback proper: an unparsed card whose only free text is a requeue reason.
-const { fallback } = execution.module("answer-card", {
-  fallback: (row, cap) =>
-    manageable(row, cap) && !(row.question && row.question.parsed),
-});
-// What one receipt answers: the source-numbered choice and its text, a text answer or a fallback action.
-const { about } = execution.module("answer-card", {
-  about: (row, op) => {
-    if (op.action)
-      return (
-        {
-          requeue: "requeue",
-          later: "later",
-          close: "close without publication",
-        }[op.action] || op.action
-      );
-    if (op.text != null) return "text answer";
-    const c =
-      row.question &&
-      row.question.choices &&
-      row.question.choices.find((x) => x.id === op.choice);
-    return (
-      "answer " +
-      op.choice +
-      (c ? ". " + label(c.label == null ? c.text : c.label) : "")
-    );
-  },
-});
-// #1699 A4: a retained correlation conflict reads in user terms and offers Check delivery, never a resend
-const CONFLICT = "Correlation id is already pending for a different request";
-const { retry, plain } = execution.module("answer-card", {
-  retry: (st, reason) =>
-    RETRY.includes(st)
-      ? '<button type="button" data-qac="retry">' +
-        (st === "failed" && reason !== CONFLICT
-          ? "Send again"
-          : "Check delivery") +
-        "</button>"
-      : "",
-  plain: (reason) =>
-    reason === CONFLICT
-      ? "An earlier answer with this operation is still pending with different content; Check delivery reads its outcome"
-      : reason,
-});
-// Why the text button is off while the card is live; an empty node otherwise, so typing updates it in place.
-const { hint } = execution.module("answer-card", {
-  hint: (id, why) =>
-    '<span class="qac-hint" id="' +
-    id +
-    '-h" aria-live="polite">' +
-    esc(why || "") +
-    "</span>",
-});
-const { draftQuestion } = execution.module("answer-card", {
-  draftQuestion: (row, cap) => (fallback(row, cap) ? REQUEUE : row.question),
-});
+  // Free text the TaskQ `answer N --text` limits accept; null: sendable.
 
-// One of STATES for a row, its local state and the adapter's capability {answer, reason}.
 
-// Pure transition: (local, event) -> {local, send}. `send` is an operation to hand to the adapter, else null.
-// Events: input {text}, choose {id}, submit, review, receipt {opId, state, reason, next}, refresh {row}, retry.
+  // § 2 visual evidence: ask images stay in view as thumbnails that open full size; without the app's copy, the link
+  // Visual choice (#1787): one image per option, image K captioned K.
+  const {images}=execution.module("answer-card",{images:q => {
+    const im = (q.evidence || []).filter(e => e.image), n = (q.choices || []).length, each = n >= 2 && im.length === n;
+    return im.length ? '<p class="qac-images">' + im.map((e, i) => (each ? '<span class="qac-shot">' : '') + '<a href="' + href(e.url) + '" target="_blank" rel="noopener" title="Open ' + esc(e.label) + ' full size">' +
+      (/^data:image\/(png|jpeg|gif|webp);base64,/.test(e.src || '') ? '<img class="qac-thumb" src="' + esc(e.src) + '" alt="' + esc(e.label) + '">' : esc(e.label) + ' ↗') + '</a>' +
+      (each ? '<span class="qac-caption">' + (i + 1) + '.</span></span>' : '')).join('') + '</p>' : '';
+  }});
+  // One render (#1787): the Done and Problem lines, each after its icon, in full
+  const {lines}=execution.module("answer-card",{lines:q => (q.done ? '<p class="qac-done"><span class="qac-icon" role="img" aria-label="Done">✓</span> ' + linked(q.done) + '</p>' : '') +
+    '<p class="qac-problem"><span class="qac-icon" role="img" aria-label="Problem">⚑</span> ' + linked(q.problem) + '</p>'});
+  const {manageable}=execution.module("answer-card",{manageable:(row, cap) => row.state === 'ask' && cap && cap.answer && cap.manage && !(row.question && row.question.choices && row.question.choices.length)});
+  // The tray fallback proper: an unparsed card whose only free text is a requeue reason.
+  const {fallback}=execution.module("answer-card",{fallback:(row, cap) => manageable(row, cap) && !(row.question && row.question.parsed)});
+  // What one receipt answers: the source-numbered choice and its text, a text answer or a fallback action.
+  const {about}=execution.module("answer-card",{about:(row, op) => {
+    if (op.action) return {requeue: 'requeue', later: 'later', close: 'close without publication'}[op.action] || op.action;
+    if (op.text != null) return 'text answer';
+    const c = row.question && row.question.choices && row.question.choices.find(x => x.id === op.choice);
+    return 'answer ' + op.choice + (c ? '. ' + label(c.label == null ? c.text : c.label) : '');
+  }});
+  // #1699 A4: a retained correlation conflict reads in user terms and offers Check delivery, never a resend
+  const CONFLICT = 'Correlation id is already pending for a different request';
+  const {retry,plain}=execution.module("answer-card",{retry:(st, reason) => RETRY.includes(st) ? '<button type="button" data-qac="retry">' + (st === 'failed' && reason !== CONFLICT ? 'Send again' : 'Check delivery') + '</button>' : '',
+    plain:reason => reason === CONFLICT ? 'An earlier answer with this operation is still pending with different content; Check delivery reads its outcome' : reason});
+  // Why the text button is off while the card is live; an empty node otherwise, so typing updates it in place.
+  const {hint}=execution.module("answer-card",{hint:(id, why) => '<span class="qac-hint" id="' + id + '-h" aria-live="polite">' + esc(why || '') + '</span>'});
+  const {draftQuestion}=execution.module("answer-card",{draftQuestion:(row, cap) => fallback(row, cap) ? REQUEUE : row.question});
 
-// Browser binding: one container, rows by board. adapter = {capability(board, row) -> {answer, reason},
-// send(board, op) -> Promise<{state, reason, next}>, newId?() }. update() keeps drafts, focus and scroll.
+  // One of STATES for a row, its local state and the adapter's capability {answer, reason}.
 
-// Conformance replay shared by every consumer harness: the fixture's events through `step` with the consumer's
-// adapter capability; returns each checkpoint's {status, html, sent} for the fixture's expectations.
 
-const api = {
-  STATES,
-  fresh,
-  status,
-  step,
-  render,
-  compose,
-  mount,
-  replay,
-  textProblem,
-};
-module.exports = api;
+  // Pure transition: (local, event) -> {local, send}. `send` is an operation to hand to the adapter, else null.
+  // Events: input {text}, choose {id}, submit, review, receipt {opId, state, reason, next}, refresh {row}, retry.
+
+
+
+
+
+
+  // Browser binding: one container, rows by board. adapter = {capability(board, row) -> {answer, reason},
+  // send(board, op) -> Promise<{state, reason, next}>, newId?() }. update() keeps drafts, focus and scroll.
+
+
+  // Conformance replay shared by every consumer harness: the fixture's events through `step` with the consumer's
+  // adapter capability; returns each checkpoint's {status, html, sent} for the fixture's expectations.
+
+
+  const api = {STATES, fresh, status, step, render, compose, mount, replay, textProblem};
+  module.exports=api;

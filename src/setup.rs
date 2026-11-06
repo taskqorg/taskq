@@ -10,14 +10,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 type Res<T> = Result<T, String>;
+pub use crate::runtime::owner::{claude_link, launch, Launched};
 use crate::runtime::owner::{ACCESS, LOGIN, MISSING};
-pub use crate::runtime::owner::{Launched, claude_link, launch};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub choice: Option<crate::runtime::choices::Choice>,
+    #[serde(default,skip_serializing_if="Option::is_none")] pub choice:Option<crate::runtime::choices::Choice>,
     pub schema: u8,
     pub id: String,
     pub created: u128,
@@ -28,62 +27,32 @@ pub struct Request {
     pub targets: Vec<String>,
     pub brief: String,
     pub state: String,
-    #[serde(default)]
-    pub job: Option<String>,
-    #[serde(default)]
-    pub session: Option<String>,
-    #[serde(default)]
-    pub url: Option<String>,
-    #[serde(default)]
-    pub reason: Option<String>,
+    #[serde(default)] pub job: Option<String>,
+    #[serde(default)] pub session: Option<String>,
+    #[serde(default)] pub url: Option<String>,
+    #[serde(default)] pub reason: Option<String>,
     /// The registered project an AI request or retro session runs in; none: a setup session.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root: Option<String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub pm: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub root: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")] pub pm: bool,
 }
 
-const STATES: [&str; 6] = [
-    "pending",
-    "launching",
-    "launched",
-    "failed",
-    "interrupted",
-    "cancelled",
-];
-pub(crate) fn owner_id(id: &str) -> bool {
-    crate::resources::id(id) && !["request", "lock"].contains(&id)
-}
+const STATES: [&str; 6] = ["pending", "launching", "launched", "failed", "interrupted", "cancelled"];
+pub(crate) fn owner_id(id:&str)->bool {crate::resources::id(id)&&!["request","lock"].contains(&id)}
 
-pub fn dir(install: &Path) -> PathBuf {
-    install.join("setup")
-}
-fn file(install: &Path, id: &str) -> PathBuf {
-    dir(install).join(format!("{id}.json"))
-}
+pub fn dir(install: &Path) -> PathBuf { install.join("setup") }
+fn file(install: &Path, id: &str) -> PathBuf { dir(install).join(format!("{id}.json")) }
 
 pub(crate) fn read(path: &Path) -> Res<Request> {
-    let mut pending = path.as_os_str().to_os_string();
-    pending.push(".pending");
+    let mut pending=path.as_os_str().to_os_string();pending.push(".pending");
     match fs::symlink_metadata(PathBuf::from(pending)) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        _ => return Err("Owner request durable write interrupted; files kept".into()),
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},
+        _=>return Err("Owner request durable write interrupted; files kept".into()),
     }
-    if !crate::messages::plain(path)? {
-        return Err("Setup request absent".into());
-    }
+    if !crate::messages::plain(path)? {return Err("Setup request absent".into());}
     let text = fs::read_to_string(path).map_err(|e| format!("setup request unknown: {e}"))?;
-    let r: Request = serde_json::from_str(&text)
-        .map_err(|e| format!("setup request {} unknown: {e}", path.display()))?;
-    if r.schema != 2
-        || !STATES.contains(&r.state.as_str())
-        || !crate::resources::id(&r.id)
-        || path.file_stem() != Some(r.id.as_ref())
-    {
-        return Err(format!(
-            "setup request {} unknown: unsupported record; kept",
-            path.display()
-        ));
+    let r: Request = serde_json::from_str(&text).map_err(|e| format!("setup request {} unknown: {e}", path.display()))?;
+    if r.schema != 2 || !STATES.contains(&r.state.as_str()) || !crate::resources::id(&r.id) || path.file_stem() != Some(r.id.as_ref()) {
+        return Err(format!("setup request {} unknown: unsupported record; kept", path.display()));
     }
     Ok(r)
 }
@@ -96,18 +65,9 @@ pub fn all(install: &Path) -> Res<(Vec<Request>, Vec<String>)> {
     };
     let (mut ok, mut bad) = (vec![], vec![]);
     for entry in entries {
-        let path = entry
-            .map_err(|e| format!("setup requests unknown: {e}"))?
-            .path();
-        if path.extension().is_none_or(|x| x != "json")
-            || path.file_name().is_some_and(|n| n == "request.json")
-        {
-            continue;
-        }
-        match read(&path) {
-            Ok(r) => ok.push(r),
-            Err(e) => bad.push(e),
-        }
+        let path = entry.map_err(|e| format!("setup requests unknown: {e}"))?.path();
+        if path.extension().is_none_or(|x| x != "json") || path.file_name().is_some_and(|n| n == "request.json") { continue; }
+        match read(&path) { Ok(r) => ok.push(r), Err(e) => bad.push(e) }
     }
     ok.sort_by(|a: &Request, b| (a.created, &a.id).cmp(&(b.created, &b.id)));
     Ok((ok, bad))
@@ -115,29 +75,20 @@ pub fn all(install: &Path) -> Res<(Vec<Request>, Vec<String>)> {
 
 fn write(install: &Path, r: &Request) -> Res<()> {
     let text = serde_json::to_string_pretty(r).map_err(|e| e.to_string())?;
-    if r.pm {
-        return coreq::write_durable(&file(install, &r.id), &(text + "\n"))
-            .map_err(|_| "PM native request write unknown; reconcile only".into());
-    }
-    crate::platform::write_atomic(&file(install, &r.id), &(text + "\n"))
-        .map_err(|e| format!("setup request write uncertain: {e}"))
+    if r.pm {return coreq::write_durable(&file(install,&r.id),&(text+"\n")).map_err(|_|"PM native request write unknown; reconcile only".into());}
+    crate::platform::write_atomic(&file(install, &r.id), &(text + "\n")).map_err(|e| format!("setup request write uncertain: {e}"))
 }
 
 pub(crate) fn locked<T>(install: &Path, f: impl FnOnce() -> Res<T>) -> Res<T> {
     crate::messages::plain(&dir(install))?;
     fs::create_dir_all(dir(install)).map_err(|e| format!("setup: {e}"))?;
-    let _lock = coreq::file_lock::try_lock(&dir(install).join("lock"))
-        .map_err(|e| format!("setup request busy, retry: {e}"))?;
+    let _lock = coreq::file_lock::try_lock(&dir(install).join("lock")).map_err(|e| format!("setup request busy, retry: {e}"))?;
     f()
 }
 
 /// The PM chat scope (owner) around the standalone-onboarding agentq brief; values are the exact request fields.
 fn brief(r: &Request, workdir: &Path) -> String {
-    let targets = if r.targets.is_empty() {
-        "none; ask the owner before touching any other folder".into()
-    } else {
-        r.targets.join(", ")
-    };
+    let targets = if r.targets.is_empty() { "none; ask the owner before touching any other folder".into() } else { r.targets.join(", ") };
     format!("You are the TaskQ PM for this host, opened by the host service because the owner asked for setup.
 Host: {host}
 Native platform: {platform}
@@ -179,9 +130,7 @@ Touch only this project, the runtime-owned folders in taskq.md section 8 and the
 }
 
 fn conversation_brief(id: &str) -> String {
-    format!(
-        "Originating TaskQ chat: {id}. When filing work from this chat, use taskq add --conversation {id} --op-id pm.{id}.<stable-request-key> with the ordinary title, goal and acceptance. Reconcile uncertain creation with the identical operation; never invent another ID. Present the held brief here and wait for the owner to Assign it; do not start chat-origin tasks from prose. Assignment uses the board Start receipt. Relay questions and outcomes here. Never infer task state from your own prose."
-    )
+    format!("Originating TaskQ chat: {id}. When filing work from this chat, use taskq add --conversation {id} --op-id pm.{id}.<stable-request-key> with the ordinary title, goal and acceptance. Reconcile uncertain creation with the identical operation; never invent another ID. Present the held brief here and wait for the owner to Assign it; do not start chat-origin tasks from prose. Assignment uses the board Start receipt. Relay questions and outcomes here. Never infer task state from your own prose.")
 }
 
 pub const RETRO: &str = "Retrospective (`taskq retro`): read the Proposals section of docs/use-cases/README.md and the board's
@@ -189,331 +138,97 @@ recent `ask`, `answer` and `requeue` entries (`taskq status --json`, `taskq inbo
 recommendations: simpler flows, missing options, quick commands. File each one the owner accepts with `taskq add`.";
 
 /// `service setup`: a new `pending` request every call.
-pub fn submit(
-    install: &Path,
-    runtime: &str,
-    client: Option<&str>,
-    targets: &[String],
-) -> Res<Request> {
-    let targets = targets
-        .iter()
-        .map(|t| {
-            let p = Path::new(t);
-            if !p.is_absolute() {
-                return Err(format!("setup target {t}: expected an absolute path"));
-            }
-            p.canonicalize()
-                .map(|p| p.display().to_string())
-                .map_err(|e| format!("setup target {t}: {e}"))
-        })
-        .collect::<Res<Vec<_>>>()?;
-    save(install, runtime, client, targets, None, |r, id| {
-        brief(r, &dir(install).join(id))
-    })
+pub fn submit(install: &Path, runtime: &str, client: Option<&str>, targets: &[String]) -> Res<Request> {
+    let targets = targets.iter().map(|t| {
+        let p = Path::new(t);
+        if !p.is_absolute() { return Err(format!("setup target {t}: expected an absolute path")); }
+        p.canonicalize().map(|p| p.display().to_string()).map_err(|e| format!("setup target {t}: {e}"))
+    }).collect::<Res<Vec<_>>>()?;
+    save(install, runtime, client, targets, None, |r, id| brief(r, &dir(install).join(id)))
 }
 
 /// Agentq OK: the existing setup writer, with exact displayed targets and this click's retry identity.
-pub fn agentq(install: &Path, id: &str, runtime: &str, targets: Vec<String>) -> Res<Request> {
-    if !crate::resources::id(id)
-        || !crate::runtime::setup_runtimes().any(|rt| rt == runtime)
-        || targets.len() != 2
-        || targets.iter().any(|p| !Path::new(p).is_absolute())
-    {
-        return Err("invalid agentq setup scope".into());
-    }
-    save_id(
-        install,
-        runtime,
-        None,
-        targets,
-        None,
-        Some((id, false)),
-        false,
-        |r, id| {
-            format!(
-                "Set up agentq from https://github.com/taskqorg/agentq on this host now.\nThe owner selected OK in TaskQ after reviewing installation of the verified agentq release, its engines and host service, and supported configuration, hooks and MCP for the selected client only.\nConsent already names these exact displayed effects and targets (including creating the absent agentq install). Do not ask again for these same effects. Ask before other effects, conflicts, legacy removal or missing access.\nDo not change TaskQ configuration, admission, runtime policy or board state.\n{}",
-                brief(r, &dir(install).join(id))
-            )
-        },
-    )
+pub fn agentq(install:&Path,id:&str,runtime:&str,targets:Vec<String>)->Res<Request> {
+    if !crate::resources::id(id) || !crate::runtime::setup_runtimes().any(|rt|rt==runtime) || targets.len()!=2 || targets.iter().any(|p|!Path::new(p).is_absolute()) {return Err("invalid agentq setup scope".into());}
+    save_id(install,runtime,None,targets,None,Some((id,false)),false,|r,id|format!("Set up agentq from https://github.com/taskqorg/agentq on this host now.\nThe owner selected OK in TaskQ after reviewing installation of the verified agentq release, its engines and host service, and supported configuration, hooks and MCP for the selected client only.\nConsent already names these exact displayed effects and targets (including creating the absent agentq install). Do not ask again for these same effects. Ask before other effects, conflicts, legacy removal or missing access.\nDo not change TaskQ configuration, admission, runtime policy or board state.\n{}",brief(r,&dir(install).join(id))))
 }
 
 /// Tray AI request or `taskq retro`: a new `pending` session in project `root` with `task` as its brief.
 pub fn open(install: &Path, root: &Path, task: &str) -> Res<Request> {
-    if task.trim().is_empty() {
-        return Err("Write a request before sending".into());
-    }
-    let root = root
-        .canonicalize()
-        .map_err(|e| format!("project {}: {e}", root.display()))?
-        .display()
-        .to_string();
-    save(
-        install,
-        crate::runtime::OWNER,
-        None,
-        vec![],
-        Some(root.clone()),
-        |r, _| {
-            format!(
-                "{}\n{}",
-                project_brief(&root, task.trim()),
-                conversation_brief(&r.id)
-            )
-        },
-    )
+    if task.trim().is_empty() { return Err("Write a request before sending".into()); }
+    let root = root.canonicalize().map_err(|e| format!("project {}: {e}", root.display()))?.display().to_string();
+    save(install, crate::runtime::OWNER, None, vec![], Some(root.clone()), |r, _| format!("{}\n{}", project_brief(&root, task.trim()), conversation_brief(&r.id)))
 }
 
 /// A workspace retry reads the same owner-session request; its identity never means a second launch.
-pub fn open_id(
-    install: &Path,
-    root: &Path,
-    task: &str,
-    id: &str,
-    runtime: &str,
-    read_only: bool,
-) -> Res<Request> {
-    if !crate::resources::id(id) {
-        return Err("Invalid owner request ID".into());
-    }
-    if task.trim().is_empty() {
-        return Err("Write a request before sending".into());
-    }
-    let root = root
-        .canonicalize()
-        .map_err(|e| format!("project {}: {e}", root.display()))?
-        .display()
-        .to_string();
-    save_id_choice(
-        install,
-        runtime,
-        None,
-        vec![],
-        Some(root.clone()),
-        Some((id, read_only)),
-        false,
-        None,
-        |r, _| {
-            format!(
-                "{}\n{}",
-                project_brief(&root, task),
-                conversation_brief(&r.id)
-            )
-        },
-    )
+pub fn open_id(install: &Path, root: &Path, task: &str, id: &str, runtime: &str, read_only: bool) -> Res<Request> {
+    if !crate::resources::id(id) { return Err("Invalid owner request ID".into()); }
+    if task.trim().is_empty() { return Err("Write a request before sending".into()); }
+    let root = root.canonicalize().map_err(|e| format!("project {}: {e}", root.display()))?.display().to_string();
+    save_id_choice(install, runtime, None, vec![], Some(root.clone()), Some((id, read_only)), false, None, |r, _| format!("{}\n{}", project_brief(&root, task), conversation_brief(&r.id)))
 }
 
-pub(crate) fn open_choice(
-    install: &Path,
-    root: &Path,
-    task: &str,
-    id: &str,
-    runtime: &str,
-    read_only: bool,
-    choice: Option<&crate::runtime::choices::Choice>,
-) -> Res<Request> {
-    let root = root
-        .canonicalize()
-        .map_err(|_| "Launch project unavailable")?
-        .display()
-        .to_string();
-    save_id_choice(
-        install,
-        runtime,
-        None,
-        vec![],
-        Some(root.clone()),
-        Some((id, read_only)),
-        false,
-        choice.cloned(),
-        |r, _| {
-            format!(
-                "{}\n{}",
-                project_brief(&root, task),
-                conversation_brief(&r.id)
-            )
-        },
-    )
+pub(crate) fn open_choice(install:&Path,root:&Path,task:&str,id:&str,runtime:&str,read_only:bool,choice:Option<&crate::runtime::choices::Choice>)->Res<Request> {
+    let root=root.canonicalize().map_err(|_|"Launch project unavailable")?.display().to_string();
+    save_id_choice(install,runtime,None,vec![],Some(root.clone()),Some((id,read_only)),false,choice.cloned(),|r,_|format!("{}\n{}",project_brief(&root,task),conversation_brief(&r.id)))
 }
 
-pub(crate) fn open_pm(
-    install: &Path,
-    root: &Path,
-    task: &str,
-    id: &str,
-    runtime: &str,
-) -> Res<Request> {
-    let root = root
-        .canonicalize()
-        .map_err(|_| "PM project unavailable")?
-        .display()
-        .to_string();
-    save_id(
-        install,
-        runtime,
-        None,
-        vec![],
-        Some(root.clone()),
-        Some((id, false)),
-        true,
-        |r, _| {
-            format!(
-                "{}\n{}",
-                project_brief(&root, task),
-                conversation_brief(&r.id)
-            )
-        },
-    )
+pub(crate) fn open_pm(install:&Path,root:&Path,task:&str,id:&str,runtime:&str)->Res<Request> {
+    let root=root.canonicalize().map_err(|_|"PM project unavailable")?.display().to_string();
+    save_id(install,runtime,None,vec![],Some(root.clone()),Some((id,false)),true,|r,_|format!("{}\n{}",project_brief(&root,task),conversation_brief(&r.id)))
 }
 
-fn save(
-    install: &Path,
-    runtime: &str,
-    client: Option<&str>,
-    targets: Vec<String>,
-    root: Option<String>,
-    brief: impl FnOnce(&Request, &str) -> String,
-) -> Res<Request> {
+fn save(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
     save_id(install, runtime, client, targets, root, None, false, brief)
 }
 
-fn save_id(
-    install: &Path,
-    runtime: &str,
-    client: Option<&str>,
-    targets: Vec<String>,
-    root: Option<String>,
-    requested_id: Option<(&str, bool)>,
-    pm: bool,
-    brief: impl FnOnce(&Request, &str) -> String,
-) -> Res<Request> {
-    save_id_choice(
-        install,
-        runtime,
-        client,
-        targets,
-        root,
-        requested_id,
-        pm,
-        None,
-        brief,
-    )
+fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, requested_id: Option<(&str, bool)>, pm:bool, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
+    save_id_choice(install,runtime,client,targets,root,requested_id,pm,None,brief)
 }
 
-fn save_id_choice(
-    install: &Path,
-    runtime: &str,
-    client: Option<&str>,
-    targets: Vec<String>,
-    root: Option<String>,
-    requested_id: Option<(&str, bool)>,
-    pm: bool,
-    choice: Option<crate::runtime::choices::Choice>,
-    brief: impl FnOnce(&Request, &str) -> String,
-) -> Res<Request> {
+fn save_id_choice(install:&Path,runtime:&str,client:Option<&str>,targets:Vec<String>,root:Option<String>,requested_id:Option<(&str,bool)>,pm:bool,choice:Option<crate::runtime::choices::Choice>,brief:impl FnOnce(&Request,&str)->String)->Res<Request> {
     // #1522: a visible Codex session is a Codex app thread, so requests take it only on macOS or Windows.
     let a = crate::runtime::of(runtime);
     if !crate::runtime::owner::supported(runtime) {
-        return Err(format!(
-            "setup runtime {runtime}: no qualified visible session here; use an installed supported owner-session runtime"
-        ));
+        return Err(format!("setup runtime {runtime}: no qualified visible session here; use an installed supported owner-session runtime"));
     }
-    let id = requested_id
-        .map(|(id, _)| String::from(id))
-        .unwrap_or_else(crate::runtime::uuid);
-    if !owner_id(&id) {
-        return Err("Reserved or invalid owner request ID; use a new ID".into());
-    }
-    let created = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| "setup clock unknown")?
-        .as_millis();
-    let platform = format!(
-        "{} {}{}",
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-        if cfg!(target_os = "linux")
-            && (std::env::var_os("WSL_DISTRO_NAME").is_some()
-                || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists())
-        {
-            " wsl"
-        } else {
-            ""
-        }
-    );
-    let mut r = Request {
-        schema: 2,
-        id: id.clone(),
-        created,
-        host: crate::config::hostname(),
-        platform,
-        client: client.unwrap_or(a.client).into(),
-        runtime: runtime.into(),
-        targets,
-        brief: String::new(),
-        state: "pending".into(),
-        job: None,
-        session: None,
-        url: None,
-        reason: None,
-        root,
-        pm,
-        choice,
-    };
+    let id = requested_id.map(|(id,_)|String::from(id)).unwrap_or_else(crate::runtime::uuid);
+    if !owner_id(&id) {return Err("Reserved or invalid owner request ID; use a new ID".into());}
+    let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
+    let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
+    let mut r = Request { schema: 2, id: id.clone(), created, host: crate::config::hostname(), platform, client: client.unwrap_or(a.client).into(), runtime: runtime.into(),
+        targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None, root, pm, choice };
     r.brief = brief(&r, &id);
     locked(install, || {
-        if crate::messages::request_deleted(install, &id)? {
-            return Err("Owner request was permanently deleted; it cannot launch again".into());
-        }
+        if crate::messages::request_deleted(install,&id)? {return Err("Owner request was permanently deleted; it cannot launch again".into());}
         if requested_id.is_some() {
             match fs::metadata(file(install, &id)) {
                 Ok(_) => {
                     let previous = read(&file(install, &id))?;
-                    if previous.root != r.root
-                        || previous.brief != r.brief
-                        || previous.runtime != r.runtime
-                        || previous.pm != r.pm
-                        || previous.choice != r.choice
-                    {
+                    if previous.root != r.root || previous.brief != r.brief || previous.runtime != r.runtime || previous.pm != r.pm || previous.choice != r.choice {
                         return Err("Owner request ID already binds different input".into());
                     }
                     r = previous;
                     return Ok(());
                 }
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::NotFound
-                        && requested_id.is_some_and(|(_, read_only)| !read_only) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && requested_id.is_some_and(|(_,read_only)|!read_only) => {},
                 Err(e) => return Err(format!("Owner request delivery unknown: {e}")),
             }
         }
         // Same-millisecond calls keep call order: created is strictly after the newest request.
-        r.created = all(install)?
-            .0
-            .last()
-            .map_or(r.created, |n| r.created.max(n.created + 1));
+        r.created = all(install)?.0.last().map_or(r.created, |n| r.created.max(n.created + 1));
         write(install, &r)
     })?;
-    crate::platform::write_atomic(&install.join("poke"), "")
-        .map_err(|e| format!("setup request saved; host notification unknown: {e}"))?;
-    let observed = read(&file(install, &id))?;
-    if observed.root != r.root
-        || observed.brief != r.brief
-        || observed.runtime != r.runtime
-        || observed.choice != r.choice
-    {
-        return Err("Owner request readback changed; delivery unknown".into());
-    }
+    crate::platform::write_atomic(&install.join("poke"), "").map_err(|e| format!("setup request saved; host notification unknown: {e}"))?;
+    let observed=read(&file(install,&id))?;
+    if observed.root!=r.root || observed.brief!=r.brief || observed.runtime!=r.runtime || observed.choice!=r.choice {return Err("Owner request readback changed; delivery unknown".into());}
     Ok(observed)
 }
 
 /// Service start: a launch without a recorded native answer has an unknown outcome and is never replayed.
 pub fn recover(install: &Path) -> Res<()> {
     locked(install, || {
-        for mut r in all(install)?
-            .0
-            .into_iter()
-            .filter(|r| r.state == "launching")
-        {
+        for mut r in all(install)?.0.into_iter().filter(|r| r.state == "launching") {
             r.state = "interrupted".into();
             r.reason = Some("service stopped during launch; outcome unknown, inspect native sessions before a new setup".into());
             write(install, &r)?;
@@ -523,31 +238,15 @@ pub fn recover(install: &Path) -> Res<()> {
 }
 
 /// #1580: cancel only a not-yet-dispatched owner request. Launch and cancel share the same lock.
-pub(crate) fn cancel_pending(install: &Path, id: &str) -> Res<()> {
-    if !crate::resources::id(id) {
-        return Err("Invalid owner request ID".into());
-    }
-    locked(install, || {
-        let mut r = read(&file(install, id))?;
-        if r.root.is_none() {
-            return Err("This is not a project owner request".into());
-        }
-        if r.state == "cancelled" {
-            return Ok(());
-        }
-        if r.state != "pending" {
-            return Err(
-                "Cancellation unavailable after launch begins; use the native session".into(),
-            );
-        }
-        r.state = "cancelled".into();
-        r.reason =
-            Some("Launch cancelled before native dispatch; no runtime work was rolled back".into());
-        write(install, &r)?;
-        if read(&file(install, id))? != r {
-            return Err("Cancellation readback unknown".into());
-        }
-        Ok(())
+pub(crate) fn cancel_pending(install:&Path,id:&str)->Res<()> {
+    if !crate::resources::id(id){return Err("Invalid owner request ID".into());}
+    locked(install,||{
+        let mut r=read(&file(install,id))?;
+        if r.root.is_none(){return Err("This is not a project owner request".into());}
+        if r.state=="cancelled" {return Ok(());}
+        if r.state!="pending" {return Err("Cancellation unavailable after launch begins; use the native session".into());}
+        r.state="cancelled".into();r.reason=Some("Launch cancelled before native dispatch; no runtime work was rolled back".into());write(install,&r)?;
+        if read(&file(install,id))?!=r {return Err("Cancellation readback unknown".into());}Ok(())
     })
 }
 
@@ -558,40 +257,19 @@ pub type Launcher = fn(&Path, &Request) -> Launched;
 /// no § 3 grant and no hold, Stop or restart waits for it.
 pub fn step(install: &Path, launch: Launcher) -> Res<()> {
     let (requests, bad) = all(install)?;
-    let Some(mut r) = requests.into_iter().find(|r| r.state == "pending") else {
-        return bad.into_iter().next().map_or(Ok(()), Err);
-    };
+    let Some(mut r) = requests.into_iter().find(|r| r.state == "pending") else { return bad.into_iter().next().map_or(Ok(()), Err) };
     let id = r.id.clone();
-    let intent = crate::pm::launch_guard(install, &r.clone(), || {
-        locked(install, || {
-            let cur = read(&file(install, &id))?;
-            if cur.state != "pending" {
-                return Err("setup request changed before launch".into());
-            }
-            r.state = "launching".into();
-            r.reason = None;
-            write(install, &r)
-        })
-    });
-    if let Err(e) = intent {
-        if !r.pm {
-            return Err(e);
-        }
-        return locked(install, || {
-            let mut cur = read(&file(install, &id))?;
-            if cur.state == "pending" {
-                cur.state = if e == "PM launch authority expired, revoked or stale; request kept" {
-                    "failed"
-                } else {
-                    "interrupted"
-                }
-                .into();
-                cur.reason = Some(
-                    "PM launch not dispatched: authority or storage unavailable; reconcile only"
-                        .into(),
-                );
-                write(install, &cur)?;
-            }
+    let intent=crate::pm::launch_guard(install, &r.clone(), || locked(install, || {
+        let cur = read(&file(install, &id))?;
+        if cur.state != "pending" { return Err("setup request changed before launch".into()); }
+        r.state = "launching".into(); r.reason = None;
+        write(install, &r)
+    }));
+    if let Err(e)=intent {
+        if !r.pm {return Err(e);}
+        return locked(install,|| {
+            let mut cur=read(&file(install,&id))?;
+            if cur.state=="pending" {cur.state=if e=="PM launch authority expired, revoked or stale; request kept" {"failed"}else{"interrupted"}.into();cur.reason=Some("PM launch not dispatched: authority or storage unavailable; reconcile only".into());write(install,&cur)?;}
             Ok(())
         });
     }
@@ -601,26 +279,13 @@ pub fn step(install: &Path, launch: Launcher) -> Res<()> {
         Err(e) => Launched::NoStart(format!("setup directory: {e}")),
     };
     match outcome {
-        Launched::Job { job, session, url } => {
-            r.state = "launched".into();
-            r.job = Some(job);
-            r.session = session;
-            r.url = url;
-        }
-        Launched::NoStart(e) => {
-            r.state = "failed".into();
-            r.reason = Some(e);
-        }
-        Launched::Unknown(e) => {
-            r.state = "interrupted".into();
-            r.reason = Some(e);
-        }
+        Launched::Job { job, session, url } => { r.state = "launched".into(); r.job = Some(job); r.session = session; r.url = url; }
+        Launched::NoStart(e) => { r.state = "failed".into(); r.reason = Some(e); }
+        Launched::Unknown(e) => { r.state = "interrupted".into(); r.reason = Some(e); }
     }
     // A lost write leaves `launching`; the next service start turns it into `interrupted`, never a second launch.
     locked(install, || {
-        if read(&file(install, &id))?.state != "launching" {
-            return Err("Setup launch record changed; late result not written".into());
-        }
+        if read(&file(install,&id))?.state!="launching" {return Err("Setup launch record changed; late result not written".into());}
         write(install, &r)
     })
 }
@@ -634,26 +299,14 @@ const LINK_WINDOW_MS: u128 = 10 * 60 * 1000;
 /// Remote Control publishes the link after `--bg` returns (#1409): later passes fill a missing session or link
 /// within the window, then stop; the session itself is never tracked.
 pub fn link(install: &Path, now: u128, observe: Linker) -> Res<()> {
-    for r in all(install)?.0.into_iter().filter(|r| {
-        r.state == "launched"
-            && crate::runtime::of(&r.runtime).has(Cap::RemoteControl)
-            && r.url.is_none()
-            && now.saturating_sub(r.created) < LINK_WINDOW_MS
-    }) {
+    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && crate::runtime::of(&r.runtime).has(Cap::RemoteControl) && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
         let Some(job) = r.job.clone() else { continue };
-        let own = r
-            .root
-            .as_deref()
-            .map_or_else(|| dir(install).join(&r.id), PathBuf::from);
+        let own = r.root.as_deref().map_or_else(|| dir(install).join(&r.id), PathBuf::from);
         let (session, url) = observe(&own, &job);
-        if session.is_none() && url.is_none() {
-            continue;
-        }
+        if session.is_none() && url.is_none() { continue; }
         locked(install, || {
             let mut cur = read(&file(install, &r.id))?;
-            if cur.state != "launched" || cur.job.as_deref() != Some(&job) {
-                return Ok(());
-            }
+            if cur.state != "launched" || cur.job.as_deref() != Some(&job) { return Ok(()); }
             cur.session = cur.session.or_else(|| session.clone());
             cur.url = cur.url.or_else(|| url.clone());
             write(install, &cur)
@@ -664,14 +317,8 @@ pub fn link(install: &Path, now: u128, observe: Linker) -> Res<()> {
 
 /// Onboard `Skipped:` line. Windows plain ssh cannot follow the nvm4w node symlink, so Claude reads not installed there.
 pub fn onboard_skipped(rt: &str, windows_ssh: bool) -> String {
-    let ssh = if windows_ssh {
-        "; over plain Windows ssh a symlinked install reads missing, so run onboard through a Scheduled Task first"
-    } else {
-        ""
-    };
-    format!(
-        "Skipped: {rt} not installed. Next, only to run {rt} here: install it for this user, then run onboard again{ssh}"
-    )
+    let ssh = if windows_ssh { "; over plain Windows ssh a symlinked install reads missing, so run onboard through a Scheduled Task first" } else { "" };
+    format!("Skipped: {rt} not installed. Next, only to run {rt} here: install it for this user, then run onboard again{ssh}")
 }
 
 /// Onboard `Access <scope>:` lines, refusals only (#1555): grants are per folder, so each line names the folder it judged (#1546).
@@ -683,50 +330,23 @@ pub fn onboard_access(scope: &str, es: &[crate::policy::Effective]) -> Vec<Strin
     }).collect()
 }
 
+
 /// What the tray shows (A1): one distinct kind per actionable state and the owner's next step.
 pub fn view(r: &Request) -> serde_json::Value {
     let reason = r.reason.as_deref().unwrap_or("");
-    let again = if r.root.is_some() {
-        "send the request again"
-    } else {
-        "run `taskq service setup`"
-    };
+    let again = if r.root.is_some() { "send the request again" } else { "run `taskq service setup`" };
     let a = crate::runtime::of(&r.runtime);
     let (name, login, sessions) = (a.client, a.login, a.sessions);
     let (kind, next) = match r.state.as_str() {
-        "pending" | "launching" => (
-            "starting",
-            "The host service is starting the session".into(),
-        ),
-        "cancelled" => (
-            "cancelled",
-            "Launch cancelled before native dispatch; continue with a new request".into(),
-        ),
-        "launched" if r.url.is_some() => (
-            "launched",
-            format!("Open the session to read and answer; archive it in {name} when done"),
-        ),
-        "launched" => (
-            "launched",
-            format!("Session started; find it in {sessions}, archive it when done"),
-        ),
-        "failed" if reason.starts_with(MISSING) => (
-            "runtime",
-            format!("Install {name} for the service user, then {again}"),
-        ),
-        "failed" if reason.starts_with(LOGIN) => (
-            "login",
-            format!("Run `{login}` as the service user, then {again}"),
-        ),
-        "failed" if reason.starts_with(ACCESS) => (
-            "access",
-            format!("Grant the access named here yourself (taskq never widens it), then {again}"),
-        ),
+        "pending" | "launching" => ("starting", "The host service is starting the session".into()),
+        "cancelled" => ("cancelled", "Launch cancelled before native dispatch; continue with a new request".into()),
+        "launched" if r.url.is_some() => ("launched", format!("Open the session to read and answer; archive it in {name} when done")),
+        "launched" => ("launched", format!("Session started; find it in {sessions}, archive it when done")),
+        "failed" if reason.starts_with(MISSING) => ("runtime", format!("Install {name} for the service user, then {again}")),
+        "failed" if reason.starts_with(LOGIN) => ("login", format!("Run `{login}` as the service user, then {again}")),
+        "failed" if reason.starts_with(ACCESS) => ("access", format!("Grant the access named here yourself (taskq never widens it), then {again}")),
         "failed" => ("failed", format!("Read the reason, fix it, then {again}")),
-        _ => (
-            "interrupted",
-            format!("Check {sessions} for a live session first; only then {again}"),
-        ),
+        _ => ("interrupted", format!("Check {sessions} for a live session first; only then {again}")),
     };
     serde_json::json!({"id": r.id, "state": r.state, "kind": kind, "next": next, "reason": r.reason, "url": r.url, "host": r.host, "runtime": r.runtime, "session": r.session})
 }
@@ -734,15 +354,7 @@ pub fn view(r: &Request) -> serde_json::Value {
 /// The tray row: the newest setup (`project` false) or project request, or unknown when none reads and some record is unreadable (R12).
 pub fn last(install: &Path, project: bool) -> serde_json::Value {
     match all(install) {
-        Ok((ok, bad)) => ok
-            .iter()
-            .rfind(|r| r.root.is_some() == project)
-            .map(view)
-            .or_else(|| {
-                bad.first()
-                    .map(|e| serde_json::json!({"kind": "unknown", "reason": e}))
-            })
-            .unwrap_or(serde_json::Value::Null),
+        Ok((ok, bad)) => ok.iter().rfind(|r| r.root.is_some() == project).map(view).or_else(|| bad.first().map(|e| serde_json::json!({"kind": "unknown", "reason": e}))).unwrap_or(serde_json::Value::Null),
         Err(e) => serde_json::json!({"kind": "unknown", "reason": e}),
     }
 }

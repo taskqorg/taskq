@@ -5,10 +5,8 @@
 module.exports = function launchOptions(o = {}) {
   const channel = process.env.PLAYWRIGHT_CHANNEL;
   if (channel && process.env.TASKQ_TASK) {
-    console.log(
-      `PLAYWRIGHT_CHANNEL=${channel} ignored in a taskq worker: chromium headless shell`,
-    );
-    return { ...o, headless: true };
+    console.log(`PLAYWRIGHT_CHANNEL=${channel} ignored in a taskq worker: chromium headless shell`);
+    return {...o, headless: true};
   }
-  return { ...o, headless: true, ...(channel && { channel }) };
+  return {...o, headless: true, ...(channel && {channel})};
 };

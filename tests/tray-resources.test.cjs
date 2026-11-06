@@ -1,288 +1,80 @@
 // Chain: native host projection -> shared editor -> immutable typed IPC -> exact saved receipt.
-const fs = require("node:fs"),
-  assert = require("node:assert/strict");
-const rc = require("../src/resource-controls.js");
-const fx = JSON.parse(
-  fs.readFileSync("tests/fixtures/resource-controls.json", "utf8"),
-);
-const modern = fx.cases.find((c) => c.name.startsWith("host commands"));
-const sent = [],
-  timers = new Map();
-let id = 0;
-const saved = {
-  limits: { claude: 2, codex: 3 },
-  load_gate: { enabled: true, cpu_max: 90, memory_min: 10 },
-};
-const project = {
-  root: "p",
-  name: "taskq",
-  cap_host: "mac",
-  cap_saved: saved,
-  resources: structuredClone(modern.groups[0]),
-};
-const context = {
-  operationController: true,
-  S: { projects: [project], font: 16, now: 1000 },
-  TaskqResources: rc,
-  esc: String,
-  send: (m) => sent.push(m),
-  fit: () => {},
-  menu: { scrollHeight: 400 },
-  setTimeout: (f, ms) => {
-    timers.set(++id, { f, ms });
-    return id;
-  },
-  clearTimeout: (i) => timers.delete(i),
-};
-require("./tray-harness.cjs").install(context);
-const call = (name, ...args) => context[name](...args),
-  plain = (x) => JSON.parse(JSON.stringify(x));
-(async () => {
-  const g = call("resourceGroup", project);
-  assert.equal(g.key, "p");
-  assert.deepEqual(plain(g.labels), { host: "mac", project: "taskq" });
-  assert.equal(call("resourceCapability", g).edit, true);
-  assert(
-    call("resourceCapability", g).note.includes("all registered projects"),
-  );
-  project.cap_saved = { error: "bad policy" };
-  assert.deepEqual(plain(call("resourceCapability", g)), {
-    edit: false,
-    reason: "Read-only here",
-    note: "Config: bad policy",
-  });
-  project.cap_saved = saved;
-  assert(
-    call("capacity", project).includes(
-      "Host limits · no maximum · Load gate: Ready",
-    ),
-  );
-  assert.equal(call("capacity", { ...project, resources: null }), "");
-  const target = project.resources.targets.find(
-    (t) => t.target.runtime_id === "codex",
-  );
-  const op = {
-    id: "op-1",
-    ops: [
-      {
-        target: target.target,
-        policy_schema: "taskq.host-capacity/1",
-        expected_revision: target.current_revision,
-        changes: { runtime_limit: 4 },
-      },
-    ],
-  };
-  const first = call("resourceSend", g, op);
-  const original = {
-    a: "capacity",
-    root: "p",
-    id: "op-1",
-    ops: plain(op.ops),
-    issued_at: 1000,
-    expires_at: 1300,
-  };
-  assert.deepEqual(plain(sent), [original]);
-  call("resourceReceipt", {
-    root: "other",
-    id: "op-1",
-    state: "saved",
-    saved_revision: "2".repeat(32),
-  });
-  call("resourceReceipt", {
-    root: "p",
-    id: "op-2",
-    state: "saved",
-    saved_revision: "2".repeat(32),
-  });
-  assert.equal(
-    timers.size,
-    1,
-    "foreign receipt leaves the original request pending",
-  );
-  [...timers.values()][0].f();
-  assert.equal((await first).state, "unknown");
-  project.cap_saved = { ...saved, limits: { claude: 9 } };
-  context.S.now = 1100;
-  op.ops[0].changes.runtime_limit = 7;
-  const again = call("resourceSend", g, op);
-  assert.deepEqual(
-    plain(sent[1]),
-    original,
-    "retry freezes body, revisions and expiry despite later edits",
-  );
-  call("resourceReceipt", {
-    root: "p",
-    id: "op-1",
-    state: "rejected",
-    reason: "config changed on disk",
-  });
-  assert.deepEqual(plain(await again), {
-    state: "rejected",
-    reason: "config changed on disk",
-  });
-  const staleOp = call("resourceSend", g, { ...op, id: "op-stale" });
-  call("resourceReceipt", {
-    root: "p",
-    id: "op-stale",
-    state: "rejected",
-    reason: "host policy changed; review current values before applying",
-  });
-  assert.deepEqual(plain(await staleOp), {
-    state: "rejected",
-    reason: "host policy changed; review current values before applying",
-  });
-  assert.deepEqual(
-    plain(sent.pop()),
-    { a: "refresh" },
-    "#2160 A3: superseded expected_revision rejection refreshes snapshot revisions",
-  );
+const fs=require('node:fs'),assert=require('node:assert/strict');
+const rc=require('../src/resource-controls.js');
+const fx=JSON.parse(fs.readFileSync('tests/fixtures/resource-controls.json','utf8'));
+const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
+const sent=[],timers=new Map();let id=0;
+const saved={limits:{claude:2,codex:3},load_gate:{enabled:true,cpu_max:90,memory_min:10}};
+const project={root:'p',name:'taskq',cap_host:'mac',cap_saved:saved,resources:structuredClone(modern.groups[0])};
+const context={operationController:true,S:{projects:[project],font:16,now:1000},TaskqResources:rc,esc:String,send:m=>sent.push(m),fit:()=>{},menu:{scrollHeight:400},
+  setTimeout:(f,ms)=>{timers.set(++id,{f,ms});return id;},clearTimeout:i=>timers.delete(i)};
+require('./tray-harness.cjs').install(context);
+const call=(name,...args)=>context[name](...args),plain=x=>JSON.parse(JSON.stringify(x));
+(async()=>{
+  const g=call('resourceGroup',project);
+  assert.equal(g.key,'p');assert.deepEqual(plain(g.labels),{host:'mac',project:'taskq'});
+  assert.equal(call('resourceCapability',g).edit,true);
+  assert(call('resourceCapability',g).note.includes('all registered projects'));
+  project.cap_saved={error:'bad policy'};
+  assert.deepEqual(plain(call('resourceCapability',g)),{edit:false,reason:'Read-only here',note:'Config: bad policy'});
+  project.cap_saved=saved;
+  assert(call('capacity',project).includes('Host limits · no maximum · Load gate: Ready'));
+  assert.equal(call('capacity',{...project,resources:null}),'');
+  const target=project.resources.targets.find(t=>t.target.runtime_id==='codex');
+  const op={id:'op-1',ops:[{target:target.target,policy_schema:'taskq.host-capacity/1',expected_revision:target.current_revision,changes:{runtime_limit:4}}]};
+  const first=call('resourceSend',g,op);
+  const original={a:'capacity',root:'p',id:'op-1',ops:plain(op.ops),issued_at:1000,expires_at:1300};
+  assert.deepEqual(plain(sent),[original]);
+  call('resourceReceipt',{root:'other',id:'op-1',state:'saved',saved_revision:'2'.repeat(32)});
+  call('resourceReceipt',{root:'p',id:'op-2',state:'saved',saved_revision:'2'.repeat(32)});
+  assert.equal(timers.size,1,'foreign receipt leaves the original request pending');
+  [...timers.values()][0].f();assert.equal((await first).state,'unknown');
+  project.cap_saved={...saved,limits:{claude:9}};context.S.now=1100;op.ops[0].changes.runtime_limit=7;
+  const again=call('resourceSend',g,op);
+  assert.deepEqual(plain(sent[1]),original,'retry freezes body, revisions and expiry despite later edits');
+  call('resourceReceipt',{root:'p',id:'op-1',state:'rejected',reason:'config changed on disk'});
+  assert.deepEqual(plain(await again),{state:'rejected',reason:'config changed on disk'});
+  const staleOp=call('resourceSend',g,{...op,id:'op-stale'});
+  call('resourceReceipt',{root:'p',id:'op-stale',state:'rejected',reason:'host policy changed; review current values before applying'});
+  assert.deepEqual(plain(await staleOp),{state:'rejected',reason:'host policy changed; review current values before applying'});
+  assert.deepEqual(plain(sent.pop()),{a:'refresh'},'#2160 A3: superseded expected_revision rejection refreshes snapshot revisions');
   sent.pop();
   {
-    const g0 = modern.groups[0],
-      g4 = modern.groups[4],
-      cap = { edit: true };
-    let n = 0;
-    let l = rc.step(
-      g0,
-      { draft: null, op: null, receipt: null },
-      cap,
-      { type: "open" },
-      () => "id-" + ++n,
-      1000,
-    ).local;
-    l = rc.step(
-      g0,
-      l,
-      cap,
-      { type: "input", key: "rt:codex", value: "4" },
-      () => "id-" + ++n,
-      1000,
-    ).local;
-    l = rc.step(g0, l, cap, { type: "review" }, () => "id-" + ++n, 1000).local;
-    const c1 = rc.step(
-      g0,
-      l,
-      cap,
-      { type: "confirm" },
-      () => "id-" + ++n,
-      1000,
-    );
-    l = c1.local;
-    assert.equal(c1.send.ops[0].expected_revision, "1".repeat(32));
-    l = rc.step(
-      g0,
-      l,
-      cap,
-      {
-        type: "receipt",
-        opId: c1.send.id,
-        state: "rejected",
-        reason: "host policy changed; review current values before applying",
-      },
-      () => "id-" + ++n,
-      1000,
-    ).local;
-    assert.equal(
-      rc.status(g4, l, cap, 1000),
-      "editing",
-      "#2160 A3: refreshed snapshot binds to draft for immediate review",
-    );
-    l = rc.step(g4, l, cap, { type: "review" }, () => "id-" + ++n, 1000).local;
-    assert.equal(rc.status(g4, l, cap, 1000), "review");
-    assert(rc.render(g4, l, cap, 1000).includes("Codex 5 → 4"));
-    const c2 = rc.step(
-      g4,
-      l,
-      cap,
-      { type: "confirm" },
-      () => "id-" + ++n,
-      1000,
-    );
-    assert.equal(
-      c2.send.ops[0].expected_revision,
-      "3".repeat(32),
-      "#2160 A3: confirmed retry after refresh uses superseded snapshot revision",
-    );
+    const g0=modern.groups[0],g4=modern.groups[4],cap={edit:true};let n=0;
+    let l=rc.step(g0,{draft:null,op:null,receipt:null},cap,{type:'open'},()=>'id-'+ ++n,1000).local;
+    l=rc.step(g0,l,cap,{type:'input',key:'rt:codex',value:'4'},()=>'id-'+ ++n,1000).local;
+    l=rc.step(g0,l,cap,{type:'review'},()=>'id-'+ ++n,1000).local;
+    const c1=rc.step(g0,l,cap,{type:'confirm'},()=>'id-'+ ++n,1000);l=c1.local;
+    assert.equal(c1.send.ops[0].expected_revision,'1'.repeat(32));
+    l=rc.step(g0,l,cap,{type:'receipt',opId:c1.send.id,state:'rejected',reason:'host policy changed; review current values before applying'},()=>'id-'+ ++n,1000).local;
+    assert.equal(rc.status(g4,l,cap,1000),'editing','#2160 A3: refreshed snapshot binds to draft for immediate review');
+    l=rc.step(g4,l,cap,{type:'review'},()=>'id-'+ ++n,1000).local;
+    assert.equal(rc.status(g4,l,cap,1000),'review');
+    assert(rc.render(g4,l,cap,1000).includes('Codex 5 → 4'));
+    const c2=rc.step(g4,l,cap,{type:'confirm'},()=>'id-'+ ++n,1000);
+    assert.equal(c2.send.ops[0].expected_revision,'3'.repeat(32),'#2160 A3: confirmed retry after refresh uses superseded snapshot revision');
   }
-  const done = call("resourceSend", g, { ...op, id: "op-3" });
-  call("resourceReceipt", {
-    root: "p",
-    id: "op-3",
-    state: "saved",
-    saved_revision: "2".repeat(32),
-  });
-  assert.deepEqual(plain(await done), {
-    state: "saved",
-    saved_revision: "2".repeat(32),
-  });
-  const malformed = call("resourceSend", g, { ...op, id: "op-4" });
-  call("resourceReceipt", {
-    root: "p",
-    id: "op-4",
-    text: "Saved: equal values",
-  });
-  assert.equal(
-    (await malformed).state,
-    "unknown",
-    "untyped legacy receipt cannot acknowledge host settings",
-  );
-  const before = sent.length;
-  assert.equal(
-    (
-      await call("resourceSend", g, {
-        id: "legacy",
-        ops: [{ ...op.ops[0], policy_schema: "taskq.capacity/1" }],
-      })
-    ).state,
-    "rejected",
-  );
-  assert.equal(
-    sent.length,
-    before,
-    "legacy project edits do not enter the host bridge",
-  );
-  assert(call("workEntry", "p").includes('data-root="p"'));
-  assert(call("workEntry").includes('data-a="work"'));
-  assert(
-    call("workPage").includes('data-resources="p"') &&
-      !call("workPage").includes("data-work"),
-    "one host editor cannot pretend project selection narrows its scope",
-  );
-  project.resources = fx.cases[0].groups[0];
-  assert.equal(
-    call("resourceCapability", call("resourceGroup", project)).edit,
-    false,
-    "legacy projections remain read-only in native tray",
-  );
-  console.log(
-    "PASS typed host IPC, original expiry/revision replay, exact receipt, stale/legacy refusal and global host scope",
-  );
-})().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+  const done=call('resourceSend',g,{...op,id:'op-3'});
+  call('resourceReceipt',{root:'p',id:'op-3',state:'saved',saved_revision:'2'.repeat(32)});
+  assert.deepEqual(plain(await done),{state:'saved',saved_revision:'2'.repeat(32)});
+  const malformed=call('resourceSend',g,{...op,id:'op-4'});
+  call('resourceReceipt',{root:'p',id:'op-4',text:'Saved: equal values'});
+  assert.equal((await malformed).state,'unknown','untyped legacy receipt cannot acknowledge host settings');
+  const before=sent.length;
+  assert.equal((await call('resourceSend',g,{id:'legacy',ops:[{...op.ops[0],policy_schema:'taskq.capacity/1'}]})).state,'rejected');
+  assert.equal(sent.length,before,'legacy project edits do not enter the host bridge');
+  assert(call('workEntry','p').includes('data-root="p"'));assert(call('workEntry').includes('data-a="work"'));
+  assert(call('workPage').includes('data-resources="p"')&&!call('workPage').includes('data-work'),'one host editor cannot pretend project selection narrows its scope');
+  project.resources=fx.cases[0].groups[0];
+  assert.equal(call('resourceCapability',call('resourceGroup',project)).edit,false,'legacy projections remain read-only in native tray');
+  console.log('PASS typed host IPC, original expiry/revision replay, exact receipt, stale/legacy refusal and global host scope');
+})().catch(e=>{console.error(e);process.exit(1);});
 
 // #2137 A1: every Balancing entry has the same four sections; the Home editor must not bypass them.
-for (const workspace of [false, true]) {
-  const c = {
-    ...context,
-    operationController: workspace,
-    S: { ...context.S, host: "mac", projects: [project] },
-  };
-  require("./tray-harness.cjs").install(c);
-  const text = c.workPage(project.root),
-    headings = [
-      "Task routing",
-      "Runtime availability",
-      "Host balancing",
-      "Project policies",
-    ];
-  let pos = -1;
-  for (const heading of headings) {
-    const next = text.indexOf(heading);
-    assert(next > pos, `Home Balancing ${workspace}: ${heading}`);
-    pos = next;
-  }
-  assert.match(text, /run-\* pins stay strict/);
-  assert.match(text, /Quota holds never change configured limits/);
+for(const workspace of [false,true]){
+ const c={...context,operationController:workspace,S:{...context.S,host:'mac',projects:[project]}};
+ require('./tray-harness.cjs').install(c);
+ const text=c.workPage(project.root),headings=['Task routing','Runtime availability','Host balancing','Project policies'];
+ let pos=-1;for(const heading of headings){const next=text.indexOf(heading);assert(next>pos,`Home Balancing ${workspace}: ${heading}`);pos=next;}
+ assert.match(text,/run-\* pins stay strict/);assert.match(text,/Quota holds never change configured limits/);
 }

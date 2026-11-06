@@ -43,9 +43,7 @@ pub fn load(install: &Path) -> Result<Policy, String> {
     };
     let p: Policy = serde_json::from_str(&text).map_err(|e| format!("{FILE}: {e}"))?;
     for g in &p.grants {
-        if !MODES.contains(&g.mode.as_str())
-            || !crate::service::RUNTIMES.contains(&g.runtime.as_str())
-        {
+        if !MODES.contains(&g.mode.as_str()) || !crate::service::RUNTIMES.contains(&g.runtime.as_str()) {
             return Err(format!("{FILE}: unknown grant {} {}", g.runtime, g.mode));
         }
     }
@@ -62,12 +60,7 @@ pub struct Host<'a> {
 
 impl Host<'_> {
     pub fn here<'a>(install: &'a Path, root: &'a Path, home: &'a Path) -> Host<'a> {
-        Host {
-            os: std::env::consts::OS,
-            install,
-            root,
-            home,
-        }
+        Host { os: std::env::consts::OS, install, root, home }
     }
 }
 
@@ -100,10 +93,7 @@ impl Effective {
             Some(r) => format!("refused: {r}"),
             None => format!("{} · {}", self.mode, self.enforcement),
         };
-        format!(
-            "{}: requested {} · grant {} · effective {eff}",
-            self.runtime, self.requested, self.grant
-        )
+        format!("{}: requested {} · grant {} · effective {eff}", self.runtime, self.requested, self.grant)
     }
 }
 
@@ -127,9 +117,7 @@ fn codex_unsandboxed(args: &[String]) -> Vec<String> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "-s" | "--sandbox" => {
-                it.next();
-            }
+            "-s" | "--sandbox" => { it.next(); }
             "-c" | "--config" => match it.next() {
                 Some(v) if v.starts_with("sandbox") => {}
                 Some(v) => out.extend([a.to_string(), v.clone()]),
@@ -144,13 +132,7 @@ fn codex_unsandboxed(args: &[String]) -> Vec<String> {
 }
 
 fn sb(p: &Path) -> String {
-    format!(
-        "\"{}\"",
-        p.display()
-            .to_string()
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-    )
+    format!("\"{}\"", p.display().to_string().replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Reserved lookup names identify a profile without filesystem objects or changes to file access.
@@ -163,112 +145,50 @@ const IDENTITY_ROOT: &str = "com.taskq.seatbelt";
 pub fn profile(install: &Path, writable: Option<&[PathBuf]>, home: &Path) -> String {
     let mut s = String::from("(version 1)\n(allow default)\n");
     if let Some(w) = writable {
-        let mut any: Vec<String> = w
-            .iter()
-            .map(|p| format!("(subpath {})", sb(&canon(p))))
-            .collect();
+        let mut any: Vec<String> = w.iter().map(|p| format!("(subpath {})", sb(&canon(p)))).collect();
         // Claude rewrites its home config through sibling temp files
-        let esc: String = canon(home)
-            .join(crate::runtime::CLAUDE_CONFIG)
-            .display()
-            .to_string()
-            .chars()
-            .flat_map(|c| {
-                if c.is_alphanumeric() || c == '/' {
-                    vec![c]
-                } else {
-                    vec!['\\', c]
-                }
-            })
-            .collect();
+        let esc: String = canon(home).join(crate::runtime::CLAUDE_CONFIG).display().to_string().chars().flat_map(|c| if c.is_alphanumeric() || c == '/' { vec![c] } else { vec!['\\', c] }).collect();
         any.push(format!("(regex #\"^{esc}\")"));
-        s += &format!(
-            "(deny file-write* (require-not (require-any {})))\n",
-            any.join(" ")
-        );
+        s += &format!("(deny file-write* (require-not (require-any {})))\n", any.join(" "));
     }
     s += &format!("(deny file-write* (subpath {}))\n", sb(&canon(install)));
     // ponytail: every absolute PATH entry; a PATH holding temp or the root itself would close it too
-    for d in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-        .filter(|d| d.is_absolute() && d.is_dir())
-    {
+    for d in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).filter(|d| d.is_absolute() && d.is_dir()) {
         s += &format!("(deny file-write* (subpath {}))\n", sb(&canon(&d)));
     }
     // the service probes the runtimes unwrapped: close their real package dirs too (an npm `bin/` shim's package)
-    for b in crate::runtime::clis()
-        .map(|a| crate::runtime::which(a.bin))
-        .filter(|b| b.is_absolute())
-        .map(|b| canon(&b))
-    {
+    for b in crate::runtime::clis().map(|a| crate::runtime::which(a.bin)).filter(|b| b.is_absolute()).map(|b| canon(&b)) {
         if let Some(d) = b.parent() {
-            s += &format!(
-                "(deny file-write* (subpath {}))\n",
-                sb(if d.ends_with("bin") {
-                    d.parent().unwrap_or(d)
-                } else {
-                    d
-                })
-            );
+            s += &format!("(deny file-write* (subpath {}))\n", sb(if d.ends_with("bin") { d.parent().unwrap_or(d) } else { d }));
         }
     }
     s += "(deny file-write* (regex #\"/\\.gemini/(config/hooks\\.json|antigravity-cli/settings\\.json)$\"))\n";
     s += "(deny file-write* (regex #\"/\\.codex/(taskq-accounts/[^/]+/)?[^/]*\\.toml$\"))\n";
     // Lookup markers need no filesystem objects or path resolution.
     let h = crate::runtime::usage::sha256(s.as_bytes());
-    s += &format!(
-        "(allow mach-lookup (global-name \"{IDENTITY_ROOT}.{h}.allow\"))\n(deny mach-lookup (global-name \"{IDENTITY_ROOT}.{h}.deny\"))\n"
-    );
+    s += &format!("(allow mach-lookup (global-name \"{IDENTITY_ROOT}.{h}.allow\"))\n(deny mach-lookup (global-name \"{IDENTITY_ROOT}.{h}.deny\"))\n");
     s
 }
 
 /// Lookup names a process under `profile` alone may and may not query ([one sandbox per daemon](docs/design/worker-permissions.md#one-sandbox-per-daemon)).
 pub fn identity(profile: &str) -> Option<(String, String)> {
     let (_, tail) = profile.rsplit_once(IDENTITY_ROOT)?;
-    let h = tail
-        .strip_prefix('.')?
-        .get(..64)
-        .filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))?;
-    Some((
-        format!("{IDENTITY_ROOT}.{h}.allow"),
-        format!("{IDENTITY_ROOT}.{h}.deny"),
-    ))
+    let h = tail.strip_prefix('.')?.get(..64).filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))?;
+    Some((format!("{IDENTITY_ROOT}.{h}.allow"), format!("{IDENTITY_ROOT}.{h}.deny")))
 }
 
 /// Writable paths of a preset: runtime homes, OS temp, devices and user build caches; Workspace adds the root,
 /// Restricted only `<root>/.taskq` (the CLI's poke and error log).
 fn writable(mode: &str, h: &Host) -> Vec<PathBuf> {
     // ponytail: fixed cache list; named per-policy cache grants (worker permissions P4) when a project needs another
-    let mut w: Vec<PathBuf> = [
-        ".claude",
-        ".codex",
-        ".cargo",
-        ".rustup",
-        ".npm",
-        ".cache",
-        "Library/Caches",
-    ]
-    .iter()
-    .map(|d| h.home.join(d))
-    .collect();
+    let mut w: Vec<PathBuf> = [".claude", ".codex", ".cargo", ".rustup", ".npm", ".cache", "Library/Caches"].iter().map(|d| h.home.join(d)).collect();
     w.extend(["/private/tmp", "/private/var/folders", "/dev"].map(PathBuf::from));
-    w.push(if mode == "workspace" {
-        h.root.to_path_buf()
-    } else {
-        h.root.join(".taskq")
-    });
+    w.push(if mode == "workspace" { h.root.to_path_buf() } else { h.root.join(".taskq") });
     w
 }
 
 /// What Git in a linked worktree writes under the common dir. config, hooks and info are absent on purpose.
-const GIT_WRITES: [&str; 7] = [
-    "objects",
-    "refs",
-    "logs",
-    "worktrees",
-    "packed-refs",
-    "packed-refs.lock",
-    "packed-refs.new",
-];
+const GIT_WRITES: [&str; 7] = ["objects", "refs", "logs", "worktrees", "packed-refs", "packed-refs.lock", "packed-refs.new"];
 
 /// The writable Git paths of `<root>/.git`, only when it is a real directory and none of them is a link: Codex resolves
 /// a writable root, so a link a worker plants in an earlier turn would open its target.
@@ -276,82 +196,33 @@ fn git_roots(root: &Path) -> Option<Vec<PathBuf>> {
     let g = canon(root).join(".git");
     let unlinked = |p: &Path| std::fs::symlink_metadata(p).map_or(true, |m| !m.is_symlink());
     let roots: Vec<PathBuf> = GIT_WRITES.iter().map(|n| g.join(n)).collect();
-    (std::fs::symlink_metadata(&g).is_ok_and(|m| m.is_dir()) && roots.iter().all(|p| unlinked(p)))
-        .then_some(roots)
+    (std::fs::symlink_metadata(&g).is_ok_and(|m| m.is_dir()) && roots.iter().all(|p| unlinked(p))).then_some(roots)
 }
 
 /// `codex-git` (#2449): why this Mac Codex launch cannot write the project's Git metadata; `None` when it can, or when
 /// no such launch runs: other OS, a refused launch, Full, taskq's own legacy profile or a root without `.git`.
 pub fn git_metadata_gap(e: &Effective, h: &Host) -> Option<String> {
     let a = crate::runtime::of(&e.runtime);
-    if h.os != "macos"
-        || !a.has(Cap::SandboxArgs)
-        || !a.has(Cap::Cli)
-        || e.refused.is_some()
-        || e.mode == "full"
-        || (e.mode == "legacy" && e.profile.is_some())
-    {
+    if h.os != "macos" || !a.has(Cap::SandboxArgs) || !a.has(Cap::Cli) || e.refused.is_some() || e.mode == "full" || (e.mode == "legacy" && e.profile.is_some()) {
         return None;
     }
     let g = canon(h.root).join(".git");
     std::fs::symlink_metadata(&g).ok()?;
-    let rooted = e.mode == "workspace"
-        || e.codex.as_ref().is_some_and(|c| {
-            c.iter()
-                .any(|x| x.starts_with("sandbox_workspace_write.writable_roots="))
-        });
-    (git_roots(h.root).is_none() || !rooted).then(|| {
-        format!(
-            "Mac {} {} launch cannot write {}; Git fails in its linked worktrees",
-            e.runtime,
-            e.mode,
-            g.display()
-        )
-    })
+    let rooted = e.mode == "workspace" || e.codex.as_ref().is_some_and(|c| c.iter().any(|x| x.starts_with("sandbox_workspace_write.writable_roots=")));
+    (git_roots(h.root).is_none() || !rooted).then(|| format!("Mac {} {} launch cannot write {}; Git fails in its linked worktrees", e.runtime, e.mode, g.display()))
 }
 
 /// [`git_metadata_gap`] of every launch of this project whose CLI is installed.
 pub fn git_metadata_gaps(install: &Path, root: &Path, codex: &[String]) -> Option<String> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    report(install, root, "", codex)
-        .iter()
-        .filter(|e| crate::runtime::missing_cli(&e.runtime).is_none())
-        .find_map(|e| git_metadata_gap(e, &Host::here(install, root, &home)))
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    report(install, root, "", codex).iter().filter(|e| crate::runtime::missing_cli(&e.runtime).is_none()).find_map(|e| git_metadata_gap(e, &Host::here(install, root, &home)))
 }
 
 /// The effective access of `rt` in this project (§ 8 Access). A project grant replaces the host default for its root.
-pub fn resolve(
-    policy: &Result<Policy, String>,
-    h: &Host,
-    rt: &str,
-    permission_mode: &str,
-    codex: &[String],
-) -> Effective {
+pub fn resolve(policy: &Result<Policy, String>, h: &Host, rt: &str, permission_mode: &str, codex: &[String]) -> Effective {
     let a = crate::runtime::of(rt);
-    let requested = if a.has(Cap::Grant) {
-        "native runtime defaults; operator grant required".into()
-    } else if !a.has(Cap::SandboxArgs) {
-        format!("--permission-mode {permission_mode}")
-    } else if codex.is_empty() {
-        "codex defaults".into()
-    } else {
-        codex.join(" ")
-    };
-    let mut e = Effective {
-        runtime: rt.into(),
-        requested,
-        grant: "none".into(),
-        mode: "legacy".into(),
-        enforcement: String::new(),
-        profile: None,
-        linux: false,
-        windows: false,
-        claude: None,
-        codex: None,
-        refused: None,
-    };
+    let requested = if a.has(Cap::Grant) { "native runtime defaults; operator grant required".into() } else if !a.has(Cap::SandboxArgs) { format!("--permission-mode {permission_mode}") } else if codex.is_empty() { "codex defaults".into() } else { codex.join(" ") };
+    let mut e = Effective { runtime: rt.into(), requested, grant: "none".into(), mode: "legacy".into(), enforcement: String::new(), profile: None, linux: false, windows: false, claude: None, codex: None, refused: None };
     let p = match policy {
         Ok(p) => p,
         Err(err) => {
@@ -361,62 +232,32 @@ pub fn resolve(
         }
     };
     let root = canon(h.root).display().to_string();
-    let g = p
-        .grants
-        .iter()
-        .find(|g| g.runtime == rt && g.project.as_deref() == Some(root.as_str()))
-        .or_else(|| {
-            p.grants
-                .iter()
-                .find(|g| g.runtime == rt && g.project.is_none())
-        });
+    let g = p.grants.iter().find(|g| g.runtime == rt && g.project.as_deref() == Some(root.as_str())).or_else(|| p.grants.iter().find(|g| g.runtime == rt && g.project.is_none()));
     let mac = h.os == "macos" && !a.has(Cap::AppTurn); // an app turn is no child of the service: nothing to wrap
     match g {
         None => {
             // legacy flags run unchanged, never as a grant; only the policy store is closed to the worker
             e.grant = "none (taskq.json is a request)".into();
-            let own = a
-                .has(Cap::SandboxArgs)
-                .then(|| codex_sandbox(codex))
-                .flatten()
-                .filter(|s| *s != "danger-full-access");
+            let own = a.has(Cap::SandboxArgs).then(|| codex_sandbox(codex)).flatten().filter(|s| *s != "danger-full-access");
             if a.has(Cap::Grant) || !mac {
-                e.refused = Some(format!(
-                    "no operator grant and no policy store protection for {rt} on {}; grant a preset",
-                    h.os
-                ));
+                e.refused = Some(format!("no operator grant and no policy store protection for {rt} on {}; grant a preset", h.os));
             } else if let Some(s) = own {
                 // codex's own Seatbelt writes cwd (the root), temp and added dirs: only one sandbox choice, a model,
                 // network access and added dirs that do not hold `<install>` may pass
-                let picks = codex
-                    .iter()
-                    .filter(|a| {
-                        ["-s", "--sandbox", "--full-auto"].contains(&a.as_str())
-                            || a.starts_with("--sandbox=")
-                    })
-                    .count();
+                let picks = codex.iter().filter(|a| ["-s", "--sandbox", "--full-auto"].contains(&a.as_str()) || a.starts_with("--sandbox=")).count();
                 let mut ok = picks == 1 && !canon(h.install).starts_with(canon(h.root));
                 let mut it = codex.iter();
                 while let Some(a) = it.next() {
                     ok &= match a.as_str() {
-                        "-s" | "--sandbox" | "-m" | "--model" => {
-                            it.next().is_some_and(|v| !v.starts_with('-'))
-                        }
-                        "--add-dir" => it.next().is_some_and(|v| {
-                            Path::new(v).is_absolute()
-                                && !canon(h.install).starts_with(canon(Path::new(v)))
-                        }),
-                        "-c" | "--config" => it.next().is_some_and(|v| {
-                            v.starts_with("sandbox_workspace_write.network_access=")
-                        }),
+                        "-s" | "--sandbox" | "-m" | "--model" => it.next().is_some_and(|v| !v.starts_with('-')),
+                        "--add-dir" => it.next().is_some_and(|v| Path::new(v).is_absolute() && !canon(h.install).starts_with(canon(Path::new(v)))),
+                        "-c" | "--config" => it.next().is_some_and(|v| v.starts_with("sandbox_workspace_write.network_access=")),
                         "--full-auto" => true,
                         a => a.starts_with("--sandbox=") || a.starts_with("--model="),
                     };
                 }
                 if !ok {
-                    e.refused = Some(
-                        "codex arguments or root may widen its sandbox to the policy store".into(),
-                    );
+                    e.refused = Some("codex arguments or root may widen its sandbox to the policy store".into());
                 }
                 e.enforcement = format!("codex sandbox {s}, policy store not writable");
                 // #2449: its workspace-write keeps `<cwd>/.git` read-only; deeper writable roots reopen only what Git in a
@@ -424,23 +265,9 @@ pub fn resolve(
                 // ponytail: check-then-launch races a worker of this project; no outer Seatbelt can nest around Codex.
                 if let Some(roots) = git_roots(h.root).filter(|_| s == "workspace-write" && ok) {
                     let mut args = codex.to_vec();
-                    args.extend([
-                        "-c".into(),
-                        format!(
-                            "sandbox_workspace_write.writable_roots={}",
-                            json!(
-                                roots
-                                    .iter()
-                                    .map(|g| g.to_string_lossy())
-                                    .collect::<Vec<_>>()
-                            )
-                        ),
-                    ]);
+                    args.extend(["-c".into(), format!("sandbox_workspace_write.writable_roots={}", json!(roots.iter().map(|g| g.to_string_lossy()).collect::<Vec<_>>()))]);
                     e.codex = Some(args);
-                    e.enforcement = format!(
-                        "codex sandbox {s} plus Git metadata of {}, policy store not writable",
-                        h.root.display()
-                    );
+                    e.enforcement = format!("codex sandbox {s} plus Git metadata of {}, policy store not writable", h.root.display());
                 }
             } else {
                 e.enforcement = "taskq seatbelt, policy store not writable".into();
@@ -448,69 +275,31 @@ pub fn resolve(
             }
         }
         Some(g) => {
-            e.grant = format!(
-                "{} ({}) rev {} by {}",
-                g.mode,
-                if g.project.is_some() {
-                    "project"
-                } else {
-                    "host"
-                },
-                p.revision,
-                g.by
-            );
+            e.grant = format!("{} ({}) rev {} by {}", g.mode, if g.project.is_some() { "project" } else { "host" }, p.revision, g.by);
             e.mode = g.mode.clone();
             if g.mode == "full" {
-                e.enforcement = if a.has(Cap::Grant) {
-                    "runtime approval prompts off, uncontained by TaskQ"
-                } else {
-                    "runtime sandbox off, uncontained; the same user can edit the policy"
-                }
-                .into();
+                e.enforcement = if a.has(Cap::Grant) { "runtime approval prompts off, uncontained by TaskQ" } else { "runtime sandbox off, uncontained; the same user can edit the policy" }.into();
                 if a.has(Cap::RemoteControl) {
                     e.claude = Some("bypassPermissions".into());
                 } else if a.has(Cap::SandboxArgs) {
                     e.codex = Some(codex_unsandboxed(codex));
                 }
-            } else if h.os == "linux"
-                && a.has(Cap::SandboxArgs)
-                && a.has(Cap::Cli)
-                && g.project.is_some()
-            {
+            } else if h.os == "linux" && a.has(Cap::SandboxArgs) && a.has(Cap::Cli) && g.project.is_some() {
                 match linux_codex(&g.mode, h.root, codex) {
-                    Ok((mode, args)) => {
-                        e.mode = mode;
-                        e.codex = Some(args);
-                        e.linux = true;
-                        e.enforcement =
-                            "taskq Linux mount/PID sandbox plus native Codex sandbox".into();
-                    }
+                    Ok((mode, args)) => { e.mode = mode; e.codex = Some(args); e.linux = true; e.enforcement = "taskq Linux mount/PID sandbox plus native Codex sandbox".into(); }
                     Err(r) => e.refused = Some(r),
                 }
-            } else if h.os == "windows"
-                && a.has(Cap::SandboxArgs)
-                && a.has(Cap::Cli)
-                && g.project.is_some()
-            {
+            } else if h.os == "windows" && a.has(Cap::SandboxArgs) && a.has(Cap::Cli) && g.project.is_some() {
                 match windows_codex(&g.mode, h, codex) {
-                    Ok(args) => {
-                        e.codex = Some(args);
-                        e.windows = true;
-                        e.enforcement = "taskq native Windows token; writes workspace, runtime home and private temp".into();
-                    }
+                    Ok(args) => { e.codex = Some(args); e.windows = true; e.enforcement = "taskq native Windows token; writes workspace, runtime home and private temp".into(); }
                     Err(r) => e.refused = Some(r),
                 }
             } else if !mac {
-                e.refused = Some(format!(
-                    "{} enforcement unknown for {rt} on {}",
-                    g.mode, h.os
-                ));
+                e.refused = Some(format!("{} enforcement unknown for {rt} on {}", g.mode, h.os));
             } else {
                 e.enforcement = format!("taskq seatbelt, writes only to the {} set", g.mode);
                 let mut paths = writable(&g.mode, h);
-                if a.has(Cap::Grant) {
-                    paths.extend([h.home.join(a.home), h.home.join(".gemini/antigravity-cli")]);
-                }
+                if a.has(Cap::Grant) { paths.extend([h.home.join(a.home), h.home.join(".gemini/antigravity-cli")]); }
                 e.profile = Some(profile(h.install, Some(&paths), h.home));
                 if a.has(Cap::SandboxArgs) {
                     e.codex = Some(codex_unsandboxed(codex));
@@ -526,31 +315,19 @@ fn linux_codex(mode: &str, root: &Path, args: &[String]) -> Result<(String, Vec<
     #[cfg(target_os = "linux")]
     crate::linux_sandbox::ready(root)?;
     #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (mode, root, args);
-        return Err("linux sandbox must be resolved on Linux".into());
-    }
+    { let _ = (mode, root, args); return Err("linux sandbox must be resolved on Linux".into()); }
     #[allow(unreachable_code)]
     bounded_codex(mode, args, "linux sandbox")
 }
 
 fn windows_codex(mode: &str, h: &Host, args: &[String]) -> Result<Vec<String>, String> {
     #[cfg(not(windows))]
-    {
-        let _ = (mode, h, args);
-        return Err("Windows sandbox must be resolved on Windows".into());
-    }
+    { let _ = (mode, h, args); return Err("Windows sandbox must be resolved on Windows".into()); }
     #[cfg(windows)]
     {
         let (effective, mut kept) = bounded_codex(mode, args, "Windows sandbox")?;
-        if effective != "workspace"
-            || !kept
-                .iter()
-                .any(|a| a == "sandbox_workspace_write.network_access=true")
-            || kept
-                .iter()
-                .any(|a| a == "sandbox_workspace_write.network_access=false")
-        {
+        if effective != "workspace" || !kept.iter().any(|a| a == "sandbox_workspace_write.network_access=true")
+            || kept.iter().any(|a| a == "sandbox_workspace_write.network_access=false") {
             return Err("Windows native candidate requires Workspace and an explicit network-enabled request; narrowing unqualified".into());
         }
         crate::windows_sandbox::ready(h.root, h.install)?;
@@ -559,11 +336,7 @@ fn windows_codex(mode: &str, h: &Host, args: &[String]) -> Result<Vec<String>, S
     }
 }
 
-fn bounded_codex(
-    mode: &str,
-    args: &[String],
-    label: &str,
-) -> Result<(String, Vec<String>), String> {
+fn bounded_codex(mode: &str, args: &[String], label: &str) -> Result<(String, Vec<String>), String> {
     let mut mode = mode.to_string();
     let mut kept = Vec::new();
     let mut it = args.iter();
@@ -571,123 +344,56 @@ fn bounded_codex(
         match a.as_str() {
             "-s" | "--sandbox" => match it.next().map(String::as_str) {
                 Some("read-only") => mode = "restricted".into(),
-                Some("workspace-write" | "danger-full-access") => {}
+                Some("workspace-write" | "danger-full-access") => {},
                 _ => return Err(format!("{label}: unknown sandbox request")),
             },
-            "-m" | "--model" => kept.extend([
-                a.clone(),
-                it.next()
-                    .filter(|v| !v.starts_with('-'))
-                    .ok_or_else(|| format!("{label}: missing model"))?
-                    .clone(),
-            ]),
+            "-m" | "--model" => kept.extend([a.clone(), it.next().filter(|v| !v.starts_with('-')).ok_or_else(|| format!("{label}: missing model"))?.clone()]),
             "-c" | "--config" => {
-                let v = it
-                    .next()
-                    .ok_or_else(|| format!("{label}: missing config"))?;
-                if !(v.starts_with("model_reasoning_effort=")
-                    || [
-                        "sandbox_workspace_write.network_access=true",
-                        "sandbox_workspace_write.network_access=false",
-                    ]
-                    .contains(&v.as_str()))
-                {
-                    return Err(format!("{label}: unsupported config request {v}"));
-                }
+                let v = it.next().ok_or_else(|| format!("{label}: missing config"))?;
+                if !(v.starts_with("model_reasoning_effort=") || ["sandbox_workspace_write.network_access=true", "sandbox_workspace_write.network_access=false"].contains(&v.as_str())) { return Err(format!("{label}: unsupported config request {v}")); }
                 kept.extend([a.clone(), v.clone()]);
             }
             _ => return Err(format!("{label}: unsupported argument {a}")),
         }
     }
-    let mut out = vec![
-        "-s".into(),
-        if mode == "restricted" {
-            "read-only"
-        } else {
-            "workspace-write"
-        }
-        .into(),
-        "-c".into(),
-        "approval_policy=never".into(),
-        "-c".into(),
-        "sandbox_workspace_write.writable_roots=[]".into(),
-    ];
+    let mut out = vec!["-s".into(), if mode == "restricted" { "read-only" } else { "workspace-write" }.into(), "-c".into(), "approval_policy=never".into(), "-c".into(), "sandbox_workspace_write.writable_roots=[]".into()];
     out.extend(kept);
     Ok((mode, out))
 }
 
 /// Every runtime taskq starts here, for `service permissions` and `status.json` `policy`.
-pub fn report(
-    install: &Path,
-    root: &Path,
-    permission_mode: &str,
-    codex: &[String],
-) -> Vec<Effective> {
+pub fn report(install: &Path, root: &Path, permission_mode: &str, codex: &[String]) -> Vec<Effective> {
     let home = crate::platform::user_home().unwrap_or_default();
     let p = load(install);
-    crate::runtime::agent_runtimes()
-        .iter()
-        .map(|rt| {
-            resolve(
-                &p,
-                &Host::here(install, root, &home),
-                rt,
-                permission_mode,
-                codex,
-            )
-        })
-        .collect()
+    crate::runtime::agent_runtimes().iter().map(|rt| resolve(&p, &Host::here(install, root, &home), rt, permission_mode, codex)).collect()
 }
 
 /// § 8 Access rollback floor: with grants, or an unreadable store, the launcher must not roll back below [`FLOOR`]. A
 /// `previous` older than it becomes `version`, so a failing release stays down (no admission) for the operator.
 pub fn pin_rollback(install: &Path, version: &str) -> Option<String> {
-    if matches!(load(install), Ok(p) if p.grants.is_empty()) || coreq::update::newer(FLOOR, version)
-    {
+    if matches!(load(install), Ok(p) if p.grants.is_empty()) || coreq::update::newer(FLOOR, version) {
         return None;
     }
-    let prev = std::fs::read_to_string(install.join("previous"))
-        .ok()?
-        .trim()
-        .to_string();
+    let prev = std::fs::read_to_string(install.join("previous")).ok()?.trim().to_string();
     if prev.is_empty() || !coreq::update::newer(FLOOR, &prev) {
         return None;
     }
     crate::platform::write_atomic(&install.join("previous"), version).ok()?;
-    Some(format!(
-        "rollback floor: previous {prev} ignores worker grants; previous is now {version}"
-    ))
+    Some(format!("rollback floor: previous {prev} ignores worker grants; previous is now {version}"))
 }
 
 /// Add, replace or remove (`mode` none) one grant (the caller refuses workers); the revision moves by one; written atomically and read back.
-pub fn grant(
-    install: &Path,
-    rt: &str,
-    mode: &str,
-    project: Option<&Path>,
-    by: &str,
-    at: u64,
-) -> Result<Policy, String> {
+pub fn grant(install: &Path, rt: &str, mode: &str, project: Option<&Path>, by: &str, at: u64) -> Result<Policy, String> {
     // Serialize revocation with the protected app-server's final authority check and native input.
     let _authority = crate::resources::acquire(install, crate::resources::WAIT)?;
     if !crate::service::RUNTIMES.contains(&rt) || !(MODES.contains(&mode) || mode == "none") {
-        return Err(format!(
-            "unknown runtime or mode: {rt} {mode}; modes: {}, none",
-            MODES.join(", ")
-        ));
+        return Err(format!("unknown runtime or mode: {rt} {mode}; modes: {}, none", MODES.join(", ")));
     }
     let mut p = load(install)?; // a corrupt store stays for the operator, never overwritten
     let project = project.map(|r| canon(r).display().to_string());
-    p.grants
-        .retain(|g| !(g.runtime == rt && g.project == project));
+    p.grants.retain(|g| !(g.runtime == rt && g.project == project));
     if mode != "none" {
-        p.grants.push(Grant {
-            runtime: rt.into(),
-            mode: mode.into(),
-            project,
-            by: by.into(),
-            at,
-        });
+        p.grants.push(Grant { runtime: rt.into(), mode: mode.into(), project, by: by.into(), at });
     }
     p.revision += 1;
     let text = serde_json::to_string_pretty(&p).map_err(|e| e.to_string())? + "\n";

@@ -6,13 +6,7 @@ use coreq::enroll::{self, Backoff, Delivery, Https};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{
-    collections::BTreeMap,
-    fs,
-    io::{Read, Write},
-    path::{Path, PathBuf},
-    thread::JoinHandle,
-};
+use std::{collections::BTreeMap, fs, io::{Read, Write}, path::{Path, PathBuf}, thread::JoinHandle};
 
 pub const SCHEMA: &str = "taskq-board/1";
 /// The `taskq.resources/1` projection as a DashQ record (shared-resource-controls.md#project-overlay); DashQ names
@@ -34,29 +28,19 @@ pub fn destination(url: &str) -> Res<String> {
     if !u.starts_with("https://") || u.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(format!("not an https URL: {url}"));
     }
-    Ok(if u.ends_with("/machine") {
-        u.into()
-    } else {
-        format!("{u}/machine")
-    })
+    Ok(if u.ends_with("/machine") { u.into() } else { format!("{u}/machine") })
 }
 
 /// R6 3: the DashQ progress page of an off-host session, as a prefix the task number completes (DashQ's board task
 /// row anchor); `None` without an active connection.
 pub fn progress_page(install: &Path, repo: &str) -> Option<String> {
     let dest = active(install).ok()??["destination"].as_str()?.to_string();
-    Some(format!(
-        "{}/projects#board-{}-task-",
-        dest.trim_end_matches("/machine"),
-        repo.replace('/', "%2F")
-    ))
+    Some(format!("{}/projects#board-{}-task-", dest.trim_end_matches("/machine"), repo.replace('/', "%2F")))
 }
 
 /// The active connection, read without creating state (coreq's first read writes a new file).
 pub fn active(install: &Path) -> Res<Option<Value>> {
-    if state(install)?.is_none() {
-        return Ok(None);
-    }
+    if state(install)?.is_none() { return Ok(None) }
     enroll::active(&dir(install))
 }
 
@@ -70,87 +54,41 @@ pub fn state(install: &Path) -> Res<Option<Value>> {
         Err(e) => return Err(format!("connection: unknown (connection state: {e})")),
     };
     let text = |v: &Value, k: &str| v[k].as_str().is_some_and(|t| !t.is_empty());
-    let conn = |v: &Value, keys: &[&str]| {
-        v.is_null() || (v.is_object() && keys.iter().all(|k| text(v, k)))
-    };
-    let valid = s.is_object()
-        && text(&s, "installation")
-        && conn(&s["pending"], &["destination"])
-        && conn(&s["pending"]["staged"], &["destination", "credential"])
+    let conn = |v: &Value, keys: &[&str]| v.is_null() || (v.is_object() && keys.iter().all(|k| text(v, k)));
+    let valid = s.is_object() && text(&s, "installation")
+        && conn(&s["pending"], &["destination"]) && conn(&s["pending"]["staged"], &["destination", "credential"])
         && conn(&s["active"], &["destination", "credential"])
-        && s["revoke"].as_array().is_some_and(|r| {
-            r.iter()
-                .all(|v| v.is_object() && conn(v, &["destination", "credential"]))
-        });
+        && s["revoke"].as_array().is_some_and(|r| r.iter().all(|v| v.is_object() && conn(v, &["destination", "credential"])));
     if valid { Ok(Some(s)) } else { Err(bad()) }
 }
 
 /// `taskq enroll`: browser or headless approval of this board's scope, then the first snapshot until DashQ
 /// projects it. Capabilities are none: the grant can neither answer tasks nor run commands.
 /// `telemetry` adds the opt-in [`crate::telemetry_sync::SCHEMA`]; a changed schema list is a new approval.
-pub fn pair(
-    install: &Path,
-    url: &str,
-    host: &str,
-    board: &BoardScope,
-    browser: bool,
-    telemetry: bool,
-) -> Res<Value> {
+pub fn pair(install: &Path, url: &str, host: &str, board: &BoardScope, browser: bool, telemetry: bool) -> Res<Value> {
     let dest = destination(url)?;
     let id = installation_id(install)?;
     let value = board.value();
-    let schemas: &[&str] = if telemetry {
-        &[SCHEMA, RESOURCES, crate::telemetry_sync::SCHEMA]
-    } else {
-        &[SCHEMA, RESOURCES]
-    };
-    let req = enroll::Request {
-        installation: Some(&id),
-        product: "taskq",
-        host_label: host,
-        schemas,
-        scope: Some((SCHEMA, &value)),
-        capabilities: &[],
-    };
-    enroll::pair(
-        &dir(install),
-        &dest,
-        &req,
-        &mut resources::Fenced::new(install, Https { browser }),
-    )
+    let schemas: &[&str] = if telemetry { &[SCHEMA, RESOURCES, crate::telemetry_sync::SCHEMA] } else { &[SCHEMA, RESOURCES] };
+    let req = enroll::Request { installation: Some(&id), product: "taskq", host_label: host, schemas, scope: Some((SCHEMA, &value)), capabilities: &[] };
+    enroll::pair(&dir(install), &dest, &req, &mut resources::Fenced::new(install, Https { browser }))
 }
 
 /// Sends `record` once and asks for its receipt until DashQ projects it (or `tries` run out).
 pub fn first_receipt(install: &Path, record: &Value, tries: u32) -> Res<&'static str> {
     let d = dir(install);
     let mut w = resources::Fenced::new(install, Https { browser: false });
-    match enroll::deliver(
-        &d,
-        std::slice::from_ref(record),
-        &mut Backoff::default(),
-        &mut w,
-    ) {
+    match enroll::deliver(&d, std::slice::from_ref(record), &mut Backoff::default(), &mut w) {
         Ok(r) if r[0]["state"] == "accepted" => {}
-        Ok(r) => {
-            return Err(format!(
-                "first snapshot rejected: {}",
-                r[0]["reason"].as_str().unwrap_or("unknown")
-            ));
-        }
-        Err(Delivery::Retry(_)) => {
-            return Err("first snapshot not delivered; the service retries".into());
-        }
+        Ok(r) => return Err(format!("first snapshot rejected: {}", r[0]["reason"].as_str().unwrap_or("unknown"))),
+        Err(Delivery::Retry(_)) => return Err("first snapshot not delivered; the service retries".into()),
         Err(Delivery::Stopped(e)) => return Err(format!("first snapshot not delivered: {e}")),
     }
     let mut state = "accepted";
     for i in 0..tries {
         state = enroll::receipt(&d, record, &mut w)?;
-        if state == "projected" {
-            break;
-        }
-        if i + 1 < tries {
-            std::thread::sleep(std::time::Duration::from_secs(2))
-        }
+        if state == "projected" { break }
+        if i + 1 < tries { std::thread::sleep(std::time::Duration::from_secs(2)) }
     }
     Ok(state)
 }
@@ -163,81 +101,48 @@ pub fn disconnect(install: &Path) -> Res<Option<String>> {
 }
 
 pub(crate) fn disconnect_with(install: &Path, w: &mut dyn enroll::Wire) -> Res<Option<String>> {
-    let Some(s) = state(install)? else {
-        return Ok(None);
-    };
+    let Some(s) = state(install)? else { return Ok(None) };
     let (active, pending) = (s["active"].is_object(), s["pending"].is_object());
     let queued = |e: &String| e.ends_with("revoke pending");
     if !active && !pending {
-        if s["revoke"].as_array().is_none_or(Vec::is_empty) {
-            return Ok(None);
-        }
-        enroll::retry_revokes(&dir(install), w)
-            .or_else(|e| if queued(&e) { Ok(()) } else { Err(e) })?;
+        if s["revoke"].as_array().is_none_or(Vec::is_empty) { return Ok(None) }
+        enroll::retry_revokes(&dir(install), w).or_else(|e| if queued(&e) { Ok(()) } else { Err(e) })?;
         let left = state(install)?.map_or(0, |s| s["revoke"].as_array().map_or(0, Vec::len));
-        return Ok(Some(if left > 0 {
-            format!("connection: none; {left} revoke pending, the service retries it")
-        } else {
-            "connection: none; revoke confirmed".into()
-        }));
+        return Ok(Some(if left > 0 { format!("connection: none; {left} revoke pending, the service retries it") }
+            else { "connection: none; revoke confirmed".into() }));
     }
     if pending {
         // a staged credential DashQ already granted is queued for revoke by coreq
         enroll::cancel(&dir(install), w).or_else(|e| if queued(&e) { Ok(()) } else { Err(e) })?;
     }
-    resources::locked(install, || {
-        enroll::disconnect(&dir(install), w).or_else(|e| if queued(&e) { Ok(()) } else { Err(e) })
-    })?;
+    resources::locked(install, || enroll::disconnect(&dir(install), w).or_else(|e| if queued(&e) { Ok(()) } else { Err(e) }))?;
     let left = state(install)?.map_or(0, |s| s["revoke"].as_array().map_or(0, Vec::len));
     let mut out = vec![];
-    if pending {
-        out.push("pairing cancelled".to_string())
-    }
-    if active {
-        out.push("sending stopped".into())
-    }
-    out.push(if left > 0 {
-        format!("{left} revoke pending, the service retries it")
-    } else if active
-        || s["pending"]["staged"].is_object()
-        || s["revoke"].as_array().is_some_and(|r| !r.is_empty())
-    {
-        "revoke confirmed".into()
-    } else {
-        "nothing granted to revoke".into()
-    });
+    if pending { out.push("pairing cancelled".to_string()) }
+    if active { out.push("sending stopped".into()) }
+    out.push(if left > 0 { format!("{left} revoke pending, the service retries it") }
+        else if active || s["pending"]["staged"].is_object() || s["revoke"].as_array().is_some_and(|r| !r.is_empty()) { "revoke confirmed".into() }
+        else { "nothing granted to revoke".into() });
     Ok(Some(format!("disconnected: {}", out.join("; "))))
 }
 
 /// Whether the active connection approved this board; no connection or an unreadable scope is no.
 pub fn approves(install: &Path, kind: &str, host: &str, repo: &str) -> bool {
-    let Ok(board) = BoardScope::new(kind, host, repo) else {
-        return false;
-    };
-    active(install)
-        .ok()
-        .flatten()
-        .and_then(|a| approved(&a))
-        .is_some_and(|b| b == board)
+    let Ok(board) = BoardScope::new(kind, host, repo) else { return false };
+    active(install).ok().flatten().and_then(|a| approved(&a)).is_some_and(|b| b == board)
 }
 
 /// The approved board of an active connection; `None` for a scope this version cannot read.
 pub fn approved(active: &Value) -> Option<BoardScope> {
-    let v = active["scope"]["value"]
-        .as_str()
-        .filter(|_| active["scope"]["name"] == SCHEMA)?;
+    let v = active["scope"]["value"].as_str().filter(|_| active["scope"]["name"] == SCHEMA)?;
     let (kind, rest) = v.split_once(':')?;
     let (host, repo) = rest.split_once('/')?;
-    BoardScope::new(kind, host, repo)
-        .ok()
-        .filter(|b| b.value() == v)
+    BoardScope::new(kind, host, repo).ok().filter(|b| b.value() == v)
 }
 
 /// Whether the service holding `snap` is the host's one DashQ speaker: its board is the connection's approved one.
 pub fn speaks(active: &Value, snap: Option<&Snapshot>) -> bool {
-    snap.is_some_and(|s| {
-        approved(active).is_some_and(|b| BoardScope::snapshot(s).is_ok_and(|x| x == b))
-    })
+    snap.is_some_and(|s| approved(active).is_some_and(|b| BoardScope::snapshot(s).is_ok_and(|x| x == b)))
 }
 
 /// The record of one snapshot: payload without `observed` names its content, so equal content dedupes by digest.
@@ -250,8 +155,7 @@ pub fn record(install: &Path, s: &Snapshot, active: &Value, local: &Local) -> Re
 fn payload(s: &Snapshot, active: &Value, local: &Local) -> Res<(String, u64, Value)> {
     let board = approved(active).ok_or("connection has no readable board scope")?;
     let id = active["installation"].as_str().unwrap_or_default();
-    let mut payload =
-        serde_json::to_value(project(s, id, &[board], local)?).map_err(|e| e.to_string())?;
+    let mut payload = serde_json::to_value(project(s, id, &[board], local)?).map_err(|e| e.to_string())?;
     let observed = payload.as_object_mut().unwrap().remove("observed");
     let digest = enroll::digest(&payload);
     payload["observed"] = observed.unwrap_or_default();
@@ -260,45 +164,24 @@ fn payload(s: &Snapshot, active: &Value, local: &Local) -> Res<(String, u64, Val
 
 /// coreq loads (and on Windows re-protects through `whoami` and `icacls`) the connection state to bind the grant.
 fn stamp(install: &Path, digest: &str, at: u64, payload: Value) -> Res<Value> {
-    enroll::stamp(
-        &dir(install),
-        SCHEMA,
-        &format!("{at}-{}", &digest[..16]),
-        at,
-        payload,
-    )
+    enroll::stamp(&dir(install), SCHEMA, &format!("{at}-{}", &digest[..16]), at, payload)
 }
 
 /// The resources record, only when the grant lists [`RESOURCES`] (a connection paired before it needs `taskq enroll`
 /// again). DashQ's metadata allowlist nests objects at most four deep, so each blocker drops its `scope`: the
 /// projection always scopes it to its own target. Payload `observed_at` keeps the status readback time.
 pub fn resources_record(install: &Path, active: &Value, now: u64) -> Res<(String, Value)> {
-    if !active["schemas"]
-        .as_array()
-        .is_some_and(|a| a.iter().any(|s| s == RESOURCES))
-    {
+    if !active["schemas"].as_array().is_some_and(|a| a.iter().any(|s| s == RESOURCES)) {
         return Err(format!("grant lacks {RESOURCES}; rerun taskq enroll"));
     }
     let mut p = resources::projection(install, now, false)?;
-    for b in p["targets"]
-        .as_array_mut()
-        .into_iter()
-        .flatten()
-        .filter_map(|t| t["blockers"].as_array_mut())
-        .flatten()
-    {
+    for b in p["targets"].as_array_mut().into_iter().flatten().filter_map(|t| t["blockers"].as_array_mut()).flatten() {
         b.as_object_mut().map(|o| o.remove("scope"));
     }
     let observed = p.as_object_mut().unwrap().remove("observed_at");
     let digest = enroll::digest(&p);
     p["observed_at"] = observed.unwrap_or_default();
-    let r = enroll::stamp(
-        &dir(install),
-        RESOURCES,
-        &format!("{now}-{}", &digest[..16]),
-        now,
-        p,
-    )?;
+    let r = enroll::stamp(&dir(install), RESOURCES, &format!("{now}-{}", &digest[..16]), now, p)?;
     Ok((digest, r))
 }
 
@@ -320,41 +203,19 @@ pub struct Sender {
 
 impl Sender {
     /// One step per service pass; returns a log line when the outcome changes.
-    pub fn tick(
-        &mut self,
-        install: &Path,
-        snap: Option<&Snapshot>,
-        local: &Local,
-        now: u64,
-    ) -> Option<String> {
+    pub fn tick(&mut self, install: &Path, snap: Option<&Snapshot>, local: &Local, now: u64) -> Option<String> {
         let before = self.outcome.clone();
         if self.job.as_ref().is_some_and(|j| j.1.is_finished()) {
             let (started, job) = self.job.take().unwrap();
-            let (digest, r) = job
-                .join()
-                .map(|(b, d, r)| {
-                    self.backoff = b;
-                    (d, r)
-                })
-                .unwrap_or_else(|_| (String::new(), Err(Delivery::Retry(60))));
+            let (digest, r) = job.join().map(|(b, d, r)| { self.backoff = b; (d, r) }).unwrap_or_else(|_| (String::new(), Err(Delivery::Retry(60))));
             match r {
                 Ok(None) => {}
                 Ok(Some(state)) => {
-                    if digest.is_empty() {
-                        self.wait_until = now + RESEND
-                    } else {
-                        self.sent = Some((digest, started))
-                    }
+                    if digest.is_empty() { self.wait_until = now + RESEND } else { self.sent = Some((digest, started)) }
                     self.outcome = Some(state);
                 }
-                Err(Delivery::Retry(secs)) => {
-                    self.wait_until = now + secs;
-                    self.outcome = Some(format!("retry in {secs} s"))
-                }
-                Err(Delivery::Stopped(e)) => {
-                    self.wait_until = now + RESEND;
-                    self.outcome = Some(format!("stopped: {e}"))
-                }
+                Err(Delivery::Retry(secs)) => { self.wait_until = now + secs; self.outcome = Some(format!("retry in {secs} s")) }
+                Err(Delivery::Stopped(e)) => { self.wait_until = now + RESEND; self.outcome = Some(format!("stopped: {e}")) }
             }
         }
         if self.job.is_none() && now >= self.wait_until {
@@ -363,118 +224,60 @@ impl Sender {
                 self.wait_until = now + RESEND;
             }
         }
-        (self.outcome != before).then(|| {
-            format!(
-                "dashq connection: {}",
-                self.outcome.as_deref().unwrap_or("none")
-            )
-        })
+        (self.outcome != before).then(|| format!("dashq connection: {}", self.outcome.as_deref().unwrap_or("none")))
     }
 
-    fn start(
-        &mut self,
-        install: &Path,
-        snap: Option<&Snapshot>,
-        local: &Local,
-        now: u64,
-    ) -> Result<(), String> {
+    fn start(&mut self, install: &Path, snap: Option<&Snapshot>, local: &Local, now: u64) -> Result<(), String> {
         let d = dir(install);
         // #1328: the pass reads the state file only; every coreq load (Windows: `whoami` and `icacls` per load)
         // runs on the delivery thread
         let st = state(install)?;
-        let Some(a) = st
-            .as_ref()
-            .map(|s| s["active"].clone())
-            .filter(Value::is_object)
-        else {
-            if self.sent.take().is_some() {
-                self.outcome = Some("disconnected".into())
-            }
+        let Some(a) = st.as_ref().map(|s| s["active"].clone()).filter(Value::is_object) else {
+            if self.sent.take().is_some() { self.outcome = Some("disconnected".into()) }
             // disconnected offline: queued revokes retry until DashQ confirms them
             if st.is_some_and(|s| s["revoke"].as_array().is_some_and(|r| !r.is_empty())) {
                 let mut backoff = std::mem::take(&mut self.backoff);
-                self.job = Some((
-                    now,
-                    std::thread::spawn(move || {
-                        let r = enroll::retry_revokes(&d, &mut Https { browser: false });
-                        let wait = backoff.next(None);
-                        (
-                            backoff,
-                            String::new(),
-                            r.map(|_| Some("revoke confirmed".into()))
-                                .map_err(|_| Delivery::Retry(wait)),
-                        )
-                    }),
-                ));
+                self.job = Some((now, std::thread::spawn(move || {
+                    let r = enroll::retry_revokes(&d, &mut Https { browser: false });
+                    let wait = backoff.next(None);
+                    (backoff, String::new(), r.map(|_| Some("revoke confirmed".into())).map_err(|_| Delivery::Retry(wait)))
+                })));
             }
             return Ok(());
         };
         // another project's board, or no board read yet: nothing to send from here
-        let Some(s) = snap.filter(|s| speaks(&a, Some(s))) else {
-            return Ok(());
-        };
+        let Some(s) = snap.filter(|s| speaks(&a, Some(s))) else { return Ok(()) };
         let (board, at, payload) = payload(s, &a, local).map_err(|e| format!("not sent: {e}"))?;
         let mut backoff = std::mem::take(&mut self.backoff);
         let (install, sent) = (install.to_path_buf(), self.sent.clone());
-        self.job = Some((
-            now,
-            std::thread::spawn(move || {
-                let rec = match stamp(&install, &board, at, payload) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        return (
-                            backoff,
-                            String::new(),
-                            Err(Delivery::Stopped(format!("not sent: {e}"))),
-                        );
-                    }
+        self.job = Some((now, std::thread::spawn(move || {
+            let rec = match stamp(&install, &board, at, payload) {
+                Ok(r) => r,
+                Err(e) => return (backoff, String::new(), Err(Delivery::Stopped(format!("not sent: {e}")))),
+            };
+            let (mut digest, mut recs) = (board, vec![rec]);
+            // the board record goes alone when the resources one cannot be built; the outcome names why
+            let skipped = match resources_record(&install, &a, now) {
+                Ok((d, r)) => { digest = format!("{digest}:{d}"); recs.push(r); None }
+                Err(e) => Some(format!("resources not sent: {e}")),
+            };
+            if sent.is_some_and(|(d, at)| d == digest && now < at + RESEND) { return (backoff, digest, Ok(None)) }
+            let r = enroll::deliver(&d, &recs, &mut backoff, &mut resources::Fenced::new(&install, Https { browser: false })).map(|r| {
+                let state = |x: &Value| match x["state"].as_str() {
+                    Some("accepted") => "accepted".to_string(),
+                    _ => format!("rejected: {}", x["reason"].as_str().unwrap_or("unknown")),
                 };
-                let (mut digest, mut recs) = (board, vec![rec]);
-                // the board record goes alone when the resources one cannot be built; the outcome names why
-                let skipped = match resources_record(&install, &a, now) {
-                    Ok((d, r)) => {
-                        digest = format!("{digest}:{d}");
-                        recs.push(r);
-                        None
-                    }
-                    Err(e) => Some(format!("resources not sent: {e}")),
-                };
-                if sent.is_some_and(|(d, at)| d == digest && now < at + RESEND) {
-                    return (backoff, digest, Ok(None));
-                }
-                let r = enroll::deliver(
-                    &d,
-                    &recs,
-                    &mut backoff,
-                    &mut resources::Fenced::new(&install, Https { browser: false }),
-                )
-                .map(|r| {
-                    let state = |x: &Value| match x["state"].as_str() {
-                        Some("accepted") => "accepted".to_string(),
-                        _ => format!("rejected: {}", x["reason"].as_str().unwrap_or("unknown")),
-                    };
-                    let res = r
-                        .get(1)
-                        .map(|x| format!("resources {}", state(x)))
-                        .or(skipped);
-                    Some(
-                        std::iter::once(state(&r[0]))
-                            .chain(res)
-                            .collect::<Vec<_>>()
-                            .join("; "),
-                    )
-                });
-                (backoff, digest, r)
-            }),
-        ));
+                let res = r.get(1).map(|x| format!("resources {}", state(x))).or(skipped);
+                Some(std::iter::once(state(&r[0])).chain(res).collect::<Vec<_>>().join("; "))
+            });
+            (backoff, digest, r)
+        })));
         Ok(())
     }
 }
 
 /// Create once, outside release folders; a corrupt identity never silently becomes a new installation.
-pub fn installation_id(install: &Path) -> Res<String> {
-    random_file(install, "installation-id")
-}
+pub fn installation_id(install: &Path) -> Res<String> { random_file(install, "installation-id") }
 
 /// 32 random bytes as hex in `<install>/<name>`, created once and kept when corrupt: the installation id and the host
 /// link key (#1832).
@@ -487,40 +290,28 @@ pub fn random_file(install: &Path, name: &str) -> Res<String> {
             Ok(bytes)
         });
         match bytes {
-            Ok(b)
-                if b.len() == 64
-                    && b.iter()
-                        .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c)) =>
-            {
-                Ok(Some(String::from_utf8(b).unwrap()))
-            }
+            Ok(b) if b.len() == 64 && b.iter().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c)) =>
+                Ok(Some(String::from_utf8(b).unwrap())),
             Ok(_) => Err(format!("{name}: corrupt; file kept")),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(format!("{name}: unreadable ({e}); file kept")),
         }
     };
-    if let Some(id) = read()? {
-        return Ok(id);
-    }
+    if let Some(id) = read()? { return Ok(id) }
     fs::create_dir_all(install).map_err(|e| e.to_string())?;
     let mut bytes = [0; 32];
-    SystemRandom::new()
-        .fill(&mut bytes)
-        .map_err(|_| format!("{name}: randomness unavailable"))?;
+    SystemRandom::new().fill(&mut bytes).map_err(|_| format!("{name}: randomness unavailable"))?;
     let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     let temp = install.join(format!("{name}-{id}.tmp"));
     let mut opts = fs::OpenOptions::new();
     opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
+    #[cfg(unix)] {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
     let publish = || -> Res<()> {
         let mut file = opts.open(&temp).map_err(|e| e.to_string())?;
-        file.write_all(id.as_bytes())
-            .and_then(|_| file.sync_all())
-            .map_err(|e| e.to_string())?;
+        file.write_all(id.as_bytes()).and_then(|_| file.sync_all()).map_err(|e| e.to_string())?;
         drop(file);
         // A hard link publishes complete bytes without overwriting another project's winner.
         match fs::hard_link(&temp, &path) {
@@ -549,47 +340,21 @@ impl BoardScope {
     }
 
     pub fn new(kind: &str, host: &str, repo: &str) -> Res<Self> {
-        let safe = |s: &str| {
-            !s.is_empty()
-                && s.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
-                && s != "."
-                && s != ".."
-        };
-        if !matches!(kind, "github" | "gitlab")
-            || !safe(host)
-            || repo.split('/').count() < 2
-            || !repo.split('/').all(safe)
-        {
+        let safe = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b)) && s != "." && s != "..";
+        if !matches!(kind, "github" | "gitlab") || !safe(host) || repo.split('/').count() < 2 || !repo.split('/').all(safe) {
             return Err("invalid board scope".into());
         }
-        Ok(Self {
-            kind: kind.into(),
-            host: host.to_ascii_lowercase(),
-            repo: if kind == "github" {
-                repo.to_ascii_lowercase()
-            } else {
-                repo.into()
-            },
-        })
+        Ok(Self { kind: kind.into(), host: host.to_ascii_lowercase(), repo: if kind == "github" { repo.to_ascii_lowercase() } else { repo.into() } })
     }
 
     fn snapshot(s: &Snapshot) -> Res<Self> {
-        let field = |k: &str| {
-            s.board[k]
-                .as_str()
-                .ok_or("missing board identity".to_string())
-        };
+        let field = |k: &str| s.board[k].as_str().ok_or("missing board identity".to_string());
         Self::new(field("kind")?, field("host")?, field("repo")?)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-struct Choice {
-    number: usize,
-    label: String,
-    recommended: bool,
-}
+struct Choice { number: usize, label: String, recommended: bool }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct TaskObservation {
@@ -633,30 +398,13 @@ pub struct Local {
 /// line text, the log, a path or a session id (#1617).
 pub fn progress(s: &Snapshot, root: &Path, host: &str) -> BTreeMap<u64, Value> {
     let mut out = BTreeMap::new();
-    for r in s
-        .tasks
-        .iter()
-        .take(MAX_TASKS)
-        .filter(|r| matches!(r.task.state.name(), "doing" | "review"))
-    {
-        let (Some(a), Some(session)) = (r.task.attempt, r.task.session.as_deref()) else {
-            continue;
-        };
-        if session.rsplit(' ').next() != Some(host) {
-            continue;
-        }
+    for r in s.tasks.iter().take(MAX_TASKS).filter(|r| matches!(r.task.state.name(), "doing" | "review")) {
+        let (Some(a), Some(session)) = (r.task.attempt, r.task.session.as_deref()) else { continue };
+        if session.rsplit(' ').next() != Some(host) { continue }
         let runtime = session.split(':').next().unwrap_or_default();
-        let log =
-            crate::runtime::attempt_log(root, r.task.role.as_deref().unwrap_or_default(), r.n, a);
-        let at = fs::metadata(&log)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs());
-        out.insert(
-            r.n,
-            json!({"host": host, "runtime": runtime, "stage": r.task.state.name(), "at": at}),
-        );
+        let log = crate::runtime::attempt_log(root, r.task.role.as_deref().unwrap_or_default(), r.n, a);
+        let at = fs::metadata(&log).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+        out.insert(r.n, json!({"host": host, "runtime": runtime, "stage": r.task.state.name(), "at": at}));
     }
     out
 }
@@ -668,21 +416,12 @@ const LOGIN_VALID: u64 = 600;
 /// `online` and `queue` come from the board read and cover every heartbeat host; `login` only this host's probe.
 fn observations(s: &Snapshot, l: &Local) -> Vec<Value> {
     let until = s.observed.saturating_add(l.ttl as i64);
-    let mut names: Vec<&str> = s
-        .hosts
-        .iter()
-        .map(|h| h.name.as_str())
-        .chain([l.host.as_str()])
-        .collect();
+    let mut names: Vec<&str> = s.hosts.iter().map(|h| h.name.as_str()).chain([l.host.as_str()]).collect();
     names.sort();
     names.dedup();
     let mut out = Vec::new();
     for name in names {
-        let beat = s
-            .hosts
-            .iter()
-            .filter(|h| h.name == name)
-            .max_by_key(|h| h.updated);
+        let beat = s.hosts.iter().filter(|h| h.name == name).max_by_key(|h| h.updated);
         let age = beat.map(|h| s.observed - h.updated);
         let service = beat.and_then(|h| h.service.clone());
         let (state, reason) = match age {
@@ -696,27 +435,13 @@ fn observations(s: &Snapshot, l: &Local) -> Vec<Value> {
             "heartbeat": beat.map(|h| h.updated), "valid_until": until, "complete": state != "unknown" && reason.is_none(), "reason": reason}));
         // Assigned queue: live attempts whose session names this host, and ready or waiting tasks labelled for it.
         let rows = || s.tasks.iter().take(MAX_TASKS);
-        let running = rows()
-            .filter(|r| {
-                r.task.attempt.is_some()
-                    && matches!(r.task.state.name(), "doing" | "review")
-                    && r.task.session.as_deref().and_then(|x| x.rsplit(' ').next()) == Some(name)
-            })
-            .count();
-        let queued = rows()
-            .filter(|r| {
-                matches!(r.task.state.name(), "ready" | "waiting")
-                    && r.labels
-                        .iter()
-                        .any(|x| x.strip_prefix("host-") == Some(name))
-            })
-            .count();
+        let running = rows().filter(|r| r.task.attempt.is_some() && matches!(r.task.state.name(), "doing" | "review")
+            && r.task.session.as_deref().and_then(|x| x.rsplit(' ').next()) == Some(name)).count();
+        let queued = rows().filter(|r| matches!(r.task.state.name(), "ready" | "waiting")
+            && r.labels.iter().any(|x| x.strip_prefix("host-") == Some(name))).count();
         let (state, reason) = match (&s.reason, s.tasks.len() > MAX_TASKS) {
             (Some(_), _) => ("unknown", Some("source incomplete")),
-            (None, true) => (
-                if running > 0 { "busy" } else { "idle" },
-                Some("task limit"),
-            ),
+            (None, true) => (if running > 0 { "busy" } else { "idle" }, Some("task limit")),
             _ => (if running > 0 { "busy" } else { "idle" }, None),
         };
         let known = state != "unknown";
@@ -728,96 +453,41 @@ fn observations(s: &Snapshot, l: &Local) -> Vec<Value> {
     let mut o = json!({"host": l.host, "kind": "login", "producer": l.service, "observed": at, "valid_until": at.map(|t| t + LOGIN_VALID)});
     let mut seen = Vec::new();
     for r in l.agents["rows"].as_array().into_iter().flatten() {
-        let Some(rt) = r["runtime"].as_str() else {
-            continue;
-        };
-        let v = match r["login"].as_str() {
-            Some(x @ ("logged in" | "not logged in" | "not installed")) => x,
-            _ => "unknown",
-        };
+        let Some(rt) = r["runtime"].as_str() else { continue };
+        let v = match r["login"].as_str() { Some(x @ ("logged in" | "not logged in" | "not installed")) => x, _ => "unknown" };
         o[rt] = json!(v);
         seen.push(v);
     }
     let unknown = at.is_none() || seen.is_empty() || seen.contains(&"unknown");
-    let known: Vec<_> = seen
-        .iter()
-        .filter(|v| **v != "unknown" && **v != "not installed")
-        .collect();
-    o["state"] = json!(if at.is_none() || known.is_empty() && unknown {
-        "unknown"
-    } else if known.iter().any(|v| **v == "not logged in") || known.is_empty() {
-        "not logged in"
-    } else {
-        "logged in"
-    });
+    let known: Vec<_> = seen.iter().filter(|v| **v != "unknown" && **v != "not installed").collect();
+    o["state"] = json!(if at.is_none() || known.is_empty() && unknown { "unknown" }
+        else if known.iter().any(|v| **v == "not logged in") || known.is_empty() { "not logged in" } else { "logged in" });
     o["complete"] = json!(!unknown);
-    o["reason"] = json!(if at.is_none() {
-        Some("no probe yet")
-    } else if unknown {
-        Some("runtime login unknown")
-    } else {
-        None
-    });
+    o["reason"] = json!(if at.is_none() { Some("no probe yet") } else if unknown { Some("runtime login unknown") } else { None });
     out.push(o);
     out
 }
 
 /// The scope is the approved board list, never inferred from host names or projects on disk.
-pub fn project(
-    s: &Snapshot,
-    installation: &str,
-    approved: &[BoardScope],
-    local: &Local,
-) -> Res<Observation> {
+pub fn project(s: &Snapshot, installation: &str, approved: &[BoardScope], local: &Local) -> Res<Observation> {
     let board = BoardScope::snapshot(s)?;
-    if !approved.contains(&board) {
-        return Err("board outside approved scope".into());
-    }
-    if installation.len() != 64
-        || !installation
-            .bytes()
-            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-    {
+    if !approved.contains(&board) { return Err("board outside approved scope".into()) }
+    if installation.len() != 64 || !installation.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
         return Err("invalid installation identity".into());
     }
     let over = s.tasks.len() > MAX_TASKS;
     Ok(Observation {
-        schema: 1,
-        installation: installation.into(),
-        board,
-        observed: s.observed,
+        schema: 1, installation: installation.into(), board, observed: s.observed,
         complete: s.reason.is_none() && !over,
-        reason: if s.reason.is_some() {
-            Some("source incomplete")
-        } else if over {
-            Some("task limit")
-        } else {
-            None
-        },
+        reason: if s.reason.is_some() { Some("source incomplete") } else if over { Some("task limit") } else { None },
         totals: s.reason.is_none().then(|| s.totals()),
-        tasks: s
-            .tasks
-            .iter()
-            .take(MAX_TASKS)
-            .map(|r| TaskObservation {
-                n: r.n,
-                state: r.task.state.name().into(),
-                revision: r.revision,
-                choices: core::options(r.task.card.as_deref().unwrap_or_default())
-                    .into_iter()
-                    .map(|(number, label, recommended)| Choice {
-                        number,
-                        label,
-                        recommended,
-                    })
-                    .collect(),
-                session: local.progress.get(&r.n).cloned(),
-                admission: r
-                    .admission
-                    .as_ref()
-                    .map(crate::snapshot::Admission::projection),
-            })
-            .collect(),
+        tasks: s.tasks.iter().take(MAX_TASKS).map(|r| TaskObservation {
+            n: r.n, state: r.task.state.name().into(), revision: r.revision,
+            choices: core::options(r.task.card.as_deref().unwrap_or_default()).into_iter()
+                .map(|(number, label, recommended)| Choice { number, label, recommended }).collect(),
+            session: local.progress.get(&r.n).cloned(),
+            admission: r.admission.as_ref().map(crate::snapshot::Admission::projection),
+        }).collect(),
         observations: observations(s, local),
     })
 }

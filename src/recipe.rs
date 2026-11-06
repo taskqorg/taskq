@@ -1,7 +1,7 @@
 //! Recipes (taskq.md § 7, § 9 `recipes`): a reusable task list whose run adds ordinary held tasks. Identity is the
 //! name and its `version`; both go into each task's op id, so a rerun of the same run returns the first receipts.
 
-use crate::{Res, cli::task_cmd::NewTask};
+use crate::{cli::task_cmd::NewTask, Res};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -50,20 +50,13 @@ fn word(what: &str, s: &str) -> Res<String> {
 pub fn load(raw: &Value, name: &str, run: &str, goal: Option<&str>) -> Res<(String, Vec<Item>)> {
     let name = word("recipe", name)?;
     word("--run", run)?;
-    let v = raw
-        .get("recipes")
-        .and_then(|r| r.get(&name))
-        .ok_or(format!("no recipe `{name}` in taskq.json `recipes`"))?;
-    let r: Recipe =
-        serde_json::from_value(v.clone()).map_err(|e| format!("recipe `{name}`: {e}"))?;
-    let version = word(
-        "recipe version",
-        &match &r.version {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            _ => return Err(format!("recipe `{name}`: version is a string or number")),
-        },
-    )?;
+    let v = raw.get("recipes").and_then(|r| r.get(&name)).ok_or(format!("no recipe `{name}` in taskq.json `recipes`"))?;
+    let r: Recipe = serde_json::from_value(v.clone()).map_err(|e| format!("recipe `{name}`: {e}"))?;
+    let version = word("recipe version", &match &r.version {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => n.to_string(),
+        _ => return Err(format!("recipe `{name}`: version is a string or number")),
+    })?;
     if r.tasks.is_empty() {
         return Err(format!("recipe `{name}` has no tasks"));
     }
@@ -77,10 +70,7 @@ pub fn load(raw: &Value, name: &str, run: &str, goal: Option<&str>) -> Res<(Stri
     let mut out = vec![];
     for (i, t) in r.tasks.into_iter().enumerate() {
         if let Some(d) = t.deps.iter().find(|d| **d == 0 || **d > i) {
-            return Err(format!(
-                "recipe `{name}` task {}: deps {d} is not an earlier task",
-                i + 1
-            ));
+            return Err(format!("recipe `{name}` task {}: deps {d} is not an earlier task", i + 1));
         }
         let priority = match t.priority {
             None => None,
@@ -97,18 +87,10 @@ pub fn load(raw: &Value, name: &str, run: &str, goal: Option<&str>) -> Res<(Stri
             runtime: t.runtime,
             priority,
             host: t.host,
-            labels: if t.gate {
-                vec!["needs-gate".into()]
-            } else {
-                vec![]
-            },
+            labels: if t.gate { vec!["needs-gate".into()] } else { vec![] },
             ..NewTask::default()
         };
-        out.push(Item {
-            task,
-            deps: t.deps,
-            gate: t.gate,
-        });
+        out.push(Item { task, deps: t.deps, gate: t.gate });
     }
     Ok((version, out))
 }

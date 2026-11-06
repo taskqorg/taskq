@@ -7,66 +7,29 @@ use std::path::PathBuf;
 /// The only runtime list (§ 9 runtime adapters).
 /// A runtime taskq can start. A name from the board stays text until it reaches this type: an unknown one has no
 /// variant and gets the adapter that answers no.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum RuntimeId {
-    Claude,
-    Codex,
-    CodexApp,
-    Antigravity,
-}
+pub enum RuntimeId { Claude, Codex, CodexApp, Antigravity }
 
 impl RuntimeId {
     pub const ALL: [Self; 4] = [Self::Claude, Self::Codex, Self::CodexApp, Self::Antigravity];
     pub const fn name(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::CodexApp => "codex-app",
-            Self::Antigravity => "antigravity",
-        }
+        match self { Self::Claude => "claude", Self::Codex => "codex", Self::CodexApp => "codex-app", Self::Antigravity => "antigravity" }
     }
-    pub fn parse(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|rt| rt.name() == name)
-    }
+    pub fn parse(name: &str) -> Option<Self> { Self::ALL.into_iter().find(|rt| rt.name() == name) }
 }
 
 impl std::fmt::Display for RuntimeId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.name())
-    }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(self.name()) }
 }
 
-impl PartialEq<str> for RuntimeId {
-    fn eq(&self, other: &str) -> bool {
-        self.name() == other
-    }
-}
-impl PartialEq<&str> for RuntimeId {
-    fn eq(&self, other: &&str) -> bool {
-        self.name() == *other
-    }
-}
-impl PartialEq<String> for RuntimeId {
-    fn eq(&self, other: &String) -> bool {
-        self.name() == other
-    }
-}
+impl PartialEq<str> for RuntimeId { fn eq(&self, other: &str) -> bool { self.name() == other } }
+impl PartialEq<&str> for RuntimeId { fn eq(&self, other: &&str) -> bool { self.name() == *other } }
+impl PartialEq<String> for RuntimeId { fn eq(&self, other: &String) -> bool { self.name() == other } }
 
-pub const RUNTIMES: [&str; 4] = [
-    RuntimeId::Claude.name(),
-    RuntimeId::Codex.name(),
-    RuntimeId::CodexApp.name(),
-    RuntimeId::Antigravity.name(),
-];
+pub const RUNTIMES: [&str; 4] = [RuntimeId::Claude.name(), RuntimeId::Codex.name(), RuntimeId::CodexApp.name(), RuntimeId::Antigravity.name()];
 /// §4 fallback order, excluding the explicitly selected app runtime.
-pub const CLI_RUNTIMES: [&str; 3] = [
-    RuntimeId::Claude.name(),
-    RuntimeId::Codex.name(),
-    RuntimeId::Antigravity.name(),
-];
+pub const CLI_RUNTIMES: [&str; 3] = [RuntimeId::Claude.name(), RuntimeId::Codex.name(), RuntimeId::Antigravity.name()];
 
 /// What a runtime can do; [`Adapter::has`] answers from the table, and no name of a capability reaches a wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -145,159 +108,46 @@ pub struct Adapter {
 }
 
 impl Adapter {
-    pub fn has(&self, cap: Cap) -> bool {
-        self.caps.contains(&cap)
-    }
+    pub fn has(&self, cap: Cap) -> bool { self.caps.contains(&cap) }
 }
 
 /// Which native home a runtime resolves through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NativeHome {
-    Claude,
-    Codex,
-}
+pub enum NativeHome { Claude, Codex }
 
 impl NativeHome {
     pub fn path(self) -> Option<PathBuf> {
-        match self {
-            Self::Claude => super::claude_home(),
-            Self::Codex => super::codex_home(),
-        }
+        match self { Self::Claude => super::claude_home(), Self::Codex => super::codex_home() }
     }
 }
 
 const CODEX_UPDATE: &str = "update Codex CLI (https://github.com/openai/codex#installation)";
 const CODEX_RELOGIN: &str = "run `codex login --device-auth` with the PM (docs/relogin.md)";
 pub(super) const ADAPTERS: [Adapter; 4] = [
-    Adapter {
-        name: RuntimeId::Claude.name(),
-        bin: "claude",
-        client: "Claude Code",
-        home: ".claude",
-        caps: &[
-            Cap::Cli,
-            Cap::RemoteControl,
-            Cap::CallerSessionId,
-            Cap::Background,
-            Cap::Accounts,
-            Cap::JsonStatus,
-            Cap::ProjectTrust,
-            Cap::UsageOauth,
-        ],
-        agent: "claude",
-        native_home: NativeHome::Claude,
-        home_var: "CLAUDE_CONFIG_DIR",
-        status: &["auth", "status"],
-        device_login: &["auth", "login"],
-        relogin: "run `claude auth login` with the PM (docs/relogin.md)",
-        setup: RuntimeId::Claude.name(),
-        login: "claude auth login",
-        sessions: "`claude agents`",
-        min: "2.1.296",
-        update: "run `claude update`",
-        history: "claude-native",
-    },
-    Adapter {
-        name: RuntimeId::Codex.name(),
-        bin: "codex",
-        client: "Codex",
-        home: ".codex",
-        caps: &[
-            Cap::Cli,
-            Cap::SandboxArgs,
-            Cap::ThreadLink,
-            Cap::Accounts,
-            Cap::AuthFile,
-            Cap::PassiveWriter,
-            Cap::RolloutQuota,
-            Cap::ModelCatalog,
-            Cap::UsageRpc,
-        ],
-        agent: "codex",
-        native_home: NativeHome::Codex,
-        home_var: CODEX_DIR_VAR,
-        status: &["login", "status"],
-        device_login: &["login", "--device-auth"],
-        relogin: CODEX_RELOGIN,
-        setup: RuntimeId::CodexApp.name(),
-        login: "codex login",
-        sessions: "the Codex app threads",
-        min: "0.159.3",
-        update: CODEX_UPDATE,
-        history: "codex-rollout",
-    },
-    Adapter {
-        name: RuntimeId::CodexApp.name(),
-        bin: "codex",
-        client: "Codex",
-        home: ".codex",
-        caps: &[
-            Cap::AppTurn,
-            Cap::SandboxArgs,
-            Cap::ThreadLink,
-            Cap::AuthFile,
-            Cap::ModelCatalog,
-        ],
-        agent: "codex",
-        native_home: NativeHome::Codex,
-        home_var: CODEX_DIR_VAR,
-        status: &["login", "status"],
-        device_login: &["login", "--device-auth"],
-        relogin: CODEX_RELOGIN,
-        setup: "",
-        login: "codex login",
-        sessions: "the Codex app threads",
-        min: "0.159.3",
-        update: CODEX_UPDATE,
-        history: "codex-rollout",
-    },
-    Adapter {
-        name: RuntimeId::Antigravity.name(),
-        bin: "agy",
-        client: "Antigravity",
-        home: ".gemini/antigravity",
-        caps: &[
-            Cap::Cli,
-            Cap::Grant,
-            Cap::StreamInput,
-            Cap::UserBin,
-            Cap::Accounts,
-            Cap::UsageCodeAssist,
-        ],
-        agent: "antigravity",
-        native_home: NativeHome::Codex,
-        home_var: "",
-        status: &[],
-        device_login: &[],
-        relogin: "sign in through the Antigravity client",
-        setup: RuntimeId::Antigravity.name(),
-        login: "sign in through the Antigravity client",
-        sessions: "Antigravity conversations",
-        min: "",
-        update: "install or update the Antigravity agy CLI",
-        history: "agy-stream",
-    },
+    Adapter { name: RuntimeId::Claude.name(), bin: "claude", client: "Claude Code", home: ".claude",
+        caps: &[Cap::Cli, Cap::RemoteControl, Cap::CallerSessionId, Cap::Background, Cap::Accounts, Cap::JsonStatus, Cap::ProjectTrust, Cap::UsageOauth],
+        agent: "claude", native_home: NativeHome::Claude, home_var: "CLAUDE_CONFIG_DIR", status: &["auth", "status"], device_login: &["auth", "login"],
+        relogin: "run `claude auth login` with the PM (docs/relogin.md)", setup: RuntimeId::Claude.name(), login: "claude auth login", sessions: "`claude agents`",
+        min: "2.1.296", update: "run `claude update`", history: "claude-native" },
+    Adapter { name: RuntimeId::Codex.name(), bin: "codex", client: "Codex", home: ".codex",
+        caps: &[Cap::Cli, Cap::SandboxArgs, Cap::ThreadLink, Cap::Accounts, Cap::AuthFile, Cap::PassiveWriter, Cap::RolloutQuota, Cap::ModelCatalog, Cap::UsageRpc],
+        agent: "codex", native_home: NativeHome::Codex, home_var: CODEX_DIR_VAR, status: &["login", "status"], device_login: &["login", "--device-auth"],
+        relogin: CODEX_RELOGIN, setup: RuntimeId::CodexApp.name(), login: "codex login", sessions: "the Codex app threads",
+        min: "0.159.3", update: CODEX_UPDATE, history: "codex-rollout" },
+    Adapter { name: RuntimeId::CodexApp.name(), bin: "codex", client: "Codex", home: ".codex",
+        caps: &[Cap::AppTurn, Cap::SandboxArgs, Cap::ThreadLink, Cap::AuthFile, Cap::ModelCatalog],
+        agent: "codex", native_home: NativeHome::Codex, home_var: CODEX_DIR_VAR, status: &["login", "status"], device_login: &["login", "--device-auth"],
+        relogin: CODEX_RELOGIN, setup: "", login: "codex login", sessions: "the Codex app threads",
+        min: "0.159.3", update: CODEX_UPDATE, history: "codex-rollout" },
+    Adapter { name: RuntimeId::Antigravity.name(), bin: "agy", client: "Antigravity", home: ".gemini/antigravity",
+        caps: &[Cap::Cli, Cap::Grant, Cap::StreamInput, Cap::UserBin, Cap::Accounts, Cap::UsageCodeAssist],
+        agent: "antigravity", native_home: NativeHome::Codex, home_var: "", status: &[], device_login: &[],
+        relogin: "sign in through the Antigravity client", setup: RuntimeId::Antigravity.name(), login: "sign in through the Antigravity client", sessions: "Antigravity conversations",
+        min: "", update: "install or update the Antigravity agy CLI", history: "agy-stream" },
 ];
 // ponytail: an unknown name keeps Codex-shaped login defaults (`login status`, Codex's home variable)
-pub(super) const OTHER: Adapter = Adapter {
-    name: "",
-    bin: "",
-    client: "",
-    home: "",
-    caps: &[],
-    agent: "",
-    native_home: NativeHome::Codex,
-    home_var: CODEX_DIR_VAR,
-    status: &["login", "status"],
-    device_login: &["login", "--device-auth"],
-    relogin: CODEX_RELOGIN,
-    setup: "",
-    login: "",
-    sessions: "",
-    min: "",
-    update: "",
-    history: "claude-native",
-};
+pub(super) const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", caps: &[], agent: "", native_home: NativeHome::Codex, home_var: CODEX_DIR_VAR,
+    status: &["login", "status"], device_login: &["login", "--device-auth"], relogin: CODEX_RELOGIN, setup: "", login: "", sessions: "", min: "", update: "", history: "claude-native" };
 
 /// The CLI runtimes a host can run as service children, one per binary: the runtime rows of host tools.
 pub fn clis() -> impl Iterator<Item = &'static Adapter> {
@@ -327,18 +177,10 @@ pub const CODEX_ARGS: &str = "codex";
 
 /// Runtimes a setup request may name, Codex first as the Connect list shows them.
 pub fn setup_runtimes() -> impl Iterator<Item = &'static str> {
-    ADAPTERS
-        .iter()
-        .rev()
-        .filter(|a| !a.setup.is_empty())
-        .map(|a| a.name)
+    ADAPTERS.iter().rev().filter(|a| !a.setup.is_empty()).map(|a| a.name)
 }
 
 /// The runtimes taskq can start here (§ 8): `codex-app` is macOS and Windows only and shares Codex's binary and login.
 pub fn agent_runtimes() -> &'static [&'static str] {
-    if cfg!(any(target_os = "macos", windows)) {
-        &RUNTIMES
-    } else {
-        &CLI_RUNTIMES
-    }
+    if cfg!(any(target_os = "macos", windows)) { &RUNTIMES } else { &CLI_RUNTIMES }
 }

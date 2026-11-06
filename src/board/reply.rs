@@ -7,70 +7,41 @@ pub const MARKER: &str = "<!-- taskq-reply ";
 const END: &str = "\n<!-- end taskq-reply-part -->";
 
 fn digest(body: &str) -> String {
-    ring::digest::digest(&ring::digest::SHA256, body.as_bytes())
-        .as_ref()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    ring::digest::digest(&ring::digest::SHA256, body.as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn reference(n: u64, body: &str, hash: &str, count: usize) -> String {
     let head = body.lines().next().unwrap_or_default();
-    let fields = if core::op_id(n, body).is_some() {
-        &body[body.rfind("\nop-id:").unwrap()..]
-    } else {
-        ""
-    };
-    format!(
-        "{head}\nLong reply: {count} ordered comments; read all parts with taskq inbox {n}.\n{MARKER}{hash} {count} -->{fields}"
-    )
+    let fields = if core::op_id(n, body).is_some() { &body[body.rfind("\nop-id:").unwrap()..] } else { "" };
+    format!("{head}\nLong reply: {count} ordered comments; read all parts with taskq inbox {n}.\n{MARKER}{hash} {count} -->{fields}")
 }
 
 /// Post inert, content-addressed parts before the ordinary command. A lost response never authorizes a retry POST.
 pub fn post(b: &dyn Board, n: u64, body: &str) -> Result<u64> {
-    if body.len() <= PART {
-        return b.comment(n, body);
-    }
+    if body.len() <= PART { return b.comment(n, body); }
     let hash = digest(body);
     let mut rest = body;
     let mut parts = Vec::new();
     while !rest.is_empty() {
         let mut end = rest.len().min(PART);
-        while !rest.is_char_boundary(end) {
-            end -= 1;
-        }
+        while !rest.is_char_boundary(end) { end -= 1; }
         // Prefer a board line break, preserving that break as part of the content.
-        if end < rest.len()
-            && let Some(i) = rest[..end].rfind('\n')
-        {
-            end = i + 1;
-        }
+        if end < rest.len() && let Some(i) = rest[..end].rfind('\n') { end = i + 1; }
         parts.push(&rest[..end]);
         rest = &rest[end..];
     }
     let existing = b.comments(n)?;
     let mut expected = Vec::new();
     for (i, part) in parts.iter().enumerate() {
-        let text = format!(
-            "taskq: reply-part {hash} {}/{}\n{part}{END}",
-            i + 1,
-            parts.len()
-        );
-        let id = match existing
-            .iter()
-            .find(|c| c.trusted && !c.edited && c.body == text)
-        {
+        let text = format!("taskq: reply-part {hash} {}/{}\n{part}{END}", i + 1, parts.len());
+        let id = match existing.iter().find(|c| c.trusted && !c.edited && c.body == text) {
             Some(c) => c.id,
             None => b.comment(n, &text)?,
         };
         expected.push((id, text));
     }
     let readback = b.comments(n)?;
-    if expected.iter().any(|(id, text)| {
-        !readback
-            .iter()
-            .any(|c| c.id == *id && c.trusted && !c.edited && c.body == *text)
-    }) {
+    if expected.iter().any(|(id, text)| !readback.iter().any(|c| c.id == *id && c.trusted && !c.edited && c.body == *text)) {
         return Err("reply parts not read back; check delivery with the same operation before sending again".into());
     }
     b.comment(n, &reference(n, body, &hash, parts.len()))

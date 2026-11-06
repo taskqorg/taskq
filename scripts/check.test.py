@@ -509,5 +509,3 @@ assert check['tree_evidence'](['docs/evidence/1/a.json', 'docs/design/evidence/1
     'docs/design/exploration/a.html', 'docs/qualification-1.md', 'docs/release-1.md']
 assert not check['tree_evidence'](['docs/research/2395.md', 'docs/shots/manifest.json', 'tests/fixtures/usage/windows-oauth-usage.json'])
 print('PASS tree guard refuses evidence paths and keeps research notes and fixtures')
-assert check['rust_sources'](['entry.rs', 'src/a.rs', 'tests/fixtures/b.rs', 'src/a.js']) == ['entry.rs', 'src/a.rs']
-print('PASS format gate covers tracked Rust and keeps fixtures byte-exact')

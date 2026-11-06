@@ -6,181 +6,66 @@ use std::fs;
 use std::path::Path;
 
 pub const CATALOG: &[&str] = &[
-    "invariant.double_attempt",
-    "invariant.golden",
-    "invariant.label_loop",
-    "adapter.read_after_write",
-    "adapter.bad_json",
-    "dispatch.panic",
-    "dispatch.start",
-    "dispatch.reexec",
-    "publication.readback",
-    "publication.not_on_main",
-    "update.smoke",
-    "update.rollback",
+    "invariant.double_attempt", "invariant.golden", "invariant.label_loop", "adapter.read_after_write",
+    "adapter.bad_json", "dispatch.panic", "dispatch.start", "dispatch.reexec", "publication.readback",
+    "publication.not_on_main", "update.smoke", "update.rollback",
 ];
 const CODES: &[&str] = &[
-    "read",
-    "create",
-    "update",
-    "delete",
-    "other",
-    "direct",
-    "pr",
-    "ready",
-    "waiting",
-    "doing",
-    "review",
-    "ask",
-    "later",
-    "failed",
-    "closed",
-    "claim:rejected",
-    "heartbeat:conflict",
-    "passes:2",
-    "spawn:missing",
-    "http:2xx",
-    "merge:unconfirmed",
-    "ancestry:missing",
-    "runtime:installed",
-    "exit:101",
-    "reexec:failed",
-    "restart:stuck",
-    "golden:mismatch",
-    "smoke:failed",
-    "starts:3",
-    "fold.json",
-    "observed",
-    "defect",
-    "panic:stdio",
-    "panic:unwrap",
-    "panic:index",
-    "panic:other",
+    "read", "create", "update", "delete", "other", "direct", "pr", "ready", "waiting", "doing", "review",
+    "ask", "later", "failed", "closed", "claim:rejected", "heartbeat:conflict", "passes:2", "spawn:missing",
+    "http:2xx", "merge:unconfirmed", "ancestry:missing", "runtime:installed", "exit:101", "reexec:failed",
+    "restart:stuck", "golden:mismatch", "smoke:failed", "starts:3", "fold.json", "observed", "defect",
+    "panic:stdio", "panic:unwrap", "panic:index", "panic:other",
 ];
 
 /// The enumerated class of a panic message; the message itself never leaves the host.
 pub fn panic_class(msg: &str) -> &'static str {
-    if msg.starts_with("failed printing to std") {
-        "panic:stdio"
-    } else if msg.starts_with("called `Option::unwrap()`")
-        || msg.starts_with("called `Result::unwrap()`")
-    {
-        "panic:unwrap"
-    } else if [
-        "index out of bounds",
-        "out of range for slice",
-        "byte index ",
-        "slice index starts",
-    ]
-    .iter()
-    .any(|p| msg.contains(p))
-    {
-        "panic:index"
-    } else {
-        "panic:other"
-    }
+    if msg.starts_with("failed printing to std") { "panic:stdio" }
+    else if msg.starts_with("called `Option::unwrap()`") || msg.starts_with("called `Result::unwrap()`") { "panic:unwrap" }
+    else if ["index out of bounds", "out of range for slice", "byte index ", "slice index starts"].iter().any(|p| msg.contains(p)) { "panic:index" }
+    else { "panic:other" }
 }
 
 /// A print to a stdout/stderr pipe the consumer closed (`taskq status | head`): EPIPE on Unix, ERROR_NO_DATA on Windows.
 fn closed_pipe(msg: &str) -> bool {
-    msg.starts_with("failed printing to std")
-        && (msg.contains("(os error 32)") || msg.contains("(os error 232)"))
+    msg.starts_with("failed printing to std") && (msg.contains("(os error 32)") || msg.contains("(os error 232)"))
 }
 
 thread_local!(static ACTIVE: Cell<bool> = const { Cell::new(false) });
 #[cfg(test)]
 thread_local!(static DETECTED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) });
 fn version(s: &str) -> bool {
-    s.len() <= 64
-        && s.split_once('-').map_or(s, |p| p.0).split('.').count() == 3
-        && s.split_once('-')
-            .map_or(s, |p| p.0)
-            .split('.')
-            .all(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
-        && s.bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b".-".contains(&c))
+    s.len() <= 64 && s.split_once('-').map_or(s, |p| p.0).split('.').count() == 3
+        && s.split_once('-').map_or(s, |p| p.0).split('.').all(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
+        && s.bytes().all(|c| c.is_ascii_alphanumeric() || b".-".contains(&c))
 }
 
 fn site(s: &str) -> bool {
-    if s == "dep" {
-        return true;
-    }
-    let Some((file, line)) = s.rsplit_once(':') else {
-        return false;
-    };
-    let Some(name) = file
-        .strip_prefix("src/")
-        .and_then(|f| f.strip_suffix(".rs"))
-    else {
-        return false;
-    };
-    ([
-        "main",
-        "cli",
-        "config",
-        "http",
-        "paths",
-        "wake",
-        "service_run",
-        "board/mod",
-        "board/github",
-        "board/gitlab",
-        "core",
-        "labels",
-        "operator",
-        "platform",
-        "runtime",
-        "service",
-        "tray",
-        "incident",
-    ]
-    .contains(&name)
-        || name.starts_with("cli/")
-        || name.starts_with("tray/"))
+    if s == "dep" { return true; }
+    let Some((file, line)) = s.rsplit_once(':') else { return false };
+    let Some(name) = file.strip_prefix("src/").and_then(|f| f.strip_suffix(".rs")) else { return false };
+    (["main", "cli", "config", "http", "paths", "wake", "service_run", "board/mod", "board/github", "board/gitlab", "core", "labels", "operator", "platform", "runtime", "service", "tray", "incident"].contains(&name)
+        || name.starts_with("cli/") || name.starts_with("tray/"))
         && line.parse::<u32>().is_ok_and(|n| n > 0)
 }
 
 fn safe(f: &Fault) -> bool {
-    let value = |s: &&str| {
-        CODES.contains(s)
-            || CATALOG.contains(s)
-            || site(s)
-            || s.strip_prefix("release:").is_some_and(version)
-    };
-    CATALOG.contains(&f.code)
-        && site(f.site)
-        && crate::board::BOARDS.iter().any(|k| k.name == f.board)
+    let value = |s: &&str| CODES.contains(s) || CATALOG.contains(s) || site(s) || s.strip_prefix("release:").is_some_and(version);
+    CATALOG.contains(&f.code) && site(f.site) && crate::board::BOARDS.iter().any(|k| k.name == f.board)
         && (f.runtime == "none" || crate::runtime::RUNTIMES.contains(&f.runtime))
-        && f.fields.len() <= 8
-        && f.fields.iter().all(value)
-        && [f.evidence, f.observed, f.inferred]
-            .into_iter()
-            .all(|a| a.len() <= 8 && a.iter().all(value))
-        && f.revision.len() == 40
-        && f.revision.bytes().all(|c| c.is_ascii_hexdigit())
-        && f.contract.len() == 12
-        && f.contract.bytes().all(|c| c.is_ascii_hexdigit())
+        && f.fields.len() <= 8 && f.fields.iter().all(value)
+        && [f.evidence, f.observed, f.inferred].into_iter().all(|a| a.len() <= 8 && a.iter().all(value))
+        && f.revision.len() == 40 && f.revision.bytes().all(|c| c.is_ascii_hexdigit())
+        && f.contract.len() == 12 && f.contract.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
 fn unsafe_outcome(f: &Fault) -> Outcome {
-    Outcome {
-        state: "local",
-        fault: CATALOG
-            .contains(&f.code)
-            .then_some(f.code)
-            .unwrap_or("unknown")
-            .into(),
-        at: now(),
-        path: None,
-        url: None,
-        reason: Some("unsafe".into()),
-    }
+    Outcome { state: "local", fault: CATALOG.contains(&f.code).then_some(f.code).unwrap_or("unknown").into(),
+        at: now(), path: None, url: None, reason: Some("unsafe".into()) }
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
 
 fn context(root: &Path) -> Option<(Value, Option<bool>)> {
@@ -193,128 +78,50 @@ fn context(root: &Path) -> Option<(Value, Option<bool>)> {
     Some((v, setting))
 }
 
-fn fault<'a>(
-    code: &'a str,
-    site: &'a str,
-    runtime: &'a str,
-    board: &'a str,
-    fields: &'a [&'a str],
-    evidence: &'a [&'a str],
-    contract: &'a str,
-) -> Fault<'a> {
-    Fault {
-        code,
-        site,
-        runtime,
-        board,
-        fields,
-        evidence,
-        revision: env!("TASKQ_REVISION"),
-        contract,
-        observed: evidence,
-        inferred: CATALOG
-            .iter()
-            .position(|c| *c == code)
-            .map(|i| &CATALOG[i..i + 1])
-            .unwrap_or(&[]),
-    }
+fn fault<'a>(code: &'a str, site: &'a str, runtime: &'a str, board: &'a str,
+    fields: &'a [&'a str], evidence: &'a [&'a str], contract: &'a str) -> Fault<'a> {
+    Fault { code, site, runtime, board, fields, evidence, revision: env!("TASKQ_REVISION"), contract,
+        observed: evidence, inferred: CATALOG.iter().position(|c| *c == code).map(|i| &CATALOG[i..i+1]).unwrap_or(&[]) }
 }
 
 pub fn detect(code: &str, site: &str, runtime: &str, fields: &[&str], evidence: &[&str]) {
-    let site: &str = &coreq::telemetry::capture::original_source(
-        site,
-        crate::COREQ_TELEMETRY_SOURCE_ROOT,
-        crate::COREQ_TELEMETRY_SOURCE_BASE,
-    );
+    let site: &str = &coreq::telemetry::capture::original_source(site, crate::COREQ_TELEMETRY_SOURCE_ROOT, crate::COREQ_TELEMETRY_SOURCE_BASE);
     #[cfg(test)]
     {
         let mut fingerprint_fields = vec![site];
         fingerprint_fields.extend_from_slice(fields);
-        let f = fault(
-            code,
-            site,
-            runtime,
-            "github",
-            &fingerprint_fields,
-            evidence,
-            "0123456789ab",
-        );
-        assert!(
-            safe(&f),
-            "unsafe catalog detection {code}: site={site}, fields={fingerprint_fields:?}, revision={}, contract={}",
-            f.revision,
-            f.contract
-        );
-        assert!(
-            coreq::incident::check(&coreq::incident::build(
-                &crate::platform::tool(&crate::platform::default_install()),
-                &f,
-                "11111111-1111-4111-8111-111111111111"
-            ))
-            .is_ok()
-        );
+        let f = fault(code, site, runtime, "github", &fingerprint_fields, evidence, "0123456789ab");
+        assert!(safe(&f), "unsafe catalog detection {code}: site={site}, fields={fingerprint_fields:?}, revision={}, contract={}", f.revision, f.contract);
+        assert!(coreq::incident::check(&coreq::incident::build(&crate::platform::tool(&crate::platform::default_install()), &f,
+            "11111111-1111-4111-8111-111111111111")).is_ok());
         if let Some(root) = std::env::var_os("TASKQ_TEST_PANIC_REPORT") {
-            let out = coreq::incident::report(
-                &crate::platform::tool(&crate::platform::default_install()),
-                Path::new(&root),
-                Some(true),
-                &f,
-                None,
-            );
+            let out = coreq::incident::report(&crate::platform::tool(&crate::platform::default_install()), Path::new(&root), Some(true), &f, None);
             assert_eq!(out.state, "unsupported-auth"); // fake transport: the subprocess never contacts a tracker
         }
         DETECTED.with(|v| v.borrow_mut().push(code.into()));
     }
     #[cfg(not(test))]
     {
-        if ACTIVE.replace(true) {
-            return;
-        }
+        if ACTIVE.replace(true) { return; }
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let Ok(root) = crate::paths::find_root() else {
-                return;
-            };
-            let Some((v, setting)) = context(&root) else {
-                return;
-            };
+            let Ok(root) = crate::paths::find_root() else { return };
+            let Some((v, setting)) = context(&root) else { return };
             let tool = crate::platform::tool(&crate::platform::default_install());
-            if coreq::incident::disabled(&tool, setting) {
-                return;
-            }
-            let contract: String =
-                ring::digest::digest(&ring::digest::SHA256, include_bytes!("../taskq.md"))
-                    .as_ref()
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect();
+            if coreq::incident::disabled(&tool, setting) { return; }
+            let contract: String = ring::digest::digest(&ring::digest::SHA256, include_bytes!("../taskq.md"))
+                .as_ref().iter().map(|b| format!("{b:02x}")).collect();
             let mut fingerprint_fields = vec![site];
             fingerprint_fields.extend_from_slice(fields);
             let (board, github_com) = board_of(&v);
-            let f = fault(
-                code,
-                site,
-                runtime,
-                board,
-                &fingerprint_fields,
-                evidence,
-                &contract[..12],
-            );
+            let f = fault(code, site, runtime, board, &fingerprint_fields, evidence, &contract[..12]);
             let mut out = if safe(&f) {
                 coreq::incident::send(&tool, &root, setting, github_com, &f)
-            } else {
-                unsafe_outcome(&f)
-            };
-            out.path = out
-                .path
-                .and_then(|p| p.strip_prefix(&root).ok().map(Path::to_path_buf));
+            } else { unsafe_outcome(&f) };
+            out.path = out.path.and_then(|p| p.strip_prefix(&root).ok().map(Path::to_path_buf));
             let _ = fs::create_dir_all(crate::paths::dot(&root));
             let mut local = out.json();
-            local["profile"] =
-                json!({"command": "taskq profile", "at_ms": out.at.saturating_mul(1000)});
-            let _ = crate::platform::write_atomic(
-                &crate::paths::dot(&root).join("incident.json"),
-                &local.to_string(),
-            );
+            local["profile"] = json!({"command": "taskq profile", "at_ms": out.at.saturating_mul(1000)});
+            let _ = crate::platform::write_atomic(&crate::paths::dot(&root).join("incident.json"), &local.to_string());
         }));
         ACTIVE.set(false);
     }
@@ -326,135 +133,61 @@ pub fn detect(code: &str, site: &str, runtime: &str, fields: &[&str], evidence: 
 pub fn launcher(_tool: &coreq::Tool, f: &Fault) {
     match f.code {
         "update.rollback" => {
-            let release = f
-                .fields
-                .first()
-                .and_then(|f| f.strip_prefix("failed:"))
-                .unwrap_or("");
+            let release = f.fields.first().and_then(|f| f.strip_prefix("failed:")).unwrap_or("");
             let field = format!("release:{release}");
-            detect(
-                f.code,
-                concat!("src/platform.rs:", line!()),
-                "none",
-                &[&field],
-                &["starts:3"],
-            );
+            detect(f.code, concat!("src/platform.rs:", line!()), "none", &[&field], &["starts:3"]);
         }
-        "dispatch.panic" => detect(
-            f.code,
-            concat!("src/platform.rs:", line!()),
-            "none",
-            &[],
-            &["exit:101"],
-        ),
-        _ => {}
+        "dispatch.panic" => detect(f.code, concat!("src/platform.rs:", line!()), "none", &[], &["exit:101"]),
+        _ => {},
     }
 }
 
 pub fn install_panic_hook() {
     // coreq initializes its guard on first report; an invalid probe does that without a file, send or panic-time hook change.
-    let invalid = Fault {
-        site: "/",
-        ..fault(
-            "dispatch.panic",
-            "dep",
-            "none",
-            "github",
-            &[],
-            &[],
-            "0123456789ab",
-        )
-    };
-    let _ = coreq::incident::report(
-        &crate::platform::tool(&crate::platform::default_install()),
-        Path::new(""),
-        Some(true),
-        &invalid,
-        None,
-    );
+    let invalid = Fault { site: "/", ..fault("dispatch.panic", "dep", "none", "github", &[], &[], "0123456789ab") };
+    let _ = coreq::incident::report(&crate::platform::tool(&crate::platform::default_install()), Path::new(""), Some(true), &invalid, None);
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if !ACTIVE.with(Cell::get) {
             let msg = info.payload_as_str().unwrap_or("");
-            if closed_pipe(msg) && !crate::host::active() {
-                crate::platform::exit(141);
-            } // consumer closed the pipe: no TaskQ defect (§ 4)
+            if closed_pipe(msg) && !crate::host::active() { crate::platform::exit(141); } // consumer closed the pipe: no TaskQ defect (§ 4)
             #[cfg(not(test))]
             if let Ok(root) = crate::paths::find_root() {
                 use std::io::Write;
-                let at = info
-                    .location()
-                    .map(|l| format!("{}:{}", l.file(), l.line()))
-                    .unwrap_or_default();
+                let at = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
                 let _ = fs::create_dir_all(crate::paths::dot(&root));
-                let _ = fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(crate::paths::dot(&root).join("cli-errors.log"))
+                let _ = fs::OpenOptions::new().create(true).append(true).open(crate::paths::dot(&root).join("cli-errors.log"))
                     .and_then(|mut f| writeln!(f, "panic at {at}: {msg}"));
             }
             let class = panic_class(msg);
-            let location = info
-                .location()
-                .map(|l| {
-                    let file = coreq::telemetry::capture::original_source(
-                        l.file(),
-                        crate::COREQ_TELEMETRY_SOURCE_ROOT,
-                        crate::COREQ_TELEMETRY_SOURCE_BASE,
-                    );
-                    file.strip_prefix("src/")
-                        .map(|f| format!("src/{f}:{}", l.line()))
-                        .filter(|s| site(s))
-                        .unwrap_or_else(|| "dep".into())
-                })
-                .unwrap_or_else(|| "dep".into());
-            detect(
-                "dispatch.panic",
-                &location,
-                "none",
-                &[&location, class],
-                &["exit:101", class],
-            );
+            let location = info.location().map(|l| {
+                let file = coreq::telemetry::capture::original_source(l.file(), crate::COREQ_TELEMETRY_SOURCE_ROOT, crate::COREQ_TELEMETRY_SOURCE_BASE);
+                file.strip_prefix("src/").map(|f| format!("src/{f}:{}", l.line()))
+                    .filter(|s| site(s)).unwrap_or_else(|| "dep".into())
+            }).unwrap_or_else(|| "dep".into());
+            detect("dispatch.panic", &location, "none", &[&location, class], &["exit:101", class]);
             // the service log keeps one stamped line per message (§ 4)
-            if crate::platform::is_service_log() {
-                crate::platform::log(&format!("thread {info}"));
-            } else {
-                previous(info);
-            }
+            if crate::platform::is_service_log() { crate::platform::log(&format!("thread {info}")); } else { previous(info); }
         }
     }));
 }
 
 pub fn status(root: &Path) -> Value {
-    let Some((_, setting)) = context(root) else {
-        return Value::Null;
-    };
-    if coreq::incident::disabled(
-        &crate::platform::tool(&crate::platform::default_install()),
-        setting,
-    ) {
+    let Some((_, setting)) = context(root) else { return Value::Null };
+    if coreq::incident::disabled(&crate::platform::tool(&crate::platform::default_install()), setting) {
         return json!({"state": "disabled"});
     }
-    fs::read(crate::paths::dot(root).join("incident.json"))
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or(Value::Null)
+    fs::read(crate::paths::dot(root).join("incident.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null)
 }
 
 /// The project's board name and whether it is github.com, where posting may reuse the board token.
 #[cfg_attr(test, allow(dead_code))]
 fn board_of(v: &Value) -> (&'static str, bool) {
-    let k = crate::board::kind(v["board"].as_str().unwrap_or("github"))
-        .unwrap_or(&crate::board::github::KIND);
-    (
-        k.name,
-        v["host"].as_str().unwrap_or(k.default_host) == "github.com",
-    )
+    let k = crate::board::kind(v["board"].as_str().unwrap_or("github")).unwrap_or(&crate::board::github::KIND);
+    (k.name, v["host"].as_str().unwrap_or(k.default_host) == "github.com")
 }
 
-pub fn notice(root: &Path) -> bool {
-    context(root).is_some_and(|(_, s)| s.is_none())
-}
+pub fn notice(root: &Path) -> bool { context(root).is_some_and(|(_, s)| s.is_none()) }
 
 pub fn disclosure(root: Option<&Path>) -> String {
     let tool = crate::platform::tool(&crate::platform::default_install());
@@ -462,43 +195,24 @@ pub fn disclosure(root: Option<&Path>) -> String {
     #[cfg(not(test))]
     {
         let github = root.and_then(context).is_some_and(|(v, _)| board_of(&v).1);
-        let account = coreq::incident::github_token(&tool, github)
-            .and_then(|token| coreq::incident::GitHub::new(&tool, token).login().ok());
-        text.push_str(&format!(
-            "\nPosting account: {}",
-            account.as_deref().unwrap_or("unavailable; local fallback")
-        ));
+        let account = coreq::incident::github_token(&tool, github).and_then(|token| {
+            coreq::incident::GitHub::new(&tool, token).login().ok()
+        });
+        text.push_str(&format!("\nPosting account: {}", account.as_deref().unwrap_or("unavailable; local fallback")));
     }
     #[cfg(test)]
-    {
-        let _ = root;
-        text.push_str("\nPosting account: test transport only");
-    }
+    { let _ = root; text.push_str("\nPosting account: test transport only"); }
     text
 }
 
 pub fn line(v: &Value) -> String {
     let state = v["state"].as_str().unwrap_or("none");
-    if matches!(state, "none" | "disabled") {
-        return format!("Incidents: {state}");
-    }
-    if !matches!(state, "sent" | "local" | "unsupported-auth") {
-        return "Incidents: unknown".into();
-    }
+    if matches!(state, "none" | "disabled") { return format!("Incidents: {state}"); }
+    if !matches!(state, "sent" | "local" | "unsupported-auth") { return "Incidents: unknown".into(); }
     let age = crate::time::age(now().saturating_sub(v["at"].as_u64().unwrap_or(now())) as i64);
-    let reason = v["reason"]
-        .as_str()
-        .map(|r| format!(" ({r})"))
-        .unwrap_or_default();
-    let dest = v["url"]
-        .as_str()
-        .or_else(|| v["path"].as_str())
-        .map(|s| format!(" · {s}"))
-        .unwrap_or_default();
-    format!(
-        "Incident: {state} {} {age}{reason}{dest} · profile: `taskq profile`",
-        v["fault"].as_str().unwrap_or("unknown")
-    )
+    let reason = v["reason"].as_str().map(|r| format!(" ({r})")).unwrap_or_default();
+    let dest = v["url"].as_str().or_else(|| v["path"].as_str()).map(|s| format!(" · {s}")).unwrap_or_default();
+    format!("Incident: {state} {} {age}{reason}{dest} · profile: `taskq profile`", v["fault"].as_str().unwrap_or("unknown"))
 }
 
 #[cfg(test)]

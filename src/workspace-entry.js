@@ -1,1 +1,1 @@
-require("./workspace.js").create().mount();
+require('./workspace.js').create().mount();

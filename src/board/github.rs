@@ -1,9 +1,6 @@
 //! GitHub issues (taskq.md § 1, § 2, § 7): REST v3 on github.com or a GitHub Enterprise host, owner-installed token.
 
-use super::{
-    Api, Board, Comment, Error, Issue, Kind, Publish, Reason, Result, encode, hex40, image_name,
-    into, iso, names, outcome, s, stamp, verify_assignment,
-};
+use super::{Api, Board, Error, Reason, image_name, Comment, Issue, Kind, Publish, Result, encode, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
 use serde_json::{Value, json};
 
 pub const KIND: Kind = Kind {
@@ -16,47 +13,29 @@ pub const KIND: Kind = Kind {
     reload_token: true,
     token_env: &["GH_TOKEN", "GITHUB_TOKEN"],
     api,
-    board: |api| {
-        Box::new(GitHub {
-            api,
-            rules: Default::default(),
-            open: Default::default(),
-            heartbeat: Default::default(),
-            evidence: Default::default(),
-            ci: Default::default(),
-        })
-    },
+    board: |api| Box::new(GitHub { api, rules: Default::default(), open: Default::default(), heartbeat: Default::default(), evidence: Default::default(), ci: Default::default() }),
 };
 
 pub const TOKEN_ERROR: &str = "GitHub board token missing, empty or unreadable; owner must install it in <install>/token; never run gh auth login";
 
 pub fn token(install: &std::path::Path) -> Result<String> {
-    std::fs::read_to_string(install.join("token"))
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| TOKEN_ERROR.into())
+    std::fs::read_to_string(install.join("token")).ok()
+        .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).ok_or_else(|| TOKEN_ERROR.into())
 }
 
 fn api(host: &str, repo: &str, token: &str) -> Api {
-    let root = if host == "github.com" || host.is_empty() {
-        "https://api.github.com".to_string()
-    } else {
-        format!("https://{host}/api/v3")
-    };
+    let root = if host == "github.com" || host.is_empty() { "https://api.github.com".to_string() } else { format!("https://{host}/api/v3") };
     Api::new(root.clone(), format!("{root}/repos/{repo}"), token)
 }
 
 /// The repository plan refuses branch rules: GitHub answers 403 "Upgrade to GitHub Pro" on a private Free repository.
-fn plan_gap(e: &Error) -> bool {
-    e.reason() == Reason::PlanGap
-}
+fn plan_gap(e: &Error) -> bool { e.reason() == Reason::PlanGap }
 
 const PLAN: &str = "this private repository's GitHub plan has no branch rules or merge queue";
 
 pub struct GitHub {
     evidence: std::cell::RefCell<Vec<crate::readiness::Publication>>,
-    ci: std::cell::RefCell<Option<(String, Option<u64>, Option<u64>)>>,
+    ci: std::cell::RefCell<Option<(String,Option<u64>,Option<u64>)>>,
     pub(super) api: Api,
     /// `main` branch rules, read once per credential (#1359), a plan refusal too (#1935). ponytail: same-token rules changes need a service restart.
     /// Keyed by repository API too: a task PR in another repository reads that repository's rules (#2047).
@@ -79,18 +58,13 @@ pub(super) struct Open {
     known: std::collections::HashMap<u64, i64>,
 }
 
-fn task(i: &Issue) -> bool {
-    i.labels.iter().any(|l| l == crate::service::TASK_LABEL)
-}
+fn task(i: &Issue) -> bool { i.labels.iter().any(|l| l == crate::service::TASK_LABEL) }
 
 /// The longest an open-issue list is reused over unchanged probes; a deleted issue does not bump `updated_at`.
 pub(super) const OPEN_REUSE: std::time::Duration = std::time::Duration::from_secs(300);
 
 fn trusted(v: &Value) -> bool {
-    matches!(
-        v["author_association"].as_str(),
-        Some("OWNER" | "MEMBER" | "COLLABORATOR")
-    )
+    matches!(v["author_association"].as_str(), Some("OWNER" | "MEMBER" | "COLLABORATOR"))
 }
 
 /// One issue comment of the REST API.
@@ -132,115 +106,48 @@ const OPEN_ISSUES: &str = "query($owner: String!, $name: String!, $after: String
 impl Open {
     /// The kept list when the probe from the newest known task update finds nothing new; else the tasks it saw, none when
     /// it failed. The probe answers the tasks and whether the reply is whole.
-    pub(super) fn probe(
-        open: &std::cell::RefCell<Option<Self>>,
-        ask: impl FnOnce(i64) -> Result<(Vec<Issue>, bool)>,
-    ) -> std::result::Result<Vec<Issue>, Vec<Issue>> {
-        let Some(mut o) = open
-            .borrow_mut()
-            .take()
-            .filter(|o| o.at.elapsed() < OPEN_REUSE)
-        else {
-            return Err(vec![]);
-        };
-        let (issues, whole) =
-            ask(o.known.values().max().copied().unwrap_or(0)).map_err(|_| vec![])?;
-        if !whole
-            || issues
-                .iter()
-                .any(|i| o.known.get(&i.number) != Some(&i.updated))
-        {
-            return Err(issues);
-        }
+    pub(super) fn probe(open: &std::cell::RefCell<Option<Self>>, ask: impl FnOnce(i64) -> Result<(Vec<Issue>, bool)>) -> std::result::Result<Vec<Issue>, Vec<Issue>> {
+        let Some(mut o) = open.borrow_mut().take().filter(|o| o.at.elapsed() < OPEN_REUSE) else { return Err(vec![]) };
+        let (issues, whole) = ask(o.known.values().max().copied().unwrap_or(0)).map_err(|_| vec![])?;
+        if !whole || issues.iter().any(|i| o.known.get(&i.number) != Some(&i.updated)) { return Err(issues); }
         o.reused = true;
         let list = o.list.clone();
         *open.borrow_mut() = Some(o);
         Ok(list)
     }
 
-    pub(super) fn keep(
-        open: &std::cell::RefCell<Option<Self>>,
-        seen: &[Issue],
-        list: &[Issue],
-        listed: i64,
-    ) {
-        let known = seen
-            .iter()
-            .chain(list)
-            .filter(|i| task(i))
-            .map(|i| (i.number, i.updated))
-            .collect();
-        *open.borrow_mut() = Some(Self {
-            at: std::time::Instant::now(),
-            listed,
-            reused: false,
-            list: list.to_vec(),
-            known,
-        });
+    pub(super) fn keep(open: &std::cell::RefCell<Option<Self>>, seen: &[Issue], list: &[Issue], listed: i64) {
+        let known = seen.iter().chain(list).filter(|i| task(i)).map(|i| (i.number, i.updated)).collect();
+        *open.borrow_mut() = Some(Self { at: std::time::Instant::now(), listed, reused: false, list: list.to_vec(), known });
     }
 
     /// The reply of a write to an open non-task issue patches the kept list: the probe sees only tasks.
     pub(super) fn patch(open: &std::cell::RefCell<Option<Self>>, issue: Issue) {
         if let Some(o) = open.borrow_mut().as_mut() {
-            if let Some(at) = o.list.iter().position(|i| i.number == issue.number) {
-                o.list[at] = issue;
-            }
+            if let Some(at) = o.list.iter().position(|i| i.number == issue.number) { o.list[at] = issue; }
         }
     }
 
     pub(super) fn reused_at(open: &std::cell::RefCell<Option<Self>>) -> Option<i64> {
-        open.borrow()
-            .as_ref()
-            .filter(|o| o.reused)
-            .map(|o| o.listed)
+        open.borrow().as_ref().filter(|o| o.reused).map(|o| o.listed)
     }
 }
 
 impl GitHub {
     /// Publication already read the PR and qualified CI. Only a retained freeze can qualify its historical parent.
-    fn observe_publication(&self, pr: &Value, landed: Option<(&str, &str, &str)>) {
-        let repository = self
-            .api
-            .repo()
-            .rsplit_once("/repos/")
-            .map(|x| x.1.to_string())
-            .unwrap_or_default();
-        let base = pr["base"]["sha"]
-            .as_str()
-            .filter(|s| hex40(s))
-            .map(String::from);
-        let parent = landed.filter(|_| base.is_some()).and_then(|(sha, _, _)| {
-            let commit = self
-                .api
-                .call("GET", &format!("/commits/{sha}"), None)
-                .ok()?
-                .json()
-                .ok()?;
-            if commit["sha"] != sha {
-                return None;
-            }
-            commit["parents"][0]["sha"]
-                .as_str()
-                .filter(|s| hex40(s))
-                .map(String::from)
+    fn observe_publication(&self, pr: &Value, landed: Option<(&str,&str,&str)>) {
+        let repository=self.api.repo().rsplit_once("/repos/").map(|x|x.1.to_string()).unwrap_or_default();
+        let base=pr["base"]["sha"].as_str().filter(|s|hex40(s)).map(String::from);
+        let parent=landed.filter(|_|base.is_some()).and_then(|(sha,_,_)| {
+            let commit=self.api.call("GET",&format!("/commits/{sha}"),None).ok()?.json().ok()?;
+            if commit["sha"]!=sha {return None;}
+            commit["parents"][0]["sha"].as_str().filter(|s|hex40(s)).map(String::from)
         });
-        let ci = self.ci.borrow();
-        let run = landed.and_then(|(_, _, sha)| ci.as_ref().filter(|(at, _, _)| at == sha));
-        self.evidence
-            .borrow_mut()
-            .push(crate::readiness::Publication {
-                repository,
-                pr: pr["number"].as_u64().unwrap_or(0),
-                base,
-                head: s(&pr["head"], "sha"),
-                integration: landed.map(|(sha, _, _)| sha.into()),
-                merged: landed.map(|(sha, _, _)| sha.into()),
-                parent,
-                ci_kind: landed.map(|(_, kind, _)| kind.into()),
-                ci_sha: landed.map(|(_, _, sha)| sha.into()),
-                ci_run_id: run.and_then(|r| r.1),
-                ci_run_attempt: run.and_then(|r| r.2),
-            });
+        let ci=self.ci.borrow();
+        let run=landed.and_then(|(_,_,sha)|ci.as_ref().filter(|(at,_,_)|at==sha));
+        self.evidence.borrow_mut().push(crate::readiness::Publication {repository,pr:pr["number"].as_u64().unwrap_or(0),
+            base,head:s(&pr["head"],"sha"),integration:landed.map(|(sha,_,_)|sha.into()),
+            merged:landed.map(|(sha,_,_)|sha.into()),parent,ci_kind:landed.map(|(_,kind,_)|kind.into()),ci_sha:landed.map(|(_,_,sha)|sha.into()),ci_run_id:run.and_then(|r|r.1),ci_run_attempt:run.and_then(|r|r.2)});
     }
     /// Every task change bumps some `taskq` issue's `updated_at`; one `since` query of the newest known task update
     /// finds them, a 304 when nothing changed (#1819). The probe asks for `taskq` issues only (#2083): heartbeat writes
@@ -248,54 +155,22 @@ impl GitHub {
     /// the full list, read at least every [`OPEN_REUSE`]; `views` relists a kept heartbeat that turns stale (§ 3).
     fn open_unchanged(&self) -> Result<Vec<Issue>> {
         let seen = match Open::probe(&self.open, |since| {
-            let url = format!(
-                "/issues?state=all&labels={}&sort=updated&direction=desc&per_page=100&since={}",
-                crate::service::TASK_LABEL,
-                stamp(since)
-            );
-            let Value::Array(rows) = self.api.call("GET", &url, None)?.json()? else {
-                return Err("invalid board list: expected array".into());
-            };
-            Ok((
-                rows.iter()
-                    .filter(|v| v.get("pull_request").is_none())
-                    .map(parse_issue)
-                    .collect(),
-                rows.len() < 100,
-            ))
-        }) {
-            Ok(list) => return Ok(list),
-            Err(seen) => seen,
-        };
+            let url = format!("/issues?state=all&labels={}&sort=updated&direction=desc&per_page=100&since={}", crate::service::TASK_LABEL, stamp(since));
+            let Value::Array(rows) = self.api.call("GET", &url, None)?.json()? else { return Err("invalid board list: expected array".into()) };
+            Ok((rows.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect(), rows.len() < 100))
+        }) { Ok(list) => return Ok(list), Err(seen) => seen };
         // a failed list keeps nothing: the next pass reads in full
         let mut list = self.open_issues()?;
-        if let Some((_, written)) = self
-            .heartbeat
-            .borrow()
-            .as_ref()
-            .filter(|(g, _)| *g == self.api.generation.get())
-        {
-            if let Some(row) = list.iter_mut().find(|i| {
-                i.number == written.number
-                    && i.trusted
-                    && crate::service::is_host(i)
-                    && i.updated > 0
-                    && i.updated < written.updated
-            }) {
-                *row = written.clone();
-            }
+        if let Some((_, written)) = self.heartbeat.borrow().as_ref().filter(|(g, _)| *g == self.api.generation.get()) {
+            if let Some(row) = list.iter_mut().find(|i| i.number == written.number && i.trusted && crate::service::is_host(i)
+                && i.updated > 0 && i.updated < written.updated) { *row = written.clone(); }
         }
         Open::keep(&self.open, &seen, &list, *self.api.clock.borrow());
         Ok(list)
     }
 
     fn open_issues(&self) -> Result<Vec<Issue>> {
-        let repo = self
-            .api
-            .base
-            .rsplit_once("/repos/")
-            .map(|x| x.1)
-            .unwrap_or_default();
+        let repo = self.api.base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default();
         let (owner, name) = repo.split_once('/').ok_or("no repository")?;
         let (mut out, mut after) = (vec![], Value::Null);
         loop {
@@ -303,10 +178,7 @@ impl GitHub {
                 "query": OPEN_ISSUES, "variables": { "owner": owner, "name": name, "after": after },
             })))?.json()?;
             let page = &v["data"]["repository"]["issues"];
-            if v["errors"]
-                .as_array()
-                .is_some_and(|errors| errors.iter().any(|e| e["type"] == "NOT_FOUND"))
-            {
+            if v["errors"].as_array().is_some_and(|errors| errors.iter().any(|e| e["type"] == "NOT_FOUND")) {
                 return Err("no access to the repository".into());
             }
             if !page["nodes"].is_array() {
@@ -316,9 +188,7 @@ impl GitHub {
                 "number": n["number"], "title": n["title"], "body": n["body"], "updated_at": n["updatedAt"], "created_at": n["createdAt"], "state": "open",
                 "author_association": n["authorAssociation"], "labels": n["labels"]["nodes"],
             }))));
-            if page["pageInfo"]["hasNextPage"] != true {
-                return Ok(out);
-            }
+            if page["pageInfo"]["hasNextPage"] != true { return Ok(out); }
             after = page["pageInfo"]["endCursor"].clone();
         }
     }
@@ -330,25 +200,9 @@ impl GitHub {
 
     /// `ci` over the check runs `keep` accepts; commit statuses always count.
     fn ci_where(&self, sha: &str, keep: &dyn Fn(&Value) -> bool) -> Result<Option<String>> {
-        let runs = self
-            .api
-            .call(
-                "GET",
-                &format!("/commits/{sha}/check-runs?per_page=100"),
-                None,
-            )?
-            .json()?;
-        let runs: Vec<Value> = runs["check_runs"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|r| keep(r))
-            .cloned()
-            .collect();
-        let status = self
-            .api
-            .call("GET", &format!("/commits/{sha}/status"), None)?
-            .json()?;
+        let runs = self.api.call("GET", &format!("/commits/{sha}/check-runs?per_page=100"), None)?.json()?;
+        let runs: Vec<Value> = runs["check_runs"].as_array().into_iter().flatten().filter(|r| keep(r)).cloned().collect();
+        let status = self.api.call("GET", &format!("/commits/{sha}/status"), None)?.json()?;
         let statuses = status["total_count"].as_u64().unwrap_or(0);
         if runs.is_empty() && statuses == 0 {
             return Err(format!("no CI on {sha}").into());
@@ -356,17 +210,8 @@ impl GitHub {
         if let Some(r) = runs.iter().find(|r| r["status"] != "completed") {
             return Err(format!("CI {} pending on {sha}", s(r, "name")).into());
         }
-        if let Some(r) = runs.iter().find(|r| {
-            !matches!(
-                r["conclusion"].as_str(),
-                Some("success" | "neutral" | "skipped")
-            )
-        }) {
-            return Ok(Some(format!(
-                "CI {} {} on {sha}",
-                s(r, "name"),
-                s(r, "conclusion")
-            )));
+        if let Some(r) = runs.iter().find(|r| !matches!(r["conclusion"].as_str(), Some("success" | "neutral" | "skipped"))) {
+            return Ok(Some(format!("CI {} {} on {sha}", s(r, "name"), s(r, "conclusion"))));
         }
         match status["state"].as_str() {
             _ if statuses == 0 => Ok(None),
@@ -378,26 +223,13 @@ impl GitHub {
 
     fn publication_ancestry(&self, sha: &str, mode: &str) {
         // Only the immediate read in this close qualifies; later main changes are not incidents.
-        if !hex40(sha) {
-            return;
-        }
-        let on_main = self
-            .api
-            .call("GET", &format!("/compare/main...{sha}"), None)
-            .and_then(|r| r.json())
+        if !hex40(sha) { return; }
+        let on_main = self.api.call("GET", &format!("/compare/main...{sha}"), None).and_then(|r| r.json())
             .and_then(|v| match v["status"].as_str() {
-                Some("identical" | "behind") => Ok(true),
-                Some("ahead" | "diverged") => Ok(false),
-                _ => Err("unknown ancestry".into()),
+                Some("identical" | "behind") => Ok(true), Some("ahead" | "diverged") => Ok(false), _ => Err("unknown ancestry".into()),
             });
         if on_main == Ok(false) {
-            crate::incident::detect(
-                "publication.not_on_main",
-                concat!(file!(), ":", line!()),
-                "none",
-                &[mode],
-                &["ancestry:missing"],
-            );
+            crate::incident::detect("publication.not_on_main", concat!(file!(), ":", line!()), "none", &[mode], &["ancestry:missing"]);
         }
     }
 
@@ -405,44 +237,19 @@ impl GitHub {
     /// a ruleset it can never bypass, or classic protection the token can read that binds admins too.
     fn strict_main(&self) -> bool {
         let read = |url: &str| self.api.call("GET", url, None).and_then(|r| r.json());
-        self.main_rules().is_ok_and(|v| {
-            v.as_array()
-                .into_iter()
-                .flatten()
-                .filter(|r| {
-                    r["type"] == "required_status_checks"
-                        && r["parameters"]["strict_required_status_checks_policy"] == true
-                })
-                .any(|r| {
-                    r["ruleset_id"].as_u64().is_some_and(|id| {
-                        read(&format!("/rulesets/{id}"))
-                            .is_ok_and(|s| s["current_user_can_bypass"] == "never")
-                    })
-                })
-        }) || read("/branches/main/protection").is_ok_and(|v| {
-            v["required_status_checks"]["strict"] == true && v["enforce_admins"]["enabled"] == true
-        })
+        self.main_rules().is_ok_and(|v| v.as_array().into_iter().flatten()
+            .filter(|r| r["type"] == "required_status_checks" && r["parameters"]["strict_required_status_checks_policy"] == true)
+            .any(|r| r["ruleset_id"].as_u64().is_some_and(|id| read(&format!("/rulesets/{id}")).is_ok_and(|s| s["current_user_can_bypass"] == "never"))))
+            || read("/branches/main/protection").is_ok_and(|v| v["required_status_checks"]["strict"] == true && v["enforce_admins"]["enabled"] == true)
     }
 
     fn main_rules(&self) -> Result<Value> {
         self.api.refresh()?;
         let repo = self.api.repo();
-        if let Some((_, _, v)) = self
-            .rules
-            .borrow()
-            .as_ref()
-            .filter(|(g, r, _)| *g == self.api.generation.get() && *r == repo)
-        {
-            return v.clone();
-        }
-        let v = self
-            .api
-            .call("GET", "/rules/branches/main", None)
-            .and_then(|r| r.json());
+        if let Some((_, _, v)) = self.rules.borrow().as_ref().filter(|(g, r, _)| *g == self.api.generation.get() && *r == repo) { return v.clone(); }
+        let v = self.api.call("GET", "/rules/branches/main", None).and_then(|r| r.json());
         // #1935: a plan without branch rules refuses every read; probe it once, other failures retry next pass
-        if v.as_ref().is_ok() || v.as_ref().is_err_and(|e| plan_gap(e)) {
-            *self.rules.borrow_mut() = Some((self.api.generation.get(), repo, v.clone()));
-        }
+        if v.as_ref().is_ok() || v.as_ref().is_err_and(|e| plan_gap(e)) { *self.rules.borrow_mut() = Some((self.api.generation.get(), repo, v.clone())); }
         v
     }
 
@@ -451,102 +258,42 @@ impl GitHub {
         let query = "query($id: ID!) { node(id: $id) { ... on PullRequest { merged mergeQueueEntry { id } } } }";
         let read = || self.graphql(query, json!({"id": id}));
         let v = read()?;
-        if v["node"]["merged"] != false {
-            return Err("PR already merged or unknown; verify close before cancelling".into());
-        }
+        if v["node"]["merged"] != false { return Err("PR already merged or unknown; verify close before cancelling".into()); }
         if v["node"]["mergeQueueEntry"].is_object() {
-            self.graphql(
-                "mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }",
-                json!({"id": id}),
-            )?;
+            self.graphql("mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }", json!({"id": id}))?;
             let back = read()?;
-            if back["node"]["merged"] != false
-                || back["node"].get("mergeQueueEntry") != Some(&Value::Null)
-            {
-                return Err("queue cancellation not read back; task unchanged".into());
-            }
-        } else if v["node"].get("mergeQueueEntry") != Some(&Value::Null) {
-            return Err("queue cancellation state unknown".into());
-        }
+            if back["node"]["merged"] != false || back["node"].get("mergeQueueEntry") != Some(&Value::Null) { return Err("queue cancellation not read back; task unchanged".into()); }
+        } else if v["node"].get("mergeQueueEntry") != Some(&Value::Null) { return Err("queue cancellation state unknown".into()); }
         Ok(())
     }
 
     fn graphql(&self, query: &str, variables: Value) -> Result<Value> {
-        let v = self
-            .api
-            .call(
-                "POST",
-                &format!("{}/graphql", self.api.root),
-                Some(json!({"query": query, "variables": variables})),
-            )?
-            .json()?;
+        let v = self.api.call("POST", &format!("{}/graphql", self.api.root), Some(json!({"query": query, "variables": variables})))?.json()?;
         if let Some(e) = v["errors"].as_array().filter(|e| !e.is_empty()) {
             // #1820: type and message become a surfaced publication reason; raw JSON hid it.
-            let reason = e
-                .iter()
-                .map(|e| match (s(e, "type").as_str(), s(e, "message")) {
-                    ("UNPROCESSABLE", m) if m.contains("Pull request has merge conflicts") => {
-                        Reason::MergeConflict
-                    }
-                    ("UNPROCESSABLE", m) if m.contains("already in the queue") => {
-                        Reason::AlreadyQueued
-                    }
-                    ("UNPROCESSABLE", _) => Reason::Refused,
-                    _ => Reason::Other,
-                })
-                .find(|r| *r != Reason::Other)
-                .unwrap_or(Reason::Other);
-            return Err(Error::new(
-                reason,
-                format!(
-                    "publication GraphQL: {}",
-                    e.iter()
-                        .map(|e| format!("{} {}", s(e, "type"), s(e, "message"))
-                            .trim()
-                            .to_string())
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                ),
-            ));
+            let reason = e.iter().map(|e| match (s(e, "type").as_str(), s(e, "message")) {
+                ("UNPROCESSABLE", m) if m.contains("Pull request has merge conflicts") => Reason::MergeConflict,
+                ("UNPROCESSABLE", m) if m.contains("already in the queue") => Reason::AlreadyQueued,
+                ("UNPROCESSABLE", _) => Reason::Refused,
+                _ => Reason::Other,
+            }).find(|r| *r != Reason::Other).unwrap_or(Reason::Other);
+            return Err(Error::new(reason, format!("publication GraphQL: {}", e.iter().map(|e| format!("{} {}", s(e, "type"), s(e, "message")).trim().to_string()).collect::<Vec<_>>().join("; "))));
         }
-        if !v["data"].is_object() {
-            return Err("publication GraphQL data unknown".into());
-        }
+        if !v["data"].is_object() { return Err("publication GraphQL data unknown".into()); }
         Ok(v["data"].clone())
     }
 
     /// § 7: qualify the merge result, never substitute green checks on the original head.
     /// Err: pending or unknown; `Ok(Err)`: the merge result's CI failed; `Ok(Ok)`: green, plus a note on ignored push failures.
     fn merge_ci(&self, sha: &str) -> Result<std::result::Result<String, String>> {
-        *self.ci.borrow_mut() = None;
-        if !hex40(sha) {
-            return Err("merge result SHA unknown".into());
-        }
-        let v = self
-            .api
-            .call(
-                "GET",
-                &format!("/actions/runs?event=merge_group&head_sha={sha}&per_page=100"),
-                None,
-            )?
-            .json()?;
-        let runs = v["workflow_runs"]
-            .as_array()
-            .ok_or("merge_group CI unknown")?;
-        let group: Vec<&Value> = runs
-            .iter()
-            .filter(|r| r["head_sha"] == sha && r["event"] == "merge_group")
-            .collect();
-        if !group
-            .iter()
-            .any(|r| r["status"] == "completed" && r["conclusion"] == "success")
-        {
+        *self.ci.borrow_mut()=None;
+        if !hex40(sha) { return Err("merge result SHA unknown".into()); }
+        let v = self.api.call("GET", &format!("/actions/runs?event=merge_group&head_sha={sha}&per_page=100"), None)?.json()?;
+        let runs = v["workflow_runs"].as_array().ok_or("merge_group CI unknown")?;
+        let group: Vec<&Value> = runs.iter().filter(|r| r["head_sha"] == sha && r["event"] == "merge_group").collect();
+        if !group.iter().any(|r| r["status"] == "completed" && r["conclusion"] == "success") {
             if let Some(r) = group.iter().find(|r| r["status"] == "completed") {
-                return Ok(Err(format!(
-                    "merge_group CI {} {} on merge result {sha}",
-                    s(r, "name"),
-                    s(r, "conclusion")
-                )));
+                return Ok(Err(format!("merge_group CI {} {} on merge result {sha}", s(r, "name"), s(r, "conclusion"))));
             }
             return Err(format!("merge_group CI not green on merge result {sha}").into());
         }
@@ -555,74 +302,29 @@ impl GitHub {
         let suites: Vec<&Value> = group.iter().map(|r| &r["check_suite_id"]).collect();
         let ignored = std::cell::RefCell::new(vec![]);
         let keep = |c: &Value| {
-            let kept =
-                c["app"]["slug"] != "github-actions" || suites.contains(&&c["check_suite"]["id"]);
-            if !kept
-                && c["status"] == "completed"
-                && !matches!(
-                    c["conclusion"].as_str(),
-                    Some("success" | "neutral" | "skipped")
-                )
-            {
-                ignored
-                    .borrow_mut()
-                    .push(format!("{} {}", s(c, "name"), s(c, "conclusion")));
+            let kept = c["app"]["slug"] != "github-actions" || suites.contains(&&c["check_suite"]["id"]);
+            if !kept && c["status"] == "completed" && !matches!(c["conclusion"].as_str(), Some("success" | "neutral" | "skipped")) {
+                ignored.borrow_mut().push(format!("{} {}", s(c, "name"), s(c, "conclusion")));
             }
             kept
         };
-        if let Some(fail) = self.ci_where(sha, &keep)? {
-            return Ok(Err(fail));
-        }
+        if let Some(fail) = self.ci_where(sha, &keep)? { return Ok(Err(fail)); }
         let ignored = ignored.into_inner();
-        if let Some(run) = group
-            .iter()
-            .find(|r| r["status"] == "completed" && r["conclusion"] == "success")
-        {
-            *self.ci.borrow_mut() = Some((
-                sha.into(),
-                run["id"].as_u64().filter(|n| *n > 0),
-                run["run_attempt"].as_u64().filter(|n| *n > 0),
-            ));
+        if let Some(run)=group.iter().find(|r|r["status"]=="completed"&&r["conclusion"]=="success") {
+            *self.ci.borrow_mut()=Some((sha.into(),run["id"].as_u64().filter(|n|*n>0),run["run_attempt"].as_u64().filter(|n|*n>0)));
         }
-        Ok(Ok(if ignored.is_empty() {
-            String::new()
-        } else {
-            format!("; push CI {} ignored", ignored.join(", "))
-        }))
+        Ok(Ok(if ignored.is_empty() { String::new() } else { format!("; push CI {} ignored", ignored.join(", ")) }))
     }
 
     /// #1820: the files main and the PR both changed since their merge base, read Git-free (a public board has no worktree).
     fn conflict_files(&self, sha: &str) -> String {
-        let files = |v: &Value| {
-            v["files"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|f| f["filename"].as_str().map(String::from))
-                .collect::<Vec<_>>()
-        };
-        let read = |range: &str| {
-            self.api
-                .call("GET", &format!("/compare/{range}"), None)
-                .and_then(|r| r.json())
-        };
-        let Ok(ours) = read(&format!("main...{sha}")) else {
-            return "conflict files unknown".into();
-        };
-        let Some(base) = ours["merge_base_commit"]["sha"]
-            .as_str()
-            .filter(|b| hex40(b))
-        else {
-            return "conflict files unknown".into();
-        };
-        let Ok(theirs) = read(&format!("{base}...main")) else {
-            return "conflict files unknown".into();
-        };
+        let files = |v: &Value| v["files"].as_array().into_iter().flatten().filter_map(|f| f["filename"].as_str().map(String::from)).collect::<Vec<_>>();
+        let read = |range: &str| self.api.call("GET", &format!("/compare/{range}"), None).and_then(|r| r.json());
+        let Ok(ours) = read(&format!("main...{sha}")) else { return "conflict files unknown".into() };
+        let Some(base) = ours["merge_base_commit"]["sha"].as_str().filter(|b| hex40(b)) else { return "conflict files unknown".into() };
+        let Ok(theirs) = read(&format!("{base}...main")) else { return "conflict files unknown".into() };
         let theirs = files(&theirs);
-        let both: Vec<String> = files(&ours)
-            .into_iter()
-            .filter(|f| theirs.contains(f))
-            .collect();
+        let both: Vec<String> = files(&ours).into_iter().filter(|f| theirs.contains(f)).collect();
         match both.len() {
             0 => "conflict files unknown".into(),
             n if n <= 5 => format!("conflict files: {}", both.join(", ")),
@@ -634,88 +336,42 @@ impl GitHub {
         let id = pr["node_id"].as_str().ok_or("PR node id unknown")?;
         let number = &pr["number"];
         // #1820 (pilotq #106): a conflicting PR is never admitted; requeue in this pass, naming the files, instead of waiting silently.
-        let conflict = || {
-            Publish::MainMoved(format!(
-                "PR #{number} conflicts with main; {}",
-                self.conflict_files(sha)
-            ))
-        };
+        let conflict = || Publish::MainMoved(format!("PR #{number} conflicts with main; {}", self.conflict_files(sha)));
         let v = self.graphql("query($id: ID!) { node(id: $id) { ... on PullRequest { headRefOid mergeable merged mergeCommit { oid } mergeQueueEntry { id } timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { reason } } } } } }", json!({"id": id}))?;
         let p = &v["node"];
         let head = p["headRefOid"].as_str().ok_or("queued PR head unknown")?;
-        if head != sha {
-            return Ok(head_moved(number, head, sha));
-        }
-        if p.get("mergeQueueEntry").is_none() {
-            return Err("queue entry state unknown".into());
-        }
+        if head != sha { return Ok(head_moved(number, head, sha)); }
+        if p.get("mergeQueueEntry").is_none() { return Err("queue entry state unknown".into()); }
         if p["merged"] == true {
-            let merged = p["mergeCommit"]["oid"]
-                .as_str()
-                .ok_or("merge result unknown")?;
+            let merged = p["mergeCommit"]["oid"].as_str().ok_or("merge result unknown")?;
             let note = match self.merge_ci(merged)? {
-                Err(fail) => {
-                    return Ok(Publish::Blocked(format!(
-                        "PR #{} merged as {merged}, {fail}",
-                        pr["number"]
-                    )));
-                }
+                Err(fail) => return Ok(Publish::Blocked(format!("PR #{} merged as {merged}, {fail}", pr["number"]))),
                 Ok(note) => note,
             };
-            self.observe_publication(pr, Some((merged, "merge_group", merged)));
+            self.observe_publication(pr,Some((merged,"merge_group",merged)));
             self.publication_ancestry(merged, "pr");
-            return Ok(Publish::Done(format!(
-                "merged #{} as {merged}; merge-result CI green{note}",
-                pr["number"]
-            )));
+            return Ok(Publish::Done(format!("merged #{} as {merged}; merge-result CI green{note}", pr["number"])));
         }
-        if p["merged"] != false {
-            return Err("queue merge state unknown".into());
-        }
-        if let Some(id) = p["mergeQueueEntry"]["id"].as_str() {
-            return Ok(Publish::Enqueued(id.into()));
-        }
+        if p["merged"] != false { return Err("queue merge state unknown".into()); }
+        if let Some(id) = p["mergeQueueEntry"]["id"].as_str() { return Ok(Publish::Enqueued(id.into())); }
         if enqueued {
-            let reason = p["timelineItems"]["nodes"][0]["reason"]
-                .as_str()
-                .ok_or("queue entry missing; removal reason unknown")?;
+            let reason = p["timelineItems"]["nodes"][0]["reason"].as_str().ok_or("queue entry missing; removal reason unknown")?;
             let lower = reason.to_lowercase();
             // #1489: GitHub records the merge removal before the merged flag; reread next pass, never ask.
-            if lower.contains("merged") {
-                return Err(format!(
-                    "merge queue removed PR as {reason}; merged state not read back yet"
-                )
-                .into());
-            }
-            if lower.contains("failed") || lower.contains("failure") {
-                return Ok(Publish::Failed(format!("merge queue removed PR: {reason}")));
-            }
-            if !["conflict", "base branch", "out of date"]
-                .iter()
-                .any(|s| lower.contains(s))
-            {
-                return Ok(Publish::Blocked(format!(
-                    "merge queue removed PR: {reason}"
-                )));
-            }
+            if lower.contains("merged") { return Err(format!("merge queue removed PR as {reason}; merged state not read back yet").into()); }
+            if lower.contains("failed") || lower.contains("failure") { return Ok(Publish::Failed(format!("merge queue removed PR: {reason}"))); }
+            if !["conflict", "base branch", "out of date"].iter().any(|s| lower.contains(s)) { return Ok(Publish::Blocked(format!("merge queue removed PR: {reason}"))); }
             // #1820: a conflict removal is final only while the PR still conflicts; a clean PR (the conflicting entry ahead left) re-enqueues below.
             match p["mergeable"].as_str() {
-                Some("MERGEABLE") => {}
+                Some("MERGEABLE") => {},
                 Some("CONFLICTING") => return Ok(conflict()),
-                _ => return Err(format!(
-                    "merge queue removed PR #{number} as {reason}; mergeability not computed yet"
-                )
-                .into()),
+                _ => return Err(format!("merge queue removed PR #{number} as {reason}; mergeability not computed yet").into()),
             }
         }
-        if p["mergeable"] == "CONFLICTING" {
-            return Ok(conflict());
-        }
+        if p["mergeable"] == "CONFLICTING" { return Ok(conflict()); }
         if pr["draft"] == true {
             let v = self.graphql("mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }", json!({"id": id}))?;
-            if v["markPullRequestReadyForReview"]["pullRequest"]["isDraft"] != false {
-                return Err("PR is still a draft".into());
-            }
+            if v["markPullRequestReadyForReview"]["pullRequest"]["isDraft"] != false { return Err("PR is still a draft".into()); }
         }
         // #1372: GitHub refuses to enqueue a conflicting head; only the worker can fix it, so retrying each pass never helps.
         match self.graphql("mutation($id: ID!, $sha: GitObjectID!) { enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $sha}) { mergeQueueEntry { id } } }", json!({"id": id, "sha": sha})) {
@@ -732,42 +388,21 @@ impl GitHub {
             r => { r?; }
         }
         // Read back admission: a mutation response alone is not proof (R12); a retry recovers it after a lost response.
-        let v = self.graphql(
-            "query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }",
-            json!({"id": id}),
-        )?;
-        let id = v["node"]["mergeQueueEntry"]["id"]
-            .as_str()
-            .ok_or("queue admission not yet read back")?;
-        self.observe_publication(pr, None);
+        let v = self.graphql("query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }", json!({"id": id}))?;
+        let id = v["node"]["mergeQueueEntry"]["id"].as_str().ok_or("queue admission not yet read back")?;
+        self.observe_publication(pr,None);
         Ok(Publish::Enqueued(id.into()))
     }
 
     fn rebase(&self, root: &std::path::Path, n: u64, sha: &str) -> Result<Publish> {
         self.api.refresh()?;
         let path = root.join(".worktrees").join(format!("taskq-{n}"));
-        let path = path
-            .canonicalize()
-            .map_err(|_| "private fallback needs its owned task worktree on this host")?;
-        if !path.starts_with(
-            root.canonicalize()
-                .map_err(|_| "private fallback root unknown")?,
-        ) {
+        let path = path.canonicalize().map_err(|_| "private fallback needs its owned task worktree on this host")?;
+        if !path.starts_with(root.canonicalize().map_err(|_| "private fallback root unknown")?) {
             return Err("private fallback worktree escapes this project".into());
         }
-        let host = self
-            .api
-            .root
-            .strip_prefix("https://")
-            .unwrap_or_default()
-            .split('/')
-            .next()
-            .unwrap_or_default();
-        let host = if host == "api.github.com" {
-            "github.com"
-        } else {
-            host
-        };
+        let host = self.api.root.strip_prefix("https://").unwrap_or_default().split('/').next().unwrap_or_default();
+        let host = if host == "api.github.com" { "github.com" } else { host };
         let git = |args: &[&str]| -> Result<std::process::Output> {
             crate::platform::command("git").current_dir(&path).args(args).env("GIT_TERMINAL_PROMPT", "0")
                 // Git's credential protocol receives the host board token through the environment, never argv/logs.
@@ -779,149 +414,56 @@ impl GitHub {
         };
         let read = |args: &[&str]| -> Result<String> {
             let out = git(args)?;
-            if !out.status.success() {
-                return Err(format!(
-                    "private fallback `git {}` failed: {}: {}; worktree kept",
-                    args.join(" "),
-                    out.status,
-                    String::from_utf8_lossy(&out.stderr).trim()
-                )
-                .into());
-            }
-            String::from_utf8(out.stdout)
-                .map(|s| s.trim().to_string())
-                .map_err(|_| "private fallback Git output unknown".into())
+            if !out.status.success() { return Err(format!("private fallback `git {}` failed: {}: {}; worktree kept", args.join(" "), out.status, String::from_utf8_lossy(&out.stderr).trim()).into()); }
+            String::from_utf8(out.stdout).map(|s| s.trim().to_string()).map_err(|_| "private fallback Git output unknown".into())
         };
         let common = read(&["rev-parse", "--git-common-dir"])?;
-        let common = path
-            .join(common)
-            .canonicalize()
-            .map_err(|_| "private fallback ownership unknown")?;
-        let project = crate::platform::command("git")
-            .current_dir(root)
-            .args(["rev-parse", "--git-common-dir"])
-            .output()
-            .map_err(|e| {
-                format!(
-                    "private fallback project unknown: `git rev-parse --git-common-dir` failed: {e}"
-                )
-            })?;
-        if !project.status.success()
-            || root
-                .join(String::from_utf8_lossy(&project.stdout).trim())
-                .canonicalize()
-                .ok()
-                .as_ref()
-                != Some(&common)
-        {
+        let common = path.join(common).canonicalize().map_err(|_| "private fallback ownership unknown")?;
+        let project = crate::platform::command("git").current_dir(root).args(["rev-parse", "--git-common-dir"]).output().map_err(|e| format!("private fallback project unknown: `git rev-parse --git-common-dir` failed: {e}"))?;
+        if !project.status.success() || root.join(String::from_utf8_lossy(&project.stdout).trim()).canonicalize().ok().as_ref() != Some(&common) {
             return Err("private fallback worktree belongs to another repository".into());
         }
         let expected = format!("taskq-{n}");
-        if read(&["symbolic-ref", "--short", "HEAD"])? != expected
-            || read(&["rev-parse", "HEAD"])? != sha
-            || !read(&["status", "--porcelain"])?.is_empty()
-        {
-            return Err(
-                "private fallback refuses a dirty, changed or unowned task worktree".into(),
-            );
+        if read(&["symbolic-ref", "--short", "HEAD"])? != expected || read(&["rev-parse", "HEAD"])? != sha || !read(&["status", "--porcelain"])?.is_empty() {
+            return Err("private fallback refuses a dirty, changed or unowned task worktree".into());
         }
-        let repo = self
-            .api
-            .base
-            .rsplit_once("/repos/")
-            .map(|x| x.1)
-            .ok_or("repository unknown")?;
+        let repo = self.api.base.rsplit_once("/repos/").map(|x| x.1).ok_or("repository unknown")?;
         let origin = read(&["config", "--get", "remote.origin.url"])?;
         let origin = origin.trim_end_matches('/').trim_end_matches(".git");
         if origin != format!("https://{host}/{repo}") && origin != format!("git@{host}:{repo}") {
             return Err("private fallback origin is not this board; worktree kept".into());
         }
-        if !git(&["fetch", "origin", "main"])?.status.success() {
-            return Err("private fallback fetch failed; worktree kept".into());
-        }
+        if !git(&["fetch", "origin", "main"])?.status.success() { return Err("private fallback fetch failed; worktree kept".into()); }
         if !git(&["rebase", "origin/main"])?.status.success() {
             let conflict = !read(&["ls-files", "-u"])?.is_empty();
-            if !git(&["rebase", "--abort"])?.status.success() {
-                return Err("private fallback rebase abort unknown; worktree kept".into());
-            }
-            return if conflict {
-                Ok(Publish::MainMoved(
-                    "private fallback rebase conflict; worker must resolve against main".into(),
-                ))
-            } else {
-                Err("private fallback rebase failed; worktree restored".into())
-            };
+            if !git(&["rebase", "--abort"])?.status.success() { return Err("private fallback rebase abort unknown; worktree kept".into()); }
+            return if conflict { Ok(Publish::MainMoved("private fallback rebase conflict; worker must resolve against main".into())) }
+                else { Err("private fallback rebase failed; worktree restored".into()) };
         }
         let head = read(&["rev-parse", "HEAD"])?;
-        if !hex40(&head) {
-            return Err("private fallback head unknown".into());
+        if !hex40(&head) { return Err("private fallback head unknown".into()); }
+        if !git(&["push", "origin", &format!("HEAD:refs/heads/{expected}"), &format!("--force-with-lease=refs/heads/{expected}:{sha}")])?.status.success() {
+            return Err("private fallback push failed; rebased worktree kept, publication unknown".into());
         }
-        if !git(&[
-            "push",
-            "origin",
-            &format!("HEAD:refs/heads/{expected}"),
-            &format!("--force-with-lease=refs/heads/{expected}:{sha}"),
-        ])?
-        .status
-        .success()
-        {
-            return Err(
-                "private fallback push failed; rebased worktree kept, publication unknown".into(),
-            );
-        }
-        let back = self
-            .api
-            .call("GET", &format!("/git/ref/heads/{expected}"), None)?
-            .json()?;
-        if back["object"]["sha"] != head {
-            return Err("private fallback pushed head not read back".into());
-        }
+        let back = self.api.call("GET", &format!("/git/ref/heads/{expected}"), None)?.json()?;
+        if back["object"]["sha"] != head { return Err("private fallback pushed head not read back".into()); }
         Ok(Publish::Rebased(head))
     }
 
-    fn try_publish(
-        &self,
-        n: u64,
-        sha: &str,
-        mode: &str,
-        title: &str,
-        task_line: &str,
-        root: Option<&std::path::Path>,
-        enqueued: bool,
-    ) -> Result<Publish> {
+    fn try_publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
         self.evidence.borrow_mut().clear();
-        *self.ci.borrow_mut() = None;
+        *self.ci.borrow_mut()=None;
         // #2061 (#2010 pilotq#200, #2015 dashq#241): a task PR of another repository publishes there, before any board
         // repository read; a named PR that is not this task's (head `taskq-<N>`, the result, or #2308 the result as its
         // merge commit) is only a mention
         let mut unread = None;
         for (repo, p) in self.foreign_prs(n)? {
-            match self
-                .api
-                .call(
-                    "GET",
-                    &format!("{}/repos/{repo}/pulls/{p}", self.api.root),
-                    None,
-                )
-                .and_then(|r| r.json())
-            {
-                Ok(pr)
-                    if pr["head"]["ref"] == format!("taskq-{n}")
-                        || pr["head"]["sha"] == sha
-                        || landed(&pr, sha) =>
-                {
-                    return self.publish_foreign(
-                        &repo,
-                        pr,
-                        (n, sha, mode, title, task_line),
-                        root,
-                        enqueued,
-                    );
+            match self.api.call("GET", &format!("{}/repos/{repo}/pulls/{p}", self.api.root), None).and_then(|r| r.json()) {
+                Ok(pr) if pr["head"]["ref"] == format!("taskq-{n}") || pr["head"]["sha"] == sha || landed(&pr, sha) => {
+                    return self.publish_foreign(&repo, pr, (n, sha, mode, title, task_line), root, enqueued);
                 }
-                Ok(_) => {}
-                Err(e) if unreachable(&e) => {
-                    unread.get_or_insert((format!("{repo}#{p}"), e));
-                }
+                Ok(_) => {},
+                Err(e) if unreachable(&e) => { unread.get_or_insert((format!("{repo}#{p}"), e)); },
                 Err(e) => return Err(e),
             }
         }
@@ -935,71 +477,32 @@ impl GitHub {
             },
             r => r?.json()?["status"].as_str().unwrap_or_default().to_string(),
         };
-        self.publish_in(
-            &status,
-            None,
-            (n, sha, mode, title, task_line),
-            root,
-            enqueued,
-        )
+        self.publish_in(&status, None, (n, sha, mode, title, task_line), root, enqueued)
     }
 
     /// #2047: the `pr` route of PR `p` in repository `repo` (same host and token): its merge state, merge queue and CI,
     /// named in every receipt and reason. An unreadable PR blocks at once; nothing retries it silently.
-    fn publish_foreign(
-        &self,
-        repo: &str,
-        pr: Value,
-        task: (u64, &str, &str, &str, &str),
-        root: Option<&std::path::Path>,
-        enqueued: bool,
-    ) -> Result<Publish> {
+    fn publish_foreign(&self, repo: &str, pr: Value, task: (u64, &str, &str, &str, &str), root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
         let sha = task.1;
-        let p = pr["number"]
-            .as_u64()
-            .ok_or("publication PR number unknown")?;
+        let p = pr["number"].as_u64().ok_or("publication PR number unknown")?;
         let name = format!("{repo}#{p}");
-        let r = self.api.scoped(
-            format!("{}/repos/{repo}", self.api.root),
-            || -> Result<Publish> {
-                let read = |url: &str| self.api.call("GET", url, None).and_then(|r| r.json());
-                let status = match read(&format!("/compare/main...{sha}")) {
-                    Err(e) if unreachable(&e) => {
-                        return Ok(Publish::Blocked(format!(
-                            "result {sha} unreachable in {repo} of publication PR {name}: {e}"
-                        )));
-                    }
-                    r => r?["status"].as_str().unwrap_or_default().to_string(),
-                };
-                self.publish_in(&status, Some(&pr), task, root, enqueued)
-            },
-        );
-        let named = |e: String| {
-            if e.contains(&name) {
-                e
-            } else {
-                format!("{name}: {e}")
-            }
-        };
+        let r = self.api.scoped(format!("{}/repos/{repo}", self.api.root), || -> Result<Publish> {
+            let read = |url: &str| self.api.call("GET", url, None).and_then(|r| r.json());
+            let status = match read(&format!("/compare/main...{sha}")) {
+                Err(e) if unreachable(&e) => return Ok(Publish::Blocked(format!("result {sha} unreachable in {repo} of publication PR {name}: {e}"))),
+                r => r?["status"].as_str().unwrap_or_default().to_string(),
+            };
+            self.publish_in(&status, Some(&pr), task, root, enqueued)
+        });
+        let named = |e: String| if e.contains(&name) { e } else { format!("{name}: {e}") };
         Ok(match r.map_err(|e| e.map_text(&named))? {
-            Publish::Done(t) => Publish::Done(if t.ends_with("already on main") {
-                format!("{t} of {repo}")
-            } else {
-                t.replacen(
-                    &format!("merged #{p}"),
-                    &format!("merged #{p} in {repo}"),
-                    1,
-                )
-            }),
+            Publish::Done(t) => Publish::Done(if t.ends_with("already on main") { format!("{t} of {repo}") } else { t.replacen(&format!("merged #{p}"), &format!("merged #{p} in {repo}"), 1) }),
             Publish::Pending(e) => Publish::Pending(named(e)),
             Publish::Waiting(e) => Publish::Waiting(named(e)),
             Publish::Failed(e) => Publish::Failed(named(e)),
             Publish::MainMoved(e) => Publish::MainMoved(named(e)),
             Publish::Blocked(e) => Publish::Blocked(named(e)),
-            Publish::Superseded { reason, merged } => Publish::Superseded {
-                reason: named(reason),
-                merged,
-            },
+            Publish::Superseded { reason, merged } => Publish::Superseded { reason: named(reason), merged },
             p => p,
         })
     }
@@ -1007,24 +510,9 @@ impl GitHub {
     /// #2047, #2061: the PRs of other repositories on this board's host that the newest `result` (or a `publish` after
     /// it) names in the trusted log, as a link or `owner/name#P`; the last named first, each once.
     fn foreign_prs(&self, n: u64) -> Result<Vec<(String, u64)>> {
-        let web = format!(
-            "{}/",
-            self.api
-                .root
-                .replace("api.github.com", "github.com")
-                .replace("/api/v3", "")
-        );
-        let own = self
-            .api
-            .base
-            .rsplit_once("/repos/")
-            .map(|x| x.1.to_lowercase())
-            .unwrap_or_default();
-        let name_ok = |s: &str| {
-            !s.is_empty()
-                && s.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
-        };
+        let web = format!("{}/", self.api.root.replace("api.github.com", "github.com").replace("/api/v3", ""));
+        let own = self.api.base.rsplit_once("/repos/").map(|x| x.1.to_lowercase()).unwrap_or_default();
+        let name_ok = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
         let mut prs: Vec<(String, u64)> = vec![];
         for u in result_links(n, &super::entries(self, n)?).iter().rev() {
             let (repo, number) = match u.strip_prefix(&web) {
@@ -1032,38 +520,19 @@ impl GitHub {
                     [owner, name, "pull", p] => (format!("{owner}/{name}"), p),
                     _ => continue,
                 },
-                None => match u.split_once('#') {
-                    Some((repo, p)) => (repo.to_string(), p),
-                    None => continue,
-                },
+                None => match u.split_once('#') { Some((repo, p)) => (repo.to_string(), p), None => continue },
             };
-            let Ok(p) = number.parse::<u64>() else {
-                continue;
-            };
-            let Some((owner, name)) = repo
-                .split_once('/')
-                .filter(|(o, r)| name_ok(o) && name_ok(r))
-            else {
-                continue;
-            };
+            let Ok(p) = number.parse::<u64>() else { continue };
+            let Some((owner, name)) = repo.split_once('/').filter(|(o, r)| name_ok(o) && name_ok(r)) else { continue };
             let repo = format!("{owner}/{name}");
-            if repo.to_lowercase() != own && !prs.contains(&(repo.clone(), p)) {
-                prs.push((repo, p));
-            }
+            if repo.to_lowercase() != own && !prs.contains(&(repo.clone(), p)) { prs.push((repo, p)); }
         }
         Ok(prs)
     }
 
     /// The `pr` and `direct` routes after the ancestry read `status` of the result; `foreign` is the PR of another
     /// repository whose API the caller scoped (#2047), else the board repository's `taskq-<N>` PRs publish.
-    fn publish_in(
-        &self,
-        status: &str,
-        foreign: Option<&Value>,
-        (n, sha, mode, title, task_line): (u64, &str, &str, &str, &str),
-        root: Option<&std::path::Path>,
-        enqueued: bool,
-    ) -> Result<Publish> {
+    fn publish_in(&self, status: &str, foreign: Option<&Value>, (n, sha, mode, title, task_line): (u64, &str, &str, &str, &str), root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
         let branch = format!("taskq-{n}");
         // #2308 (#2302 agentq#206): the result is the merge commit of the named PR of another repository; that merge is
         // the publication, qualified by its CI below whatever the route, never read as an unqualified `already on main`
@@ -1076,199 +545,75 @@ impl GitHub {
             return Ok(Publish::Blocked("publication PR is in another repository; `direct` moves only the board repository's main".into()));
         }
         if mode == "direct" && !at_merge {
-            if let Some(fail) = self.ci(sha)? {
-                return Ok(Publish::Failed(fail));
-            }
-            let head = self
-                .api
-                .call("GET", &format!("/git/ref/heads/{branch}"), None)?
-                .json()?;
+            if let Some(fail) = self.ci(sha)? { return Ok(Publish::Failed(fail)); }
+            let head = self.api.call("GET", &format!("/git/ref/heads/{branch}"), None)?.json()?;
             if head["object"]["sha"] != sha {
-                return Ok(Publish::Failed(format!(
-                    "{branch} is not at the result {sha}"
-                )));
+                return Ok(Publish::Failed(format!("{branch} is not at the result {sha}")));
             }
-            self.api.call(
-                "PATCH",
-                "/git/refs/heads/main",
-                Some(json!({ "sha": sha, "force": false })),
-            )?;
+            self.api.call("PATCH", "/git/refs/heads/main", Some(json!({ "sha": sha, "force": false })))?;
             self.publication_ancestry(sha, mode);
             return Ok(Publish::Done(format!("main fast-forwarded to {sha}")));
         }
         let rules = self.main_rules();
         let manual = rules.as_ref().is_err_and(|e| plan_gap(e));
-        let queue = !manual
-            && rules?
-                .as_array()
-                .ok_or("unknown main rules")?
-                .iter()
-                .any(|r| r["type"] == "merge_queue");
-        let owner = self
-            .api
-            .base
-            .rsplit_once("/repos/")
-            .map(|x| x.1)
-            .and_then(|r| r.split('/').next())
-            .unwrap_or_default()
-            .to_string();
+        let queue = !manual && rules?.as_array().ok_or("unknown main rules")?.iter().any(|r| r["type"] == "merge_queue");
+        let owner = self.api.base.rsplit_once("/repos/").map(|x| x.1).and_then(|r| r.split('/').next()).unwrap_or_default().to_string();
         let prs = match foreign {
             Some(pr) if pr["state"] == "open" => vec![pr.clone()],
             Some(_) => vec![],
-            None => self
-                .api
-                .call(
-                    "GET",
-                    &format!("/pulls?head={owner}:{branch}&base=main&state=open"),
-                    None,
-                )?
-                .json()?
-                .as_array()
-                .cloned()
-                .ok_or("PR list unknown")?,
+            None => self.api.call("GET", &format!("/pulls?head={owner}:{branch}&base=main&state=open"), None)?.json()?.as_array().cloned().ok_or("PR list unknown")?,
         };
         if prs.is_empty() {
             // § 7 merged, not closed: a merged PR at the result SHA into any base (a release branch too) is the publication; no second merge
             let closed = match foreign {
                 Some(pr) => json!([pr]),
-                None => self
-                    .api
-                    .call(
-                        "GET",
-                        &format!("/pulls?head={owner}:{branch}&state=closed"),
-                        None,
-                    )?
-                    .json()?,
+                None => self.api.call("GET", &format!("/pulls?head={owner}:{branch}&state=closed"), None)?.json()?,
             };
-            let merged_prs: Vec<&Value> = closed
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|p| !p["merged_at"].is_null())
-                .collect();
-            if foreign.is_some() && merged_prs.is_empty() {
-                return Ok(Publish::Blocked(format!(
-                    "publication PR closed unmerged at result {sha}"
-                )));
-            }
+            let merged_prs: Vec<&Value> = closed.as_array().into_iter().flatten().filter(|p| !p["merged_at"].is_null()).collect();
+            if foreign.is_some() && merged_prs.is_empty() { return Ok(Publish::Blocked(format!("publication PR closed unmerged at result {sha}"))); }
             // #1820 (pilotq #106): a PR merged at a rebased head is the publication when it carries the result's patch
-            let found = merged_prs
-                .iter()
-                .find(|p| p["head"]["sha"] == sha || landed(p, sha))
-                .map(|p| (*p, String::new()))
-                .or_else(|| {
-                    merged_prs.iter().find_map(|p| {
-                        self.same_patch(p, sha).ok().flatten().map(|by| {
-                            (
-                                *p,
-                                format!(" (head {:.7}, the result's {by})", s(&p["head"], "sha")),
-                            )
-                        })
-                    })
-                });
+            let found = merged_prs.iter().find(|p| p["head"]["sha"] == sha || landed(p, sha)).map(|p| (*p, String::new()))
+                .or_else(|| merged_prs.iter().find_map(|p| self.same_patch(p, sha).ok().flatten()
+                    .map(|by| (*p, format!(" (head {:.7}, the result's {by})", s(&p["head"], "sha"))))));
             if let Some((pr, note)) = found {
                 let merged = s(pr, "merge_commit_sha");
                 let head = s(&pr["head"], "sha");
                 let ci = if queue || enqueued {
                     match self.merge_ci(&merged)? {
-                        Err(fail) => {
-                            return Ok(Publish::Blocked(format!(
-                                "PR #{} merged as {merged}, {fail}",
-                                pr["number"]
-                            )));
-                        }
+                        Err(fail) => return Ok(Publish::Blocked(format!("PR #{} merged as {merged}, {fail}", pr["number"]))),
                         Ok(note) => format!("merge-result CI green{note}"),
                     }
-                } else if let Some(fail) = self.ci(&head)? {
-                    return Ok(Publish::Failed(fail));
-                } else {
-                    format!("exact-SHA CI green on {head}")
-                };
-                self.observe_publication(
-                    pr,
-                    Some((
-                        &merged,
-                        if queue || enqueued {
-                            "merge_group"
-                        } else {
-                            "exact_sha"
-                        },
-                        if queue || enqueued { &merged } else { &head },
-                    )),
-                );
-                return Ok(Publish::Done(format!(
-                    "merged #{}{} as {}{note}; {ci}",
-                    pr["number"],
-                    into(&s(&pr["base"], "ref")),
-                    merged
-                )));
+                } else if let Some(fail) = self.ci(&head)? { return Ok(Publish::Failed(fail)); } else { format!("exact-SHA CI green on {head}") };
+                self.observe_publication(pr,Some((&merged,if queue || enqueued {"merge_group"} else {"exact_sha"},if queue || enqueued {&merged} else {&head})));
+                return Ok(Publish::Done(format!("merged #{}{} as {}{note}; {ci}", pr["number"], into(&s(&pr["base"], "ref")), merged)));
             }
             // #1777: superseded by PRs merged at other heads; `Failed` would cancel a PR that is gone and retry each pass
-            let merged: Vec<_> = merged_prs
-                .iter()
-                .map(|p| format!("#{} at {:.7}", p["number"], s(&p["head"], "sha")))
-                .collect();
-            if merged.is_empty() {
-                return Ok(Publish::Blocked(format!(
-                    "no open {branch} PR at result {sha}; merged {branch} PRs: none"
-                )));
-            }
+            let merged: Vec<_> = merged_prs.iter().map(|p| format!("#{} at {:.7}", p["number"], s(&p["head"], "sha"))).collect();
+            if merged.is_empty() { return Ok(Publish::Blocked(format!("no open {branch} PR at result {sha}; merged {branch} PRs: none"))); }
             let merged = merged.join(", ");
-            return Ok(Publish::Superseded {
-                reason: format!(
-                    "no open {branch} PR at result {sha}; merged {branch} PRs: {merged}"
-                ),
-                merged,
-            });
+            return Ok(Publish::Superseded { reason: format!("no open {branch} PR at result {sha}; merged {branch} PRs: {merged}"), merged });
         }
         if prs.len() != 1 {
-            return Ok(Publish::Failed(format!(
-                "{} open PRs of {branch}, want exactly one",
-                prs.len()
-            )));
+            return Ok(Publish::Failed(format!("{} open PRs of {branch}, want exactly one", prs.len())));
         }
-        let head = prs[0]["head"]["sha"]
-            .as_str()
-            .ok_or("PR head SHA unknown")?;
-        if head != sha {
-            return Ok(head_moved(&prs[0]["number"], head, sha));
-        }
+        let head = prs[0]["head"]["sha"].as_str().ok_or("PR head SHA unknown")?;
+        if head != sha { return Ok(head_moved(&prs[0]["number"], head, sha)); }
         // #1935: no queue and no protection on this plan; a person merges, the merged-PR reconcile above closes
-        if manual {
-            return Err(format!(
-                "PR #{} {}: {PLAN}; merge it: {}",
-                prs[0]["number"],
-                super::MANUAL_MERGE,
-                s(&prs[0], "html_url")
-            )
-            .into());
-        }
-        if queue {
-            return self.queue(&prs[0], sha, enqueued);
-        }
+        if manual { return Err(format!("PR #{} {}: {PLAN}; merge it: {}", prs[0]["number"], super::MANUAL_MERGE, s(&prs[0], "html_url")).into()); }
+        if queue { return self.queue(&prs[0], sha, enqueued); }
         match self.api.call("GET", "", None)?.json()?["private"].as_bool() {
             Some(true) => {},
             Some(false) => return Err("public board needs a main merge queue with required merge_group CI; Git fallback is private-only".into()),
             None => return Err("repository visibility unknown; no fallback".into()),
         }
         let root = root.ok_or("private fallback requires the service")?;
-        if !self.strict_main() {
-            return Err(
-                "private fallback needs strict main protection without token bypass".into(),
-            );
-        }
+        if !self.strict_main() { return Err("private fallback needs strict main protection without token bypass".into()); }
         if status == "diverged" {
-            if foreign.is_some() {
-                return Ok(Publish::Blocked("private fallback rebases only the board repository's task worktree; rebase the PR in its repository".into()));
-            }
+            if foreign.is_some() { return Ok(Publish::Blocked("private fallback rebases only the board repository's task worktree; rebase the PR in its repository".into())); }
             return self.rebase(root, n, sha);
         }
-        if status != "ahead" {
-            return Err("unknown result ancestry; private fallback left unchanged".into());
-        }
-        if let Some(fail) = self.ci(sha)? {
-            return Ok(Publish::Failed(fail));
-        }
+        if status != "ahead" { return Err("unknown result ancestry; private fallback left unchanged".into()); }
+        if let Some(fail) = self.ci(sha)? { return Ok(Publish::Failed(fail)); }
         let p = prs[0]["number"].as_u64().unwrap_or(0);
         if prs[0]["draft"] == true {
             // GitHub refuses to merge a draft (HTTP 405) and REST cannot mark it ready
@@ -1280,45 +625,23 @@ impl GitHub {
                 return Err(format!("#{p} is still a draft: {}", ready["errors"]).into());
             }
         }
-        self.observe_publication(&prs[0], None);
+        self.observe_publication(&prs[0],None);
         let merged = match self.api.call("PUT", &format!("/pulls/{p}/merge"), Some(json!({ "merge_method": "squash", "sha": sha, "commit_title": format!("{title} (#{p})"), "commit_message": task_line }))) {
             Err(e) if matches!(e.status(), Some(405 | 409)) => return Err("main moved or merge unavailable; service will reread the private fallback".into()),
             r => r?,
         };
         let back = self.api.call("GET", &format!("/pulls/{p}"), None)?.json()?;
         if back["merged"] != true {
-            if let Ok(second) = self
-                .api
-                .call("GET", &format!("/pulls/{p}"), None)
-                .and_then(|r| r.json())
+            if let Ok(second) = self.api.call("GET", &format!("/pulls/{p}"), None).and_then(|r| r.json())
                 && second["merged"] != true
             {
-                crate::incident::detect(
-                    "publication.readback",
-                    concat!(file!(), ":", line!()),
-                    "none",
-                    &[mode],
-                    &["merge:unconfirmed"],
-                );
+                crate::incident::detect("publication.readback", concat!(file!(), ":", line!()), "none", &[mode], &["merge:unconfirmed"]);
             }
         }
         if back["merged"] == true {
-            if let Ok(merged) = merged.json() {
-                self.publication_ancestry(&s(&merged, "sha"), mode);
-            }
+            if let Ok(merged) = merged.json() { self.publication_ancestry(&s(&merged, "sha"), mode); }
         }
-        if back["merged"] == true {
-            self.observe_publication(
-                &back,
-                Some((&s(&back, "merge_commit_sha"), "private_exact_sha", sha)),
-            );
-            Ok(Publish::Done(format!(
-                "merged #{p} as {}; exact-SHA CI green on {sha}",
-                s(&back, "merge_commit_sha")
-            )))
-        } else {
-            Err(format!("#{p} not merged yet").into())
-        }
+        if back["merged"] == true { self.observe_publication(&back,Some((&s(&back,"merge_commit_sha"),"private_exact_sha",sha))); Ok(Publish::Done(format!("merged #{p} as {}; exact-SHA CI green on {sha}", s(&back, "merge_commit_sha")))) } else { Err(format!("#{p} not merged yet").into()) }
     }
 }
 
@@ -1329,31 +652,12 @@ impl GitHub {
     /// omitted a file's patch.
     fn same_patch(&self, pr: &Value, sha: &str) -> Result<Option<&'static str>> {
         let merge = s(pr, "merge_commit_sha");
-        if !hex40(&merge) {
-            return Ok(None);
-        }
-        let base = self
-            .api
-            .call("GET", &format!("/commits/{merge}"), None)?
-            .json()?["parents"][0]["sha"]
-            .as_str()
-            .map(String::from)
-            .ok_or("merge parent unknown")?;
-        let diff = |head: &str| -> Result<Value> {
-            self.api
-                .call("GET", &format!("/compare/{base}...{head}"), None)?
-                .json()
-        };
+        if !hex40(&merge) { return Ok(None); }
+        let base = self.api.call("GET", &format!("/commits/{merge}"), None)?.json()?["parents"][0]["sha"].as_str().map(String::from).ok_or("merge parent unknown")?;
+        let diff = |head: &str| -> Result<Value> { self.api.call("GET", &format!("/compare/{base}...{head}"), None)?.json() };
         let (merged, result) = (diff(&s(&pr["head"], "sha"))?, diff(sha)?);
-        Ok(
-            if matches!((patch_id(&merged), patch_id(&result)), (Some(a), Some(b)) if a == b) {
-                Some("patch-id")
-            } else if matches!((changes(&merged), changes(&result)), (Some(a), Some(b)) if a == b) {
-                Some("changes")
-            } else {
-                None
-            },
-        )
+        Ok(if matches!((patch_id(&merged), patch_id(&result)), (Some(a), Some(b)) if a == b) { Some("patch-id") }
+            else if matches!((changes(&merged), changes(&result)), (Some(a), Some(b)) if a == b) { Some("changes") } else { None })
     }
 }
 
@@ -1361,32 +665,15 @@ impl GitHub {
 /// status, then its removed and its added lines, each in order and without whitespace; a file whose patch GitHub
 /// omits (binary, too large) is its blob. None when the list may be truncated (300 files).
 fn changes(compare: &Value) -> Option<Vec<(String, Vec<String>, Vec<String>)>> {
-    let files = compare["files"]
-        .as_array()
-        .filter(|f| !f.is_empty() && f.len() < 300)?;
+    let files = compare["files"].as_array().filter(|f| !f.is_empty() && f.len() < 300)?;
     let mut all = vec![];
     for f in files {
         let name = f["filename"].as_str()?;
-        let file = format!(
-            "{} {} {name}",
-            f["status"].as_str()?,
-            f["previous_filename"].as_str().unwrap_or(name)
-        );
-        let lines = |sign: char| -> Option<Vec<String>> {
-            match f["patch"].as_str() {
-                Some(patch) => Some(
-                    patch
-                        .lines()
-                        .filter_map(|l| l.strip_prefix(sign))
-                        .map(|l| l.chars().filter(|c| !c.is_whitespace()).collect())
-                        .collect(),
-                ),
-                None => Some(vec![format!(
-                    "blob {}",
-                    f["sha"].as_str().filter(|b| hex40(b))?
-                )]),
-            }
-        };
+        let file = format!("{} {} {name}", f["status"].as_str()?, f["previous_filename"].as_str().unwrap_or(name));
+        let lines = |sign: char| -> Option<Vec<String>> { match f["patch"].as_str() {
+            Some(patch) => Some(patch.lines().filter_map(|l| l.strip_prefix(sign)).map(|l| l.chars().filter(|c| !c.is_whitespace()).collect()).collect()),
+            None => Some(vec![format!("blob {}", f["sha"].as_str().filter(|b| hex40(b))?)]),
+        } };
         all.push((file, lines('-')?, lines('+')?));
     }
     all.sort();
@@ -1397,48 +684,19 @@ fn changes(compare: &Value) -> Option<Vec<(String, Vec<String>, Vec<String>)>> {
 /// whitespace or `@@` line numbers; file hashes summed with carry, so file order does not matter.
 /// None when GitHub omits a file's patch (binary, too large) or may have truncated the list (300 files).
 fn patch_id(compare: &Value) -> Option<[u8; 20]> {
-    let files = compare["files"]
-        .as_array()
-        .filter(|f| !f.is_empty() && f.len() < 300)?;
+    let files = compare["files"].as_array().filter(|f| !f.is_empty() && f.len() < 300)?;
     let mut sum = [0u8; 20];
     for f in files {
         let name = f["filename"].as_str()?;
         let old = f["previous_filename"].as_str().unwrap_or(name);
-        let (from, to) = match f["status"].as_str() {
-            Some("added") => ("/dev/null".into(), format!("b/{name}")),
-            Some("removed") => (format!("a/{old}"), "/dev/null".into()),
-            _ => (format!("a/{old}"), format!("b/{name}")),
-        };
+        let (from, to) = match f["status"].as_str() { Some("added") => ("/dev/null".into(), format!("b/{name}")),
+            Some("removed") => (format!("a/{old}"), "/dev/null".into()), _ => (format!("a/{old}"), format!("b/{name}")) };
         // GitHub sends no file mode: an added or removed file reads as a regular one (100644)
-        let mode = match f["status"].as_str() {
-            Some("added") => "new file mode 100644",
-            Some("removed") => "deleted file mode 100644",
-            _ => "",
-        };
-        let header = [
-            format!("diff --git a/{old} b/{name}"),
-            mode.into(),
-            format!("--- {from}"),
-            format!("+++ {to}"),
-        ];
+        let mode = match f["status"].as_str() { Some("added") => "new file mode 100644", Some("removed") => "deleted file mode 100644", _ => "" };
+        let header = [format!("diff --git a/{old} b/{name}"), mode.into(), format!("--- {from}"), format!("+++ {to}")];
         let mut ctx = ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
-        for line in header
-            .iter()
-            .map(String::as_str)
-            .filter(|l| !l.is_empty())
-            .chain(
-                f["patch"]
-                    .as_str()?
-                    .lines()
-                    .filter(|l| !l.starts_with("@@")),
-            )
-        {
-            ctx.update(
-                line.chars()
-                    .filter(|c| !c.is_whitespace())
-                    .collect::<String>()
-                    .as_bytes(),
-            );
+        for line in header.iter().map(String::as_str).filter(|l| !l.is_empty()).chain(f["patch"].as_str()?.lines().filter(|l| !l.starts_with("@@"))) {
+            ctx.update(line.chars().filter(|c| !c.is_whitespace()).collect::<String>().as_bytes());
         }
         let mut carry = 0u16;
         for (s, d) in sum.iter_mut().zip(ctx.finish().as_ref()) {
@@ -1461,25 +719,12 @@ fn result_links(n: u64, log: &[crate::core::Entry]) -> Vec<String> {
     let mut links = vec![];
     for e in log.iter().filter(|e| !e.edited) {
         let kind = crate::core::kind(n, &e.body);
-        if kind == "result" {
-            links.clear();
-        }
+        if kind == "result" { links.clear(); }
         if matches!(kind, "result" | "publish") {
-            links.extend(
-                e.body
-                    .split(|c: char| {
-                        c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '<' | '>' | ',')
-                    })
-                    .map(|u| {
-                        u.trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
-                            .trim_end_matches(|c: char| !c.is_ascii_alphanumeric())
-                    })
-                    .filter(|u| {
-                        u.starts_with("https://") && u.contains("/pull/")
-                            || !u.contains("://") && u.contains('/') && u.contains('#')
-                    })
-                    .map(String::from),
-            );
+            links.extend(e.body.split(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '<' | '>' | ','))
+                .map(|u| u.trim_start_matches(|c: char| !c.is_ascii_alphanumeric()).trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))
+                .filter(|u| u.starts_with("https://") && u.contains("/pull/") || !u.contains("://") && u.contains('/') && u.contains('#'))
+                .map(String::from));
         }
     }
     links
@@ -1488,9 +733,7 @@ fn result_links(n: u64, log: &[crate::core::Entry]) -> Vec<String> {
 /// #1820 (pilotq #106): a PR pushed after the result (a rebase in review) is unreviewed and never merges; silence held it 50 minutes.
 /// `main-moved` requeues the task; the worker reviews the PR head and delivers it as a new result.
 fn head_moved(number: &Value, head: &str, sha: &str) -> Publish {
-    Publish::MainMoved(format!(
-        "PR #{number} head {head:.7} is not the result {sha:.7}; deliver the PR head as a new result"
-    ))
+    Publish::MainMoved(format!("PR #{number} head {head:.7} is not the result {sha:.7}; deliver the PR head as a new result"))
 }
 
 /// #2308: PR `pr` is merged and its merge commit is the result `sha`: a worker that merged the PR itself reports the
@@ -1500,27 +743,14 @@ fn landed(pr: &Value, sha: &str) -> bool {
 }
 
 impl Board for GitHub {
-    fn take_publication_evidence(&self) -> Vec<crate::readiness::Publication> {
-        self.evidence.take()
-    }
-    fn forget(&self) {
-        *self.open.borrow_mut() = None;
-    }
-    fn kept(&self) -> Option<i64> {
-        Open::reused_at(&self.open)
-    }
-    fn merge_ci_green(&self, sha: &str) -> Result<()> {
-        Ok(self.merge_ci(sha)?.map(|_| ())?)
-    }
+    fn take_publication_evidence(&self) -> Vec<crate::readiness::Publication> { self.evidence.take() }
+    fn forget(&self) { *self.open.borrow_mut() = None; }
+    fn kept(&self) -> Option<i64> { Open::reused_at(&self.open) }
+    fn merge_ci_green(&self, sha: &str) -> Result<()> { Ok(self.merge_ci(sha)?.map(|_| ())?) }
     fn delivery_gap(&self, mode: &str) -> Result<Option<String>> {
-        if mode != "pr" {
-            return Ok(None);
-        }
+        if mode != "pr" { return Ok(None); }
         match self.main_rules() {
-            Err(e) if plan_gap(&e) => Ok(Some(format!(
-                "{PLAN} (HTTP 403); each PR {}",
-                super::MANUAL_MERGE
-            ))),
+            Err(e) if plan_gap(&e) => Ok(Some(format!("{PLAN} (HTTP 403); each PR {}", super::MANUAL_MERGE))),
             r => r.map(|_| None),
         }
     }
@@ -1528,34 +758,15 @@ impl Board for GitHub {
     fn pr_route(&self) -> crate::check::Probe {
         use crate::check::Probe;
         let rules = match self.main_rules() {
-            Err(e) if plan_gap(&e) => {
-                return Probe::Gap(format!(
-                    "{PLAN} (HTTP 403); each PR {}",
-                    super::MANUAL_MERGE
-                ));
-            }
+            Err(e) if plan_gap(&e) => return Probe::Gap(format!("{PLAN} (HTTP 403); each PR {}", super::MANUAL_MERGE)),
             Err(e) => return Probe::Unknown(e.into()),
             Ok(v) => v,
         };
-        if rules
-            .as_array()
-            .is_some_and(|r| r.iter().any(|r| r["type"] == "merge_queue"))
-        {
-            return Probe::Ok;
-        }
-        match self
-            .api
-            .call("GET", "", None)
-            .and_then(|r| r.json())
-            .map(|v| v["private"].as_bool())
-        {
-            Ok(Some(false)) => {
-                Probe::Gap("main of this public repository has no merge queue".into())
-            }
+        if rules.as_array().is_some_and(|r| r.iter().any(|r| r["type"] == "merge_queue")) { return Probe::Ok; }
+        match self.api.call("GET", "", None).and_then(|r| r.json()).map(|v| v["private"].as_bool()) {
+            Ok(Some(false)) => Probe::Gap("main of this public repository has no merge queue".into()),
             Ok(Some(true)) if self.strict_main() => Probe::Ok,
-            Ok(Some(true)) => Probe::Gap(
-                "this private repository has no merge queue and no strict main protection".into(),
-            ),
+            Ok(Some(true)) => Probe::Gap("this private repository has no merge queue and no strict main protection".into()),
             Ok(None) => Probe::Unknown("repository visibility unknown".into()),
             Err(e) => Probe::Unknown(e.into()),
         }
@@ -1565,74 +776,34 @@ impl Board for GitHub {
     /// 401, 403 or 404 names the status and the access it failed.
     fn access(&self) -> Vec<(&'static str, crate::check::Probe)> {
         use crate::check::Probe;
-        let probe = |method: &str, path: &str, body: Option<Value>, ok: u16| match self
-            .api
-            .refresh()
-            .and_then(|_| self.api.call(method, path, body))
-        {
+        let probe = |method: &str, path: &str, body: Option<Value>, ok: u16| match self.api.refresh().and_then(|_| self.api.call(method, path, body)) {
             Ok(_) => Probe::Ok,
             Err(e) => match e.status() {
                 Some(s) if s == ok => Probe::Ok,
-                Some(s @ (401 | 403 | 404)) => Probe::Gap(format!(
-                    "{} HTTP {s}",
-                    if method == "GET" { "read" } else { "write" }
-                )),
+                Some(s @ (401 | 403 | 404)) => Probe::Gap(format!("{} HTTP {s}", if method == "GET" { "read" } else { "write" })),
                 _ => Probe::Unknown(e.into()),
             },
         };
         // an empty repository answers 409 to a reader that may read it
         // #2352: the Issues read asks for `taskq` issues only: heartbeat writes never change it, so it answers 304
-        [
-            ("Issues", "/issues", true),
-            ("Contents", "/commits", false),
-            ("Pull requests", "/pulls", true),
-        ]
-        .into_iter()
-        .map(|(name, path, write)| {
-            let query = if name == "Issues" {
-                format!("?labels={}&per_page=1", crate::service::TASK_LABEL)
-            } else {
-                "?per_page=1".into()
-            };
-            let read = probe(
-                "GET",
-                &format!("{path}{query}"),
-                None,
-                if name == "Contents" { 409 } else { 0 },
-            );
-            (
-                name,
-                if write && read == Probe::Ok {
-                    probe("POST", path, Some(json!({})), 422)
-                } else {
-                    read
-                },
-            )
-        })
-        .collect()
+        [("Issues", "/issues", true), ("Contents", "/commits", false), ("Pull requests", "/pulls", true)].into_iter().map(|(name, path, write)| {
+            let query = if name == "Issues" { format!("?labels={}&per_page=1", crate::service::TASK_LABEL) } else { "?per_page=1".into() };
+            let read = probe("GET", &format!("{path}{query}"), None, if name == "Contents" { 409 } else { 0 });
+            (name, if write && read == Probe::Ok { probe("POST", path, Some(json!({})), 422) } else { read })
+        }).collect()
     }
     fn canonical_labels(&self) -> Result<bool> {
         self.api.canonical_labels()
     }
 
     fn ensure_labels(&self, names: &[String]) -> Result<()> {
-        self.api.ensure_labels(
-            names,
-            |c| c.into(),
-            |current, payload| {
-                let (method, path) = match current {
-                    Some(_) => (
-                        "PATCH",
-                        format!(
-                            "/labels/{}",
-                            encode(payload["name"].as_str().unwrap_or_default())
-                        ),
-                    ),
-                    None => ("POST", "/labels".into()),
-                };
-                self.api.call(method, &path, Some(payload)).map(|_| ())
-            },
-        )
+        self.api.ensure_labels(names, |c| c.into(), |current, payload| {
+            let (method, path) = match current {
+                Some(_) => ("PATCH", format!("/labels/{}", encode(payload["name"].as_str().unwrap_or_default()))),
+                None => ("POST", "/labels".into()),
+            };
+            self.api.call(method, &path, Some(payload)).map(|_| ())
+        })
     }
 
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> {
@@ -1641,87 +812,38 @@ impl Board for GitHub {
             None if self.api.root == "https://api.github.com" => return self.open_unchanged(),
             None => "/issues?state=open&per_page=100".into(),
         };
-        Ok(self
-            .api
-            .all(&url)?
-            .iter()
-            .filter(|v| v.get("pull_request").is_none())
-            .map(parse_issue)
-            .collect())
+        Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect())
     }
 
     fn tasks(&self, since: i64) -> Result<Vec<Issue>> {
-        let url = format!(
-            "/issues?state=all&labels={}&per_page=100&since={}",
-            crate::service::TASK_LABEL,
-            stamp(since)
-        );
-        Ok(self
-            .api
-            .all(&url)?
-            .iter()
-            .filter(|v| v.get("pull_request").is_none())
-            .map(parse_issue)
-            .collect())
+        let url = format!("/issues?state=all&labels={}&per_page=100&since={}", crate::service::TASK_LABEL, stamp(since));
+        Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect())
     }
 
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> {
         let since = since.map_or(String::new(), |t| format!("&since={}", stamp(t)));
         let r = self.api.call("GET", &format!("/issues?state=closed&labels={}&sort=updated&direction=desc&per_page={}&page={}{since}", crate::service::TASK_LABEL, super::CLOSED_PAGE, page.max(1)), None)?;
         let list = r.json()?;
-        let rows = list
-            .as_array()
-            .ok_or("invalid board list: expected array")?
-            .iter()
-            .filter(|v| v.get("pull_request").is_none());
-        Ok((
-            rows.map(|v| (parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0)))
-                .collect(),
-            r.next().is_some(),
-        ))
+        let rows = list.as_array().ok_or("invalid board list: expected array")?.iter().filter(|v| v.get("pull_request").is_none());
+        Ok((rows.map(|v| (parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0))).collect(), r.next().is_some()))
     }
 
     fn issue(&self, n: u64) -> Result<Issue> {
-        Ok(parse_issue(
-            &self
-                .api
-                .call("GET", &format!("/issues/{n}"), None)?
-                .json()?,
-        ))
+        Ok(parse_issue(&self.api.call("GET", &format!("/issues/{n}"), None)?.json()?))
     }
 
     fn closed_labelled(&self, label: &str) -> Result<Vec<(Issue, i64)>> {
-        let url = format!(
-            "/issues?state=closed&labels={},{}&per_page=100",
-            crate::service::TASK_LABEL,
-            encode(label)
-        );
-        Ok(self
-            .api
-            .all(&url)?
-            .iter()
-            .filter(|v| v.get("pull_request").is_none())
-            .map(|v| (parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0)))
-            .collect())
+        let url = format!("/issues?state=closed&labels={},{}&per_page=100", crate::service::TASK_LABEL, encode(label));
+        Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(|v| (parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0))).collect())
     }
+
 
     fn source(&self, path: &str, sha: &str) -> Result<String> {
         use base64::{Engine, engine::general_purpose::STANDARD};
-        let v = self
-            .api
-            .call(
-                "GET",
-                &format!("/contents/{}?ref={}", encode(path), encode(sha)),
-                None,
-            )?
-            .json()?;
-        if v["encoding"] != "base64" {
-            return Err("report source encoding unknown".into());
-        }
-        let bytes = STANDARD
-            .decode(s(&v, "content").replace(['\r', '\n'], ""))
-            .map_err(|_| "report source encoding invalid")?;
-        String::from_utf8(bytes).map_err(|_| "report source is not UTF-8".into())
+        let v=self.api.call("GET", &format!("/contents/{}?ref={}",encode(path),encode(sha)),None)?.json()?;
+        if v["encoding"]!="base64" {return Err("report source encoding unknown".into());}
+        let bytes=STANDARD.decode(s(&v,"content").replace(['\r','\n'],"")).map_err(|_|"report source encoding invalid")?;
+        String::from_utf8(bytes).map_err(|_|"report source is not UTF-8".into())
     }
 
     fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> {
@@ -1730,63 +852,29 @@ impl Board for GitHub {
     }
 
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {
-        Ok(self
-            .api
-            .all(&format!("/issues/{n}/comments?per_page=100"))?
-            .iter()
-            .map(parse_comment)
-            .collect())
+        Ok(self.api.all(&format!("/issues/{n}/comments?per_page=100"))?.iter().map(parse_comment).collect())
     }
 
     fn comment(&self, n: u64, body: &str) -> Result<u64> {
-        self.api
-            .call(
-                "POST",
-                &format!("/issues/{n}/comments"),
-                Some(json!({ "body": body })),
-            )?
-            .json()?["id"]
-            .as_u64()
-            .ok_or("no comment id".into())
+        self.api.call("POST", &format!("/issues/{n}/comments"), Some(json!({ "body": body })))?.json()?["id"].as_u64().ok_or("no comment id".into())
     }
 
     fn edit_comment(&self, _n: u64, id: u64, body: &str) -> Result<()> {
-        self.api
-            .call(
-                "PATCH",
-                &format!("/issues/comments/{id}"),
-                Some(json!({ "body": body })),
-            )
-            .map(|_| ())
+        self.api.call("PATCH", &format!("/issues/comments/{id}"), Some(json!({ "body": body }))).map(|_| ())
     }
 
     fn react_read(&self, _n: u64, id: u64) -> Result<()> {
-        self.api
-            .call(
-                "POST",
-                &format!("/issues/comments/{id}/reactions"),
-                Some(json!({ "content": "eyes" })),
-            )
-            .map(|_| ())
+        self.api.call("POST", &format!("/issues/comments/{id}/reactions"), Some(json!({ "content": "eyes" }))).map(|_| ())
     }
 
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> {
-        if !add.is_empty() && self.canonical_labels()? {
-            self.ensure_labels(add)?;
-        }
+        if !add.is_empty() && self.canonical_labels()? { self.ensure_labels(add)?; }
         if !add.is_empty() {
-            self.api.call(
-                "POST",
-                &format!("/issues/{n}/labels"),
-                Some(json!({ "labels": add })),
-            )?;
+            self.api.call("POST", &format!("/issues/{n}/labels"), Some(json!({ "labels": add })))?;
         }
         for l in remove {
             // percent-encode: a label like `q-/../..` must not walk the API path
-            match self
-                .api
-                .call("DELETE", &format!("/issues/{n}/labels/{}", encode(l)), None)
-            {
+            match self.api.call("DELETE", &format!("/issues/{n}/labels/{}", encode(l)), None) {
                 Err(e) if e.status() == Some(404) => {}
                 r => {
                     r?;
@@ -1797,72 +885,36 @@ impl Board for GitHub {
     }
 
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u64> {
-        if let Some(names) = self.api.creation_labels(labels)? {
-            self.ensure_labels(&names)?;
-        }
+        if let Some(names) = self.api.creation_labels(labels)? { self.ensure_labels(&names)?; }
         // #2083: a new heartbeat or held draft is not a `taskq` change the probe sees; the next list reads in full
         self.forget();
-        let n = self
-            .api
-            .call(
-                "POST",
-                "/issues",
-                Some(json!({ "title": title, "body": body, "labels": labels })),
-            )?
-            .json()?["number"]
-            .as_u64()
-            .ok_or("no issue number")?;
+        let n = self.api.call("POST", "/issues", Some(json!({ "title": title, "body": body, "labels": labels })))?.json()?["number"].as_u64().ok_or("no issue number")?;
         verify_assignment(self, n, labels, &[])?;
         Ok(n)
     }
 
     fn edit(&self, n: u64, body: &str) -> Result<()> {
-        let reply = self.api.call(
-            "PATCH",
-            &format!("/issues/{n}"),
-            Some(json!({ "body": body })),
-        )?;
+        let reply = self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "body": body })))?;
         // #2083: the probe does not see this host's heartbeat write; its reply patches the kept list, so the next
         // pass reads the new `updated_at` and does not write again
-        let issue = reply
-            .json()
-            .map(|v| parse_issue(&v))
-            .ok()
-            .filter(|i| i.number == n && i.open && !task(i));
-        if let Some(issue) = issue
-            .as_ref()
-            .filter(|i| i.trusted && crate::service::is_host(i))
-        {
+        let issue = reply.json().map(|v| parse_issue(&v)).ok().filter(|i| i.number == n && i.open && !task(i));
+        if let Some(issue) = issue.as_ref().filter(|i| i.trusted && crate::service::is_host(i)) {
             *self.heartbeat.borrow_mut() = Some((self.api.generation.get(), issue.clone()));
         }
-        if let Some(issue) = issue {
-            Open::patch(&self.open, issue);
-        }
+        if let Some(issue) = issue { Open::patch(&self.open, issue); }
         Ok(())
     }
 
     fn close(&self, n: u64) -> Result<()> {
         self.heartbeat.borrow_mut().take_if(|(_, i)| i.number == n);
         self.forget();
-        self.api
-            .call(
-                "PATCH",
-                &format!("/issues/{n}"),
-                Some(json!({ "state": "closed" })),
-            )
-            .map(|_| ())
+        self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "state": "closed" }))).map(|_| ())
     }
 
     fn reopen(&self, n: u64) -> Result<()> {
         self.heartbeat.borrow_mut().take_if(|(_, i)| i.number == n);
         self.forget();
-        self.api
-            .call(
-                "PATCH",
-                &format!("/issues/{n}"),
-                Some(json!({ "state": "open" })),
-            )
-            .map(|_| ())
+        self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "state": "open" }))).map(|_| ())
     }
 
     fn now(&self) -> Result<i64> {
@@ -1874,154 +926,52 @@ impl Board for GitHub {
         self.api.me(KIND.user_key)
     }
 
-    fn defer_publication(&self, mode: &str) -> bool {
-        mode == "pr"
-    }
+    fn defer_publication(&self, mode: &str) -> bool { mode == "pr" }
 
     fn cancel_publication(&self, n: u64, sha: &str) -> Result<()> {
-        let owner = self
-            .api
-            .base
-            .rsplit_once("/repos/")
-            .and_then(|r| r.1.split('/').next())
-            .ok_or("repository owner unknown")?;
-        let prs = self
-            .api
-            .call(
-                "GET",
-                &format!("/pulls?head={owner}:taskq-{n}&base=main&state=open"),
-                None,
-            )?
-            .json()?;
+        let owner = self.api.base.rsplit_once("/repos/").and_then(|r| r.1.split('/').next()).ok_or("repository owner unknown")?;
+        let prs = self.api.call("GET", &format!("/pulls?head={owner}:taskq-{n}&base=main&state=open"), None)?.json()?;
         let prs = prs.as_array().ok_or("cancellation PR list unknown")?;
         // #2047: no task PR here; the result's PR in another repository is the publication to cancel
-        if prs.is_empty()
-            && let Some((repo, p)) = self.foreign_prs(n)?.into_iter().next()
-        {
+        if prs.is_empty() && let Some((repo, p)) = self.foreign_prs(n)?.into_iter().next() {
             let name = format!("{repo}#{p}");
-            let pr = self
-                .api
-                .call(
-                    "GET",
-                    &format!("{}/repos/{repo}/pulls/{p}", self.api.root),
-                    None,
-                )
-                .and_then(|r| r.json())
-                .map_err(|e| {
-                    format!(
-                        "publication PR {name} unreachable; verify merge before cancelling: {e}"
-                    )
-                })?;
-            if pr["head"]["sha"]
-                .as_str()
-                .ok_or_else(|| format!("{name} cancellation head unknown"))?
-                != sha
-            {
-                return Ok(());
-            }
-            return self
-                .dequeue(
-                    pr["node_id"]
-                        .as_str()
-                        .ok_or_else(|| format!("{name} cancellation PR id unknown"))?,
-                )
-                .map_err(|e| e.map_text(|t| format!("{name}: {t}")));
+            let pr = self.api.call("GET", &format!("{}/repos/{repo}/pulls/{p}", self.api.root), None)
+                .and_then(|r| r.json()).map_err(|e| format!("publication PR {name} unreachable; verify merge before cancelling: {e}"))?;
+            if pr["head"]["sha"].as_str().ok_or_else(|| format!("{name} cancellation head unknown"))? != sha { return Ok(()); }
+            return self.dequeue(pr["node_id"].as_str().ok_or_else(|| format!("{name} cancellation PR id unknown"))?).map_err(|e| e.map_text(|t| format!("{name}: {t}")));
         }
         // #2347: a result with no task PR, open or merged, has nothing in publication; only a merged one needs a look first
         if prs.is_empty() {
-            let closed = self
-                .api
-                .call(
-                    "GET",
-                    &format!("/pulls?head={owner}:taskq-{n}&state=closed"),
-                    None,
-                )?
-                .json()?;
+            let closed = self.api.call("GET", &format!("/pulls?head={owner}:taskq-{n}&state=closed"), None)?.json()?;
             let closed = closed.as_array().ok_or("cancellation PR list unknown")?;
-            if closed.iter().all(|p| p["merged_at"].is_null()) {
-                return Ok(());
-            }
+            if closed.iter().all(|p| p["merged_at"].is_null()) { return Ok(()); }
         }
-        if prs.len() != 1 {
-            return Err(
-                "publication PR absent or ambiguous; verify merge before cancelling".into(),
-            );
-        }
-        if prs[0]["head"]["sha"]
-            .as_str()
-            .ok_or("cancellation head unknown")?
-            != sha
-        {
-            return Ok(());
-        }
-        self.dequeue(
-            prs[0]["node_id"]
-                .as_str()
-                .ok_or("cancellation PR id unknown")?,
-        )
+        if prs.len() != 1 { return Err("publication PR absent or ambiguous; verify merge before cancelling".into()); }
+        if prs[0]["head"]["sha"].as_str().ok_or("cancellation head unknown")? != sha { return Ok(()); }
+        self.dequeue(prs[0]["node_id"].as_str().ok_or("cancellation PR id unknown")?)
     }
 
     fn close_task_prs(&self, n: u64, reason: &str) -> Result<Vec<u64>> {
-        let owner = self
-            .api
-            .base
-            .rsplit_once("/repos/")
-            .and_then(|r| r.1.split('/').next())
-            .ok_or("repository owner unknown")?;
-        let prs = self
-            .api
-            .call(
-                "GET",
-                &format!("/pulls?head={owner}:taskq-{n}&state=open"),
-                None,
-            )?
-            .json()?;
+        let owner = self.api.base.rsplit_once("/repos/").and_then(|r| r.1.split('/').next()).ok_or("repository owner unknown")?;
+        let prs = self.api.call("GET", &format!("/pulls?head={owner}:taskq-{n}&state=open"), None)?.json()?;
         let marker = format!("Task #{n} closed without merging this PR");
         let mut closed = vec![];
         for pr in prs.as_array().ok_or("task PR list unknown")? {
             let p = pr["number"].as_u64().ok_or("task PR number unknown")?;
             self.dequeue(pr["node_id"].as_str().ok_or("task PR id unknown")?)?;
             // ponytail: two hosts racing between this read and the post both comment; a guard comment is the upgrade path
-            if !self
-                .comments(p)?
-                .iter()
-                .any(|c| c.body.starts_with(&marker))
-            {
-                self.comment(
-                    p,
-                    &format!(
-                        "{marker}: {reason}\nBranch `taskq-{n}` kept. Task: {}",
-                        self.url(n)
-                    ),
-                )?;
+            if !self.comments(p)?.iter().any(|c| c.body.starts_with(&marker)) {
+                self.comment(p, &format!("{marker}: {reason}\nBranch `taskq-{n}` kept. Task: {}", self.url(n)))?;
             }
-            let back = self
-                .api
-                .call(
-                    "PATCH",
-                    &format!("/pulls/{p}"),
-                    Some(json!({ "state": "closed" })),
-                )?
-                .json()?;
-            if back["state"] != "closed" || back["merged"] == true {
-                return Err(format!("PR #{p} close not read back").into());
-            }
+            let back = self.api.call("PATCH", &format!("/pulls/{p}"), Some(json!({ "state": "closed" })))?.json()?;
+            if back["state"] != "closed" || back["merged"] == true { return Err(format!("PR #{p} close not read back").into()); }
             closed.push(p);
         }
         Ok(closed)
     }
 
     // § 7 Result and close verdicts: a pending publication takes the current preset (#1942: was always `pr`)
-    fn resume_publication(
-        &self,
-        n: u64,
-        sha: &str,
-        mode: &str,
-        title: &str,
-        task_line: &str,
-        root: &std::path::Path,
-        enqueued: bool,
-    ) -> Publish {
+    fn resume_publication(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
         outcome(self.try_publish(n, sha, mode, title, task_line, Some(root), enqueued))
     }
 
@@ -2036,61 +986,30 @@ impl Board for GitHub {
     fn quota(&self) -> crate::requests::Budget {
         // #2084: a status that read only GraphQL saw no core budget; `GET /rate_limit` is free and carries it.
         // A failed read leaves the quota unknown.
-        if !self.requests().has_core() {
-            let _ = self
-                .api
-                .call("GET", &format!("{}/rate_limit", self.api.root), None);
-        }
+        if !self.requests().has_core() { let _ = self.api.call("GET", &format!("{}/rate_limit", self.api.root), None); }
         self.requests()
     }
 
     fn url(&self, n: u64) -> String {
-        self.foreign_url(
-            self.api
-                .base
-                .rsplit_once("/repos/")
-                .map(|x| x.1)
-                .unwrap_or_default(),
-            n,
-        )
+        self.foreign_url(self.api.base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default(), n)
     }
 
     fn foreign(&self, repo: &str, n: u64) -> Result<Issue> {
-        let v = self
-            .api
-            .call(
-                "GET",
-                &format!(
-                    "{}/repos/{}/issues/{n}",
-                    self.api.root,
-                    self.api.sibling("/repos/", repo)
-                ),
-                None,
-            )?
-            .json()?;
+        let v = self.api.call("GET", &format!("{}/repos/{}/issues/{n}", self.api.root, self.api.sibling("/repos/", repo)), None)?.json()?;
         Ok(parse_issue(&super::dep_reply(v, "number", n, "open")?))
     }
 
     fn foreign_url(&self, repo: &str, n: u64) -> String {
-        let web = self
-            .api
-            .root
-            .replace("api.github.com", "github.com")
-            .replace("/api/v3", "");
+        let web = self.api.root.replace("api.github.com", "github.com").replace("/api/v3", "");
         format!("{web}/{}/issues/{n}", self.api.sibling("/repos/", repo))
     }
 
     /// One commit on the orphan `taskq-evidence` branch per image; the URL pins that commit, so it never moves.
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> {
         let (sha, file, bytes) = self.evidence_commit(n, path, &format!("heads/{EVIDENCE}"))?;
-        let public = super::video_kind(&bytes).is_some()
-            && self.api.root == "https://api.github.com"
+        let public = super::video_kind(&bytes).is_some() && self.api.root == "https://api.github.com"
             && self.api.call("GET", "", None)?.json()?["private"] == false;
-        Ok(if public {
-            cdn_url(&self.api.base, &sha, &file)
-        } else {
-            raw_url(&self.api.root, &self.api.base, &sha, &file)
-        })
+        Ok(if public { cdn_url(&self.api.base, &sha, &file) } else { raw_url(&self.api.root, &self.api.base, &sha, &file) })
     }
 
     /// § 2 evidence files (#2019): one commit per file under the non-branch ref `refs/taskq/evidence`, so a default
@@ -2101,34 +1020,15 @@ impl Board for GitHub {
     }
 
     /// GitHub raw serves `.html` and `.htm` as `text/plain`: the browser shows the page source instead of saving it.
-    fn html_downloads(&self) -> bool {
-        false
-    }
+    fn html_downloads(&self) -> bool { false }
 
     fn file(&self, url: &str) -> Result<Vec<u8>> {
         use base64::Engine;
-        let (sha, file) = raw_path(&self.api.root, &self.api.base, url).ok_or_else(|| {
-            format!("image unknown: {url} is not a taskq evidence image of this repository")
-        })?;
+        let (sha, file) = raw_path(&self.api.root, &self.api.base, url).ok_or_else(|| format!("image unknown: {url} is not a taskq evidence image of this repository"))?;
         // the contents API carries files up to 1 MB inline; the blob API reads larger ones by sha
-        let meta = self
-            .api
-            .call(
-                "GET",
-                &format!(
-                    "/contents/{}?ref={sha}",
-                    file.split('/').map(encode).collect::<Vec<_>>().join("/")
-                ),
-                None,
-            )?
-            .json()?;
-        let blob = self
-            .api
-            .call("GET", &format!("/git/blobs/{}", s(&meta, "sha")), None)?
-            .json()?;
-        base64::engine::general_purpose::STANDARD
-            .decode(s(&blob, "content").replace('\n', ""))
-            .map_err(|e| Error::new(Reason::Invalid, format!("image {url}: {e}")))
+        let meta = self.api.call("GET", &format!("/contents/{}?ref={sha}", file.split('/').map(encode).collect::<Vec<_>>().join("/")), None)?.json()?;
+        let blob = self.api.call("GET", &format!("/git/blobs/{}", s(&meta, "sha")), None)?.json()?;
+        base64::engine::general_purpose::STANDARD.decode(s(&blob, "content").replace('\n', "")).map_err(|e| Error::new(Reason::Invalid, format!("image {url}: {e}")))
     }
 }
 
@@ -2136,18 +1036,10 @@ impl GitHub {
     /// Commits the file `path` as `<n>/<digest>-<name>` on top of ref `git_ref` (`heads/<branch>` or a non-branch ref
     /// below `refs/`), creating the ref as an orphan when missing; returns the commit, the file path and its bytes.
     /// ponytail: a concurrent upload moving the ref fails the PATCH (not a fast-forward); the caller retries the command.
-    fn evidence_commit(
-        &self,
-        n: u64,
-        path: &std::path::Path,
-        git_ref: &str,
-    ) -> Result<(String, String, Vec<u8>)> {
+    fn evidence_commit(&self, n: u64, path: &std::path::Path, git_ref: &str) -> Result<(String, String, Vec<u8>)> {
         use base64::Engine;
         let bytes = std::fs::read(path).map_err(|e| format!("file {}: {e}", path.display()))?;
-        let digest: String = ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref()[..6]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let digest: String = ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
         let file = format!("{n}/{digest}-{}", image_name(path));
         let parent = match self.api.call("GET", &format!("/git/ref/{git_ref}"), None) {
             Ok(r) => Some(s(&r.json()?["object"], "sha")),
@@ -2155,29 +1047,16 @@ impl GitHub {
             Err(e) => return Err(e),
         };
         let blob = self.api.call("POST", "/git/blobs", Some(json!({"content": base64::engine::general_purpose::STANDARD.encode(&bytes), "encoding": "base64"})))?.json()?;
-        let mut tree =
-            json!({"tree": [{"path": file, "mode": "100644", "type": "blob", "sha": blob["sha"]}]});
+        let mut tree = json!({"tree": [{"path": file, "mode": "100644", "type": "blob", "sha": blob["sha"]}]});
         if let Some(p) = &parent {
-            tree["base_tree"] = self
-                .api
-                .call("GET", &format!("/git/commits/{p}"), None)?
-                .json()?["tree"]["sha"]
-                .clone();
+            tree["base_tree"] = self.api.call("GET", &format!("/git/commits/{p}"), None)?.json()?["tree"]["sha"].clone();
         }
         let tree = self.api.call("POST", "/git/trees", Some(tree))?.json()?;
         let commit = self.api.call("POST", "/git/commits", Some(json!({"message": format!("taskq evidence #{n}"), "tree": tree["sha"], "parents": parent.iter().collect::<Vec<_>>()})))?.json()?;
         let sha = s(&commit, "sha");
         match parent {
-            Some(_) => self.api.call(
-                "PATCH",
-                &format!("/git/refs/{git_ref}"),
-                Some(json!({"sha": sha})),
-            )?,
-            None => self.api.call(
-                "POST",
-                "/git/refs",
-                Some(json!({"ref": format!("refs/{git_ref}"), "sha": sha})),
-            )?,
+            Some(_) => self.api.call("PATCH", &format!("/git/refs/{git_ref}"), Some(json!({"sha": sha})))?,
+            None => self.api.call("POST", "/git/refs", Some(json!({"ref": format!("refs/{git_ref}"), "sha": sha})))?,
         };
         Ok((sha, file, bytes))
     }
@@ -2190,12 +1069,7 @@ const EVIDENCE: &str = "taskq-evidence";
 const ATTACHMENTS: &str = "taskq/evidence";
 
 fn web(root: &str, base: &str) -> String {
-    format!(
-        "{}/{}",
-        root.replace("api.github.com", "github.com")
-            .replace("/api/v3", ""),
-        base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default()
-    )
+    format!("{}/{}", root.replace("api.github.com", "github.com").replace("/api/v3", ""), base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default())
 }
 
 /// § 2 visual evidence (#1782): the absolute, commit-pinned URL of an evidence image; GitHub renders it for every
@@ -2207,43 +1081,23 @@ fn raw_url(root: &str, base: &str, sha: &str, file: &str) -> String {
 /// § 2 visual evidence videos (#1844): GitHub serves a raw MP4 or WebM as a download, so a public github.com repository
 /// links the same commit-pinned file through jsDelivr, which serves it with its video type and the browser plays it.
 fn cdn_url(base: &str, sha: &str, file: &str) -> String {
-    format!(
-        "https://cdn.jsdelivr.net/gh/{}@{sha}/{file}",
-        base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default()
-    )
+    format!("https://cdn.jsdelivr.net/gh/{}@{sha}/{file}", base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default())
 }
 
 /// The commit and file of an evidence URL of this repository, raw or jsDelivr; none for any other URL.
 fn raw_path<'a>(root: &str, base: &str, url: &'a str) -> Option<(&'a str, &'a str)> {
-    let cdn = (root == "https://api.github.com")
-        .then(|| cdn_url(base, "", ""))
-        .and_then(|p| url.strip_prefix(p.trim_end_matches('/')));
-    let (sha, file) = cdn
-        .or_else(|| url.strip_prefix(&format!("{}/raw/", web(root, base))))?
-        .split_once('/')?;
-    (hex40(sha) && !file.is_empty() && !file.split('/').any(|p| p.is_empty() || p == ".."))
-        .then_some((sha, file))
+    let cdn = (root == "https://api.github.com").then(|| cdn_url(base, "", "")).and_then(|p| url.strip_prefix(p.trim_end_matches('/')));
+    let (sha, file) = cdn.or_else(|| url.strip_prefix(&format!("{}/raw/", web(root, base))))?.split_once('/')?;
+    (hex40(sha) && !file.is_empty() && !file.split('/').any(|p| p.is_empty() || p == "..")).then_some((sha, file))
 }
 
 /// Complete paginated board history, never issue creation or current queue size.
 /// A deleted label's event has no label (§ 4 admission records): it admits nothing.
 fn first_admission(events: &[Value]) -> Result<Option<(u64, i64)>> {
-    events
-        .iter()
-        .filter(|v| v["event"] == "labeled" && v["label"]["name"] == "taskq")
-        .map(|v| {
-            Ok((
-                v["id"]
-                    .as_u64()
-                    .filter(|id| *id > 0)
-                    .ok_or("admission ID unavailable")?,
-                iso(&s(v, "created_at"))
-                    .filter(|at| *at > 0)
-                    .ok_or("admission time unavailable")?,
-            ))
-        })
-        .collect::<Result<Vec<_>>>()
-        .map(|events| events.into_iter().min_by_key(|(id, at)| (*at, *id)))
+    events.iter().filter(|v| v["event"] == "labeled" && v["label"]["name"] == "taskq")
+        .map(|v| Ok((v["id"].as_u64().filter(|id| *id > 0).ok_or("admission ID unavailable")?,
+            iso(&s(v, "created_at")).filter(|at| *at > 0).ok_or("admission time unavailable")?)))
+        .collect::<Result<Vec<_>>>().map(|events| events.into_iter().min_by_key(|(id, at)| (*at, *id)))
 }
 
 #[cfg(test)]

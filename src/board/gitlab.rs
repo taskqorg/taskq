@@ -1,10 +1,7 @@
 //! GitLab issues (taskq.md § 1, § 2, § 7): REST v4 on gitlab.com or a self-managed host, `glab` login.
 
 use super::github::Open;
-use super::{
-    Api, Board, Comment, Error, Issue, Kind, Publish, Reason, Result, hex40, image_name, into, iso,
-    names, outcome, s, stamp, verify_assignment,
-};
+use super::{Api, Board, Error, Reason, image_name, Comment, Issue, Kind, Publish, Result, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 
@@ -18,39 +15,25 @@ pub const KIND: Kind = Kind {
     token,
     token_env: &["GITLAB_TOKEN"],
     api,
-    board: |api| {
-        Box::new(GitLab {
-            api,
-            members: RefCell::new(vec![]),
-            open: RefCell::new(None),
-        })
-    },
+    board: |api| Box::new(GitLab { api, members: RefCell::new(vec![]), open: RefCell::new(None) }),
 };
 
 /// coreq's lookup (§ 9): env, `<install>/gitlab-token`, then `glab`. Reaching `glab` means no env token and no file.
 fn token(tool: &coreq::Tool, host: &str) -> Result<String> {
-    tool.token(true, host)
-        .map_err(|e| missing(&tool.install.join("gitlab-token"), host, &e).into())
+    tool.token(true, host).map_err(|e| missing(&tool.install.join("gitlab-token"), host, &e).into())
 }
 
 /// Names what to provide when neither the file nor `glab` gave a token (#1894); other errors pass unchanged.
 fn missing(file: &std::path::Path, host: &str, e: &str) -> String {
     match e.strip_prefix("board token lookup unavailable: ") {
-        Some(why) => format!(
-            "no GitLab token: no {} and `glab` cannot run ({why})\nNext: write a GitLab access token for {host} to that file, or install glab and log in to {host}",
-            file.display()
-        ),
+        Some(why) => format!("no GitLab token: no {} and `glab` cannot run ({why})\nNext: write a GitLab access token for {host} to that file, or install glab and log in to {host}", file.display()),
         None => e.into(),
     }
 }
 
 fn api(host: &str, repo: &str, token: &str) -> Api {
     let root = format!("https://{host}/api/v4");
-    Api::new(
-        root.clone(),
-        format!("{root}/projects/{}", repo.replace('/', "%2F")),
-        token,
-    )
+    Api::new(root.clone(), format!("{root}/projects/{}", repo.replace('/', "%2F")), token)
 }
 
 pub struct GitLab {
@@ -100,11 +83,7 @@ impl GitLab {
         if let Some((_, ok)) = self.members.borrow().iter().find(|(u, _)| *u == user) {
             return *ok;
         }
-        let ok = self
-            .api
-            .call("GET", &format!("/members/all/{user}"), None)
-            .ok()
-            .and_then(|r| r.json().ok())
+        let ok = self.api.call("GET", &format!("/members/all/{user}"), None).ok().and_then(|r| r.json().ok())
             .is_some_and(|v| v["access_level"].as_u64().unwrap_or(0) >= 20);
         self.members.borrow_mut().push((user, ok));
         ok
@@ -112,17 +91,11 @@ impl GitLab {
 
     /// CI on `sha`: Ok(None) green, Ok(Some) the outcome that stops this close (failed, or still running), Err pending or missing.
     fn ci(&self, sha: &str) -> Result<Option<Publish>> {
-        let v = self
-            .api
-            .call("GET", &format!("/repository/commits/{sha}"), None)?
-            .json()?;
+        let v = self.api.call("GET", &format!("/repository/commits/{sha}"), None)?.json()?;
         let p = &v["last_pipeline"];
         match p["status"].as_str() {
             Some("success") => Ok(None),
-            Some(st @ ("failed" | "canceled")) => Ok(Some(Publish::Failed(format!(
-                "CI {st} on {sha}{}",
-                link(p)
-            )))),
+            Some(st @ ("failed" | "canceled")) => Ok(Some(Publish::Failed(format!("CI {st} on {sha}{}", link(p))))),
             Some(st) if RUNNING.contains(&st) => Ok(Some(self.running(&format!("CI on {sha}"), p))),
             Some(st) => Err(format!("CI {st} on {sha}").into()),
             None => Err(format!("no CI on {sha}").into()),
@@ -134,69 +107,30 @@ impl GitLab {
         let st = p["status"].as_str().unwrap_or("running");
         // board clock only (§ 4); unknown clock or start never trips the deadline
         let clock = *self.api.clock.borrow();
-        let age = iso(&s(p, "created_at"))
-            .filter(|_| clock > 0)
-            .map(|t| clock - t);
+        let age = iso(&s(p, "created_at")).filter(|_| clock > 0).map(|t| clock - t);
         if age.is_some_and(|a| a > PIPELINE_DEADLINE) {
-            return Publish::Blocked(format!(
-                "{what} still {st} after {} h{}",
-                PIPELINE_DEADLINE / 3600,
-                link(p)
-            ));
+            return Publish::Blocked(format!("{what} still {st} after {} h{}", PIPELINE_DEADLINE / 3600, link(p)));
         }
         Publish::Waiting(format!("{what} {st}{}: merges when it passes", link(p)))
     }
 
     fn publication_ancestry(&self, sha: &str, mode: &str) {
         // Only the immediate read in this close qualifies; later main changes are not incidents.
-        if !hex40(sha) {
-            return;
-        }
-        let on_main = self
-            .api
-            .call(
-                "GET",
-                &format!("/repository/merge_base?refs[]=main&refs[]={sha}"),
-                None,
-            )
-            .and_then(|r| r.json())
-            .and_then(|v| {
-                let id = v["id"]
-                    .as_str()
-                    .filter(|id| hex40(id))
-                    .ok_or("unknown merge base")?;
+        if !hex40(sha) { return; }
+        let on_main = self.api.call("GET", &format!("/repository/merge_base?refs[]=main&refs[]={sha}"), None)
+            .and_then(|r| r.json()).and_then(|v| {
+                let id = v["id"].as_str().filter(|id| hex40(id)).ok_or("unknown merge base")?;
                 Ok(id == sha)
             });
         if on_main == Ok(false) {
-            crate::incident::detect(
-                "publication.not_on_main",
-                concat!(file!(), ":", line!()),
-                "none",
-                &[mode],
-                &["ancestry:missing"],
-            );
+            crate::incident::detect("publication.not_on_main", concat!(file!(), ":", line!()), "none", &[mode], &["ancestry:missing"]);
         }
     }
 
-    fn try_publish(
-        &self,
-        n: u64,
-        sha: &str,
-        mode: &str,
-        title: &str,
-        task_line: &str,
-    ) -> Result<Publish> {
+    fn try_publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> Result<Publish> {
         let branch = format!("taskq-{n}");
         // No commit, or the SHA is already on main: verify ancestry, close.
-        let base = self
-            .api
-            .call(
-                "GET",
-                &format!("/repository/merge_base?refs[]=main&refs[]={sha}"),
-                None,
-            )?
-            .json()?["id"]
-            .clone();
+        let base = self.api.call("GET", &format!("/repository/merge_base?refs[]=main&refs[]={sha}"), None)?.json()?["id"].clone();
         if base == sha {
             return Ok(Publish::Done(format!("{sha} already on main")));
         }
@@ -204,85 +138,33 @@ impl GitLab {
             return Ok(stop);
         }
         // no fast-forward ref API: `direct` merges a fast-forward MR (§ 7)
-        let mrs = self
-            .api
-            .call(
-                "GET",
-                &format!("/merge_requests?source_branch={branch}&target_branch=main&state=opened"),
-                None,
-            )?
-            .json()?;
+        let mrs = self.api.call("GET", &format!("/merge_requests?source_branch={branch}&target_branch=main&state=opened"), None)?.json()?;
         let mrs = mrs.as_array().cloned().unwrap_or_default();
         if mrs.is_empty() {
             // § 7 merged, not closed: a merged MR at the result SHA into any target (a release branch too) is the publication; no second merge
-            let merged = self
-                .api
-                .call(
-                    "GET",
-                    &format!("/merge_requests?source_branch={branch}&state=merged"),
-                    None,
-                )?
-                .json()?;
-            if let Some(mr) = merged
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|m| m["sha"] == sha)
-            {
-                return Ok(Publish::Done(format!(
-                    "merged !{}{}",
-                    mr["iid"],
-                    into(&s(mr, "target_branch"))
-                )));
+            let merged = self.api.call("GET", &format!("/merge_requests?source_branch={branch}&state=merged"), None)?.json()?;
+            if let Some(mr) = merged.as_array().into_iter().flatten().find(|m| m["sha"] == sha) {
+                return Ok(Publish::Done(format!("merged !{}{}", mr["iid"], into(&s(mr, "target_branch")))));
             }
         }
         let mr = match (mrs.len(), mode) {
             (1, _) => mrs[0].clone(),
-            (0, "direct") => self
-                .api
-                .call(
-                    "POST",
-                    "/merge_requests",
-                    Some(
-                        json!({ "source_branch": branch, "target_branch": "main", "title": title }),
-                    ),
-                )?
-                .json()?,
-            (k, _) => {
-                return Ok(Publish::Failed(format!(
-                    "{k} open MRs of {branch}, want exactly one"
-                )));
-            }
+            (0, "direct") => self.api.call("POST", "/merge_requests", Some(json!({ "source_branch": branch, "target_branch": "main", "title": title })))?.json()?,
+            (k, _) => return Ok(Publish::Failed(format!("{k} open MRs of {branch}, want exactly one"))),
         };
         if mr["sha"] != sha {
-            return Ok(Publish::Failed(format!(
-                "MR head {} is not the result {sha}",
-                s(&mr, "sha")
-            )));
+            return Ok(Publish::Failed(format!("MR head {} is not the result {sha}", s(&mr, "sha"))));
         }
-        if mode == "pr"
-            && base
-                != self
-                    .api
-                    .call("GET", "/repository/branches/main", None)?
-                    .json()?["commit"]["id"]
-        {
+        if mode == "pr" && base != self.api.call("GET", "/repository/branches/main", None)?.json()?["commit"]["id"] {
             // CI on a head that lacks current main proves nothing about the merge result (#1139)
-            return Ok(Publish::Failed(format!(
-                "{branch} is not rebased on current main: rebase, rerun the checks and push"
-            )));
+            return Ok(Publish::Failed(format!("{branch} is not rebased on current main: rebase, rerun the checks and push")));
         }
         let project = self.api.call("GET", "", None)?.json()?;
         if project["autoclose_referenced_issues"] != false {
             // MR or commit text such as 'Do not close #N' would close the task on merge, before its acceptance (csgo#428, #1909)
             return Ok(Publish::Pending("project closes issues named in MR or commit text: set autoclose_referenced_issues to false".into()));
         }
-        if mode == "pr"
-            && !matches!(
-                project["merge_method"].as_str(),
-                Some("ff" | "rebase_merge")
-            )
-        {
+        if mode == "pr" && !matches!(project["merge_method"].as_str(), Some("ff" | "rebase_merge")) {
             // main can move between the check above and the merge: only a fast-forward merge method refuses a stale head at merge time
             return Ok(Publish::Pending("project merge method does not require a rebased MR: set fast-forward or semi-linear".into()));
         }
@@ -290,66 +172,30 @@ impl GitLab {
         if let Some(stop) = self.mergeable(iid)? {
             return Ok(stop);
         }
-        let body = if mode == "pr" {
-            json!({ "sha": sha, "squash": true, "squash_commit_message": format!("{title}\n\n{task_line}") })
-        } else {
-            json!({ "sha": sha })
-        };
-        let merged = match self
-            .api
-            .call("PUT", &format!("/merge_requests/{iid}/merge"), Some(body))
-        {
+        let body = if mode == "pr" { json!({ "sha": sha, "squash": true, "squash_commit_message": format!("{title}\n\n{task_line}") }) } else { json!({ "sha": sha }) };
+        let merged = match self.api.call("PUT", &format!("/merge_requests/{iid}/merge"), Some(body)) {
             // 422 'Branch cannot be merged' also answers a merge sent while GitLab rechecks: only a settled blocker fails (#1687)
-            Err(e) if e.status() == Some(422) => {
-                return Ok(match self.merge_status(iid)? {
-                    Status::Blocked(why) => {
-                        Publish::Failed(format!("!{iid} cannot be merged: {why}: {e}"))
-                    }
-                    Status::Running(p) => self.running(&format!("!{iid} pipeline"), &p),
-                    _ => Publish::Pending(format!(
-                        "!{iid} merge refused while GitLab checks mergeability: {e}"
-                    )),
-                });
-            }
+            Err(e) if e.status() == Some(422) => return Ok(match self.merge_status(iid)? {
+                Status::Blocked(why) => Publish::Failed(format!("!{iid} cannot be merged: {why}: {e}")),
+                Status::Running(p) => self.running(&format!("!{iid} pipeline"), &p),
+                _ => Publish::Pending(format!("!{iid} merge refused while GitLab checks mergeability: {e}")),
+            }),
             r => r?,
         };
-        let back = self
-            .api
-            .call("GET", &format!("/merge_requests/{iid}"), None)?
-            .json()?;
+        let back = self.api.call("GET", &format!("/merge_requests/{iid}"), None)?.json()?;
         if back["state"] != "merged" {
-            if let Ok(second) = self
-                .api
-                .call("GET", &format!("/merge_requests/{iid}"), None)
-                .and_then(|r| r.json())
+            if let Ok(second) = self.api.call("GET", &format!("/merge_requests/{iid}"), None).and_then(|r| r.json())
                 && second["state"] != "merged"
             {
-                crate::incident::detect(
-                    "publication.readback",
-                    concat!(file!(), ":", line!()),
-                    "none",
-                    &[mode],
-                    &["merge:unconfirmed"],
-                );
+                crate::incident::detect("publication.readback", concat!(file!(), ":", line!()), "none", &[mode], &["merge:unconfirmed"]);
             }
         }
         if back["state"] == "merged" {
             let merged = merged.json().ok();
-            let target = if mode == "direct" {
-                sha
-            } else {
-                merged
-                    .as_ref()
-                    .and_then(|v| v["squash_commit_sha"].as_str())
-                    .unwrap_or("")
-            };
+            let target = if mode == "direct" { sha } else { merged.as_ref().and_then(|v| v["squash_commit_sha"].as_str()).unwrap_or("") };
             self.publication_ancestry(target, mode);
         }
-        if back["state"] == "merged" {
-            Ok(Publish::Done(format!("merged !{iid}")))
-        } else {
-            Err(format!("!{iid} not merged yet").into())
-        }
+        if back["state"] == "merged" { Ok(Publish::Done(format!("merged !{iid}"))) } else { Err(format!("!{iid} not merged yet").into()) }
     }
 }
 
@@ -364,21 +210,13 @@ enum Status {
 }
 
 /// Pipeline states that end by themselves; `manual` and `scheduled` wait for a person.
-const RUNNING: [&str; 5] = [
-    "created",
-    "waiting_for_resource",
-    "preparing",
-    "pending",
-    "running",
-];
+const RUNNING: [&str; 5] = ["created", "waiting_for_resource", "preparing", "pending", "running"];
 /// A pipeline still running this long after it started needs the owner (§ 7).
 pub(super) const PIPELINE_DEADLINE: i64 = 24 * 3600;
 
 /// ` <pipeline url>` when the board names one.
 fn link(p: &Value) -> String {
-    p["web_url"]
-        .as_str()
-        .map_or(String::new(), |u| format!(" {u}"))
+    p["web_url"].as_str().map_or(String::new(), |u| format!(" {u}"))
 }
 
 /// Reads of a checking MR before close gives up as Pending; the review retries the close later.
@@ -388,22 +226,10 @@ const MERGE_STATUS_WAIT: std::time::Duration = std::time::Duration::from_secs(2)
 /// Complete paginated board history, never issue creation or current queue size.
 /// A deleted label's event has no label (§ 4 admission records): it admits nothing.
 fn first_admission(events: &[Value]) -> Result<Option<(u64, i64)>> {
-    events
-        .iter()
-        .filter(|v| v["action"] == "add" && v["label"]["name"] == "taskq")
-        .map(|v| {
-            Ok((
-                v["id"]
-                    .as_u64()
-                    .filter(|id| *id > 0)
-                    .ok_or("admission ID unavailable")?,
-                iso(&s(v, "created_at"))
-                    .filter(|at| *at > 0)
-                    .ok_or("admission time unavailable")?,
-            ))
-        })
-        .collect::<Result<Vec<_>>>()
-        .map(|events| events.into_iter().min_by_key(|(id, at)| (*at, *id)))
+    events.iter().filter(|v| v["action"] == "add" && v["label"]["name"] == "taskq")
+        .map(|v| Ok((v["id"].as_u64().filter(|id| *id > 0).ok_or("admission ID unavailable")?,
+            iso(&s(v, "created_at")).filter(|at| *at > 0).ok_or("admission time unavailable")?)))
+        .collect::<Result<Vec<_>>>().map(|events| events.into_iter().min_by_key(|(id, at)| (*at, *id)))
 }
 
 #[cfg(test)]
@@ -416,60 +242,32 @@ const MERGE_STATUS_WAIT: std::time::Duration = std::time::Duration::ZERO;
 impl GitLab {
     fn merge_status(&self, iid: u64) -> Result<Status> {
         // reading one MR also queues its recheck
-        let v = self
-            .api
-            .call("GET", &format!("/merge_requests/{iid}"), None)?
-            .json()?;
+        let v = self.api.call("GET", &format!("/merge_requests/{iid}"), None)?.json()?;
         // `detailed_merge_status` (GitLab 15.6+); legacy `merge_status` otherwise
-        Ok(
-            match (
-                v["detailed_merge_status"].as_str(),
-                v["merge_status"].as_str(),
-            ) {
-                (Some("mergeable"), _) | (None, Some("can_be_merged")) => Status::Mergeable,
-                (Some("ci_still_running"), _) => Status::Running(v["head_pipeline"].clone()),
-                (Some("ci_must_pass"), _) => {
-                    Status::Blocked(format!("ci_must_pass{}", link(&v["head_pipeline"])))
-                }
-                (Some(st @ ("unchecked" | "checking" | "preparing" | "approvals_syncing")), _)
-                | (
-                    None,
-                    Some(
-                        st @ ("unchecked"
-                        | "checking"
-                        | "cannot_be_merged_recheck"
-                        | "cannot_be_merged_rechecking"),
-                    ),
-                ) => Status::Checking(st.into()),
-                (Some(st), _) | (None, Some(st)) => Status::Blocked(st.into()),
-                (None, None) => Status::Checking("unknown merge status".into()),
-            },
-        )
+        Ok(match (v["detailed_merge_status"].as_str(), v["merge_status"].as_str()) {
+            (Some("mergeable"), _) | (None, Some("can_be_merged")) => Status::Mergeable,
+            (Some("ci_still_running"), _) => Status::Running(v["head_pipeline"].clone()),
+            (Some("ci_must_pass"), _) => Status::Blocked(format!("ci_must_pass{}", link(&v["head_pipeline"]))),
+            (Some(st @ ("unchecked" | "checking" | "preparing" | "approvals_syncing")), _)
+            | (None, Some(st @ ("unchecked" | "checking" | "cannot_be_merged_recheck" | "cannot_be_merged_rechecking"))) => Status::Checking(st.into()),
+            (Some(st), _) | (None, Some(st)) => Status::Blocked(st.into()),
+            (None, None) => Status::Checking("unknown merge status".into()),
+        })
     }
 
     /// None when the MR is mergeable; else the outcome that stops this close.
     fn mergeable(&self, iid: u64) -> Result<Option<Publish>> {
         let mut last = String::new();
         for read in 0..MERGE_STATUS_READS {
-            if read > 0 {
-                std::thread::sleep(MERGE_STATUS_WAIT);
-            }
+            if read > 0 { std::thread::sleep(MERGE_STATUS_WAIT); }
             match self.merge_status(iid)? {
                 Status::Mergeable => return Ok(None),
-                Status::Blocked(why) => {
-                    return Ok(Some(Publish::Failed(format!(
-                        "!{iid} cannot be merged: {why}"
-                    ))));
-                }
-                Status::Running(p) => {
-                    return Ok(Some(self.running(&format!("!{iid} pipeline"), &p)));
-                }
+                Status::Blocked(why) => return Ok(Some(Publish::Failed(format!("!{iid} cannot be merged: {why}")))),
+                Status::Running(p) => return Ok(Some(self.running(&format!("!{iid} pipeline"), &p))),
                 Status::Checking(st) => last = st,
             }
         }
-        Ok(Some(Publish::Pending(format!(
-            "!{iid} merge status {last}: GitLab still checks"
-        ))))
+        Ok(Some(Publish::Pending(format!("!{iid} merge status {last}: GitLab still checks"))))
     }
 }
 
@@ -478,10 +276,7 @@ impl Board for GitLab {
     /// probe.
     fn access(&self) -> Vec<(&'static str, crate::check::Probe)> {
         let get = |url: &str| self.api.call("GET", url, None).and_then(|r| r.json());
-        crate::health::gitlab_access(
-            &get(&format!("{}/personal_access_tokens/self", self.api.root)),
-            &get(""),
-        )
+        crate::health::gitlab_access(&get(&format!("{}/personal_access_tokens/self", self.api.root)), &get(""))
     }
 
     fn canonical_labels(&self) -> Result<bool> {
@@ -489,262 +284,118 @@ impl Board for GitLab {
     }
 
     fn ensure_labels(&self, names: &[String]) -> Result<()> {
-        self.api.ensure_labels(
-            names,
-            |c| format!("#{c}"),
-            |current, payload| {
-                let (method, path) = match current {
-                    Some(v) => (
-                        "PUT",
-                        format!("/labels/{}", v["id"].as_u64().ok_or("label has no id")?),
-                    ),
-                    None => ("POST", "/labels".into()),
-                };
-                self.api.call(method, &path, Some(payload)).map(|_| ())
-            },
-        )
+        self.api.ensure_labels(names, |c| format!("#{c}"), |current, payload| {
+            let (method, path) = match current {
+                Some(v) => ("PUT", format!("/labels/{}", v["id"].as_u64().ok_or("label has no id")?)),
+                None => ("POST", "/labels".into()),
+            };
+            self.api.call(method, &path, Some(payload)).map(|_| ())
+        })
     }
 
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> {
         if let Some(t) = since {
-            return Ok(self
-                .api
-                .all(&format!(
-                    "/issues?state=all&per_page=100&updated_after={}",
-                    stamp(t)
-                ))?
-                .iter()
-                .map(|v| self.parse_issue(v))
-                .collect());
+            return Ok(self.api.all(&format!("/issues?state=all&per_page=100&updated_after={}", stamp(t)))?.iter().map(|v| self.parse_issue(v)).collect());
         }
         // #2352: heartbeat writes of three hosts changed this reply, so each pass billed it; heartbeats may read
         // `OPEN_REUSE` late as on GitHub, and `views` relists one that turns stale (§ 3).
         let seen = match Open::probe(&self.open, |since| {
-            let url = format!(
-                "/issues?state=all&labels={}&order_by=updated_at&sort=desc&per_page=100&updated_after={}",
-                crate::service::TASK_LABEL,
-                stamp(since)
-            );
-            let Value::Array(rows) = self.api.call("GET", &url, None)?.json()? else {
-                return Err("invalid board list: expected array".into());
-            };
-            Ok((
-                rows.iter().map(|v| self.parse_issue(v)).collect(),
-                rows.len() < 100,
-            ))
-        }) {
-            Ok(list) => return Ok(list),
-            Err(seen) => seen,
-        };
-        let list: Vec<Issue> = self
-            .api
-            .all("/issues?state=opened&per_page=100")?
-            .iter()
-            .map(|v| self.parse_issue(v))
-            .collect();
+            let url = format!("/issues?state=all&labels={}&order_by=updated_at&sort=desc&per_page=100&updated_after={}", crate::service::TASK_LABEL, stamp(since));
+            let Value::Array(rows) = self.api.call("GET", &url, None)?.json()? else { return Err("invalid board list: expected array".into()) };
+            Ok((rows.iter().map(|v| self.parse_issue(v)).collect(), rows.len() < 100))
+        }) { Ok(list) => return Ok(list), Err(seen) => seen };
+        let list: Vec<Issue> = self.api.all("/issues?state=opened&per_page=100")?.iter().map(|v| self.parse_issue(v)).collect();
         Open::keep(&self.open, &seen, &list, *self.api.clock.borrow());
         Ok(list)
     }
 
     /// #2352: heartbeat writes never change this reply, so an unchanged board answers 304.
     fn tasks(&self, since: i64) -> Result<Vec<Issue>> {
-        let url = format!(
-            "/issues?state=all&labels={}&per_page=100&updated_after={}",
-            crate::service::TASK_LABEL,
-            stamp(since)
-        );
-        Ok(self
-            .api
-            .all(&url)?
-            .iter()
-            .map(|v| self.parse_issue(v))
-            .collect())
+        let url = format!("/issues?state=all&labels={}&per_page=100&updated_after={}", crate::service::TASK_LABEL, stamp(since));
+        Ok(self.api.all(&url)?.iter().map(|v| self.parse_issue(v)).collect())
     }
 
-    fn forget(&self) {
-        *self.open.borrow_mut() = None;
-    }
-    fn kept(&self) -> Option<i64> {
-        Open::reused_at(&self.open)
-    }
+    fn forget(&self) { *self.open.borrow_mut() = None; }
+    fn kept(&self) -> Option<i64> { Open::reused_at(&self.open) }
 
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> {
         let since = since.map_or(String::new(), |t| format!("&updated_after={}", stamp(t)));
         let r = self.api.call("GET", &format!("/issues?state=closed&labels={}&order_by=updated_at&sort=desc&per_page={}&page={}{since}", crate::service::TASK_LABEL, super::CLOSED_PAGE, page.max(1)), None)?;
         let list = r.json()?;
-        let rows = list
-            .as_array()
-            .ok_or("invalid board list: expected array")?;
-        Ok((
-            rows.iter()
-                .map(|v| (self.parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0)))
-                .collect(),
-            r.next().is_some(),
-        ))
+        let rows = list.as_array().ok_or("invalid board list: expected array")?;
+        Ok((rows.iter().map(|v| (self.parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0))).collect(), r.next().is_some()))
     }
 
     fn issue(&self, n: u64) -> Result<Issue> {
-        Ok(self.parse_issue(
-            &self
-                .api
-                .call("GET", &format!("/issues/{n}"), None)?
-                .json()?,
-        ))
+        Ok(self.parse_issue(&self.api.call("GET", &format!("/issues/{n}"), None)?.json()?))
     }
 
     fn closed_labelled(&self, label: &str) -> Result<Vec<(Issue, i64)>> {
-        let url = format!(
-            "/issues?state=closed&labels={},{}&per_page=100",
-            crate::service::TASK_LABEL,
-            super::encode(label)
-        );
-        Ok(self
-            .api
-            .all(&url)?
-            .iter()
-            .map(|v| (self.parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0)))
-            .collect())
+        let url = format!("/issues?state=closed&labels={},{}&per_page=100", crate::service::TASK_LABEL, super::encode(label));
+        Ok(self.api.all(&url)?.iter().map(|v| (self.parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0))).collect())
     }
 
-    fn source(&self, path: &str, sha: &str) -> Result<String> {
-        use base64::{Engine, engine::general_purpose::STANDARD};
-        let v = self
-            .api
-            .call(
-                "GET",
-                &format!(
-                    "/repository/files/{}?ref={}",
-                    super::encode(path),
-                    super::encode(sha)
-                ),
-                None,
-            )?
-            .json()?;
-        if v["encoding"] != "base64" {
-            return Err("report source encoding unknown".into());
-        }
-        let bytes = STANDARD
-            .decode(s(&v, "content").replace(['\r', '\n'], ""))
-            .map_err(|_| "report source encoding invalid")?;
-        String::from_utf8(bytes).map_err(|_| "report source is not UTF-8".into())
+
+    fn source(&self,path:&str,sha:&str)->Result<String> {
+        use base64::{Engine,engine::general_purpose::STANDARD};
+        let v=self.api.call("GET",&format!("/repository/files/{}?ref={}",super::encode(path),super::encode(sha)),None)?.json()?;
+        if v["encoding"]!="base64" {return Err("report source encoding unknown".into());}
+        let bytes=STANDARD.decode(s(&v,"content").replace(['\r','\n'],"")).map_err(|_|"report source encoding invalid")?;
+        String::from_utf8(bytes).map_err(|_|"report source is not UTF-8".into())
     }
 
     fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> {
-        let events = self
-            .api
-            .all(&format!("/issues/{n}/resource_label_events?per_page=100"))?;
+        let events = self.api.all(&format!("/issues/{n}/resource_label_events?per_page=100"))?;
         first_admission(&events)
     }
 
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {
-        Ok(self
-            .api
-            .all(&format!(
-                "/issues/{n}/notes?sort=asc&order_by=created_at&per_page=100"
-            ))?
-            .iter()
+        Ok(self.api.all(&format!("/issues/{n}/notes?sort=asc&order_by=created_at&per_page=100"))?.iter()
             .filter(|v| v["system"].as_bool() != Some(true))
-            .map(|v| parse_note(v, self.member(v["author"]["id"].as_u64().unwrap_or(0))))
-            .collect())
+            .map(|v| parse_note(v, self.member(v["author"]["id"].as_u64().unwrap_or(0)))).collect())
     }
 
     fn comment(&self, n: u64, body: &str) -> Result<u64> {
-        self.api
-            .call(
-                "POST",
-                &format!("/issues/{n}/notes"),
-                Some(json!({ "body": body })),
-            )?
-            .json()?["id"]
-            .as_u64()
-            .ok_or("no comment id".into())
+        self.api.call("POST", &format!("/issues/{n}/notes"), Some(json!({ "body": body })))?.json()?["id"].as_u64().ok_or("no comment id".into())
     }
 
-    fn comment_url(&self, n: u64, id: u64) -> String {
-        format!("{}#note_{id}", self.url(n))
-    }
+    fn comment_url(&self, n: u64, id: u64) -> String { format!("{}#note_{id}", self.url(n)) }
 
     fn edit_comment(&self, n: u64, id: u64, body: &str) -> Result<()> {
-        self.api
-            .call(
-                "PUT",
-                &format!("/issues/{n}/notes/{id}"),
-                Some(json!({ "body": body })),
-            )
-            .map(|_| ())
+        self.api.call("PUT", &format!("/issues/{n}/notes/{id}"), Some(json!({ "body": body }))).map(|_| ())
     }
 
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> {
-        if !add.is_empty() && self.canonical_labels()? {
-            self.ensure_labels(add)?;
-        }
+        if !add.is_empty() && self.canonical_labels()? { self.ensure_labels(add)?; }
         self.forget();
-        self.api.call(
-            "PUT",
-            &format!("/issues/{n}"),
-            Some(json!({ "add_labels": csv(add), "remove_labels": csv(remove) })),
-        )?;
+        self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "add_labels": csv(add), "remove_labels": csv(remove) })))?;
         verify_assignment(self, n, add, remove)
     }
 
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u64> {
-        if let Some(names) = self.api.creation_labels(labels)? {
-            self.ensure_labels(&names)?;
-        }
+        if let Some(names) = self.api.creation_labels(labels)? { self.ensure_labels(&names)?; }
         self.forget();
-        let n = self
-            .api
-            .call(
-                "POST",
-                "/issues",
-                Some(json!({ "title": title, "description": body, "labels": csv(labels) })),
-            )?
-            .json()?["iid"]
-            .as_u64()
-            .ok_or("no issue number")?;
+        let n = self.api.call("POST", "/issues", Some(json!({ "title": title, "description": body, "labels": csv(labels) })))?.json()?["iid"].as_u64().ok_or("no issue number")?;
         verify_assignment(self, n, labels, &[])?;
         Ok(n)
     }
 
     fn edit(&self, n: u64, body: &str) -> Result<()> {
-        let reply = self.api.call(
-            "PUT",
-            &format!("/issues/{n}"),
-            Some(json!({ "description": body })),
-        )?;
+        let reply = self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "description": body })))?;
         // The probe does not see this host's heartbeat write; its reply patches the kept list, so the next pass does not write again.
         let task = |i: &Issue| i.labels.iter().any(|l| l == crate::service::TASK_LABEL);
-        if let Some(issue) = reply
-            .json()
-            .map(|v| self.parse_issue(&v))
-            .ok()
-            .filter(|i| i.number == n && i.open && !task(i))
-        {
-            Open::patch(&self.open, issue);
-        }
+        if let Some(issue) = reply.json().map(|v| self.parse_issue(&v)).ok().filter(|i| i.number == n && i.open && !task(i)) { Open::patch(&self.open, issue); }
         Ok(())
     }
 
     fn close(&self, n: u64) -> Result<()> {
         self.forget();
-        self.api
-            .call(
-                "PUT",
-                &format!("/issues/{n}"),
-                Some(json!({ "state_event": "close" })),
-            )
-            .map(|_| ())
+        self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "state_event": "close" }))).map(|_| ())
     }
 
     fn reopen(&self, n: u64) -> Result<()> {
         self.forget();
-        self.api
-            .call(
-                "PUT",
-                &format!("/issues/{n}"),
-                Some(json!({ "state_event": "reopen" })),
-            )
-            .map(|_| ())
+        self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "state_event": "reopen" }))).map(|_| ())
     }
 
     fn now(&self) -> Result<i64> {
@@ -764,45 +415,18 @@ impl Board for GitLab {
     }
 
     fn url(&self, n: u64) -> String {
-        self.foreign_url(
-            &self
-                .api
-                .base
-                .rsplit_once("/projects/")
-                .map(|x| x.1.replace("%2F", "/"))
-                .unwrap_or_default(),
-            n,
-        )
+        self.foreign_url(&self.api.base.rsplit_once("/projects/").map(|x| x.1.replace("%2F", "/")).unwrap_or_default(), n)
     }
 
     fn foreign(&self, repo: &str, n: u64) -> Result<Issue> {
         let path = self.api.sibling("/projects/", repo).replace('/', "%2F");
-        let v = super::dep_reply(
-            self.api
-                .call(
-                    "GET",
-                    &format!("{}/projects/{path}/issues/{n}", self.api.root),
-                    None,
-                )?
-                .json()?,
-            "iid",
-            n,
-            "opened",
-        )?;
+        let v = super::dep_reply(self.api.call("GET", &format!("{}/projects/{path}/issues/{n}", self.api.root), None)?.json()?, "iid", n, "opened")?;
         // trust is for log entries; a dependency is judged only by its state
-        Ok(Issue {
-            number: v["iid"].as_u64().unwrap_or(0),
-            open: v["state"] == "opened",
-            ..Default::default()
-        })
+        Ok(Issue { number: v["iid"].as_u64().unwrap_or(0), open: v["state"] == "opened", ..Default::default() })
     }
 
     fn foreign_url(&self, repo: &str, n: u64) -> String {
-        format!(
-            "{}/{}/-/issues/{n}",
-            self.api.root.trim_end_matches("/api/v4"),
-            self.api.sibling("/projects/", repo)
-        )
+        format!("{}/{}/-/issues/{n}", self.api.root.trim_end_matches("/api/v4"), self.api.sibling("/projects/", repo))
     }
 
     fn upload_file(&self, _n: u64, path: &std::path::Path) -> Result<String> {
@@ -813,21 +437,13 @@ impl Board for GitLab {
         std::fs::create_dir_all(&dir).map_err(|e| format!("image: {e}"))?;
         let name = format!("{}-{}", &id[..8], image_name(path));
         let file = dir.join(&name);
-        let sent = std::fs::copy(path, &file)
-            .map_err(|e| Error::from(format!("image {}: {e}", path.display())))
+        let sent = std::fs::copy(path, &file).map_err(|e| Error::from(format!("image {}: {e}", path.display())))
             .and_then(|_| self.api.raw("/uploads", Some(&file)));
         let _ = std::fs::remove_dir_all(&dir);
-        let mut reply: Value = serde_json::from_slice(&sent?)
-            .map_err(|e| Error::new(Reason::Invalid, format!("bad JSON from board: {e}")))?;
+        let mut reply: Value = serde_json::from_slice(&sent?).map_err(|e| Error::new(Reason::Invalid, format!("bad JSON from board: {e}")))?;
         if reply["id"].is_null() {
             let list = self.api.call("GET", "/uploads?per_page=20", None)?.json()?;
-            reply["id"] = list
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|u| u["filename"] == name.as_str())
-                .map(|u| u["id"].clone())
-                .unwrap_or_default();
+            reply["id"] = list.as_array().into_iter().flatten().find(|u| u["filename"] == name.as_str()).map(|u| u["id"].clone()).unwrap_or_default();
         }
         upload_url(&self.api.root, self.project()?, &reply)
     }
@@ -840,32 +456,20 @@ impl Board for GitLab {
             // a video URL carries no `#upload=` id: the newest uploads find it by its unique file name
             None => {
                 let name = video_name(&self.api.root, project, url).ok_or_else(unknown)?;
-                let list = self
-                    .api
-                    .call("GET", "/uploads?per_page=100", None)?
-                    .json()?;
-                list.as_array()
-                    .into_iter()
-                    .flatten()
-                    .find(|u| u["filename"] == name)
-                    .and_then(|u| u["id"].as_u64())
-                    .ok_or_else(unknown)?
+                let list = self.api.call("GET", "/uploads?per_page=100", None)?.json()?;
+                list.as_array().into_iter().flatten().find(|u| u["filename"] == name).and_then(|u| u["id"].as_u64()).ok_or_else(unknown)?
             }
         };
         self.api.raw(&format!("/uploads/{id}"), None)
     }
 
-    fn video_inline(&self) -> bool {
-        true
-    }
+    fn video_inline(&self) -> bool { true }
 }
 
 impl GitLab {
     /// The numeric project id upload URLs carry.
     fn project(&self) -> Result<u64> {
-        self.api.call("GET", "", None)?.json()?["id"]
-            .as_u64()
-            .ok_or_else(|| "project id unknown".into())
+        self.api.call("GET", "", None)?.json()?["id"].as_u64().ok_or_else(|| "project id unknown".into())
     }
 }
 
@@ -874,50 +478,29 @@ impl GitLab {
 /// `https://<host>/-/project/<id>/uploads/<secret>/<file>` with `#upload=<upload id>`, the id the load check reads back;
 /// a video (#1844) goes without the fragment and the load check finds its id by the unique file name.
 pub(super) fn upload_url(root: &str, project: u64, reply: &Value) -> Result<String> {
-    let rel = reply["url"]
-        .as_str()
-        .and_then(|u| u.strip_prefix("/uploads/"))
-        .filter(|r| r.split('/').count() == 2 && !r.contains(['(', ')', ' ']))
+    let rel = reply["url"].as_str().and_then(|u| u.strip_prefix("/uploads/")).filter(|r| r.split('/').count() == 2 && !r.contains(['(', ')', ' ']))
         .ok_or("upload reply has no /uploads/<secret>/<file> url")?;
-    let id = reply["id"].as_u64().ok_or(
-        "upload id unknown: not in the reply nor the newest uploads; GitLab 17.2 or newer needed",
-    )?;
-    let url = format!(
-        "{}/-/project/{project}/uploads/{rel}",
-        root.trim_end_matches("/api/v4")
-    );
+    let id = reply["id"].as_u64().ok_or("upload id unknown: not in the reply nor the newest uploads; GitLab 17.2 or newer needed")?;
+    let url = format!("{}/-/project/{project}/uploads/{rel}", root.trim_end_matches("/api/v4"));
     // #1844: GitLab plays `![name](url)` inline only when the URL ends in the video extension, so a video has no fragment
-    Ok(if video(&url) {
-        url
-    } else {
-        format!("{url}#upload={id}")
-    })
+    Ok(if video(&url) { url } else { format!("{url}#upload={id}") })
 }
 
 fn video(url: &str) -> bool {
-    [".mp4", ".webm"]
-        .iter()
-        .any(|e| url.to_ascii_lowercase().ends_with(e))
+    [".mp4", ".webm"].iter().any(|e| url.to_ascii_lowercase().ends_with(e))
 }
 
 /// The file name of a video URL that [`upload_url`] wrote for this project; none for any other URL.
 fn video_name<'a>(root: &str, project: u64, url: &'a str) -> Option<&'a str> {
-    let rel = url.strip_prefix(&format!(
-        "{}/-/project/{project}/uploads/",
-        root.trim_end_matches("/api/v4")
-    ))?;
+    let rel = url.strip_prefix(&format!("{}/-/project/{project}/uploads/", root.trim_end_matches("/api/v4")))?;
     let (secret, name) = rel.split_once('/')?;
-    (video(url) && !secret.is_empty() && !name.is_empty() && !name.contains(['/', '#', '?']))
-        .then_some(name)
+    (video(url) && !secret.is_empty() && !name.is_empty() && !name.contains(['/', '#', '?'])).then_some(name)
 }
 
 /// The upload id of an image URL that [`upload_url`] wrote for this project; none for any other URL.
 pub(super) fn upload_id(root: &str, project: u64, url: &str) -> Option<u64> {
     let (path, id) = url.split_once("#upload=")?;
-    path.strip_prefix(&format!(
-        "{}/-/project/{project}/uploads/",
-        root.trim_end_matches("/api/v4")
-    ))?;
+    path.strip_prefix(&format!("{}/-/project/{project}/uploads/", root.trim_end_matches("/api/v4")))?;
     id.parse().ok()
 }
 

@@ -1,621 +1,165 @@
 // Chain: bundled tray -> qualified host editor -> typed IPC -> exact observed revision. Browser, not installed proof.
-const fs = require("node:fs"),
-  assert = require("node:assert/strict"),
-  path = require("node:path"),
-  { chromium } = require("playwright");
-const html = fs.readFileSync("build/web/workspace.html", "utf8");
-const fx = JSON.parse(
-  fs.readFileSync("tests/fixtures/resource-controls.json", "utf8"),
-);
-const modern = fx.cases.find((c) => c.name.startsWith("host commands"));
-(async () => {
-  const browser = await chromium.launch(require("./browser.cjs")());
-  try {
-    for (const theme of ["light", "dark"])
-      for (const font of [16, 20])
-        for (const width of [280, font === 20 ? 360 : 320]) {
-          const page = await browser.newPage({
-            viewport: { width, height: 900 },
-            colorScheme: theme,
-          });
-          const errors = [];
-          page.on("pageerror", (e) => errors.push(e.message));
-          await page.evaluate(() => {
-            window.messages = [];
-            window.ipc = {
-              postMessage: (s) => window.messages.push(JSON.parse(s)),
-            };
-          });
-          await page.setContent(html);
-          const root = "/fixture/project",
-            saved = {
-              limits: { claude: 2, codex: 3 },
-              load_gate: { enabled: true, cpu_max: 90, memory_min: 10 },
-            };
-          const state = (r) => ({
-            page: root,
-            font,
-            theme,
-            now: 1000,
-            service: { state: "running", pid: 731, fresh: false },
-            projects: [
-              {
-                root,
-                name: "taskq",
-                issues: "",
-                alive: true,
-                age: 10,
-                complete: true,
-                focus: [],
-                labels: [],
-                tasks: [],
-                cap_host: "mac",
-                cap_saved: saved,
-                resources: r,
-              },
-            ],
-            ai: { draft: "" },
-            notify: { projects: {} },
-          });
-          const fits = async () =>
-            assert.equal(
-              await page.evaluate(
-                () => document.documentElement.scrollWidth > innerWidth,
-              ),
-              false,
-              "host editor fits " + theme + "/" + font + "/" + width,
-            );
-          const shot = async (name) => {
-            if (process.env.TASKQ_TEST_ARTIFACTS && font === 20) {
-              fs.mkdirSync(process.env.TASKQ_TEST_ARTIFACTS, {
-                recursive: true,
-              });
-              await page.evaluate(() => scrollTo(0, 0));
-              await page.screenshot({
-                path: path.join(
-                  process.env.TASKQ_TEST_ARTIFACTS,
-                  "host-capacity-" +
-                    theme +
-                    "-" +
-                    name +
-                    "-" +
-                    font +
-                    "-" +
-                    width +
-                    ".png",
-                ),
-                fullPage: true,
-              });
-            }
-          };
-          const modeState = state(modern.groups[0]);
-          modeState.host = "mac";
-          Object.assign(modeState.projects[0], {
-            host: "mac",
-            mode: "run",
-            sample_age_text: "5s",
-            capacity: {
-              gate: "open",
-              reasons: [{ code: "access", text: "claude: host grant missing" }],
-              cpu_percent: 42,
-              memory_available_percent: 62,
-            },
-          });
-          await page.evaluate((s) => taskq.receive(s), modeState);
-          await page.evaluate(() =>
-            taskq.receive({
-              open: { page: "operations", operation: "resources" },
-            }),
-          );
-          assert.match(
-            await page.locator(".content [role=status]").first().innerText(),
-            /^Admission · Blocked work: taskq \(access\).*Intake: 1 configured/,
-            "R32: actual Balancing leads with scoped blockers before the load gate",
-          );
-          assert.match(
-            await page.locator(".content").innerText(),
-            /Task routing[\s\S]*Runtime availability[\s\S]*Host balancing[\s\S]*Project policies/,
-            "#2137 A1: the Home entry preserves all four Balancing sections",
-          );
-          await fits();
-          await shot("balancing");
-          if (font === 20) {
-            const home = await browser.newPage({
-              viewport: { width, height: 900 },
-              colorScheme: theme,
-            });
-            home.on("pageerror", (e) => errors.push(e.message));
-            await home.setContent(
-              fs.readFileSync("build/web/tray.html", "utf8"),
-            );
-            await home.evaluate(() => {
-              window.messages = [];
-              window.ipc = { postMessage: (s) => messages.push(JSON.parse(s)) };
-            });
-            await home.evaluate((s) => taskq.receive({ ...s, page: "home" }), {
-              ...modeState,
-              display: require("./fixtures/display-model.json").display,
-            });
-            await home.locator(".dashboard-status > summary").click();
-            await home.locator("[data-a=work]").click();
-            const open = await home.evaluate(
-              () => messages.find((m) => m.a === "workspace")?.open,
-            );
-            assert.equal(
-              open?.operation,
-              "resources",
-              "Home Balancing keeps its existing workspace destination",
-            );
-            await page.evaluate((open) => taskq.receive({ open }), open);
-            assert.match(
-              await page.locator(".content").innerText(),
-              /Task routing[\s\S]*Runtime availability[\s\S]*Host balancing[\s\S]*Project policies/,
-              "#2137 A1: actual Home click reaches the same sections",
-            );
-            assert.equal(
-              await home.evaluate(
-                () => document.documentElement.scrollWidth > innerWidth,
-              ),
-              false,
-            );
-            if (process.env.TASKQ_TEST_ARTIFACTS && width === 280) {
-              await page.screenshot({
-                path: path.join(
-                  process.env.TASKQ_TEST_ARTIFACTS,
-                  "home-balancing-" + theme + "-top.png",
-                ),
-              });
-              await page
-                .locator(".content")
-                .evaluate((e) => (e.scrollTop = e.scrollHeight));
-              await page.screenshot({
-                path: path.join(
-                  process.env.TASKQ_TEST_ARTIFACTS,
-                  "home-balancing-" + theme + "-bottom.png",
-                ),
-              });
-            }
-            assert.deepEqual(
-              await home.evaluate(() =>
-                messages.filter((m) =>
-                  ["capacity", "focus", "control"].includes(m.a),
-                ),
-              ),
-              [],
-              "opening Balancing changes no policy",
-            );
-            await home.close();
-          }
-          assert.equal(
-            await page.locator(".resource-meter meter").count(),
-            2,
-            "R28: resource meters retain percent units",
-          );
-          assert(
-            !(await page
-              .locator(".content")
-              .innerText()
-              .then((t) => t.includes(root))),
-            "exact target paths start disclosed",
-          );
-          const over = structuredClone(modern.groups[0]);
-          over.targets[0].runtime_usage = [
-            { runtime_id: "codex", used: 3, limit: 1, limit_kind: "ceiling" },
-          ];
-          await page.evaluate((s) => taskq.receive(s), state(over));
-          await page.evaluate(
-            (root) =>
-              taskq.receive({
-                open: { page: "operations", operation: "service", root },
-              }),
-            root,
-          );
-          await page.locator("summary", { hasText: "Capacity" }).click();
-          const service = page.locator("details.service");
-          if (!(await service.evaluate((e) => e.open)))
-            await service.locator("summary").first().click();
-          assert.match(
-            await page.locator(".content").innerText(),
-            /Host service: running · PID 731 · stale observation/,
-          );
-          assert.match(
-            await page.locator(".rsc").innerText(),
-            /3\/1 · over limit/,
-          );
-          await fits();
-          const restarting = state(modern.groups[0]);
-          restarting.service = {
-            state: "running",
-            pid: 731,
-            fresh: true,
-            instance: "origin",
-            restart_protocol: 1,
-          };
-          Object.assign(restarting.projects[0], {
-            service_pid: 731,
-            host_instance: "origin",
-            restart_waits: ["#7", "operator"],
-          });
-          restarting.restart_review = {
-            id: "review",
-            instance: "origin",
-            roots: ["/fixture/project"],
-            issued_at: 1000,
-            expires_at: 1300,
-          };
-          await page.evaluate((s) => taskq.receive(s), restarting);
-          await page.locator(".host-restart > summary").click();
-          assert.match(
-            await page.locator(".host-restart").innerText(),
-            /all registered projects: taskq/,
-          );
-          assert.match(
-            await page.locator(".host-restart").innerText(),
-            /active turns can delay restart/,
-          );
-          await fits();
-          await shot("restart-review");
-          await page.locator("[data-a=restart]").click();
-          await page.waitForFunction(() =>
-            messages.some((m) => m.a === "restart"),
-          );
-          const restart = await page.evaluate(() =>
-            messages.find((m) => m.a === "restart"),
-          );
-          assert.equal(restart.instance, "origin");
-          assert.deepEqual(restart.roots, ["/fixture/project"]);
-          assert.equal(restart.expires_at, 1300);
-          assert.equal(
-            await page.locator("[data-a=restart]").isDisabled(),
-            true,
-          );
-          await page.evaluate((r) => taskq.receive({ capmsg: r }), {
-            id: restart.id,
-            root,
-            state: "queued",
-            received_receipt: "a".repeat(32),
-          });
-          assert.match(
-            await page.locator(".host-restart").innerText(),
-            /waits for taskq#7, operator/,
-          );
-          await fits();
-          await shot("restart-pending");
-          restarting.lifecycle = {
-            id: restart.id,
-            state: "observed",
-            received_receipt: "a".repeat(32),
-            applied_receipt: "b".repeat(32),
-            observed_receipt: "c".repeat(32),
-            service_instance: "replacement",
-          };
-          restarting.service.instance = "replacement";
-          await page.evaluate((s) => taskq.receive(s), restarting);
-          assert.match(
-            await page.locator(".host-restart [role=status]").innerText(),
-            /observed/,
-          );
-          await fits();
-          await shot("restart-observed");
-          restarting.stop_review = {
-            ...restarting.restart_review,
-            action: "stop",
-            instance: "replacement",
-          };
-          await page.evaluate((s) => taskq.receive(s), restarting);
-          await page.locator(".host-stop > summary").click();
-          assert.match(
-            await page.locator(".host-stop").innerText(),
-            /all registered projects: taskq/,
-          );
-          assert.match(
-            await page.locator(".host-stop").innerText(),
-            /retains OS autostart/,
-          );
-          await fits();
-          await shot("stop-review");
-          await page.locator("[data-a=stop]").click();
-          await page.waitForFunction(() =>
-            messages.some((m) => m.a === "stop"),
-          );
-          const stop = await page.evaluate(() =>
-            messages.find((m) => m.a === "stop"),
-          );
-          assert.equal(stop.action, "stop");
-          assert.equal(stop.instance, "replacement");
-          assert.deepEqual(stop.roots, ["/fixture/project"]);
-          assert.equal(await page.locator("[data-a=stop]").isDisabled(), true);
-          assert.equal(
-            await page.locator("[data-a=restart]").isDisabled(),
-            true,
-          );
-          await page.evaluate((r) => taskq.receive({ capmsg: r }), {
-            id: stop.id,
-            root,
-            action: "stop",
-            state: "applied",
-            received_receipt: "a".repeat(32),
-            applied_receipt: "b".repeat(32),
-            reason: "waiting for exact native exit",
-          });
-          assert.match(
-            await page.locator(".host-stop [role=status]").innerText(),
-            /waiting for exact native exit/,
-          );
-          await fits();
-          await shot("stop-pending");
-          restarting.lifecycle = {
-            id: stop.id,
-            action: "stop",
-            origin_instance: "replacement",
-            state: "observed",
-            received_receipt: "a".repeat(32),
-            applied_receipt: "b".repeat(32),
-            observed_receipt: "c".repeat(32),
-            restart_condition: "next logon or explicit service install",
-            native_exit: true,
-            native_pid: 731,
-            native_started: "12345",
-            unit_revision: "a".repeat(64),
-          };
-          restarting.service.state = "exited";
-          restarting.service.fresh = false;
-          restarting.stop_review = {
-            state: "unknown",
-            reason: "host stopped; native restart conditions apply",
-          };
-          await page.evaluate((s) => taskq.receive(s), restarting);
-          assert.match(
-            await page.locator(".host-stop [role=status]").innerText(),
-            /Recorded host exit observed; restart: next logon or explicit service install/,
-          );
-          assert.equal(await page.locator("[data-a=stop]").isDisabled(), true);
-          await fits();
-          await shot("stop-observed");
-          restarting.service = {
-            state: "running",
-            pid: 731,
-            fresh: true,
-            instance: "replacement",
-          };
-          restarting.projects[0].uninstall_review = {
-            ...restarting.restart_review,
-            action: "uninstall",
-            project: root,
-            instance: "replacement",
-          };
-          await page.evaluate((s) => taskq.receive(s), restarting);
-          await page.locator(".host-uninstall > summary").click();
-          assert.match(
-            await page.locator(".host-uninstall").innerText(),
-            /last host unit after exact exit/,
-          );
-          await fits();
-          await shot("uninstall-review");
-          await page.locator("[data-a=uninstall]").click();
-          await page.waitForFunction(() =>
-            messages.some((m) => m.a === "uninstall"),
-          );
-          const uninstall = await page.evaluate(() =>
-            messages.find((m) => m.a === "uninstall"),
-          );
-          assert.equal(uninstall.project, root);
-          assert.equal(uninstall.action, "uninstall");
-          assert.deepEqual(uninstall.roots, [root]);
-          await page.evaluate((r) => taskq.receive({ capmsg: r }), {
-            id: uninstall.id,
-            root,
-            state: "queued",
-            reason: "waiting for owned work to end",
-          });
-          assert.match(
-            await page.locator(".host-uninstall").innerText(),
-            /waiting for owned work/,
-          );
-          await fits();
-          await shot("uninstall-pending");
-          restarting.page = "services";
-          restarting.projects = [];
-          restarting.lifecycle = {
-            ...restarting.lifecycle,
-            id: uninstall.id,
-            action: "uninstall",
-            project: root,
-            unit_removed: true,
-            unregistered: true,
-          };
-          await page.evaluate((s) => taskq.receive(s), restarting);
-          assert.match(
-            await page.locator(".content").innerText(),
-            /Host unit removal and exact exit observed/,
-          );
-          await fits();
-          await shot("uninstall-observed");
-          await page.evaluate((s) => taskq.receive(s), state(modern.groups[0]));
-          if (
-            !(await page
-              .locator("details")
-              .filter({ has: page.locator("[data-rsc=open]") })
-              .first()
-              .evaluate((e) => e.open))
-          )
-            await page.locator("summary", { hasText: "Capacity" }).click();
-          await page.locator("[data-rsc=open]").click();
-          const codex = page.locator('[data-rsc-field="rt:codex"]');
-          await codex.fill("4");
-          await codex.focus();
-          await page.evaluate((s) => taskq.receive(s), state(modern.groups[0]));
-          assert.deepEqual(
-            await codex.evaluate((t) => ({
-              v: t.value,
-              focused: document.activeElement === t,
-            })),
-            { v: "4", focused: true },
-            "tick keeps draft and focus",
-          );
-          assert.equal(
-            await page.locator('[data-rsc-field="gate.enabled"]').isDisabled(),
-            false,
-            "host gate is independently editable",
-          );
-          assert.equal(
-            await page.locator('[data-rsc-field="host.mode"]').count(),
-            0,
-            "no Fixed/Auto selector",
-          );
-          await fits();
-          await shot("editor");
-          await page.evaluate((s) => taskq.receive(s), state(modern.groups[4]));
-          await page.locator("[data-rsc=cancel]").focus();
-          await page.waitForFunction(
-            () =>
-              document.querySelector(".rsc").dataset.rscState === "conflict",
-          );
-          assert.equal(await codex.inputValue(), "4");
-          await page.locator("[data-rsc=rebase]").click();
-          await page.locator("[data-rsc=review]").click();
-          assert.match(
-            await page.locator(".rsc-review").innerText(),
-            /Codex 5 → 4/,
-          );
-          assert.match(
-            await page.locator(".rsc-review").innerText(),
-            /all registered projects/,
-          );
-          await fits();
-          await shot("review");
-          await page.locator("[data-rsc=confirm]").click();
-          await page.waitForFunction(() =>
-            messages.some((m) => m.a === "capacity"),
-          );
-          const m = await page.evaluate(() =>
-            messages.find((m) => m.a === "capacity"),
-          );
-          assert.equal(m.root, root);
-          assert.equal(m.issued_at, 1000);
-          assert.equal(m.expires_at, 1300);
-          assert.equal(m.ops.length, 1);
-          assert.equal(m.ops[0].target.project_id, null);
-          assert.equal(m.ops[0].policy_schema, "taskq.host-capacity/1");
-          assert.deepEqual(m.ops[0].changes, { runtime_limit: 4 });
-          assert.equal(m.ops[0].expected_revision, "3".repeat(32));
-          assert.equal(m.set, undefined, "legacy converter is retired");
-          await page.evaluate((x) => taskq.receive({ capmsg: x }), {
-            root,
-            id: m.id,
-            state: "rejected",
-            reason:
-              "host policy changed; review current values before applying",
-          });
-          assert.equal(
-            await page.evaluate(() => messages.some((m) => m.a === "refresh")),
-            true,
-            "#2160 A3: superseded expected_revision rejection requests snapshot refresh",
-          );
-          const superseded = structuredClone(modern.groups[4]);
-          for (const t of superseded.targets)
-            t.current_revision = t.effective_revision = "6".repeat(32);
-          await page.evaluate((s) => taskq.receive(s), state(superseded));
-          await page.waitForFunction(
-            () => document.querySelector(".rsc").dataset.rscState === "editing",
-          );
-          assert.equal(
-            await codex.inputValue(),
-            "4",
-            "#2160 A3: rejection recovery preserves edited draft value",
-          );
-          await page.locator("[data-rsc=review]").click();
-          assert.match(
-            await page.locator(".rsc-review").innerText(),
-            /Codex 5 → 4/,
-          );
-          await page.locator("[data-rsc=confirm]").click();
-          await page.waitForFunction(
-            () => messages.filter((m) => m.a === "capacity").length === 2,
-          );
-          const retried = await page.evaluate(
-            () => messages.filter((m) => m.a === "capacity")[1],
-          );
-          assert.equal(
-            retried.ops[0].expected_revision,
-            "6".repeat(32),
-            "#2160 A3: user reviews and confirms with refreshed expected_revision without manual reload",
-          );
-          await page.evaluate((x) => taskq.receive({ capmsg: x }), {
-            root,
-            id: retried.id,
-            state: "saved",
-            saved_revision: "4".repeat(32),
-          });
-          await page.waitForFunction(
-            () => document.querySelector(".rsc").dataset.rscState === "saved",
-          );
-          const pending = structuredClone(modern.groups[3]);
-          for (const t of pending.targets) {
-            t.current_revision = "4".repeat(32);
-            t.effective_revision = "5".repeat(32);
-          }
-          await page.evaluate((s) => taskq.receive(s), state(pending));
-          assert.equal(
-            await page.locator(".rsc").getAttribute("data-rsc-state"),
-            "saved",
-            "equal values with a different receipt cannot confirm application",
-          );
-          for (const t of pending.targets)
-            t.effective_revision = t.current_revision;
-          await page.evaluate((s) => taskq.receive(s), state(pending));
-          await page.waitForFunction(
-            () => document.querySelector(".rsc").dataset.rscState === "applied",
-          );
-          await fits();
-          await page.evaluate(
-            (root) =>
-              taskq.receive({
-                open: { page: "operations", operation: "resources", root },
-              }),
-            root,
-          );
-          assert.equal(
-            await page.locator("[data-rsc-select]").count(),
-            0,
-            "project checkboxes cannot narrow a host edit",
-          );
-          assert.match(
-            await page.locator(".rsc").getAttribute("aria-label"),
-            /all registered projects/,
-          );
-          await fits();
-          await page.locator("[data-a=back]").click();
-          await page.evaluate(
-            (s) => taskq.receive(s),
-            state(fx.cases[0].groups[0]),
-          );
-          const summary = page.locator("summary", { hasText: "Capacity" });
-          if (
-            !(await page
-              .locator("details")
-              .filter({ has: summary })
-              .evaluate((e) => e.open))
-          )
-            await summary.click();
-          assert.equal(
-            await page.locator(".rsc button").count(),
-            0,
-            "legacy source retires the editor and stale receipt",
-          );
-          assert.deepEqual(errors, []);
-          console.log(
-            "PASS host scope, bounded typed IPC, draft/focus, conflict, exact acknowledgment and legacy refusal;",
-            theme,
-            font + "px",
-            width + "px",
-          );
-          await page.close();
+const fs=require('node:fs'),assert=require('node:assert/strict'),path=require('node:path'),{chromium}=require('playwright');
+const html=fs.readFileSync('build/web/workspace.html','utf8');
+const fx=JSON.parse(fs.readFileSync('tests/fixtures/resource-controls.json','utf8'));
+const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
+(async()=>{
+  const browser=await chromium.launch(require('./browser.cjs')());
+  try{
+    for(const theme of ['light','dark'])for(const font of [16,20])for(const width of [280,font===20?360:320]){
+      const page=await browser.newPage({viewport:{width,height:900},colorScheme:theme});
+      const errors=[];page.on('pageerror',e=>errors.push(e.message));
+      await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>window.messages.push(JSON.parse(s))};});
+      await page.setContent(html);
+      const root='/fixture/project',saved={limits:{claude:2,codex:3},load_gate:{enabled:true,cpu_max:90,memory_min:10}};
+      const state=r=>({page:root,font,theme,now:1000,service:{state:'running',pid:731,fresh:false},projects:[{root,name:'taskq',issues:'',alive:true,age:10,complete:true,focus:[],labels:[],tasks:[],cap_host:'mac',cap_saved:saved,resources:r}],ai:{draft:''},notify:{projects:{}}});
+      const fits=async()=>assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'host editor fits '+theme+'/'+font+'/'+width);
+      const shot=async name=>{if(process.env.TASKQ_TEST_ARTIFACTS&&font===20){fs.mkdirSync(process.env.TASKQ_TEST_ARTIFACTS,{recursive:true});await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:path.join(process.env.TASKQ_TEST_ARTIFACTS,'host-capacity-'+theme+'-'+name+'-'+font+'-'+width+'.png'),fullPage:true});}};
+      const modeState=state(modern.groups[0]);modeState.host='mac';Object.assign(modeState.projects[0],{host:'mac',mode:'run',sample_age_text:'5s',capacity:{gate:'open',reasons:[{code:'access',text:'claude: host grant missing'}],cpu_percent:42,memory_available_percent:62}});
+      await page.evaluate(s=>taskq.receive(s),modeState);
+      await page.evaluate(()=>taskq.receive({open:{page:'operations',operation:'resources'}}));
+      assert.match(await page.locator('.content [role=status]').first().innerText(),/^Admission · Blocked work: taskq \(access\).*Intake: 1 configured/,'R32: actual Balancing leads with scoped blockers before the load gate');
+      assert.match(await page.locator('.content').innerText(),/Task routing[\s\S]*Runtime availability[\s\S]*Host balancing[\s\S]*Project policies/,'#2137 A1: the Home entry preserves all four Balancing sections');
+      await fits();await shot('balancing');
+      if(font===20){
+        const home=await browser.newPage({viewport:{width,height:900},colorScheme:theme});
+        home.on('pageerror',e=>errors.push(e.message));
+        await home.setContent(fs.readFileSync('build/web/tray.html','utf8'));
+        await home.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>messages.push(JSON.parse(s))};});
+        await home.evaluate(s=>taskq.receive({...s,page:'home'}),{...modeState,display:require('./fixtures/display-model.json').display});
+        await home.locator('.dashboard-status > summary').click();
+        await home.locator('[data-a=work]').click();
+        const open=await home.evaluate(()=>messages.find(m=>m.a==='workspace')?.open);
+        assert.equal(open?.operation,'resources','Home Balancing keeps its existing workspace destination');
+        await page.evaluate(open=>taskq.receive({open}),open);
+        assert.match(await page.locator('.content').innerText(),/Task routing[\s\S]*Runtime availability[\s\S]*Host balancing[\s\S]*Project policies/,'#2137 A1: actual Home click reaches the same sections');
+        assert.equal(await home.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+        if(process.env.TASKQ_TEST_ARTIFACTS&&width===280){
+          await page.screenshot({path:path.join(process.env.TASKQ_TEST_ARTIFACTS,'home-balancing-'+theme+'-top.png')});
+          await page.locator('.content').evaluate(e=>e.scrollTop=e.scrollHeight);
+          await page.screenshot({path:path.join(process.env.TASKQ_TEST_ARTIFACTS,'home-balancing-'+theme+'-bottom.png')});
         }
-  } finally {
-    await browser.close();
-  }
-})().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+        assert.deepEqual(await home.evaluate(()=>messages.filter(m=>['capacity','focus','control'].includes(m.a))),[],'opening Balancing changes no policy');
+        await home.close();
+      }
+      assert.equal(await page.locator('.resource-meter meter').count(),2,'R28: resource meters retain percent units');
+      assert(!await page.locator('.content').innerText().then(t=>t.includes(root)),'exact target paths start disclosed');
+      const over=structuredClone(modern.groups[0]);over.targets[0].runtime_usage=[{runtime_id:'codex',used:3,limit:1,limit_kind:'ceiling'}];
+      await page.evaluate(s=>taskq.receive(s),state(over));
+      await page.evaluate(root=>taskq.receive({open:{page:'operations',operation:'service',root}}),root);
+      await page.locator('summary',{hasText:'Capacity'}).click();
+      const service=page.locator('details.service');
+      if(!await service.evaluate(e=>e.open))await service.locator('summary').first().click();
+      assert.match(await page.locator('.content').innerText(),/Host service: running · PID 731 · stale observation/);
+      assert.match(await page.locator('.rsc').innerText(),/3\/1 · over limit/);await fits();
+      const restarting=state(modern.groups[0]);restarting.service={state:'running',pid:731,fresh:true,instance:'origin',restart_protocol:1};
+      Object.assign(restarting.projects[0],{service_pid:731,host_instance:'origin',restart_waits:['#7','operator']});
+      restarting.restart_review={id:'review',instance:'origin',roots:['/fixture/project'],issued_at:1000,expires_at:1300};
+      await page.evaluate(s=>taskq.receive(s),restarting);
+      await page.locator('.host-restart > summary').click();
+      assert.match(await page.locator('.host-restart').innerText(),/all registered projects: taskq/);
+      assert.match(await page.locator('.host-restart').innerText(),/active turns can delay restart/);
+      await fits();await shot('restart-review');
+      await page.locator('[data-a=restart]').click();
+      await page.waitForFunction(()=>messages.some(m=>m.a==='restart'));
+      const restart=await page.evaluate(()=>messages.find(m=>m.a==='restart'));
+      assert.equal(restart.instance,'origin');assert.deepEqual(restart.roots,['/fixture/project']);assert.equal(restart.expires_at,1300);
+      assert.equal(await page.locator('[data-a=restart]').isDisabled(),true);
+      await page.evaluate(r=>taskq.receive({capmsg:r}),{id:restart.id,root,state:'queued',received_receipt:'a'.repeat(32)});
+      assert.match(await page.locator('.host-restart').innerText(),/waits for taskq#7, operator/);await fits();await shot('restart-pending');
+      restarting.lifecycle={id:restart.id,state:'observed',received_receipt:'a'.repeat(32),applied_receipt:'b'.repeat(32),observed_receipt:'c'.repeat(32),service_instance:'replacement'};
+      restarting.service.instance='replacement';await page.evaluate(s=>taskq.receive(s),restarting);
+      assert.match(await page.locator('.host-restart [role=status]').innerText(),/observed/);await fits();await shot('restart-observed');
+      restarting.stop_review={...restarting.restart_review,action:'stop',instance:'replacement'};
+      await page.evaluate(s=>taskq.receive(s),restarting);
+      await page.locator('.host-stop > summary').click();
+      assert.match(await page.locator('.host-stop').innerText(),/all registered projects: taskq/);
+      assert.match(await page.locator('.host-stop').innerText(),/retains OS autostart/);await fits();await shot('stop-review');
+      await page.locator('[data-a=stop]').click();
+      await page.waitForFunction(()=>messages.some(m=>m.a==='stop'));
+      const stop=await page.evaluate(()=>messages.find(m=>m.a==='stop'));
+      assert.equal(stop.action,'stop');assert.equal(stop.instance,'replacement');assert.deepEqual(stop.roots,['/fixture/project']);
+      assert.equal(await page.locator('[data-a=stop]').isDisabled(),true);assert.equal(await page.locator('[data-a=restart]').isDisabled(),true);
+      await page.evaluate(r=>taskq.receive({capmsg:r}),{id:stop.id,root,action:'stop',state:'applied',received_receipt:'a'.repeat(32),applied_receipt:'b'.repeat(32),reason:'waiting for exact native exit'});
+      assert.match(await page.locator('.host-stop [role=status]').innerText(),/waiting for exact native exit/);await fits();await shot('stop-pending');
+      restarting.lifecycle={id:stop.id,action:'stop',origin_instance:'replacement',state:'observed',received_receipt:'a'.repeat(32),applied_receipt:'b'.repeat(32),observed_receipt:'c'.repeat(32),restart_condition:'next logon or explicit service install',native_exit:true,native_pid:731,native_started:'12345',unit_revision:'a'.repeat(64)};
+      restarting.service.state='exited';restarting.service.fresh=false;restarting.stop_review={state:'unknown',reason:'host stopped; native restart conditions apply'};
+      await page.evaluate(s=>taskq.receive(s),restarting);
+      assert.match(await page.locator('.host-stop [role=status]').innerText(),/Recorded host exit observed; restart: next logon or explicit service install/);
+      assert.equal(await page.locator('[data-a=stop]').isDisabled(),true);await fits();await shot('stop-observed');
+      restarting.service={state:'running',pid:731,fresh:true,instance:'replacement'};
+      restarting.projects[0].uninstall_review={...restarting.restart_review,action:'uninstall',project:root,instance:'replacement'};
+      await page.evaluate(s=>taskq.receive(s),restarting);
+      await page.locator('.host-uninstall > summary').click();
+      assert.match(await page.locator('.host-uninstall').innerText(),/last host unit after exact exit/);await fits();await shot('uninstall-review');
+      await page.locator('[data-a=uninstall]').click();
+      await page.waitForFunction(()=>messages.some(m=>m.a==='uninstall'));
+      const uninstall=await page.evaluate(()=>messages.find(m=>m.a==='uninstall'));
+      assert.equal(uninstall.project,root);assert.equal(uninstall.action,'uninstall');assert.deepEqual(uninstall.roots,[root]);
+      await page.evaluate(r=>taskq.receive({capmsg:r}),{id:uninstall.id,root,state:'queued',reason:'waiting for owned work to end'});
+      assert.match(await page.locator('.host-uninstall').innerText(),/waiting for owned work/);await fits();await shot('uninstall-pending');
+      restarting.page='services';restarting.projects=[];
+      restarting.lifecycle={...restarting.lifecycle,id:uninstall.id,action:'uninstall',project:root,unit_removed:true,unregistered:true};
+      await page.evaluate(s=>taskq.receive(s),restarting);
+      assert.match(await page.locator('.content').innerText(),/Host unit removal and exact exit observed/);await fits();await shot('uninstall-observed');
+      await page.evaluate(s=>taskq.receive(s),state(modern.groups[0]));
+      if(!await page.locator('details').filter({has:page.locator('[data-rsc=open]')}).first().evaluate(e=>e.open))await page.locator('summary',{hasText:'Capacity'}).click();
+      await page.locator('[data-rsc=open]').click();
+      const codex=page.locator('[data-rsc-field="rt:codex"]');
+      await codex.fill('4');await codex.focus();
+      await page.evaluate(s=>taskq.receive(s),state(modern.groups[0]));
+      assert.deepEqual(await codex.evaluate(t=>({v:t.value,focused:document.activeElement===t})),{v:'4',focused:true},'tick keeps draft and focus');
+      assert.equal(await page.locator('[data-rsc-field="gate.enabled"]').isDisabled(),false,'host gate is independently editable');
+      assert.equal(await page.locator('[data-rsc-field="host.mode"]').count(),0,'no Fixed/Auto selector');
+      await fits();await shot('editor');
+      await page.evaluate(s=>taskq.receive(s),state(modern.groups[4]));
+      await page.locator('[data-rsc=cancel]').focus();
+      await page.waitForFunction(()=>document.querySelector('.rsc').dataset.rscState==='conflict');
+      assert.equal(await codex.inputValue(),'4');
+      await page.locator('[data-rsc=rebase]').click();await page.locator('[data-rsc=review]').click();
+      assert.match(await page.locator('.rsc-review').innerText(),/Codex 5 → 4/);
+      assert.match(await page.locator('.rsc-review').innerText(),/all registered projects/);
+      await fits();await shot('review');
+      await page.locator('[data-rsc=confirm]').click();
+      await page.waitForFunction(()=>messages.some(m=>m.a==='capacity'));
+      const m=await page.evaluate(()=>messages.find(m=>m.a==='capacity'));
+      assert.equal(m.root,root);assert.equal(m.issued_at,1000);assert.equal(m.expires_at,1300);
+      assert.equal(m.ops.length,1);assert.equal(m.ops[0].target.project_id,null);
+      assert.equal(m.ops[0].policy_schema,'taskq.host-capacity/1');assert.deepEqual(m.ops[0].changes,{runtime_limit:4});
+      assert.equal(m.ops[0].expected_revision,'3'.repeat(32));assert.equal(m.set,undefined,'legacy converter is retired');
+      await page.evaluate(x=>taskq.receive({capmsg:x}),{root,id:m.id,state:'rejected',reason:'host policy changed; review current values before applying'});
+      assert.equal(await page.evaluate(()=>messages.some(m=>m.a==='refresh')),true,'#2160 A3: superseded expected_revision rejection requests snapshot refresh');
+      const superseded=structuredClone(modern.groups[4]);
+      for(const t of superseded.targets)t.current_revision=t.effective_revision='6'.repeat(32);
+      await page.evaluate(s=>taskq.receive(s),state(superseded));
+      await page.waitForFunction(()=>document.querySelector('.rsc').dataset.rscState==='editing');
+      assert.equal(await codex.inputValue(),'4','#2160 A3: rejection recovery preserves edited draft value');
+      await page.locator('[data-rsc=review]').click();
+      assert.match(await page.locator('.rsc-review').innerText(),/Codex 5 → 4/);
+      await page.locator('[data-rsc=confirm]').click();
+      await page.waitForFunction(()=>messages.filter(m=>m.a==='capacity').length===2);
+      const retried=await page.evaluate(()=>messages.filter(m=>m.a==='capacity')[1]);
+      assert.equal(retried.ops[0].expected_revision,'6'.repeat(32),'#2160 A3: user reviews and confirms with refreshed expected_revision without manual reload');
+      await page.evaluate(x=>taskq.receive({capmsg:x}),{root,id:retried.id,state:'saved',saved_revision:'4'.repeat(32)});
+      await page.waitForFunction(()=>document.querySelector('.rsc').dataset.rscState==='saved');
+      const pending=structuredClone(modern.groups[3]);
+      for(const t of pending.targets){t.current_revision='4'.repeat(32);t.effective_revision='5'.repeat(32);}
+      await page.evaluate(s=>taskq.receive(s),state(pending));
+      assert.equal(await page.locator('.rsc').getAttribute('data-rsc-state'),'saved','equal values with a different receipt cannot confirm application');
+      for(const t of pending.targets)t.effective_revision=t.current_revision;
+      await page.evaluate(s=>taskq.receive(s),state(pending));
+      await page.waitForFunction(()=>document.querySelector('.rsc').dataset.rscState==='applied');await fits();
+      await page.evaluate(root=>taskq.receive({open:{page:'operations',operation:'resources',root}}),root);
+      assert.equal(await page.locator('[data-rsc-select]').count(),0,'project checkboxes cannot narrow a host edit');
+      assert.match(await page.locator('.rsc').getAttribute('aria-label'),/all registered projects/);await fits();
+      await page.locator('[data-a=back]').click();
+      await page.evaluate(s=>taskq.receive(s),state(fx.cases[0].groups[0]));
+      const summary=page.locator('summary',{hasText:'Capacity'});
+      if(!await page.locator('details').filter({has:summary}).evaluate(e=>e.open))await summary.click();
+      assert.equal(await page.locator('.rsc button').count(),0,'legacy source retires the editor and stale receipt');
+      assert.deepEqual(errors,[]);
+      console.log('PASS host scope, bounded typed IPC, draft/focus, conflict, exact acknowledgment and legacy refusal;',theme,font+'px',width+'px');
+      await page.close();
+    }
+  }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exit(1);});

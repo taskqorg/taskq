@@ -1,239 +1,95 @@
 //! Owner sessions (§ 8): how a setup or project request launches, links and gets trusted per runtime. Only this
 //! adapter knows the native argv, output and refusals; `setup` keeps the request state machine.
 use crate::runtime::{CLAUDE_CONFIG, Cap};
-use crate::setup::{Request, dir};
+use crate::setup::{dir, Request};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 type Res<T> = Result<T, String>;
 
-pub enum Launched {
-    Job {
-        job: String,
-        session: Option<String>,
-        url: Option<String>,
-    },
-    NoStart(String),
-    Unknown(String),
+pub enum Launched { Job { job: String, session: Option<String>, url: Option<String> }, NoStart(String), Unknown(String) }
+
+pub(crate) fn supported(runtime:&str)->bool {
+    let a=super::of(runtime);
+    super::owner_stream::handles(runtime) || a.has(Cap::RemoteControl) || a.has(Cap::SandboxArgs) && a.has(Cap::Cli) && cfg!(any(target_os="macos",windows))
 }
 
-pub(crate) fn supported(runtime: &str) -> bool {
-    let a = super::of(runtime);
-    super::owner_stream::handles(runtime)
-        || a.has(Cap::RemoteControl)
-        || a.has(Cap::SandboxArgs) && a.has(Cap::Cli) && cfg!(any(target_os = "macos", windows))
+pub(super) fn request_access(env:&super::Env,runtime:&str,r:&Request)->Res<crate::policy::Effective> {
+    match &r.choice {Some(choice)=>{
+        let mut choice=choice.clone();
+        if r.state=="launched" {choice.grant_revision=Some(crate::policy::load(env.install)?.revision);}else {choice.validate(runtime)?;}
+        choice.access(env.install,env.root,runtime,env.permission_mode,env.codex)
+    },None=>super::access(env,runtime).map_err(|e|e.message)}
 }
 
-pub(super) fn request_access(
-    env: &super::Env,
-    runtime: &str,
-    r: &Request,
-) -> Res<crate::policy::Effective> {
-    match &r.choice {
-        Some(choice) => {
-            let mut choice = choice.clone();
-            if r.state == "launched" {
-                choice.grant_revision = Some(crate::policy::load(env.install)?.revision);
-            } else {
-                choice.validate(runtime)?;
-            }
-            choice.access(
-                env.install,
-                env.root,
-                runtime,
-                env.permission_mode,
-                env.codex,
-            )
-        }
-        None => super::access(env, runtime).map_err(|e| e.message),
-    }
-}
-
-fn choice_args(spec: &mut agentq_runtime::agent::NativeSpec, r: &Request) {
-    if let Some(choice) = &r.choice {
-        if !choice.model.is_empty() {
-            spec.args
-                .extend(["--model".into(), choice.model.clone().into()]);
-        }
-        if !choice.effort.is_empty() {
-            spec.args
-                .extend(["--effort".into(), choice.effort.clone().into()]);
-        }
-    }
+fn choice_args(spec:&mut agentq_runtime::agent::NativeSpec,r:&Request) {
+    if let Some(choice)=&r.choice {if !choice.model.is_empty(){spec.args.extend(["--model".into(),choice.model.clone().into()]);}if !choice.effort.is_empty(){spec.args.extend(["--effort".into(),choice.effort.clone().into()]);}}
 }
 
 /// The request's runtime adapter (§ 8 table).
 pub fn launch(own: &Path, r: &Request) -> Launched {
-    if super::owner_stream::handles(&r.runtime) {
-        return super::owner_stream::launch(own, r);
-    }
-    if super::of(&r.runtime).has(Cap::ThreadLink) {
-        codex_launch(own, r)
-    } else {
-        claude_launch(own, r)
-    }
+    if super::owner_stream::handles(&r.runtime){return super::owner_stream::launch(own,r);}
+    if super::of(&r.runtime).has(Cap::ThreadLink) { codex_launch(own, r) } else { claude_launch(own, r) }
 }
 
 /// An owner session's AgentQ `agent` turn (§ 8 Spawn and resume); `base` loses TaskQ's attempt variables first.
-pub(super) fn spec(
-    base: &mut std::process::Command,
-    root: &Path,
-    session: &str,
-    args: &[&str],
-) -> agentq_runtime::agent::NativeSpec {
-    for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE", "TASKQ_ROOT"] {
-        base.env_remove(k);
-    }
-    agentq_runtime::agent::NativeSpec {
-        root: root.into(),
-        session: session.into(),
-        resume: session != "-" && !session.is_empty(),
-        args: args.iter().map(Into::into).collect(),
-        home: None,
-        env: vec![],
-    }
+pub(super) fn spec(base: &mut std::process::Command, root: &Path, session: &str, args: &[&str]) -> agentq_runtime::agent::NativeSpec {
+    for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE", "TASKQ_ROOT"] { base.env_remove(k); }
+    agentq_runtime::agent::NativeSpec { root: root.into(), session: session.into(), resume: session != "-" && !session.is_empty(),
+        args: args.iter().map(Into::into).collect(), home: None, env: vec![] }
 }
 
 /// The brief is a file in the session folder; the first message only points at it.
 pub(crate) fn read_brief(path: &Path) -> String {
-    format!(
-        "Before any work, use Read to read {} in full. It is this session's brief; follow it.",
-        serde_json::to_string(&path.to_string_lossy()).unwrap_or_default()
-    )
+    format!("Before any work, use Read to read {} in full. It is this session's brief; follow it.", serde_json::to_string(&path.to_string_lossy()).unwrap_or_default())
 }
 
 /// The visible Codex app owns the thread after the handshake; its existing app grant bounds launch and resume (R9).
 fn codex_launch(own: &Path, r: &Request) -> Launched {
-    let workdir = r.root.as_deref().map_or(own, Path::new);
+    let workdir=r.root.as_deref().map_or(own,Path::new);
     let a = super::of(&r.runtime);
     let bin = super::which(a.bin);
-    if !bin.is_absolute() {
-        return Launched::NoStart(format!(
-            "{MISSING} {} is not on the host service PATH",
-            a.bin
-        ));
-    }
-    if super::login_state(a.bin, &bin) == "not logged in" {
-        return Launched::NoStart(format!(
-            "{LOGIN} {} is not logged in on this host",
-            a.client
-        ));
-    }
+    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
+    if super::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let codex = crate::host::Policy::read_for_hostname(install, crate::config::hostname)
-        .map_or(vec![], |p| p.codex);
-    let codex = r
-        .choice
-        .as_ref()
-        .map_or_else(|| codex.clone(), |choice| choice.codex(&codex));
+    let codex = crate::host::Policy::read_for_hostname(install, crate::config::hostname).map_or(vec![], |p| p.codex);
+    let codex=r.choice.as_ref().map_or_else(||codex.clone(),|choice|choice.codex(&codex));
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env {
-        context: "",
-        root: workdir,
-        exe: &exe,
-        install,
-        permission_mode: "",
-        codex: &codex,
-        delivery: crate::config::Delivery::AutoMerge,
-        board_env: &[],
-        jobs: None,
-    };
-    let access = match request_access(&env, a.setup, r) {
-        Ok(a) => a,
-        Err(e) => return Launched::NoStart(e),
-    };
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: "", codex: &codex, delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
+    let access = match request_access(&env,a.setup,r) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let path = own.join("brief.txt");
-    if let Err(e) = fs::write(&path, &r.brief) {
-        return Launched::NoStart(format!("setup brief: {e}"));
-    }
-    let mut c = match super::cli(&r.runtime, &access, &env) {
-        Ok(c) => c,
-        Err(e) => return Launched::NoStart(format!("Codex launch: {e}")),
-    };
+    if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
+    let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
     // Standalone setup has no repository; project requests keep the repository check and their exact root.
-    let args: Vec<&str> = r
-        .root
-        .is_none()
-        .then_some("--skip-git-repo-check")
-        .into_iter()
-        .chain(
-            access
-                .codex
-                .as_deref()
-                .unwrap_or(&codex)
-                .iter()
-                .map(String::as_str),
-        )
-        .collect();
+    let args: Vec<&str> = r.root.is_none().then_some("--skip-git-repo-check").into_iter().chain(access.codex.as_deref().unwrap_or(&codex).iter().map(String::as_str)).collect();
     let spec = spec(&mut c, workdir, "-", &args);
-    let spec = match super::optimized(&r.runtime, spec) {
-        Ok(s) => s,
-        Err(e) => return Launched::NoStart(e),
-    };
-    let mut c = match super::agent(&r.runtime).and_then(|a| a.command(c, &spec)) {
-        Ok(c) => c,
-        Err(e) => return Launched::NoStart(e),
-    };
+    let spec = match super::optimized(&r.runtime, spec) { Ok(s) => s, Err(e) => return Launched::NoStart(e) };
+    let mut c = match super::agent(&r.runtime).and_then(|a| a.command(c, &spec)) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
     use coreq::process::Failure;
-    let out = match coreq::process::exchange(
-        "setup.codex-launch",
-        &mut c,
-        super::HANDSHAKE.as_bytes(),
-        std::time::Duration::from_secs(60),
-    ) {
+    let out = match coreq::process::exchange("setup.codex-launch", &mut c, super::HANDSHAKE.as_bytes(), std::time::Duration::from_secs(60)) {
         Ok(out) | Err(Failure::Exit(out)) => out,
-        Err(
-            e @ (Failure::InvalidDeadline
-            | Failure::Capacity
-            | Failure::Owner(_)
-            | Failure::Spawn(_)
-            | Failure::InputLimit),
-        ) => return Launched::NoStart(format!("Codex launch: {e}")),
+        Err(e @ (Failure::InvalidDeadline | Failure::Capacity | Failure::Owner(_) | Failure::Spawn(_) | Failure::InputLimit)) => return Launched::NoStart(format!("Codex launch: {e}")),
         Err(e) => return Launched::Unknown(format!("Codex launch outcome unknown: {e}")),
     };
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
-    codex_thread(&r.runtime, &stdout, &stderr, out.status.code(), |thread| {
-        super::app_submit(thread, &read_brief(&path))
-    })
+    codex_thread(&r.runtime, &stdout, &stderr, out.status.code(), |thread| super::app_submit(thread, &read_brief(&path)))
 }
 
 /// The handshake's answer: no thread is a definite no-start; a thread whose brief is not queued is unknown.
-pub(crate) fn codex_thread(
-    rt: &str,
-    stdout: &str,
-    stderr: &str,
-    code: Option<i32>,
-    submit: impl FnOnce(&str) -> Res<()>,
-) -> Launched {
-    let thread = stdout
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .find(|v| v["type"] == "thread.started")
-        .and_then(|v| v["thread_id"].as_str().map(String::from));
+pub(crate) fn codex_thread(rt: &str, stdout: &str, stderr: &str, code: Option<i32>, submit: impl FnOnce(&str) -> Res<()>) -> Launched {
+    let thread = stdout.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["type"] == "thread.started").and_then(|v| v["thread_id"].as_str().map(String::from));
     let Some(thread) = thread else {
-        if super::launch_cause(rt, &format!("{stdout}{stderr}")) == Some("login-required") {
-            return Launched::NoStart(format!("{LOGIN} Codex asked for login"));
-        }
-        return Launched::NoStart(format!(
-            "Codex handshake started no thread (exit {})",
-            code.map_or("unknown".into(), |c| c.to_string())
-        ));
+        if super::launch_cause(rt, &format!("{stdout}{stderr}")) == Some("login-required") { return Launched::NoStart(format!("{LOGIN} Codex asked for login")); }
+        return Launched::NoStart(format!("Codex handshake started no thread (exit {})", code.map_or("unknown".into(), |c| c.to_string())));
     };
     // the id reaches the app URL and, on Windows, a shell: only a plain id
-    if !super::plain_thread(&thread) {
-        return Launched::Unknown(format!("Codex returned thread {thread:?}; outcome unknown"));
-    }
+    if !super::plain_thread(&thread) { return Launched::Unknown(format!("Codex returned thread {thread:?}; outcome unknown")); }
     match submit(&thread) {
-        Ok(()) => Launched::Job {
-            job: thread.clone(),
-            session: Some(thread.clone()),
-            url: Some(super::thread_url(&thread)),
-        },
-        Err(e) => Launched::Unknown(format!(
-            "{e}; brief delivery unknown, inspect Codex thread {thread}"
-        )),
+        Ok(()) => Launched::Job { job: thread.clone(), session: Some(thread.clone()), url: Some(super::thread_url(&thread)) },
+        Err(e) => Launched::Unknown(format!("{e}; brief delivery unknown, inspect Codex thread {thread}")),
     }
 }
 
@@ -242,87 +98,27 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     let workdir = r.root.as_deref().map_or(own, Path::new);
     let a = super::of(&r.runtime);
     let bin = super::which(a.bin);
-    if !bin.is_absolute() {
-        return Launched::NoStart(format!(
-            "{MISSING} {} is not on the host service PATH",
-            a.bin
-        ));
-    }
-    if super::login_state(a.bin, &bin) == "not logged in" {
-        return Launched::NoStart(format!(
-            "{LOGIN} {} is not logged in on this host",
-            a.client
-        ));
-    }
+    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
+    if super::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
-    let mode = policy
-        .as_ref()
-        .map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
+    let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env {
-        context: "",
-        root: workdir,
-        exe: &exe,
-        install,
-        permission_mode: &mode,
-        codex: &[],
-        delivery: crate::config::Delivery::AutoMerge,
-        board_env: &[],
-        jobs: None,
-    };
-    let access = match request_access(&env, &r.runtime, r) {
-        Ok(a) => a,
-        Err(e) => return Launched::NoStart(e),
-    };
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
+    let access = match request_access(&env,&r.runtime,r) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let path = own.join("brief.txt");
-    if let Err(e) = fs::write(&path, &r.brief) {
-        return Launched::NoStart(format!("setup brief: {e}"));
-    }
-    let mut c = match super::cli(&r.runtime, &access, &env) {
-        Ok(c) => c,
-        Err(e) => return Launched::NoStart(e),
-    };
+    if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
+    let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
     let settings = serde_json::json!({"env": super::claude_env(install, None, None)}).to_string();
-    let mut spec = spec(
-        &mut c,
-        workdir,
-        "",
-        &[
-            "--settings",
-            &settings,
-            "--remote-control",
-            if r.root.is_some() {
-                "taskq request"
-            } else {
-                "taskq setup"
-            },
-            "--permission-mode",
-            access.claude.as_deref().unwrap_or(&mode),
-        ],
-    );
-    choice_args(&mut spec, r);
-    let spec = match super::optimized(&r.runtime, spec) {
-        Ok(s) => s,
-        Err(e) => return Launched::NoStart(e),
-    };
-    let agent = match super::agent(&r.runtime) {
-        Ok(a) => a,
-        Err(e) => return Launched::NoStart(e),
-    };
+    let mut spec = spec(&mut c, workdir, "", &["--settings", &settings, "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
+    choice_args(&mut spec,r);
+    let spec = match super::optimized(&r.runtime, spec) { Ok(s) => s, Err(e) => return Launched::NoStart(e) };
+    let agent = match super::agent(&r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e) };
     let input = read_brief(&path);
     use coreq::process::Failure;
     let home = super::accounts::default_home(&r.runtime);
     let out = {
-        let _daemon = match super::daemon_sandbox::enter(
-            &r.runtime,
-            home.as_deref(),
-            access.profile.as_deref(),
-            false,
-        ) {
-            Ok(gate) => gate,
-            Err(e) => return Launched::NoStart(format!("{ACCESS} {e}")),
-        };
+        let _daemon = match super::daemon_sandbox::enter(&r.runtime, home.as_deref(), access.profile.as_deref(), false) { Ok(gate) => gate, Err(e) => return Launched::NoStart(format!("{ACCESS} {e}")) };
         match agent.background_launch(c, &spec, &input, std::time::Duration::from_secs(30)) {
             Err(e) => return Launched::NoStart(format!("Claude launch: {e}")),
             Ok(out) => out,
@@ -330,333 +126,144 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     };
     let out = match out {
         Ok(out) | Err(Failure::Exit(out)) => out,
-        Err(
-            e @ (Failure::InvalidDeadline
-            | Failure::Capacity
-            | Failure::Owner(_)
-            | Failure::Spawn(_)
-            | Failure::InputLimit),
-        ) => return Launched::NoStart(format!("Claude launch: {e}")),
+        Err(e @ (Failure::InvalidDeadline | Failure::Capacity | Failure::Owner(_) | Failure::Spawn(_) | Failure::InputLimit)) => return Launched::NoStart(format!("Claude launch: {e}")),
         Err(e) => return Launched::Unknown(format!("Claude launch outcome unknown: {e}")),
     };
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
     // Claude refuses before it starts anything: a definite no-start, never `interrupted`.
-    match (
-        out.status.success(),
-        agent.launch_refusal(&stderr).map(|c| c.0),
-    ) {
-        (false, Some("workspace-untrusted")) => {
-            return Launched::NoStart(format!(
-                "{ACCESS} Claude workspace not trusted: {}",
-                workdir.display()
-            ));
-        }
-        (false, Some("login-required")) => {
-            return Launched::NoStart(format!("{LOGIN} Claude Code asked for login"));
-        }
+    match (out.status.success(), agent.launch_refusal(&stderr).map(|c| c.0)) {
+        (false, Some("workspace-untrusted")) => return Launched::NoStart(format!("{ACCESS} Claude workspace not trusted: {}", workdir.display())),
+        (false, Some("login-required")) => return Launched::NoStart(format!("{LOGIN} Claude Code asked for login")),
         _ => {}
     }
-    match stdout.lines().find_map(|l| {
-        l.strip_prefix("backgrounded · ")
-            .and_then(|s| s.split_whitespace().next())
-    }) {
+    match stdout.lines().find_map(|l| l.strip_prefix("backgrounded · ").and_then(|s| s.split_whitespace().next())) {
         // One link read at launch, never after: the Claude session manager owns the session from here.
         Some(id) if out.status.success() && super::native_job_id(id) => {
             let (session, url) = claude_link(workdir, id);
-            Launched::Job {
-                job: id.into(),
-                session,
-                url,
-            }
+            Launched::Job { job: id.into(), session, url }
         }
-        _ => Launched::Unknown(
-            "Claude returned no background job; outcome unknown, inspect native sessions".into(),
-        ),
+        _ => Launched::Unknown("Claude returned no background job; outcome unknown, inspect native sessions".into()),
     }
 }
 
 /// A launched job's native session and Remote Control link, each unknown until Claude publishes it.
 pub fn claude_link(workdir: &Path, job: &str) -> (Option<String>, Option<String>) {
-    let session = super::claude_agents(workdir).ok().and_then(|rows| {
-        rows.iter()
-            .find(|v| v["id"] == job)
-            .and_then(|v| v["sessionId"].as_str().map(String::from))
-    });
+    let session = super::claude_agents(workdir).ok()
+        .and_then(|rows| rows.iter().find(|v| v["id"] == job).and_then(|v| v["sessionId"].as_str().map(String::from)));
     let url = session.as_deref().and_then(super::claude_remote);
     (session, url)
 }
 /// D2: one owner turn into a launched session, text on stdin; the caller spawns it. Never `--bg --resume`: that copies the session.
 pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
-    if super::owner_stream::handles(&r.runtime) {
-        return super::owner_stream::command(own, r, true);
-    }
+    if super::owner_stream::handles(&r.runtime){return super::owner_stream::command(own,r,true);}
     let a = super::of(&r.runtime);
-    let session = r
-        .session
-        .as_deref()
-        .filter(|s| super::plain_thread(s))
-        .ok_or("native session unknown; open it in its runtime")?;
-    if !super::which(a.bin).is_absolute() {
-        return Err(format!(
-            "{MISSING} {} is not on the host service PATH",
-            a.bin
-        ));
-    }
-    if a.has(Cap::ThreadLink) {
-        return Err("App-owned Codex input must use its native queue; CLI resume refused".into());
-    }
+    let session = r.session.as_deref().filter(|s| super::plain_thread(s)).ok_or("native session unknown; open it in its runtime")?;
+    if !super::which(a.bin).is_absolute() { return Err(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
+    if a.has(Cap::ThreadLink) {return Err("App-owned Codex input must use its native queue; CLI resume refused".into());}
     release_idle(r)?;
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
-    let mode = policy
-        .as_ref()
-        .map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
+    let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let codex = policy.map_or(vec![], |p| p.codex);
     // the same folder and grant as the launch, so the turn resumes where the session started
     let workdir = r.root.as_deref().map_or(own, Path::new);
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env {
-        context: "",
-        root: workdir,
-        exe: &exe,
-        install,
-        permission_mode: &mode,
-        codex: &codex,
-        delivery: crate::config::Delivery::AutoMerge,
-        board_env: &[],
-        jobs: None,
-    };
-    let access = request_access(
-        &env,
-        if a.has(Cap::SandboxArgs) {
-            a.setup
-        } else {
-            &r.runtime
-        },
-        r,
-    )?;
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, delivery: crate::config::Delivery::AutoMerge, board_env: &[], jobs: None };
+    let access = request_access(&env, if a.has(Cap::SandboxArgs) { a.setup } else { &r.runtime },r)?;
     let mut c = super::cli(&r.runtime, &access, &env)?;
-    let mut spec = spec(
-        &mut c,
-        workdir,
-        session,
-        &[
-            "--permission-mode",
-            access.claude.as_deref().unwrap_or(&mode),
-            "--settings",
-            &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string(),
-        ],
-    );
-    choice_args(&mut spec, r);
+    let mut spec = spec(&mut c, workdir, session, &["--permission-mode", access.claude.as_deref().unwrap_or(&mode),
+        "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string()]);
+    choice_args(&mut spec,r);
     super::agent(&r.runtime)?.command(c, &super::optimized(&r.runtime, spec)?)
 }
 
 /// D2/D5: reuse native App readback, binding canonical project, thread, exact input and terminal turn id.
-fn app_history(
-    own: &Path,
-    r: &Request,
-    input: &str,
-    baseline: usize,
-    after: u64,
-) -> Res<super::AppHistory> {
-    let session = r
-        .session
-        .as_deref()
-        .filter(|s| super::plain_thread(s))
-        .ok_or("native App session unknown")?;
-    let root = r
-        .root
-        .as_deref()
-        .map_or(own, Path::new)
-        .canonicalize()
-        .map_err(|_| "native App project unavailable")?;
-    let path = transcript(&r.runtime, session)?;
-    let mut history = super::AppHistory {
-        floor: after,
-        ..super::AppHistory::default()
-    };
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        match history.read(&path, baseline, input, &root, session) {
-            Ok(_) if history.reader.offset >= after => return Ok(history),
-            Ok(_) => return Err("native App source shrank before the saved input boundary".into()),
-            Err(reason)
-                if reason
-                    == "Codex native history scan pending; retry observation without queueing"
-                    && std::time::Instant::now() < until => {}
-            Err(reason) => return Err(reason),
-        }
-    }
+fn app_history(own:&Path,r:&Request,input:&str,baseline:usize,after:u64)->Res<super::AppHistory> {
+    let session=r.session.as_deref().filter(|s|super::plain_thread(s)).ok_or("native App session unknown")?;
+    let root=r.root.as_deref().map_or(own,Path::new).canonicalize().map_err(|_|"native App project unavailable")?;
+    let path=transcript(&r.runtime,session)?;let mut history=super::AppHistory {floor:after,..super::AppHistory::default()};
+    let until=std::time::Instant::now()+std::time::Duration::from_secs(5);
+    loop {match history.read(&path,baseline,input,&root,session) {
+        Ok(_) if history.reader.offset>=after=>return Ok(history),
+        Ok(_)=>return Err("native App source shrank before the saved input boundary".into()),
+        Err(reason) if reason=="Codex native history scan pending; retry observation without queueing"&&std::time::Instant::now()<until=>{},
+        Err(reason)=>return Err(reason),
+    }}
 }
 
-pub(crate) fn app_baseline(own: &Path, r: &Request) -> Res<(usize, u64)> {
-    let history = app_history(own, r, &read_brief(&own.join("brief.txt")), 0, 0)?;
-    if history.current.is_some() {
-        return Err("native App is working; input not queued".into());
-    }
-    Ok((history.count, history.reader.offset))
+pub(crate) fn app_baseline(own:&Path,r:&Request)->Res<(usize,u64)> {
+    let history=app_history(own,r,&read_brief(&own.join("brief.txt")),0,0)?;
+    if history.current.is_some() {return Err("native App is working; input not queued".into());}
+    Ok((history.count,history.reader.offset))
 }
 
-pub(crate) fn app_submit(own: &Path, r: &Request, input: &str) -> Res<()> {
-    let session = r
-        .session
-        .as_deref()
-        .filter(|s| super::plain_thread(s))
-        .ok_or("native App session unknown")?;
-    let install = own
-        .parent()
-        .and_then(Path::parent)
-        .ok_or("owner installation unknown")?;
-    let root = r.root.as_deref().map_or(own, Path::new);
-    let exe = std::env::current_exe().map_err(|_| "owner executable unknown")?;
-    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname)?;
-    let env = super::Env {
-        context: "",
-        root,
-        exe: &exe,
-        install,
-        permission_mode: &policy.permission_mode,
-        codex: &policy.codex,
-        delivery: crate::config::Delivery::AutoMerge,
-        board_env: &[],
-        jobs: None,
-    };
-    request_access(&env, super::of(&r.runtime).setup, r)?;
-    super::app_queue(session, input)
+pub(crate) fn app_submit(own:&Path,r:&Request,input:&str)->Res<()> {
+    let session=r.session.as_deref().filter(|s|super::plain_thread(s)).ok_or("native App session unknown")?;
+    let install=own.parent().and_then(Path::parent).ok_or("owner installation unknown")?;
+    let root=r.root.as_deref().map_or(own,Path::new);let exe=std::env::current_exe().map_err(|_|"owner executable unknown")?;
+    let policy=crate::host::Policy::read_for_hostname(install,crate::config::hostname)?;
+    let env=super::Env {context:"",root,exe:&exe,install,permission_mode:&policy.permission_mode,codex:&policy.codex,delivery:crate::config::Delivery::AutoMerge,board_env:&[],jobs:None};
+    request_access(&env,super::of(&r.runtime).setup,r)?;
+    super::app_queue(session,input)
 }
 
-pub(crate) fn app_observe(
-    own: &Path,
-    r: &Request,
-    t: &crate::dialogue::Turn,
-) -> Res<crate::dialogue::AppState> {
-    let history = app_history(
-        own,
-        r,
-        &t.input,
-        t.app_baseline.ok_or("native App baseline unknown")?,
-        t.app_after.ok_or("native App input boundary unknown")?,
-    )?;
-    Ok(crate::dialogue::AppState {
-        accepted: history.owned.is_some(),
-        active: history.current.is_some(),
-        outcome: history.ended.then(|| {
-            if history.aborted {
-                "failed: native App turn aborted".into()
-            } else {
-                "success".into()
-            }
-        }),
-    })
+pub(crate) fn app_observe(own:&Path,r:&Request,t:&crate::dialogue::Turn)->Res<crate::dialogue::AppState> {
+    let history=app_history(own,r,&t.input,t.app_baseline.ok_or("native App baseline unknown")?,t.app_after.ok_or("native App input boundary unknown")?)?;
+    Ok(crate::dialogue::AppState {accepted:history.owned.is_some(),active:history.current.is_some(),outcome:history.ended.then(||if history.aborted {"failed: native App turn aborted".into()}else{"success".into()})})
 }
 
 /// D3: Claude lists a session someone has open; Codex refuses the second writer itself, so its check is the turn.
 pub fn holder(_own: &Path, r: &Request) -> Res<bool> {
-    if super::owner_stream::handles(&r.runtime) {
-        return super::owner_stream::holder(_own, r);
-    }
-    if super::of(&r.runtime).has(Cap::ThreadLink) {
-        return Ok(false);
-    }
+    if super::owner_stream::handles(&r.runtime){return super::owner_stream::holder(_own,r);}
+    if super::of(&r.runtime).has(Cap::ThreadLink) { return Ok(false); }
     Ok(holds(&claude_rows()?, r) == Hold::Other)
 }
 
 #[derive(Debug, PartialEq)]
-enum Hold {
-    Free,
-    Own,
-    Other,
-}
+enum Hold { Free, Own, Other }
 
 /// The job TaskQ launched stays open after its reply; idle, it is no other writer. Interactive, busy or foreign rows hold.
 /// Only `status` tells a turn in progress: `claude agents --json` keeps `state` `working` on an idle launched job (#1762).
 fn holds(rows: &[serde_json::Value], r: &Request) -> Hold {
     let mut hold = Hold::Free;
-    for v in rows.iter().filter(|v| {
-        v["sessionId"]
-            .as_str()
-            .is_some_and(|s| Some(s) == r.session.as_deref())
-    }) {
+    for v in rows.iter().filter(|v| v["sessionId"].as_str().is_some_and(|s| Some(s) == r.session.as_deref())) {
         let own = v["kind"] == "background" && r.job.as_deref().is_some_and(|j| v["id"] == j);
-        if !own || v["status"] == "busy" {
-            return Hold::Other;
-        }
+        if !own || v["status"] == "busy" { return Hold::Other; }
         hold = Hold::Own;
     }
     hold
 }
 
 fn claude_rows() -> Res<Vec<serde_json::Value>> {
-    let (ok, out) = super::probe(
-        "runtime.agents",
-        &super::which(super::of(super::CLAUDE).bin),
-        &["agents", "--json"],
-    )
-    .ok_or("Claude agents unavailable or timed out")?;
-    if !ok {
-        return Err(format!("claude agents: {}", out.trim()));
-    }
+    let (ok, out) = super::probe("runtime.agents", &super::which(super::of(super::CLAUDE).bin), &["agents", "--json"]).ok_or("Claude agents unavailable or timed out")?;
+    if !ok { return Err(format!("claude agents: {}", out.trim())); }
     serde_json::from_str(&out).map_err(|e| format!("claude agents: {e}"))
 }
 
 /// D3: Claude resumes only a stopped session, so the turn stops the idle launched job first and reads its release back.
 fn release_idle(r: &Request) -> Res<()> {
-    let job = match holds(&claude_rows()?, r) {
-        Hold::Free => return Ok(()),
-        Hold::Other => return Err(open_in(&r.runtime)),
-        Hold::Own => r.job.as_deref().unwrap_or_default(),
-    };
-    let (ok, out) = super::probe(
-        "runtime.stop",
-        &super::which(super::of(super::CLAUDE).bin),
-        &["stop", job],
-    )
-    .ok_or("Claude stop unavailable or timed out; state unknown")?;
-    if !ok {
-        return Err(format!("claude stop: {}", out.trim()));
-    }
-    if holds(&claude_rows()?, r) == Hold::Free {
-        Ok(())
-    } else {
-        Err("Claude session still open after stop; state unknown".into())
-    }
+    let job = match holds(&claude_rows()?, r) { Hold::Free => return Ok(()), Hold::Other => return Err(open_in(&r.runtime)), Hold::Own => r.job.as_deref().unwrap_or_default() };
+    let (ok, out) = super::probe("runtime.stop", &super::which(super::of(super::CLAUDE).bin), &["stop", job]).ok_or("Claude stop unavailable or timed out; state unknown")?;
+    if !ok { return Err(format!("claude stop: {}", out.trim())); }
+    if holds(&claude_rows()?, r) == Hold::Free { Ok(()) } else { Err("Claude session still open after stop; state unknown".into()) }
 }
 
 /// D3 refusal text.
-pub fn open_in(runtime: &str) -> String {
-    format!("open in {runtime}; close it there first")
-}
+pub fn open_in(runtime: &str) -> String { format!("open in {runtime}; close it there first") }
 
 /// D5: the outcome only from the runtime's end record (Claude `result`, Codex `turn.completed`/`turn.failed`); exit alone is unknown.
 pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
-    if super::owner_stream::handles(runtime) {
-        return super::owner_stream::outcome(runtime, out);
-    }
+    if super::owner_stream::handles(runtime){return super::owner_stream::outcome(runtime,out);}
     let codex = super::of(runtime).has(Cap::ThreadLink);
-    if codex && format!("{out}{err}").contains("already has an active writer") {
-        return open_in(runtime);
-    }
-    for v in out
-        .lines()
-        .rev()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-    {
+    if codex && format!("{out}{err}").contains("already has an active writer") { return open_in(runtime); }
+    for v in out.lines().rev().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
         match (codex, v["type"].as_str()) {
-            (false, Some("result")) if v["is_error"] != true && v["subtype"] == "success" => {
-                return "success".into();
-            }
-            (false, Some("result")) => {
-                return format!("failed: {}", v["subtype"].as_str().unwrap_or("error"));
-            }
+            (false, Some("result")) if v["is_error"] != true && v["subtype"] == "success" => return "success".into(),
+            (false, Some("result")) => return format!("failed: {}", v["subtype"].as_str().unwrap_or("error")),
             (true, Some("turn.completed")) => return "success".into(),
-            (true, Some("turn.failed")) => {
-                return format!(
-                    "failed: {}",
-                    v["error"]["message"].as_str().unwrap_or("error")
-                );
-            }
+            (true, Some("turn.failed")) => return format!("failed: {}", v["error"]["message"].as_str().unwrap_or("error")),
             _ => {}
         }
     }
@@ -664,177 +271,80 @@ pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
 }
 
 /// The session's transcript (D1): Claude `projects/*/<id>.jsonl`, Codex `sessions/**/rollout-*-<id>.jsonl`.
-pub fn transcript_for(install: &Path, r: &Request) -> Res<PathBuf> {
-    if super::owner_stream::handles(&r.runtime) {
-        return super::owner_stream::transcript(&dir(install).join(&r.id), r);
-    }
-    transcript(
-        &r.runtime,
-        r.session
-            .as_deref()
-            .ok_or("Native session identity unknown")?,
-    )
+pub fn transcript_for(install:&Path,r:&Request)->Res<PathBuf> {
+    if super::owner_stream::handles(&r.runtime){return super::owner_stream::transcript(&dir(install).join(&r.id),r);}
+    transcript(&r.runtime,r.session.as_deref().ok_or("Native session identity unknown")?)
 }
 
 pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
     let a = super::of(runtime);
-    if !a.has(Cap::ThreadLink) && !a.has(Cap::RemoteControl) {
-        return Err(format!(
-            "runtime {runtime:?}: no retained native transcript file; view unknown"
-        ));
-    }
+    if !a.has(Cap::ThreadLink) && !a.has(Cap::RemoteControl) { return Err(format!("runtime {runtime:?}: no retained native transcript file; view unknown")); }
     if a.has(Cap::ThreadLink) {
-        codex_transcript_in(
-            &super::codex_home().ok_or("transcript unknown: no home folder")?,
-            session,
-        )
+        codex_transcript_in(&super::codex_home().ok_or("transcript unknown: no home folder")?, session)
     } else {
-        super::claude_transcript_in(
-            &super::claude_home().ok_or("transcript unknown: no home folder")?,
-            session,
-        )
+        super::claude_transcript_in(&super::claude_home().ok_or("transcript unknown: no home folder")?, session)
     }
 }
 
 #[derive(Default)]
-struct TranscriptPaths {
-    home: PathBuf,
-    dirs: Vec<(PathBuf, std::time::SystemTime)>,
-    paths: std::collections::BTreeMap<String, (PathBuf, bool)>,
-}
-static TRANSCRIPT_PATHS: std::sync::Mutex<Vec<TranscriptPaths>> = std::sync::Mutex::new(Vec::new());
+struct TranscriptPaths { home:PathBuf, dirs:Vec<(PathBuf,std::time::SystemTime)>, paths:std::collections::BTreeMap<String,(PathBuf,bool)> }
+static TRANSCRIPT_PATHS:std::sync::Mutex<Vec<TranscriptPaths>>=std::sync::Mutex::new(Vec::new());
 // A directory change in the clock tick of its last change keeps the stamp (NTFS: seen on 26 of 100 immediate changes).
 // Only a stamp this much older than the scan start proves that a later change will show; 2 s is the coarsest tick (FAT).
-pub(crate) const STAMP_SETTLE: std::time::Duration = std::time::Duration::from_secs(2);
+pub(crate) const STAMP_SETTLE:std::time::Duration=std::time::Duration::from_secs(2);
 
 pub(crate) fn codex_transcript_in(home: &Path, session: &str) -> Res<PathBuf> {
-    crate::profile::source_read(|| codex_path(home, session))
+    crate::profile::source_read(||codex_path(home,session))
 }
-fn codex_path(home: &Path, session: &str) -> Res<PathBuf> {
-    if !super::plain_thread(session) {
-        return Err("Codex thread identity invalid".into());
-    }
-    let mut caches = TRANSCRIPT_PATHS
-        .lock()
-        .map_err(|_| "Codex transcript path cache unavailable")?;
-    let index = if let Some(i) = caches.iter().position(|c| c.home == home) {
-        i
-    } else {
-        if caches.len() >= 4 {
-            caches.remove(0);
-        }
-        caches.push(TranscriptPaths {
-            home: home.into(),
-            ..Default::default()
-        });
-        caches.len() - 1
-    };
-    let cache = &mut caches[index];
-    let prior = cache.paths.get(session).cloned();
+fn codex_path(home:&Path,session:&str)->Res<PathBuf> {
+    if !super::plain_thread(session) { return Err("Codex thread identity invalid".into()); }
+    let mut caches=TRANSCRIPT_PATHS.lock().map_err(|_|"Codex transcript path cache unavailable")?;
+    let index=if let Some(i)=caches.iter().position(|c|c.home==home){i}else{if caches.len()>=4 {caches.remove(0);}caches.push(TranscriptPaths{home:home.into(),..Default::default()});caches.len()-1};
+    let cache=&mut caches[index];let prior=cache.paths.get(session).cloned();
     // A vanished accepted path refuses; finding another matching name must never silently replace it.
-    if prior.as_ref().is_some_and(|(p, _)| !p.is_file()) {
-        return Err("Codex transcript path lost; native source unavailable".into());
-    }
-    let reuse = true;
-    #[cfg(test)]
-    let reuse = !crate::profile::SOURCE_BASELINE.get();
-    if reuse
-        && let Some((path, true)) = &prior
-        && !cache.dirs.is_empty()
-        && cache.dirs.iter().all(|(p, at)| {
-            crate::profile::source_count("path_directory_checks", 1);
-            fs::metadata(p).and_then(|m| m.modified()).ok().as_ref() == Some(at)
-        })
-    {
-        crate::profile::source_count("path_cache_hits", 1);
-        return Ok(path.clone());
-    }
-    let suffix = format!("-{session}.jsonl");
-    let started = std::time::SystemTime::now();
-    let (mut found, mut dirs, mut seen, mut stamps) =
-        (vec![], vec![(home.join("sessions"), 0)], 0, vec![]);
+    if prior.as_ref().is_some_and(|(p,_)|!p.is_file()){return Err("Codex transcript path lost; native source unavailable".into());}
+    let reuse=true;
+    #[cfg(test)] let reuse=!crate::profile::SOURCE_BASELINE.get();
+    if reuse && let Some((path,true))=&prior && !cache.dirs.is_empty() && cache.dirs.iter().all(|(p,at)|{crate::profile::source_count("path_directory_checks",1);fs::metadata(p).and_then(|m|m.modified()).ok().as_ref()==Some(at)}) {crate::profile::source_count("path_cache_hits",1);return Ok(path.clone());}
+    let suffix = format!("-{session}.jsonl");let started=std::time::SystemTime::now();
+    let (mut found, mut dirs, mut seen,mut stamps) = (vec![], vec![(home.join("sessions"), 0)], 0,vec![]);
     while let Some((dir, depth)) = dirs.pop() {
-        crate::profile::source_count("path_directories_scanned", 1);
-        let at = fs::metadata(&dir)
-            .and_then(|m| m.modified())
-            .map_err(|e| format!("Codex transcript unavailable: {e}"))?;
+        crate::profile::source_count("path_directories_scanned",1);
+        let at=fs::metadata(&dir).and_then(|m|m.modified()).map_err(|e|format!("Codex transcript unavailable: {e}"))?;
         for entry in fs::read_dir(&dir).map_err(|e| format!("Codex transcript unavailable: {e}"))? {
-            seen += 1;
-            crate::profile::source_count("path_entries_scanned", 1);
-            if seen > 200_000 {
-                return Err("Codex transcript scan exceeds 200000 entries".into());
-            }
+            seen += 1;crate::profile::source_count("path_entries_scanned",1);
+            if seen > 200_000 { return Err("Codex transcript scan exceeds 200000 entries".into()); }
             let p = entry.map_err(|e| e.to_string())?.path();
             let name = p.file_name().and_then(|s| s.to_str()).unwrap_or_default();
-            if depth < 3 && p.is_dir() {
-                dirs.push((p.clone(), depth + 1));
-            } else if name.starts_with("rollout-") && name.ends_with(&suffix) && p.is_file() {
-                found.push(p);
-            }
+            if depth < 3 && p.is_dir() { dirs.push((p.clone(), depth + 1)); } else if name.starts_with("rollout-") && name.ends_with(&suffix) && p.is_file() { found.push(p); }
         }
-        if fs::metadata(&dir).and_then(|m| m.modified()).ok() != Some(at) {
-            return Err(
-                "Codex transcript directory changed during resolution; retry exact source".into(),
-            );
-        }
-        stamps.push((dir, at));
+        if fs::metadata(&dir).and_then(|m|m.modified()).ok()!=Some(at){return Err("Codex transcript directory changed during resolution; retry exact source".into());}
+        stamps.push((dir,at));
     }
-    let path = match found.len() {
+    let path=match found.len() {
         1 => found.remove(0),
         0 => return Err("Codex transcript unavailable".into()),
-        _ => {
-            return Err(
-                "Codex session has multiple transcript paths; inspect native history".into(),
-            );
-        }
+        _ => return Err("Codex session has multiple transcript paths; inspect native history".into()),
     };
-    if prior.as_ref().is_some_and(|(p, _)| p != &path) {
-        return Err("Codex transcript path changed; native source unavailable".into());
-    }
+    if prior.as_ref().is_some_and(|(p,_)|p!=&path){return Err("Codex transcript path changed; native source unavailable".into());}
     // Directory stamps detect tree changes, not transcript integrity; AgentQ still verifies the file every read.
     // shortcut: cache at most 4096 directories / 64 sessions per account; larger trees keep the bounded full scan.
     // Invalidate other sessions' scan proof while retaining their accepted path fences.
     // A stamp not yet settled (or ahead of this clock) keeps the path fence but proves nothing: the next read scans again.
-    let settled = stamps.iter().all(|(_, at)| {
-        started
-            .duration_since(*at)
-            .is_ok_and(|age| age >= STAMP_SETTLE)
-    });
-    if stamps.len() <= 4096 {
-        if cache.dirs != stamps {
-            for (_, verified) in cache.paths.values_mut() {
-                *verified = false;
-            }
-        }
-        cache.dirs = stamps;
-        if cache.paths.len() >= 64 && !cache.paths.contains_key(session) {
-            cache.paths.pop_first();
-        }
-        cache.paths.insert(session.into(), (path.clone(), settled));
-    }
+    let settled=stamps.iter().all(|(_,at)|started.duration_since(*at).is_ok_and(|age|age>=STAMP_SETTLE));
+    if stamps.len()<=4096 {if cache.dirs!=stamps {for (_,verified) in cache.paths.values_mut(){*verified=false;}}cache.dirs=stamps;if cache.paths.len()>=64&&!cache.paths.contains_key(session){cache.paths.pop_first();}cache.paths.insert(session.into(),(path.clone(),settled));}
     Ok(path)
 }
 
 /// Claude's project key: forward slashes on every platform; a Windows backslash key never matches (#1546),
 /// nor a verbatim `//?/C:/` one (#1858).
-pub fn claude_key(p: &Path) -> String {
-    crate::platform::plain_path(p)
-        .display()
-        .to_string()
-        .replace('\\', "/")
-}
+pub fn claude_key(p: &Path) -> String { crate::platform::plain_path(p).display().to_string().replace('\\', "/") }
 
 /// The owner step for an untrusted folder that works while other Claude sessions run (#1555): Claude saves its own trust.
-pub fn trust_step(folder: &str) -> String {
-    format!(
-        "Next: run `claude` in {folder} and accept its trust prompt; other Claude sessions keep running"
-    )
-}
+pub fn trust_step(folder: &str) -> String { format!("Next: run `claude` in {folder} and accept its trust prompt; other Claude sessions keep running") }
 
 /// Whether this host has a claude binary a worker launch would find (#2417).
-pub fn claude_installed() -> bool {
-    super::which(super::of(super::CLAUDE).bin).is_absolute()
-}
+pub fn claude_installed() -> bool { super::which(super::of(super::CLAUDE).bin).is_absolute() }
 
 /// Whether Claude trusts `root` per its config file in `<home>`, read only: `None` without a Claude config (#1555, #2300).
 pub fn trust_state(home: &Path, root: &Path) -> Result<Option<bool>, String> {
@@ -844,34 +354,14 @@ pub fn trust_state(home: &Path, root: &Path) -> Result<Option<bool>, String> {
         Err(e) => return Err(e.to_string()),
     };
     // Claude walks parent folders: a trusted parent covers the root
-    Ok(Some(root.ancestors().any(|p| {
-        v["projects"][claude_key(p)]["hasTrustDialogAccepted"] == true
-    })))
+    Ok(Some(root.ancestors().any(|p| v["projects"][claude_key(p)]["hasTrustDialogAccepted"] == true)))
 }
 
 /// Onboarding trust (#1546): `<install>/setup` and every registered root get `hasTrustDialogAccepted` in
 /// Claude's config file in `<home>`. Nothing trusted yet changes only while no Claude runs, after a backup; gap lines only.
-pub fn trust(
-    install: &Path,
-    home: &Path,
-    claude_pids: impl FnOnce() -> Res<Vec<String>>,
-) -> Res<Vec<String>> {
-    let roots = fs::read_to_string(install.join("projects")).or_else(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            Ok(String::new())
-        } else {
-            Err(format!("project registry unreadable: {e}"))
-        }
-    })?;
-    let keys: Vec<String> = std::iter::once(dir(install))
-        .chain(
-            roots
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .map(PathBuf::from),
-        )
-        .map(|p| claude_key(&p))
-        .collect();
+pub fn trust(install: &Path, home: &Path, claude_pids: impl FnOnce() -> Res<Vec<String>>) -> Res<Vec<String>> {
+    let roots = fs::read_to_string(install.join("projects")).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(String::new()) } else { Err(format!("project registry unreadable: {e}")) })?;
+    let keys: Vec<String> = std::iter::once(dir(install)).chain(roots.lines().filter(|l| !l.trim().is_empty()).map(PathBuf::from)).map(|p| claude_key(&p)).collect();
     trust_keys(home, &keys, claude_pids, false)
 }
 
@@ -879,24 +369,13 @@ pub fn trust(
 static TRUST_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// R9: registration authorizes only this exact root. Missing trust is repaired, never an owner prompt.
-pub(crate) fn registered_trust(
-    install: &Path,
-    root: &Path,
-    config: Option<&Path>,
-) -> Res<Vec<String>> {
+pub(crate) fn registered_trust(install: &Path, root: &Path, config: Option<&Path>) -> Res<Vec<String>> {
     registered_trust_with(install, root, config, claude_pids)
 }
 
-pub(crate) fn registered_trust_with(
-    install: &Path,
-    root: &Path,
-    config: Option<&Path>,
-    pids: impl FnOnce() -> Res<Vec<String>>,
-) -> Res<Vec<String>> {
+pub(crate) fn registered_trust_with(install: &Path, root: &Path, config: Option<&Path>, pids: impl FnOnce() -> Res<Vec<String>>) -> Res<Vec<String>> {
     let root = root.canonicalize().map_err(|e| e.to_string())?;
-    if !crate::host::projects(install)?.contains(&root) {
-        return Err("trust setup: root is not registered".into());
-    }
+    if !crate::host::projects(install)?.contains(&root) { return Err("trust setup: root is not registered".into()); }
     let home = match config {
         Some(p) => p.to_path_buf(),
         None => crate::platform::user_home().ok_or("trust setup: host home unknown")?,
@@ -904,73 +383,36 @@ pub(crate) fn registered_trust_with(
     // A selected CLAUDE_CONFIG_DIR stores the config file inside that directory.
     let key = claude_key(&root);
     let mut keys = vec![key.clone()];
-    if cfg!(windows) {
-        keys.push(key.replace('/', "\\"));
-    }
+    if cfg!(windows) { keys.push(key.replace('/', "\\")); }
     trust_keys(&home, &keys, pids, true)
 }
 
 /// Host registration/startup prepares the default config; selected account configs are checked at launch.
 pub(crate) fn registered_host_trust(install: &Path, root: &Path) -> Res<Vec<String>> {
-    if !super::which(super::of(super::CLAUDE).bin).is_file() {
-        return Ok(vec![]);
-    }
+    if !super::which(super::of(super::CLAUDE).bin).is_file() { return Ok(vec![]); }
     let config = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from);
     registered_trust(install, root, config.as_deref())
 }
 
-fn trust_keys(
-    home: &Path,
-    keys: &[String],
-    claude_pids: impl FnOnce() -> Res<Vec<String>>,
-    automatic: bool,
-) -> Res<Vec<String>> {
-    let _guard = TRUST_WRITE
-        .lock()
-        .map_err(|_| "Claude trust writer unavailable")?;
-    let _file_lock = coreq::file_lock::try_lock(&home.join(format!("{CLAUDE_CONFIG}.taskq-lock")))
-        .map_err(|e| format!("Claude trust writer busy: {e}"))?;
+fn trust_keys(home: &Path, keys: &[String], claude_pids: impl FnOnce() -> Res<Vec<String>>, automatic: bool) -> Res<Vec<String>> {
+    let _guard = TRUST_WRITE.lock().map_err(|_| "Claude trust writer unavailable")?;
+    let _file_lock = coreq::file_lock::try_lock(&home.join(format!("{CLAUDE_CONFIG}.taskq-lock"))).map_err(|e| format!("Claude trust writer busy: {e}"))?;
     let path = home.join(CLAUDE_CONFIG);
-    let text = match fs::read_to_string(&path) {
-        Ok(t) => Some(t),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(format!("Claude config unreadable: {e}")),
-    };
+    let text = match fs::read_to_string(&path) { Ok(t) => Some(t), Err(e) if e.kind() == std::io::ErrorKind::NotFound => None, Err(e) => return Err(format!("Claude config unreadable: {e}")) };
     let (next, changed) = trusted(text.as_deref(), &keys)?;
     let mut lines = vec![];
-    if changed.is_empty() {
-        return Ok(lines);
-    }
+    if changed.is_empty() { return Ok(lines); }
     // Claude rewrites the whole file: a running one would drop the change, so the owner lets Claude write it (#1555)
-    let pids =
-        claude_pids().map_err(|e| format!("Claude processes unknown ({e}); trust unchanged"))?;
+    let pids = claude_pids().map_err(|e| format!("Claude processes unknown ({e}); trust unchanged"))?;
     if !pids.is_empty() {
-        if automatic {
-            return Err(
-                "Claude trust setup pending: Claude runs; service retries when it exits".into(),
-            );
-        }
-        return Ok(changed
-            .iter()
-            .flat_map(|k| {
-                [
-                    format!(
-                        "Trust: {k} not trusted; Claude runs (pid {}), so onboard leaves the file",
-                        pids.join(", ")
-                    ),
-                    trust_step(k),
-                ]
-            })
-            .collect());
+        if automatic { return Err("Claude trust setup pending: Claude runs; service retries when it exits".into()); }
+        return Ok(changed.iter().flat_map(|k| [format!("Trust: {k} not trusted; Claude runs (pid {}), so onboard leaves the file", pids.join(", ")), trust_step(k)]).collect());
     }
     if let Some(t) = &text {
-        let ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis());
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
         let backup = home.join(format!("{CLAUDE_CONFIG}.bak-onboard-{ms}"));
         // copy keeps the config's owner-only mode; a plain write would leave it world-readable
-        fs::copy(&path, &backup)
-            .map_err(|e| format!("Claude config backup: {e}; trust unchanged"))?;
+        fs::copy(&path, &backup).map_err(|e| format!("Claude config backup: {e}; trust unchanged"))?;
         lines.push(format!("Backup: {}", backup.display()));
     }
     let tmp = home.join(format!("{CLAUDE_CONFIG}.onboard-tmp"));
@@ -978,99 +420,45 @@ fn trust_keys(
     open.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
-    if text.is_some() {
-        fs::copy(&path, &tmp).map_err(|e| format!("Claude config write: {e}"))?;
-    }
-    std::io::Write::write_all(
-        &mut open
-            .open(&tmp)
-            .map_err(|e| format!("Claude config write: {e}"))?,
-        next.as_bytes(),
-    )
-    .map_err(|e| format!("Claude config write: {e}"))?;
+    if text.is_some() { fs::copy(&path, &tmp).map_err(|e| format!("Claude config write: {e}"))?; }
+    std::io::Write::write_all(&mut open.open(&tmp).map_err(|e| format!("Claude config write: {e}"))?, next.as_bytes()).map_err(|e| format!("Claude config write: {e}"))?;
     fs::rename(&tmp, &path).map_err(|e| format!("Claude config write: {e}"))?;
     let (_, left) = trusted(fs::read_to_string(&path).ok().as_deref(), &keys)?;
-    if !left.is_empty() {
-        return Err(format!(
-            "Claude config readback: {} not trusted",
-            left.join(", ")
-        ));
-    }
+    if !left.is_empty() { return Err(format!("Claude config readback: {} not trusted", left.join(", "))); }
     lines.extend(changed.iter().map(|k| format!("Trust: {k} trusted")));
     Ok(lines)
 }
 
 /// The config with every key trusted, and the keys that were not.
 pub(crate) fn trusted(text: Option<&str>, keys: &[String]) -> Res<(String, Vec<String>)> {
-    let mut v: serde_json::Value = match text {
-        Some(t) => serde_json::from_str(t).map_err(|e| format!("Claude config unreadable: {e}"))?,
-        None => serde_json::json!({}),
-    };
-    let projects = v
-        .as_object_mut()
-        .ok_or("Claude config is not an object")?
-        .entry("projects")
-        .or_insert_with(|| serde_json::json!({}));
-    let projects = projects
-        .as_object_mut()
-        .ok_or("Claude config projects is not an object")?;
+    let mut v: serde_json::Value = match text { Some(t) => serde_json::from_str(t).map_err(|e| format!("Claude config unreadable: {e}"))?, None => serde_json::json!({}) };
+    let projects = v.as_object_mut().ok_or("Claude config is not an object")?.entry("projects").or_insert_with(|| serde_json::json!({}));
+    let projects = projects.as_object_mut().ok_or("Claude config projects is not an object")?;
     let mut changed = vec![];
     for k in keys {
-        let p = projects
-            .entry(k.clone())
-            .or_insert_with(|| serde_json::json!({}))
-            .as_object_mut()
-            .ok_or(format!("Claude config project {k} is not an object"))?;
+        let p = projects.entry(k.clone()).or_insert_with(|| serde_json::json!({})).as_object_mut().ok_or(format!("Claude config project {k} is not an object"))?;
         if p.get("hasTrustDialogAccepted") != Some(&serde_json::Value::Bool(true)) {
             p.insert("hasTrustDialogAccepted".into(), true.into());
             changed.push(k.clone());
         }
     }
-    Ok((
-        serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?,
-        changed,
-    ))
+    Ok((serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, changed))
 }
 
 /// Running Claude processes of this user's machine; an unreadable list is an error, never none (R12).
 pub fn claude_pids() -> Res<Vec<String>> {
     let out = if cfg!(windows) {
-        crate::platform::command("tasklist")
-            .args([
-                "/FI",
-                format!("IMAGENAME eq {}", super::CLAUDE_EXE).as_str(),
-                "/FO",
-                "CSV",
-                "/NH",
-            ])
-            .output()
+        crate::platform::command("tasklist").args(["/FI", format!("IMAGENAME eq {}", super::CLAUDE_EXE).as_str(), "/FO", "CSV", "/NH"]).output()
     } else {
         // ponytail: process name `claude` (native installs); an npm `node` Claude is missed, match the command line if one shows up
-        crate::platform::command("pgrep")
-            .args(["-x", super::of(super::OWNER).bin])
-            .output()
-    }
-    .map_err(|e| e.to_string())?;
+        crate::platform::command("pgrep").args(["-x", super::of(super::OWNER).bin]).output()
+    }.map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout);
     if cfg!(windows) {
-        if !out.status.success() {
-            return Err(format!("tasklist exit {:?}", out.status.code()));
-        }
-        return Ok(text
-            .lines()
-            .filter_map(|l| {
-                l.split("\",\"")
-                    .nth(1)
-                    .filter(|_| l.starts_with(&format!("\"{}\"", super::CLAUDE_EXE)))
-                    .map(String::from)
-            })
-            .collect());
+        if !out.status.success() { return Err(format!("tasklist exit {:?}", out.status.code())); }
+        return Ok(text.lines().filter_map(|l| l.split("\",\"").nth(1).filter(|_| l.starts_with(&format!("\"{}\"", super::CLAUDE_EXE))).map(String::from)).collect());
     }
-    match out.status.code() {
-        Some(0) => Ok(text.split_whitespace().map(String::from).collect()),
-        Some(1) => Ok(vec![]),
-        c => Err(format!("pgrep exit {c:?}")),
-    }
+    match out.status.code() { Some(0) => Ok(text.split_whitespace().map(String::from).collect()), Some(1) => Ok(vec![]), c => Err(format!("pgrep exit {c:?}")) }
 }
 
 pub(crate) const MISSING: &str = "runtime missing:";

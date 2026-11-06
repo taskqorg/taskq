@@ -6,31 +6,13 @@ use std::time::Duration;
 use coreq::process::Failure;
 
 /// One curl child fed `config` on stdin. A curl exit that is not 0 still returns its output.
-pub(crate) fn with_config(
-    operation: &'static str,
-    args: &[&str],
-    config: &str,
-    deadline: Duration,
-) -> Result<Output, Failure> {
-    settled(coreq::process::exchange(
-        operation,
-        crate::platform::command("curl").args(args),
-        config.as_bytes(),
-        deadline,
-    ))
+pub(crate) fn with_config(operation: &'static str, args: &[&str], config: &str, deadline: Duration) -> Result<Output, Failure> {
+    settled(coreq::process::exchange(operation, crate::platform::command("curl").args(args), config.as_bytes(), deadline))
 }
 
 /// One curl child with no stdin, for a public URL.
-pub(crate) fn with_args(
-    operation: &'static str,
-    args: &[&str],
-    deadline: Duration,
-) -> Result<Output, Failure> {
-    settled(coreq::process::output(
-        operation,
-        crate::platform::command("curl").args(args),
-        deadline,
-    ))
+pub(crate) fn with_args(operation: &'static str, args: &[&str], deadline: Duration) -> Result<Output, Failure> {
+    settled(coreq::process::output(operation, crate::platform::command("curl").args(args), deadline))
 }
 
 fn settled(out: Result<Output, Failure>) -> Result<Output, Failure> {
@@ -44,10 +26,7 @@ fn settled(out: Result<Output, Failure>) -> Result<Output, Failure> {
 pub(crate) fn status_tail(out: &Output) -> (String, Option<u16>) {
     let text = String::from_utf8_lossy(&out.stdout);
     let (body, code) = text.rsplit_once('\n').unwrap_or(("", &text));
-    (
-        body.to_string(),
-        code.trim().parse().ok().filter(|code| *code != 0),
-    )
+    (body.to_string(), code.trim().parse().ok().filter(|code| *code != 0))
 }
 
 /// A value quoted for a curl config file.

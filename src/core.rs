@@ -50,47 +50,20 @@ impl Dep {
 
 /// `Depends on #N` and `Depends on <repo>#N` lines of an issue text (§ 1); `<repo>` is `name` or `owner/name`.
 pub fn depends(body: &str) -> Vec<Dep> {
-    body.lines()
-        .filter_map(|l| {
-            let (repo, n) = l
-                .trim()
-                .strip_prefix("Depends on ")?
-                .split_whitespace()
-                .next()?
-                .split_once('#')?;
-            let path = |s: &str| {
-                s.split('/').all(|p| {
-                    !p.is_empty()
-                        && !p.starts_with('.')
-                        && p.bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-                })
-            };
-            Some(Dep {
-                repo: (!repo.is_empty())
-                    .then(|| repo.to_string())
-                    .filter(|r| path(r)),
-                n: n.parse().ok()?,
-            })
-            .filter(|d| repo.is_empty() || d.repo.is_some())
-        })
-        .collect()
+    body.lines().filter_map(|l| {
+        let (repo, n) = l.trim().strip_prefix("Depends on ")?.split_whitespace().next()?.split_once('#')?;
+        let path = |s: &str| s.split('/').all(|p| !p.is_empty() && !p.starts_with('.') && p.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)));
+        Some(Dep { repo: (!repo.is_empty()).then(|| repo.to_string()).filter(|r| path(r)), n: n.parse().ok()? }).filter(|d| repo.is_empty() || d.repo.is_some())
+    }).collect()
 }
 
 /// A log entry's comment body (§ 2).
 pub fn entry(kind: &str, args: &[&str], attempt: Option<u64>, text: &str) -> String {
-    let mut head = std::iter::once(kind)
-        .chain(args.iter().copied())
-        .collect::<Vec<_>>()
-        .join(" ");
+    let mut head = std::iter::once(kind).chain(args.iter().copied()).collect::<Vec<_>>().join(" ");
     if let Some(a) = attempt {
         head += &format!(" attempt {a}");
     }
-    if text.is_empty() {
-        format!("taskq: {head}")
-    } else {
-        format!("taskq: {head}\n{text}")
-    }
+    if text.is_empty() { format!("taskq: {head}") } else { format!("taskq: {head}\n{text}") }
 }
 
 /// § 2 retry limits: an attempt `requeue` that makes `retries` this, or a `gone` that makes it [`GONE_MAX`], asks.
@@ -98,8 +71,7 @@ pub const REQUEUE_MAX: u32 = 3;
 pub const GONE_MAX: u32 = 2;
 
 /// The `later` option of a service card (#2012): only an answer `N.K` parks the task (§ 2).
-pub const LATER: &str =
-    "later: park the task - + no attempt runs; - waits until the owner requeues it";
+pub const LATER: &str = "later: park the task - + no attempt runs; - waits until the owner requeues it";
 
 /// The text of attempt `kind` (`requeue`, `gone`) on `t` (§ 2 limit card, #1123): when it reaches the retry limit, the
 /// reason plus a card naming the limit with requeue and later options, so the parked task never waits on a card
@@ -110,8 +82,7 @@ pub fn limit_text(n: u64, t: &Task, kind: &str, text: &str) -> String {
         "gone" => GONE_MAX,
         _ => return text.into(),
     };
-    let is_card = text.lines().any(|l| l.starts_with("Problem: "))
-        && options(text).iter().filter(|o| o.2).count() == 1;
+    let is_card = text.lines().any(|l| l.starts_with("Problem: ")) && options(text).iter().filter(|o| o.2).count() == 1;
     if !matches!(t.state, State::Doing | State::Review) || t.retries + 1 < max || is_card {
         return text.into();
     }
@@ -119,28 +90,17 @@ pub fn limit_text(n: u64, t: &Task, kind: &str, text: &str) -> String {
     let reason = text.lines().map(|l| {
         let body = l.trim_start();
         match body.split_once(". ") {
-            Some((k, rest)) if !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()) => {
-                format!("{}{k}) {rest}", &l[..l.len() - body.len()])
-            }
+            Some((k, rest)) if !k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()) => format!("{}{k}) {rest}", &l[..l.len() - body.len()]),
             _ => l.to_string(),
         }
     });
     // a bare comment `K` folds as a plain answer (ready), so `later` needs the CLI form (§ 2)
-    let card = crate::cli::text::service_card(
-        n,
-        "the service stopped retrying; no new attempt starts until the owner answers.",
-        &format!("retry limit {max} reached by this {kind}; the task waits for the owner."),
-        &[
-            "requeue: retry - + a fresh attempt starts now; - it may fail the same way".into(),
-            LATER.into(),
-        ],
-        1,
-    );
-    reason
-        .filter(|s| !s.trim().is_empty())
-        .chain(card.lines().map(String::from))
-        .collect::<Vec<_>>()
-        .join("\n")
+    let card = crate::cli::text::service_card(n, "the service stopped retrying; no new attempt starts until the owner answers.",
+        &format!("retry limit {max} reached by this {kind}; the task waits for the owner."), &[
+        "requeue: retry - + a fresh attempt starts now; - it may fail the same way".into(),
+        LATER.into(),
+    ], 1);
+    reason.filter(|s| !s.trim().is_empty()).chain(card.lines().map(String::from)).collect::<Vec<_>>().join("\n")
 }
 
 /// Appends the optional § 2 fields to an entry body: `op-id`, then `revision` (written only with an op id).
@@ -172,15 +132,8 @@ pub fn has_fields(text: &str) -> bool {
 fn fields(text: &str) -> (&str, Option<&str>) {
     let t = text.trim_end();
     let (rest, last) = t.rsplit_once('\n').unwrap_or(("", t));
-    let (rest, last) = match last
-        .trim()
-        .strip_prefix("revision: ")
-        .and_then(|r| r.trim().parse::<u64>().ok())
-    {
-        Some(_) => rest
-            .trim_end()
-            .rsplit_once('\n')
-            .unwrap_or(("", rest.trim_end())),
+    let (rest, last) = match last.trim().strip_prefix("revision: ").and_then(|r| r.trim().parse::<u64>().ok()) {
+        Some(_) => rest.trim_end().rsplit_once('\n').unwrap_or(("", rest.trim_end())),
         None => (rest, last),
     };
     match last.trim().strip_prefix("op-id: ") {
@@ -242,9 +195,7 @@ pub struct Task {
 
 /// The issue text whose `Depends on` lines keep `t` waiting (§ 1): `body` plus a worker park's blocker (§ 2).
 pub fn dep_body(body: &str, t: &Task) -> String {
-    t.blocker
-        .as_ref()
-        .map_or_else(|| body.to_string(), |r| format!("{body}\nDepends on {r}\n"))
+    t.blocker.as_ref().map_or_else(|| body.to_string(), |r| format!("{body}\nDepends on {r}\n"))
 }
 
 /// The task's stages (§ 2 Stages): its Acceptance item ids `A<k>` in body order, each once.
@@ -252,39 +203,23 @@ pub fn acceptance(body: &str) -> Vec<String> {
     let mut ids: Vec<String> = vec![];
     for l in body.lines() {
         let l = l.trim_start();
-        let l = l
-            .strip_prefix("- ")
-            .or_else(|| l.strip_prefix("* "))
-            .unwrap_or(l);
-        let Some((id, _)) = l.split_once(". ") else {
-            continue;
-        };
-        if stage_id(id) && !ids.iter().any(|x| x == id) {
-            ids.push(id.to_string());
-        }
+        let l = l.strip_prefix("- ").or_else(|| l.strip_prefix("* ")).unwrap_or(l);
+        let Some((id, _)) = l.split_once(". ") else { continue };
+        if stage_id(id) && !ids.iter().any(|x| x == id) { ids.push(id.to_string()); }
     }
     ids
 }
 
 fn stage_id(s: &str) -> bool {
-    s.strip_prefix('A').is_some_and(|k| {
-        !k.is_empty()
-            && k.len() <= 3
-            && k.bytes().all(|c| c.is_ascii_digit())
-            && !k.starts_with('0')
-    })
+    s.strip_prefix('A').is_some_and(|k| !k.is_empty() && k.len() <= 3 && k.bytes().all(|c| c.is_ascii_digit()) && !k.starts_with('0'))
 }
 
 /// A `later` text's `Stages:` line (§ 2 Stages): the finished set sorted by number, empty for `none`; `None` without a valid line.
 pub fn stages_line(text: &str) -> Option<Vec<String>> {
     let rest = text.lines().find_map(|l| l.strip_prefix("Stages:"))?.trim();
-    if rest == "none" {
-        return Some(vec![]);
-    }
+    if rest == "none" { return Some(vec![]); }
     let mut ids: Vec<&str> = rest.split_whitespace().collect();
-    if ids.is_empty() || !ids.iter().all(|i| stage_id(i)) {
-        return None;
-    }
+    if ids.is_empty() || !ids.iter().all(|i| stage_id(i)) { return None; }
     ids.sort_by_key(|i| i[1..].parse::<u32>().unwrap_or(0));
     ids.dedup();
     Some(ids.into_iter().map(String::from).collect())
@@ -293,48 +228,18 @@ pub fn stages_line(text: &str) -> Option<Vec<String>> {
 /// R6 `stage k/n`: k is the position of the first open stage (all done: n), n the Acceptance item count; `None` before any record.
 pub fn stage(body: &str, done: &[String]) -> Option<(usize, usize)> {
     let ids = acceptance(body);
-    if done.is_empty() || ids.is_empty() {
-        return None;
-    }
-    Some((
-        ids.iter()
-            .position(|i| !done.contains(i))
-            .map_or(ids.len(), |k| k + 1),
-        ids.len(),
-    ))
+    if done.is_empty() || ids.is_empty() { return None; }
+    Some((ids.iter().position(|i| !done.contains(i)).map_or(ids.len(), |k| k + 1), ids.len()))
 }
 
 /// Whether `s` is a timed park's time (§ 2): `YYYY-MM-DDTHH:MM:SSZ`, a real UTC date and time.
 pub fn utc(s: &str) -> bool {
     let b = s.as_bytes();
-    let n = |a: usize, z: usize| {
-        s.get(a..z)
-            .filter(|x| x.bytes().all(|c| c.is_ascii_digit()))
-            .and_then(|x| x.parse::<u32>().ok())
-    };
-    let (Some(y), Some(m), Some(d), Some(h), Some(mi), Some(sec)) =
-        (n(0, 4), n(5, 7), n(8, 10), n(11, 13), n(14, 16), n(17, 19))
-    else {
-        return false;
-    };
-    let feb = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-        29
-    } else {
-        28
-    };
-    b.len() == 20
-        && b[4] == b'-'
-        && b[7] == b'-'
-        && b[10] == b'T'
-        && b[13] == b':'
-        && b[16] == b':'
-        && b[19] == b'Z'
-        && (1..=12).contains(&m)
-        && d >= 1
-        && d <= [31, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m as usize - 1]
-        && h < 24
-        && mi < 60
-        && sec < 60
+    let n = |a: usize, z: usize| s.get(a..z).filter(|x| x.bytes().all(|c| c.is_ascii_digit())).and_then(|x| x.parse::<u32>().ok());
+    let (Some(y), Some(m), Some(d), Some(h), Some(mi), Some(sec)) = (n(0, 4), n(5, 7), n(8, 10), n(11, 13), n(14, 16), n(17, 19)) else { return false };
+    let feb = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 29 } else { 28 };
+    b.len() == 20 && b[4] == b'-' && b[7] == b'-' && b[10] == b'T' && b[13] == b':' && b[16] == b':' && b[19] == b'Z'
+        && (1..=12).contains(&m) && d >= 1 && d <= [31, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m as usize - 1] && h < 24 && mi < 60 && sec < 60
 }
 
 /// Whether `r` is one `#N` or `<repo>#N` blocker reference (§ 2 worker park).
@@ -352,10 +257,7 @@ pub struct Entry {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Release {
-    Exit,
-    NoStart,
-}
+pub enum Release { Exit, NoStart }
 
 /// A board intent, its exact-input acceptance and independent native release evidence.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -387,7 +289,7 @@ pub struct Projection {
     pub answers: Vec<Answer>,
     pub executions: Vec<Execution>,
     /// O1 read projection: execution id and its first confirmed native-input acceptance entry.
-    pub accepted_inputs: Vec<(u64, u64)>,
+    pub accepted_inputs: Vec<(u64,u64)>,
     pub changes: Vec<(u64, Task, Task)>,
     /// Review entries that start or end a deferred publication: the merge queue, a profile-only state (#1344)
     pub queue: Vec<(u64, Task, Task)>,
@@ -404,34 +306,20 @@ pub struct Answer {
 }
 
 impl Projection {
-    pub fn accepts(&self, id: u64) -> bool {
-        self.accepted.contains(&id)
-    }
+    pub fn accepts(&self, id: u64) -> bool { self.accepted.contains(&id) }
     pub fn delivered(&self, attempt: u64) -> Option<u64> {
-        self.executions
-            .iter()
-            .filter(|x| x.attempt == attempt && x.accepted)
-            .map(|x| x.through)
-            .max()
+        self.executions.iter().filter(|x| x.attempt == attempt && x.accepted).map(|x| x.through).max()
     }
     /// The accepted `answer` of `entries` that closed the last question, while the task stays out of `ask` (§ 5 late answer, #1785).
     pub fn closing_answer(&self, n: u64, entries: &[Entry]) -> Option<u64> {
-        if self.task.state == State::Ask {
-            return None;
-        }
-        let (id, kind) = entries
-            .iter()
-            .filter(|e| self.accepted.contains(&e.id))
-            .filter_map(|e| Some((e.id, parse(n, &e.body)?.kind)))
-            .filter(|(_, k)| matches!(*k, "ask" | "answer"))
-            .max_by_key(|(id, _)| *id)?;
+        if self.task.state == State::Ask { return None; }
+        let (id, kind) = entries.iter().filter(|e| self.accepted.contains(&e.id)).filter_map(|e| Some((e.id, parse(n, &e.body)?.kind)))
+            .filter(|(_, k)| matches!(*k, "ask" | "answer")).max_by_key(|(id, _)| *id)?;
         (kind == "answer").then_some(id)
     }
 }
 
-pub fn executions(n: u64, entries: &[Entry]) -> Vec<Execution> {
-    project(n, entries, false).executions
-}
+pub fn executions(n: u64, entries: &[Entry]) -> Vec<Execution> { project(n, entries, false).executions }
 
 struct Line<'a> {
     kind: &'a str,
@@ -453,24 +341,10 @@ fn parse(n: u64, body: &str) -> Option<Line<'_>> {
             None => arg.trim(),
         };
         k.parse::<usize>().ok()?;
-        return Some(Line {
-            kind: "answer",
-            args: vec![k],
-            attempt: None,
-            text: text.trim(),
-            bare: false,
-            op,
-        });
+        return Some(Line { kind: "answer", args: vec![k], attempt: None, text: text.trim(), bare: false, op });
     }
     let Some(head) = head.trim().strip_prefix("taskq:") else {
-        return Some(Line {
-            kind: "answer",
-            args: vec![body.trim()],
-            attempt: None,
-            text: "",
-            bare: true,
-            op: None,
-        });
+        return Some(Line { kind: "answer", args: vec![body.trim()], attempt: None, text: "", bare: true, op: None });
     };
     let mut words: Vec<&str> = head.split_whitespace().collect();
     let mut attempt = None;
@@ -479,14 +353,7 @@ fn parse(n: u64, body: &str) -> Option<Line<'_>> {
         words.pop();
     }
     let kind = words.first().copied()?;
-    Some(Line {
-        kind,
-        args: words[1..].to_vec(),
-        attempt,
-        text: text.trim(),
-        bare: false,
-        op,
-    })
+    Some(Line { kind, args: words[1..].to_vec(), attempt, text: text.trim(), bare: false, op })
 }
 
 fn sha(s: &str) -> bool {
@@ -504,11 +371,7 @@ pub fn options(card: &str) -> Vec<(usize, String, bool)> {
             let (k, rest) = l.trim().split_once(". ")?;
             let k: usize = k.parse().ok()?;
             let star = rest.trim_end().ends_with('★');
-            Some((
-                k,
-                rest.trim_end().trim_end_matches('★').trim().to_string(),
-                star,
-            ))
+            Some((k, rest.trim_end().trim_end_matches('★').trim().to_string(), star))
         })
         .collect()
 }
@@ -516,9 +379,7 @@ pub fn options(card: &str) -> Vec<(usize, String, bool)> {
 /// The revision displayed by an approval option; no implicit approval of an unseen result.
 pub fn approval_sha(option: &str) -> Option<&str> {
     let mut words = option.split_whitespace();
-    if !words.next()?.eq_ignore_ascii_case("approve") {
-        return None;
-    }
+    if !words.next()?.eq_ignore_ascii_case("approve") { return None; }
     let sha = words.next()?;
     ((7..=40).contains(&sha.len()) && sha.bytes().all(|b| b.is_ascii_hexdigit())).then_some(sha)
 }
@@ -529,14 +390,7 @@ fn pick(card: &str, s: &str) -> Option<usize> {
     let s = s.trim_end_matches('★').trim().to_lowercase();
     let m: Vec<usize> = options(card)
         .into_iter()
-        .filter(|(k, o, _)| {
-            [
-                k.to_string(),
-                o.to_lowercase(),
-                format!("{k}. {}", o.to_lowercase()),
-            ]
-            .contains(&s)
-        })
+        .filter(|(k, o, _)| [k.to_string(), o.to_lowercase(), format!("{k}. {}", o.to_lowercase())].contains(&s))
         .map(|o| o.0)
         .collect();
     (m.len() == 1).then(|| m[0])
@@ -551,25 +405,13 @@ pub fn card_before(n: u64, entries: &[Entry], id: u64) -> Option<String> {
 /// § 2 owner notes: accepted `answer`s and `steer`s written without `attempt` (attempt-bound steers are the
 /// worker's or the service's), in board order.
 pub fn owner_notes(n: u64, entries: &[Entry], p: &Projection) -> Vec<u64> {
-    p.notes
-        .iter()
-        .copied()
-        .filter(|id| {
-            entries
-                .iter()
-                .find(|e| e.id == *id)
-                .and_then(|e| parse(n, &e.body))
-                .is_some_and(|l| l.attempt.is_none())
-        })
-        .collect()
+    p.notes.iter().copied().filter(|id| entries.iter().find(|e| e.id == *id).and_then(|e| parse(n, &e.body)).is_some_and(|l| l.attempt.is_none())).collect()
 }
 
 /// What a resumed child receives for inbox entry `id` (§ 2): its text, else option K of the card it answers, else its
 /// first line; never empty.
 pub fn delivery(n: u64, entries: &[Entry], id: u64) -> String {
-    let Some(e) = entries.iter().find(|e| e.id == id) else {
-        return String::new();
-    };
+    let Some(e) = entries.iter().find(|e| e.id == id) else { return String::new() };
     let head = e.body.split_once('\n').map_or(e.body.as_str(), |h| h.0);
     let text = parse(n, &e.body).map_or("", |l| l.text);
     if !text.is_empty() {
@@ -577,38 +419,18 @@ pub fn delivery(n: u64, entries: &[Entry], id: u64) -> String {
     }
     let before: Vec<Entry> = entries.iter().filter(|x| x.id < id).cloned().collect();
     let card = fold(n, &before, false).card.unwrap_or_default();
-    let k = parse(n, &e.body).and_then(|l| {
-        if l.bare {
-            pick(&card, l.args[0])
-        } else {
-            l.args.first()?.parse::<usize>().ok()
-        }
-    });
-    options(&card)
-        .into_iter()
-        .find(|o| Some(o.0) == k)
-        .map(|o| o.1)
-        .unwrap_or_else(|| head.trim().to_string())
+    let k = parse(n, &e.body).and_then(|l| if l.bare { pick(&card, l.args[0]) } else { l.args.first()?.parse::<usize>().ok() });
+    options(&card).into_iter().find(|o| Some(o.0) == k).map(|o| o.1).unwrap_or_else(|| head.trim().to_string())
 }
 
 /// § 2 Summary: a `close` names the `publish` it repeats (`Repeats: publish <id>`); that entry's text stands in the
 /// line's place. Older closes that copy the verdict, or a reference to no `publish`, read unchanged.
 pub fn verdict(n: u64, entries: &[Entry], text: &str) -> String {
-    text.lines()
-        .map(|l| {
-            let id = l
-                .trim()
-                .strip_prefix(REPEATS)
-                .and_then(|id| id.trim().parse::<u64>().ok());
-            id.and_then(|id| {
-                entries
-                    .iter()
-                    .find(|e| e.id == id && !e.edited && kind(n, &e.body) == "publish")
-            })
+    text.lines().map(|l| {
+        let id = l.trim().strip_prefix(REPEATS).and_then(|id| id.trim().parse::<u64>().ok());
+        id.and_then(|id| entries.iter().find(|e| e.id == id && !e.edited && kind(n, &e.body) == "publish"))
             .map_or_else(|| l.to_string(), |e| entry_text(n, &e.body).to_string())
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    }).collect::<Vec<_>>().join("\n")
 }
 
 /// The `close` line naming the `publish` entry it repeats (§ 2 Summary).
@@ -621,42 +443,23 @@ pub fn kind(n: u64, body: &str) -> &str {
 
 /// Whether attempt `a` wrote `ask`, `result` or `requeue` after entry `after`: its child then exits clean (§ 4 step 1).
 pub fn handed_in(n: u64, entries: &[Entry], a: u64, after: u64) -> bool {
-    entries
-        .iter()
-        .filter(|e| e.id > after && !e.edited)
-        .filter_map(|e| parse(n, &e.body))
-        .any(|l| l.attempt == Some(a) && matches!(l.kind, "ask" | "result" | "requeue" | "publish"))
+    entries.iter().filter(|e| e.id > after && !e.edited).filter_map(|e| parse(n, &e.body)).any(|l| l.attempt == Some(a) && matches!(l.kind, "ask" | "result" | "requeue" | "publish"))
 }
 
 /// The kind of attempt `a`'s last `ask`, `result`, `requeue` or `close` after entry `after` that `fold` accepted:
 /// invalid, duplicate and wrong-state entries change nothing and count as no hand-in.
 fn hand_in(n: u64, entries: &[Entry], a: u64, after: u64) -> Option<&'static str> {
     let accepted = project(n, entries, false).accepted;
-    let mut log: Vec<&Entry> = entries
-        .iter()
-        .filter(|e| e.id > after && accepted.contains(&e.id))
-        .collect();
+    let mut log: Vec<&Entry> = entries.iter().filter(|e| e.id > after && accepted.contains(&e.id)).collect();
     log.sort_by_key(|e| e.id);
-    log.into_iter()
-        .filter_map(|e| parse(n, &e.body))
-        .filter(|l| l.attempt == Some(a))
-        .filter_map(|l| {
-            ["ask", "result", "requeue", "close", "publish"]
-                .into_iter()
-                .find(|k| *k == l.kind)
-        })
-        .last()
+    log.into_iter().filter_map(|e| parse(n, &e.body)).filter(|l| l.attempt == Some(a))
+        .filter_map(|l| ["ask", "result", "requeue", "close", "publish"].into_iter().find(|k| *k == l.kind)).last()
 }
 
 /// Outcome and error class of attempt `a`'s `build`/`review` stage when its child exits or is stopped (§ 4 Profiling):
 /// its accepted hand-in after entry `after` wins over a stop. `live` is whether the board read shows `a` as the task's
 /// attempt, `None` once the issue left the board read (`log` then read back); an unread log is unknown with its reason.
-pub fn stage_outcome(
-    n: u64,
-    log: Result<(&[Entry], Option<bool>), &'static str>,
-    a: u64,
-    after: u64,
-) -> (&'static str, &'static str) {
+pub fn stage_outcome(n: u64, log: Result<(&[Entry], Option<bool>), &'static str>, a: u64, after: u64) -> (&'static str, &'static str) {
     let (entries, live) = match log {
         Ok(x) => x,
         Err(why) => return ("unknown", why),
@@ -675,10 +478,7 @@ pub fn stage_outcome(
 }
 
 fn has_options(s: &str) -> bool {
-    s.lines().any(|l| {
-        l.split_once(". ")
-            .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-    })
+    s.lines().any(|l| l.split_once(". ").is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())))
 }
 
 fn end(t: &mut Task) {
@@ -722,6 +522,7 @@ pub fn revision(n: u64, entries: &[Entry]) -> u64 {
     project(n, entries, false).revision
 }
 
+
 /// Parse and reduce once, retaining facts needed by the service and command surfaces.
 pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut log: Vec<&Entry> = entries.iter().filter(|e| !e.edited).collect();
@@ -733,7 +534,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut answers = vec![];
     let mut executions: Vec<Execution> = vec![];
     let (mut changes, mut queue) = (vec![], vec![]);
-    let mut accepted_inputs = vec![];
+    let mut accepted_inputs=vec![];
     let (mut routing_revision, mut reroute, mut routing_writer) = (0, None, None);
     let (mut deps_intent, mut deps_writer) = (None, None);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
@@ -745,63 +546,32 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             }
             // §1: board-order held-body fence. No state transition can race a pending edit.
             if l.kind == "deps" {
-                if deps_intent.is_none()
-                    && t.state == State::Held
-                    && l.attempt.is_none()
-                    && l.op.is_some()
-                    && l.args.len() == 1
-                    && l.args[0].parse() == Ok(last)
-                    && !accepted.iter().any(|id| {
-                        entries
-                            .iter()
-                            .any(|e| e.id == *id && kind(n, &e.body) == "start")
-                    })
-                {
-                    deps_intent = Some(e.id);
-                    accepted.push(e.id);
-                    last = e.id;
+                if deps_intent.is_none() && t.state == State::Held && l.attempt.is_none() && l.op.is_some()
+                    && l.args.len()==1 && l.args[0].parse()==Ok(last)
+                    && !accepted.iter().any(|id| entries.iter().any(|e| e.id==*id && kind(n,&e.body)=="start")) {
+                    deps_intent=Some(e.id);accepted.push(e.id);last=e.id;
                 }
                 continue;
             }
-            if matches!(l.kind, "deps-write" | "deps-release" | "deps-done") {
-                let arg = l.args.first().and_then(|v| v.parse::<u64>().ok());
-                let valid = l.attempt.is_none()
-                    && l.args.len() == 1
-                    && match l.kind {
-                        "deps-write" => {
-                            deps_intent.is_some() && arg == deps_intent && deps_writer.is_none()
-                        }
-                        "deps-release" => deps_writer.is_some() && arg == deps_writer,
-                        _ => deps_intent.is_some() && arg == deps_intent && deps_writer.is_none(),
-                    };
+            if matches!(l.kind,"deps-write"|"deps-release"|"deps-done") {
+                let arg=l.args.first().and_then(|v|v.parse::<u64>().ok());
+                let valid=l.attempt.is_none() && l.args.len()==1 && match l.kind {
+                    "deps-write" => deps_intent.is_some() && arg==deps_intent && deps_writer.is_none(),
+                    "deps-release" => deps_writer.is_some() && arg==deps_writer,
+                    _ => deps_intent.is_some() && arg==deps_intent && deps_writer.is_none(),
+                };
                 if valid {
-                    match l.kind {
-                        "deps-write" => deps_writer = Some(e.id),
-                        "deps-release" => deps_writer = None,
-                        _ => deps_intent = None,
-                    }
-                    accepted.push(e.id);
-                    last = e.id;
+                    match l.kind {"deps-write"=>deps_writer=Some(e.id),"deps-release"=>deps_writer=None,_=>deps_intent=None}
+                    accepted.push(e.id);last=e.id;
                 }
                 continue;
             }
-            if deps_intent.is_some() {
-                continue;
-            }
+            if deps_intent.is_some() {continue;}
             // §5: serialize pin changes with admission in board order, including stale selections after completion.
-            if l.kind == "reroute"
-                && l.attempt.is_none()
-                && l.args.len() == 2
-                && l.args[0] != l.args[1]
-                && l.args
-                    .iter()
-                    .all(|rt| crate::runtime::CLI_RUNTIMES.contains(rt))
-                && l.text.lines().last() == Some("routing-fence: 1")
-            {
-                if reroute.is_none()
-                    && t.state == State::Ready
-                    && executions.iter().all(|x| x.release.is_some())
-                {
+            if l.kind == "reroute" && l.attempt.is_none() && l.args.len() == 2 && l.args[0] != l.args[1]
+                && l.args.iter().all(|rt| crate::runtime::CLI_RUNTIMES.contains(rt))
+                && l.text.lines().last() == Some("routing-fence: 1") {
+                if reroute.is_none() && t.state == State::Ready && executions.iter().all(|x| x.release.is_some()) {
                     routing_revision = e.id;
                     reroute = Some((e.id, l.args[0].to_string(), l.args[1].to_string()));
                     accepted.push(e.id);
@@ -810,63 +580,40 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                 continue;
             }
             if l.kind == "routing-write" && l.attempt.is_none() && l.args.len() == 1 {
-                if routing_writer.is_none()
-                    && reroute
-                        .as_ref()
-                        .is_some_and(|(id, _, _)| l.args[0].parse() == Ok(*id))
-                {
-                    routing_writer = Some(e.id);
+                if routing_writer.is_none() && reroute.as_ref().is_some_and(|(id,_,_)| l.args[0].parse()==Ok(*id)) {
+                    routing_writer=Some(e.id);
                     accepted.push(e.id);
-                    last = e.id;
+                    last=e.id;
                 }
                 continue;
             }
             if l.kind == "routing-release" && l.attempt.is_none() && l.args.len() == 1 {
-                if routing_writer.is_some_and(|id| l.args[0].parse() == Ok(id)) {
-                    routing_writer = None;
+                if routing_writer.is_some_and(|id| l.args[0].parse()==Ok(id)) {
+                    routing_writer=None;
                     accepted.push(e.id);
-                    last = e.id;
+                    last=e.id;
                 }
                 continue;
             }
             if l.kind == "rerouted" && l.attempt.is_none() && l.args.len() == 1 {
-                if routing_writer.is_none()
-                    && reroute
-                        .as_ref()
-                        .is_some_and(|(id, _, _)| l.args[0].parse() == Ok(*id))
-                {
+                if routing_writer.is_none() && reroute.as_ref().is_some_and(|(id,_,_)| l.args[0].parse() == Ok(*id)) {
                     reroute = None;
                     accepted.push(e.id);
                     last = e.id;
                 }
                 continue;
             }
-            if l.kind == "spawn"
-                && (reroute.is_some()
-                    || routing_revision != 0
-                        && !l
-                            .text
-                            .lines()
-                            .any(|line| line == format!("routing-revision: {routing_revision}")))
-            {
+            if l.kind == "spawn" && (reroute.is_some() || routing_revision != 0 && !l.text.lines().any(|line| line == format!("routing-revision: {routing_revision}"))) {
                 continue;
             }
             let before = t.clone();
             step(&mut t, &mut resume, e.id, &l, last == 0);
             // §2.12: only the owning service's quota continuation may deliver to a released reviewer.
-            if before.state == State::Review
-                && before.role.as_deref() == Some("reviewer")
-                && l.kind == "steer"
-                && l.args == ["quota"]
-                && l.attempt.is_some()
-                && l.attempt == before.attempt
+            if before.state == State::Review && before.role.as_deref() == Some("reviewer")
+                && l.kind == "steer" && l.args == ["quota"] && l.attempt.is_some() && l.attempt == before.attempt
                 && executions.iter().all(|x| x.release.is_some())
-                && executions
-                    .iter()
-                    .rev()
-                    .find(|x| Some(x.attempt) == before.attempt)
-                    .is_some_and(|x| x.accepted && x.release == Some(Release::Exit))
-            {
+                && executions.iter().rev().find(|x| Some(x.attempt) == before.attempt)
+                    .is_some_and(|x| x.accepted && x.release == Some(Release::Exit)) {
                 t.inbox.push(e.id);
             }
             // § 2: a pick belongs to the card it was made on
@@ -874,135 +621,59 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                 t.pick = None;
             }
             if l.kind == "spawn" && t.attempt == Some(e.id) && before.attempt != t.attempt {
-                executions.push(Execution {
-                    id: e.id,
-                    attempt: e.id,
-                    through: e.id,
-                    host: l.args[2].into(),
-                    runtime: l.args[1].split(':').next().unwrap_or("").into(),
-                    accepted: false,
-                    release: None,
-                    usage_hold: None,
-                });
-            } else if l.kind == "executing"
-                && l.args.len() == 1
-                && l.attempt.is_some()
-                && l.attempt == t.attempt
-                && matches!(t.state, State::Doing | State::Review)
-                && executions.iter().all(|x| x.release.is_some())
-            {
+                executions.push(Execution { id:e.id, attempt:e.id, through:e.id, host:l.args[2].into(),
+                    runtime:l.args[1].split(':').next().unwrap_or("").into(), accepted:false, release:None,usage_hold:None });
+            } else if l.kind == "executing" && l.args.len() == 1 && l.attempt.is_some() && l.attempt == t.attempt
+                && matches!(t.state,State::Doing|State::Review) && executions.iter().all(|x|x.release.is_some()) {
                 if let Ok(through) = l.args[0].parse::<u64>() {
-                    let attempt = l.attempt.unwrap();
-                    if t.inbox.last() == Some(&through)
-                        && executions.iter().filter(|x| x.attempt == attempt).all(|x| {
-                            (x.accepted && x.through < through)
-                                || (x.release == Some(Release::NoStart) && x.through <= through)
-                        })
-                    {
-                        if let Some(previous) = executions.iter().find(|x| x.attempt == attempt) {
-                            executions.push(Execution {
-                                id: e.id,
-                                attempt,
-                                through,
-                                host: previous.host.clone(),
-                                runtime: previous.runtime.clone(),
-                                accepted: false,
-                                release: None,
-                                usage_hold: None,
-                            });
+                    let attempt=l.attempt.unwrap();
+                    if t.inbox.last() == Some(&through) && executions.iter().filter(|x|x.attempt==attempt)
+                        .all(|x| (x.accepted && x.through < through) || (x.release == Some(Release::NoStart) && x.through <= through)) {
+                        if let Some(previous)=executions.iter().find(|x|x.attempt==attempt) {
+                            executions.push(Execution {id:e.id,attempt,through,host:previous.host.clone(),runtime:previous.runtime.clone(),accepted:false,release:None,usage_hold:None});
                         }
                     }
                 }
             } else if l.kind == "accepted" && l.args.len() == 1 {
                 if let Ok(id) = l.args[0].parse::<u64>() {
-                    if let Some(x) = executions.iter_mut().find(|x| {
-                        x.id == id
-                            && Some(x.attempt) == l.attempt
-                            && x.release != Some(Release::NoStart)
-                    }) {
-                        if !x.accepted {
-                            accepted_inputs.push((x.id, e.id));
-                        }
+                    if let Some(x) = executions.iter_mut().find(|x| x.id == id && Some(x.attempt) == l.attempt && x.release != Some(Release::NoStart)) {
+                        if !x.accepted {accepted_inputs.push((x.id,e.id));}
                         x.accepted = true;
                     }
                 }
-            } else if l.kind == "released"
-                && l.args.len() == 2
-                && matches!(l.args[1], "exit" | "no-start")
-            {
-                if let Ok(id) = l.args[0].parse::<u64>() {
-                    let proof = if l.args[1] == "exit" {
-                        Release::Exit
-                    } else {
-                        Release::NoStart
-                    };
-                    if let Some(x) = executions
-                        .iter_mut()
-                        .find(|x| x.id == id && Some(x.attempt) == l.attempt && x.release.is_none())
-                    {
+            } else if l.kind == "released" && l.args.len() == 2 && matches!(l.args[1],"exit"|"no-start") {
+                if let Ok(id)=l.args[0].parse::<u64>() {
+                    let proof = if l.args[1] == "exit" { Release::Exit } else { Release::NoStart };
+                    if let Some(x)=executions.iter_mut().find(|x|x.id==id && Some(x.attempt)==l.attempt && x.release.is_none()) {
                         if proof != Release::NoStart || !x.accepted {
                             x.release = Some(proof);
-                            let words: Vec<_> = l
-                                .text
-                                .lines()
-                                .next()
-                                .unwrap_or_default()
-                                .split_whitespace()
-                                .collect();
-                            if proof == Release::Exit
-                                && words.len() == 3
-                                && words[0] == "usage-limit"
-                                && matches!(words[1], "until" | "probe")
-                            {
-                                x.usage_hold =
-                                    words[2].parse().ok().map(|at| (at, words[1] == "until"));
+                            let words: Vec<_> = l.text.lines().next().unwrap_or_default().split_whitespace().collect();
+                            if proof == Release::Exit && words.len() == 3 && words[0] == "usage-limit" && matches!(words[1], "until" | "probe") {
+                                x.usage_hold = words[2].parse().ok().map(|at| (at, words[1] == "until"));
                             }
                         }
                     }
                 }
             }
-            let note = l.kind == "steer"
-                && before.state != State::Closed
-                && !l.text.is_empty()
+            let note = l.kind == "steer" && before.state != State::Closed && !l.text.is_empty()
                 && l.attempt.is_none_or(|a| Some(a) == before.attempt);
             if t != before || note {
                 last = e.id;
                 accepted.push(e.id);
-                if note || l.kind == "answer" {
-                    notes.push(e.id);
-                }
+                if note || l.kind == "answer" { notes.push(e.id); }
                 if l.kind == "answer" {
                     let card = before.card.as_deref().unwrap_or("");
-                    let option = if l.bare {
-                        pick(card, l.args[0])
-                    } else {
-                        l.args.first().and_then(|k| k.parse().ok())
-                    };
-                    answers.push(Answer {
-                        id: e.id,
-                        revision: card_at.unwrap_or(0),
-                        option,
-                        late: false,
-                    });
+                    let option = if l.bare { pick(card, l.args[0]) } else { l.args.first().and_then(|k| k.parse().ok()) };
+                    answers.push(Answer { id: e.id, revision: card_at.unwrap_or(0), option, late: false });
                 } else if note && l.args.first() == Some(&"answer") {
-                    answers.push(Answer {
-                        id: e.id,
-                        revision: l.args.get(1).and_then(|r| r.parse().ok()).unwrap_or(0),
-                        option: None,
-                        late: true,
-                    });
+                    answers.push(Answer { id: e.id, revision: l.args.get(1).and_then(|r| r.parse().ok()).unwrap_or(0), option: None, late: true });
                 }
                 if t.card.is_some() && t.card != before.card {
                     card_at = Some(e.id);
                 }
             }
-            if t.state != before.state {
-                changes.push((e.id, before, t.clone()));
-            } else if t.state == State::Review
-                && t.publication.is_some() != before.publication.is_some()
-            {
-                queue.push((e.id, before, t.clone()));
-            }
+            if t.state != before.state { changes.push((e.id, before, t.clone())); }
+            else if t.state == State::Review && t.publication.is_some() != before.publication.is_some() { queue.push((e.id, before, t.clone())); }
         }
     }
     // ponytail: dependencies are judged at read time only, so a hand-typed spawn while waiting is accepted
@@ -1010,22 +681,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection {
-        task: t,
-        revision: rev,
-        routing_revision,
-        reroute,
-        routing_writer,
-        deps_intent,
-        deps_writer,
-        accepted,
-        notes,
-        answers,
-        executions,
-        accepted_inputs,
-        changes,
-        queue,
-    }
+    Projection { task:t, revision:rev, routing_revision, reroute, routing_writer, deps_intent, deps_writer, accepted, notes, answers, executions, accepted_inputs, changes, queue }
 }
 
 /// The board-backed context repeated at every attempt/resume and before hand-in (§ 7).
@@ -1051,26 +707,11 @@ pub fn task_context(n: u64, body: &str, entries: &[Entry]) -> String {
     let ids = acceptance(body);
     let stages = match ids.iter().find(|i| !p.task.stages.contains(i)) {
         _ if p.task.stages.is_empty() || ids.is_empty() => String::new(),
-        Some(open) => format!(
-            "\n\nStages done: {}; continue at {open} (stage {}/{}) in the existing worktree; park again with `later --stage` or hand in once all are done.",
-            p.task.stages.join(" "),
-            ids.iter().position(|i| i == open).unwrap_or(0) + 1,
-            ids.len()
-        ),
-        None => format!(
-            "\n\nStages done: {}; all {} stages are done: check them and hand in the result.",
-            p.task.stages.join(" "),
-            ids.len()
-        ),
+        Some(open) => format!("\n\nStages done: {}; continue at {open} (stage {}/{}) in the existing worktree; park again with `later --stage` or hand in once all are done.",
+            p.task.stages.join(" "), ids.iter().position(|i| i == open).unwrap_or(0) + 1, ids.len()),
+        None => format!("\n\nStages done: {}; all {} stages are done: check them and hand in the result.", p.task.stages.join(" "), ids.len()),
     };
-    format!(
-        "Task goal and acceptance (binding):\n{body}{stages}\n\nTask notes (oldest first):\n{}\n\nAcceptance remains binding. Before asking, check the original question and accepted answers: reuse settled decisions within their scope; the PM reconciles already decided acceptance changes before resume (docs/design/pm-runbook.md). Ask only for an unresolved choice or conflict, never repeat a settled question or defer a known conflict until hand-in. Task notes do not grant runtime permissions or replace action-time approval. Before hand-in, read inbox again and check the result against acceptance with all notes.",
-        if notes.is_empty() {
-            "none".into()
-        } else {
-            notes.join("\n\n")
-        }
-    )
+    format!("Task goal and acceptance (binding):\n{body}{stages}\n\nTask notes (oldest first):\n{}\n\nAcceptance remains binding. Before asking, check the original question and accepted answers: reuse settled decisions within their scope; the PM reconciles already decided acceptance changes before resume (docs/design/pm-runbook.md). Ask only for an unresolved choice or conflict, never repeat a settled question or defer a known conflict until hand-in. Task notes do not grant runtime permissions or replace action-time approval. Before hand-in, read inbox again and check the result against acceptance with all notes.", if notes.is_empty() { "none".into() } else { notes.join("\n\n") })
 }
 
 /// R1/#1929: only the first accepted hold associates a task with an owner chat; lifecycle is unchanged.
@@ -1078,15 +719,8 @@ pub fn conversation(n: u64, entries: &[Entry]) -> Option<String> {
     let p = project(n, entries, false);
     let id = p.changes.iter().find(|(_, _, t)| t.state == State::Held)?.0;
     let e = entries.iter().find(|e| e.id == id && !e.edited)?;
-    let ids: Vec<_> = e
-        .body
-        .lines()
-        .filter_map(|l| l.strip_prefix("conversation: "))
-        .collect();
-    match ids.as_slice() {
-        [id] if crate::setup::owner_id(id) => Some((*id).into()),
-        _ => None,
-    }
+    let ids: Vec<_> = e.body.lines().filter_map(|l| l.strip_prefix("conversation: ")).collect();
+    match ids.as_slice() { [id] if crate::setup::owner_id(id) => Some((*id).into()), _ => None }
 }
 
 fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool) {
@@ -1121,23 +755,14 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         // § 2 gate: set before work; only the owner (no attempt) approves, and only the current result; an approval
         // without a gate serves a `review-pr` project (§ 7)
         (Held | Ready, "gate", false) if t.gate.is_none() => t.gate = Some(Gate::Required),
-        (Review | Ask, "approve", false)
-            if t.gate != Some(Gate::Approved)
-                && l.args.len() == 1
-                && t.result.as_deref() == Some(l.args[0]) =>
-        {
+        (Review | Ask, "approve", false) if t.gate != Some(Gate::Approved) && l.args.len() == 1 && t.result.as_deref() == Some(l.args[0]) => {
             t.gate = Some(Gate::Approved)
         }
         (Ready, "spawn", false) if l.args.len() == 3 && l.args[0] == "worker" => {
             spawn(t, "worker");
             t.state = Doing;
         }
-        (Review, "spawn", false)
-            if l.args.len() == 3
-                && l.args[0] == "reviewer"
-                && t.attempt.is_none()
-                && t.publication.is_none() =>
-        {
+        (Review, "spawn", false) if l.args.len() == 3 && l.args[0] == "reviewer" && t.attempt.is_none() && t.publication.is_none() => {
             spawn(t, "reviewer")
         }
         (Doing, "result", true) if l.args.len() == 1 && sha(l.args[0]) => {
@@ -1152,26 +777,15 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
             *resume = Some(t.state);
             t.state = Ask;
         }
-        (Review, "publish", _)
-            if t.publication.is_none()
-                && !l.text.is_empty()
-                && t.gate.is_none_or(|g| g == Gate::Approved) =>
-        {
+        (Review, "publish", _) if t.publication.is_none() && !l.text.is_empty() && t.gate.is_none_or(|g| g == Gate::Approved) => {
             end(t);
             t.card = None;
             t.publication = text(l.text);
         }
-        (Review, "enqueued", false)
-            if t.publication.is_some() && t.enqueued.is_none() && l.args.len() == 1 =>
-        {
+        (Review, "enqueued", false) if t.publication.is_some() && t.enqueued.is_none() && l.args.len() == 1 => {
             t.enqueued = Some(l.args[0].to_string());
         }
-        (Review, "rebased", false)
-            if t.publication.is_some()
-                && l.args.len() == 1
-                && sha(l.args[0])
-                && t.result.as_deref() != Some(l.args[0]) =>
-        {
+        (Review, "rebased", false) if t.publication.is_some() && l.args.len() == 1 && sha(l.args[0]) && t.result.as_deref() != Some(l.args[0]) => {
             t.result = Some(l.args[0].to_string());
             if t.gate.is_some() {
                 invalidate(t);
@@ -1184,9 +798,7 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
             t.state = Ask;
         }
         (Review, "publication-failed", false) if t.publication.is_some() => {
-            if !limit(t, resume, REQUEUE_MAX) {
-                ready(t)
-            }
+            if !limit(t, resume, REQUEUE_MAX) { ready(t) }
         }
         (Doing | Review, "requeue", _) if l.args == ["main-moved"] => ready(t),
         (Doing | Review, "requeue", true) => {
@@ -1194,13 +806,7 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
                 ready(t)
             }
         }
-        (Doing | Review, "usage-limit", true) if l.args.is_empty() => {
-            if t.state == Review {
-                end(t)
-            } else {
-                ready(t)
-            }
-        }
+        (Doing | Review, "usage-limit", true) if l.args.is_empty() => if t.state == Review { end(t) } else { ready(t) },
         (Doing | Review, "gone", true) => {
             if !limit(t, resume, GONE_MAX) {
                 if t.state == Review { end(t) } else { ready(t) }
@@ -1215,34 +821,19 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
             end(t);
             t.state = Closed;
         }
-        (Ask, "pick", false)
-            if l.args.len() == 1 && !l.text.is_empty() && !l.text.contains('\n') =>
-        {
+        (Ask, "pick", false) if l.args.len() == 1 && !l.text.is_empty() && !l.text.contains('\n') => {
             let card = t.card.as_deref().unwrap_or("");
-            if let Some(k) = l.args[0]
-                .parse()
-                .ok()
-                .filter(|k| options(card).iter().any(|o| o.0 == *k))
-            {
+            if let Some(k) = l.args[0].parse().ok().filter(|k| options(card).iter().any(|o| o.0 == *k)) {
                 t.pick = Some((k, l.text.to_string()));
             }
         }
-        (Ask, "answer", _)
-            if !l.bare || pick(t.card.as_deref().unwrap_or(""), l.args[0]).is_some() =>
-        {
+        (Ask, "answer", _) if !l.bare || pick(t.card.as_deref().unwrap_or(""), l.args[0]).is_some() => {
             if !own {
                 let card = t.card.as_deref().unwrap_or("");
-                let k = if l.bare {
-                    pick(card, l.args[0])
-                } else {
-                    l.args.first().and_then(|s| s.parse().ok())
-                };
-                if options(card).iter().any(|(n, option, _)| {
-                    Some(*n) == k
-                        && approval_sha(option).is_some_and(|sha| {
-                            t.result.as_deref().is_some_and(|r| r.starts_with(sha))
-                        })
-                }) {
+                let k = if l.bare { pick(card, l.args[0]) } else { l.args.first().and_then(|s| s.parse().ok()) };
+                if options(card).iter().any(|(n, option, _)| Some(*n) == k
+                    && approval_sha(option).is_some_and(|sha| t.result.as_deref().is_some_and(|r| r.starts_with(sha))))
+                {
                     t.gate = Some(Gate::Approved);
                 }
             }
@@ -1258,11 +849,7 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         }
         (Ready | Waiting | Doing | Review | Ask | Later | Failed, "requeue", false) => {
             // § 2: Retry of an owner park returns to the worker park's blocker; a requeue elsewhere overrides it
-            let blocker = if matches!(t.state, Later | Failed) {
-                t.blocker.take()
-            } else {
-                None
-            };
+            let blocker = if matches!(t.state, Later | Failed) { t.blocker.take() } else { None };
             t.retries = 0;
             ready(t);
             t.blocker = blocker;
@@ -1271,21 +858,15 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         (Doing | Review, "later", true) if l.args.len() == 1 && blocker_ref(l.args[0]) => {
             ready(t);
             t.blocker = Some(l.args[0].to_string());
-            if let Some(s) = stages_line(l.text) {
-                t.stages = s;
-            }
+            if let Some(s) = stages_line(l.text) { t.stages = s; }
         }
         (Ready | Waiting | Doing | Review | Ask, "later" | "failed", _) => {
             end(t);
             t.state = if l.kind == "later" { Later } else { Failed };
             // § 2 timed park: a malformed time parks untimed, as N-1 folds every timed park
-            t.until =
-                (l.kind == "later" && l.args.len() == 2 && l.args[0] == "until" && utc(l.args[1]))
-                    .then(|| l.args[1].to_string());
+            t.until = (l.kind == "later" && l.args.len() == 2 && l.args[0] == "until" && utc(l.args[1])).then(|| l.args[1].to_string());
             // § 2 Stages: a `later` records the finished stages; a stage park counts no retry
-            if let Some(s) = stages_line(l.text).filter(|_| l.kind == "later") {
-                t.stages = s;
-            }
+            if let Some(s) = stages_line(l.text).filter(|_| l.kind == "later") { t.stages = s; }
         }
         _ => {}
     }
@@ -1313,11 +894,7 @@ pub fn golden(json: &str) -> Result<usize, String> {
         if got != tr.expect {
             return Err(format!("{}: got {:?}, want {:?}", tr.name, got, tr.expect));
         }
-        if tr
-            .notes
-            .as_ref()
-            .is_some_and(|notes| *notes != project(tr.task, &tr.entries, tr.deps_open).notes)
-        {
+        if tr.notes.as_ref().is_some_and(|notes| *notes != project(tr.task, &tr.entries, tr.deps_open).notes) {
             return Err(format!("{}: task notes differ", tr.name));
         }
     }

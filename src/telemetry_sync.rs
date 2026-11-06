@@ -6,13 +6,7 @@ use crate::{Res, enrollment, resources, snapshot::Snapshot};
 use base64::Engine;
 use coreq::enroll::{self, Backoff, Delivery, Https, Wire};
 use serde_json::{Value, json};
-use std::{
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-    thread::JoinHandle,
-    time::{Duration, Instant},
-};
+use std::{fs, io::Write, path::{Path, PathBuf}, thread::JoinHandle, time::{Duration, Instant}};
 
 pub const SCHEMA: &str = "taskq-telemetry/1";
 /// Compressed bytes per record: base64 and the envelope stay under coreq's 1 MiB `/ingest` body.
@@ -29,9 +23,7 @@ const STOP: u64 = 300;
 
 /// Whether the active grant lists the telemetry schema; without it no telemetry code path runs (A3).
 pub fn granted(active: &Value) -> bool {
-    active["schemas"]
-        .as_array()
-        .is_some_and(|a| a.iter().any(|s| s == SCHEMA))
+    active["schemas"].as_array().is_some_and(|a| a.iter().any(|s| s == SCHEMA))
 }
 
 fn cursor_path(install: &Path) -> PathBuf {
@@ -49,50 +41,25 @@ fn load(install: &Path, destination: &str) -> Res<Value> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(fresh),
         Err(_) => return Err("cursor-unreadable".into()),
     };
-    if c["seq"].as_i64().is_none() || c["gap_rows"].as_u64().is_none() {
-        return Err("cursor-unreadable".into());
-    }
-    Ok(if c["destination"] == destination {
-        c
-    } else {
-        fresh
-    })
+    if c["seq"].as_i64().is_none() || c["gap_rows"].as_u64().is_none() { return Err("cursor-unreadable".into()) }
+    Ok(if c["destination"] == destination { c } else { fresh })
 }
 
 fn save(install: &Path, c: &Value) -> Res<()> {
-    let (path, tmp) = (
-        cursor_path(install),
-        cursor_path(install).with_extension("json.tmp"),
-    );
+    let (path, tmp) = (cursor_path(install), cursor_path(install).with_extension("json.tmp"));
     let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
-    f.write_all(c.to_string().as_bytes())
-        .and_then(|_| f.sync_all())
-        .map_err(|e| e.to_string())?;
+    f.write_all(c.to_string().as_bytes()).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
     fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
-struct Block {
-    last: i64,
-    event_id: String,
-    observed: u64,
-    payload: Value,
-    raw: usize,
-}
+struct Block { last: i64, event_id: String, observed: u64, payload: Value, raw: usize }
 
 /// What one Reader snapshot shows after the cursor.
-struct Read {
-    blocks: Vec<Block>,
-    gap: u64,
-    base: i64,
-    retained_last: i64,
-    end: bool,
-}
+struct Read { blocks: Vec<Block>, gap: u64, base: i64, retained_last: i64, end: bool }
 
 fn gzip(lines: &[(i64, String, i64, String)]) -> Res<Vec<u8>> {
     let mut z = flate2::write::GzEncoder::new(vec![], flate2::Compression::default());
-    for l in lines {
-        z.write_all(l.3.as_bytes()).map_err(|e| e.to_string())?
-    }
+    for l in lines { z.write_all(l.3.as_bytes()).map_err(|e| e.to_string())? }
     z.finish().map_err(|e| e.to_string())
 }
 
@@ -103,18 +70,9 @@ fn read(install: &Path, installation: &str, seq: i64, pending: Option<i64>) -> R
     let mut page = reader.export(0, seq, 1024)?;
     let bounds = |p: &Value, i: usize| p["retained_seq"][i].as_i64();
     // a replaced store restarts below the cursor: its rows have new ids, so starting over sends no duplicate
-    let seq = if bounds(&page, 1).is_some_and(|l| l < seq) {
-        page = reader.export(0, 0, 1024)?;
-        0
-    } else {
-        seq
-    };
+    let seq = if bounds(&page, 1).is_some_and(|l| l < seq) { page = reader.export(0, 0, 1024)?; 0 } else { seq };
     let oldest = bounds(&page, 0).map_or(page["pruned_through"].as_i64().unwrap_or(0) + 1, |f| f);
-    let (gap, base) = if oldest > seq + 1 {
-        ((oldest - seq - 1) as u64, oldest - 1)
-    } else {
-        (0, seq)
-    };
+    let (gap, base) = if oldest > seq + 1 { ((oldest - seq - 1) as u64, oldest - 1) } else { (0, seq) };
     let retained_last = bounds(&page, 1).unwrap_or(base).max(base);
     let mut rows: Vec<(i64, String, i64, String)> = vec![];
     let (mut raw, mut end) = (0, false);
@@ -123,17 +81,9 @@ fn read(install: &Path, installation: &str, seq: i64, pending: Option<i64>) -> R
             let s = e["seq"].as_i64().ok_or("export-page-invalid")?;
             let line = format!("{e}\n");
             raw += line.len();
-            rows.push((
-                s,
-                e["id"].as_str().unwrap_or_default().into(),
-                e["received_ms"].as_i64().unwrap_or(0),
-                line,
-            ));
+            rows.push((s, e["id"].as_str().unwrap_or_default().into(), e["received_ms"].as_i64().unwrap_or(0), line));
         }
-        if page["more"] != true {
-            end = true;
-            break;
-        }
+        if page["more"] != true { end = true; break }
         page = reader.export(0, page["next"].as_i64().ok_or("export-page-invalid")?, 1024)?;
     }
     drop(reader);
@@ -144,34 +94,14 @@ fn read(install: &Path, installation: &str, seq: i64, pending: Option<i64>) -> R
         // a block ends at RAW bytes, at the pending seq, or halves until it compresses under BLOCK
         let mut n = match (blocks.is_empty(), pending) {
             (true, Some(p)) => rest.iter().take_while(|r| r.0 <= p).count().max(1),
-            _ => {
-                let mut b = 0;
-                rest.iter()
-                    .take_while(|r| {
-                        b += r.3.len();
-                        b <= RAW
-                    })
-                    .count()
-                    .max(1)
-            }
+            _ => { let mut b = 0; rest.iter().take_while(|r| { b += r.3.len(); b <= RAW }).count().max(1) }
         };
         let mut z = gzip(&rest[..n])?;
-        while z.len() > BLOCK && n > 1 {
-            n /= 2;
-            z = gzip(&rest[..n])?
-        }
-        if z.len() > BLOCK {
-            return Err("row-over-limit".into());
-        }
+        while z.len() > BLOCK && n > 1 { n /= 2; z = gzip(&rest[..n])? }
+        if z.len() > BLOCK { return Err("row-over-limit".into()) }
         let (b, first, last) = (&rest[..n], &rest[0], &rest[n - 1]);
-        let id = ring::digest::digest(
-            &ring::digest::SHA256,
-            format!("{installation}\0{}\0{}", first.1, last.1).as_bytes(),
-        );
-        let hex: String = id.as_ref()[..16]
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect();
+        let id = ring::digest::digest(&ring::digest::SHA256, format!("{installation}\0{}\0{}", first.1, last.1).as_bytes());
+        let hex: String = id.as_ref()[..16].iter().map(|x| format!("{x:02x}")).collect();
         let raw: usize = b.iter().map(|r| r.3.len()).sum();
         blocks.push(Block {
             last: last.0, event_id: format!("t-{hex}"), observed: u64::try_from(last.2 / 1000).unwrap_or(0), raw,
@@ -180,39 +110,20 @@ fn read(install: &Path, installation: &str, seq: i64, pending: Option<i64>) -> R
         });
         rest = &rest[n..];
     }
-    Ok(Read {
-        blocks,
-        gap,
-        base,
-        retained_last,
-        end,
-    })
+    Ok(Read { blocks, gap, base, retained_last, end })
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 /// One job: sends blocks one at a time until caught up, a failure, or `deadline`. Returns the status and the
 /// seconds to wait before the next job.
-fn run(
-    install: &Path,
-    wire: &mut dyn Wire,
-    backoff: &mut Backoff,
-    deadline: Instant,
-) -> (Value, u64) {
-    let status = |state: &str,
-                  c: &Value,
-                  backlog: Option<(i64, Option<usize>)>,
-                  error: Option<&str>| {
-        json!({
-            "state": state, "last_synced": c["last_synced"], "gap_rows": c["gap_rows"], "last_error": error,
-            "backlog_rows": backlog.map(|b| b.0), "backlog_bytes": backlog.and_then(|b| b.1),
-        })
-    };
+fn run(install: &Path, wire: &mut dyn Wire, backoff: &mut Backoff, deadline: Instant) -> (Value, u64) {
+    let status = |state: &str, c: &Value, backlog: Option<(i64, Option<usize>)>, error: Option<&str>| json!({
+        "state": state, "last_synced": c["last_synced"], "gap_rows": c["gap_rows"], "last_error": error,
+        "backlog_rows": backlog.map(|b| b.0), "backlog_bytes": backlog.and_then(|b| b.1),
+    });
     let unknown = |e: &str| (json!({"state": "unknown", "last_error": e}), IDLE);
     let d = enrollment::dir(install);
     let a = match enroll::active(&d) {
@@ -220,130 +131,56 @@ fn run(
         Ok(_) => return (json!({"state": "off"}), IDLE),
         Err(_) => return unknown("connection-unreadable"),
     };
-    let (dest, installation) = (
-        a["destination"].as_str().unwrap_or_default(),
-        a["installation"].as_str().unwrap_or_default(),
-    );
-    let mut c = match load(install, dest) {
-        Ok(c) => c,
-        Err(e) => return unknown(&e),
-    };
+    let (dest, installation) = (a["destination"].as_str().unwrap_or_default(), a["installation"].as_str().unwrap_or_default());
+    let mut c = match load(install, dest) { Ok(c) => c, Err(e) => return unknown(&e) };
     loop {
-        let r = match read(
-            install,
-            installation,
-            c["seq"].as_i64().unwrap_or(0),
-            c["pending"].as_i64(),
-        ) {
-            Ok(r) => r,
-            Err(e) => return unknown(&e),
-        };
+        let r = match read(install, installation, c["seq"].as_i64().unwrap_or(0), c["pending"].as_i64()) { Ok(r) => r, Err(e) => return unknown(&e) };
         if r.gap > 0 || r.base != c["seq"].as_i64().unwrap_or(0) {
             c["gap_rows"] = json!(c["gap_rows"].as_u64().unwrap_or(0) + r.gap);
             c["seq"] = json!(r.base);
             (c["pending"], c["pending_status"]) = (Value::Null, Value::Null);
-            if save(install, &c).is_err() {
-                return unknown("cursor-unwritable");
-            }
+            if save(install, &c).is_err() { return unknown("cursor-unwritable") }
         }
-        let backlog = |c: &Value, sent: usize| {
-            (
-                r.retained_last - c["seq"].as_i64().unwrap_or(0),
-                r.end
-                    .then(|| r.blocks.iter().map(|b| b.raw).sum::<usize>() - sent),
-            )
-        };
-        if r.blocks.is_empty() {
-            return (status("idle", &c, Some((0, Some(0))), None), IDLE);
-        }
+        let backlog = |c: &Value, sent: usize| (r.retained_last - c["seq"].as_i64().unwrap_or(0),
+            r.end.then(|| r.blocks.iter().map(|b| b.raw).sum::<usize>() - sent));
+        if r.blocks.is_empty() { return (status("idle", &c, Some((0, Some(0))), None), IDLE) }
         let mut sent = 0;
         for (i, b) in r.blocks.iter().enumerate() {
             // DashQ D11 `status`: counters after this block. A retry repeats the stored ones, since other content
             // under the same event id is `replay_mismatch`; a block pending from a release without them sends none.
-            let st = if c["pending"] == json!(b.last) {
-                c["pending_status"].clone()
-            } else {
+            let st = if c["pending"] == json!(b.last) { c["pending_status"].clone() } else {
                 json!({"backlog_rows": r.retained_last - b.last, "gap_rows": c["gap_rows"],
                     "backlog_bytes": r.end.then(|| r.blocks[i + 1..].iter().map(|b| b.raw).sum::<usize>())})
             };
             (c["pending"], c["pending_status"]) = (json!(b.last), st.clone());
-            if save(install, &c).is_err() {
-                return unknown("cursor-unwritable");
-            }
+            if save(install, &c).is_err() { return unknown("cursor-unwritable") }
             let mut payload = b.payload.clone();
-            if st.is_object() {
-                payload["status"] = st
-            }
+            if st.is_object() { payload["status"] = st }
             let rec = match enroll::stamp(&d, SCHEMA, &b.event_id, b.observed, payload) {
                 Ok(rec) => rec,
-                Err(e) => {
-                    return (
-                        status("stopped", &c, Some(backlog(&c, sent)), Some(&e)),
-                        STOP,
-                    );
-                }
+                Err(e) => return (status("stopped", &c, Some(backlog(&c, sent)), Some(&e)), STOP),
             };
             match enroll::deliver(&d, &[rec], backoff, wire) {
                 Ok(x) if x[0]["state"] == "accepted" => {
-                    (
-                        c["seq"],
-                        c["pending"],
-                        c["pending_status"],
-                        c["last_synced"],
-                    ) = (json!(b.last), Value::Null, Value::Null, json!(now()));
-                    if save(install, &c).is_err() {
-                        return unknown("cursor-unwritable");
-                    }
+                    (c["seq"], c["pending"], c["pending_status"], c["last_synced"]) = (json!(b.last), Value::Null, Value::Null, json!(now()));
+                    if save(install, &c).is_err() { return unknown("cursor-unwritable") }
                     sent += b.raw;
                 }
                 // DashQ refuses rows past its retention window for good: the block becomes a counted gap (S4)
                 Ok(x) if x[0]["state"] == "rejected" && x[0]["reason"] == "expired" => {
-                    c["gap_rows"] = json!(
-                        c["gap_rows"].as_u64().unwrap_or(0)
-                            + b.payload["rows"].as_u64().unwrap_or(0)
-                    );
-                    (c["seq"], c["pending"], c["pending_status"]) =
-                        (json!(b.last), Value::Null, Value::Null);
-                    if save(install, &c).is_err() {
-                        return unknown("cursor-unwritable");
-                    }
+                    c["gap_rows"] = json!(c["gap_rows"].as_u64().unwrap_or(0) + b.payload["rows"].as_u64().unwrap_or(0));
+                    (c["seq"], c["pending"], c["pending_status"]) = (json!(b.last), Value::Null, Value::Null);
+                    if save(install, &c).is_err() { return unknown("cursor-unwritable") }
                     sent += b.raw;
                 }
                 // any other rejected block stays unsent: the cursor waits, nothing is dropped
-                Ok(x) => {
-                    return (
-                        status(
-                            "stopped",
-                            &c,
-                            Some(backlog(&c, sent)),
-                            Some(&format!(
-                                "rejected: {}",
-                                x[0]["reason"].as_str().unwrap_or("unknown")
-                            )),
-                        ),
-                        STOP,
-                    );
-                }
-                Err(Delivery::Retry(s)) => {
-                    return (
-                        status("retrying", &c, Some(backlog(&c, sent)), Some("unreachable")),
-                        s,
-                    );
-                }
-                Err(Delivery::Stopped(e)) => {
-                    return (
-                        status("stopped", &c, Some(backlog(&c, sent)), Some(&e)),
-                        STOP,
-                    );
-                }
+                Ok(x) =>return (status("stopped", &c, Some(backlog(&c, sent)), Some(&format!("rejected: {}", x[0]["reason"].as_str().unwrap_or("unknown")))), STOP),
+                Err(Delivery::Retry(s)) => return (status("retrying", &c, Some(backlog(&c, sent)), Some("unreachable")), s),
+                Err(Delivery::Stopped(e)) => return (status("stopped", &c, Some(backlog(&c, sent)), Some(&e)), STOP),
             }
-            if Instant::now() >= deadline {
-                return (status("syncing", &c, Some(backlog(&c, sent)), None), 0);
-            }
+            if Instant::now() >= deadline { return (status("syncing", &c, Some(backlog(&c, sent)), None), 0) }
         }
-        if r.end {
-            return (status("idle", &c, Some(backlog(&c, sent)), None), IDLE);
-        }
+        if r.end { return (status("idle", &c, Some(backlog(&c, sent)), None), IDLE) }
     }
 }
 
@@ -363,78 +200,35 @@ pub struct Sender {
 impl Sender {
     /// One step per service pass; reads only the connection file. Returns a log line when the state changes.
     pub fn tick(&mut self, install: &Path, snap: Option<&Snapshot>, now: u64) -> Option<String> {
-        self.tick_with(install, snap, now, |i| {
-            Box::new(resources::Fenced::new(i, Https { browser: false }))
-        })
+        self.tick_with(install, snap, now, |i| Box::new(resources::Fenced::new(i, Https { browser: false })))
     }
 
-    fn tick_with(
-        &mut self,
-        install: &Path,
-        snap: Option<&Snapshot>,
-        now: u64,
-        wire: fn(&Path) -> Box<dyn Wire + Send>,
-    ) -> Option<String> {
-        let before = (
-            self.status["state"].clone(),
-            self.status["last_error"].clone(),
-        );
+    fn tick_with(&mut self, install: &Path, snap: Option<&Snapshot>, now: u64, wire: fn(&Path) -> Box<dyn Wire + Send>) -> Option<String> {
+        let before = (self.status["state"].clone(), self.status["last_error"].clone());
         if self.job.as_ref().is_some_and(|j| j.is_finished()) {
-            let (b, s, wait) = self.job.take().unwrap().join().unwrap_or_else(|_| {
-                (
-                    Backoff::default(),
-                    json!({"state": "unknown", "last_error": "sender-panic"}),
-                    IDLE,
-                )
-            });
+            let (b, s, wait) = self.job.take().unwrap().join().unwrap_or_else(|_| (Backoff::default(), json!({"state": "unknown", "last_error": "sender-panic"}), IDLE));
             (self.backoff, self.status, self.wait_until) = (b, s, now + wait);
         }
         if self.job.is_none() && now >= self.wait_until {
             match enrollment::state(install) {
-                Err(_) => {
-                    self.status = json!({"state": "unknown", "last_error": "connection-unreadable"})
-                }
-                Ok(st) => match st
-                    .map(|s| s["active"].clone())
-                    .filter(|a| a.is_object() && granted(a))
-                {
+                Err(_) => self.status = json!({"state": "unknown", "last_error": "connection-unreadable"}),
+                Ok(st) => match st.map(|s| s["active"].clone()).filter(|a| a.is_object() && granted(a)) {
                     None => self.status = json!({"state": "off"}),
-                    Some(a) if !enrollment::speaks(&a, snap) => {
-                        self.status =
-                            json!({"state": "off", "reason": "another project's service sends"})
-                    }
+                    Some(a) if !enrollment::speaks(&a, snap) => self.status = json!({"state": "off", "reason": "another project's service sends"}),
                     Some(_) => {
-                        let (install, mut backoff) =
-                            (install.to_path_buf(), std::mem::take(&mut self.backoff));
+                        let (install, mut backoff) = (install.to_path_buf(), std::mem::take(&mut self.backoff));
                         self.status["state"] = json!("syncing");
                         self.job = Some(std::thread::spawn(move || {
-                            let (s, wait) = run(
-                                &install,
-                                &mut *wire(&install),
-                                &mut backoff,
-                                Instant::now() + Duration::from_secs(RUN),
-                            );
+                            let (s, wait) = run(&install, &mut *wire(&install), &mut backoff, Instant::now() + Duration::from_secs(RUN));
                             (backoff, s, wait)
                         }));
                     }
                 },
             }
         }
-        let after = (
-            self.status["state"].clone(),
-            self.status["last_error"].clone(),
-        );
-        (after != before && after.0 != "syncing").then(|| {
-            format!(
-                "telemetry sync: {}{}",
-                after.0.as_str().unwrap_or("unknown"),
-                after
-                    .1
-                    .as_str()
-                    .map(|e| format!(" ({e})"))
-                    .unwrap_or_default()
-            )
-        })
+        let after = (self.status["state"].clone(), self.status["last_error"].clone());
+        (after != before && after.0 != "syncing").then(|| format!("telemetry sync: {}{}", after.0.as_str().unwrap_or("unknown"),
+            after.1.as_str().map(|e| format!(" ({e})")).unwrap_or_default()))
     }
 }
 
