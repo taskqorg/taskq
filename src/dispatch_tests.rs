@@ -1,6 +1,134 @@
 use super::*;
 use crate::board::Fake;
 
+// Chain: §1, §2.28, R12: duplicate close reads the successor; lost replies and spawn races never duplicate work.
+#[test]
+fn duplicate_draft_close_preserves_authority_readback_and_retry() {
+    for case in [
+        "held successor",
+        "unreadable",
+        "non-task",
+        "untrusted",
+        "cancelled",
+        "child",
+        "stale",
+        "lost reply",
+        "spawn race",
+    ] {
+        let b = Fake::default();
+        let root = std::env::temp_dir().join(format!("taskq-duplicate-{}", crate::runtime::uuid()));
+        let n = b.create("duplicate", "", &["q-held".into()]).unwrap();
+        let rev = b.comment(n, "taskq: hold").unwrap();
+        let m = b
+            .create(
+                "successor",
+                "",
+                &[if case == "held successor" {
+                    "q-held"
+                } else {
+                    "taskq"
+                }
+                .into()],
+            )
+            .unwrap();
+        if case == "held successor" {
+            b.comment(m, "taskq: hold").unwrap();
+        }
+        match case {
+            "unreadable" => b.state.borrow_mut().fail_issue_read = Some((m, 1)),
+            "non-task" => b
+                .state
+                .borrow_mut()
+                .issues
+                .iter_mut()
+                .find(|i| i.number == m)
+                .unwrap()
+                .labels
+                .clear(),
+            "untrusted" => {
+                b.state
+                    .borrow_mut()
+                    .issues
+                    .iter_mut()
+                    .find(|i| i.number == m)
+                    .unwrap()
+                    .trusted = false
+            }
+            "cancelled" => {
+                b.close(m).unwrap();
+                b.state
+                    .borrow_mut()
+                    .issues
+                    .iter_mut()
+                    .find(|i| i.number == m)
+                    .unwrap()
+                    .reason = Some("not_planned".into());
+            }
+            "lost reply" => b.state.borrow_mut().lose_comment_response = true,
+            "spawn race" => {
+                b.comment(n, "taskq: start").unwrap();
+                b.state.borrow_mut().race = Some("taskq: spawn worker codex:invented win".into());
+            }
+            _ => {}
+        }
+        let op = Op {
+            id: Some("duplicate-2497".into()),
+            revision: (case != "spawn race").then_some(if case == "stale" { 0 } else { rev }),
+        };
+        let text = format!("replaced by #{m}");
+        let run = || {
+            act_child(
+                &b,
+                &root,
+                n,
+                "close",
+                &[],
+                &text,
+                &op,
+                if case == "child" {
+                    (Some(n.to_string()), None)
+                } else {
+                    (None, None)
+                },
+            )
+        };
+        let before = b.comments(n).unwrap().len();
+        let r = run();
+        if case == "held successor" || case == "lost reply" {
+            if case == "lost reply" {
+                assert_eq!(r.outcome, "unknown");
+            } else {
+                assert!(r.ok(), "{}", r.text());
+            }
+            let count = b.comments(n).unwrap().len();
+            assert!(run().ok());
+            assert!(!b.issue(n).unwrap().open, "{case}");
+            assert_eq!(b.comments(n).unwrap().len(), count);
+            assert_eq!(current(&b, m).unwrap().1.state, State::Ready);
+        } else {
+            assert!(!r.ok(), "{case}: {}", r.text());
+            assert!(b.issue(n).unwrap().open, "{case}");
+            assert_eq!(
+                current(&b, n).unwrap().1.state,
+                if case == "spawn race" {
+                    State::Doing
+                } else {
+                    State::Held
+                }
+            );
+            if case != "spawn race" {
+                assert_eq!(b.comments(n).unwrap().len(), before, "{case}");
+            }
+        }
+        assert_eq!(
+            b.state.borrow().publications,
+            0,
+            "duplicate closes never publish"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
 // §2.26/R6: #2427 needs #2463 proof before publication; retain its review and question identity.
 #[test]
 fn dependency_wait_2469_preserves_review_and_requires_forwarded_proof() {

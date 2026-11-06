@@ -61,6 +61,15 @@ pub fn successor(verdict: &str) -> Option<u64> {
     })
 }
 
+/// §1: the short duplicate-draft close names a different task, with no review verdict fields.
+pub fn draft_successor(n: u64, text: &str) -> Option<u64> {
+    text.strip_prefix("replaced by #")
+        .filter(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit()))?
+        .parse::<u64>()
+        .ok()
+        .filter(|m| *m != 0 && *m != n)
+}
+
 /// § 7 close outcome, the text after `closed: ` in events, notifications and `status --closed`: `replaced by #M
 /// (<its state>)`, `no change` (Changed `none`) or `delivered`, plus `, N items unverified` for each distinct
 /// `A<k> gap|unknown` of its Checks lines (moved items of a replaced task are not counted). No verdict: the issue

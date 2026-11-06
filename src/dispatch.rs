@@ -911,7 +911,14 @@ fn act_input(
             .iter()
             .any(|e| !e.edited && core::op_id(n, &e.body) == Some(id.as_str()))
     {
-        // a retry: the first write stands, no further board write (even after it cleared the attempt)
+        // A retry keeps the first entry; finish a close projection if its response was lost.
+        if kind == "close"
+            && before.state == State::Closed
+            && issue.open
+            && let Err(e) = service::project(b, &issue, &before)
+        {
+            return Receipt::new(n, op, "unknown", e, "Retry with the same --op-id.");
+        }
         return note_receipt(
             b,
             accepted(
@@ -1014,6 +1021,22 @@ fn act_input(
             n,
             op,
             "text ends with an `op-id:` or `revision:` line; reword it",
+        );
+    }
+    let draft_close = kind == "close" && matches!(before.state, State::Held | State::Ready);
+    if draft_close
+        && ((!service::is_task(&issue) && !service::is_held(&issue))
+            || attempt.is_some()
+            || child.is_some_and(|env| env.0.is_some() || env.1.is_some())
+            || !cfg!(test)
+                && ["TASKQ_ROLE", "TASKQ_SERVICE"]
+                    .iter()
+                    .any(|key| std::env::var_os(key).is_some()))
+    {
+        return Receipt::rejected(
+            n,
+            op,
+            "duplicate draft close requires an owner/PM local CLI",
         );
     }
     let forwarded = match crate::waits::validate(
@@ -1131,6 +1154,9 @@ fn act_input(
             format!("Run `taskq inbox {n}`, then retry with the same --op-id."),
         )
     };
+    if draft_close && let Err(r) = successor_moving(b, root, n, &text, op, false) {
+        return r;
+    }
     let files = match crate::reply_files::upload(b, n, files) {
         Ok(files) => files,
         Err(e) => {
@@ -1417,6 +1443,7 @@ fn close_body(
         })
     };
     match t.state {
+        State::Held | State::Ready => act(b, &cfg.root, n, "close", &[], verdict, op),
         State::Later | State::Failed => {
             successor().map_or_else(|r| r, |_| act(b, &cfg.root, n, "close", &[], verdict, op))
         }
@@ -1850,9 +1877,20 @@ fn successor_moving(
             );
         }
     };
+    if crate::display::draft_successor(n, verdict).is_some()
+        && !service::is_task(&issue)
+        && !service::is_held(&issue)
+    {
+        return refuse(
+            format!("successor #{m} is not a trusted task"),
+            "File the successor with `taskq add`, then close.".into(),
+        );
+    }
     if !issue.open {
         // § 1: GitLab records no reason, so a closed GitLab issue is done
-        return if issue.reason.as_deref().is_none_or(|r| r == "completed") {
+        return if t.state != State::Doing
+            && issue.reason.as_deref().is_none_or(|r| r == "completed")
+        {
             Ok(())
         } else {
             refuse(

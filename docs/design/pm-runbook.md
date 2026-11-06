@@ -5,6 +5,8 @@ Under [taskq.md R3](../../taskq.md#r3-roles), the queue drives itself. The PM st
 ## Contract detail
 
 - Intake: `taskq add` always writes a held task (§ 1). The hold exists only for the read-back. Read the task back with `taskq inbox N`, then run `taskq start N` in the same turn.
+- Duplicate drafts: close a never-started held or ready duplicate with `taskq close N --text 'replaced by #M' --op-id ID`, naming the existing task. Read back the close and successor; reuse the same op id after an uncertain response. A task with any accepted worker spawn stays refused (§1).
+- Read-only diagnostics that forbid source edits are not filed with `--type research`: research requires a tracked report. Use a non-research type whose acceptance permits the diagnostic evidence; do not promise a report while forbidding the source changes needed to deliver it.
 - Dependents: a task that waits on another gets `--deps M` (one `Depends on #M` line) and is started at once. It stays `waiting` and becomes `ready` when #M closes. Never hold a task to wait for another task.
 - `taskq status` flags a held task whose body names an open task `#M` without a `Depends on` line: `PM: names open #M without Depends on`. Add the line, then start the task.
 - Worker blockers: a worker files its blocker held and parks with `later N --blocker #M`. The park starts a held local #M, so the blocker runs and the parked task resumes when it closes.
