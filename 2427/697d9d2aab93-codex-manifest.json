@@ -1,0 +1,38 @@
+{
+  "runtime": "codex",
+  "launches": 1,
+  "grant": "codex: requested -s workspace-write -c sandbox_workspace_write.network_access=true \u00b7 grant workspace (project) rev 34 by kirs \u00b7 effective workspace \u00b7 taskq seatbelt, writes only to the workspace set",
+  "identity": "Identity { pid: 19471, started: \"1793938577-458876\" }",
+  "live_rows": 6,
+  "reads": 8,
+  "status_heartbeat_equal_reads": 8,
+  "unequal": [],
+  "local_rows_with_process_id": 7,
+  "heartbeat_execution_lines": [
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938577,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"native execution progress source unavailable\",\"observed\":1793938578,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"waiting\",\"reason\":\"native input acceptance pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"no supported native progress event\",\"observed\":1793938579,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"no supported native progress event\",\"observed\":1793938580,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"no supported native progress event\",\"observed\":1793938581,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"no supported native progress event\",\"observed\":1793938582,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"status\":\"unknown\",\"last_event\":null,\"reason\":\"no supported native progress event\",\"observed\":1793938583,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}",
+    "{\"progress\":{\"source\":\"native execution events\",\"clock\":\"native timestamp or append mtime lower bound\",\"status\":\"quiet\",\"last_event\":1793938583,\"deadline\":null,\"overdue_since\":null,\"tool_since\":null,\"pending_tools\":0,\"reason\":\"no pending tool; quiet work is not failure\",\"observed\":1793938584,\"notice_open\":false},\"task\":1,\"attempt\":3,\"id\":3,\"through\":3,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}"
+  ],
+  "launch_epoch": 1793938577,
+  "process": [
+    "Identity { pid: 19471, started: \"1793938577-458876\" } ps=Fri Nov  6 11:16:17 2026     /usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex"
+  ],
+  "session": "edc75a723cc672a4dc203bab3a587e3ae8d849e1c13920ab416b3ef626eef349",
+  "canary": "TaskQ-Qualification-2453-42bbd880-4918-4e2a-a848-3f298176e921",
+  "native_transcript": "<home>/.codex/sessions/2026/11/06/rollout-2026-11-06T11-16-18-01a1af12-589b-70a0-a48d-49359eebb606.jsonl",
+  "taskq_transcript_has_reply": true,
+  "transitions": [
+    "\"waiting\"/\"codex\"/\"unknown\"",
+    "\"running\"/\"codex\"/\"unknown\"",
+    "\"running\"/\"codex\"/\"quiet\""
+  ],
+  "release": "Some(Exit)",
+  "after": null,
+  "canary_in_native_log": true,
+  "scope": "candidate Service with fixture board and native client; no installed service"
+}
