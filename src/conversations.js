@@ -10,6 +10,11 @@ const { h } = require("preact"),
   ui = require("./ui-runtime.js"),
   icons = require("./ui-icons.js"),
   { execution } = ui;
+const conversationOpen = ui.measured(
+  "conversation.open",
+  ["cold", "warm"],
+  ["snapshot", "cache", "board", "unknown"],
+);
 // D6: the event kinds a watch may follow.
 const EVENTS = ["close", "failed", "ask", "blocked", "gone"];
 // #1742 Q-A5: a transcript view mounts at most WINDOW items and re-reads evicted ranges from the native source;
@@ -179,9 +184,22 @@ module.exports = execution.module("conversations", {
         ),
     );
   },
+  // A record without a time stays among its own source's records, next to the nearest timed one.
   chronological: function (items) {
-    return items
-      .map((item, index) => ({ item, index, at: time.value(item.updated) }))
+    const rows = items.map((item, index) => ({
+      item,
+      index,
+      source: item.source ?? item.attempt ?? "",
+      at: time.value(item.updated),
+    }));
+    for (const order of [rows, [...rows].reverse()]) {
+      const last = new Map();
+      for (const row of order) {
+        row.at ??= last.get(row.source) ?? null;
+        if (row.at !== null) last.set(row.source, row.at);
+      }
+    }
+    return rows
       .sort(
         (a, b) => (a.at ?? Infinity) - (b.at ?? Infinity) || a.index - b.index,
       )
@@ -228,7 +246,9 @@ module.exports = execution.module("conversations", {
       list = "recent",
       search = "",
       selection = {},
-      scrolls = {},
+      lists = {},
+      listBefore = null,
+      readerBefore = null,
       listOnly = false,
       focusDraft = false,
       focusSearch = false,
@@ -309,8 +329,10 @@ module.exports = execution.module("conversations", {
     let live = null,
       workerPaused = false,
       linked = null,
-      linkedReads = {};
-    const workerPages = new Map();
+      linkedReads = {},
+      opening = null;
+    const workerPages = new Map(),
+      readThreads = new Set();
     const api = execution.module("conversations.instance", {
       id: function () {
         return Array.from(
@@ -813,11 +835,18 @@ module.exports = execution.module("conversations", {
           (leaving || positions[id] === undefined)
         ) {
           const a = api.mark(el);
-          if (a?.board) api.place(id, api.boardPosition(a));
-          else if (!positions[id]?.key) api.place(id, Math.round(el.scrollTop));
+          if (a?.board || !positions[id]?.key)
+            api.place(id, api.readerPlace(el, a));
         }
+        const rows = menu.querySelector(".conversation-rows");
+        listBefore = rows && anchor.snapshot(rows);
+        readerBefore = el && { id, position: anchor.snapshot(el) };
       },
-      // Stable board/native record offsets share the bounded navigation; plain readers retain pixel positions.
+      // Board, native and plain readers all store row keys with offsets in the bounded navigation.
+      readerPlace: function (el, a) {
+        const near = anchor.compact(anchor.snapshot(el));
+        return a?.board ? { ...api.boardPosition(a), ...near } : near;
+      },
       boardPosition: function (a) {
         return {
           key: a.key,
@@ -828,12 +857,6 @@ module.exports = execution.module("conversations", {
       },
       place: function (id, value) {
         const prior = positions[id];
-        if (Number.isFinite(value) && prior?.target)
-          value = {
-            y: value,
-            target: prior.target,
-            ...(prior.attempt ? { attempt: prior.attempt } : {}),
-          };
         if (
           value &&
           typeof value === "object" &&
@@ -1201,6 +1224,8 @@ module.exports = execution.module("conversations", {
               s.anchor = api.mark(el) || s.anchor;
               api.storeAnchor(id, s);
             }
+          } else if (p?.rows) {
+            if (anchor.survivor(el, p) >= 0) anchor.restore(el, p);
           } else if (p?.key) {
             if (!api.hold(el, { anchor: { key: p.key, board: true, y: p.y } }))
               return;
@@ -1972,17 +1997,43 @@ module.exports = execution.module("conversations", {
             };
           }),
           requested = positions[thread]?.attempt;
-        const w = requested
-          ? sources.find((w) => w.attempt === requested)
-          : sources.at(-1);
-        if (
-          workerPaused ||
-          !p?.alive ||
-          p.complete === false ||
-          !(w?.local_session || w?.host) ||
-          w.role !== "worker" ||
-          !w.attempt
-        ) {
+        const readable = (source) =>
+            source.role === "worker" &&
+            !!source.attempt &&
+            !!(source.local_session || source.host),
+          w =
+            sources.find(
+              (source) =>
+                requested && source.attempt === requested && readable(source),
+            ) || sources.findLast(readable);
+        const merged = (rows, native = []) =>
+          module.exports.chronological([
+            ...rows.map((row) => ({
+              boardNode: row,
+              role: "board",
+              source: "attempt",
+              updated: row.props?.["data-time"],
+            })),
+            ...native,
+            ...boardNodes.map((boardNode) => ({
+              boardNode,
+              role: "board",
+              source: "board",
+              updated: boardNode.props?.["data-time"],
+            })),
+          ]);
+        const reviewers = (t?.reviewers || []).map((source) =>
+          api.attemptRow(
+            {
+              ...source,
+              runtime: source.session?.split(":")[0],
+              host: source.session?.split(" ")[1],
+            },
+            null,
+            "a reviewer log is not served in the thread",
+          ),
+        );
+        if (workerPaused || !p?.alive || p.complete === false || !w) {
           api.workerStop();
           return h(
             "section",
@@ -1992,7 +2043,20 @@ module.exports = execution.module("conversations", {
               { role: "status" },
               "Native worker history unavailable: project or accepted source unknown.",
             ),
-            boardNodes,
+            merged([
+              ...sources.map((source) =>
+                api.attemptRow(
+                  source,
+                  null,
+                  !p?.alive || p.complete === false
+                    ? "project unavailable"
+                    : workerPaused
+                      ? "worker history closed"
+                      : "session not recorded",
+                ),
+              ),
+              ...reviewers,
+            ]).map((item) => item.boardNode),
           );
         }
         if (live && (live.thread !== thread || live.root !== p.root))
@@ -2029,6 +2093,10 @@ module.exports = execution.module("conversations", {
             timeout: null,
             ended: false,
             stick: !saved && !positions[thread]?.target,
+            opened:
+              saved?.at !== undefined ||
+              (positions[thread]?.target?.kind === "native" &&
+                positions[thread].target.attempt === source.attempt),
             anchor:
               saved && (saved.key || saved.at !== undefined)
                 ? {
@@ -2091,13 +2159,19 @@ module.exports = execution.module("conversations", {
                 : !current || x?.state === "ended"
                   ? "ended"
                   : "unknown";
+            page.opened ||=
+              current &&
+              (t.state === "ask" ||
+                (t.state === "doing" && x?.state !== "ended"));
           }
+          // Opening a thread reads no ended attempt's log: only a live attempt reads by itself, and only its bounded tail.
           if (
             !page.ended &&
             !page.lost &&
             !page.request &&
             !page.timer &&
-            ((page.end === null && !page.attempted) || page.follow)
+            ((page.opened && page.end === null && !page.attempted) ||
+              page.follow)
           )
             page.timer = ui.defer(
               () =>
@@ -2109,77 +2183,20 @@ module.exports = execution.module("conversations", {
               page.end === null && !page.reason ? 0 : 1000,
             );
         }
-        const loaded = sources.filter((source) =>
-            workerPages.has(source.attempt),
-          ),
-          gaps = loaded
-            .slice(1)
-            .map((source, i) => {
-              const before = sources.indexOf(loaded[i]),
-                after = sources.indexOf(source);
-              return after > before + 1 ? sources[before + 1] : null;
-            })
-            .filter(Boolean),
-          first = sources.findIndex(
-            (source) => source.attempt === loaded[0]?.attempt,
-          ),
-          last = sources.findIndex(
-            (source) => source.attempt === loaded.at(-1)?.attempt,
-          );
-        const controls = loaded.map((source) => {
-          const page = workerPages.get(source.attempt);
-          return h(
-            "div",
-            {
-              class: "conversation-tools attempt-navigation",
-              key: source.attempt,
-            },
-            h(
-              "span",
-              { class: "meta" },
-              "Worker " +
-                source.attempt +
-                " / " +
-                (source.runtime || "Runtime unknown") +
-                " / " +
-                page.activity,
+        const rows = [
+          ...sources.map((source) =>
+            api.attemptRow(
+              source,
+              workerPages.get(source.attempt) || null,
+              readable(source) ? "" : "session not recorded",
             ),
-            page.start > 0 &&
-              h(
-                "button",
-                {
-                  "data-c": "worker-earlier",
-                  "data-attempt": source.attempt,
-                  disabled: !!page.request,
-                },
-                "Earlier records",
-              ),
-            page.end < page.size &&
-              h(
-                "button",
-                {
-                  "data-c": "worker-later",
-                  "data-attempt": source.attempt,
-                  disabled: !!page.request,
-                },
-                "Later records",
-              ),
-            page.end === null &&
-              !page.reason &&
-              h("span", { class: "meta" }, "Reading session..."),
-            page.reason &&
-              h(
-                "span",
-                { role: "status" },
-                "Worker " + source.attempt + " unavailable: " + page.reason,
-              ),
-            page.limitReason && h("span", { role: "status" }, page.limitReason),
-            api.capability(page.capability),
-          );
+          ),
+          ...reviewers,
+        ];
+        const native = sources.flatMap((source) => {
+          const page = workerPages.get(source.attempt);
+          return page?.opened ? page.items : [];
         });
-        const native = loaded.flatMap(
-          (source) => workerPages.get(source.attempt).items,
-        );
         return h(
           "section",
           { class: "worker-live", "aria-label": "Worker document" },
@@ -2188,36 +2205,6 @@ module.exports = execution.module("conversations", {
             { class: "meta document-author" },
             "Accepted worker history / " + sources.length + " attempts",
           ),
-          h(
-            "div",
-            { class: "conversation-tools" },
-            first > 0 &&
-              h(
-                "button",
-                {
-                  "data-c": "worker-attempt",
-                  "data-attempt": sources[first - 1].attempt,
-                },
-                "Load earlier worker",
-              ),
-            last + 1 < sources.length &&
-              h(
-                "button",
-                {
-                  "data-c": "worker-attempt",
-                  "data-attempt": sources[last + 1].attempt,
-                },
-                "Load later worker",
-              ),
-            gaps.map((source) =>
-              h(
-                "button",
-                { "data-c": "worker-attempt", "data-attempt": source.attempt },
-                "Load worker " + source.attempt + " between loaded attempts",
-              ),
-            ),
-          ),
-          controls,
           (!live.stick || !live.follow) &&
             h(
               "button",
@@ -2234,14 +2221,7 @@ module.exports = execution.module("conversations", {
               "data-id": thread,
             },
             api.steps(
-              module.exports.chronological([
-                ...native,
-                ...boardNodes.map((boardNode) => ({
-                  boardNode,
-                  role: "board",
-                  updated: boardNode.props?.["data-time"],
-                })),
-              ]),
+              merged(rows, native),
               live.follow && !live.ended,
               (item) =>
                 api.nativeItem(
@@ -2256,6 +2236,75 @@ module.exports = execution.module("conversations", {
                 ),
             ),
           ),
+        );
+      },
+      // One row per attempt: its facts and the control that opens its full log in place, a bounded page at a time.
+      attemptRow: function (source, page, reason) {
+        const attempt = source.attempt,
+          started = time.seconds(source.started),
+          who = source.role === "reviewer" ? "Reviewer " : "Worker ";
+        return h(
+          "div",
+          {
+            key: "attempt:" + attempt,
+            class: "conversation-tools attempt-navigation attempt-row",
+            "data-reading-key": "attempt:" + attempt,
+            "data-time": started ?? undefined,
+          },
+          h(
+            "span",
+            { class: "meta" },
+            who +
+              attempt +
+              " / " +
+              (source.runtime || "Runtime unknown") +
+              " / " +
+              (source.host || "Host unknown") +
+              " / ",
+            time.stamp(started, "Started", "Timestamp unavailable"),
+            " / " + (page?.activity || (reason ? "unknown" : "ended")),
+          ),
+          reason && h("span", { role: "status" }, "Log unavailable: " + reason),
+          !reason &&
+            !page?.opened &&
+            h(
+              "button",
+              { "data-c": "worker-attempt", "data-attempt": attempt },
+              "Open full log",
+            ),
+          page?.opened && [
+            page.start > 0 &&
+              h(
+                "button",
+                {
+                  "data-c": "worker-earlier",
+                  "data-attempt": attempt,
+                  disabled: !!page.request,
+                },
+                "Earlier records",
+              ),
+            page.end < page.size &&
+              h(
+                "button",
+                {
+                  "data-c": "worker-later",
+                  "data-attempt": attempt,
+                  disabled: !!page.request,
+                },
+                "Later records",
+              ),
+            page.end === null &&
+              !page.reason &&
+              h("span", { class: "meta" }, "Reading session..."),
+            page.reason &&
+              h(
+                "span",
+                { role: "status" },
+                "Worker " + attempt + " unavailable: " + page.reason,
+              ),
+            page.limitReason && h("span", { role: "status" }, page.limitReason),
+            api.capability(page.capability),
+          ],
         );
       },
       workerLoad: function (attempt) {
@@ -2635,15 +2684,10 @@ module.exports = execution.module("conversations", {
         const image = item.image;
         if (image) {
           const resident = closed
-              ? closedViews.get(scope)?.page
-              : item.attempt
-                ? workerPages.get(item.attempt)
-                : live || view,
-            items = resident?.items || [],
-            index = items.findIndex((i) => api.key(i) === key),
-            earlier = items
-              .slice(0, Math.max(0, index))
-              .filter((i) => i.image?.src).length;
+            ? closedViews.get(scope)?.page
+            : item.attempt
+              ? workerPages.get(item.attempt)
+              : live || view;
           const name =
               typeof image.name === "string" ? image.name : "Recorded image",
             identity =
@@ -2668,41 +2712,30 @@ module.exports = execution.module("conversations", {
           const reason =
             imageFailures.get(identity) ||
             image.reason ||
-            (earlier >= 4
-              ? "Image reader preview limit; inspect the native source"
-              : !src
-                ? "Image bytes unavailable or unsupported"
-                : "");
+            (!src ? "Image bytes unavailable or unsupported" : "");
           content = h(
             "figure",
             { class: "transcript-image" },
             h("figcaption", null, name),
             reason
               ? h("p", { role: "status" }, reason)
-              : [
-                  h(
-                    "details",
-                    { "data-view-key": "image:" + identity },
-                    h("summary", null, "Inspect recorded image"),
-                  ),
-                  h("img", {
-                    src,
-                    alt: name,
-                    width: image.width,
-                    height: image.height,
-                    loading: "lazy",
-                    decoding: "async",
-                    onError: () => {
-                      imageFailures.set(
-                        identity,
-                        "Image decode failed; recorded source retained",
-                      );
-                      while (imageFailures.size > 24)
-                        imageFailures.delete(imageFailures.keys().next().value);
-                      draw();
-                    },
-                  }),
-                ],
+              : h("img", {
+                  src,
+                  alt: name,
+                  width: image.width,
+                  height: image.height,
+                  loading: "lazy",
+                  decoding: "async",
+                  onError: () => {
+                    imageFailures.set(
+                      identity,
+                      "Image decode failed; recorded source retained",
+                    );
+                    while (imageFailures.size > 24)
+                      imageFailures.delete(imageFailures.keys().next().value);
+                    draw();
+                  },
+                }),
             typeof image.url === "string" &&
               /^https?:\/\//.test(image.url) &&
               h(
@@ -3062,7 +3095,10 @@ module.exports = execution.module("conversations", {
               "p",
               { role: "status" },
               t.reason
-                ? "History unavailable: " + t.reason
+                ? "History unavailable: " +
+                    (t.boardId
+                      ? t.reason + " · reading the board"
+                      : t.boardReason || t.reason)
                 : "Reading exact closed-task history…",
             ),
             t.reason &&
@@ -3114,6 +3150,12 @@ module.exports = execution.module("conversations", {
                 api.taskText(task, task.brief, "brief", r.root),
               ),
           ),
+          t.boardReason &&
+            h(
+              "p",
+              { role: "status" },
+              "Showing the local record. Board read failed: " + t.boardReason,
+            ),
           history.tools,
           api.worker(
             thread,
@@ -3196,7 +3238,56 @@ module.exports = execution.module("conversations", {
         );
         draw();
       },
+      closedObject: function (object) {
+        const value = {
+          ...object,
+          history_count: object.history?.length || 0,
+          history_lazy: true,
+        };
+        delete value.history;
+        return value;
+      },
+      // The local record paints first; one background board read then updates it in place and a failure leaves it standing.
+      closedBoard: function (t) {
+        if (t.boardRead) return;
+        t.boardRead = true;
+        t.boardId = api.id();
+        ui.send({
+          a: "completed",
+          root: t.root,
+          task: t.task,
+          id: t.boardId,
+          board: true,
+        });
+        t.boardTimer = ui.defer(
+          () =>
+            api.closedBoardReceive(t, {
+              reason: "No board response within 65 seconds",
+            }),
+          65000,
+        );
+      },
+      closedBoardReceive: function (t, r) {
+        ui.cancel(t.boardTimer);
+        t.boardId = null;
+        const object = r.tasks?.find((o) => o.n === t.task);
+        if (object && !object.error) {
+          t.object = api.closedObject(object);
+          t.source = "board";
+          t.boardReason = "";
+          t.reason = "";
+        } else
+          t.boardReason = object?.error || r.reason || "Board read unavailable";
+        draw();
+      },
       closedReceive: function (r) {
+        const refreshed = [...closedViews.values()].find(
+          (t) => t.boardId === r.id && t.root === r.root,
+        );
+        if (refreshed) {
+          api.closedBoardReceive(refreshed, r);
+          return;
+        }
         const t = [...closedViews.values()].find(
           (t) => t.id === r.id && t.root === r.root,
         );
@@ -3207,14 +3298,11 @@ module.exports = execution.module("conversations", {
         if (t.metadata) {
           const object = r.tasks?.find((o) => o.n === t.task);
           if (object && !object.error) {
-            t.object = {
-              ...object,
-              history_count: object.history?.length || 0,
-              history_lazy: true,
-            };
-            delete t.object.history;
+            t.object = api.closedObject(object);
+            t.source = "cache";
           } else
             t.reason = object?.error || t.reason || "Exact closed task omitted";
+          api.closedBoard(t);
           draw();
           return;
         }
@@ -3476,21 +3564,15 @@ module.exports = execution.module("conversations", {
           ...(c.runtime ? { runtime: c.runtime } : {}),
           text: c.text || "",
           caret: c.caret || [0, 0],
-          scroll: c.scroll || 0,
+          scroll: 0,
           next: !!c.next,
           ...(c.replyAck ? { reply_ack: c.replyAck } : {}),
         };
       },
-      // #1773 A4: the host refuses fractional scroll offsets and navigation over 4096 bytes; whole pixels and the newest opened threads fit
+      // #1773 A4: the host refuses navigation over 4096 bytes; row-key positions and the newest opened threads fit
       nav: function () {
         ui.cancel(navTimer);
         navTimer = ui.defer(() => {
-          const whole = Object.fromEntries(
-            Object.entries(scrolls).map(([k, v]) => [
-              k,
-              Math.max(0, Math.round(v) || 0),
-            ]),
-          );
           let navigation;
           for (;;) {
             navigation = {
@@ -3500,12 +3582,12 @@ module.exports = execution.module("conversations", {
               selected: api.current()?.id || null,
               listOnly,
               pane,
-              scrolls: whole,
               threads: {
                 selected,
                 selection,
                 opened,
                 positions,
+                lists,
                 focuses,
                 completed,
                 scopeReturn,
@@ -3700,6 +3782,7 @@ module.exports = execution.module("conversations", {
         api.select(prior.selected, false);
       },
       select: function (id, focus = true) {
+        if (id !== selected) opening = { id, at: performance.now() };
         api.capture(true);
         navigated = true;
         revealed = id;
@@ -3786,7 +3869,7 @@ module.exports = execution.module("conversations", {
         stableOrder.clear();
         stableGroups.clear();
         sidebarProjection = null;
-        scrolls.recent = 0;
+        delete lists.recent;
         items.push(c);
         list = "recent";
         search = "";
@@ -4554,7 +4637,6 @@ module.exports = execution.module("conversations", {
               ? nav.filter
               : "all";
             selection = nav.selection || {};
-            scrolls = nav.scrolls || {};
             selected = nav.selected;
             listOnly = nav.listOnly === true;
             if (
@@ -4610,6 +4692,11 @@ module.exports = execution.module("conversations", {
                 typeof t.selection?.[k] === "string" ? t.selection[k] : null,
               ]),
             );
+            lists = Object.fromEntries(
+              ["recent", "archive"]
+                .filter((k) => anchor.saved(t.lists?.[k]))
+                .map((k) => [k, t.lists[k]]),
+            );
             opened = Array.isArray(t.opened)
               ? t.opened
                   .filter(
@@ -4626,7 +4713,7 @@ module.exports = execution.module("conversations", {
                 ? Object.fromEntries(
                     Object.entries(t.positions).filter(
                       ([k, v]) =>
-                        (Number.isFinite(v) && v >= 0) ||
+                        anchor.saved(v) ||
                         api.anchored(v) ||
                         (v &&
                           Number.isFinite(v.y) &&
@@ -5093,6 +5180,7 @@ module.exports = execution.module("conversations", {
                     {
                       key: r.id,
                       class: "conversation-item task-row",
+                      "data-row-key": r.id,
                       "data-unavailable-pin": r.pinRef,
                     },
                     h(
@@ -5128,7 +5216,11 @@ module.exports = execution.module("conversations", {
                     };
                   return h(
                     "div",
-                    { key: r.id, class: "conversation-item task-row" },
+                    {
+                      key: r.id,
+                      class: "conversation-item task-row",
+                      "data-row-key": r.id,
+                    },
                     h("span", {
                       dangerouslySetInnerHTML: {
                         __html: blocks.task(
@@ -5199,7 +5291,11 @@ module.exports = execution.module("conversations", {
                     : null;
                 return h(
                   "div",
-                  { key: r.id, class: "conversation-item" },
+                  {
+                    key: r.id,
+                    class: "conversation-item",
+                    "data-row-key": r.id,
+                  },
                   h(
                     "button",
                     {
@@ -6392,7 +6488,10 @@ module.exports = execution.module("conversations", {
           return true;
         }
         if (action === "worker-attempt") {
-          api.workerLoad(Number(b.dataset.attempt));
+          const attempt = Number(b.dataset.attempt);
+          api.workerLoad(attempt);
+          const page = workerPages.get(attempt);
+          if (page) page.opened = true;
           draw();
           return true;
         }
@@ -6469,7 +6568,7 @@ module.exports = execution.module("conversations", {
           live.stick = true;
           live.anchor = null;
           api.place(live.thread);
-          if (reset || !live.follow || live.end < live.size) {
+          if (live.opened && (reset || !live.follow || live.end < live.size)) {
             live.gen++;
             live.items = [];
             live.start = live.end = null;
@@ -6996,13 +7095,18 @@ module.exports = execution.module("conversations", {
           "scroll",
           (e) => {
             if (e.target.classList?.contains("conversation-rows")) {
-              scrolls[list] = e.target.scrollTop;
+              lists[list] = anchor.compact(anchor.snapshot(e.target), 2);
               api.nav();
               return;
             }
             if (!e.target.classList?.contains("conversation-reader")) return;
             // Native layout/clamping scrolls are not user navigation; only input or an explicit instrument updates the anchor.
-            if (e.isTrusted && (correcting || (!scrollIntent && !dragScroll)))
+            // A correction hides only its own write: focus or input that moves the reader in the same frame still counts.
+            if (
+              e.isTrusted &&
+              ((correcting && anchor.wrote(e.target)) ||
+                (!scrollIntent && !dragScroll))
+            )
               return;
             if (scrollIntent === "wheel" || scrollIntent === "focus")
               scrollIntent = null;
@@ -7011,9 +7115,7 @@ module.exports = execution.module("conversations", {
               const a = api.mark(e.target);
               api.place(
                 e.target.parentElement.dataset.threadId || selected,
-                a?.board
-                  ? api.boardPosition(a)
-                  : Math.round(e.target.scrollTop),
+                api.readerPlace(e.target, a),
               );
               api.nav();
               return;
@@ -7023,13 +7125,7 @@ module.exports = execution.module("conversations", {
               (live.thread === selected || live.conversation === selected)
             ) {
               const was = live.stick;
-              if (
-                e.target.scrollHeight -
-                  e.target.scrollTop -
-                  e.target.clientHeight >=
-                24
-              )
-                live.stick = false;
+              if (!anchor.atBottom(e.target)) live.stick = false;
               live.anchor = api.mark(e.target);
               api.storeAnchor(live.thread, live);
               api.edge(e.target, live);
@@ -7047,11 +7143,7 @@ module.exports = execution.module("conversations", {
             const shown = api.latest();
             if (
               !view.busy.initial &&
-              (view.end < view.size ||
-                e.target.scrollHeight -
-                  e.target.scrollTop -
-                  e.target.clientHeight >=
-                  24)
+              (view.end < view.size || !anchor.atBottom(e.target))
             )
               view.stick = false;
             if (view.stick) view.unseen = false;
@@ -7155,6 +7247,47 @@ module.exports = execution.module("conversations", {
           }
         }
       },
+      openSource: function () {
+        const closed = [...closedViews.values()].find(
+          (view) => view.thread === selected && view.object,
+        );
+        if (closed) return closed.source || "unknown";
+        const task = /^task:(.+)\/(\d+)$/.exec(selected || "");
+        return (
+          task
+            ? snapshot.projects?.some(
+                (p) =>
+                  p.issues === task[1] &&
+                  p.tasks?.some((t) => t.n === Number(task[2])),
+              )
+            : items.some((c) => c.id === selected)
+        )
+          ? "snapshot"
+          : "unknown";
+      },
+      // Click-to-text, per open: the first draw that shows this thread's records ends the measure. No latency ceiling.
+      // Coming back to the Conversations page opens its selected thread; a redraw of that page does not.
+      entering: function () {
+        opening = selected ? { id: selected, at: performance.now() } : null;
+      },
+      openMeasure: function (detail) {
+        if (
+          !opening ||
+          opening.id !== selected ||
+          !detail?.querySelector(
+            ".dialogue-item,.attempt-row,.closed-history .object-metadata,.worker-history",
+          )
+        )
+          return;
+        conversationOpen(
+          [readThreads.has(selected) ? "warm" : "cold", api.openSource()],
+          { duration_us: (performance.now() - opening.at) * 1000 },
+        );
+        opening = null;
+        readThreads.add(selected);
+        while (readThreads.size > 256)
+          readThreads.delete(readThreads.values().next().value);
+      },
       afterDraw: function () {
         api.taskTrim();
         if (view && view.id !== selected) {
@@ -7186,14 +7319,17 @@ module.exports = execution.module("conversations", {
         if (changed) readerPending = null;
         if (changed && detail && !log) {
           const p = positions[identity];
-          if (typeof p === "number" && detail.scrollTop !== p) {
-            detail.scrollTop = p;
-            if (Math.abs(detail.scrollTop - p) >= 1) readerPending = p;
-          } else if (!p && detail.scrollTop !== 0) detail.scrollTop = 0;
-        } else if (readerPending !== null && detail && !log) {
-          detail.scrollTop = readerPending;
-          if (Math.abs(detail.scrollTop - readerPending) < 1)
-            readerPending = null;
+          if (p?.rows) {
+            if (!anchor.restore(detail, p)) readerPending = p;
+          } else if (!p) anchor.top(detail);
+        } else if (
+          readerPending !== null &&
+          detail &&
+          !log &&
+          anchor.survivor(detail, readerPending) >= 0
+        ) {
+          anchor.restore(detail, readerPending);
+          readerPending = null;
         }
         if (log && open) api.open(open);
         api.observe(detail);
@@ -7226,12 +7362,27 @@ module.exports = execution.module("conversations", {
               api.place(selected, { key: node.dataset.readingKey, y: 0 });
               api.nav();
             }
-            detail.scrollTop +=
-              node.getBoundingClientRect().top -
-              detail.getBoundingClientRect().top;
+            anchor.reveal(detail, node);
             appliedTarget = token;
           }
         }
+        if (
+          !changed &&
+          detail &&
+          readerBefore?.id === identity &&
+          !(
+            live && (live.thread === selected || live.conversation === selected)
+              ? live
+              : view?.id === selected
+                ? view
+                : {}
+          ).stick &&
+          !(positions[identity] === undefined && /^task:/.test(identity || ""))
+        )
+          anchor.measure(detail, readerBefore.position, "conversations");
+        readerBefore = null;
+        anchor.track(detail, "conversations");
+        api.openMeasure(detail);
 
         if (live && detail && log) {
           let changed = false;
@@ -7254,8 +7405,7 @@ module.exports = execution.module("conversations", {
           return;
         }
         const c = api.current(),
-          input = menu.querySelector("[data-c-field=text]"),
-          record = menu.querySelector(".conversation-record");
+          input = menu.querySelector("[data-c-field=text]");
         const rows = menu.querySelector(".conversation-rows");
         if (focusSearch) {
           focusSearch = false;
@@ -7269,11 +7419,12 @@ module.exports = execution.module("conversations", {
           );
           if (n) {
             anchor.hold(rows, a, n);
-            scrolls[list] = rows.scrollTop;
           }
-        } else if (rows && rows.scrollTop !== scrolls[list] && changed)
-          rows.scrollTop = scrolls[list] || 0;
-        if (record && c) record.scrollTop = c.scroll || 0;
+        } else if (rows && changed) anchor.restore(rows, lists[list]);
+        if (rows && listBefore)
+          anchor.measure(rows, listBefore, "conversations");
+        listBefore = null;
+        anchor.track(rows, "conversations");
         if (
           row &&
           rows?.checkVisibility() &&
@@ -7282,9 +7433,11 @@ module.exports = execution.module("conversations", {
           const r = row.getBoundingClientRect(),
             b = rows.getBoundingClientRect(),
             offset = r.top - b.top;
-          rows.scrollTop +=
-            offset - Math.max(0, Math.min(offset, b.height - r.height));
-          scrolls[list] = rows.scrollTop;
+          anchor.by(
+            rows,
+            offset - Math.max(0, Math.min(offset, b.height - r.height)),
+          );
+          lists[list] = anchor.compact(anchor.snapshot(rows), 2);
           api.nav();
         }
         listReveal = null;
@@ -7384,7 +7537,7 @@ module.exports = execution.module("conversations", {
             selected,
             list,
             selection,
-            scrolls,
+            lists,
             positions,
             focuses,
             opened,
@@ -7448,13 +7601,13 @@ module.exports = execution.module("conversations", {
             selected,
             list,
             selection,
-            scrolls,
             positions,
             focuses,
             opened,
             listOnly,
             search,
           } = c);
+          lists = c.lists || {};
           if (
             c.pane &&
             Number.isFinite(c.pane.width) &&

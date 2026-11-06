@@ -181,11 +181,22 @@ const fs = require("node:fs"),
         .locator(".conversation-reader")
         .evaluate((el) => {
           el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight * 2);
-          el.dispatchEvent(new Event("scroll"));
           const top = el.getBoundingClientRect().top,
-            n = [...el.querySelectorAll("[data-native-part]")].find(
-              (n) => n.getBoundingClientRect().bottom > top,
-            );
+            visible = () =>
+              [...el.querySelectorAll("[data-native-part]")].find(
+                (n) => n.getBoundingClientRect().bottom > top,
+              );
+          // On every font, park the record's copy control just above the viewport so focus has to scroll.
+          for (let i = 0; i < 8 && visible(); i++) {
+            const copy = visible()
+              .closest("[data-key]")
+              .querySelector(".copy-block")
+              .getBoundingClientRect();
+            if (copy.bottom <= top) break;
+            el.scrollTop += copy.bottom - top + 1;
+          }
+          el.dispatchEvent(new Event("scroll"));
+          const n = visible();
           if (!n) return null;
           const range = document.createRange();
           range.selectNodeContents(n);
@@ -200,6 +211,30 @@ const fs = require("node:fs"),
         });
       assert(anchor, "visible paragraph has an identity");
       await page.locator('[data-key="' + anchor.key + '"] .copy-block').focus();
+      // Focus scrolls its control into view; the hold starts from where that leaves the reader.
+      anchor.y = await page.evaluate(
+        (a) =>
+          new Promise((r) =>
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => {
+                const el = document.querySelector(".conversation-reader");
+                r(
+                  el
+                    .querySelector(
+                      '[data-key="' +
+                        a.key +
+                        '"] [data-native-part="' +
+                        a.part +
+                        '"]',
+                    )
+                    .getBoundingClientRect().top -
+                    el.getBoundingClientRect().top,
+                );
+              }),
+            ),
+          ),
+        anchor,
+      );
       await page.evaluate(() => {
         nativeCount++;
       });

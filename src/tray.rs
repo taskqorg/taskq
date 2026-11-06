@@ -2098,9 +2098,7 @@ fn add_submit(
     ) {
         Ok(_) => {}
         Err(ADD_UNAVAILABLE) => {
-            return Err(
-                "Add project worker unavailable; prior result unknown; do not retry".into(),
-            );
+            return Err("Add project worker unavailable; prior result unknown; do not retry".into());
         }
         Err(_) => {
             return Err(
@@ -2301,7 +2299,7 @@ fn queued_resources(_install: &Path, _root: &Path, _message: &Value) -> crate::R
 }
 /// MP14 Completed: one board history page through the owner CLI; the tray itself stays token-free.
 fn queued_history(_install: &Path, root: &Path, m: &Value) -> crate::Res<Value> {
-    if m["transcript"] != true {
+    if m["transcript"] != true && m["board"] != true {
         return crate::reports::cached_history(root, m);
     }
     let mut c = owner_command(root)?;
@@ -2893,6 +2891,7 @@ fn web_observation(row: &Value) -> crate::Res<Value> {
                     | "unowned-async"
                     | "completion-timeout"
                     | "collection-incomplete"
+                    | "scroll-drift"
             )
         )
     {

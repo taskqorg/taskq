@@ -140,15 +140,14 @@ const fs = require("node:fs"),
       assert.equal(await panel.locator("script").count(), 0);
       assert.equal(
         await panel.locator("img").count(),
-        4,
-        "reader caps mounted images",
+        6,
+        "every recorded image shows inline; the page byte window in tests/conversations-bounds.browser.cjs bounds them",
       );
       assert.match(
-        await panel.locator('[data-key="10:0"] .meta').innerText(),
+        await panel.locator('[data-key="attempt:71:10:0"] .meta').innerText(),
         /^Native image/,
         "a native user-image wrapper never claims board/human authorship",
       );
-      assert.match(await panel.innerText(), /Image reader preview limit/);
       assert.match(await panel.innerText(), /Image bytes missing/);
       assert.equal(
         await panel
@@ -174,7 +173,9 @@ const fs = require("node:fs"),
         .filter({ hasText: "Exact source" })
         .click();
       assert.equal(
-        await panel.locator('[data-key="0:0"] details pre').innerText(),
+        await panel
+          .locator('[data-key="attempt:71:0:0"] details pre')
+          .innerText(),
         text,
       );
       await panel
@@ -189,7 +190,9 @@ const fs = require("node:fs"),
         );
         for (const width of [900, 540]) {
           await page.setViewportSize({ width, height: 760 });
-          await panel.locator('[data-key="0:0"]').scrollIntoViewIfNeeded();
+          await panel
+            .locator('[data-key="attempt:71:0:0"]')
+            .scrollIntoViewIfNeeded();
           assert(
             await page
               .locator(".conversation-reader")
