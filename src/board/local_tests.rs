@@ -492,7 +492,14 @@ fn shared_2431_reopen_survives_an_unchanged_poll() {
                     let other = json!({"number":6,"state":"open","updated_at":stamp(base+400),"labels":[{"name":"taskq"}]});
                     let body = if url.ends_with("/issues/5") {
                         singles.set(singles.get() + 1);
-                        if current.get() == 5 {
+                        if final_read == "deleted" && current.get() == 7 {
+                            return Err(Error::http(403, "refused after not-found"));
+                        }
+                        if final_read == "deleted" && current.get() >= 8 {
+                            row(true, 600)
+                        } else if current.get() >= 5 && matches!(final_read, "closed" | "deleted")
+                            || current.get() == 5
+                        {
                             match final_read {
                                 "deleted" => return Err(Error::http(404, "not found")),
                                 "unreadable" => return Err(Error::http(403, "refused")),
@@ -539,6 +546,8 @@ fn shared_2431_reopen_survives_an_unchanged_poll() {
                         );
                         json!([if current.get() == 0 {
                             row(initially_open, 100)
+                        } else if current.get() >= 5 {
+                            row(true, 100)
                         } else {
                             row(true, 300)
                         }])
@@ -589,7 +598,11 @@ fn shared_2431_reopen_survives_an_unchanged_poll() {
                 assert_eq!(lists.get(), 3);
                 stage.set(5);
                 shared::forget(&board.api, true);
-                let result = board.issues(None);
+                let result = if matches!(final_read, "closed" | "deleted") {
+                    board.issues(Some(0))
+                } else {
+                    board.issues(None)
+                };
                 if matches!(final_read, "unreadable" | "stale" | "invalid") {
                     assert!(
                         result
@@ -602,9 +615,66 @@ fn shared_2431_reopen_survives_an_unchanged_poll() {
                     check(board.issues(None).unwrap());
                     assert_eq!(lists.get(), 5, "unknown reconciliation retries a full read");
                 } else {
-                    assert!(result.unwrap().iter().all(|i| i.number != 5));
+                    let history = result.unwrap();
+                    if final_read == "closed" {
+                        let closed = history.iter().find(|i| i.number == 5).unwrap();
+                        assert!(!closed.open);
+                        assert_eq!(closed.updated, base + 500);
+                    } else {
+                        assert!(
+                            history.iter().all(|i| i.number != 5),
+                            "404 cannot be undone by broad old history"
+                        );
+                    }
                     stage.set(6);
                     assert!(board.issues(None).unwrap().iter().all(|i| i.number != 5));
+                    let later = board.issues(Some(0)).unwrap();
+                    if final_read == "closed" {
+                        assert!(!later.iter().find(|i| i.number == 5).unwrap().open);
+                    } else {
+                        assert!(
+                            later.iter().all(|i| i.number != 5),
+                            "later broad history cannot resurrect NotFound"
+                        );
+                    }
+                    shared::forget(&board.api, true);
+                    assert!(board.issues(None).unwrap().iter().all(|i| i.number != 5));
+                    assert!(board.issues(None).unwrap().iter().all(|i| i.number != 5));
+                    if final_read == "deleted" {
+                        stage.set(7);
+                        assert!(
+                            board
+                                .issues(Some(0))
+                                .unwrap_err()
+                                .text()
+                                .contains("reconciliation unknown")
+                        );
+                        assert!(
+                            shared::snapshot(&board.api, None, false)
+                                .unwrap()
+                                .iter()
+                                .all(|i| i.number != 5)
+                        );
+                        stage.set(8);
+                        let restored = board.issues(Some(0)).unwrap();
+                        let restored = restored.iter().find(|i| i.number == 5).unwrap();
+                        assert!(restored.open);
+                        assert_eq!(
+                            restored.updated,
+                            base + 600,
+                            "only current direct evidence can restore presence"
+                        );
+                        assert_eq!(
+                            board
+                                .issues(None)
+                                .unwrap()
+                                .iter()
+                                .find(|i| i.number == 5)
+                                .unwrap()
+                                .updated,
+                            base + 600
+                        );
+                    }
                 }
             }
         }

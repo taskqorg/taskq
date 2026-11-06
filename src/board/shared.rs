@@ -19,11 +19,29 @@ struct Poll {
     full: u64,
     pokes: BTreeMap<std::path::PathBuf, Option<SystemTime>>,
 }
+#[derive(Clone, PartialEq)]
+enum Row {
+    Current(Issue),
+    NotFound(Issue),
+}
+impl Row {
+    fn issue(&self) -> &Issue {
+        match self {
+            Self::Current(issue) | Self::NotFound(issue) => issue,
+        }
+    }
+    fn current(&self) -> Option<&Issue> {
+        match self {
+            Self::Current(issue) => Some(issue),
+            Self::NotFound(_) => None,
+        }
+    }
+}
 #[derive(Clone, Default)]
 struct Snapshot {
     ready: bool,
     history_since: Option<i64>,
-    rows: BTreeMap<u64, Issue>,
+    rows: BTreeMap<u64, Row>,
     confirmed: BTreeMap<u64, Issue>,
     clock: i64,
     listed: Option<i64>,
@@ -69,7 +87,9 @@ pub(super) fn patch(api: &Api, issue: &Issue) {
             snapshot.confirmed.insert(issue.number, issue.clone());
         }
         if snapshot.rows.contains_key(&issue.number) {
-            snapshot.rows.insert(issue.number, issue.clone());
+            snapshot
+                .rows
+                .insert(issue.number, Row::Current(issue.clone()));
         }
     }
 }
@@ -90,6 +110,10 @@ fn rows(api: &Api, snapshot: Snapshot, since: Option<i64>, tasks: bool) -> Vec<I
     snapshot
         .rows
         .into_values()
+        .filter_map(|row| match row {
+            Row::Current(issue) => Some(issue),
+            Row::NotFound(_) => None,
+        })
         .filter(|i| since.map_or(i.open, |since| i.updated >= since))
         .filter(|i| !tasks || i.labels.iter().any(|l| l == crate::service::TASK_LABEL))
         .collect()
@@ -187,62 +211,68 @@ pub(super) fn issues(
             .map_err(|_| "shared board snapshot poisoned")?
             .rows
             .values()
-            .filter(|issue| issue.open && !crate::service::is_host(issue))
             .cloned()
             .collect();
-        let mut removed = vec![];
-        if relisted {
-            let missing: Vec<_> = baseline
-                .iter()
-                .filter(|prior| {
-                    prior.open
-                        && !list.iter().any(|i| i.number == prior.number)
-                        && !changes
-                            .iter()
-                            .any(|i| i.number == prior.number && i.updated >= prior.updated)
-                })
-                .collect();
-            for prior in missing {
-                let observed = api
-                    .call("GET", &format!("/issues/{}", prior.number), None)
-                    .and_then(|reply| {
-                        let value = reply.json()?;
-                        if !matches!(value["state"].as_str(), Some("open" | "closed")) {
-                            return Err(Error::new(
-                                Reason::Invalid,
-                                "direct issue state unavailable",
-                            ));
-                        }
-                        Ok(github::parse_issue(&value))
-                    });
-                let observed = match observed {
-                    Ok(issue)
-                        if issue.number == prior.number
-                            && issue.updated >= prior.updated
-                            && issue.updated > 0 =>
-                    {
-                        issue
+        let candidates: Vec<_> = baseline
+            .iter()
+            .filter(|row| {
+                let prior = row.issue();
+                match row {
+                    Row::Current(_) => {
+                        relisted
+                            && prior.open
+                            && !crate::service::is_host(prior)
+                            && !list.iter().any(|i| i.number == prior.number)
+                            && !changes
+                                .iter()
+                                .any(|i| i.number == prior.number && i.updated >= prior.updated)
                     }
-                    Ok(_) => {
-                        poll.open = None;
-                        return Err(format!("shared board issue {} reconciliation unknown: direct observation older than accepted update or invalid", prior.number).into());
+                    Row::NotFound(_) => list
+                        .iter()
+                        .chain(&changes)
+                        .any(|i| i.number == prior.number),
+                }
+            })
+            .collect();
+        let mut direct = vec![];
+        for baseline in candidates {
+            let prior = baseline.issue();
+            let observed = api
+                .call("GET", &format!("/issues/{}", prior.number), None)
+                .and_then(|reply| {
+                    let value = reply.json()?;
+                    if !matches!(value["state"].as_str(), Some("open" | "closed")) {
+                        return Err(Error::new(
+                            Reason::Invalid,
+                            "direct issue state unavailable",
+                        ));
                     }
-                    Err(e) if e.reason() == Reason::NotFound => {
-                        removed.push(prior.clone());
-                        continue;
-                    }
-                    Err(e) => {
-                        poll.open = None;
-                        return Err(e.map_text(|text| {
-                            format!(
-                                "shared board issue {} reconciliation unknown: {text}",
-                                prior.number
-                            )
-                        }));
-                    }
-                };
-                changes.push(observed);
-            }
+                    Ok(github::parse_issue(&value))
+                });
+            let observed = match observed {
+                Ok(issue)
+                    if issue.number == prior.number
+                        && issue.updated >= prior.updated
+                        && issue.updated > 0 =>
+                {
+                    Row::Current(issue)
+                }
+                Ok(_) => {
+                    poll.open = None;
+                    return Err(format!("shared board issue {} reconciliation unknown: direct observation older than accepted update or invalid", prior.number).into());
+                }
+                Err(e) if e.reason() == Reason::NotFound => Row::NotFound(prior.clone()),
+                Err(e) => {
+                    poll.open = None;
+                    return Err(e.map_text(|text| {
+                        format!(
+                            "shared board issue {} reconciliation unknown: {text}",
+                            prior.number
+                        )
+                    }));
+                }
+            };
+            direct.push((baseline, observed));
         }
         let mut saved = shared
             .snapshot
@@ -250,8 +280,10 @@ pub(super) fn issues(
             .map_err(|_| "shared board snapshot poisoned")?;
         let mut next = saved.clone();
         // Heartbeat presence is list-owned; only the confirmed older-row correction below may replace it.
-        next.rows
-            .retain(|_, issue| !issue.open || !crate::service::is_host(issue));
+        next.rows.retain(|_, row| {
+            row.current()
+                .is_none_or(|issue| !issue.open || !crate::service::is_host(issue))
+        });
         // The confirmed reply can arrive while the poll is in flight; only older list rows are corrected.
         for issue in &mut list {
             if let Some(written) = next.confirmed.get(&issue.number).filter(|written| {
@@ -263,30 +295,36 @@ pub(super) fn issues(
                 *issue = written.clone();
             }
         }
-        for prior in removed {
-            if next.rows.get(&prior.number) == Some(&prior) {
-                next.rows.remove(&prior.number);
+        for issue in list.into_iter().chain(changes) {
+            if next.rows.get(&issue.number).is_none_or(|prior| {
+                prior
+                    .current()
+                    .is_some_and(|prior| prior.updated <= issue.updated)
+            }) {
+                next.rows.insert(issue.number, Row::Current(issue));
             }
         }
-        for issue in list.into_iter().chain(changes) {
-            if next
-                .rows
-                .get(&issue.number)
-                .is_none_or(|prior| prior.updated <= issue.updated)
+        // Current direct authority follows broad observations; a concurrent accepted row retains precedence.
+        for (baseline, observed) in direct {
+            let number = baseline.issue().number;
+            if saved.rows.get(&number) == Some(baseline)
+                && shared.epoch.load(Ordering::Acquire) == epoch
             {
-                next.rows.insert(issue.number, issue);
+                next.rows.insert(number, observed);
             }
         }
         if let Some(open) = poll.open.as_mut() {
             open.list = next
                 .rows
                 .values()
+                .filter_map(Row::current)
                 .filter(|issue| issue.open)
                 .cloned()
                 .collect();
             for issue in next
                 .rows
                 .values()
+                .map(Row::issue)
                 .filter(|i| i.labels.iter().any(|l| l == crate::service::TASK_LABEL))
             {
                 open.known.insert(issue.number, issue.updated);
