@@ -548,6 +548,18 @@ const place = (p, s) =>
   }, sel(s));
 // Only input moves a reader's anchor, so a real wheel parks the reader, and the gate closes before the case starts.
 const park = async (p, s) => {
+  await p.evaluate(() => {
+    window.parkProof = { last: 0 };
+    const note = () => {
+      parkProof.last = performance.now();
+    };
+    for (const type of ["wheel", "scroll"])
+      document.addEventListener(type, note, { capture: true, passive: true });
+    window.parkCleanup = () => {
+      for (const type of ["wheel", "scroll"])
+        document.removeEventListener(type, note, true);
+    };
+  });
   const { delta, x, y } = await p.evaluate(({ viewport, rows, hold }) => {
     const v = document.querySelector(viewport),
       all = [...document.querySelectorAll(rows)],
@@ -570,7 +582,10 @@ const park = async (p, s) => {
   }, sel(s));
   await p.mouse.move(x, y);
   await p.mouse.wheel(0, delta);
-  await p.waitForTimeout(260);
+  await p.waitForFunction(
+    () => parkProof.last > 0 && performance.now() - parkProof.last >= 200,
+  );
+  await p.evaluate(() => parkCleanup());
   assert(
     await p.evaluate(
       (v) => document.querySelector(v).scrollTop > 0,
@@ -699,6 +714,7 @@ const refreshDuringScrolling = async (p, s, at) => {
     ({ viewport, rows, id, marker }) => {
       const proof = (window.gateProof = {
         last: 0,
+        wheels: 0,
         applied: null,
         place: null,
       });
@@ -717,8 +733,9 @@ const refreshDuringScrolling = async (p, s, at) => {
               ];
         });
       };
-      const note = () => {
+      const note = (event) => {
         proof.last = performance.now();
+        if (event.type === "wheel") proof.wheels++;
         proof.place = read();
       };
       // Wheel listeners can run before composited scrolling finishes; compare the last painted rows.
@@ -760,11 +777,18 @@ const refreshDuringScrolling = async (p, s, at) => {
   await p.mouse.wheel(0, 24);
   // mouse.wheel queues native input; the page may receive it after the data unless we observe its arrival.
   await p.waitForFunction(() => gateProof.last > 0);
-  await s.refresh(marker)(p);
   for (let i = 0; i < 3; i++) {
+    const wheels = await p.evaluate(() => gateProof.wheels);
     await p.mouse.wheel(0, i % 2 ? 24 : -24);
-    await p.waitForTimeout(40);
+    await p.waitForFunction((n) => gateProof.wheels > n, wheels);
+    if (i < 2) await p.waitForTimeout(40);
   }
+  // Queue data while the final native input is still settling; later input would legitimately move the rows again.
+  await s.refresh(marker)(p);
+  assert(
+    await p.evaluate(() => !gateProof.applied),
+    at + ": data applied before scrolling settled",
+  );
   await p.waitForFunction(() => gateProof.applied, null, { timeout: 3000 });
   await frames(p);
   const proof = await p.evaluate(() => gateProof),

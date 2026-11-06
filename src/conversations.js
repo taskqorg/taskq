@@ -4770,6 +4770,7 @@ module.exports = execution.module("conversations", {
             api.place();
           } else if (!navigated && !selected)
             selected = api.visible()[0]?.id || null;
+          if (selected && !opening) api.entering();
           api.resume();
         }
 

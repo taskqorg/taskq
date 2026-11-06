@@ -513,6 +513,23 @@ const closedThread = async (browser, boardReply) => {
 (async () => {
   const browser = await chromium.launch(require("./browser.cjs")());
   try {
+    const restored = await page(browser);
+    const saved = state([live]);
+    saved.conversations.navigation = { threads: { selected: thread } };
+    await restored.evaluate((s) => taskq.receive(s), saved);
+    await restored.locator(".attempt-row").first().waitFor();
+    assert.deepEqual(
+      (await opens(restored)).map((row) => row.operation),
+      ["js.conversation.open.cold.snapshot"],
+      "restoring the selected thread records its first paint",
+    );
+    await restored.evaluate((s) => taskq.receive(s), saved);
+    assert.equal(
+      (await opens(restored)).length,
+      1,
+      "a restored thread's redraw is not another open",
+    );
+    await restored.close();
     await liveThread(browser);
     console.log("PASS live thread");
     const updated = await closedThread(browser, {

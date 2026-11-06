@@ -277,6 +277,7 @@ Each scroll region holds position by row key and offset, never pixels; only the 
 One reading anchor owns every scroll position and restores focus and selection by key; visible rows shift at most 2 CSS px, and data arriving during wheel, touch, drag or inertia applies within 250 ms after scrolling stops.
 
 Scrolling stays native, with no library. Drift over 2 CSS px goes to existing telemetry with surface and cause ([detail](docs/design/ai-workspace.md#scroll-position)).
+Conversations keeps complete task threads, paged attempt logs on demand, local first paint, background refresh and per-open timing, including restored selections ([detail](docs/design/ai-workspace.md#task-thread)).
 ### [menu]
 [menu]: docs/design/menu.md#contract-detail
 [hs]: docs/design/host-service.md#contract-detail
