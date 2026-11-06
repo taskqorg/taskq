@@ -10,7 +10,8 @@ permissions:
   issues: read
 env:
   CHECK_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || 'HEAD^' }}
-  CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' }}
+  # docs/testing.md: a README shots branch gets its selected checks; every other dispatch, main included, stays full.
+  CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' && !startsWith(github.ref, 'refs/heads/taskq-shots-') }}
 jobs:
   plan:
     runs-on: ubuntu-latest
