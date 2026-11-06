@@ -241,6 +241,9 @@ fn decoded(value: &Value) -> Res<Sample> {
             original.insert((*old).into(), field.clone());
         }
     }
+    if kind == "stage" && value["attempt"].is_null() {
+        original.insert("attempt".into(), json!(0));
+    }
     if kind == "operation" && value.get("process_id").is_some() {
         original.insert("trace".into(),json!({"run":value["run_id"],"process":value["process_id"],"span":value["span_id"],"parent":value["parent_id"]}));
     }

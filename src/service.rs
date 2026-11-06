@@ -2897,7 +2897,16 @@ impl<'a> Service<'a> {
     }
 
     /// The `build` or `review` stage of a child that exited or was stopped (§ 4 Profiling); `v` is its task's view.
-    fn ended(&mut self, n: u64, a: u64, v: Option<&View>, failure: Option<&'static str>) {
+    #[tracing::instrument(name="taskq.attempt.ended",skip_all,fields(project=self.cfg.repo.as_str(),task=n,attempt=a))]
+    fn ended(
+        &mut self,
+        n: u64,
+        a: u64,
+        v: Option<&View>,
+        failure: Option<&'static str>,
+        agent: Option<(PathBuf, u64)>,
+        recorded: bool,
+    ) {
         let Some((role, rt, begun)) = self.begun.remove(&a) else {
             return;
         };
@@ -2918,6 +2927,20 @@ impl<'a> Service<'a> {
             err
         };
         let log = crate::runtime::attempt_log(&self.cfg.root, &role, n, a);
+        let _actor = tracing::info_span!("attempt.actor", actor = role.as_str()).entered();
+        if !recorded {
+            let (source, offset) = agent.unwrap_or_else(|| (log.clone(), 0));
+            let offset = if source == log {
+                offset.max(begun.map_or(0, |(_, pos)| pos))
+            } else {
+                offset
+            };
+            if let Err(error) =
+                crate::runtime::record_session(&self.cfg.install, &source, offset, &rt, n, a)
+            {
+                self.log.push(format!("Agent telemetry: unknown ({error})"));
+            }
+        }
         let stage = if role == "reviewer" {
             "review"
         } else {
@@ -3741,7 +3764,7 @@ impl<'a> Service<'a> {
     }
 
     /// One pass of § 4. Tasks written to in a step are left alone by later steps until the next pass re-reads them.
-    #[tracing::instrument(name = "service.Service.pass", skip_all)]
+    #[tracing::instrument(name="service.Service.pass",skip_all,fields(project=self.cfg.repo.as_str(),actor="service"))]
     pub fn pass(&mut self) -> Result<(), String> {
         self.full_stop_owned();
         self.ownership_known = false;
@@ -4566,6 +4589,8 @@ impl<'a> Service<'a> {
                             code,
                             k.proc.exit_error(),
                             lost.map(|l| (k.execution, l)),
+                            k.proc.progress_source().ok(),
+                            k.proc.records_agent(),
                         ));
                     }
                     false
@@ -4583,8 +4608,8 @@ impl<'a> Service<'a> {
         for (task, attempt, execution, native, pid) in retired.drain(..) {
             self.retired(task, attempt, execution, native, pid);
         }
-        for (n, a, code, failure, lost) in exited {
-            self.ended(n, a, by_n.get(&n).copied(), failure);
+        for (n, a, code, failure, lost, source, recorded) in exited {
+            self.ended(n, a, by_n.get(&n).copied(), failure, source, recorded);
             if code == 0
                 && let Some(v) = by_n.get(&n)
                 && let Some((rt, _)) = rt_of(&v.projection.task)
@@ -4694,7 +4719,7 @@ impl<'a> Service<'a> {
                     match crate::runtime::observe_until(native_until,||k.proc.exited()) {
                         Ok(Some(_))=>{
                             retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has(Cap::Cli),k.proc.id()));
-                            released.insert(k.execution);stopped.push((k.task,k.attempt));
+                            released.insert(k.execution);stopped.push((k.task,k.attempt,k.proc.progress_source().ok(),k.proc.records_agent()));
                             return false;
                         }
                         Ok(None)=>{k.unknown=Some(format!("execution {} released by Exit on the board, native process still running",k.execution));return true;}
@@ -4716,7 +4741,7 @@ impl<'a> Service<'a> {
                         Ok(_)=>{
                             crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, pid_before, "ok", kill_reason);
                             retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has(Cap::Cli),k.proc.id()));
-                            released.insert(k.execution);stopped.push((k.task,k.attempt));
+                            released.insert(k.execution);stopped.push((k.task,k.attempt,k.proc.progress_source().ok(),k.proc.records_agent()));
                         },
                         Err(e)=>{k.unknown=Some(e);return true;}
                     },
@@ -4728,8 +4753,8 @@ impl<'a> Service<'a> {
         for (task, attempt, execution, native, pid) in retired {
             self.retired(task, attempt, execution, native, pid);
         }
-        for (n, a) in stopped {
-            self.ended(n, a, by_n.get(&n).copied(), None);
+        for (n, a, source, recorded) in stopped {
+            self.ended(n, a, by_n.get(&n).copied(), None, source, recorded);
         }
         self.held.retain(|l| {
             by_n.get(&l.task)
@@ -5975,6 +6000,14 @@ impl<'a> Service<'a> {
                                         .map_or("", |c| c.body.as_str()),
                                 )
                             });
+                        let _context = tracing::info_span!(
+                            "queue.transition",
+                            task = n,
+                            attempt = side.attempt,
+                            entry = id,
+                            actor = side.role.as_deref()
+                        )
+                        .entered();
                         crate::profile::transition(
                             n,
                             id,
@@ -7032,6 +7065,7 @@ impl<'a> Service<'a> {
         }
     }
 
+    #[tracing::instrument(name="taskq.claim",skip_all,fields(task=v.issue.number,actor=role))]
     fn claim_inner(
         &mut self,
         v: &View,

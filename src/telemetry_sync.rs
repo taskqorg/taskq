@@ -347,12 +347,36 @@ fn run(
     }
 }
 
+/// One CoreQ shipper pass; cursor, receipts and pruning remain owned by CoreQ.
+fn observations(install: &Path, wire: &mut dyn Wire, backoff: &mut Backoff) -> (Value, u64) {
+    let result = crate::telemetry::budget(install, "telemetry.sqlite3")
+        .and_then(|budget| {
+            coreq::telemetry::Store::open_bounded(
+                &install.join("telemetry.log/universal.sqlite3"),
+                budget,
+            )
+        })
+        .map_err(Delivery::Stopped)
+        .and_then(|store| {
+            store.ship(&enrollment::dir(install), backoff, wire)?;
+            store.shipper().map_err(Delivery::Stopped)
+        });
+    match result {
+        Ok(status) => (status, IDLE),
+        Err(Delivery::Retry(wait)) => {
+            (json!({"state":"retrying","last_error":"unreachable"}), wait)
+        }
+        Err(Delivery::Stopped(error)) => (json!({"state":"unknown","last_error":error}), STOP),
+    }
+}
+
 type Job = JoinHandle<(Backoff, Value, u64)>;
 
 /// The service's telemetry sender beside [`enrollment::Sender`]: one job at a time on its own thread, only on the
 /// approved board's service and only under the telemetry grant.
 #[derive(Default)]
 pub struct Sender {
+    observations: bool,
     job: Option<Job>,
     backoff: Backoff,
     wait_until: u64,
@@ -361,6 +385,12 @@ pub struct Sender {
 }
 
 impl Sender {
+    pub fn observations() -> Self {
+        Self {
+            observations: true,
+            ..Self::default()
+        }
+    }
     /// One step per service pass; reads only the connection file. Returns a log line when the state changes.
     pub fn tick(&mut self, install: &Path, snap: Option<&Snapshot>, now: u64) -> Option<String> {
         self.tick_with(install, snap, now, |i| {
@@ -394,10 +424,16 @@ impl Sender {
                 Err(_) => {
                     self.status = json!({"state": "unknown", "last_error": "connection-unreadable"})
                 }
-                Ok(st) => match st
-                    .map(|s| s["active"].clone())
-                    .filter(|a| a.is_object() && granted(a))
-                {
+                Ok(st) => match st.map(|s| s["active"].clone()).filter(|a| {
+                    a.is_object()
+                        && if self.observations {
+                            a["schemas"].as_array().is_some_and(|s| {
+                                s.iter().any(|s| s == coreq::telemetry::OBSERVATION_SCHEMA)
+                            })
+                        } else {
+                            granted(a)
+                        }
+                }) {
                     None => self.status = json!({"state": "off"}),
                     Some(a) if !enrollment::speaks(&a, snap) => {
                         self.status =
@@ -407,15 +443,22 @@ impl Sender {
                         let (install, mut backoff) =
                             (install.to_path_buf(), std::mem::take(&mut self.backoff));
                         self.status["state"] = json!("syncing");
-                        self.job = Some(std::thread::spawn(move || {
-                            let (s, wait) = run(
-                                &install,
-                                &mut *wire(&install),
-                                &mut backoff,
-                                Instant::now() + Duration::from_secs(RUN),
-                            );
-                            (backoff, s, wait)
-                        }));
+                        let observations_path = self.observations;
+                        self.job = Some(std::thread::spawn(coreq::telemetry::capture::bind(
+                            move || {
+                                let (s, wait) = if observations_path {
+                                    observations(&install, &mut *wire(&install), &mut backoff)
+                                } else {
+                                    run(
+                                        &install,
+                                        &mut *wire(&install),
+                                        &mut backoff,
+                                        Instant::now() + Duration::from_secs(RUN),
+                                    )
+                                };
+                                (backoff, s, wait)
+                            },
+                        )));
                     }
                 },
             }
@@ -426,7 +469,12 @@ impl Sender {
         );
         (after != before && after.0 != "syncing").then(|| {
             format!(
-                "telemetry sync: {}{}",
+                "{}: {}{}",
+                if self.observations {
+                    "CoreQ shipper"
+                } else {
+                    "telemetry sync"
+                },
                 after.0.as_str().unwrap_or("unknown"),
                 after
                     .1

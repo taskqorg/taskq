@@ -583,6 +583,7 @@ impl Board for GitLab {
         ))
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn issue(&self, n: u64) -> Result<Issue> {
         Ok(self.parse_issue(
             &self
@@ -629,6 +630,7 @@ impl Board for GitLab {
         String::from_utf8(bytes).map_err(|_| "report source is not UTF-8".into())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> {
         let events = self
             .api
@@ -636,6 +638,7 @@ impl Board for GitLab {
         first_admission(&events)
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {
         Ok(self
             .api
@@ -648,6 +651,7 @@ impl Board for GitLab {
             .collect())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn comment(&self, n: u64, body: &str) -> Result<u64> {
         self.api
             .call(
@@ -664,6 +668,7 @@ impl Board for GitLab {
         format!("{}#note_{id}", self.url(n))
     }
 
+    #[tracing::instrument(name="board.entry",skip_all,fields(task=n,entry=id))]
     fn edit_comment(&self, n: u64, id: u64, body: &str) -> Result<()> {
         self.api
             .call(
@@ -674,6 +679,7 @@ impl Board for GitLab {
             .map(|_| ())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> {
         if !add.is_empty() && self.canonical_labels()? {
             self.ensure_labels(add)?;
@@ -706,6 +712,7 @@ impl Board for GitLab {
         Ok(n)
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn edit(&self, n: u64, body: &str) -> Result<()> {
         let reply = self.api.call(
             "PUT",
@@ -725,6 +732,7 @@ impl Board for GitLab {
         Ok(())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn close(&self, n: u64) -> Result<()> {
         self.forget();
         self.api
@@ -736,6 +744,7 @@ impl Board for GitLab {
             .map(|_| ())
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn reopen(&self, n: u64) -> Result<()> {
         self.forget();
         self.api
@@ -755,6 +764,7 @@ impl Board for GitLab {
         self.api.me(KIND.user_key)
     }
 
+    #[tracing::instrument(name="board.task",skip_all,fields(task=n))]
     fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> Publish {
         outcome(self.try_publish(n, sha, mode, title, task_line))
     }

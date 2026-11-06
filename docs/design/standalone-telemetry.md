@@ -75,6 +75,8 @@ The second R8 exception is [receipt-degraded Stop](host-service.md#receipt-degra
 
 ## Remote sync (#1353)
 
+This section describes the retained `telemetry_sync` path. The parallel CoreQ observation shipper follows [profiling](profiling.md#coreq-observations-contract-detail).
+
 Owner-accepted S1–S5, implemented in `src/telemetry_sync.rs`. Facts it builds on: the only live store is the coreq universal store `telemetry.log/universal.sqlite3`; `coreq::telemetry::Reader` reads one committed snapshot without the writer lock; observations carry stable ids; the coreq [connection client](https://github.com/taskqorg/coreq/blob/main/docs/design/enrollment.md) delivers `/ingest` records (at most 100 records and 1 MiB per call) with per-record receipts, backoff and revoke. ServerQ has no ingest route: it is itself a DashQ connection client. The only existing collector is DashQ.
 
 ### Decisions

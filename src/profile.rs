@@ -791,6 +791,7 @@ pub fn stage(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(name="taskq.stage",skip_all,fields(task,attempt=(attempt>0).then_some(attempt)))]
 fn stage_at(
     path: Option<&Path>,
     name: &'static str,

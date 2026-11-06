@@ -165,11 +165,17 @@ pub(super) fn background(
 pub(super) struct Native {
     rt: String,
     run: Run,
+    install: Option<PathBuf>,
+    caller: Option<coreq::telemetry::capture::TraceContext>,
+    recorded: bool,
     #[cfg(windows)]
     scope: windows_process::Execution,
 }
 
 impl Proc for Native {
+    fn records_agent(&self) -> bool {
+        true
+    }
     fn native_identity(&self) -> Result<coreq::process::Identity, String> {
         #[cfg(windows)]
         {
@@ -211,6 +217,19 @@ impl Proc for Native {
             .report(&self.run)?
             .exit
             .ok_or("native process exit unconfirmed")?;
+        if !self.recorded {
+            self.recorded = true;
+            if let Some(install) = &self.install {
+                let _caller = self.caller.as_ref().map(|c| c.span().entered());
+                // AgentQ froze this run at the terminal poll; only the append waits on the store.
+                let result = self.run.snapshot(&record_context()).and_then(|frozen| {
+                    super::records::submit(install, move |store| frozen.append(store))
+                });
+                if let Err(error) = result {
+                    eprintln!("Agent telemetry: unknown ({error})");
+                }
+            }
+        }
         #[cfg(windows)]
         {
             let _ = exit;
@@ -241,7 +260,10 @@ pub(super) fn start(
         l.resume.as_ref().map(|_| l.session.as_str()),
         &mut request,
     )
-    .map(|native| Box::new(native) as Box<dyn Proc>)
+    .map(|mut native| {
+        native.install = Some(env.install.into());
+        Box::new(native) as Box<dyn Proc>
+    })
 }
 
 fn native(rt: &str, session: Option<&str>, request: &mut Request) -> Result<Native, StartError> {
@@ -257,9 +279,23 @@ fn native(rt: &str, session: Option<&str>, request: &mut Request) -> Result<Nati
     Ok(Native {
         rt: rt.into(),
         run,
+        install: None,
+        caller: coreq::telemetry::capture::TraceContext::current(),
+        recorded: false,
         #[cfg(windows)]
         scope,
     })
+}
+
+fn record_context() -> agentq_runtime::agent::Context<'static> {
+    agentq_runtime::agent::Context {
+        product: "taskq",
+        version: crate::platform::VERSION,
+        project: "other",
+        task: None,
+        route: None,
+        account: "unknown",
+    }
 }
 
 #[cfg(test)]
