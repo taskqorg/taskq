@@ -1,0 +1,250 @@
+{
+  "task": 2463,
+  "attempt": 6675965760,
+  "scope_authority": {
+    "question_revision": 6676033348,
+    "accepted_answer": 6677791656,
+    "pm_steer": 6677824747,
+    "scope": "read-only owned Antigravity native conversation; credentials and other sessions excluded"
+  },
+  "candidate": "ee39a45cdaf50f9ebc9d4de3c9a8fc92118b2e34",
+  "original_runtime_candidate": "12699ff8eed7d16ac721090654e802648ccc0c63",
+  "runtime_source_reuse": {
+    "changed_paths": [
+      "src/service.rs",
+      "src/service_tests.rs"
+    ],
+    "runtime_input_dependencies_unchanged": true,
+    "meaning": "historical native turns reused only for unchanged runtime/input boundary; corrected candidate Service probes remain separate"
+  },
+  "native_store": {
+    "kind": "Antigravity native per-conversation SQLite DB",
+    "session": "54730d96-06f6-47ce-80c5-62e817f1e359",
+    "trajectory_id": "d227a08d-837b-4dc3-b1d7-dc6dc2c834e7",
+    "cascade_id": "54730d96-06f6-47ce-80c5-62e817f1e359",
+    "trajectory_type": 4,
+    "source": 17,
+    "bytes": 491520,
+    "sha256": "be582039b9a43a86679b3a0c441aed39ca0e44a971f7ecbbbdc4b6a3c0464532",
+    "quick_check": "ok",
+    "wal_and_journal_absent": true,
+    "before_after_bytes_and_mtime_equal": true,
+    "query": "SELECT idx,step_type,status,step_payload FROM steps ORDER BY idx",
+    "all_step_payload_hashes": [
+      {
+        "idx": 0,
+        "step_type": 14,
+        "status": 3,
+        "bytes": 2118,
+        "sha256": "0a2e7ce9dbb9e67ea7749090fbc9328a0f7ee0882baac8b52974dbf3f4533266"
+      },
+      {
+        "idx": 1,
+        "step_type": 15,
+        "status": 3,
+        "bytes": 1186,
+        "sha256": "d8b5c7328178f19c4f0c5340cfdca018fc19daa7f069e57b03bc3610b8d15195"
+      },
+      {
+        "idx": 2,
+        "step_type": 14,
+        "status": 3,
+        "bytes": 3430,
+        "sha256": "781b46de9ec30029e9c5666c8f2548191395e2d105e8d2a08d81f9c39c1fd50e"
+      },
+      {
+        "idx": 3,
+        "step_type": 101,
+        "status": 3,
+        "bytes": 1211,
+        "sha256": "1c3cdcd13b95672e03492d43ae65db9b2a3cbc7f2ab48ae7a77367fbfdfbb925"
+      },
+      {
+        "idx": 4,
+        "step_type": 15,
+        "status": 3,
+        "bytes": 1016,
+        "sha256": "949101fdb7a08bb1ee9c43118e5fb9a9a29483bd71c404f63a82a6907cf25a60"
+      }
+    ]
+  },
+  "native_stream": {
+    "sha256": "a4c812fd4ac202086a1b05515c6fab6ec6a66c7da4719edc0431ef878ad99941",
+    "bytes": 5460,
+    "matches_original_launch_receipt": true
+  },
+  "turns": [
+    {
+      "resume": false,
+      "native_step": 0,
+      "native_step_type": 14,
+      "native_status": 3,
+      "input_utf8_bytes": 293,
+      "input_utf8_sha256": "0d02b23ee1a2d3431657829049afa2a8d45ccb2ee503c1cd0d08ecaf333e52d2",
+      "expected_input_utf8_sha256": "0d02b23ee1a2d3431657829049afa2a8d45ccb2ee503c1cd0d08ecaf333e52d2",
+      "entire_field_equal": true,
+      "protobuf_field_paths": [
+        [
+          19,
+          2
+        ],
+        [
+          19,
+          3,
+          1
+        ]
+      ],
+      "field_envelope_payload_offsets": [
+        200,
+        496
+      ],
+      "text_payload_offsets": [
+        203,
+        496
+      ],
+      "step_payload_sha256": "0a2e7ce9dbb9e67ea7749090fbc9328a0f7ee0882baac8b52974dbf3f4533266",
+      "step_payload_bytes": 2118,
+      "native_stream_user_event": {
+        "conversation_id": "54730d96-06f6-47ce-80c5-62e817f1e359",
+        "step_index": 0,
+        "state": "DONE",
+        "step_type": "user_input"
+      },
+      "native_response_step": 1,
+      "native_response_field_paths": [
+        [
+          20,
+          1
+        ],
+        [
+          20,
+          8
+        ]
+      ],
+      "response_comparison": "complete native fields equal stream response with its terminal LF removed; input comparisons are unmodified bytes",
+      "native_result": {
+        "conversation_id": "54730d96-06f6-47ce-80c5-62e817f1e359",
+        "status": "SUCCESS",
+        "response": "TaskQ-Qualification-2427-145e44a9-f9b4-4e51-bf9e-758ef94e7c22\n",
+        "duration_seconds": 5.9485532,
+        "num_turns": 1,
+        "usage": {
+          "input_tokens": 7360,
+          "output_tokens": 163,
+          "thinking_tokens": 115,
+          "cache_read_tokens": 0,
+          "total_tokens": 7523
+        }
+      }
+    },
+    {
+      "resume": true,
+      "native_step": 2,
+      "native_step_type": 14,
+      "native_status": 3,
+      "input_utf8_bytes": 293,
+      "input_utf8_sha256": "bdeb01e97a5aa82276f75bda9856704327ac81aab50506311951bd55800fa007",
+      "expected_input_utf8_sha256": "bdeb01e97a5aa82276f75bda9856704327ac81aab50506311951bd55800fa007",
+      "entire_field_equal": true,
+      "protobuf_field_paths": [
+        [
+          19,
+          2
+        ],
+        [
+          19,
+          3,
+          1
+        ]
+      ],
+      "field_envelope_payload_offsets": [
+        204,
+        500
+      ],
+      "text_payload_offsets": [
+        207,
+        500
+      ],
+      "step_payload_sha256": "781b46de9ec30029e9c5666c8f2548191395e2d105e8d2a08d81f9c39c1fd50e",
+      "step_payload_bytes": 3430,
+      "native_stream_user_event": {
+        "conversation_id": "54730d96-06f6-47ce-80c5-62e817f1e359",
+        "step_index": 2,
+        "state": "DONE",
+        "step_type": "user_input"
+      },
+      "native_response_step": 4,
+      "native_response_field_paths": [
+        [
+          20,
+          1
+        ],
+        [
+          20,
+          8
+        ]
+      ],
+      "response_comparison": "complete native fields equal stream response with its terminal LF removed; input comparisons are unmodified bytes",
+      "native_result": {
+        "conversation_id": "54730d96-06f6-47ce-80c5-62e817f1e359",
+        "status": "SUCCESS",
+        "response": "TaskQ-Qualification-2427-fcb6ba9d-a709-4a75-b496-fbc70e16cf7b\n",
+        "duration_seconds": 16.4596895,
+        "num_turns": 2,
+        "usage": {
+          "input_tokens": 9872,
+          "output_tokens": 298,
+          "thinking_tokens": 206,
+          "cache_read_tokens": 5306,
+          "total_tokens": 10170
+        }
+      }
+    }
+  ],
+  "identity": {
+    "source": "ee39a45cdaf50f9ebc9d4de3c9a8fc92118b2e34",
+    "os": {
+      "Caption": "Microsoft Windows 11 Pro",
+      "Version": "10.0.26300",
+      "BuildNumber": "26300"
+    },
+    "clients": {
+      "claude": "2.1.318",
+      "codex": "0.162.1",
+      "antigravity": "1.5.1",
+      "codex-app": "OpenAI.Codex_26.1029.7803.0_x64"
+    },
+    "artifacts": {
+      "instrument-test.exe": "1357fce9790e906197b973bcb7f5580c0bf35036cbc1a28830554e84cc0c824f",
+      "WebView2Loader.dll": "86545b66cdb0603bc26b626fb9ad610cb6e71f28d468f5ea66df23b03dda96d5",
+      "original-test.exe": "7c26a1cb0f797629dc991e00e492e97c3c5991b681fa936e58571bc59d00e7ff"
+    },
+    "embedded_instrument_revision": "unknown: archive has no .git; source proved by Git blobs and test-only roundtrip",
+    "scope": "in-process candidate Service, fixture board, native clients; no installed-service or real-board transport qualification"
+  },
+  "retained_corrected_evidence": {
+    "zip_sha256": "4b50dd0eaa11ba8efc78e53dbfc2b3d6409087593ddf6c0e47443f5b750f4b35",
+    "checksums_verified": true,
+    "all_pairs": 52,
+    "equal_pairs": 52
+  },
+  "audit": {
+    "new_model_turns": 0,
+    "native_input_replays": 0,
+    "runtime_launches": 0,
+    "source_or_policy_or_service_writes": 0,
+    "native_files_read": [
+      "owned conversation DB only"
+    ],
+    "snapshot": "native file copied byte-for-byte to OS temp; SQLite read-only immutable mode on the copy",
+    "parser": "protobuf wire fields, not an assumed schema; exact bytes equal in two complete length-delimited fields per input",
+    "excluded": "credentials, unrelated sessions, raw DB, complete payloads and private paths"
+  },
+  "open": [
+    "installed candidate service",
+    "real-board transport",
+    "native containment",
+    "telemetry",
+    "merge_group CI"
+  ]
+}
