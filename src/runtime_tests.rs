@@ -585,7 +585,17 @@ fn antigravity_turn_uses_its_log_boundary_and_preserves_quota_unknowns() {
     )
     .unwrap();
     assert_eq!(turn.exited(), Ok(None));
-    assert_eq!(turn.accepted(), Ok(true));
+    assert_eq!(
+        turn.accepted(),
+        Ok(false),
+        "an unsupported state is not input proof"
+    );
+    for state in ["ACTIVE", "DONE"] {
+        writeln!(File::options().append(true).open(&log).unwrap(),"{}",
+            serde_json::json!({"event":"step_update","step_update":{"step_type":"tool","state":state,"tool_name":"Read","step_index":1}})).unwrap();
+        assert_eq!(turn.exited(), Ok(None));
+        assert_eq!(turn.accepted(), Ok(true));
+    }
     writeln!(
         File::options().append(true).open(&log).unwrap(),
         "{}",
@@ -663,7 +673,7 @@ fn optimization_preserves_policy_and_reports_effective_state() {
     )
     .unwrap();
     for name in ["claude", "codex"] {
-        for (intent, effective) in [("inherit", "on"), ("off", "off"), ("on", "on")] {
+        for intent in ["inherit", "off", "on"] {
             for resume in [false, true] {
                 let mut spec = NativeSpec {
                     root: root.clone(),
@@ -678,44 +688,46 @@ fn optimization_preserves_policy_and_reports_effective_state() {
                 };
                 let state = optimization(name, &mut spec, Some(&install)).unwrap();
                 assert_eq!(
-                    (state.intent, state.effective),
-                    (Intent::parse(intent).unwrap(), effective)
+                    (state.intent, state.effective, state.reason),
+                    (
+                        Intent::parse(intent).unwrap(),
+                        "off",
+                        "optimization_retired"
+                    )
                 );
                 assert_eq!(spec.session, "saved-native-id");
                 assert_eq!((spec.resume, spec.home.as_ref()), (resume, Some(&home)));
                 assert_eq!(&spec.args[..2], &["--permission-mode", "dontAsk"]);
+                assert_eq!(spec.args.len(), if name == "claude" { 4 } else { 2 });
                 assert_eq!(
-                    spec.args.len(),
-                    if name == "claude" || intent == "off" {
-                        4
-                    } else {
-                        2
-                    }
+                    spec.env
+                        .iter()
+                        .filter(|(key, _)| key == "AGENTQ_OPTIMIZATION")
+                        .count(),
+                    1,
+                    "no injected optimization override"
                 );
-                if intent == "off" && name == "codex" {
-                    assert_eq!(
-                        spec.args[3],
-                        "model_providers.agentq.http_headers.x-agentq-optimization=\"off\""
-                    );
-                }
-                if intent == "on" {
-                    assert_eq!(
-                        optimization(name, &mut spec, None).unwrap().reason,
-                        "not_installed"
-                    );
-                    std::fs::write(
-                        install.join("data/config.json"),
-                        r#"{"compression":{"enabled":false}}"#,
-                    )
-                    .unwrap();
-                    assert_eq!(
-                        optimization(name, &mut spec, Some(&install))
-                            .unwrap()
-                            .effective,
-                        "off"
-                    );
-                    std::fs::remove_file(install.join("data/config.json")).unwrap();
-                }
+                assert_eq!(
+                    spec.env
+                        .iter()
+                        .find(|(key, _)| key == "TASKQ_TASK")
+                        .unwrap()
+                        .1,
+                    "2111"
+                );
+                assert_eq!(
+                    spec.env
+                        .iter()
+                        .find(|(key, _)| key == "AGENTQ_LAUNCHER")
+                        .unwrap()
+                        .1,
+                    "taskq"
+                );
+                assert!(optimizer_settings(&spec)["env"]["AGENTQ_OPTIMIZATION"].is_null());
+                assert_eq!(
+                    optimization(name, &mut spec, None).unwrap().reason,
+                    "optimization_retired"
+                );
                 spec.env
                     .push(("AGENTQ_OPTIMIZATION".into(), "invalid".into()));
                 assert!(
@@ -794,7 +806,7 @@ fn optimization_reaches_background_settings_and_operator_attribution() {
         let settings: serde_json::Value =
             serde_json::from_str(&args[args.iter().position(|a| a == "--settings").unwrap() + 1])
                 .unwrap();
-        assert_eq!(settings["env"]["AGENTQ_OPTIMIZATION"], "off");
+        assert!(settings["env"]["AGENTQ_OPTIMIZATION"].is_null());
         assert_eq!(settings["env"]["AGENTQ_LAUNCHER"], "taskq");
         assert_eq!(settings["env"]["TASKQ_INSTALL"], "invented");
         assert_eq!(settings["hooks"]["SessionStart"], serde_json::json!([]));
@@ -2009,6 +2021,20 @@ fn launcher_stderr_in_last_message_and_active_account_probe() {
     assert_eq!(
         last_message(&log, "claude").as_deref(),
         Some("completed work")
+    );
+    std::fs::write(&log, concat!(
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"earlier message\"}]}}\n",
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"unfinished latest message\"}]}}\n"
+    )).unwrap();
+    assert_eq!(
+        classify("claude", &std::fs::read_to_string(&log).unwrap())
+            .unwrap()
+            .text,
+        None
+    );
+    assert_eq!(
+        last_message(&log, "claude").as_deref(),
+        Some("unfinished latest message")
     );
     std::fs::write(&log, "{\"type\":\"taskq.rules\",\"phase\":\"start\"}\n{\"type\":\"thread.started\",\"thread_id\":\"t1\"}\n").unwrap();
     assert_eq!(last_message(&log, "codex"), None);

@@ -13,20 +13,32 @@ fn dir(name: &str) -> PathBuf {
 #[test]
 fn usage_2448_does_not_require_a_cli_on_path() {
     let home = dir("no-cli");
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
+    let exe = std::env::current_exe().unwrap();
+    let path = if cfg!(windows) {
+        // GNU debug binaries need their private Cargo DLL directories even without a native CLI.
+        std::env::join_paths(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                .filter(|dir| dir.starts_with(exe.parent().unwrap().parent().unwrap())),
+        )
+        .unwrap()
+    } else {
+        std::ffi::OsString::new()
+    };
+    let out = std::process::Command::new(exe)
         .args([
             "--exact",
             "runtime::usage::tests::usage_2448_no_cli_child",
             "--ignored",
             "--nocapture",
         ])
-        .env("PATH", "")
+        .env("PATH", path)
         .env("CLAUDE_CONFIG_DIR", &home)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "{}{}",
+        "status={} {}{}",
+        out.status,
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
@@ -36,7 +48,10 @@ fn usage_2448_does_not_require_a_cli_on_path() {
 #[test]
 #[ignore = "private credential-free subprocess of usage_2448_does_not_require_a_cli_on_path"]
 fn usage_2448_no_cli_child() {
-    assert_eq!(std::env::var_os("PATH").unwrap(), "");
+    assert!(
+        !super::super::which("claude").is_absolute(),
+        "the fixture must have no native CLI"
+    );
     assert_eq!(
         fetch("claude", "default", &mut Ids::default())
             .unknown

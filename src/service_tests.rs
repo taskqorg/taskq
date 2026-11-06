@@ -5480,9 +5480,12 @@ fn turn_end(paused: bool) {
     let root = std::env::temp_dir().join(format!("taskq-turn-end-{paused}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let b = Fake::default();
-    let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
+    let n = b
+        .create("T", "", &[TASK_LABEL.into(), "run-codex".into()])
+        .unwrap();
     let c = Config {
         root: root.clone(),
+        limits: BTreeMap::from([("codex".into(), 1)]),
         ..cfg("win")
     };
     let flags: Exits = Default::default();

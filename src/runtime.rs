@@ -786,6 +786,22 @@ pub fn last_message(log: &Path, rt: &str) -> Option<String> {
     if let Some(m) = classify(rt, &text).and_then(|r| r.text) {
         return Some(m);
     }
+    if let Some(message) = agent(rt).ok().and_then(|agent| {
+        agent
+            .log_records(&text)
+            .into_iter()
+            .flat_map(|r| r.events)
+            .rev()
+            .find_map(|event| {
+                if let Event::Message { text, .. } = event {
+                    Some(text)
+                } else {
+                    None
+                }
+            })
+    }) {
+        return Some(message);
+    }
     let mut tail: Vec<&str> = text
         .lines()
         .rev()
@@ -1313,10 +1329,7 @@ fn optimization(
             .and_then(Intent::parse)
             .ok_or("AGENTQ_OPTIMIZATION must be inherit, off or on")?,
     };
-    spec.env.extend([
-        (optimization::ENV.into(), intent.code().into()),
-        ("AGENTQ_LAUNCHER".into(), "taskq".into()),
-    ]);
+    spec.env.push(("AGENTQ_LAUNCHER".into(), "taskq".into()));
     let state = agent(rt)?.prepare(intent, "taskq", spec, install);
     if of(rt).has(Cap::RemoteControl) {
         let env = optimizer_settings(spec)["env"].clone();
@@ -1351,7 +1364,7 @@ fn optimizer_settings(spec: &NativeSpec) -> serde_json::Value {
     let env: serde_json::Map<String, serde_json::Value> = spec
         .env
         .iter()
-        .filter(|(k, _)| k == "AGENTQ_OPTIMIZATION" || k == "AGENTQ_LAUNCHER")
+        .filter(|(k, _)| k == "AGENTQ_LAUNCHER")
         .map(|(k, v)| {
             (
                 k.to_string_lossy().into_owned(),
