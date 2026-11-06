@@ -71,6 +71,7 @@ pub fn delivered(n: u64, log: &[Entry]) -> Option<u64> {
     let (id, before, after) = p.changes.iter().rev().find(|(_, _, t)| t.state == State::Closed)?;
     if before.state != State::Review || after.state != p.task.state { return None; }
     let close = log.iter().find(|e| e.id == *id)?;
+    if core::entry_text(n, &close.body).lines().any(|l|l.starts_with("Completion: evidence-only v1:")) { return None; }
     let verdict = core::verdict(n, log, core::entry_text(n, &close.body));
     crate::display::close_outcome(Some(&verdict), None).starts_with("delivered").then_some(*id)
 }

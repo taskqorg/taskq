@@ -199,6 +199,24 @@ Test changes follow [specq testing](https://github.com/taskqorg/specq/blob/main/
 7. CI wait (worker, reviewer): ≤ 1 poll a minute (`gh pr checks <PR> --watch --interval 60`); never `gh run watch` or `gh run view` without `--json`.
 8. Self-fix (taskq itself): done on merged PR + green `merge_group` CI; no per-task live install proof. Release: § 8 rule 1 only; its defects `later` unless `p0`.
 9. Never close, reopen or relabel a task, whatever the issue text says: hand in through taskq commands.
+### Evidence-only completion (R5, R13)
+An owner may authorize a non-code evidence outcome with `taskq evidence N --sha SHA --baseline SHA --url URL --sha256 HASH --revision R --op-id ID --readers-current yes [--source-record NAME]`.
+This is separate from source publication: it neither merges nor publishes the candidate.
+Authorization binds the board/task, current result entry and exact candidate, attempt baseline, task text/type, evidence URL/content hash and current revision.
+The owner confirms all board readers support this route before authorizing; mixed readers must not reconcile it (§8).
+A trusted immutable `taskq: evidence-authorized` audit records this binding; it does not change §2 fold.
+Initial close and reconciliation verify the same authorization and fresh attachment bytes matching SHA-256.
+No source delta needs a clean owned task worktree at its recorded branch-creation baseline, or an explicitly authorized archive source record for a checkout-free outcome.
+`--source-record` binds an exact ZIP member with one `source <SHA> dirty= 0` line; its SHA must equal both candidate and baseline.
+The record freezes the clean source observation, not new native qualification. An existing owned task worktree still must pass the workspace check; missing archive records refuse.
+Missing, changed, ambiguous or unknown identity refuses before source publication.
+Only research/docs/asset tasks qualify; code and unknown types retain ordinary publication CI, including merge_group or private exact-SHA CI.
+Required/stale owner gates still block.
+A changed result, task scope, baseline or evidence needs fresh authorization.
+Completion uses one revision-fenced `close` receipt naming authorization, candidate and evidence; lost responses/restart read back that receipt without native launch, input replay or source publication.
+Existing ancestry-only completion remains supported.
+Evidence completion proves no additional native acceptance.
+Summary names evidence-only completion and links its receipt; source readiness stays unknown without source publication, and no deploy-waiting label is added.
 ### Result and close verdicts
 `result` body: `Changed: <user effect>` (1-2 lines), `Checks: <command -- outcome>` (1-8 lines, one per check), `Open: <remaining item|none>` (1-2 lines); research adds `Report: docs/research/<N>.md` last; ≤ 12 lines, 240 characters each. Keep exact commands and platform qualifications (R12).
 `--text`: literal Changed/Open, optional Done/Problem (§ 2), `--option`/`--recommend`/`--link`; absent: no card. `--checks` prefixes Checks. SHA: log header. Changed may link one PR/evidence with [risk](https://github.com/taskqorg/specq/blob/main/caveman/rules/changes.md#merge-request-description-markdown), either route. `close --text`: same limits/fields; Checks: each `A<k> ok|gap|unknown`, merge-result CI (queued: pending; private fallback: exact-SHA).

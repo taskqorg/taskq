@@ -27,6 +27,7 @@ Task text lint (§1 Task text): `add`, and `start` on the issue's Goal and Accep
 | `taskq requeue N [--text T]` / `taskq steer N --text T` | back to `ready` / text to the live worker |
 | `taskq later N [--text T] [--blocker #M\|--until UTC] [--stage A<k>..]` / `taskq failed N --text R` | park (§ 7) / hold |
 | `taskq close N [M..] [--text VERDICT]` | publish (§ 7) and close; one failure never stops the rest |
+| `taskq evidence N --sha SHA --baseline SHA --url URL --sha256 HASH --revision R --op-id ID --readers-current yes [--source-record NAME]` | Owner-only [evidence authorization](../../taskq.md#evidence-only-completion-r5-r13); no gate approval or publication |
 | `taskq gate N` / `taskq add .. --gate` | § 7 owner gate on a held or ready task: label `needs-gate` and a `gate` entry |
 | `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | § 7 owner approval of the current result (refused with `TASKQ_ATTEMPT`) / recipe run |
 | `taskq status [--only L,..] [--json] [--timing]` / `taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]]` | Read-only R6; `--only`: any label (absent: all); `--timing`: per-project section seconds on stderr. JSON/history: [menu](menu.md#contract-detail) |

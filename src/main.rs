@@ -24,6 +24,7 @@ mod health;
 mod http;
 mod deploy;
 mod dispatch;
+mod evidence;
 mod display;
 mod enrollment;
 mod incident;
@@ -345,6 +346,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "gate" => emit(&[gate_task(b, root, a.num(1)?, &op)], json),
         "start" => emit(&start_tasks(b, root, &a.pos[1..], &op)?, json),
+        "evidence" => {
+            let owner=["TASKQ_ATTEMPT","TASKQ_TASK","TASKQ_ROLE","TASKQ_SERVICE"].iter().all(|k|std::env::var_os(k).is_none());
+            emit(&[evidence::authorize(b,root,a.num(1)?,a.need("sha")?,a.need("baseline")?,a.need("url")?,a.need("sha256")?,&op,owner,a.one("readers-current")==Some("yes"),a.one("source-record"))],json)
+        }
         "approve" => emit(&[dispatch::approve(b, root, a.num(1)?, a.one("sha"), &op, dispatch::agent())], json),
         "recipe" => {
             let name = a.pos.get(1).ok_or("recipe name missing")?;
