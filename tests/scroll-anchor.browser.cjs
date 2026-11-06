@@ -721,6 +721,13 @@ const refreshDuringScrolling = async (p, s, at) => {
         proof.last = performance.now();
         proof.place = read();
       };
+      // Wheel listeners can run before composited scrolling finishes; compare the last painted rows.
+      const painted = () => {
+        if (proof.applied) return;
+        proof.painted = read();
+        requestAnimationFrame(painted);
+      };
+      requestAnimationFrame(painted);
       document.addEventListener("wheel", note, {
         capture: true,
         passive: true,
@@ -734,7 +741,7 @@ const refreshDuringScrolling = async (p, s, at) => {
           proof.applied = {
             at: performance.now(),
             last: proof.last,
-            place: proof.place,
+            place: proof.painted || proof.place,
           };
       }).observe(document.body, {
         subtree: true,
