@@ -475,6 +475,16 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
         &wrapped
     } else { text };
     let text = if !(kind == "requeue" && args == ["main-moved"]) && attempt.is_some() && attempt == before.attempt { core::limit_text(n, &before, kind, text) } else { text.into() };
+    // §7: revalidate evidence against the action-time read, including an owner note at the same attempt revision.
+    if kind == "close" && before.state == State::Review
+        && let Some(proof) = crate::evidence::completion(b, root, &issue, &before, &log)
+    {
+        match proof {
+            Ok(proof) if text.lines().any(|line| line == proof) => {},
+            Ok(_) => return Receipt::rejected(n, op, "evidence completion receipt identity missing or changed"),
+            Err(e) => return Receipt::rejected(n, op, e),
+        }
+    }
     // Check the transition before uploading anything; file-only replies still carry a nonempty attachment manifest.
     let preview=if text.trim().is_empty()&&!files.is_empty(){"Attached files"}else{&text};
     let body = core::with_fields(entry(kind, args, attempt, preview), op.id.as_deref(), op.revision);
@@ -598,12 +608,12 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
         State::Later | State::Failed => successor().map_or_else(|r| r, |_| act(b, &cfg.root, n, "close", &[], verdict, op)),
         State::Review if needs_approval(cfg, &t) && t.gate != Some(Gate::Approved) => {
             // § 7: no publication before the owner's approval of this result; the current policy decides (B4 fencing)
-            let sha = t.result.unwrap_or_default();
+            let sha = t.result.clone().unwrap_or_default();
             let r = Receipt::rejected(n, op, format!("gate is {}: the owner has not approved {}", t.gate.map_or("required", Gate::name), &sha[..sha.len().min(7)]));
             Receipt { state: Some(t.state.name()), next: format!("Owner: `taskq approve {n}`, or pick the approve option."), ..r }
         }
         State::Review => {
-            let sha = t.result.unwrap_or_default();
+            let sha = t.result.clone().unwrap_or_default();
             let rev = entries(b, n).map(|l| core::revision(n, &l)).unwrap_or(0);
             if op.revision.is_some_and(|r| r != rev) {
                 return act(b, &cfg.root, n, "close", &[], verdict, op); // the stale receipt, before any publication
@@ -615,6 +625,12 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
             }
             if let Err(e) = verdict_label(b, &issue, verdict) {
                 return Receipt { state: Some(t.state.name()), ..Receipt::rejected(n, op, e) };
+            }
+            if let Some(proof) = crate::evidence::completion(b, &cfg.root, &issue, &t, &log) {
+                return match proof {
+                    Ok(proof) => act(b, &cfg.root, n, "close", &[], &join(&[verdict, &proof]), &crate::evidence::operation(&proof, rev)),
+                    Err(e) => Receipt::rejected(n, op, e),
+                };
             }
             // § 4 Profiling: `checks` is the CI verification and merge call
             if b.defer_publication(cfg.delivery.mode()) {
@@ -693,6 +709,12 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
     let rev = core::revision(n, log);
     let op = Op { revision: Some(rev), ..Default::default() };
     let write = |kind, args: &[&str], text: &str| act_as(b, &cfg.root, n, kind, args, text, &op, None, None);
+    if let Some(proof) = crate::evidence::completion(b, &cfg.root, issue, t, log) {
+        return match proof {
+            Ok(proof) => act_as(b, &cfg.root, n, "close", &[], &join(&[&repeats(n, log, verdict), &proof]), &crate::evidence::operation(&proof, rev), None, None),
+            Err(e) => Receipt::rejected(n, &op, e),
+        };
+    }
     let published=b.resume_publication(n, t.result.as_deref().unwrap_or_default(), cfg.delivery.mode(), &issue.title, &format!("Task: {}", b.url(n)), &cfg.root, t.enqueued.is_some());
     let evidence=crate::readiness::receipt(n,&b.url(n),log,b.take_publication_evidence());
     match published {

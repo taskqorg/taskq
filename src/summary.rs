@@ -28,11 +28,15 @@ pub fn render(n: u64, body: &str, log: &[Entry], t: &Task, link: &dyn Fn(u64) ->
         head.push(format!("result {}", &r[..r.len().min(7)]));
     }
     let merged = (t.state == State::Closed).then(|| crate::cli::inbox::merge_receipt(log)).flatten();
-    match (&merged, pr(log)) {
+    let evidence = (t.state == State::Closed).then(||crate::evidence::receipt(n, log)).flatten();
+    if let Some((id, _)) = evidence {
+        head.push(format!("[evidence-only]({})", link(id)));
+        if let Some(sha) = &t.result { head.push(format!("candidate {}", &sha[..sha.len().min(7)])); }
+    } else { match (&merged, pr(log)) {
         (Some(m), _) => head.push(m.clone()),
         (None, Some((label, url))) => head.push(format!("[{label}]({url})")),
         _ => {}
-    }
+    }}
     if matches!(t.state, State::Doing | State::Review) && t.session.is_some() {
         head.push(format!("{} running", t.role.as_deref().unwrap_or("worker")));
     }
