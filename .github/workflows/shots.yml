@@ -1,6 +1,7 @@
 # README shots (docs/design/readme-plan.md, Images and acceptance; #2024): on dispatch, never per tray push
 # (taskq.md R12, Product). release.yml dispatches it with the new tag, whose release binary is verified and captured.
-# A stale set arrives as a draft PR from branch taskq-shots-<version> through the merge queue, never a push to main;
+# A stale set arrives as a draft PR from branch taskq-shots-<version> through the merge queue, never a push to main,
+# and closes earlier open shots PRs and their branches;
 # runs dispatched on another branch only upload artifacts.
 name: README shots
 on:
@@ -75,7 +76,13 @@ jobs:
           git commit -m "Refresh README screenshots for $version" -m "Captured from $REF by docs/shots/update.sh." -m 'Task: https://github.com/taskqorg/taskq/issues/2024'
           # An existing branch for this version means a PR is already open; never force it.
           git push origin "HEAD:refs/heads/$branch"
-          gh pr create --draft --base main --head "$branch" --title "Refresh README screenshots for $version" \
-            --body "Images, manifest and README preview (1280 and 390 px, in the run artifact `readme-shots`) from \`docs/shots/update.sh $REF\`. Review the three images and both preview widths before merging through the merge queue."
+          url=$(gh pr create --draft --base main --head "$branch" --title "Refresh README screenshots for $version" \
+            --body "Images, manifest and README preview (1280 and 390 px, in the run artifact `readme-shots`) from \`docs/shots/update.sh $REF\`. Review the three images and both preview widths before merging through the merge queue.")
           # Token pushes start no CI; dispatch the suite on the branch without waiting for it.
           gh workflow run tests.yml --ref "$branch"
+          # Only the newest set stays open: close earlier shots PRs of this repo and delete their branches.
+          gh pr list --state open --limit 200 --json number,title,headRefName,isCrossRepository --jq \
+            ".[] | select(.number < ${url##*/} and (.isCrossRepository | not) and (.headRefName | startswith(\"taskq-shots-\")) and (.title | startswith(\"Refresh README screenshots\"))) | .number" |
+            while read -r old; do
+              gh pr close "$old" --delete-branch --comment "Superseded by $url."
+            done
