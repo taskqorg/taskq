@@ -4825,9 +4825,9 @@ fn agent_record_end_child() {
         ),
     )
     .unwrap();
-    // The worker waits on this lock, so the record is still queued when the process ends.
+    // Block the store write, not its 1 s budget-lock acquisition: a 1 s sleep races that refusal on a loaded host.
     let (held, wait) = std::sync::mpsc::channel();
-    let lock = root.join("taskq-profile.lock");
+    let lock = root.join("telemetry.log/universal.sqlite3.write.lock");
     std::thread::spawn(move || {
         let _lock = coreq::file_lock::lock(&lock).unwrap();
         held.send(()).unwrap();
