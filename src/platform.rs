@@ -353,13 +353,31 @@ pub fn exit(code: i32) -> ! {
         terminate(code)
     }
     #[cfg(not(windows))]
-    std::process::exit(code)
+    {
+        settle_agent_records();
+        std::process::exit(code)
+    }
+}
+
+/// §4 Telemetry observations: a clean end commits queued AgentQ records first; one that outlasts the bound stays unknown.
+fn settle_agent_records() {
+    if !crate::runtime::settle_records(std::time::Duration::from_secs(10)) {
+        log("Agent telemetry: unknown (records still queued after 10 s at process end)");
+    }
+}
+
+/// The last step before an exec replaces this image: no exit path runs after it.
+#[cfg(unix)]
+pub fn before_exec() {
+    settle_agent_records();
+    coreq::telemetry::capture::before_exec();
 }
 
 /// #1566: CoreQ's exit flush waits 3 s, but one Windows append can outlast it (its writer retries a busy store for 10 s);
 /// ending the process then loses the queued observations. Retry the unacknowledged flush, bounded, before that flush.
 pub fn drain_telemetry() {
     use coreq::telemetry::capture::Capture;
+    settle_agent_records();
     let Some(capture) = tracing::dispatcher::get_default(|d| d.downcast_ref::<Capture>().cloned())
     else {
         return;

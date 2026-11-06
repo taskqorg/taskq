@@ -1576,7 +1576,7 @@ pub(crate) fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     let mut command =
         crate::platform::command(cfg.install.join(platform::tool(&cfg.install).exe_name()));
     command.args(["service", "run"]);
-    coreq::telemetry::capture::before_exec();
+    platform::before_exec();
     let e = command.exec();
     incident::detect(
         "dispatch.reexec",

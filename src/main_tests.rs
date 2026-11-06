@@ -4809,6 +4809,115 @@ fn stale_sandbox_helper_child_survives_the_reexec() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+#[ignore = "process end fixture"]
+fn agent_record_end_child() {
+    let root = PathBuf::from(std::env::var_os("TASKQ_RECORD_ROOT").unwrap());
+    let log = root.join("attempt.log");
+    fs::write(
+        &log,
+        format!(
+            "{}\n",
+            serde_json::json!({"type":"assistant","message":{"id":"call-1","model":"invented-model","usage":{"input_tokens":2,"output_tokens":1,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}})
+        ),
+    )
+    .unwrap();
+    // The worker waits on this lock, so the record is still queued when the process ends.
+    let (held, wait) = std::sync::mpsc::channel();
+    let lock = root.join("taskq-profile.lock");
+    std::thread::spawn(move || {
+        let _lock = coreq::file_lock::lock(&lock).unwrap();
+        held.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    });
+    wait.recv().unwrap();
+    runtime::record_session(&root, &log, 0, "claude", 2428, 77).unwrap();
+    match std::env::var("TASKQ_RECORD_END").unwrap().as_str() {
+        "exit" => crate::platform::exit(0),
+        "stop" => {
+            // The Stop controller ends this process without its exit path.
+            crate::platform::drain_telemetry();
+            fs::write(root.join("drained"), "").unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
+        _ => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let next = root.join(crate::platform::tool(&root).exe_name());
+                fs::write(&next, "#!/bin/sh\n: > \"$TASKQ_RECORD_ROOT/next\"\n").unwrap();
+                fs::set_permissions(&next, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            let b = Fake::default();
+            let c = Config {
+                root: root.clone(),
+                install: root.clone(),
+                ..cfg()
+            };
+            let mut s =
+                crate::service::Service::new(&b, &c, "fixture", Box::new(|_| unreachable!()));
+            s.reconcile_ownership().unwrap();
+            crate::service_run::reexec(&s, &c).unwrap();
+        }
+    }
+    unreachable!("the process end did not end the fixture");
+}
+
+// Defect: the FIFO worker's queued AgentQ records vanished when a clean re-exec, exit or Stop ended the process, since
+// only main's return settled them. Kept: the queue stays off supervision, and only a job past the bound reads unknown.
+#[test]
+fn clean_process_ends_commit_queued_agent_records() {
+    let mut lost = vec![];
+    for (end, code) in [
+        ("exit", Some(0)),
+        ("stop", None),
+        ("reexec", Some(if cfg!(windows) { 75 } else { 0 })),
+    ] {
+        let root =
+            std::env::temp_dir().join(format!("taskq-record-end-{end}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("telemetry.log")).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::agent_record_end_child",
+                "--ignored",
+                "--nocapture",
+            ])
+            .current_dir(&root)
+            .env("TASKQ_RECORD_ROOT", &root)
+            .env("TASKQ_RECORD_END", end)
+            .env_remove("TASKQ_ROOT")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        if code.is_some() {
+            assert_eq!(child.wait().unwrap().code(), code, "{end}");
+        } else {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(60);
+            while !root.join("drained").exists() {
+                assert!(std::time::Instant::now() < until, "{end} never drained");
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+        #[cfg(unix)]
+        if end == "reexec" {
+            assert!(root.join("next").exists(), "the re-exec reached its image");
+        }
+        let rows = coreq::telemetry::Reader::open(&root.join("telemetry.log/universal.sqlite3"))
+            .and_then(|r| r.export_kinds(&["agent.turn"], 0, 0, 100));
+        let turns = rows.map_or(0, |r| r["events"].as_array().unwrap().len());
+        if turns != 1 {
+            lost.push(format!("{end}: {turns} agent.turn"));
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+    assert!(lost.is_empty(), "queued records lost: {lost:?}");
+}
+
 // § 8 re-exec preserves native CLI and Claude identity and defers for app ownership; no unit reload path remains.
 #[cfg(unix)]
 #[test]
