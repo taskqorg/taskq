@@ -871,3 +871,87 @@ fn shared_2431_heartbeat_confirmation_does_not_survive_token_rotation() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// Chain: #2431 A4/R12: credential expiry on another adapter fences an already-running poll's publication.
+#[test]
+fn shared_2431_other_adapter_expiry_fences_a_blocked_poll() {
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicI64, Ordering},
+        mpsc,
+    };
+    let root = std::env::temp_dir().join(format!(
+        "taskq-2431-expired-poll-{}",
+        crate::runtime::uuid()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let base = iso("2026-11-06T00:00:00Z").unwrap();
+    let url = format!("https://fixture.invalid/repos/o/{}", crate::runtime::uuid());
+    let native = Arc::new(AtomicI64::new(100));
+    let block = Arc::new(AtomicBool::new(false));
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (result_tx, result_rx) = mpsc::channel();
+    let (read_tx, read_rx) = mpsc::channel();
+    let (key, state, held) = (url.clone(), native.clone(), block.clone());
+    let worker = std::thread::spawn(move || {
+        let mut api = Api::new("https://fixture.invalid".into(), key, "invented-A");
+        api.poll = Some(std::time::Duration::ZERO);
+        let transport_held = held.clone();
+        api.transport = Some(Box::new(move |_, url, _| {
+            let body = json!([{"number":5,"title":"task","state":"open","author_association":"OWNER","created_at":stamp(base),"updated_at":stamp(base+state.load(Ordering::Acquire)),"labels":[{"name":"taskq"}]}]).to_string();
+            if url.contains("state=open") && transport_held.swap(false, Ordering::AcqRel) {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            }
+            Ok(Reply {
+                status: 200,
+                headers: vec![("Date".into(), "Fri, 06 Nov 2026 00:10:00 GMT".into())],
+                body,
+                operation: "read",
+            })
+        }));
+        let board = github::GitHub::new(api);
+        assert_eq!(board.issues(None).unwrap()[0].updated, base + 100);
+        held.store(true, Ordering::Release);
+        board.forget();
+        result_tx.send(board.issues(None)).unwrap();
+        read_rx.recv().unwrap();
+        board.issues(None).unwrap()
+    });
+    entered_rx.recv().unwrap();
+    let credential = Arc::new(Mutex::new("invented-A".to_string()));
+    let source = credential.clone();
+    let mut observer = Api::new("https://fixture.invalid".into(), url, "invented-A");
+    observer.token_source = Some((
+        root.clone(),
+        Box::new(move || Ok(source.lock().unwrap().clone())),
+    ));
+    *credential.lock().unwrap() = "invented-B".into();
+    observer.refresh().unwrap();
+    *credential.lock().unwrap() = "invented-A".into();
+    observer.refresh().unwrap();
+    assert!(shared::snapshot(&observer, None, false).is_err());
+    native.store(300, Ordering::Release);
+    release_tx.send(()).unwrap();
+    let old = result_rx.recv().unwrap();
+    let still_unavailable = shared::snapshot(&observer, None, false).is_err();
+    read_tx.send(()).unwrap();
+    let fresh = worker.join().unwrap();
+    assert!(
+        old.as_ref().err().is_some_and(|e| e
+            .text()
+            .contains("credential authority changed during poll")),
+        "expired poll must remain unknown: {old:?}"
+    );
+    assert!(
+        still_unavailable,
+        "old response cannot republish a ready snapshot after cross-adapter expiry"
+    );
+    assert_eq!(fresh[0].updated, base + 300);
+    assert_eq!(
+        shared::snapshot(&observer, None, false).unwrap()[0].updated,
+        base + 300
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

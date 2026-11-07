@@ -41,6 +41,7 @@ impl Row {
 #[derive(Clone, Default)]
 struct Snapshot {
     ready: bool,
+    credentials: u64,
     history_since: Option<i64>,
     rows: BTreeMap<u64, Row>,
     confirmed: BTreeMap<u64, Issue>,
@@ -83,6 +84,7 @@ pub(super) fn credentials_changed(api: &Api) -> Result<()> {
             .map_err(|_| "shared board snapshot poisoned")?;
         snapshot.confirmed.clear();
         snapshot.ready = false;
+        snapshot.credentials += 1;
         shared.epoch.fetch_add(1, Ordering::AcqRel);
         shared.full.fetch_add(1, Ordering::AcqRel);
     }
@@ -195,6 +197,11 @@ pub(super) fn issues(
             since < floor || (!tasks && at.elapsed() >= history_interval)
         })
     });
+    let credentials = shared
+        .snapshot
+        .lock()
+        .map_err(|_| "shared board snapshot poisoned")?
+        .credentials;
     let epoch = shared.epoch.load(Ordering::Acquire);
     let full = shared.full.load(Ordering::Acquire);
     if poll
@@ -323,6 +330,13 @@ pub(super) fn issues(
             .snapshot
             .lock()
             .map_err(|_| "shared board snapshot poisoned")?;
+        if saved.credentials != credentials {
+            poll.open = None;
+            return Err(
+                "shared board credential authority changed during poll; reconciliation unknown"
+                    .into(),
+            );
+        }
         let mut next = saved.clone();
         // Host history remains evidence; current presence comes only from the open list.
         for row in next.rows.values_mut() {
