@@ -33,7 +33,9 @@ fails=0
 # $1 name, $2 version line, $3 tags, $4 released, $5 expected exit, $6 expected output, $7 expected tag write
 case_() {
   printf '%s\n' "$2" > Cargo.toml; rm -f writes; touch writes
-  rc=0; out=$(TAGS=$3 RELEASED=$4 sh "$src" 2>/dev/null) || rc=$?
+  # POSIX shells can retain assignments on function calls; isolate each case's clock.
+  utc_day=$UTC_DAY; UTC_DAY=261107
+  rc=0; out=$(UTC_DAY=$utc_day TAGS=$3 RELEASED=$4 sh "$src" 2>/dev/null) || rc=$?
   w=$(sed -n 's|.*ref=refs/tags/\([^ ]*\) -f sha=abc$|\1|p' writes)
   if [ "$rc" = "$5" ] && [ "$out" = "$6" ] && [ "$w" = "$7" ]; then echo "ok   $1"
   else echo "FAIL $1: exit $rc out '$out' write '$w'; want $5 '$6' '$7'"; fails=1; fi
