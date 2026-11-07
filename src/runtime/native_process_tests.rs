@@ -29,10 +29,14 @@ pub fn command(
     } else {
         vec![]
     };
-    let mut c = agent(&l.rt)?.command(
-        cli(&l.rt, access, env)?,
-        &optimized(&l.rt, spec(env, l, env.root.into(), args))?,
-    )?;
+    let selected = spec(env, l, env.root.into(), args);
+    let mut c = cli(&l.rt, access, env)?;
+    c.args(agent(&l.rt)?.native_arguments(&selected)?)
+        .envs(selected.env)
+        .current_dir(&selected.root);
+    if let Some(home) = selected.home {
+        c.env(a.home_var, home);
+    }
     if let Some(p) = build {
         c.env("RUSTC_WRAPPER", p);
     }
@@ -70,4 +74,39 @@ pub fn start_file(command: &mut Command, input: File) -> Result<Box<dyn Proc>, S
             .map(|child| Box::new(child) as Box<dyn Proc>)
             .map_err(|e| StartError::io(e, None))
     }
+}
+
+/// Invented native rows enter through the public decoder, never a consumer constructor.
+pub(crate) fn background_rows(
+    rows: &[serde_json::Value],
+    root: &Path,
+    home: &Path,
+) -> Result<Vec<agentq_runtime::agent::BackgroundCandidate>, String> {
+    let mut rows = rows.to_vec();
+    for row in &mut rows {
+        let object = row
+            .as_object_mut()
+            .ok_or("invented row must be an object")?;
+        object
+            .entry("kind")
+            .or_insert(serde_json::json!("background"));
+        object.entry("id").or_insert(serde_json::json!("c37eb75a"));
+        object
+            .entry("sessionId")
+            .or_insert(serde_json::json!("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"));
+        object.entry("cwd").or_insert(serde_json::json!(root));
+    }
+    let python = super::which(if cfg!(windows) { "python" } else { "python3" });
+    let mut command = crate::platform::command(python);
+    command.args([
+        "-c",
+        "import sys;print(sys.argv[1])",
+        &serde_json::to_string(&rows).unwrap(),
+    ]);
+    super::agent(super::CLAUDE)?.background_candidates(
+        command,
+        &super::claude_spec(root, Some(home)),
+        false,
+        std::time::Duration::from_secs(10),
+    )
 }

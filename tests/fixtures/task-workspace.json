@@ -20,6 +20,7 @@
     "root": "a",
     "issues": "https://github.com/o/r/issues",
     "board_kind": "github",
+    "alive": true,
     "complete": true,
     "focus": [],
     "saved": true,
@@ -455,7 +456,7 @@
     {
      "expect": {
       "count": {
-       "[data-a=task-detail]": 7
+       ".task-target[role=button]": 7
       },
       "fits": true,
       "open": false
@@ -476,7 +477,7 @@
     {
      "expect": {
       "count": {
-       "[data-a=task-detail]": 1
+       ".task-target[role=button]": 1
       }
      }
     },
@@ -502,29 +503,64 @@
     {
      "expect": {
       "count": {
-       "[data-a=task-detail]": 7
+       ".task-target[role=button]": 7
       },
-      "fits": true
+      "fits": true,
+      "open": false
      }
     },
     {
-     "click": "[data-a=task-detail]"
+     "click": ".task-target[role=button]"
     },
     {
      "expect": {
-      "open": true,
+      "open": false,
+      "destination": {
+       "page": "conversations",
+       "thread": "task:https://github.com/o/r/issues/7",
+       "operation": null,
+       "root": "a",
+       "board": "https://github.com/o/r/issues",
+       "task": 7,
+       "revision": null
+      },
+      "navigationCount": 1
+     }
+    },
+    {
+     "reader": true
+    },
+    {
+     "expect": {
       "text": {
-       ".task-inline-details": "View agent"
+       ".sticky-object-head h2": "a#7 T7"
       },
       "fits": true
      }
     },
     {
-     "click": ".task-inline-details [data-a=control][data-control=stop]"
+     "press": "Tab",
+     "until": ".sticky-object-head [data-control=stop]",
+     "max": 40
     },
     {
      "expect": {
-      "sent": "answer"
+      "focus": ".sticky-object-head [data-control=stop]"
+     }
+    },
+    {
+     "press": "Enter"
+    },
+    {
+     "expect": {
+      "sent": "answer",
+      "operation": {
+       "root": "a",
+       "board": "https://github.com/o/r/issues",
+       "task": 7,
+       "revision": 0,
+       "action": "stop"
+      }
      }
     }
    ]
@@ -539,12 +575,14 @@
    "steps": [
     {
      "press": "Tab",
-     "until": "[data-a=task-detail]",
+     "until": ".task-target[role=button]",
      "max": 40
     },
     {
      "expect": {
-      "open": false
+      "open": false,
+      "navigationCount": 0,
+      "focus": ".task-target[role=button]"
      }
     },
     {
@@ -552,17 +590,37 @@
     },
     {
      "expect": {
-      "open": true,
-      "focus": ".task-inline-details"
+      "open": false,
+      "focus": ".task-target[role=button]",
+      "destination": {
+       "page": "conversations",
+       "thread": "task:https://github.com/o/r/issues/7",
+       "operation": null,
+       "root": "a",
+       "board": "https://github.com/o/r/issues",
+       "task": 7,
+       "revision": null
+      },
+      "navigationCount": 1
      }
     },
     {
-     "press": "Escape"
+     "press": "Space"
     },
     {
      "expect": {
       "open": false,
-      "focus": "[data-a=task-detail]"
+      "focus": ".task-target[role=button]",
+      "destination": {
+       "page": "conversations",
+       "thread": "task:https://github.com/o/r/issues/7",
+       "operation": null,
+       "root": "a",
+       "board": "https://github.com/o/r/issues",
+       "task": 7,
+       "revision": null
+      },
+      "navigationCount": 2
      }
     }
    ]

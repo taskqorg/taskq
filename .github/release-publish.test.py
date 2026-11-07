@@ -54,8 +54,8 @@ else: sys.exit(2)
     def start(name, **extra):
         d = root/name
         d.mkdir(exist_ok=True)
-        (d/f'taskq-1.2.3-{name}').write_text(name)
-        return subprocess.Popen(['sh', str(src), 'v1.2.3', str(d)], env=dict(env, **extra))
+        (d/f'taskq-4.261107.10-{name}').write_text(name)
+        return subprocess.Popen(['sh', str(src), 'v4.261107.10', str(d)], env=dict(env, **extra))
     def waitfile(name):
         deadline = time.monotonic()+10
         while not (root/name).exists():
@@ -71,7 +71,9 @@ else: sys.exit(2)
     finally:
         (root/'resume').touch()
     assert win.wait(timeout=10) == linux.wait(timeout=10) == 0
-    files = json.loads((root/'store/latest.json').read_text())['files']
+    index = json.loads((root/'store/latest.json').read_text())
+    assert index['version'] == '4.261107.10'
+    files = index['files']
     assert set(files) == {'windows-x86_64', 'linux-x86_64'}, files
     assert len((root/'store/SHA256SUMS').read_text().splitlines()) == 2
     print('PASS delayed writer preserves both OS indexes')
@@ -94,7 +96,7 @@ else: sys.exit(2)
     (root/'lock').rmdir()
     assert start('macos-aarch64', FLAKY='1').wait(timeout=10) == 0
     assert (root/'flaked').exists()
-    assert (root/'store/taskq-1.2.3-macos-aarch64').exists()
+    assert (root/'store/taskq-4.261107.10-macos-aarch64').exists()
     assert 'macos-aarch64' in json.loads((root/'store/latest.json').read_text())['files']
     assert not (root/'lock').exists()
     print('PASS transient upload failure retries and publishes')

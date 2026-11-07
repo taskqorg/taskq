@@ -493,7 +493,7 @@ pub struct Execution {
     job: Option<OwnedHandle>,
     assigned: bool,
     scope_known: bool,
-    terminal: Option<i32>,
+    terminal: Option<super::Exit>,
     fault: Option<String>,
     cancelled: bool,
 }
@@ -587,7 +587,7 @@ impl Execution {
                     let cleanup = scope.kill();
                     let until = Instant::now() + Duration::from_secs(2);
                     while Instant::now() < until {
-                        if scope.exited().is_ok_and(|ended| ended.is_some()) {
+                        if scope.termination().is_ok_and(|ended| ended.is_some()) {
                             return Err(format!(
                                 "native setup failed before resume; child cleanup confirmed: {reason}"
                             ));
@@ -619,7 +619,7 @@ impl Execution {
             job: None,
             assigned: true,
             scope_known: true,
-            terminal: Some(-1),
+            terminal: Some(super::Exit { code: None }),
             fault: None,
             cancelled: false,
         })
@@ -705,6 +705,11 @@ impl Proc for Execution {
             .unwrap_or_else(|| self.native.as_ref().unwrap().pid)
     }
     fn exited(&mut self) -> Result<Option<i32>, String> {
+        self.termination()?
+            .map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into()))
+            .transpose()
+    }
+    fn termination(&mut self) -> Result<Option<super::Exit>, String> {
         if self.terminal.is_some() {
             return Ok(self.terminal);
         }
@@ -718,7 +723,9 @@ impl Proc for Execution {
             child
                 .try_wait()
                 .map_err(|e| e.to_string())?
-                .map(|s| s.code().unwrap_or(-1))
+                .map(|status| super::Exit {
+                    code: status.code(),
+                })
         } else if let Some(launcher) = &self.launcher {
             match unsafe { WaitForSingleObject(launcher.as_raw_handle(), 0) } {
                 258 => None,
@@ -727,7 +734,9 @@ impl Proc for Execution {
                     if unsafe { GetExitCodeProcess(launcher.as_raw_handle(), &mut code) } == 0 {
                         return Err(io::Error::last_os_error().to_string());
                     }
-                    Some(code as i32)
+                    Some(super::Exit {
+                        code: Some(code as i32),
+                    })
                 }
                 _ => return Err(io::Error::last_os_error().to_string()),
             }
@@ -737,19 +746,15 @@ impl Proc for Execution {
                 .map_err(|e| e.to_string())?
                 .filter(|id| id == &native)
                 .is_none()
-                .then_some(-1)
+                .then_some(super::Exit { code: None })
         };
         if let Some(job) = &self.job {
             members(job, &mut self.members)?;
         }
         let members = self.job.as_ref().map(active).transpose()?.unwrap_or(0);
-        if let Some(code) = root {
+        if let Some(exit) = root {
             if members == 0 && self.members.is_empty() {
-                self.terminal = Some(if self.cancelled || self.fault.is_some() {
-                    -1
-                } else {
-                    code
-                });
+                self.terminal = Some(exit);
                 return Ok(self.terminal);
             }
         }
@@ -758,10 +763,13 @@ impl Proc for Execution {
         }
         Ok(None)
     }
+    fn exit_error(&self) -> Option<&'static str> {
+        self.fault.as_deref().map(crate::profile::class)
+    }
     fn kill(&mut self) -> Result<(), String> {
         if self.cancelled
             || self.terminal.is_some()
-            || self.exited().is_ok_and(|ended| ended.is_some())
+            || self.termination().is_ok_and(|ended| ended.is_some())
         {
             return Ok(());
         }

@@ -41,26 +41,47 @@ fn free(_: &Path, _: &Request) -> Res<bool> {
 fn held(_: &Path, _: &Request) -> Res<bool> {
     Ok(true)
 }
-fn never(_: &Path, _: &Request) -> Res<std::process::Command> {
+fn never(_: &Path, _: &Request) -> Res<agentq_runtime::agent::Launch> {
     panic!("no turn may start")
 }
-fn claude_ok(_: &Path, _: &Request) -> Res<std::process::Command> {
+fn claude_ok(own: &Path, _: &Request) -> Res<agentq_runtime::agent::Launch> {
     let mut c = std::process::Command::new("sh");
     c.args(["-c", r#"cat >/dev/null; echo '{"type":"system"}'; echo '{"type":"result","subtype":"success","is_error":false}'"#]);
-    Ok(c)
+    let mut request = agentq_runtime::agent::Launch::new(own, own.join("turn.out"), "", "taskq");
+    request.command = std::iter::once(c.get_program())
+        .chain(c.get_args())
+        .map(Into::into)
+        .collect();
+    std::fs::create_dir_all(own.join("invented-home")).unwrap();
+    request.home = Some(own.join("invented-home"));
+    Ok(request)
 }
-fn exits(_: &Path, _: &Request) -> Res<std::process::Command> {
+fn exits(own: &Path, _: &Request) -> Res<agentq_runtime::agent::Launch> {
     let mut c = std::process::Command::new("sh");
     c.args(["-c", "cat >/dev/null"]);
-    Ok(c)
+    let mut request = agentq_runtime::agent::Launch::new(own, own.join("turn.out"), "", "taskq");
+    request.command = std::iter::once(c.get_program())
+        .chain(c.get_args())
+        .map(Into::into)
+        .collect();
+    std::fs::create_dir_all(own.join("invented-home")).unwrap();
+    request.home = Some(own.join("invented-home"));
+    Ok(request)
 }
-fn codex_writer(_: &Path, _: &Request) -> Res<std::process::Command> {
+fn codex_writer(own: &Path, _: &Request) -> Res<agentq_runtime::agent::Launch> {
     let mut c = std::process::Command::new("sh");
     c.args([
         "-c",
         "cat >/dev/null; echo 'Error: thread 0b4e already has an active writer' >&2; exit 1",
     ]);
-    Ok(c)
+    let mut request = agentq_runtime::agent::Launch::new(own, own.join("turn.out"), "", "taskq");
+    request.command = std::iter::once(c.get_program())
+        .chain(c.get_args())
+        .map(Into::into)
+        .collect();
+    std::fs::create_dir_all(own.join("invented-home")).unwrap();
+    request.home = Some(own.join("invented-home"));
+    Ok(request)
 }
 
 /// #2515: a fixed 4 s poll raced the `sh` turn on a stalled Windows merge-queue runner ("turn never ended").

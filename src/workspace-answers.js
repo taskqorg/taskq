@@ -572,14 +572,16 @@ const { create } = execution.module("workspace.answers", {
             ...el.querySelectorAll(
               ".qac-done,.qac-problem,.qac-detail,.qac-context>summary,.qac-images,.qac-evidence,.qac-text,[data-choice]",
             ),
-          ].entries())
-            node.dataset.readingKey = readingAnchor.key(
+          ].entries()) {
+            const key = readingAnchor.key(
               "report",
               "question",
               t.n,
               t.revision,
               i,
             );
+            if (node.dataset.readingKey !== key) node.dataset.readingKey = key;
+          }
       },
       // ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
       answerSteerComposer: function (board, t) {

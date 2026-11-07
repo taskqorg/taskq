@@ -7,8 +7,8 @@ publish = false
 autotests = false
 
 [dependencies]
-agentq-runtime = { git = "https://github.com/taskqorg/agentq", rev = "b5431b118c68494bdd8c8075715cc74c5b6485df" }
-coreq = { git = "https://github.com/taskqorg/coreq", tag = "v0.23.0" }
+agentq-runtime = { git = "https://github.com/taskqorg/agentq", rev = "6b50afb86bf63f349059071e17988243a0eb4fe1" }
+coreq = { git = "https://github.com/taskqorg/coreq", tag = "v0.23.4" }
 tracing = "0.1"
 ring = "0.17"
 # telemetry upload blocks (docs/design/standalone-telemetry.md); both already in the tree via coreq
@@ -66,7 +66,7 @@ lto = "thin"
 
 [build-dependencies]
 embed-resource = "3"
-coreq-instrument = { git = "https://github.com/taskqorg/coreq", tag = "v0.23.0" }
+coreq-instrument = { git = "https://github.com/taskqorg/coreq", tag = "v0.23.4" }
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }

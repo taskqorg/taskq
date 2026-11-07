@@ -103,12 +103,6 @@ pub enum Cap {
     RolloutQuota,
     /// Codex model list.
     ModelCatalog,
-    /// An account's usage through the app-server call.
-    UsageRpc,
-    /// An account's usage through the provider's OAuth usage call.
-    UsageOauth,
-    /// An account's usage through the Code Assist quota calls with the `agy` login.
-    UsageCodeAssist,
     /// Launches need the project's trust entry.
     ProjectTrust,
 }
@@ -182,7 +176,6 @@ pub(super) const ADAPTERS: [Adapter; 4] = [
             Cap::Accounts,
             Cap::JsonStatus,
             Cap::ProjectTrust,
-            Cap::UsageOauth,
         ],
         agent: "claude",
         native_home: NativeHome::Claude,
@@ -211,7 +204,6 @@ pub(super) const ADAPTERS: [Adapter; 4] = [
             Cap::PassiveWriter,
             Cap::RolloutQuota,
             Cap::ModelCatalog,
-            Cap::UsageRpc,
         ],
         agent: "codex",
         native_home: NativeHome::Codex,
@@ -262,7 +254,6 @@ pub(super) const ADAPTERS: [Adapter; 4] = [
             Cap::StreamInput,
             Cap::UserBin,
             Cap::Accounts,
-            Cap::UsageCodeAssist,
         ],
         agent: "antigravity",
         native_home: NativeHome::Codex,
@@ -342,3 +333,6 @@ pub fn agent_runtimes() -> &'static [&'static str] {
         &CLI_RUNTIMES
     }
 }
+
+/// Physical owner-stream representation selected when TaskQ creates this source.
+pub const OWNER_STREAM_FORMAT: &str = "agy-stream";

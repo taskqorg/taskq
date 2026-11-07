@@ -593,3 +593,21 @@ with tempfile.TemporaryDirectory(prefix='taskq-check-receipt-') as temp:
     blocked.write_text('invented', encoding='utf-8')
     check['write_receipt'](blocked / 'receipts' / 'x.json', {'result': 'passed'})
 print('PASS one receipt per tree across worktrees; repeat full gate refused before any check without --reason; CI keeps none')
+
+# Registered selectors retain actual component+adapter and artifact guards; unknown never shortcuts.
+web = check['web_checks']
+assert {'tests/answer-card.test.cjs', 'tests/answer-card.browser.cjs', 'tests/tray-answer.test.cjs', 'tests/tray-answer.browser.cjs', 'tests/design-sources.test.cjs'} <= set(web(['src/answer-card.js']))
+assert web(['src/tray.html']) is None
+assert web(['src/answer-card.js', 'unknown']) is None
+assert web([]) is None
+findings = dict(changed=[], removed=[], tests=['R12'])
+claim = 'Retains: R12 -> scripts/check.test.py::Registered selectors'
+assert check['unnamed'](findings, claim) == []
+assert check['unnamed'](findings, 'Retains: R12 -> absent::anything')
+assert check['unnamed'](dict(changed=['R12'], removed=[], tests=[]), claim), 'retention cannot authorize behavior changes'
+
+assert check['unnamed'](dict(changed=[], removed=['R12'], tests=[]), claim), 'retention cannot authorize rule removal'
+assert 'tests/task-workspace.test.cjs' in web(['src/answer-card.css']), 'published adapter source binding retained'
+
+# CI consumes plan stdout directly as GITHUB_OUTPUT; retain the focused subprocess protocol regression.
+runpy.run_path(str(Path(__file__).with_name('check-plan.test.py')))

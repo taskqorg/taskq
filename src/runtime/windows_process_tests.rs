@@ -318,7 +318,7 @@ impl Execution {
                 let cleanup = execution.kill();
                 let until = Instant::now() + Duration::from_secs(2);
                 while Instant::now() < until {
-                    if execution.exited().is_ok_and(|ended| ended.is_some()) {
+                    if execution.termination().is_ok_and(|ended| ended.is_some()) {
                         return Err(format!(
                             "native setup failed before resume; child cleanup confirmed: {reason}"
                         )

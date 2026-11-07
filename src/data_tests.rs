@@ -237,6 +237,7 @@ fn corrupt_state_reads_unknown_and_stays() {
         started: "service".into(),
     };
     let row = KidLine {
+        control: None,
         task: 7,
         attempt: 41,
         runtime: "codex".into(),
@@ -346,4 +347,76 @@ fn corrupt_state_reads_unknown_and_stays() {
         Ok(Some(json!({"a": 1})))
     );
     let _ = fs::remove_dir_all(&root);
+}
+
+// R9/R12: protected control evidence requires explicit admission/version; old absence never means fresh.
+#[test]
+fn background_control_proof_requires_version_and_admission() {
+    use base64::Engine;
+    let root =
+        std::env::temp_dir().join(format!("taskq-control-record-{}", crate::runtime::uuid()));
+    fs::create_dir_all(&root).unwrap();
+    let project = root.canonicalize().unwrap();
+    let proof = BackgroundControlProof {
+        admission: BackgroundAdmission::Fresh,
+        grant: crate::policy::Grant {
+            runtime: "claude".into(),
+            mode: "workspace".into(),
+            project: Some(project.to_string_lossy().into()),
+            by: "invented fixture".into(),
+            at: 1,
+        },
+        controller: agentq_runtime::agent::NativeProcess {
+            pid: 9,
+            started: "controller".into(),
+        },
+        session_store: project.join("runtime-sessions"),
+        lifetime: agentq_runtime::agent::Lifetime::Recoverable,
+        project: project.clone(),
+        home: project.join("home"),
+        cwd: project,
+        job: "c37eb75a".into(),
+        native_session: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".into(),
+        before: 17,
+        input_sha256: "a".repeat(64),
+        owner: serde_json::json!({"receipt":"invented"}),
+        source: serde_json::json!({"checkpoint":"invented codec payload, never control proof"}),
+    };
+    let encode = |value: &serde_json::Value| {
+        base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec(value).unwrap())
+    };
+    let payload = serde_json::to_value(&proof).unwrap();
+    let mut missing_store = payload.clone();
+    missing_store
+        .as_object_mut()
+        .unwrap()
+        .remove("session_store");
+    assert!(serde_json::from_value::<BackgroundControlProof>(missing_store).is_err());
+    let row = format!(
+        "7 41 claude 123 child 43 99 control-v1:{}\n",
+        encode(&payload)
+    );
+    let text = format!("pid 9 controller executor-v2\n{row}");
+    let parsed = kids(&text).unwrap().1;
+    assert_eq!(parsed[0].control.as_ref(), Some(&proof));
+    assert_eq!(parsed[0].offset, 99);
+    assert!(kids(&text.replace("executor-v2", "executor-v1")).is_err());
+    let mut missing = payload.clone();
+    missing.as_object_mut().unwrap().remove("admission");
+    assert!(
+        kids(&format!(
+            "pid 9 controller executor-v2\n7 41 claude 123 child 43 99 control-v1:{}\n",
+            encode(&missing)
+        ))
+        .is_err()
+    );
+    assert!(
+        kids("pid 9 controller executor-v1\n7 41 claude 123 child 43 0\n")
+            .unwrap()
+            .1[0]
+            .control
+            .is_none()
+    );
+    assert!(!text.contains("protected input body"));
+    fs::remove_dir_all(root).unwrap();
 }

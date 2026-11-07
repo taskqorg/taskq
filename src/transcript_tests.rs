@@ -295,13 +295,13 @@ fn ten_mib_claude_transcript_pages_by_cursor() {
     let path = dir.join(format!("projects/-p/{id}.jsonl"));
     assert_eq!(
         crate::runtime::claude_transcript_in(&dir, id).unwrap_err(),
-        "Claude transcript unavailable; completion unknown"
+        "history session not found"
     );
     let mut f = fs::File::create(&path).unwrap();
     writeln!(
         f,
         "{}",
-        json!({"type":"user","message":{"role":"user","content":"first"}})
+        json!({"type":"user","sessionId":id,"message":{"role":"user","content":"first"}})
     )
     .unwrap();
     let filler = "x".repeat(1000);
@@ -312,13 +312,13 @@ fn ten_mib_claude_transcript_pages_by_cursor() {
         n += 1;
     }
     writeln!(f, "{}", json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo  test\n--locked"}}]}})).unwrap();
-    write!(f, "{{\"type\":\"user\",\"mess").unwrap();
+    write!(f, "{{\"type\":\"user\",\"sessionId\":\"{id}\",\"mess").unwrap();
     drop(f);
     assert_eq!(
         crate::runtime::claude_transcript_in(&dir, id).unwrap(),
         path
     );
-    let open = before("claude-native", "-", &path, None).unwrap();
+    let open = before("claude-native", id, &path, None).unwrap();
     assert!(open.start > 0 && bounded(&open), "one bounded page");
     assert_eq!(
         text(&open.items).last().unwrap(),
@@ -330,7 +330,7 @@ fn ten_mib_claude_transcript_pages_by_cursor() {
     );
     let (mut cursor, mut pages, mut first) = (open.start, 1, None);
     while cursor > 0 {
-        let page = before("claude-native", "-", &path, Some(cursor)).unwrap();
+        let page = before("claude-native", id, &path, Some(cursor)).unwrap();
         assert!(page.end == cursor && page.start < cursor);
         cursor = page.start;
         first = text(&page.items).first().cloned();
@@ -340,11 +340,11 @@ fn ten_mib_claude_transcript_pages_by_cursor() {
     assert!(pages >= 40);
     let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
     write!(f, "age\":{{\"content\":\"next\"}}}}\n").unwrap();
-    let new = after("claude-native", "-", &path, open.end).unwrap();
+    let new = after("claude-native", id, &path, open.end).unwrap();
     assert_eq!(text(&new.items), vec![json!({"role":"user","text":"next"})]);
     assert_eq!(new.end, fs::metadata(&path).unwrap().len());
     assert_eq!(
-        last_line("claude-native", "-", &path).unwrap(),
+        last_line("claude-native", id, &path).unwrap(),
         Some(format!("{} {filler}", n - 1))
     );
     fs::remove_dir_all(dir).unwrap();
@@ -653,24 +653,36 @@ fn codex_custom_tool_calls_read_as_commands() {
 /// #1833 review: a quote that never closes (a regex literal, a cut script) read past the script and panicked.
 #[test]
 fn codex_scripts_with_open_quotes_and_comments_read_without_panic() {
-    assert_eq!(codex_script("text(r.replace(/'/g, ''))"), None);
-    assert_eq!(codex_script("text('abc"), None);
+    let summary = |input: &str| {
+        let record = json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":input}});
+        let rows = read(true, &format!("{record}\n"));
+        let value = rows
+            .first()
+            .and_then(|row| row["text"].as_str())
+            .unwrap_or_default();
+        value
+            .strip_prefix("exec ")
+            .filter(|value| *value != input)
+            .map(str::to_owned)
+    };
+    assert_eq!(summary("text(r.replace(/'/g, ''))"), None);
+    assert_eq!(summary("text('abc"), None);
     assert_eq!(
-        codex_script("text(await tools.exec_command({cmd:\"echo a"),
+        summary("text(await tools.exec_command({cmd:\"echo a"),
         Some("echo a".into())
     );
     assert_eq!(
-        codex_script(
+        summary(
             "/* tools.exec_command({cmd:\"x\"}) 'it's */ text(await tools.exec_command({cmd:\"y\"}))"
         ),
         Some("y".into())
     );
-    assert_eq!(codex_script("/* open"), None);
-    assert_eq!(codex_script("/*/ tools.exec_command({cmd:\"x\"})"), None);
+    assert_eq!(summary("/* open"), None);
+    assert_eq!(summary("/*/ tools.exec_command({cmd:\"x\"})"), None);
     // every cut of a real script reads: Codex records may end mid-literal
     let js = "/* c */ const r=await tools.exec_command({cmd:'a \\'b\\' \\u00e9',\"workdir\": `w`}); // x\ntools.view_image({path:\"p\"})";
     for (k, _) in js.char_indices() {
-        codex_script(&js[..k]);
+        summary(&js[..k]);
     }
 }
 
@@ -1024,7 +1036,7 @@ fn lifecycle_events_render_as_lines() {
         (
             "agy-stream",
             vec![
-                json!({"event":"init"}),
+                json!({"event":"init","conversation_id":"fixture-session"}),
                 json!({"event":"step_update","step_update":{"step_index":1,"step_type":"checkpoint","state":"DONE"}}),
             ],
             vec!["session started", "checkpoint"],
@@ -1036,7 +1048,12 @@ fn lifecycle_events_render_as_lines() {
             rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
         )
         .unwrap();
-        let page = before(format, "-", &path, None).unwrap();
+        let session = if format == "agy-stream" {
+            "fixture-session"
+        } else {
+            "-"
+        };
+        let page = before(format, session, &path, None).unwrap();
         let got: Vec<_> = page
             .items
             .iter()

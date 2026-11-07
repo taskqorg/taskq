@@ -140,7 +140,7 @@ fn remember(h: &History) {
 /// prefix the SHA-256 of the bytes before `offset`; AgentQ verifies both and refuses a replaced or rewritten source.
 // AgentQ still verifies the entire checkpoint prefix on open and hashes it again after polling.
 // Reusing its exact checkpoint removes only TaskQ's duplicate synthesis, never either native integrity check.
-fn at(format: &str, path: &Path, session: &str, offset: u64) -> Res<History> {
+pub(crate) fn at(format: &str, path: &Path, session: &str, offset: u64) -> Res<History> {
     let source = path.to_string_lossy();
     let h = History::new(format, &source, session)?;
     if offset == 0 {
@@ -232,7 +232,7 @@ fn page(
     if self::generation(path)? != generation {
         return Err("transcript replaced during read; view unknown".into());
     }
-    let mut items = view(format, events);
+    let mut items = view(events);
     let (mut count, mut bytes) = (0, 0);
     for item in &mut items {
         if let Some(src) = item["image"]["src"].as_str() {
@@ -306,35 +306,22 @@ fn read_after(format: &str, session: &str, path: &Path, from: u64) -> Res<Page> 
 /// and each tool result as its own item at its record, its body opened only on request (owner answer on #2176: arguments stay omitted on worker views).
 /// Lifecycle events are one compact line each, named by their native type; usage counters and unknown shapes stay
 /// in the exact source only.
-fn view(format: &str, events: &[Value]) -> Vec<Value> {
+fn view(events: &[Value]) -> Vec<Value> {
     let mut out = Vec::<Value>::new();
     let (mut model, mut effort, mut version) = (Value::Null, Value::Null, Value::Null);
-    let (claude, codex) = (format.starts_with("claude-"), format.starts_with("codex-"));
     for e in events {
         let first = out.len();
-        let raw: Value =
-            serde_json::from_str(e["raw"].as_str().unwrap_or_default()).unwrap_or_default();
-        if let Some(v) = raw["payload"]["cli_version"]
-            .as_str()
-            .or(raw["claude_code_version"].as_str())
-        {
+        let facts = &e["presentation"];
+        if let Some(v) = facts["cli_version"].as_str() {
             version = json!(v);
         }
-        // Only source-recorded metadata: a page without its earlier context keeps provenance unknown.
-        if let Some(m) = raw["message"]["model"]
-            .as_str()
-            .or(raw["payload"]["model"].as_str())
-            .or(raw["model"].as_str())
-        {
+        // Source-recorded facts only; a page without earlier context stays unknown.
+        if let Some(m) = facts["model"].as_str() {
             model = json!(m);
             effort = Value::Null;
         }
-        if let Some(e) = raw["payload"]["effort"]
-            .as_str()
-            .or(raw["payload"]["reasoning_effort"].as_str())
-            .or(raw["reasoning_effort"].as_str())
-        {
-            effort = json!(e);
+        if let Some(effort_value) = facts["effort"].as_str() {
+            effort = json!(effort_value);
         }
         let author = e["author"].as_str().unwrap_or("unknown");
         let blocks = e["blocks"]
@@ -342,28 +329,18 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
             .map(Vec::as_slice)
             .unwrap_or_default();
         match e["kind"].as_str().unwrap_or_default() {
-            // agy-stream: step deltas are partial; the result record carries the complete response
-            "message" if format == "agy-stream" => {}
             "message" if matches!(author, "user" | "assistant") => {
-                if claude {
-                    let raw: Value = serde_json::from_str(e["raw"].as_str().unwrap_or_default())
-                        .unwrap_or_default();
-                    if raw["isSidechain"] == true || raw["isMeta"] == true {
-                        continue;
-                    }
+                if facts["sidechain"] == true || facts["meta"] == true {
+                    continue;
                 }
-                let joined: Vec<&str> = blocks.iter().filter_map(|b| b["text"].as_str()).collect();
-                // Codex sends its environment and AGENTS.md to the model as user input; the owner never wrote them
-                if codex
-                    && author == "user"
-                    && joined
-                        .first()
-                        .is_some_and(|t| t.starts_with('<') || t.starts_with("# AGENTS.md"))
-                {
+                if author == "user" && blocks.iter().any(|b| b["origin"] == "injected_context") {
                     continue;
                 }
                 let mut text = Vec::new();
                 for b in blocks {
+                    if b["text_mode"] == "delta" {
+                        continue;
+                    }
                     match b["type"].as_str().unwrap_or_default() {
                         "text" => {
                             if let Some(t) = b["text"].as_str() {
@@ -386,39 +363,29 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
             "tool" => {
                 for b in blocks {
                     if b["type"] == "unknown" {
-                        out.push(tool(
-                            b["native"]["name"].as_str().unwrap_or("tool"),
-                            &Value::Null,
-                        ));
+                        out.push(tool(b["name"].as_str().unwrap_or("tool"), &Value::Null));
                     } else {
                         block("tool", b, &mut out);
                     }
                 }
             }
-            "result" if format == "agy-stream" => {
+            "result" => {
                 let text: Vec<&str> = blocks.iter().filter_map(|b| b["text"].as_str()).collect();
                 if !text.is_empty() {
                     out.push(line("assistant", &text.join("\n")));
                 }
             }
             "lifecycle" => {
-                if let Some(t) = lifecycle(e) {
-                    out.push(line("event", &t));
-                }
-            }
-            // TaskQ's own owner input record in the Antigravity stream: input intent, not native acceptance
-            _ if format == "agy-stream" => {
-                let raw: Value =
-                    serde_json::from_str(e["raw"].as_str().unwrap_or_default()).unwrap_or_default();
-                if raw["event"] == "user" {
-                    if let Some(t) = raw["message"]["content"].as_str() {
-                        out.push(json!({"role":"user","text":t,"delivery":"intent"}));
-                    }
+                if let Some(t) = e["lifecycle"].as_str() {
+                    out.push(line("event", t));
                 }
             }
             _ => {}
         }
         for (i, item) in out[first..].iter_mut().enumerate() {
+            if blocks.iter().any(|b| b["delivery"] == "intent") {
+                item["delivery"] = json!("intent");
+            }
             item["at"] = e["start"].clone();
             item["i"] = json!(i);
             item["model"] = model.clone();
@@ -432,77 +399,29 @@ fn view(format: &str, events: &[Value]) -> Vec<Value> {
     out
 }
 
-/// A2: the native name of a lifecycle event (`turn complete`, `system compact boundary`); usage counters give none.
-fn lifecycle(e: &Value) -> Option<String> {
-    let raw: Value = serde_json::from_str(e["raw"].as_str().unwrap_or_default()).ok()?;
-    let p = &raw["payload"];
-    let name = match e["format"].as_str().unwrap_or_default() {
-        f if f.starts_with("claude-") => [raw["type"].as_str(), raw["subtype"].as_str()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" "),
-        "agy-stream" => raw["step_update"]["step_type"]
-            .as_str()
-            .or(raw["event"].as_str())?
-            .into(),
-        _ => p["type"]
-            .as_str()
-            .or(raw["type"].as_str())
-            .or(raw["method"].as_str())?
-            .into(),
-    };
-    if matches!(name.as_str(), "token_count" | "rate_limit_event" | "") {
-        return None;
-    }
-    let name = name.replace("task_", "turn_").replace(['_', '.', '/'], " ");
-    Some(if name == "init" {
-        "session started".into()
-    } else {
-        name
-    })
-}
-
 fn block(author: &str, b: &Value, out: &mut Vec<Value>) {
     match b["type"].as_str().unwrap_or_default() {
-        "image" => out.push(image(author, &b["native"])),
+        "image" => out.push(image(author, &b["image"])),
         "tool_call" => {
             let name = b["name"].as_str().unwrap_or("tool");
-            let raw = b["input"].as_str();
-            // a custom tool's input is free text: an exec script or an apply_patch envelope, never shown as is
-            let summary = raw
-                .filter(|_| b["native"]["type"] == "custom_tool_call")
-                .and_then(|a| {
-                    if name == "apply_patch" {
-                        Some(patch_files(a))
-                    } else {
-                        codex_script(a)
-                    }
-                });
-            let input = match (summary, raw) {
-                (Some(cmd), _) => json!({"cmd": cmd}),
-                (None, Some(a)) => serde_json::from_str(a).unwrap_or_else(|_| json!(a)),
-                _ => b["input"].clone(),
-            };
+            let input = b["summary"]
+                .as_str()
+                .map(|summary| json!({"cmd":summary}))
+                .unwrap_or_else(|| b["input"].clone());
             out.push(tool(name, &input));
         }
         "tool_result" => {
-            let mut text = Vec::new();
-            match &b["output"] {
-                Value::String(s) => text.push(s.clone()),
-                Value::Array(parts) => {
-                    for p in parts {
-                        if matches!(
-                            p["type"].as_str(),
-                            Some("image" | "input_image" | "image_url" | "output_image")
-                        ) {
-                            out.push(image("tool", p));
-                        } else if let Some(t) = p["text"].as_str() {
-                            text.push(t.into());
+            let mut text = Vec::<String>::new();
+            for part in b["parts"].as_array().into_iter().flatten() {
+                match part["type"].as_str() {
+                    Some("image") => out.push(image("tool", &part["image"])),
+                    Some("text") => {
+                        if let Some(value) = part["text"].as_str() {
+                            text.push(value.into());
                         }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
             if text.is_empty() {
                 return;
@@ -633,123 +552,6 @@ fn json_masked(s: &str) -> String {
 }
 
 /// #1833 A1: newer Codex runs commands through its `exec` tool as JavaScript; the line shows what the script calls,
-/// `tools.exec_command({cmd})` as the command, other tools by name and target, never the script. None: no tool call.
-fn codex_script(js: &str) -> Option<String> {
-    let s: Vec<char> = js.chars().collect();
-    let (mut i, mut calls, mut key) = (0, Vec::<(String, Option<String>)>::new(), None::<String>);
-    let ident = |i: usize| {
-        s[i..]
-            .iter()
-            .take_while(|c| c.is_alphanumeric() || **c == '_' || **c == '$')
-            .collect::<String>()
-    };
-    let colon = |i: usize| s[i..].iter().find(|c| !c.is_whitespace()) == Some(&':');
-    while i < s.len() {
-        match s[i] {
-            '/' if s.get(i + 1) == Some(&'/') => {
-                while i < s.len() && s[i] != '\n' {
-                    i += 1
-                }
-            }
-            '/' if s.get(i + 1) == Some(&'*') => {
-                i = (i + 3..s.len())
-                    .find(|&k| s[k - 1] == '*' && s[k] == '/')
-                    .map_or(s.len(), |k| k + 1)
-            }
-            q @ ('"' | '\'' | '`') => {
-                let (lit, end) = literal(&s, i + 1, q);
-                i = end;
-                if colon(i) {
-                    key = Some(lit);
-                    continue;
-                }
-                if let Some((name, target @ None)) = calls.last_mut() {
-                    if matches!(
-                        (name.as_str(), key.as_deref()),
-                        ("exec_command", Some("cmd"))
-                            | ("view_image", Some("path"))
-                            | ("apply_patch", None)
-                    ) {
-                        *target = Some(lit);
-                    }
-                }
-                key = None;
-            }
-            c if c.is_alphabetic() || c == '_' || c == '$' => {
-                let word = ident(i);
-                i += word.chars().count();
-                if word == "tools" && s.get(i) == Some(&'.') {
-                    let name = ident(i + 1);
-                    i += 1 + name.chars().count();
-                    if s.get(i) == Some(&'(') {
-                        calls.push((name, None));
-                        key = None;
-                    }
-                } else if colon(i) {
-                    key = Some(word);
-                }
-            }
-            _ => i += 1,
-        }
-    }
-    let line: Vec<String> = calls
-        .into_iter()
-        .map(|(name, target)| match (name.as_str(), target) {
-            ("exec_command", Some(cmd)) => cmd,
-            ("apply_patch", Some(patch)) => format!("apply_patch {}", patch_files(&patch)),
-            (_, Some(target)) => format!("{name} {target}"),
-            (_, None) => name,
-        })
-        .collect();
-    (!line.is_empty()).then(|| line.join(" · "))
-}
-
-/// The JavaScript string literal that starts at `i`, closed by `q`, and the index after it; an open one ends the script.
-fn literal(s: &[char], mut i: usize, q: char) -> (String, usize) {
-    let mut out = String::new();
-    while i < s.len() && s[i] != q {
-        if s[i] == '\\' && i + 1 < s.len() {
-            i += 1;
-            let hex = |n: usize| {
-                s.get(i + 1..i + 1 + n)
-                    .and_then(|h| u32::from_str_radix(&h.iter().collect::<String>(), 16).ok())
-                    .and_then(char::from_u32)
-            };
-            match s[i] {
-                'n' => out.push('\n'),
-                't' => out.push('\t'),
-                'r' => out.push('\r'),
-                'u' if hex(4).is_some() => {
-                    out.push(hex(4).unwrap());
-                    i += 4;
-                }
-                'x' if hex(2).is_some() => {
-                    out.push(hex(2).unwrap());
-                    i += 2;
-                }
-                c => out.push(c),
-            }
-        } else {
-            out.push(s[i]);
-        }
-        i += 1;
-    }
-    (out, (i + 1).min(s.len()))
-}
-
-/// The files an `apply_patch` envelope adds, updates or deletes.
-fn patch_files(patch: &str) -> String {
-    patch
-        .lines()
-        .filter_map(|l| {
-            ["*** Add File: ", "*** Update File: ", "*** Delete File: "]
-                .iter()
-                .find_map(|p| l.strip_prefix(p))
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn redact(w: &str) -> String {
     let (name, value) = w.rsplit_once('=').unwrap_or(("", w));
     let value = value.trim_matches(|c| c == '"' || c == '\'');
@@ -783,33 +585,23 @@ fn redact(w: &str) -> String {
 /// Only recorded bytes authorize an inline image. Paths and remote URLs never trigger a file/network read.
 fn image(role: &str, b: &Value) -> Value {
     use base64::Engine;
-    let name = b["alt"]
+    let name = b["name"]
         .as_str()
-        .or(b["name"].as_str())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("Recorded image");
     // Native user-image wrappers also carry tool images; their human/board authorship is unknown.
     let mut item = line(if role == "user" { "image" } else { role }, "");
     item["native_role"] = json!(role);
     item["image"] = json!({"name":name.chars().take(160).collect::<String>()});
-    let url = b["image_url"]
-        .as_str()
-        .or(b["image_url"]["url"].as_str())
-        .or(b["source"]["url"].as_str());
+    let url = b["url"].as_str();
     if let Some(url) =
         url.filter(|s| s.len() <= 4096 && (s.starts_with("https://") || s.starts_with("http://")))
     {
         item["image"]["url"] = json!(url);
     }
-    let data = url
-        .and_then(|s| s.strip_prefix("data:image/"))
-        .and_then(|s| s.split_once(";base64,"))
-        .map(|(_, data)| data)
-        .or_else(|| {
-            (b["source"]["type"] == "base64")
-                .then(|| b["source"]["data"].as_str())
-                .flatten()
-        });
+    let data = (b["encoding"] == "base64")
+        .then(|| b["data"].as_str())
+        .flatten();
     let preview = (|| {
         let data =
             data.ok_or("Image bytes missing or access unavailable; no file or URL fetched")?;

@@ -1192,3 +1192,20 @@ fn the_user_home_prefers_the_native_variable_and_skips_an_empty_one() {
     );
     assert_eq!(home_from(vars(None, None)), None);
 }
+
+// Calendar versions keep the same comparator and current/previous rollback domain.
+#[test]
+fn calendar_release_ordering_preserves_update_and_previous_identity() {
+    for (new, old) in [
+        ("4.261107.1", "4.6.91"),
+        ("4.261107.10", "4.261107.9"),
+        ("4.261108.1", "4.261107.99"),
+        ("4.270101.1", "4.261231.99"),
+    ] {
+        assert!(coreq::update::newer(new, old));
+        assert!(!coreq::update::newer(old, new));
+        assert!(crate::service_versions::version(new));
+    }
+    assert!(!coreq::update::newer("4.261107.1", "4.261107.1"));
+    assert!(coreq::update::newer("999.0.0", "4.261107.1"));
+}

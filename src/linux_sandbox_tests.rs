@@ -280,8 +280,8 @@ fn live_linux_boundary_matrix() {
             let mut child = crate::runtime::spawn(&env, &l).unwrap_or_else(|e| panic!("{e}"));
             let began = std::time::Instant::now();
             let code = loop {
-                if let Some(code) = child.exited().unwrap() {
-                    break code;
+                if let Some(exit) = child.termination().unwrap() {
+                    break exit.code;
                 }
                 if began.elapsed().as_secs() > 180 {
                     child.kill();
@@ -290,7 +290,7 @@ fn live_linux_boundary_matrix() {
                 std::thread::sleep(std::time::Duration::from_millis(200));
             };
             let log = std::fs::read_to_string(crate::runtime::log_path(&root, &l)).unwrap();
-            assert_eq!(code, 0, "{log}");
+            assert_eq!(code, Some(0), "{log}");
             let ids: Vec<String> = log
                 .lines()
                 .filter_map(|s| serde_json::from_str::<serde_json::Value>(s).ok())

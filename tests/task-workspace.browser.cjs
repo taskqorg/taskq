@@ -5,10 +5,19 @@ const fs = require("node:fs"),
   { chromium } = require("playwright");
 const fx = require("./fixtures/task-workspace.json"),
   css = fs.readFileSync("build/web/task-workspace.css", "utf8");
+// Optional exact journey names retain independent prior evidence without repeating it.
+const selected = process.argv.slice(2);
+assert(
+  selected.every((name) => fx.journeys.some((j) => j.id === name)),
+  "unknown journey",
+);
+const journeys = selected.length
+  ? fx.journeys.filter((j) => selected.includes(j.id))
+  : fx.journeys;
 (async () => {
   const browser = await chromium.launch(require("./browser.cjs")());
   try {
-    for (const j of fx.journeys) {
+    for (const j of journeys) {
       const p = await browser.newPage({
         viewport: { width: j.viewport[0], height: j.viewport[1] },
       });
@@ -35,6 +44,39 @@ const fx = require("./fixtures/task-workspace.json"),
       );
       for (const [i, s] of j.steps.entries()) {
         const at = j.id + " step " + i;
+        if (s.reader) {
+          const destination = await p.evaluate(
+            () => messages.filter((m) => m.a === "workspace").at(-1).open,
+          );
+          // The actual host handoff opens the unified reader, never a synthetic inline detail.
+          await p.setContent(
+            fs.readFileSync("build/web/workspace.html", "utf8"),
+          );
+          await p.evaluate(() => {
+            window.messages = [];
+            window.ipc = { postMessage: (m) => messages.push(JSON.parse(m)) };
+          });
+          await p.evaluate(
+            ({ state, open }) => {
+              taskq.receive(state);
+              taskq.receive({ open });
+            },
+            { state: { ...fx.state, font: j.font }, open: destination },
+          );
+          const stop = p.locator(".sticky-object-head [data-control=stop]");
+          assert.equal(
+            await stop.count(),
+            1,
+            "one visible current-task header Stop",
+          );
+          assert.equal(await stop.getAttribute("aria-label"), "Stop a#7");
+          assert(await stop.isVisible(), "Stop is not hidden in metadata");
+          assert.equal(
+            await p.locator(".object-metadata [data-a=control]").count(),
+            0,
+            "no duplicate metadata controls",
+          );
+        }
         if (s.click) await p.locator(s.click).first().click();
         if (s.press && !s.until) await p.keyboard.press(s.press);
         if (s.until) {
@@ -58,7 +100,59 @@ const fx = require("./fixtures/task-workspace.json"),
               [sel, n],
               { timeout: 2000 },
             )
-            .catch(() => assert.fail(at + ": " + sel + " count is not " + n));
+            .catch(async () =>
+              assert.fail(
+                at +
+                  ": " +
+                  sel +
+                  " expected " +
+                  n +
+                  ", actual " +
+                  (await p.locator(sel).count()),
+              ),
+            );
+        if ("navigationCount" in e) {
+          const destinations = await p.evaluate(() =>
+            messages.filter((m) => m.a === "workspace"),
+          );
+          assert.equal(
+            destinations.length,
+            e.navigationCount,
+            at + ": one navigation per activation",
+          );
+          if (e.destination)
+            assert.deepEqual(
+              destinations.at(-1).open,
+              e.destination,
+              at + ": exact task destination",
+            );
+        }
+        if (e.operation) {
+          await p.waitForFunction(
+            () => messages.some((m) => m.a === "answer"),
+            null,
+            { timeout: 2000 },
+          );
+          const operations = await p.evaluate(() =>
+            messages.filter((m) => m.a === "answer"),
+          );
+          assert.equal(
+            operations.length,
+            1,
+            at + ": one keyboard control operation",
+          );
+          const { root, board, op } = operations[0];
+          assert.deepEqual(
+            {
+              root,
+              board,
+              task: op.task,
+              revision: op.revision,
+              action: op.action,
+            },
+            e.operation,
+          );
+        }
         if ("open" in e)
           await p
             .waitForFunction(
@@ -80,7 +174,9 @@ const fx = require("./fixtures/task-workspace.json"),
           );
         for (const [sel, text] of Object.entries(e.text || {}))
           assert(
-            (await p.locator(sel).innerText()).includes(text),
+            (await p.locator(sel).innerText())
+              .replace(/\s+/g, " ")
+              .includes(text),
             at + ": " + sel + " lacks " + text,
           );
         if (e.fits)
@@ -90,7 +186,7 @@ const fx = require("./fixtures/task-workspace.json"),
                 document.scrollingElement.scrollWidth <= innerWidth &&
                 [
                   ...document.querySelectorAll(
-                    "#taskq-popover:popover-open,.task-inline-details",
+                    "#taskq-popover:popover-open,.task-inline-details,.sticky-object-head",
                   ),
                 ].every((x) => x.getBoundingClientRect().right <= innerWidth),
             ),
@@ -107,7 +203,7 @@ const fx = require("./fixtures/task-workspace.json"),
     }
     console.log(
       "PASS task workspace journeys on the published bundle: " +
-        fx.journeys.map((j) => j.id).join(", "),
+        journeys.map((j) => j.id).join(", "),
     );
   } finally {
     await browser.close();

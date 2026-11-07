@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
-    process::Stdio,
 };
 type Res<T> = Result<T, String>;
 
@@ -78,7 +76,7 @@ pub struct AppState {
 }
 pub struct Native {
     pub app: Option<AppNative>,
-    pub turn: fn(&Path, &Request) -> Res<std::process::Command>,
+    pub turn: fn(&Path, &Request) -> Res<agentq_runtime::agent::Launch>,
     pub holder: fn(&Path, &Request) -> Res<bool>,
 }
 pub const NATIVE: Native = Native {
@@ -523,74 +521,83 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
             return store(&own.join("turn.json"), t);
         }
     }
-    let mut c = match (native.turn)(own, r) {
-        Ok(c) => c,
+    let mut request = match (native.turn)(own, r) {
+        Ok(request) => request,
         Err(e) => return finish(install, own, t, format!("not sent: {e}")),
     };
     t.state = "dispatching".into();
     store(&own.join("turn.json"), t)?;
     let stream = crate::runtime::owner_stream::handles(&r.runtime);
-    let files = if stream {
+    if stream {
         let path = crate::runtime::owner_stream::log(own);
-        crate::runtime::owner_stream::write_input(own, &t.input)?;
+        crate::runtime::owner_stream::write_input(own, &r.runtime, &t.input)?;
         t.stream_offset = Some(
             fs::metadata(&path)
                 .map_err(|_| "Native input boundary unavailable")?
                 .len(),
         );
-        store(&own.join("turn.json"), t)?;
-        (
-            fs::OpenOptions::new().create(true).append(true).open(path),
-            fs::File::create(own.join("turn.err")),
-        )
+        request.log = path;
     } else {
-        (
-            fs::File::create(own.join("turn.out")),
-            fs::File::create(own.join("turn.err")),
-        )
+        request.log = own.join("turn.out");
+        fs::write(&request.log, "").map_err(|_| "Turn log unavailable")?;
+    }
+    fs::write(own.join("turn.err"), "").map_err(|_| "Turn diagnostic unavailable")?;
+    request.input = t.input.clone();
+    store(&own.join("turn.json"), t)?;
+    let adapter = crate::runtime::agent(&r.runtime)?;
+    let session = r
+        .session
+        .as_deref()
+        .ok_or("Native session identity unknown")?;
+    adapter.adopt(session, &request, &[])?;
+    let mut run = match adapter.resume(session, &request) {
+        Ok(run) => run,
+        Err(reason) => {
+            return finish(
+                install,
+                own,
+                t,
+                format!("unknown: {}; no replay", reason.detail),
+            );
+        }
     };
-    let (Ok(out), Ok(err)) = files else {
-        return finish(install, own, t, "not sent: turn log unavailable".into());
-    };
-    let mut child = match c.stdin(Stdio::piped()).stdout(out).stderr(err).spawn() {
-        Ok(c) => c,
-        Err(e) => return finish(install, own, t, format!("not sent: {e}")),
-    };
-    t.pid = Some(child.id());
-    t.started = coreq::process::identity(child.id())
-        .ok()
-        .flatten()
+    t.pid = run.id();
+    t.started = t
+        .pid
+        .and_then(|pid| coreq::process::identity(pid).ok().flatten())
         .map(|i| i.started);
-    if stream {
-        store(&own.join("turn.json"), t)?;
-        if let Err(reason) = crate::runtime::owner_stream::ready(
-            own,
-            &r.runtime,
-            r.session.as_deref().unwrap_or_default(),
-            t.stream_offset.unwrap_or(0),
-            &mut child,
-        ) {
-            drop(child.stdin.take());
-            std::thread::spawn(move || child.wait());
-            t.state = "running".into();
-            t.outcome = Some(format!("unknown: {reason}"));
-            return store(&own.join("turn.json"), t);
-        }
-    }
-    // a failed write still leaves a turn whose outcome only the runtime's end record tells
-    let written = child.stdin.take().is_some_and(|mut s| {
-        s.write_all(crate::runtime::owner_input(&r.runtime, &t.input).as_bytes())
-            .is_ok()
-    });
-    if stream {
-        t.stream_written = written;
-        if !written {
-            t.outcome = Some("unknown: native input write unverified; no replay".into());
-        }
-    }
+    t.stream_written = stream;
     t.state = "running".into();
-    // ponytail: one waiting thread per turn reaps it; the next pass reads the end record from the log
-    std::thread::spawn(move || child.wait());
+    adapter.poll(&mut run)?;
+    let terminated = adapter.report(&run).is_ok_and(|report| {
+        matches!(
+            report.termination,
+            agentq_runtime::agent::ProcessTermination::Observed
+        )
+    });
+    if !adapter.descriptor().has("acp") && !terminated {
+        let checkpoint = adapter.checkpoint(&run).map_err(|e| e.to_string())?;
+        store(&own.join("runtime-run.json"), &checkpoint)?;
+    }
+    let rt = r.runtime.clone();
+    // Retain runtime ownership until the native process is reaped; terminal text alone cannot release it.
+    std::thread::spawn(move || {
+        let Ok(adapter) = crate::runtime::agent(&rt) else {
+            return;
+        };
+        loop {
+            let _ = adapter.poll(&mut run);
+            if adapter.report(&run).is_ok_and(|report| {
+                matches!(
+                    report.termination,
+                    agentq_runtime::agent::ProcessTermination::Observed
+                )
+            }) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    });
     store(&own.join("turn.json"), t)
 }
 

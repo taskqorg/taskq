@@ -14,3 +14,5 @@ Linked from `taskq.md` R13 to keep the contract under its R8 size bound; this te
 - Ask-context association proves the ordinary worker/reviewer ask path and numbered CLI aliases. Unsupported lifecycle histories contribute no inferred context; they cannot grant approval from an ignored ask.
 - Coverage (report only): `check.py --rules` prints each `taskq.md` and menu ID that no test `Chain:` line cites, and their count.
 - Stage 3: coverage becomes a gate for new rules (a new ID needs a citing `Chain:` line) after 20 consecutive merged PRs add no uncovered ID; the change is a task that edits this text.
+
+A trusted task-context `Retains: <rule ID> -> <test path>::<detector name>` line may name retained equivalent failure detection for a changed guarding assertion. The path must exist and contain that detector; review checks equivalence, not just the spelling. This does not authorize a changed or removed rule, waive trusted issue/owner evidence, or excuse weaker protection.

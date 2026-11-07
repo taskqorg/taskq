@@ -2,6 +2,66 @@ use super::*;
 use crate::runtime::Cap;
 use std::process::Stdio;
 
+// Invented rows are decoded by AgentQ before exercising consumer lifecycle guards.
+fn fixture_row(
+    row: &serde_json::Value,
+    root: &Path,
+    home: &Path,
+) -> Result<BackgroundCandidate, String> {
+    let candidate = native_fixture::background_rows(&[row.clone()], root, home)?
+        .pop()
+        .ok_or("invented row missing")?;
+    if let (Some(detail), Some(id)) = (row.get("detail"), candidate.id()) {
+        let path = home.join("jobs").join(id).join("state.json");
+        std::fs::create_dir_all(path.parent().unwrap()).map_err(|error| error.to_string())?;
+        std::fs::write(
+            path,
+            serde_json::json!({"cwd":candidate.cwd(),"sessionId":candidate.session(),
+            "state":candidate.state().map(BackgroundState::as_str),"detail":detail})
+            .to_string(),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(candidate)
+}
+fn observe_fixture(turn: &mut ClaudeTurn, row: &serde_json::Value) -> Result<Option<i32>, String> {
+    let row = fixture_row(row, &turn.root, &turn.root)?;
+    turn.observe(&row)
+}
+fn capture_fixture(turn: &mut ClaudeTurn, row: &serde_json::Value) -> Result<(), String> {
+    let row = fixture_row(row, &turn.root, &turn.root)?;
+    turn.capture_identity(&row)
+}
+fn recover_fixture(
+    turn: &mut ClaudeTurn,
+    rows: &[serde_json::Value],
+    home: Option<&Path>,
+) -> Result<(), String> {
+    let rows = native_fixture::background_rows(rows, &turn.root, home.unwrap_or(&turn.root))?;
+    turn.recover_job(&rows, home)
+}
+fn claude_exit(
+    row: &serde_json::Value,
+    known: Option<&coreq::process::Identity>,
+    handed: bool,
+) -> Result<bool, String> {
+    let root = row["cwd"]
+        .as_str()
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    super::claude_exit(&fixture_row(row, &root, &root)?, known, handed)
+}
+fn claude_stopped(
+    row: &serde_json::Value,
+    known: Option<&coreq::process::Identity>,
+) -> Result<bool, String> {
+    let root = row["cwd"]
+        .as_str()
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    super::claude_stopped(&fixture_row(row, &root, &root)?, known)
+}
+
 // Chain: §8, R2, R9, R11, R12, #2157 A1/A2 -> Codex resume keeps its bound CODEX_HOME without copying auth,
 // releases a passive unheld writer lock on a completed turn, and retains live writers for no-start continuation retry.
 #[test]
@@ -84,8 +144,21 @@ fn codex_resume_releases_passive_writer_and_preserves_bound_home_and_input() {
             "never copy auth.json across homes"
         );
 
-        struct Exited;
+        struct Exited {
+            session: Option<String>,
+        }
         impl Proc for Exited {
+            fn start_failure(&self) -> Option<agentq_runtime::agent::LaunchError> {
+                self.session
+                    .as_ref()
+                    .map(|session| agentq_runtime::agent::LaunchError {
+                        stage: agentq_runtime::agent::InputStage::BeforeInput,
+                        cause: Some(agentq_runtime::agent::Cause("session-busy")),
+                        session: Some(session.clone()),
+                        detail: "invented canonical owned-run refusal".into(),
+                        native: None,
+                    })
+            }
             fn exited(&mut self) -> Result<Option<i32>, String> {
                 Ok(Some(1))
             }
@@ -119,8 +192,8 @@ fn codex_resume_releases_passive_writer_and_preserves_bound_home_and_input() {
         assert!(lock_path.exists(), "live OS writer lock stays untouched");
         writeln!(File::options().append(true).open(&log).unwrap(),
                 "2026-11-02T00:00:00Z ERROR codex_core::session: Failed to create session: thread-store conflict: thread {thread} already has an active writer\nError: thread/resume: thread/resume failed: thread {thread} already has an active writer (code -32600)").unwrap();
-        let turn = CliTurn {
-            proc: Box::new(Exited),
+        let mut turn = CliTurn {
+            proc: Box::new(Exited { session: None }),
             log: log.clone(),
             pos: start,
             start,
@@ -132,7 +205,15 @@ fn codex_resume_releases_passive_writer_and_preserves_bound_home_and_input() {
             recovery: None,
             rt: "codex".into(),
         };
+        assert!(
+            turn.refused(l.task, l.attempt, 44, 1).is_none(),
+            "historical diagnostic bytes never mint no-start"
+        );
+        turn.proc = Box::new(Exited {
+            session: Some(thread.clone()),
+        });
         assert!(turn.refused(l.task, l.attempt, 44, 1).is_some());
+        assert!(turn.refused(l.task, l.attempt, 44, 0).is_none());
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "retained answer",
@@ -285,7 +366,10 @@ finally:
         };
         assert_ne!(code, 0);
         assert_eq!(turn.accepted(), Ok(false));
-        assert!(turn.refused(l.task, l.attempt, execution, code).is_some());
+        assert!(
+            turn.refused(l.task, l.attempt, execution, code).is_none(),
+            "raw client fixture has no qualified canonical owned-run start proof"
+        );
         assert_eq!(std::fs::read_to_string(path).unwrap(), text);
     }
     drop(owner.stdin.take());
@@ -326,13 +410,10 @@ fn antigravity_commands_and_input_preserve_identity_and_grants() {
         "model_reasoning_effort=high",
     ]
     .map(String::from);
-    let vars = vec![
-        (
-            "ANTIGRAVITY_HOME".into(),
-            root.join("invented-home").display().to_string(),
-        ),
-        ("AGENTQ_OPTIMIZATION".into(), "off".into()),
-    ];
+    let vars = vec![(
+        "ANTIGRAVITY_HOME".into(),
+        root.join("invented-home").display().to_string(),
+    )];
     let env = Env {
         context: "",
         root: &root,
@@ -574,7 +655,7 @@ fn antigravity_turn_uses_its_log_boundary_and_preserves_quota_unknowns() {
         session: None,
         native: None,
         recovery: None,
-        rt: "codex".into(),
+        rt: "antigravity".into(),
     };
     assert_eq!(turn.exited(), Ok(None));
     assert_eq!(turn.accepted(), Ok(false));
@@ -585,7 +666,17 @@ fn antigravity_turn_uses_its_log_boundary_and_preserves_quota_unknowns() {
     )
     .unwrap();
     assert_eq!(turn.exited(), Ok(None));
-    assert_eq!(turn.accepted(), Ok(true));
+    assert_eq!(
+        turn.accepted(),
+        Ok(false),
+        "an unsupported state is not input proof"
+    );
+    for state in ["ACTIVE", "DONE"] {
+        writeln!(File::options().append(true).open(&log).unwrap(),"{}",
+            serde_json::json!({"event":"step_update","step_update":{"step_type":"tool","state":state,"tool_name":"Read","step_index":1}})).unwrap();
+        assert_eq!(turn.exited(), Ok(None));
+        assert_eq!(turn.accepted(), Ok(true));
+    }
     writeln!(
         File::options().append(true).open(&log).unwrap(),
         "{}",
@@ -644,167 +735,6 @@ fn antigravity_turn_uses_its_log_boundary_and_preserves_quota_unknowns() {
         "mid-work quota must not become a pre-work retry"
     );
     std::fs::remove_dir_all(root).unwrap();
-}
-
-// A4/R9: launch intent must preserve client policy and identity, never enable or rewrite an integration.
-#[test]
-fn optimization_preserves_policy_and_reports_effective_state() {
-    use agentq_runtime::optimization::Intent;
-    let root = rules_root("optimization");
-    let home = root.join("home");
-    let install = root.join("optimizer");
-    std::fs::create_dir_all(&home).unwrap();
-    std::fs::create_dir_all(install.join("data")).unwrap();
-    let config = "model_provider = \"agentq\"\n";
-    std::fs::write(home.join("config.toml"), config).unwrap();
-    std::fs::write(
-        home.join("settings.json"),
-        r#"{"hooks":{"PreToolUse":[{"hooks":[{"command":"agentq hook claude pre"}]}]}}"#,
-    )
-    .unwrap();
-    for name in ["claude", "codex"] {
-        for (intent, effective) in [("inherit", "on"), ("off", "off"), ("on", "on")] {
-            for resume in [false, true] {
-                let mut spec = NativeSpec {
-                    root: root.clone(),
-                    session: "saved-native-id".into(),
-                    resume,
-                    args: vec!["--permission-mode".into(), "dontAsk".into()],
-                    home: Some(home.clone()),
-                    env: vec![
-                        ("AGENTQ_OPTIMIZATION".into(), intent.into()),
-                        ("TASKQ_TASK".into(), "2111".into()),
-                    ],
-                };
-                let state = optimization(name, &mut spec, Some(&install)).unwrap();
-                assert_eq!(
-                    (state.intent, state.effective),
-                    (Intent::parse(intent).unwrap(), effective)
-                );
-                assert_eq!(spec.session, "saved-native-id");
-                assert_eq!((spec.resume, spec.home.as_ref()), (resume, Some(&home)));
-                assert_eq!(&spec.args[..2], &["--permission-mode", "dontAsk"]);
-                assert_eq!(
-                    spec.args.len(),
-                    if name == "claude" || intent == "off" {
-                        4
-                    } else {
-                        2
-                    }
-                );
-                if intent == "off" && name == "codex" {
-                    assert_eq!(
-                        spec.args[3],
-                        "model_providers.agentq.http_headers.x-agentq-optimization=\"off\""
-                    );
-                }
-                if intent == "on" {
-                    assert_eq!(
-                        optimization(name, &mut spec, None).unwrap().reason,
-                        "not_installed"
-                    );
-                    std::fs::write(
-                        install.join("data/config.json"),
-                        r#"{"compression":{"enabled":false}}"#,
-                    )
-                    .unwrap();
-                    assert_eq!(
-                        optimization(name, &mut spec, Some(&install))
-                            .unwrap()
-                            .effective,
-                        "off"
-                    );
-                    std::fs::remove_file(install.join("data/config.json")).unwrap();
-                }
-                spec.env
-                    .push(("AGENTQ_OPTIMIZATION".into(), "invalid".into()));
-                assert!(
-                    optimization(name, &mut spec, Some(&install))
-                        .unwrap_err()
-                        .contains("inherit, off or on")
-                );
-            }
-        }
-    }
-    assert_eq!(
-        std::fs::read_to_string(home.join("config.toml")).unwrap(),
-        config
-    );
-    assert!(!install.join("data/integration.json").exists());
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-// A3/A4/R9: a daemon-backed start carries session env; a resume passes no flags, because Claude copies a job resumed
-// with flags into a new conversation (#2262), so the job keeps the settings saved at its start.
-#[cfg(unix)]
-#[test]
-fn optimization_reaches_background_settings_and_operator_attribution() {
-    use std::os::unix::fs::PermissionsExt;
-    let client = std::env::temp_dir().join(format!("taskq-background-args-{}", uuid()));
-    std::fs::write(
-        &client,
-        "#!/bin/sh\ncat >/dev/null\nfor a; do printf '%s\\n' \"$a\"; done\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
-    for resume in [false, true] {
-        let mut spec = NativeSpec {
-            root: std::env::temp_dir(),
-            session: "saved-native-id".into(),
-            resume,
-            args: vec![
-                "--settings".into(),
-                r#"{"env":{"TASKQ_INSTALL":"invented"},"hooks":{"SessionStart":[]}}"#.into(),
-                "--permission-mode".into(),
-                "dontAsk".into(),
-                "--name".into(),
-                "retained name".into(),
-            ],
-            home: None,
-            env: vec![("AGENTQ_OPTIMIZATION".into(), "off".into())],
-        };
-        optimization("claude", &mut spec, None).unwrap();
-        let out = agent("claude")
-            .unwrap()
-            .background_launch(
-                Command::new(&client),
-                &spec,
-                "fixture input",
-                std::time::Duration::from_secs(10),
-            )
-            .unwrap()
-            .unwrap();
-        let args: Vec<String> = String::from_utf8(out.stdout)
-            .unwrap()
-            .lines()
-            .map(String::from)
-            .collect();
-        if resume {
-            assert_eq!(
-                args,
-                ["--bg", "--resume", "saved-native-id"],
-                "a flagged resume starts a copy job (#2262)"
-            );
-            continue;
-        }
-        assert_eq!(
-            args.iter().filter(|a| a.as_str() == "--settings").count(),
-            1
-        );
-        let settings: serde_json::Value =
-            serde_json::from_str(&args[args.iter().position(|a| a == "--settings").unwrap() + 1])
-                .unwrap();
-        assert_eq!(settings["env"]["AGENTQ_OPTIMIZATION"], "off");
-        assert_eq!(settings["env"]["AGENTQ_LAUNCHER"], "taskq");
-        assert_eq!(settings["env"]["TASKQ_INSTALL"], "invented");
-        assert_eq!(settings["hooks"]["SessionStart"], serde_json::json!([]));
-        assert!(
-            args.windows(2)
-                .any(|a| a == ["--permission-mode", "dontAsk"])
-        );
-        assert!(args.windows(2).any(|a| a == ["--name", "retained name"]));
-    }
-    std::fs::remove_file(client).unwrap();
 }
 
 // Risk: Windows `explorer` exits 1 after a successful open, so a Codex app queue reads it as a failed open (#1593).
@@ -872,19 +802,30 @@ fn session_links_follow_the_adapter() {
 #[test]
 fn balancing_quota_observations_keep_windows() {
     let log = std::env::temp_dir().join(format!("taskq-quota-metadata-{}", uuid()));
-    std::fs::write(&log,concat!("{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"rateLimitType\":\"seven_day\",\"resetsAt\":604800}}\n",
-            "{\"type\":\"rate_limits\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":18000}}}\n")).unwrap();
+    std::fs::write(&log,"{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"rateLimitType\":\"seven_day\",\"resetsAt\":604800}}\n").unwrap();
     assert_eq!(
-        quota_windows(&log, "codex"),
-        [
-            ("300m".into(), Some(18000)),
-            ("seven_day".into(), Some(604800))
-        ]
+        quota_windows(&log, "claude"),
+        [("seven_day".into(), Some(604800))]
     );
     rules_line(&log, "resume", "fixture input").unwrap();
     assert!(
-        quota_windows(&log, "codex").is_empty(),
+        quota_windows(&log, "claude").is_empty(),
         "a successful later turn must not reuse old quota events"
+    );
+    std::fs::write(&log,"{\"type\":\"rate_limits\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":18000}}}\n").unwrap();
+    assert!(
+        quota_windows(&log, "codex").is_empty(),
+        "a usage snapshot alone is not native rejection"
+    );
+    std::fs::write(
+        &log,
+        "{\"type\":\"turn.failed\",\"error\":{\"message\":\"usage limit reached\"}}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        quota_windows(&log, "codex"),
+        [("unknown".into(), None)],
+        "an actual rejection with no window remains unknown"
     );
     std::fs::write(
         &log,
@@ -897,6 +838,56 @@ fn balancing_quota_observations_keep_windows() {
         "no guessed agy reset/window"
     );
     std::fs::remove_file(log).unwrap();
+}
+
+// Chain: #2448/capacity limited -> native rejection only; utilization and siblings cannot hold a working account.
+#[test]
+fn quota_2448_allowed_windows_do_not_hold_accounts() {
+    let log = std::env::temp_dir().join(format!("taskq-quota-rejection-{}", uuid()));
+    for status in ["allowed", "allowed_warning"] {
+        std::fs::write(&log, format!("{}\n", serde_json::json!({
+            "type":"rate_limit_event", "rate_limit_info":{
+                "status":status, "rateLimitType":"five_hour", "utilization":1.0, "resetsAt":100,
+                "unifiedWindows":{"seven_day":{"utilization":1.0,"resetsAt":700}}
+            }
+        }))).unwrap();
+        assert!(
+            quota_windows(&log, "claude").is_empty(),
+            "{status} is not native rejection"
+        );
+    }
+    std::fs::write(&log, format!("{}\n", serde_json::json!({
+        "type":"rate_limit_event", "rate_limit_info":{
+            "status":"rejected", "rateLimitType":"five_hour", "utilization":1.0, "resetsAt":100,
+            "unifiedWindows":{"seven_day":{"utilization":1.0,"resetsAt":700}}
+        }
+    }))).unwrap();
+    assert_eq!(
+        quota_windows(&log, "claude"),
+        [("five_hour".into(), Some(100))],
+        "a non-binding sibling must not extend the rejection"
+    );
+    std::fs::remove_file(log).unwrap();
+}
+
+// Chain: #2448/R12 native input boundary -> acceptance; an unsupported event must remain unknown.
+#[test]
+fn input_2448_unknown_is_not_accepted() {
+    assert!(!takes_input(
+        "claude",
+        &[Event::Unsupported {
+            reason: "future record"
+        }]
+    ));
+    assert!(!takes_input("claude", &[Event::Activity]));
+    assert!(!takes_input("claude", &[Event::TurnStart]));
+    assert!(takes_input(
+        "claude",
+        &[Event::Text {
+            item: None,
+            delta: "work".into()
+        }]
+    ));
 }
 
 // Chain: attempt log -> usage limit before work -> reset. Risk: a limit after work started skips its retry,
@@ -1015,11 +1006,11 @@ fn live_background_reads_jobs_the_last_turn_left_running() {
     let running = r#"{"type":"queue-operation","content":"<task-notification>\n<task-id>b7x9</task-id>\n<status>running</status>\n</task-notification>"}"#;
     let killed = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_4","name":"KillShell","input":{"shell_id":"b7x9"}}]}}"#;
     let cases: [(Vec<&str>, Vec<&str>); 8] = [
-        (vec![start, fg, fg_done, bash, started], vec!["Full check"]),
-        (vec![start, bash, started, running], vec!["Full check"]),
+        (vec![start, fg, fg_done, bash, started], vec!["Bash"]),
+        (vec![start, bash, started, running], vec!["Bash"]),
         (
             vec![start, bash, started, monitor, monitor_started],
-            vec!["Full check", "CI watch"],
+            vec!["Bash", "Monitor"],
         ),
         (vec![start, bash, started, done], vec![]),
         (vec![start, bash, started, killed], vec![]),
@@ -1030,11 +1021,11 @@ fn live_background_reads_jobs_the_last_turn_left_running() {
     for (lines, want) in cases {
         let text = lines.join("\n") + "\n";
         std::fs::write(&log, &text).unwrap();
-        assert_eq!(live_background(&log), want, "{text}");
+        assert_eq!(live_background(&log, "claude"), want, "{text}");
     }
     let _ = std::fs::remove_file(&log);
     assert!(
-        live_background(&log).is_empty(),
+        live_background(&log, "claude").is_empty(),
         "an unreadable log has no live job"
     );
 }
@@ -1441,8 +1432,8 @@ fn file_stdin_handoff_preserves_bytes_and_never_waits_for_a_reader() {
         }
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let status = loop {
-            if let Some(status) = child.exited().unwrap() {
-                break status;
+            if let Some(exit) = child.termination().unwrap() {
+                break exit.code;
             }
             if std::time::Instant::now() >= until {
                 let cleanup = stop(child.as_mut());
@@ -1452,7 +1443,7 @@ fn file_stdin_handoff_preserves_bytes_and_never_waits_for_a_reader() {
         };
         if mode == "read" {
             assert!(
-                status == 0,
+                status == Some(0),
                 "child could not read the original bytes after cache unlink"
             );
         }
@@ -1495,7 +1486,10 @@ fn native_stop_reaps_the_owned_process() {
         let requested = stop(proc);
         let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
-            if proc.exited().unwrap().is_some() {
+            if let Some(exit) = proc.termination().unwrap() {
+                if exit.code.is_none() {
+                    assert!(proc.exited().unwrap_err().contains("exit code unknown"));
+                }
                 break;
             }
             assert!(
@@ -1949,6 +1943,20 @@ fn launcher_stderr_in_last_message_and_active_account_probe() {
         last_message(&log, "claude").as_deref(),
         Some("completed work")
     );
+    std::fs::write(&log, concat!(
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"earlier message\"}]}}\n",
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"unfinished latest message\"}]}}\n"
+    )).unwrap();
+    assert_eq!(
+        classify("claude", &std::fs::read_to_string(&log).unwrap())
+            .unwrap()
+            .text,
+        None
+    );
+    assert_eq!(
+        last_message(&log, "claude").as_deref(),
+        Some("unfinished latest message")
+    );
     std::fs::write(&log, "{\"type\":\"taskq.rules\",\"phase\":\"start\"}\n{\"type\":\"thread.started\",\"thread_id\":\"t1\"}\n").unwrap();
     assert_eq!(last_message(&log, "codex"), None);
 
@@ -2153,10 +2161,13 @@ fn claude_account_environment_fixture() {
     for resume in [false, true] {
         l.resume = resume.then(|| "retained input".into());
         let turn = spec(&env, &l, root.clone(), vec![]);
-        let mut c = agent("claude")
-            .unwrap()
-            .command(crate::platform::command(&bin), &turn)
-            .unwrap();
+        let mut c = crate::platform::command(&bin);
+        c.args(agent("claude").unwrap().native_arguments(&turn).unwrap())
+            .envs(turn.env)
+            .current_dir(&turn.root);
+        if let Some(home) = turn.home {
+            c.env(of("claude").home_var, home);
+        }
         let out = coreq::process::output(
             "qualification.launch-env",
             &mut c,
@@ -2187,17 +2198,23 @@ fn claude_account_environment_fixture() {
         let work_path = work_dir.join(format!("{session}.jsonl"));
         std::fs::write(
             &default_path,
-            r#"{"sessionKind":"bg","permissionMode":"bypassPermissions"}"#,
+            serde_json::json!({"type":"system","sessionId":session,"sessionKind":"bg","permissionMode":"bypassPermissions"}).to_string()+"\n",
         )
         .unwrap();
         assert!(
-            !claude_background(&root, &session, Some(&work)).unwrap(),
-            "missing named history cannot borrow default background state"
+            claude_background(&root, &session, Some(&work)).is_err(),
+            "missing named history stays unknown and cannot borrow default background state"
         );
-        std::fs::write(&work_path, r#"{"permissionMode":"dontAsk"}"#).unwrap();
+        std::fs::write(
+            &work_path,
+            serde_json::json!({"type":"system","sessionId":session,"permissionMode":"dontAsk"})
+                .to_string()
+                + "\n",
+        )
+        .unwrap();
         assert_eq!(
             claude_transcript(&session, Some(&work)),
-            Some(work_path.clone()),
+            Ok(work_path.clone()),
             "saved permissions stay in their account"
         );
         assert!(
@@ -2206,7 +2223,7 @@ fn claude_account_environment_fixture() {
         );
         std::fs::write(
             &work_path,
-            r#"{"sessionKind":"bg","permissionMode":"dontAsk"}"#,
+            serde_json::json!({"type":"system","sessionId":session,"sessionKind":"bg","permissionMode":"dontAsk"}).to_string()+"\n",
         )
         .unwrap();
         assert!(claude_background(&root, &session, Some(&work)).unwrap());
@@ -2574,10 +2591,17 @@ fn cli_acceptance_uses_only_native_events_after_its_input_boundary() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("turn.log");
     let old = "{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\"}\n";
-    for native in [
-        "",
-        "{\"type\":\"turn.started\"}\n",
-        "{\"type\":\"assistant\",\"message\":{}}\n",
+    for (rt, native) in [
+        ("codex", ""),
+        ("codex", "{\"type\":\"turn.started\"}\n"),
+        (
+            "claude",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"work\"}]}}\n",
+        ),
+        (
+            "claude",
+            "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"work\"}}}\n",
+        ),
     ] {
         std::fs::write(
             &path,
@@ -2595,7 +2619,7 @@ fn cli_acceptance_uses_only_native_events_after_its_input_boundary() {
             session: None,
             native: None,
             recovery: None,
-            rt: "codex".into(),
+            rt: rt.into(),
         };
         assert_eq!(turn.accepted(), Ok(false));
         assert_eq!(turn.exited(), Ok(Some(0)));
@@ -2838,7 +2862,7 @@ fn app_turn_requires_its_input_and_matching_native_completion() {
     );
     assert_eq!(
         stop(&mut t),
-        Ok(0),
+        Ok(Exit { code: Some(0) }),
         "observed native completion resolves stop even when cancellation is unsupported"
     );
     t.running = || Ok(false);
@@ -3480,7 +3504,7 @@ fn only_the_trust_error_marks_the_trust_wait() {
 
 // A1 / R9: trust repair can retry a definite no-start, but never reuse uncertain input.
 #[test]
-fn trust_retry_reuses_only_a_definitely_refused_input() {
+fn historical_trust_receipt_never_replays_bound_input() {
     let root = std::env::temp_dir().join(format!("taskq-trust-input-{}", uuid()));
     std::fs::create_dir_all(root.join(".taskq")).unwrap();
     let l = Launch {
@@ -3505,11 +3529,12 @@ fn trust_retry_reuses_only_a_definitely_refused_input() {
     let binding = serde_json::json!({"type":"taskq.input","execution":42});
     let refusal = serde_json::json!({"type":"claude.launch","stdout":"","stderr":"Workspace not trusted","status":1});
     std::fs::write(&log, format!("{binding}\n{refusal}\n")).unwrap();
-    let (reused, lock, same) = claude_input(&root, "changed input", Some(&l)).unwrap();
-    assert_eq!(reused, input);
-    assert_eq!(same, path);
+    assert!(
+        claude_input(&root, "changed input", Some(&l)).is_err(),
+        "historical diagnostics cannot authorize replay even when native refusal is classified"
+    );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "original input");
-    drop(lock);
+    assert_eq!(input, claude_reference(&path).unwrap());
     record_input(&log, &binding).unwrap();
     assert!(
         claude_input(&root, "changed input", Some(&l)).is_err(),
@@ -3520,8 +3545,8 @@ fn trust_retry_reuses_only_a_definitely_refused_input() {
 
 // Risk: a refused launch blocks its task forever, or a doubtful record releases a started job (#1557).
 #[test]
-fn saved_launch_records_reconcile_only_a_refusal() {
-    // #1557 A4: records written before the status field still reconcile; any doubt stays unknown.
+fn saved_launch_records_classify_without_proving_no_start() {
+    // Legacy diagnostics remain readable observations; no historical exchange produces native start proof.
     let root = std::env::temp_dir().join(format!("taskq-refused-{}", uuid()));
     std::fs::create_dir_all(root.join(".taskq")).unwrap();
     let x = crate::core::Execution {
@@ -3559,7 +3584,7 @@ fn saved_launch_records_reconcile_only_a_refusal() {
                 bind(44),
                 launch("", "Workspace not trusted", Some(serde_json::Value::Null)),
             ],
-            false,
+            true, // A diagnostic classification is not affirmative no-start evidence.
         ),
         (
             "exit 0",
@@ -3604,7 +3629,19 @@ fn saved_launch_records_reconcile_only_a_refusal() {
         ("no record", vec![bind(44)], false),
     ] {
         std::fs::write(attempt_log(&root, "worker", 7, 42), lines.join("\n")).unwrap();
-        assert_eq!(refused_launch(&root, 7, &x).is_some(), want, "{case}");
+        if let Some(receipt) = recorded_background_launch(&root, 7, &x) {
+            assert!(
+                receipt.unknown.is_some(),
+                "{case}: historical text never proves native rejection"
+            );
+        }
+        assert_eq!(
+            recorded_background_launch(&root, 7, &x)
+                .and_then(|receipt| receipt.cause)
+                .is_some(),
+            want,
+            "{case}"
+        );
     }
     std::fs::write(
         attempt_log(&root, "worker", 7, 42),
@@ -3612,7 +3649,7 @@ fn saved_launch_records_reconcile_only_a_refusal() {
     )
     .unwrap();
     assert!(
-        refused_launch(
+        recorded_background_launch(
             &root,
             7,
             &crate::core::Execution {
@@ -3624,7 +3661,7 @@ fn saved_launch_records_reconcile_only_a_refusal() {
         "accepted input never reads no-start"
     );
     assert!(
-        refused_launch(
+        recorded_background_launch(
             &root,
             7,
             &crate::core::Execution {
@@ -3636,7 +3673,7 @@ fn saved_launch_records_reconcile_only_a_refusal() {
     );
     std::fs::write(attempt_log(&root, "reviewer", 7, 42), "").unwrap();
     assert!(
-        refused_launch(&root, 7, &x).is_none(),
+        recorded_background_launch(&root, 7, &x).is_none(),
         "ambiguous log stays unknown"
     );
     std::fs::remove_dir_all(root).unwrap();
@@ -3727,6 +3764,9 @@ fn uncertain_background_launch_retains_its_bound_input() {
         assert_eq!(record["input"], input);
         assert!(!written.contains("private task body"));
         let mut turn = ClaudeTurn {
+            run: None,
+            admission: None,
+            control: None,
             start: 0,
             root: root.clone(),
             log: log.clone(),
@@ -3797,31 +3837,21 @@ fn uncertain_background_launch_retains_its_bound_input() {
             }),
         };
         let result = turn.finish_launch(output);
-        if case == "no-start" {
-            assert!(result.unwrap_err().no_start);
-        } else if case == "untrusted" {
-            let e = result.unwrap_err();
-            assert!(
-                e.no_start
-                    && e.class() == "trust-setup"
-                    && e.message.contains("service retries automatically"),
-                "{}",
-                e.message
+        assert!(
+            result.is_ok(),
+            "caller-held exchange without canonical owned proof cannot become no-start: {case}"
+        );
+        assert!(
+            turn.launch_error.is_some(),
+            "{case}: uncertainty retains the input and execution"
+        );
+        if matches!(case, "exit-id" | "log" | "copy") {
+            assert_eq!(
+                turn.id, candidate,
+                "unverified locator survives an uncertain receipt"
             );
-            assert!(
-                !e.message.contains(&root.display().to_string()),
-                "board text never holds a local path"
-            );
-        } else if case == "refused" {
-            let e = result.unwrap_err();
-            assert!(
-                e.no_start
-                    && e.message.contains(
-                        "refused: Error: Background sessions are disabled. Ask your administrator."
-                    ),
-                "{}",
-                e.message
-            );
+        }
+        if case == "refused" {
             let x = crate::core::Execution {
                 id: 44,
                 attempt: 42,
@@ -3834,49 +3864,28 @@ fn uncertain_background_launch_retains_its_bound_input() {
             };
             let attempt = attempt_log(&root, "worker", 7, 42);
             std::fs::copy(&log, &attempt).unwrap();
-            assert_eq!(
-                refused_launch(&root, 7, &x).as_deref(),
-                Some("Error: Background sessions are disabled. Ask your administrator."),
-                "saved refusal reconciles cold"
+            assert!(
+                recorded_background_launch(&root, 7, &x)
+                    .unwrap()
+                    .cause
+                    .is_some(),
+                "saved diagnostic remains readable observation, not stage proof"
             );
             std::fs::remove_file(attempt).unwrap();
-        } else {
-            assert!(
-                result.is_ok(),
-                "{case}: uncertain native side effect must retain its handle"
-            );
-            assert!(turn.launch_error.is_some());
-            if case == "exit-id" {
-                assert_eq!(turn.id, candidate);
-            }
-            if case == "killed" {
-                assert!(
-                    turn.launch_error
-                        .as_deref()
-                        .unwrap()
-                        .contains("native launch failed")
-                );
-                let reason = turn.recover_job(&[], Some(&root)).unwrap_err();
-                assert!(
-                    reason.contains("native launch failed")
-                        && reason.contains("original input not found"),
-                    "native refusal was masked: {reason}"
-                );
-            }
-            assert_eq!(turn.input, input);
-            assert!(turn.observe(&serde_json::json!({"id":turn.id,"sessionId":turn.session,"state":"failed","pid":null})).unwrap_err().contains("current input acceptance unconfirmed"),"old job status cannot settle the current submission");
-            if matches!(case, "log" | "copy") {
-                assert_eq!(
-                    turn.id, candidate,
-                    "returned native identity survives a subsequent failure"
-                );
-            }
-            let probe = File::options().read(true).write(true).open(&path).unwrap();
-            assert!(
-                matches!(probe.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
-                "uncertain turn keeps its original input"
-            );
         }
+        assert_eq!(turn.input, input);
+        assert!(!turn.done && !turn.accepted);
+        let failed =
+            serde_json::json!({"id":turn.id,"sessionId":turn.session,"state":"failed","pid":null});
+        assert!(
+            observe_fixture(&mut turn, &failed).is_err(),
+            "uncertain native identity cannot settle current input"
+        );
+        let probe = File::options().read(true).write(true).open(&path).unwrap();
+        assert!(
+            matches!(probe.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+            "uncertain exchange retains original input lock"
+        );
     }
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -3928,25 +3937,25 @@ fn claude_lost_reply_recovers_only_its_unique_input() {
         "resume-two-inputs",
     ] {
         let (input, lock, path) = claude_input(&root, "fixture task body", None).unwrap();
-        let event=serde_json::json!({"type":"user","message":{"content":if case=="blocks" {serde_json::json!([{"type":"text","text":input}])} else {serde_json::json!(input)}}}).to_string()+"\n";
+        let event=serde_json::json!({"type":"user","sessionId":session,"message":{"content":if case=="blocks" {serde_json::json!([{"type":"text","text":input}])} else {serde_json::json!(input)}}}).to_string()+"\n";
         let a = root.join("projects/a").join(format!("{session}.jsonl"));
         let b = root.join("projects/a").join(format!("{other}.jsonl"));
         let content=match case {
-                "absent"=>serde_json::json!({"type":"user","message":{"content":"unrelated input"}}).to_string()+"\n",
+                "absent"=>serde_json::json!({"type":"user","sessionId":session,"message":{"content":"unrelated input"}}).to_string()+"\n",
                 "two-inputs"=>event.repeat(2),
                 "partial"=>event.clone()+"{",
                 "invalid"=>event.clone()+"{}\n",
                 "oversize"=>"x".repeat(8*1024*1024+1),
-                "long-history"=>(serde_json::json!({"type":"system","padding":"x".repeat(1024*1024)}).to_string()+"\n").repeat(18)+&event
+                "long-history"=>(serde_json::json!({"type":"system","sessionId":session,"padding":"x".repeat(1024*1024)}).to_string()+"\n").repeat(18)+&event
                     +&serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"owned final"}]}}).to_string()+"\n"
                     +&serde_json::json!({"type":"system","subtype":"turn_duration"}).to_string()+"\n"
                     +&serde_json::json!({"type":"user","message":{"content":"another turn"}}).to_string()+"\n"
                     +&serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"foreign final"}]}}).to_string()+"\n",
-                "resume"|"resume-two-jobs"|"resume-two-inputs"=>serde_json::json!({"type":"system"}).to_string()+"\n"+&event,
+                "resume"|"resume-two-jobs"|"resume-two-inputs"=>serde_json::json!({"type":"system","sessionId":session}).to_string()+"\n"+&event,
                 _=>event.clone(),
             };
         std::fs::write(&a, content).unwrap();
-        std::fs::write(&b, &event).unwrap();
+        std::fs::write(&b, event.replace(&session, &other)).unwrap();
         let shared = case.starts_with("resume-two");
         for (id, sid) in [
             ("c37eb75a", &session),
@@ -3985,6 +3994,9 @@ fn claude_lost_reply_recovers_only_its_unique_input() {
             std::fs::write(&b, "x".repeat(8 * 1024 * 1024 + 1)).unwrap();
         }
         let mut turn = ClaudeTurn {
+            run: None,
+            admission: None,
+            control: None,
             start: 0,
             root: root.clone(),
             log: root.join("attempt.log"),
@@ -4038,19 +4050,20 @@ fn claude_lost_reply_recovers_only_its_unique_input() {
         if shared {
             rows.insert(0,serde_json::json!({"id":"eaff90e7","kind":"background","sessionId":session,"cwd":root,"state":"done"}));
         }
-        rows.push(serde_json::json!({"id":"abcdef12","kind":"background","cwd":root.join("deleted-worktree"),"state":"done"}));
+        assert!(native_fixture::background_rows(&[serde_json::json!({"id":"abcdef12","kind":"background","cwd":root.join("deleted-worktree"),"state":"done"})], &root, &root).is_err(),
+            "unreadable native candidate must fail closed before recovery");
         if case == "missing" {
             std::fs::remove_file(&a).unwrap();
         }
         let original_id = turn.id.clone();
-        let mut result = turn.recover_job(&rows, Some(&root));
+        let mut result = recover_fixture(&mut turn, &rows, Some(&root));
         if case == "long-history" {
             let mut passes = 1;
             while result.as_ref().is_err_and(|e| e.contains("scan pending")) {
                 assert!(!turn.accepted);
                 assert_eq!(turn.id, original_id);
                 assert!(passes < 5);
-                result = turn.recover_job(&rows, Some(&root));
+                result = recover_fixture(&mut turn, &rows, Some(&root));
                 passes += 1;
             }
             assert!(passes >= 3);
@@ -4062,7 +4075,7 @@ fn claude_lost_reply_recovers_only_its_unique_input() {
                     .contains("foreign final")
             );
             assert_eq!(
-                claude_history(&a, 0, |_| {}).unwrap(),
+                claude_history(&a, &session, 0, |_| {}).unwrap(),
                 23,
                 "pre-submission scan supports the same large history"
             );
@@ -4083,7 +4096,7 @@ fn claude_lost_reply_recovers_only_its_unique_input() {
             assert_eq!(turn.session, session);
             assert_eq!(turn.accepted(), Ok(true));
             assert!(!turn.done, "input acceptance is not native exit");
-            turn.recover_job(&rows, None).unwrap();
+            recover_fixture(&mut turn, &rows, None).unwrap();
         } else {
             assert!(result.is_err(), "{case} must remain unknown");
             assert_eq!(turn.id, original_id);
@@ -4102,13 +4115,21 @@ fn claude_lost_reply_recovers_only_its_unique_input() {
     std::fs::create_dir_all(projects.join("b")).unwrap();
     std::fs::write(projects.join("unrelated-file"), "").unwrap();
     let native = projects.join("a").join(format!("{session}.jsonl"));
-    std::fs::write(&native, "{}\n").unwrap();
+    std::fs::write(
+        &native,
+        serde_json::json!({"type":"system","sessionId":session}).to_string() + "\n",
+    )
+    .unwrap();
     assert_eq!(claude_transcript_in(&root, &session).unwrap(), native);
-    std::fs::write(projects.join("b").join(format!("{session}.jsonl")), "{}\n").unwrap();
+    std::fs::write(
+        projects.join("b").join(format!("{session}.jsonl")),
+        serde_json::json!({"type":"system","sessionId":session}).to_string() + "\n",
+    )
+    .unwrap();
     assert!(
         claude_transcript_in(&root, &session)
             .unwrap_err()
-            .contains("multiple transcript paths")
+            .contains("multiple sources")
     );
     assert!(claude_transcript_in(&root, "../other").is_err());
     std::fs::remove_dir_all(root).unwrap();
@@ -4145,6 +4166,9 @@ fn native_claude_lost_reply_readback() {
     let log = evidence.join("candidate-readback.log");
     File::create(&log).unwrap();
     let mut turn = ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root,
         log,
@@ -4280,12 +4304,12 @@ fn handed_in_copy_job_is_adopted_and_exits_without_recorded_process() {
     let line = |v: serde_json::Value| v.to_string() + "\n";
     std::fs::write(
         root.join("projects/a").join(format!("{saved}.jsonl")),
-        line(serde_json::json!({"type":"user","message":{"content":"earlier input"}})),
+        line(serde_json::json!({"type":"user","sessionId":saved,"message":{"content":"earlier input"}})),
     )
     .unwrap();
-    std::fs::write(root.join("projects/a").join(format!("{copy}.jsonl")),line(serde_json::json!({"type":"user","message":{"content":input}}))
-            +&line(serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"handed in"}]}}))
-            +&line(serde_json::json!({"type":"system","subtype":"turn_duration"}))).unwrap();
+    std::fs::write(root.join("projects/a").join(format!("{copy}.jsonl")),line(serde_json::json!({"type":"user","sessionId":saved,"message":{"content":input}}))
+            +&line(serde_json::json!({"type":"assistant","sessionId":saved,"message":{"content":[{"type":"text","text":"handed in"}]}}))
+            +&line(serde_json::json!({"type":"system","sessionId":saved,"subtype":"turn_duration"}))).unwrap();
     for (id, session, intent) in [
         ("c3f6f318", &saved, "earlier input"),
         ("94f2ba2a", &copy, input.as_str()),
@@ -4304,6 +4328,9 @@ fn handed_in_copy_job_is_adopted_and_exits_without_recorded_process() {
     ];
     // The § 4 recovery shape: saved session from the binding, no job id, no recorded process.
     let mut t = ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root: root.clone(),
         log: root.join("attempt.log"),
@@ -4334,7 +4361,7 @@ fn handed_in_copy_job_is_adopted_and_exits_without_recorded_process() {
         resumed: None,
         lost: None,
     };
-    let refused = t.recover_job(&rows, Some(&root)).unwrap_err();
+    let refused = recover_fixture(&mut t, &rows, Some(&root)).unwrap_err();
     assert!(
         refused.contains("copied job 94f2ba2a"),
         "no hand-in: the copy stays refused: {refused}"
@@ -4346,14 +4373,14 @@ fn handed_in_copy_job_is_adopted_and_exits_without_recorded_process() {
     );
     // #2285: a board Exit release lets the copy stand in for its exit; acceptance still needs the transcript readback
     t.released();
-    t.recover_job(&rows, Some(&root)).unwrap();
+    recover_fixture(&mut t, &rows, Some(&root)).unwrap();
     assert_eq!(
         (t.id.as_str(), t.accepted, t.handed),
         ("94f2ba2a", t.history.ended, false),
         "a board Exit is no hand-in"
     );
     t.accept();
-    t.recover_job(&rows, Some(&root)).unwrap();
+    recover_fixture(&mut t, &rows, Some(&root)).unwrap();
     assert_eq!(
         (t.id.as_str(), t.session.as_str()),
         ("94f2ba2a", copy.as_str()),
@@ -4362,7 +4389,7 @@ fn handed_in_copy_job_is_adopted_and_exits_without_recorded_process() {
     assert_eq!(t.accepted(), Ok(true));
     assert!(t.history.ended);
     assert_eq!(t.history.answer.as_deref(), Some("handed in"));
-    t.capture_identity(&done).unwrap();
+    capture_fixture(&mut t, &done).unwrap();
     t.persist().unwrap();
     assert!(
         t.native.is_none() && t.recovery.is_some(),
@@ -4409,6 +4436,9 @@ fn resumed_claude_job_without_process_or_input_is_lost_after_the_accept_deadline
     let session = uuid();
     let (input, lock, _) = claude_input(&root, "answered resume body", None).unwrap();
     let mut t = ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root: root.clone(),
         log: root.join("attempt.log"),
@@ -4433,7 +4463,18 @@ fn resumed_claude_job_without_process_or_input_is_lost_after_the_accept_deadline
         lost: None,
     };
     let mut row = serde_json::json!({"id":"5d1e0b7a","kind":"background","sessionId":session,"cwd":root,"state":"done"});
-    let early = t.observe(&row).unwrap_err();
+    assert!(
+        observe_fixture(&mut t, &row).is_err(),
+        "missing source remains unknown, never a negative input witness"
+    );
+    assert!(!t.done && t.lost_input().is_none());
+    std::fs::create_dir_all(root.join("projects/a")).unwrap();
+    std::fs::write(
+        root.join("projects/a").join(format!("{session}.jsonl")),
+        (serde_json::json!({"type":"system","sessionId":session}).to_string() + "\n").repeat(3),
+    )
+    .unwrap();
+    let early = observe_fixture(&mut t, &row).unwrap_err();
     assert!(
         early.starts_with(
             "no native process after resume: Claude job done input not accepted 0 s after launch"
@@ -4451,21 +4492,21 @@ fn resumed_claude_job_without_process_or_input_is_lost_after_the_accept_deadline
     row["pid"] = std::process::id().into();
     let late = CLAUDE_RESUME_ACCEPT + std::time::Duration::from_secs(1);
     assert_eq!(
-        t.lost_resume(&row, late),
+        fixture_row(&row, &root, &root).and_then(|row| t.lost_resume(&row, late)),
         Ok(None),
         "a listed live process is never lost"
     );
     row["pid"] = serde_json::Value::Null;
     t.native = coreq::process::identity(std::process::id()).unwrap();
     assert_eq!(
-        t.lost_resume(&row, late),
+        fixture_row(&row, &root, &root).and_then(|row| t.lost_resume(&row, late)),
         Ok(None),
         "a recorded live process is never lost"
     );
     t.native = None;
     t.resumed = std::time::Instant::now().checked_sub(late);
     assert_eq!(
-        t.observe(&row),
+        observe_fixture(&mut t, &row),
         Ok(Some(-1)),
         "past the deadline the resume ends"
     );
@@ -4483,6 +4524,9 @@ fn resumed_claude_job_without_process_or_input_is_lost_after_the_accept_deadline
         (true, Some("lost-input"), Ok(Some(-1)))
     );
     let mut fresh = ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         resumed: None,
         lost: None,
@@ -4492,7 +4536,7 @@ fn resumed_claude_job_without_process_or_input_is_lost_after_the_accept_deadline
     };
     fresh.handed = true;
     fresh.resumed = std::time::Instant::now().checked_sub(late);
-    let handed = fresh.observe(&row);
+    let handed = observe_fixture(&mut fresh, &row);
     assert!(
         handed != Ok(Some(-1)) && fresh.lost_input().is_none() && !fresh.done,
         "a hand-in is acceptance, never a lost input: {handed:?}"
@@ -4518,9 +4562,12 @@ fn recovered_worktree_claude_job_is_accepted_and_reports_progress() {
     let session = uuid();
     let (input, lock, _) = claude_input(&root, "worktree task body", None).unwrap();
     let line = |v: serde_json::Value| v.to_string() + "\n";
-    std::fs::write(root.join("projects/a").join(format!("{session}.jsonl")),line(serde_json::json!({"type":"user","message":{"content":input}}))
+    std::fs::write(root.join("projects/a").join(format!("{session}.jsonl")),line(serde_json::json!({"type":"user","sessionId":session,"message":{"content":input}}))
             +&line(serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"working"}]}}))).unwrap();
     let mut t = ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root: root.clone(),
         log: root.join("attempt.log"),
@@ -4545,14 +4592,18 @@ fn recovered_worktree_claude_job_is_accepted_and_reports_progress() {
         lost: None,
     };
     let row = |cwd: &Path| serde_json::json!({"id":"5be0c1d2","kind":"background","sessionId":session,"cwd":cwd,"state":"working"});
-    let refused = t.recover_job(&[row(&other)], Some(&root)).unwrap_err();
+    let refused = recover_fixture(&mut t, &[row(&other)], Some(&root)).unwrap_err();
     assert!(
         refused.contains("original input not found") && !t.accepted,
         "outside the root stays unknown: {refused}"
     );
     assert!(t.progress_source().is_err());
-    t.recover_job(&[row(&root.join(".worktrees/taskq-7"))], Some(&root))
-        .unwrap();
+    recover_fixture(
+        &mut t,
+        &[row(&root.join(".worktrees/taskq-7"))],
+        Some(&root),
+    )
+    .unwrap();
     assert!(t.accepted && t.id == "5be0c1d2", "worktree job adopted");
     assert_eq!(
         t.progress_source().map(|(p, _)| p),
@@ -4598,6 +4649,9 @@ fn claude_cold_identity_survives_checkpoint_failure_and_process_exit() {
         .spawn()
         .unwrap();
     let mut t = ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root: root.clone(),
         log,
@@ -4630,7 +4684,7 @@ fn claude_cold_identity_survives_checkpoint_failure_and_process_exit() {
     };
     let row =
         serde_json::json!({"id":t.id,"sessionId":t.session,"pid":child.id(),"state":"working"});
-    t.capture_identity(&row).unwrap();
+    capture_fixture(&mut t, &row).unwrap();
     let original = t.native_identity().unwrap();
     std::fs::write(
         install.join("native"),
@@ -4642,7 +4696,13 @@ fn claude_cold_identity_survives_checkpoint_failure_and_process_exit() {
     assert!(t.recovery.is_some());
     std::fs::remove_file(install.join("native")).unwrap();
     t.persist().unwrap();
-    assert!(t.recovery.is_none());
+    assert_eq!(
+        t.recovery
+            .as_ref()
+            .map(|r| (r.task, r.attempt, r.execution)),
+        Some((7, 42, 42)),
+        "durable admission context must survive persistence for later control checks"
+    );
     let saved = crate::service_run::kids_file(&install, &root).unwrap();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].process, original);
@@ -4650,7 +4710,7 @@ fn claude_cold_identity_survives_checkpoint_failure_and_process_exit() {
     assert_eq!(saved[0].offset, 0);
     let mut conflicting = row.clone();
     conflicting["pid"] = std::process::id().into();
-    assert!(t.capture_identity(&conflicting).is_err());
+    assert!(capture_fixture(&mut t, &conflicting).is_err());
     assert_eq!(t.native_identity(), Ok(original.clone()));
     let x = crate::core::Execution {
         id: 42,
@@ -4887,7 +4947,7 @@ fn claude_image_child() {
     let session = "0b6c3f4e-8f2a-4c1d-9e7b-5a2d1c3b4e6f";
     let transcript = home.join("projects/p").join(format!("{session}.jsonl"));
     let agents = |state: &str, pid: Option<u32>| {
-        std::fs::write(root.join("agents.json"),serde_json::json!([{"id":"c37eb75a","kind":"background","sessionId":session,"cwd":root,"state":state,"pid":pid}]).to_string()).unwrap()
+        std::fs::write(root.join("agents.json"),serde_json::json!([{"id":"c37eb75a","kind":"background","sessionId":session,"cwd":root,"state":state,"status":"idle","pid":pid}]).to_string()).unwrap()
     };
     if std::env::var("TASKQ_IMAGE_PHASE").unwrap() == "before" {
         let l = Launch {
@@ -4917,7 +4977,9 @@ fn claude_image_child() {
         std::fs::create_dir_all(home.join("jobs/c37eb75a")).unwrap();
         std::fs::write(
             &transcript,
-            serde_json::json!({"type":"user","message":{"content":input}}).to_string() + "\n",
+            serde_json::json!({"type":"user","sessionId":session,"message":{"content":input}})
+                .to_string()
+                + "\n",
         )
         .unwrap();
         std::fs::write(
@@ -4938,6 +5000,9 @@ fn claude_image_child() {
         std::fs::write(root.join("native-pid"), pid.to_string()).unwrap();
         agents("working", Some(pid));
         let turn = ClaudeTurn {
+            run: None,
+            admission: None,
+            control: None,
             start: 0,
             root: root.clone(),
             log,
@@ -5069,6 +5134,9 @@ fn claude_records_carry_their_own_process() {
     let mut first = Command::new("sleep").arg("30").spawn().unwrap();
     let mut second = Command::new("sleep").arg("30").spawn().unwrap();
     let turn = |task: u64, id: &str| ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root: root.clone(),
         log: root.join(format!("{task}.log")),
@@ -5104,18 +5172,16 @@ fn claude_records_carry_their_own_process() {
     };
     let row = |id: &str, pid: u32| serde_json::json!({"id":id,"state":"working","pid":pid});
     let mut a = turn(1557, "c2fc6503");
-    a.capture_identity(&row("c2fc6503", first.id())).unwrap();
+    capture_fixture(&mut a, &row("c2fc6503", first.id())).unwrap();
     a.persist().unwrap();
     let mut b = turn(1558, "90d3662a");
-    let refused = b
-        .capture_identity(&row("90d3662a", first.id()))
-        .unwrap_err();
+    let refused = capture_fixture(&mut b, &row("90d3662a", first.id())).unwrap_err();
     assert!(
         refused.contains("#1557"),
         "the earlier job's process is not this job's identity: {refused}"
     );
     assert!(b.native.is_none(), "a refused readback keeps no identity");
-    b.capture_identity(&row("90d3662a", second.id())).unwrap();
+    capture_fixture(&mut b, &row("90d3662a", second.id())).unwrap();
     b.persist().unwrap();
     let records: Vec<_> = crate::service_run::kids_file(&install, &root)
         .unwrap()
@@ -5158,6 +5224,7 @@ fn recovered_claude_job_on_a_new_process_resolves() {
         &install,
         &root,
         crate::data::KidLine {
+            control: None,
             task: 1592,
             attempt: 10,
             runtime: "claude".into(),
@@ -5169,6 +5236,9 @@ fn recovered_claude_job_on_a_new_process_resolves() {
     )
     .unwrap();
     let turn = |accepted: bool, session: &str| ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root: root.clone(),
         log: root.join("1592.log"),
@@ -5206,7 +5276,7 @@ fn recovered_claude_job_on_a_new_process_resolves() {
     let row =
         serde_json::json!({"id":"c37eb75a","sessionId":session,"state":"working","pid":new.id()});
     let fenced = |mut t: ClaudeTurn| {
-        let e = t.capture_identity(&row).unwrap_err();
+        let e = capture_fixture(&mut t, &row).unwrap_err();
         assert!(e.contains("process changed"), "{e}");
         assert_eq!(t.native.as_ref(), Some(&recorded));
     };
@@ -5216,7 +5286,7 @@ fn recovered_claude_job_on_a_new_process_resolves() {
     fenced(turn(false, session));
     fenced(turn(true, ""));
     let mut t = turn(true, session);
-    t.capture_identity(&row).unwrap();
+    capture_fixture(&mut t, &row).unwrap();
     t.persist().unwrap();
     assert_eq!(
         t.id(),
@@ -5265,6 +5335,7 @@ fn exited_process_resolves_from_board_exit_at_handover() {
         &root,
         &root,
         crate::data::KidLine {
+            control: None,
             task: n,
             attempt: a,
             runtime: "claude".into(),
@@ -5278,6 +5349,9 @@ fn exited_process_resolves_from_board_exit_at_handover() {
     child.kill().unwrap();
     child.wait().unwrap();
     let turn = ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root: root.clone(),
         log: root.join("attempt.log"),
@@ -5379,6 +5453,9 @@ fn claude_native_state_requires_exit_evidence() {
     let log = root.join("attempt.log");
     File::create(&log).unwrap();
     let mut t = ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root: root.clone(),
         log,
@@ -5412,7 +5489,7 @@ fn claude_native_state_requires_exit_evidence() {
     }
     for state in ["failed", "stopped", "crashed", "unexpected"] {
         assert!(
-            t.observe(&serde_json::json!({"state":state})).is_err(),
+            observe_fixture(&mut t, &serde_json::json!({"state":state})).is_err(),
             "{state} without process proof must not release"
         );
     }
@@ -5464,13 +5541,14 @@ fn claude_native_state_requires_exit_evidence() {
         assert!(claude_stopped(&serde_json::json!({"state":"stopped","pid":pid}), None).is_err());
     }
     for row in [serde_json::json!({}), serde_json::json!({"state":null})] {
-        assert!(t.observe(&row).is_err());
+        assert!(observe_fixture(&mut t, &row).is_err());
     }
-    let row = serde_json::json!({"id":t.id,"state":"working","sessionId":t.session});
+    let row =
+        serde_json::json!({"id":t.id,"state":"working","status":"idle","sessionId":t.session});
     assert!(
-        t.observe(&row)
+        observe_fixture(&mut t, &row)
             .unwrap_err()
-            .contains("transcript unavailable"),
+            .contains("history session not found"),
         "no status field must not suppress the real observation error"
     );
     assert!(t.announced);
@@ -5480,14 +5558,15 @@ fn claude_native_state_requires_exit_evidence() {
         t.done = false;
         t.failure = None;
         t.accepted = true;
-        let path = root.join(format!("completed-{api_error}.jsonl"));
+        std::fs::create_dir_all(root.join("projects/a")).unwrap();
+        let path = root.join("projects/a").join(format!("{}.jsonl", t.session));
         let mut assistant = serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":if api_error {"Login expired; please run /login"} else {"owned final"}}]}});
         if api_error {
             assistant["error"] = serde_json::json!("authentication_failed");
             assistant["isApiErrorMessage"] = serde_json::json!(true);
         }
         let events = [
-            serde_json::json!({"type":"user","message":{"content":t.input}}),
+            serde_json::json!({"type":"user","sessionId":t.session,"message":{"content":t.input}}),
             assistant,
             serde_json::json!({"type":"system","subtype":"turn_duration"}),
         ];
@@ -5496,17 +5575,29 @@ fn claude_native_state_requires_exit_evidence() {
             events.iter().map(|v| format!("{v}\n")).collect::<String>(),
         )
         .unwrap();
-        assert!(t.history.read(&path, 0, &t.input, &t.log).unwrap());
+        assert!(
+            t.history
+                .read(&path, 0, &t.input, &t.log, &t.session)
+                .unwrap()
+        );
         assert!(t.history.ended);
+        let unknown_activity =
+            serde_json::json!({"id":t.id,"sessionId":t.session,"state":"working"});
+        assert!(
+            observe_fixture(&mut t, &unknown_activity)
+                .unwrap_err()
+                .contains("activity unknown")
+        );
+        assert!(!t.done, "missing status cannot release occupancy");
         let row = serde_json::json!({"id":t.id,"sessionId":t.session,"state":"stopped","pid":null});
         t.native = coreq::process::identity(std::process::id()).unwrap();
         assert!(
-            t.observe(&row).is_err(),
+            observe_fixture(&mut t, &row).is_err(),
             "completed input and stop acknowledgment cannot replace process exit proof"
         );
         t.native = Some(identity.clone());
         assert_eq!(
-            t.observe(&row),
+            observe_fixture(&mut t, &row),
             Ok(Some(if api_error { -1 } else { 0 })),
             "completed input outcome lost after stopped"
         );
@@ -5554,6 +5645,9 @@ fn claude_handed_in_job_stopped_by_the_service_exits_ok_and_real_failures_stay_f
     let live = coreq::process::identity(std::process::id()).unwrap();
     let session = uuid();
     let turn = |handed: bool, native: Option<coreq::process::Identity>| ClaudeTurn {
+        run: None,
+        admission: None,
+        control: None,
         start: 0,
         root: root.clone(),
         log: log.clone(),
@@ -5580,11 +5674,11 @@ fn claude_handed_in_job_stopped_by_the_service_exits_ok_and_real_failures_stay_f
         resumed: None,
         lost: None,
     };
-    let row = |state: &str, detail: Option<&str>| serde_json::json!({"id":"c37eb75a","sessionId":session,"state":state,"detail":detail,"pid":null});
+    let row = |state: &str, detail: Option<&str>| serde_json::json!({"id":"c37eb75a","sessionId":session,"state":state,"status":"idle","detail":detail,"pid":null});
     for native in [None, Some(gone.clone())] {
         let mut t = turn(true, native.clone());
         assert_eq!(
-            t.observe(&row("stopped", Some("stopped"))),
+            observe_fixture(&mut t, &row("stopped", Some("stopped"))),
             Ok(Some(0)),
             "stopped after hand-in, identity {native:?}"
         );
@@ -5605,7 +5699,7 @@ fn claude_handed_in_job_stopped_by_the_service_exits_ok_and_real_failures_stay_f
         ] {
             let mut t = turn(true, native.clone());
             assert_eq!(
-                t.observe(&row(state, Some(detail))),
+                observe_fixture(&mut t, &row(state, Some(detail))),
                 Ok(Some(-1)),
                 "native {state} after hand-in stays failed"
             );
@@ -5614,12 +5708,15 @@ fn claude_handed_in_job_stopped_by_the_service_exits_ok_and_real_failures_stay_f
     }
     // Without a hand-in a stopped job is still no clean exit; its attempt is released as an ordinary failure.
     let mut t = turn(false, Some(gone));
-    assert_eq!(t.observe(&row("stopped", Some("stopped"))), Ok(Some(-1)));
+    assert_eq!(
+        observe_fixture(&mut t, &row("stopped", Some("stopped"))),
+        Ok(Some(-1))
+    );
     assert_eq!(t.exit_error(), Some("other"));
     // A hand-in never stands in for process exit: the recorded process still runs, so the stop stays pending.
     let mut t = turn(true, live);
     assert!(
-        t.observe(&row("stopped", Some("stopped")))
+        observe_fixture(&mut t, &row("stopped", Some("stopped")))
             .unwrap_err()
             .contains("native process exit unconfirmed")
     );
@@ -6544,12 +6641,8 @@ fn compaction_resends_header_and_index_only_to_claude() {
     );
     // #1531: the per-user Claude daemon spawns from its own env; settings carry this launch's values.
     // Risk: a worker reads another launch's TASKQ_* (install, task, attempt), or an operator session gets an attempt.
-    let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
+    let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"AGENTQ_LAUNCHER":"taskq", "TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
     let mut worker = want("7", "42", "worker");
-    worker["AGENTQ_OPTIMIZATION"] = std::env::var("AGENTQ_OPTIMIZATION")
-        .unwrap_or("inherit".into())
-        .into();
-    worker["AGENTQ_LAUNCHER"] = "taskq".into();
     if let Some(p) = build_cache_for("claude", &access(&env, "claude").unwrap(), &env) {
         worker["RUSTC_WRAPPER"] = p.to_string_lossy().into();
     }
@@ -7271,6 +7364,139 @@ fn a_differing_daemon_starts_no_background_job() {
     std::fs::remove_dir_all(&root).ok();
 }
 
+// Chain: #2448/#2221: only a caller-validated copied job may observe the saved conversation's native records.
+#[test]
+fn claude_history_alias_2448_requires_bound_copy() {
+    let root = std::env::temp_dir().join(format!("taskq-claude-alias-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let (copy, saved, unrelated) = (uuid(), uuid(), uuid());
+    let path = root.join(format!("{copy}.jsonl"));
+    let line = |session: &str| {
+        serde_json::json!({
+            "type":"user", "sessionId":session, "message":{"content":"exact copied input"}
+        })
+        .to_string()
+            + "\n"
+    };
+    std::fs::write(&path, line(&saved)).unwrap();
+    assert!(
+        ClaudeRecords::default()
+            .read(&path, &copy, |_| Ok(()))
+            .unwrap_err()
+            .contains("native session differs")
+    );
+    let mut reader = ClaudeRecords::default();
+    reader.copied_from(&saved).unwrap();
+    assert!(
+        reader
+            .read(&path, &copy, |v| {
+                assert_eq!(v["session"], copy);
+                assert_eq!(v["native_session"], saved);
+                assert_eq!(v["session_binding"], "alias");
+                Ok(())
+            })
+            .unwrap()
+    );
+    assert!(
+        reader
+            .copied_from(&unrelated)
+            .unwrap_err()
+            .contains("binding changed")
+    );
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(line(&unrelated).as_bytes())
+        .unwrap();
+    assert!(
+        reader
+            .read(&path, &copy, |_| panic!("foreign session delivered"))
+            .unwrap_err()
+            .contains("native session differs")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// R12 / #2448: an AgentQ page buffered past TaskQ's byte budget cannot conceal changed source bytes.
+#[test]
+fn claude_history_buffered_records_still_require_exact_source() {
+    let root = std::env::temp_dir().join(format!("taskq-claude-buffer-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("transcript.jsonl");
+    let rows: Vec<_> = (0..10)
+        .map(|n| {
+            serde_json::json!({"type":"system", "n":n,"padding":"x".repeat(1024 * 1024)})
+                .to_string()
+                + "\n"
+        })
+        .collect();
+    std::fs::write(&path, rows.concat()).unwrap();
+    let mut reader = ClaudeRecords::default();
+    let mut seen = 0;
+    assert!(
+        !reader
+            .read(&path, "invented-session", |_| {
+                seen += 1;
+                Ok(())
+            })
+            .unwrap()
+    );
+    assert!(seen > 0 && seen < rows.len());
+    assert!(reader.pending.len() > 0);
+    let mut changed = rows.clone();
+    changed[seen] = changed[seen].replace(&format!("\"n\":{seen}"), "\"n\":99");
+    changed.push("{\"type\":\"system\"}\n".into());
+    std::fs::write(&path, changed.concat()).unwrap();
+    assert!(
+        reader
+            .read(&path, "invented-session", |_| panic!(
+                "changed buffered record delivered"
+            ))
+            .unwrap_err()
+            .contains("changed during observation")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// R12 / #2448: previously ignored native metadata cannot hide an exact input or turn end.
+#[test]
+fn claude_history_ignores_metadata_without_accepting_invalid_records() {
+    let root = std::env::temp_dir().join(format!("taskq-claude-shape-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("transcript.jsonl");
+    let log = root.join("attempt.log");
+    let input =
+        serde_json::json!({"type":"user","message":{"content":"exact input"}}).to_string() + "\n";
+    for (record, accepted) in [
+        (
+            serde_json::json!({"type":"file-history-snapshot","snapshot":{}}),
+            true,
+        ),
+        (serde_json::json!({}), false),
+    ] {
+        let text =
+            format!("{record}\n{input}{{\"type\":\"system\",\"subtype\":\"turn_duration\"}}\n");
+        std::fs::write(&path, text).unwrap();
+        let mut history = ClaudeHistory::default();
+        if accepted {
+            assert_eq!(
+                history.read(&path, 0, "exact input", &log, "invented-session"),
+                Ok(true)
+            );
+            assert!(history.ended);
+        } else {
+            assert!(
+                history
+                    .read(&path, 0, "exact input", &log, "invented-session")
+                    .is_err()
+            );
+            assert!(!history.found);
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // §4/A3: native session hooks delegate parsing and immutable IDs to AgentQ; old calls and private payload stay out.
 #[test]
 fn claude_recovered_observations_keep_resume_boundaries() {
@@ -7406,4 +7632,306 @@ fn session_observations_use_agentq_and_only_the_new_native_bytes() {
     drop(capture);
     drop(store);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+// R9/R11/R12: only an actually retained new Run may persist original control proof; failed writes never stop.
+#[cfg(unix)]
+#[test]
+fn new_background_control_persists_original_proof_before_cancellation() {
+    struct Owned(std::process::Child);
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    for cold in [false, true] {
+        let root = std::env::temp_dir().join(format!("taskq-owned-background-{}", uuid()));
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let install = root.join("install");
+        crate::policy::grant(
+            &install,
+            CLAUDE,
+            "workspace",
+            Some(&root),
+            "invented fixture",
+            1,
+        )
+        .unwrap();
+        let grant = background_grant(&install, &root).unwrap();
+        let policy_bytes = std::fs::read(install.join(crate::policy::FILE)).unwrap();
+        let mut child = Owned(Command::new("sleep").arg("60").spawn().unwrap());
+        let process = coreq::process::identity(child.0.id()).unwrap().unwrap();
+        let state = root.join("background.json");
+        let native_session = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        std::fs::write(
+            &state,
+            serde_json::json!({"row":{"id":"c37eb75a","sessionId":native_session,
+        "kind":"background","cwd":root,"pid":process.pid,"state":"working","status":"busy"}})
+            .to_string(),
+        )
+        .unwrap();
+        let l = Launch {
+            files: String::new(),
+            execution: Some(42),
+            task: 7,
+            attempt: 42,
+            title: "invented control fixture".into(),
+            role: "worker".into(),
+            rt: CLAUDE.into(),
+            session: uuid(),
+            url: String::new(),
+            resume: None,
+        };
+        let log = log_path(&root, &l);
+        let (input, input_file, path) =
+            claude_input(&root, "private fixture body", Some(&l)).unwrap();
+        bind_input(
+            &log,
+            &l,
+            &path,
+            &input,
+            serde_json::json!({"before":0,"session":l.session}),
+        )
+        .unwrap();
+        let mut request = agentq_runtime::agent::Launch::new(&root, &log, &input, "taskq");
+        request.mode = agentq_runtime::agent::Mode::Background;
+        request.home = Some(root.join("home"));
+        request.session_store =
+            agentq_runtime::agent::SessionStore::new(install.join("runtime-sessions"));
+        request.lifetime = agentq_runtime::agent::Lifetime::Recoverable;
+        request.policy.approval = agentq_runtime::agent::Approval::Deny;
+        request.command = vec![
+            which("python3").into(),
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/runtime-launch.py")
+                .into(),
+        ];
+        request.env = vec![
+            ("TASKQ_FIXTURE_RT".into(), "claude".into()),
+            (
+                "TASKQ_FIXTURE_RECORD".into(),
+                root.join("exchange.json").into(),
+            ),
+            ("TASKQ_FIXTURE_BACKGROUND".into(), state.clone().into()),
+        ];
+        let adapter = agent(CLAUDE).unwrap();
+        let mut run = adapter.launch(&request).unwrap();
+        adapter.launcher_output(&mut run).unwrap().unwrap();
+        adapter.poll(&mut run).unwrap();
+        let job = adapter.background_job(&run).unwrap();
+        assert_eq!(job.pid, Some(process.pid));
+        assert!(
+            job.process.as_ref().is_some_and(
+                |pinned| pinned.pid == process.pid && pinned.started == process.started
+            )
+        );
+        let source = adapter.transcript(&run).unwrap();
+        let mut turn = ClaudeTurn {
+            run: Some(run),
+            admission: Some(BackgroundAdmissionCapture {
+                kind: crate::data::BackgroundAdmission::Fresh,
+                grant,
+                request,
+            }),
+            control: None,
+            root: root.clone(),
+            log: log.clone(),
+            start: 0,
+            session: String::new(),
+            id: String::new(),
+            announced: true,
+            accepted: false,
+            history: ClaudeHistory::default(),
+            before: 0,
+            mode: "workspace".into(),
+            input: input.clone(),
+            _input_file: input_file,
+            pid: 0,
+            native: None,
+            recovery: None,
+            done: false,
+            failure: None,
+            handed: false,
+            released: false,
+            launch_error: None,
+            resumed: None,
+            lost: None,
+        };
+        let cfg = crate::service::Config {
+            root: root.clone(),
+            install: install.clone(),
+            ..crate::tests::cfg()
+        };
+        std::fs::write(install.join("native"), "invented persistence failure").unwrap();
+        assert!(
+            turn.checkpoint(&cfg, &l, 42).is_err(),
+            "actual checkpoint must retain failed persistence"
+        );
+        assert!(
+            !turn.accepted,
+            "init-only source must persist proof before acceptance"
+        );
+        assert!(matches!(
+            turn.control.as_ref().unwrap().admission,
+            crate::data::BackgroundAdmission::Fresh
+        ));
+        let proof = turn.control.clone().unwrap();
+        assert_eq!(proof.before, 0);
+        assert_eq!(
+            proof.session_store,
+            turn.admission.as_ref().unwrap().request.session_store.path
+        );
+        assert_eq!(proof.lifetime, agentq_runtime::agent::Lifetime::Recoverable);
+        assert_eq!(
+            proof.native_session,
+            adapter.session_id(turn.run.as_ref().unwrap()).unwrap()
+        );
+        assert_ne!(
+            proof.native_session, l.session,
+            "fresh native identity is not a copied resume"
+        );
+        let resolved = adapter
+            .history(
+                &proof.native_session,
+                Some(&proof.home),
+                None,
+                Some(&proof.source),
+            )
+            .unwrap();
+        assert_eq!(resolved.source().path, source);
+        assert!(
+            turn.kill().is_err(),
+            "failed protected persistence must prevent control"
+        );
+        assert_eq!(
+            coreq::process::identity(process.pid).unwrap(),
+            Some(process.clone())
+        );
+        assert!(turn.run.is_some() && !turn.done && turn.recovery.is_some());
+        let calls = || std::fs::read_to_string(state.with_extension("calls")).unwrap();
+        assert!(!calls().lines().any(|line| line.contains("\"stop\"")));
+        std::fs::remove_file(install.join("native")).unwrap();
+        turn.checkpoint(&cfg, &l, 42).unwrap();
+        let saved = crate::service_run::kids_file(&install, &root).unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].control.as_ref(), Some(&proof));
+        assert_eq!(saved[0].process, process);
+        let protected =
+            std::fs::read_to_string(crate::paths::kids_path(&install, &root).unwrap()).unwrap();
+        assert!(protected.lines().next().unwrap().ends_with("executor-v2"));
+        assert!(!protected.contains("private fixture body"));
+        assert!(
+            !serde_json::to_string(&proof)
+                .unwrap()
+                .contains("private fixture body")
+        );
+        let mut downgrade = saved[0].clone();
+        downgrade.control = None;
+        assert!(crate::service_run::checkpoint_kid(&install, &root, downgrade).is_err());
+        assert_eq!(
+            crate::service_run::kids_file(&install, &root).unwrap(),
+            saved
+        );
+        let mut changed = saved[0].clone();
+        changed.control.as_mut().unwrap().before += 1;
+        assert!(crate::service_run::checkpoint_kid(&install, &root, changed).is_err());
+        assert_eq!(
+            crate::service_run::kids_file(&install, &root).unwrap(),
+            saved
+        );
+        let legacy_install = root.join("legacy-install");
+        let mut old = saved[0].clone();
+        old.control = None;
+        crate::service_run::write_kids(&legacy_install, &root, &[old]).unwrap();
+        let legacy_path = crate::paths::kids_path(&legacy_install, &root).unwrap();
+        let legacy_bytes = std::fs::read(&legacy_path).unwrap();
+        let execution = crate::core::Execution {
+            id: 42,
+            attempt: 42,
+            through: 42,
+            host: "invented host".into(),
+            runtime: CLAUDE.into(),
+            accepted: false,
+            release: None,
+            usage_hold: None,
+        };
+        let mut legacy = recover(&root, &legacy_install, 7, &execution).unwrap();
+        assert!(legacy.kill().unwrap_err().contains("control proof missing"));
+        assert_eq!(legacy.native_identity(), Ok(process.clone()));
+        assert_eq!(std::fs::read(legacy_path).unwrap(), legacy_bytes);
+        assert!(!calls().lines().any(|line| line.contains("\"stop\"")));
+        drop(legacy);
+        std::fs::remove_file(install.join(crate::policy::FILE)).unwrap();
+        assert!(turn.kill().unwrap_err().contains("revoked"));
+        assert!(!calls().lines().any(|line| line.contains("\"stop\"")));
+        std::fs::write(install.join(crate::policy::FILE), policy_bytes).unwrap();
+        let request = &turn.admission.as_ref().unwrap().request;
+        let command = request.command.clone();
+        let env = request.env.clone();
+        let base = || {
+            let mut base = crate::platform::command(&command[0]);
+            base.args(&command[1..]).envs(env.iter().cloned());
+            base
+        };
+        let stopped = if cold {
+            drop(turn.run.take());
+            turn.admission = None;
+            turn.control = crate::service_run::kids_file(&install, &root).unwrap()[0]
+                .control
+                .clone();
+            let recovered = recover(&root, &install, 7, &execution).unwrap();
+            assert_eq!(recovered.native_identity(), Ok(process.clone()));
+            assert_eq!(
+                recovered.session_spec().unwrap().1.as_deref(),
+                Some(proof.job.as_str())
+            );
+            drop(recovered);
+            turn.stop_recovered_owned(&base)
+        } else {
+            turn.kill()
+        };
+        assert!(calls().lines().any(|line| line.contains("\"stop\"")));
+        if stopped.is_err() {
+            assert!(!turn.done, "acknowledgement cannot invent process exit");
+        }
+        child.0.wait().unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        if !cold {
+            while turn.exited().unwrap().is_none() {
+                assert!(
+                    std::time::Instant::now() < until,
+                    "actual original process exit must become observable"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        } else {
+            if !turn.done {
+                turn.stop_recovered_owned(&base).unwrap();
+            }
+            assert!(
+                turn.done,
+                "independently observed original exit must resolve stop"
+            );
+            assert_eq!(
+                calls()
+                    .lines()
+                    .filter(|line| line.contains("\"stop\""))
+                    .count(),
+                1,
+                "observed exit must not repeat native control"
+            );
+        }
+        assert_ne!(
+            coreq::process::identity(process.pid).unwrap(),
+            Some(process)
+        );
+        assert!(
+            !turn.accepted,
+            "original exact cancellation does not require accepted input"
+        );
+        drop(turn);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

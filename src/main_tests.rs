@@ -499,6 +499,7 @@ fn kids_from_a_previous_boot_are_retired_and_live_kids_kept() {
     .unwrap();
     let me = coreq::process::identity(live.id()).unwrap().unwrap();
     let kid = |task, process| data::KidLine {
+        control: None,
         task,
         attempt: 1,
         runtime: "codex".into(),
@@ -4613,7 +4614,7 @@ fn handover_image_child() {
             fs::write(root.join("ready"), "").unwrap();
             let until = Instant::now() + Duration::from_secs(10);
             if cold == "ended" {
-                while s.kids[0].proc.exited().unwrap().is_none() {
+                while s.kids[0].proc.termination().unwrap().is_none() {
                     assert!(Instant::now() < until);
                     std::thread::sleep(Duration::from_millis(10));
                 }
@@ -4648,7 +4649,7 @@ fn handover_image_child() {
     );
     if cold != "ended" {
         assert_eq!(
-            s.kids[0].proc.exited(),
+            s.kids[0].proc.termination(),
             Ok(None),
             "the re-exec killed the live child"
         );
@@ -4695,7 +4696,11 @@ fn handover_image_child() {
         fs::write(root.join("exit"), "").unwrap();
     }
     if !s.kids.is_empty() {
-        while !s.kids[0].proc.exited().is_ok_and(|code| code.is_some()) {
+        while !s.kids[0]
+            .proc
+            .termination()
+            .is_ok_and(|code| code.is_some())
+        {
             assert!(Instant::now() < until);
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -4992,8 +4997,8 @@ fn live_child_survives_reexec_preparation_and_native_adoption() {
     wrong.started.push_str("-wrong");
     let mut wrong = runtime::Adopted::new(wrong);
     assert_eq!(
-        wrong.exited(),
-        Ok(Some(-1)),
+        wrong.termination(),
+        Ok(Some(runtime::Exit { code: None })),
         "a different native incarnation proves the recorded one is gone"
     );
     wrong.kill().unwrap(); // Terminal identity is a no-op; the current incarnation must remain untouched.
@@ -5016,6 +5021,7 @@ fn live_child_survives_reexec_preparation_and_native_adoption() {
     assert_eq!(
         kids_file(&root, &root).unwrap(),
         vec![data::KidLine {
+            control: None,
             task: 7,
             attempt: 41,
             runtime: "codex".into(),
@@ -5287,6 +5293,7 @@ fn recorded_process_verdict_through_pre_boot_and_handover() {
     fs::write(root.join("log"), "").unwrap();
     s.kids = vec![kid(n, live, spawn(), false), kid(m, ended, spawn(), true)];
     let line = |k: &Kid| data::KidLine {
+        control: None,
         task: k.task,
         attempt: k.attempt,
         runtime: "codex".into(),
@@ -5375,6 +5382,7 @@ fn native_recovery_preserves_corrupt_and_legacy_evidence() {
     assert_eq!(
         kids_file(&root, &root).unwrap(),
         vec![data::KidLine {
+            control: None,
             task: 7,
             attempt: 41,
             runtime: "codex".into(),

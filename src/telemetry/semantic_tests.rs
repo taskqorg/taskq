@@ -52,6 +52,38 @@ fn read(store: &coreq::telemetry::Reader, kinds: &[&str]) -> Res<String> {
     }
     Ok(text)
 }
+// Chain: #2448 CoreQ resource observations cannot erase durable request counts or invent a zero duration.
+#[test]
+fn resource_observations_leave_semantic_request_counts_readable() {
+    let dir =
+        std::env::temp_dir().join(format!("taskq-resource-profile-{}", crate::runtime::uuid()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = coreq::telemetry::Store::open(&dir.join("db")).unwrap();
+    let mut resource =
+        observation(r#"taskq-profile {"op":"spawn","us":7,"error":"none","at_ms":8}"#).unwrap();
+    resource["operation"] = json!("resource.cpu-time");
+    resource["duration_us"] = Value::Null;
+    resource["unknown"]["duration_us"] = json!("not-collected");
+    resource["process_id"] = json!(42);
+    let requests = r#"taskq-requests {"at_ms":9,"source":"service","ops":{"PATCH issues/N":2}}"#;
+    store
+        .append(&[
+            coreq::telemetry::Event::new(resource).unwrap(),
+            coreq::telemetry::Event::new(observation(requests).unwrap()).unwrap(),
+        ])
+        .unwrap();
+    let reader = coreq::telemetry::Reader::open(&dir.join("db")).unwrap();
+    assert_eq!(
+        read(&reader, &["operation", "requests"]).unwrap(),
+        requests.to_string() + "\n"
+    );
+    let raw = reader.export_kinds(&["operation"], 0, 0, 10).unwrap();
+    assert!(raw["events"][0]["observation"]["duration_us"].is_null());
+    drop(reader);
+    drop(store);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn all_semantic_kinds_roundtrip_through_the_shared_store() {
     let source = [

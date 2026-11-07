@@ -33,6 +33,37 @@ Object.assign(
     steer: require("../src/pm-composer.js").composer,
   }),
 );
+// #1430: stable question anchors write nothing on refresh, but a new source revision rekeys them.
+{
+  let writes = 0;
+  const nodes = Array.from({ length: 2 }, () => ({
+    dataset: new Proxy(
+      {},
+      {
+        set(target, name, value) {
+          writes++;
+          target[name] = value;
+          return true;
+        },
+      },
+    ),
+  }));
+  const el = { querySelectorAll: () => nodes };
+  context.readingAnchors(el, { n: 841, revision: 4 });
+  assert.deepEqual(
+    nodes.map((node) => node.dataset.readingKey),
+    ["report:question:841:4:0", "report:question:841:4:1"],
+  );
+  assert.equal(writes, 2);
+  context.readingAnchors(el, { n: 841, revision: 4 });
+  assert.equal(writes, 2, "unchanged refresh writes no anchor attributes");
+  context.readingAnchors(el, { n: 841, revision: 5 });
+  assert.equal(writes, 4, "changed source revision updates every anchor");
+  assert.deepEqual(
+    nodes.map((node) => node.dataset.readingKey),
+    ["report:question:841:5:0", "report:question:841:5:1"],
+  );
+}
 const { html } = require("./tray-harness.cjs"),
   call = (name, ...args) => {
     const r = context[name](...args);
@@ -238,6 +269,22 @@ const plain = (x) => JSON.parse(JSON.stringify(x));
     const o = { ...op, id: "readback-" + state },
       before = sent.length,
       pending = call("answerSend", board, o);
+    project.tasks = [];
+    call("answerReadback");
+    assert.equal(
+      sent.length,
+      before + 1,
+      "missing task cannot trigger reconciliation",
+    );
+    project.complete = false;
+    project.tasks = [{ n: 841, state: "ask", revision: 5 }];
+    call("answerReadback");
+    assert.equal(
+      sent.length,
+      before + 1,
+      "incomplete snapshot cannot trigger reconciliation",
+    );
+    project.complete = true;
     project.tasks = [{ n: 841, state: "ask", revision: 4 }];
     call("answerReadback");
     assert.equal(sent.length, before + 1, "unchanged question: no reconcile");

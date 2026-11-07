@@ -1,5 +1,5 @@
 //! Antigravity owner sessions: original AgentQ I/O, exact native identity and no submission replay.
-use super::owner::{Launched, request_access, spec};
+use super::owner::Launched;
 use crate::runtime::Cap;
 use crate::setup::Request;
 use serde_json::{Value, json};
@@ -26,11 +26,7 @@ fn input(own: &Path, text: &str) -> Res<()> {
     .map_err(|_| "Native input intent write unknown; no replay".into())
 }
 pub fn launch(own: &Path, r: &Request) -> Launched {
-    let command = match command(own, r, false) {
-        Ok(command) => command,
-        Err(reason) => return Launched::NoStart(reason),
-    };
-    match start(own, r, command) {
+    match start(own, r) {
         Ok(session) => Launched::Job {
             job: r.id.clone(),
             session: Some(session),
@@ -39,22 +35,21 @@ pub fn launch(own: &Path, r: &Request) -> Launched {
         Err(reason) => Launched::Unknown(reason),
     }
 }
-fn start(own: &Path, r: &Request, mut command: std::process::Command) -> Res<String> {
-    let root = r.root.as_deref().map_or(own, Path::new);
-    let args = arguments(r);
-    let args: Vec<_> = args.iter().map(String::as_str).collect();
-    let selected = super::optimized(&r.runtime, spec(&mut command, root, "-", &args))?;
+fn start(own: &Path, r: &Request) -> Res<String> {
     fs::write(own.join("brief.txt"), &r.brief).map_err(|_| "Owner brief unavailable")?;
     let text = super::owner::read_brief(&own.join("brief.txt"));
-    input(own, &text)?;
-    let mut turn = super::agent(&r.runtime)?.turn(
-        command,
-        &selected,
-        &log(own),
-        &text,
-        &agentq_runtime::agent::Process::default(),
-    )?;
-    let identity_result = coreq::process::identity(turn.id());
+    let request = super::owner::request(own, r, &text)?;
+    write_input(own, &r.runtime, &text)?;
+    let adapter = super::agent(&r.runtime)?;
+    let mut turn = adapter.launch(&request).map_err(|error| error.detail)?;
+    let pid = turn
+        .id()
+        .ok_or("Native process identity unavailable; no replay")?;
+    if !adapter.descriptor().has("acp") {
+        let saved = adapter.checkpoint(&turn).map_err(|e| e.to_string())?;
+        coreq::write_durable(&own.join("runtime-run.json"), &saved.to_string())?;
+    }
+    let identity_result = coreq::process::identity(pid);
     let identity = identity_result.as_ref().ok().and_then(|i| i.clone());
     let checkpoint = identity
         .as_ref()
@@ -70,13 +65,18 @@ fn start(own: &Path, r: &Request, mut command: std::process::Command) -> Res<Str
     let path = own.to_path_buf();
     std::thread::spawn(move || {
         loop {
-            match turn.poll() {
-                Ok(Some(exit)) => {
-                    let report = turn.report();
+            match adapter.poll(&mut turn).and_then(|_| adapter.report(&turn)) {
+                Ok(report)
+                    if matches!(
+                        report.termination,
+                        agentq_runtime::agent::ProcessTermination::Observed
+                    ) =>
+                {
+                    let exit = report.exit.unwrap_or(-1);
                     let _=coreq::write_durable(&path.join("native-exit.json"),&json!({"identity":identity.map(|i|json!({"pid":i.pid,"started":i.started})),"exit":exit,"session":report.session,"outcome":report.outcome}).to_string());
                     break;
                 }
-                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Ok(_) => std::thread::sleep(Duration::from_millis(100)),
                 Err(_) => {
                     std::thread::sleep(Duration::from_secs(1));
                 }
@@ -102,60 +102,7 @@ fn start(own: &Path, r: &Request, mut command: std::process::Command) -> Res<Str
         std::thread::sleep(Duration::from_millis(50));
     }
 }
-fn arguments(r: &Request) -> Vec<String> {
-    let mut args = vec!["--dangerously-skip-permissions".into()];
-    if let Some(choice) = &r.choice {
-        if !choice.model.is_empty() {
-            args.extend(["--model".into(), choice.model.clone()]);
-            if !choice.effort.is_empty() {
-                args.extend(["--effort".into(), choice.effort.clone()]);
-            }
-        }
-    }
-    args
-}
-pub fn command(own: &Path, r: &Request, resume: bool) -> Res<std::process::Command> {
-    let install = own
-        .parent()
-        .and_then(Path::parent)
-        .ok_or("Owner installation unknown")?;
-    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname)?;
-    let root = r.root.as_deref().map_or(own, Path::new);
-    let exe = std::env::current_exe().map_err(|_| "Owner executable unknown")?;
-    let env = super::Env {
-        context: "",
-        root,
-        exe: &exe,
-        install,
-        permission_mode: &policy.permission_mode,
-        codex: &policy.codex,
-        delivery: crate::config::Delivery::AutoMerge,
-        board_env: &[],
-        jobs: None,
-    };
-    let access = request_access(&env, &r.runtime, r)?;
-    if !matches!(access.mode.as_str(), "workspace" | "full") {
-        return Err("Antigravity owner sessions require a Workspace or Full operator grant".into());
-    }
-    let mut command = super::cli(&r.runtime, &access, &env)?;
-    if !resume {
-        return Ok(command);
-    }
-    if holder(own, r)? {
-        return Err("Antigravity native turn still owns this session; no input sent".into());
-    }
-    let session = r
-        .session
-        .as_deref()
-        .filter(|s| super::plain_thread(s))
-        .ok_or("Native session identity unknown")?;
-    native_source(session)?;
-    let args = arguments(r);
-    let args: Vec<_> = args.iter().map(String::as_str).collect();
-    let selected = super::optimized(&r.runtime, spec(&mut command, root, session, &args))?;
-    super::agent(&r.runtime)?.command(command, &selected)
-}
-fn native_source(session: &str) -> Res<()> {
+pub(super) fn native_source(session: &str) -> Res<()> {
     let home = crate::platform::user_home().ok_or("Native home unknown")?;
     if ["ANTIGRAVITY_HOME", "ANTIGRAVITY_APP_DATA_DIR"]
         .iter()
@@ -191,12 +138,24 @@ fn readable_source(path: &Path) -> Res<()> {
     Ok(())
 }
 /// agy may ignore a missing --conversation. Never send until its own startup receipt binds the expected ID.
+#[cfg(test)]
 pub fn ready(
     own: &Path,
     rt: &str,
     expected: &str,
     offset: u64,
     child: &mut std::process::Child,
+) -> Res<()> {
+    ready_before_input(own, rt, expected, offset, child.id())
+}
+
+#[cfg(test)]
+pub(crate) fn ready_before_input(
+    own: &Path,
+    rt: &str,
+    expected: &str,
+    offset: u64,
+    pid: u32,
 ) -> Res<()> {
     use std::io::{Read, Seek, SeekFrom};
     let until = std::time::Instant::now() + Duration::from_secs(10);
@@ -224,10 +183,9 @@ pub fn ready(
                 Err("Antigravity returned a different session; input not sent, no fallback".into())
             };
         }
-        if child
-            .try_wait()
+        if coreq::process::identity(pid)
             .map_err(|_| "Native startup liveness unknown")?
-            .is_some()
+            .is_none()
             || std::time::Instant::now() >= until
         {
             return Err("Native startup identity unverified; input not sent".into());
@@ -318,8 +276,18 @@ pub fn transcript(own: &Path, r: &Request) -> Res<std::path::PathBuf> {
     }
     Ok(path)
 }
-pub fn write_input(own: &Path, text: &str) -> Res<()> {
-    input(own, text)
+pub fn write_input(own: &Path, runtime: &str, text: &str) -> Res<()> {
+    if super::agent(runtime)?.descriptor().has("acp") {
+        // Intent is already durable in brief.txt or turn.json; ACP owns its physical representation.
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log(own))
+            .map_err(|_| "Native source unavailable")?;
+        Ok(())
+    } else {
+        input(own, text)
+    }
 }
 pub fn outcome(rt: &str, text: &str) -> String {
     let rows: Vec<Value> = text
@@ -364,14 +332,35 @@ pub fn accepted(own: &Path, r: &Request, turn: &crate::dialogue::Turn) -> Res<bo
     if session(&r.runtime, &text)?.as_deref() != r.session.as_deref() {
         return Ok(false);
     }
-    Ok(text
-        .lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .any(|v| {
-            v["event"] == "step_update"
-                && v["step_update"]["step_type"] == "user_input"
-                && v["step_update"]["state"] == "DONE"
-        }))
+    let mut history = crate::transcript::at(
+        super::table::OWNER_STREAM_FORMAT,
+        &log(own),
+        r.session
+            .as_deref()
+            .ok_or("Native session identity unknown")?,
+        offset,
+    )?;
+    let end = offset.saturating_add(text.len() as u64);
+    loop {
+        let before = history.checkpoint()["offset"]
+            .as_u64()
+            .ok_or("Native acceptance cursor unknown")?;
+        let page = history.poll(&log(own))?;
+        if page.events.iter().any(|event| {
+            event["end"].as_u64().is_some_and(|at| at <= end)
+                && event["kind"] == "message"
+                && event["author"] == "user"
+                && event["state"] == "completed"
+        }) {
+            return Ok(true);
+        }
+        let after = history.checkpoint()["offset"]
+            .as_u64()
+            .ok_or("Native acceptance cursor unknown")?;
+        if !page.more || after == before || after >= end {
+            return Ok(false);
+        }
+    }
 }
 
 #[cfg(test)]

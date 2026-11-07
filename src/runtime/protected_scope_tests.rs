@@ -1,28 +1,9 @@
 use super::*;
-// Chain: §8 #2161 A1/A2 — launchd preserves child optimization intent in the hashed job.
-// Risk: an explicit off silently becomes inherit at the supervisor boundary.
+// R8/R9: the protected scope retains launcher attribution in its hashed job.
 #[test]
-fn protected_scope_preserves_optimization_in_hashed_job() {
-    if std::env::var_os("TASKQ_SCOPE_ENV_TEST").is_none() {
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        command.args(["--exact","runtime::protected_app_server::scope::tests::protected_scope_preserves_optimization_in_hashed_job","--nocapture"])
-                .env("TASKQ_SCOPE_ENV_TEST","1").env("AGENTQ_OPTIMIZATION","off");
-        let out = coreq::process::output(
-            "test.scope-environment",
-            &mut command,
-            Duration::from_secs(10),
-        )
-        .unwrap();
-        assert!(
-            out.status.success(),
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        return;
-    }
+fn protected_scope_preserves_launcher_in_hashed_job() {
     let mut environment = environment(Path::new("/invented/home"));
-    assert_eq!(environment["AGENTQ_OPTIMIZATION"], "off");
+    assert_eq!(environment["AGENTQ_LAUNCHER"], "taskq");
     let job = plist(
         "invented-label",
         "/invented/adapter",
@@ -31,16 +12,16 @@ fn protected_scope_preserves_optimization_in_hashed_job() {
         &environment,
     )
     .unwrap();
-    assert!(job.contains("<key>AGENTQ_OPTIMIZATION</key><string>off</string>"));
+    assert!(job.contains("<key>AGENTQ_LAUNCHER</key><string>taskq</string>"));
     let job_sha256 = digest(job.as_bytes());
-    for intent in [Some("on"), None] {
-        if let Some(value) = intent {
-            environment["AGENTQ_OPTIMIZATION"] = json!(value);
+    for marker in [Some("foreign"), None] {
+        if let Some(value) = marker {
+            environment["AGENTQ_LAUNCHER"] = json!(value);
         } else {
             environment
                 .as_object_mut()
                 .unwrap()
-                .remove("AGENTQ_OPTIMIZATION");
+                .remove("AGENTQ_LAUNCHER");
         }
         let changed = plist(
             "invented-label",

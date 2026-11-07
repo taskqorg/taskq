@@ -49,19 +49,6 @@ pub(super) fn request_access(
     }
 }
 
-fn choice_args(spec: &mut agentq_runtime::agent::NativeSpec, r: &Request) {
-    if let Some(choice) = &r.choice {
-        if !choice.model.is_empty() {
-            spec.args
-                .extend(["--model".into(), choice.model.clone().into()]);
-        }
-        if !choice.effort.is_empty() {
-            spec.args
-                .extend(["--effort".into(), choice.effort.clone().into()]);
-        }
-    }
-}
-
 /// The request's runtime adapter (§ 8 table).
 pub fn launch(own: &Path, r: &Request) -> Launched {
     if super::owner_stream::handles(&r.runtime) {
@@ -71,26 +58,6 @@ pub fn launch(own: &Path, r: &Request) -> Launched {
         codex_launch(own, r)
     } else {
         claude_launch(own, r)
-    }
-}
-
-/// An owner session's AgentQ `agent` turn (§ 8 Spawn and resume); `base` loses TaskQ's attempt variables first.
-pub(super) fn spec(
-    base: &mut std::process::Command,
-    root: &Path,
-    session: &str,
-    args: &[&str],
-) -> agentq_runtime::agent::NativeSpec {
-    for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE", "TASKQ_ROOT"] {
-        base.env_remove(k);
-    }
-    agentq_runtime::agent::NativeSpec {
-        root: root.into(),
-        session: session.into(),
-        resume: session != "-" && !session.is_empty(),
-        args: args.iter().map(Into::into).collect(),
-        home: None,
-        env: vec![],
     }
 }
 
@@ -104,7 +71,6 @@ pub(crate) fn read_brief(path: &Path) -> String {
 
 /// The visible Codex app owns the thread after the handshake; its existing app grant bounds launch and resume (R9).
 fn codex_launch(own: &Path, r: &Request) -> Launched {
-    let workdir = r.root.as_deref().map_or(own, Path::new);
     let a = super::of(&r.runtime);
     let bin = super::which(a.bin);
     if !bin.is_absolute() {
@@ -119,82 +85,47 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
             a.client
         ));
     }
-    let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let codex = crate::host::Policy::read_for_hostname(install, crate::config::hostname)
-        .map_or(vec![], |p| p.codex);
-    let codex = r
-        .choice
-        .as_ref()
-        .map_or_else(|| codex.clone(), |choice| choice.codex(&codex));
-    let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env {
-        context: "",
-        root: workdir,
-        exe: &exe,
-        install,
-        permission_mode: "",
-        codex: &codex,
-        delivery: crate::config::Delivery::AutoMerge,
-        board_env: &[],
-        jobs: None,
-    };
-    let access = match request_access(&env, a.setup, r) {
-        Ok(a) => a,
-        Err(e) => return Launched::NoStart(e),
-    };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) {
         return Launched::NoStart(format!("setup brief: {e}"));
     }
-    let mut c = match super::cli(&r.runtime, &access, &env) {
-        Ok(c) => c,
-        Err(e) => return Launched::NoStart(format!("Codex launch: {e}")),
-    };
-    // Standalone setup has no repository; project requests keep the repository check and their exact root.
-    let args: Vec<&str> = r
-        .root
-        .is_none()
-        .then_some("--skip-git-repo-check")
-        .into_iter()
-        .chain(
-            access
-                .codex
-                .as_deref()
-                .unwrap_or(&codex)
-                .iter()
-                .map(String::as_str),
-        )
-        .collect();
-    let spec = spec(&mut c, workdir, "-", &args);
-    let spec = match super::optimized(&r.runtime, spec) {
-        Ok(s) => s,
+    let mut request = match request(own, r, super::HANDSHAKE) {
+        Ok(request) => request,
         Err(e) => return Launched::NoStart(e),
     };
-    let mut c = match super::agent(&r.runtime).and_then(|a| a.command(c, &spec)) {
-        Ok(c) => c,
+    if r.root.is_none() {
+        request.host_args.push("--skip-git-repo-check".into());
+    }
+    request.log = own.join("launch.log");
+    request.deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
+    let adapter = match super::agent(&r.runtime) {
+        Ok(adapter) => adapter,
         Err(e) => return Launched::NoStart(e),
     };
-    use coreq::process::Failure;
-    let out = match coreq::process::exchange(
-        "setup.codex-launch",
-        &mut c,
-        super::HANDSHAKE.as_bytes(),
-        std::time::Duration::from_secs(60),
-    ) {
-        Ok(out) | Err(Failure::Exit(out)) => out,
-        Err(
-            e @ (Failure::InvalidDeadline
-            | Failure::Capacity
-            | Failure::Owner(_)
-            | Failure::Spawn(_)
-            | Failure::InputLimit),
-        ) => return Launched::NoStart(format!("Codex launch: {e}")),
-        Err(e) => return Launched::Unknown(format!("Codex launch outcome unknown: {e}")),
+    let mut run = match adapter.launch(&request) {
+        Ok(run) => run,
+        Err(error) => {
+            return match error.stage {
+                agentq_runtime::agent::InputStage::BeforeInput => Launched::NoStart(error.detail),
+                agentq_runtime::agent::InputStage::Unknown => Launched::Unknown(error.detail),
+            };
+        }
     };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
-    codex_thread(&r.runtime, &stdout, &stderr, out.status.code(), |thread| {
+    loop {
+        match adapter.poll(&mut run) {
+            Ok(agentq_runtime::agent::State::Running) => {
+                std::thread::sleep(std::time::Duration::from_millis(25))
+            }
+            Ok(_) => break,
+            Err(e) => return Launched::Unknown(format!("Codex launch outcome unknown: {e}")),
+        }
+    }
+    let report = match adapter.report(&run) {
+        Ok(report) => report,
+        Err(e) => return Launched::Unknown(e),
+    };
+    let stdout = fs::read_to_string(&request.log).unwrap_or_default();
+    codex_thread(&r.runtime, &stdout, "", report.exit, |thread| {
         super::app_submit(thread, &read_brief(&path))
     })
 }
@@ -207,11 +138,7 @@ pub(crate) fn codex_thread(
     code: Option<i32>,
     submit: impl FnOnce(&str) -> Res<()>,
 ) -> Launched {
-    let thread = stdout
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .find(|v| v["type"] == "thread.started")
-        .and_then(|v| v["thread_id"].as_str().map(String::from));
+    let thread = super::classify(rt, stdout).and_then(|r| r.session);
     let Some(thread) = thread else {
         if super::launch_cause(rt, &format!("{stdout}{stderr}")) == Some("login-required") {
             return Launched::NoStart(format!("{LOGIN} Codex asked for login"));
@@ -239,141 +166,97 @@ pub(crate) fn codex_thread(
 
 /// Claude background session with Remote Control (§ 8 table); access and permission mode come from § 8 Access.
 fn claude_launch(own: &Path, r: &Request) -> Launched {
-    let workdir = r.root.as_deref().map_or(own, Path::new);
-    let a = super::of(&r.runtime);
-    let bin = super::which(a.bin);
-    if !bin.is_absolute() {
-        return Launched::NoStart(format!(
-            "{MISSING} {} is not on the host service PATH",
-            a.bin
-        ));
+    let path = own.join("brief.txt");
+    if let Err(error) = fs::write(&path, &r.brief) {
+        return Launched::NoStart(format!("setup brief: {error}"));
     }
-    if super::login_state(a.bin, &bin) == "not logged in" {
-        return Launched::NoStart(format!(
-            "{LOGIN} {} is not logged in on this host",
-            a.client
-        ));
-    }
+    let mut request = match request(own, r, &read_brief(&path)) {
+        Ok(request) => request,
+        Err(error) => return Launched::NoStart(error),
+    };
+    request.log = own.join("launch.log");
+    request.mode = agentq_runtime::agent::Mode::Background;
+    request.title = Some(
+        if r.root.is_some() {
+            "taskq request"
+        } else {
+            "taskq setup"
+        }
+        .into(),
+    );
+    let adapter = match super::agent(&r.runtime) {
+        Ok(adapter) => adapter,
+        Err(error) => return Launched::NoStart(error),
+    };
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
-    let mode = policy
-        .as_ref()
-        .map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
+    let root = r.root.as_deref().map_or(own, Path::new);
+    let policy = match crate::host::Policy::read_for_hostname(install, crate::config::hostname) {
+        Ok(policy) => policy,
+        Err(error) => return Launched::NoStart(error),
+    };
     let exe = std::env::current_exe().unwrap_or_default();
     let env = super::Env {
         context: "",
-        root: workdir,
+        root,
         exe: &exe,
         install,
-        permission_mode: &mode,
-        codex: &[],
+        permission_mode: &policy.permission_mode,
+        codex: &policy.codex,
         delivery: crate::config::Delivery::AutoMerge,
         board_env: &[],
         jobs: None,
     };
     let access = match request_access(&env, &r.runtime, r) {
-        Ok(a) => a,
-        Err(e) => return Launched::NoStart(e),
+        Ok(access) => access,
+        Err(error) => return Launched::NoStart(error),
     };
-    let path = own.join("brief.txt");
-    if let Err(e) = fs::write(&path, &r.brief) {
-        return Launched::NoStart(format!("setup brief: {e}"));
-    }
-    let mut c = match super::cli(&r.runtime, &access, &env) {
-        Ok(c) => c,
-        Err(e) => return Launched::NoStart(e),
-    };
-    let settings = serde_json::json!({"env": super::claude_env(install, None, None)}).to_string();
-    let mut spec = spec(
-        &mut c,
-        workdir,
-        "",
-        &[
-            "--settings",
-            &settings,
-            "--remote-control",
-            if r.root.is_some() {
-                "taskq request"
-            } else {
-                "taskq setup"
-            },
-            "--permission-mode",
-            access.claude.as_deref().unwrap_or(&mode),
-        ],
-    );
-    choice_args(&mut spec, r);
-    let spec = match super::optimized(&r.runtime, spec) {
-        Ok(s) => s,
-        Err(e) => return Launched::NoStart(e),
-    };
-    let agent = match super::agent(&r.runtime) {
-        Ok(a) => a,
-        Err(e) => return Launched::NoStart(e),
-    };
-    let input = read_brief(&path);
-    use coreq::process::Failure;
     let home = super::accounts::default_home(&r.runtime);
-    let out = {
-        let _daemon = match super::daemon_sandbox::enter(
-            &r.runtime,
-            home.as_deref(),
-            access.profile.as_deref(),
-            false,
-        ) {
-            Ok(gate) => gate,
-            Err(e) => return Launched::NoStart(format!("{ACCESS} {e}")),
-        };
-        match agent.background_launch(c, &spec, &input, std::time::Duration::from_secs(30)) {
-            Err(e) => return Launched::NoStart(format!("Claude launch: {e}")),
-            Ok(out) => out,
-        }
-    };
-    let out = match out {
-        Ok(out) | Err(Failure::Exit(out)) => out,
-        Err(
-            e @ (Failure::InvalidDeadline
-            | Failure::Capacity
-            | Failure::Owner(_)
-            | Failure::Spawn(_)
-            | Failure::InputLimit),
-        ) => return Launched::NoStart(format!("Claude launch: {e}")),
-        Err(e) => return Launched::Unknown(format!("Claude launch outcome unknown: {e}")),
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
-    // Claude refuses before it starts anything: a definite no-start, never `interrupted`.
-    match (
-        out.status.success(),
-        agent.launch_refusal(&stderr).map(|c| c.0),
+    let _daemon = match super::daemon_sandbox::enter(
+        &r.runtime,
+        home.as_deref(),
+        access.profile.as_deref(),
+        false,
     ) {
-        (false, Some("workspace-untrusted")) => {
-            return Launched::NoStart(format!(
-                "{ACCESS} Claude workspace not trusted: {}",
-                workdir.display()
+        Ok(gate) => gate,
+        Err(error) => return Launched::NoStart(format!("{ACCESS} {error}")),
+    };
+    let mut run = match adapter.launch(&request) {
+        Ok(run) => run,
+        Err(error) => {
+            return Launched::Unknown(format!(
+                "Native background launch: {}; no replay",
+                error.detail
             ));
         }
-        (false, Some("login-required")) => {
-            return Launched::NoStart(format!("{LOGIN} Claude Code asked for login"));
+    };
+    if let Ok(output) = adapter.launcher_output(&mut run) {
+        if let Ok(output) | Err(coreq::process::Failure::Exit(output)) = output {
+            let _ = fs::write(
+                &request.log,
+                format!(
+                    "{}\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            );
         }
-        _ => {}
     }
-    match stdout.lines().find_map(|l| {
-        l.strip_prefix("backgrounded · ")
-            .and_then(|s| s.split_whitespace().next())
-    }) {
-        // One link read at launch, never after: the Claude session manager owns the session from here.
-        Some(id) if out.status.success() && super::native_job_id(id) => {
-            let (session, url) = claude_link(workdir, id);
-            Launched::Job {
-                job: id.into(),
-                session,
-                url,
-            }
+    if let Err(error) = adapter.poll(&mut run) {
+        return Launched::Unknown(error);
+    }
+    let job = match adapter.background_job(&run) {
+        Ok(job) => job,
+        Err(cause) => {
+            return Launched::Unknown(format!(
+                "Native background identity unverified: {cause}; original input retained, no replay"
+            ));
         }
-        _ => Launched::Unknown(
-            "Claude returned no background job; outcome unknown, inspect native sessions".into(),
-        ),
+    };
+    let url = adapter.session_url(&run).ok();
+    Launched::Job {
+        job: job.id,
+        session: Some(job.session),
+        url,
     }
 }
 
@@ -381,53 +264,33 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
 pub fn claude_link(workdir: &Path, job: &str) -> (Option<String>, Option<String>) {
     let session = super::claude_agents(workdir).ok().and_then(|rows| {
         rows.iter()
-            .find(|v| v["id"] == job)
-            .and_then(|v| v["sessionId"].as_str().map(String::from))
+            .find(|v| v.id() == Some(job))
+            .map(|v| v.session().to_owned())
     });
     let url = session.as_deref().and_then(super::claude_remote);
     (session, url)
 }
-/// D2: one owner turn into a launched session, text on stdin; the caller spawns it. Never `--bg --resume`: that copies the session.
-pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
-    if super::owner_stream::handles(&r.runtime) {
-        return super::owner_stream::command(own, r, true);
-    }
-    let a = super::of(&r.runtime);
-    let session = r
-        .session
-        .as_deref()
-        .filter(|s| super::plain_thread(s))
-        .ok_or("native session unknown; open it in its runtime")?;
-    if !super::which(a.bin).is_absolute() {
-        return Err(format!(
-            "{MISSING} {} is not on the host service PATH",
-            a.bin
-        ));
-    }
-    if a.has(Cap::ThreadLink) {
-        return Err("App-owned Codex input must use its native queue; CLI resume refused".into());
-    }
-    release_idle(r)?;
-    let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname).ok();
-    let mode = policy
-        .as_ref()
-        .map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
-    let codex = policy.map_or(vec![], |p| p.codex);
-    // the same folder and grant as the launch, so the turn resumes where the session started
-    let workdir = r.root.as_deref().map_or(own, Path::new);
-    let exe = std::env::current_exe().unwrap_or_default();
+/// The existing owner grant becomes the same typed launch policy as worker/operator turns.
+pub(super) fn request(own: &Path, r: &Request, text: &str) -> Res<agentq_runtime::agent::Launch> {
+    let install = own
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("Owner installation unknown")?;
+    let policy = crate::host::Policy::read_for_hostname(install, crate::config::hostname)?;
+    let root = r.root.as_deref().map_or(own, Path::new);
+    let exe = std::env::current_exe().map_err(|_| "Owner executable unknown")?;
     let env = super::Env {
         context: "",
-        root: workdir,
+        root,
         exe: &exe,
         install,
-        permission_mode: &mode,
-        codex: &codex,
+        permission_mode: &policy.permission_mode,
+        codex: &policy.codex,
         delivery: crate::config::Delivery::AutoMerge,
         board_env: &[],
         jobs: None,
     };
+    let a = super::of(&r.runtime);
     let access = request_access(
         &env,
         if a.has(Cap::SandboxArgs) {
@@ -437,20 +300,64 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
         },
         r,
     )?;
-    let mut c = super::cli(&r.runtime, &access, &env)?;
-    let mut spec = spec(
-        &mut c,
-        workdir,
-        session,
-        &[
-            "--permission-mode",
-            access.claude.as_deref().unwrap_or(&mode),
-            "--settings",
-            &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string(),
-        ],
-    );
-    choice_args(&mut spec, r);
-    super::agent(&r.runtime)?.command(c, &super::optimized(&r.runtime, spec)?)
+    if a.has(Cap::StreamInput) && !matches!(access.mode.as_str(), "workspace" | "full") {
+        return Err("Antigravity owner sessions require a Workspace or Full operator grant".into());
+    }
+    let launch = super::Launch {
+        files: String::new(),
+        execution: None,
+        task: 0,
+        title: String::new(),
+        attempt: 0,
+        role: "operator".into(),
+        rt: r.runtime.clone(),
+        session: r.session.clone().unwrap_or_default(),
+        url: String::new(),
+        resume: r.session.as_ref().map(|_| "continue".into()),
+    };
+    let log = if a.has(Cap::StreamInput) {
+        super::owner_stream::log(own)
+    } else {
+        own.join("turn.out")
+    };
+    let mut request = super::launch::request(&env, &launch, &log, text, &access)?;
+    request.title = None;
+    request.compact_hook = None;
+    if a.has(Cap::RemoteControl) {
+        request.settings_env = super::claude_env(install, None, None)
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap().into()))
+            .collect();
+    }
+    if let Some(choice) = &r.choice {
+        request.model = (!choice.model.is_empty()).then(|| choice.model.clone());
+        request.effort = (!choice.effort.is_empty()).then(|| choice.effort.clone());
+    }
+    Ok(request)
+}
+
+/// D2: prepare one typed turn into an existing owner session, without submitting input.
+pub fn turn(own: &Path, r: &Request) -> Res<agentq_runtime::agent::Launch> {
+    let session = r
+        .session
+        .as_deref()
+        .filter(|s| super::plain_thread(s))
+        .ok_or("native session unknown; open it in its runtime")?;
+    let a = super::of(&r.runtime);
+    if a.has(Cap::ThreadLink) {
+        return Err("App-owned Codex input must use its native queue; CLI resume refused".into());
+    }
+    if a.has(Cap::StreamInput) {
+        if super::owner_stream::holder(own, r)? {
+            return Err("Antigravity native turn still owns this session; no input sent".into());
+        }
+        super::owner_stream::native_source(session)?;
+    } else {
+        release_idle(own, r)?;
+    }
+    request(own, r, "")
 }
 
 /// D2/D5: reuse native App readback, binding canonical project, thread, exact input and terminal turn id.
@@ -560,7 +467,7 @@ pub fn holder(_own: &Path, r: &Request) -> Res<bool> {
     if super::of(&r.runtime).has(Cap::ThreadLink) {
         return Ok(false);
     }
-    Ok(holds(&claude_rows()?, r) == Hold::Other)
+    Ok(holds(&claude_rows(_own, r)?, r) == Hold::Other)
 }
 
 #[derive(Debug, PartialEq)]
@@ -572,15 +479,15 @@ enum Hold {
 
 /// The job TaskQ launched stays open after its reply; idle, it is no other writer. Interactive, busy or foreign rows hold.
 /// Only `status` tells a turn in progress: `claude agents --json` keeps `state` `working` on an idle launched job (#1762).
-fn holds(rows: &[serde_json::Value], r: &Request) -> Hold {
+fn holds(rows: &[agentq_runtime::agent::BackgroundCandidate], r: &Request) -> Hold {
     let mut hold = Hold::Free;
-    for v in rows.iter().filter(|v| {
-        v["sessionId"]
-            .as_str()
-            .is_some_and(|s| Some(s) == r.session.as_deref())
-    }) {
-        let own = v["kind"] == "background" && r.job.as_deref().is_some_and(|j| v["id"] == j);
-        if !own || v["status"] == "busy" {
+    for v in rows
+        .iter()
+        .filter(|v| Some(v.session()) == r.session.as_deref())
+    {
+        let own = v.kind() == agentq_runtime::agent::BackgroundKind::Background
+            && v.id() == r.job.as_deref();
+        if !own || v.activity() != agentq_runtime::agent::BackgroundActivity::Idle {
             return Hold::Other;
         }
         hold = Hold::Own;
@@ -588,22 +495,20 @@ fn holds(rows: &[serde_json::Value], r: &Request) -> Hold {
     hold
 }
 
-fn claude_rows() -> Res<Vec<serde_json::Value>> {
-    let (ok, out) = super::probe(
-        "runtime.agents",
-        &super::which(super::of(super::CLAUDE).bin),
-        &["agents", "--json"],
+fn claude_rows(own: &Path, r: &Request) -> Res<Vec<agentq_runtime::agent::BackgroundCandidate>> {
+    let root = r.root.as_deref().map_or(own, Path::new);
+    let home = super::claude_home();
+    super::agent(super::CLAUDE)?.background_candidates(
+        crate::platform::command(super::which(super::of(super::CLAUDE).bin)),
+        &super::claude_spec(root, home.as_deref()),
+        false,
+        std::time::Duration::from_secs(10),
     )
-    .ok_or("Claude agents unavailable or timed out")?;
-    if !ok {
-        return Err(format!("claude agents: {}", out.trim()));
-    }
-    serde_json::from_str(&out).map_err(|e| format!("claude agents: {e}"))
 }
 
 /// D3: Claude resumes only a stopped session, so the turn stops the idle launched job first and reads its release back.
-fn release_idle(r: &Request) -> Res<()> {
-    let job = match holds(&claude_rows()?, r) {
+fn release_idle(own: &Path, r: &Request) -> Res<()> {
+    let job = match holds(&claude_rows(own, r)?, r) {
         Hold::Free => return Ok(()),
         Hold::Other => return Err(open_in(&r.runtime)),
         Hold::Own => r.job.as_deref().unwrap_or_default(),
@@ -617,7 +522,7 @@ fn release_idle(r: &Request) -> Res<()> {
     if !ok {
         return Err(format!("claude stop: {}", out.trim()));
     }
-    if holds(&claude_rows()?, r) == Hold::Free {
+    if holds(&claude_rows(own, r)?, r) == Hold::Free {
         Ok(())
     } else {
         Err("Claude session still open after stop; state unknown".into())
@@ -629,38 +534,22 @@ pub fn open_in(runtime: &str) -> String {
     format!("open in {runtime}; close it there first")
 }
 
-/// D5: the outcome only from the runtime's end record (Claude `result`, Codex `turn.completed`/`turn.failed`); exit alone is unknown.
+/// D5: the outcome only from AgentQ's report of the runtime's end record; exit alone is unknown.
 pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
     if super::owner_stream::handles(runtime) {
         return super::owner_stream::outcome(runtime, out);
     }
-    let codex = super::of(runtime).has(Cap::ThreadLink);
-    if codex && format!("{out}{err}").contains("already has an active writer") {
+    let report = super::classify(runtime, &format!("{out}\n{err}"));
+    if report.as_ref().is_some_and(|r| r.error == "session-busy") {
         return open_in(runtime);
     }
-    for v in out
-        .lines()
-        .rev()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-    {
-        match (codex, v["type"].as_str()) {
-            (false, Some("result")) if v["is_error"] != true && v["subtype"] == "success" => {
-                return "success".into();
-            }
-            (false, Some("result")) => {
-                return format!("failed: {}", v["subtype"].as_str().unwrap_or("error"));
-            }
-            (true, Some("turn.completed")) => return "success".into(),
-            (true, Some("turn.failed")) => {
-                return format!(
-                    "failed: {}",
-                    v["error"]["message"].as_str().unwrap_or("error")
-                );
-            }
-            _ => {}
+    match report {
+        Some(r) if r.outcome == "ok" => "success".into(),
+        Some(r) if r.outcome != "unknown" => {
+            format!("failed: {}", r.detail.as_deref().unwrap_or(r.error))
         }
+        _ => "unknown: the turn ended without a result record".into(),
     }
-    "unknown: the turn ended without a result record".into()
 }
 
 /// The session's transcript (D1): Claude `projects/*/<id>.jsonl`, Codex `sessions/**/rollout-*-<id>.jsonl`.

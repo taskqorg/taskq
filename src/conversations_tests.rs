@@ -573,7 +573,7 @@ fn large_closed_history_keeps_metadata_pages_and_worker_reads() {
 
 #[test]
 fn conversation_1929_reply_refusal_keeps_editable_input() {
-    fn never(_: &Path, _: &crate::setup::Request) -> Res<std::process::Command> {
+    fn never(_: &Path, _: &crate::setup::Request) -> Res<agentq_runtime::agent::Launch> {
         panic!("no native dispatch")
     }
     fn unknown(_: &Path, _: &crate::setup::Request) -> Res<bool> {
@@ -655,7 +655,7 @@ fn conversation_1929_reply_refusal_keeps_editable_input() {
 // D2/C4/#2159: an accepted local App intent is not native delivery; retain exact draft/files until readback.
 #[test]
 fn app_reply_pending_acceptance_keeps_draft_and_original_operation() {
-    fn never(_: &Path, _: &crate::setup::Request) -> Res<std::process::Command> {
+    fn never(_: &Path, _: &crate::setup::Request) -> Res<agentq_runtime::agent::Launch> {
         panic!("no CLI writer")
     }
     fn free(_: &Path, _: &crate::setup::Request) -> Res<bool> {

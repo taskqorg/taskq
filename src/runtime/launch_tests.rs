@@ -11,14 +11,16 @@ fn agentq_delayed_record_excludes_later_turn_bytes() {
     let root = std::env::temp_dir().join(format!("taskq-agentq-freeze-{}", uuid()));
     std::fs::create_dir_all(&root).unwrap();
     let log = root.join("native.log");
+    std::fs::create_dir_all(root.join("home")).unwrap();
     let mut request = Request::new(&root, &log, "invented input", "taskq");
+    request.home = Some(root.join("home"));
+    request.session_store = agentq_runtime::agent::SessionStore::new(root.join("owners"));
     request.command = vec![
         python().into(),
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/runtime-launch.py")
             .into(),
     ];
-    request.optimization = agentq_runtime::optimization::Intent::Off;
     request.env = vec![
         ("TASKQ_FIXTURE_RT".into(), "claude".into()),
         (
@@ -89,10 +91,7 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
         "model_reasoning_effort=high",
     ]
     .map(String::from);
-    let vars = vec![
-        ("AGENTQ_OPTIMIZATION".into(), "off".into()),
-        ("INVENTED_BOARD_SECRET".into(), "invented-secret".into()),
-    ];
+    let vars = vec![("INVENTED_BOARD_SECRET".into(), "invented-secret".into())];
     let env = Env {
         context: "",
         root: &root,
@@ -140,6 +139,7 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
     for rt in ["codex", "claude", "antigravity"] {
         crate::policy::grant(&root, rt, "full", None, "invented operator", 1).unwrap();
         let access = access(&env, rt).unwrap();
+        let mut saved_session = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".to_string();
         for resume in [false, true] {
             let l = Launch {
                 files: String::new(),
@@ -149,7 +149,7 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
                 attempt: 42,
                 role: "worker".into(),
                 rt: rt.into(),
-                session: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".into(),
+                session: saved_session.clone(),
                 url: String::new(),
                 resume: resume.then(|| "continue".into()),
             };
@@ -157,6 +157,9 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
             let log = root.join(format!("{rt}-{resume}.log"));
             let mut req = request(&env, &l, &log, &input, &access).unwrap();
             req.command = vec![python.clone().into(), fixture.clone().into()];
+            let home = root.join(format!("fixture-home-{rt}"));
+            std::fs::create_dir_all(&home).unwrap();
+            req.home = Some(home);
             req.env.extend([
                 ("TASKQ_FIXTURE_RT".into(), rt.into()),
                 ("TASKQ_FIXTURE_RECORD".into(), record.clone().into()),
@@ -164,6 +167,9 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
                 ("TASKQ_FIXTURE_LINGER".into(), "1".into()),
             ]);
             assert!(!format!("{:?}", req.host_args).contains("invented-secret"));
+            if resume {
+                agent(rt).unwrap().adopt(&l.session, &req, &[]).unwrap();
+            }
             let mut child = native(rt, resume.then_some(l.session.as_str()), &mut req).unwrap();
             child.install = Some(root.clone());
             let identity = child.native_identity().unwrap();
@@ -171,17 +177,18 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
             let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
             loop {
                 let began = std::time::Instant::now();
-                if let Some(code) = child.exited().unwrap() {
+                if let Some(exit) = child.termination().unwrap() {
                     let elapsed = began.elapsed();
                     drop(held);
                     assert!(
                         elapsed < std::time::Duration::from_millis(500),
                         "terminal polling waited on telemetry: {elapsed:?}"
                     );
-                    assert_ne!(
-                        code, 0,
-                        "a completed turn stops the deliberately lingering client"
+                    assert_eq!(
+                        exit.code, None,
+                        "cleanup never invents a numeric signal exit"
                     );
+                    assert!(child.exited().unwrap_err().contains("exit code unknown"));
                     assert_ne!(
                         coreq::process::identity(identity.pid).unwrap(),
                         Some(identity)
@@ -193,7 +200,7 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
                         "ok"
                     );
                     assert!(
-                        child.exited().unwrap().is_some(),
+                        child.termination().unwrap().is_some(),
                         "terminal reread must not duplicate records"
                     );
                     break;
@@ -204,19 +211,31 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
+            let observed_session = agent(rt).unwrap().session_id(&child.run).unwrap();
+            if resume {
+                assert_eq!(
+                    observed_session, saved_session,
+                    "resume must retain the saved native identity"
+                );
+            }
+            saved_session = observed_session;
             let row: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
+            assert_eq!(row["input"], input);
             if rt == "antigravity" {
-                let wire: serde_json::Value =
-                    serde_json::from_str(row["input"].as_str().unwrap()).unwrap();
-                assert_eq!(wire["message"]["content"], input);
-            } else {
-                assert_eq!(row["input"], input);
+                assert_eq!(row["wire"]["method"], "session/prompt");
+                assert_eq!(row["wire"]["params"]["sessionId"], l.session);
+                assert!(
+                    row["args"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&serde_json::json!("acp"))
+                );
             }
             assert_eq!(row["env"]["TASKQ_ATTEMPT"], "42");
             assert_eq!(row["env"]["CARGO_BUILD_JOBS"], "2");
             assert_eq!(row["env"]["INVENTED_BOARD_SECRET"], "invented-secret");
-            assert_eq!(row["env"]["AGENTQ_OPTIMIZATION"], "off");
+            assert!(row["env"]["AGENTQ_OPTIMIZATION"].is_null());
             assert_eq!(row["env"]["AGENTQ_LAUNCHER"], "taskq");
             let argv: Vec<_> = row["args"]
                 .as_array()
@@ -246,7 +265,7 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
             }
             assert_eq!(
                 native_session(rt, &log).as_deref(),
-                Some(l.session.as_str())
+                Some(saved_session.as_str())
             );
             #[cfg(windows)]
             assert!(child.job().unwrap().starts_with("job-kill:"));
@@ -370,6 +389,9 @@ fn background_trait_retains_launcher_output_and_saved_session() {
             ("TASKQ_FIXTURE_RECORD".into(), record.clone().into()),
             ("PYTHONIOENCODING".into(), "utf-8".into()),
         ];
+        if resume {
+            adapter.adopt(session, &request, &[]).unwrap();
+        }
         let mut run = submit("claude", resume.then_some(session), &request).unwrap();
         let output = adapter.launcher_output(&mut run).unwrap().unwrap();
         assert!(output.status.success());
@@ -394,12 +416,22 @@ fn background_trait_retains_launcher_output_and_saved_session() {
                 serde_json::json!(["--bg", "--resume", session])
             );
         } else {
+            let args = row["args"].as_array().unwrap();
+            assert_eq!(args.iter().filter(|arg| *arg == "--settings").count(), 1);
+            let at = args.iter().position(|arg| arg == "--settings").unwrap();
+            let settings: serde_json::Value =
+                serde_json::from_str(args[at + 1].as_str().unwrap()).unwrap();
+            assert_eq!(settings["env"]["TASKQ_ATTEMPT"], "42");
+            assert_eq!(settings["env"]["CARGO_BUILD_JOBS"], "2");
+            assert_eq!(settings["env"]["AGENTQ_LAUNCHER"], "taskq");
+            assert!(settings["env"]["AGENTQ_OPTIMIZATION"].is_null());
             assert!(
-                row["args"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|arg| arg == "--settings")
+                args.windows(2)
+                    .any(|pair| pair == ["--permission-mode", "dontAsk"])
+            );
+            assert!(
+                args.windows(2)
+                    .any(|pair| pair == ["--name", "invented title"])
             );
         }
     }
@@ -415,7 +447,7 @@ fn trait_scope_retains_descendants_after_launcher_exit() {
         fn drop(&mut self) {
             let _ = self.0.kill();
             let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
-            while !self.0.exited().is_ok_and(|exit| exit.is_some())
+            while !self.0.termination().is_ok_and(|exit| exit.is_some())
                 && std::time::Instant::now() < until
             {
                 std::thread::sleep(std::time::Duration::from_millis(10));
@@ -468,28 +500,28 @@ fn trait_scope_retains_descendants_after_launcher_exit() {
         assert!(std::time::Instant::now() < until);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert_eq!(child.exited(), Ok(None));
+    assert_eq!(child.termination(), Ok(None));
     assert_eq!(
         coreq::process::identity(pid).unwrap(),
         Some(descendant.clone())
     );
     child.kill().unwrap();
-    while child.exited().unwrap().is_none() {
+    while child.termination().unwrap().is_none() {
         assert!(std::time::Instant::now() < until);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert_ne!(coreq::process::identity(pid).unwrap(), Some(descendant));
     assert_eq!(
-        child.exited(),
-        Ok(Some(-1)),
-        "cancelled scope preserves its terminal verdict"
+        child.termination(),
+        Ok(Some(Exit { code: None })),
+        "scope termination preserves the unknown numeric exit"
     );
     assert_eq!(
         coreq::process::identity(sentinel.id()).unwrap(),
         Some(sentinel.native_identity().unwrap())
     );
     sentinel.kill().unwrap();
-    while sentinel.exited().unwrap().is_none() {
+    while sentinel.termination().unwrap().is_none() {
         assert!(std::time::Instant::now() < until);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -503,6 +535,14 @@ fn trait_scope_retains_descendants_after_launcher_exit() {
 #[ignore = "paid native qualification; TASKQ_NATIVE_RUNTIME and TASKQ_NATIVE_INSTALL require owner approval"]
 fn native_trait_start_resume_and_transcript() {
     let rt = std::env::var("TASKQ_NATIVE_RUNTIME").expect("TASKQ_NATIVE_RUNTIME");
+    let cancel_continuation =
+        std::env::var("TASKQ_NATIVE_CANCEL_CONTINUATION").as_deref() == Ok("1");
+    if cancel_continuation {
+        assert_eq!(
+            rt, CLAUDE,
+            "owned background caller qualification is Claude-only"
+        );
+    }
     assert!(RuntimeId::parse(&rt).is_some());
     let install =
         PathBuf::from(std::env::var_os("TASKQ_NATIVE_INSTALL").expect("TASKQ_NATIVE_INSTALL"));
@@ -515,6 +555,16 @@ fn native_trait_start_resume_and_transcript() {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
     let root = root.as_path();
+    if cancel_continuation {
+        assert!(
+            std::env::var_os("TASKQ_NATIVE_ROOT").is_some(),
+            "explicit disposable project required"
+        );
+        assert!(
+            install.starts_with(root) && install != root,
+            "preauthorized disposable install must be inside project"
+        );
+    }
     let exe = std::env::current_exe().unwrap();
     let authority = Env {
         context: "",
@@ -533,32 +583,59 @@ fn native_trait_start_resume_and_transcript() {
     std::fs::create_dir_all(&fixture).unwrap();
     println!("evidence={}", evidence.display());
     let env = Env {
-        install: &fixture,
+        install: if cancel_continuation {
+            &install
+        } else {
+            &fixture
+        },
         ..authority
     };
     let log = evidence.join("native.log");
     File::create(&log).unwrap();
     let mut session = String::from("-");
     let mut rows = vec![];
+    let mut submitted_inputs = vec![];
     for resume in [false, true] {
         let access = access(&authority, &rt).unwrap();
         let canary = format!("TaskQ-Qualification-2427-{}", uuid());
-        let text = format!(
+        let mut text = format!(
             "This is an approved non-task TaskQ Qualification probe. Reply with exactly {canary}. Do no work, edit no files, run no commands and make no taskq or board writes. Read this turn's input file if the launcher refers to it; use no other tools."
         );
+        if cancel_continuation && resume {
+            text = format!(
+                "Approved disposable qualification continuation {canary}. Produce a long numbered explanation of arithmetic, at least 20000 words. Use no tools, edit no files and make no board writes. The controller will cancel this turn after native acceptance."
+            );
+        }
         let l = Launch {
             files: String::new(),
-            execution: None,
-            task: 0,
+            execution: cancel_continuation.then_some(if resume { 2 } else { 1 }),
+            task: if cancel_continuation {
+                if resume { 8 } else { 7 }
+            } else {
+                0
+            },
             title: "TaskQ Qualification 2427".into(),
-            attempt: 0,
-            role: "operator".into(),
+            attempt: if cancel_continuation { 1 } else { 0 },
+            role: if cancel_continuation {
+                "worker"
+            } else {
+                "operator"
+            }
+            .into(),
             rt: rt.clone(),
             session: session.clone(),
             url: String::new(),
             resume: resume.then(|| text.clone()),
         };
         std::fs::write(evidence.join(format!("input-{resume}.json")),serde_json::to_vec_pretty(&serde_json::json!({"runtime":rt,"resume":resume,"session":session,"input":text,"access":access.json()})).unwrap()).unwrap();
+        if cancel_continuation {
+            submitted_inputs.push(
+                claude_reference(
+                    &execution_input(root, l.task, l.attempt, l.execution.unwrap()).unwrap(),
+                )
+                .unwrap(),
+            );
+        }
         let pos = std::fs::metadata(&log).unwrap().len();
         let mut proc: Box<dyn Proc> = if of(&rt).has(Cap::AppTurn) {
             assert!(
@@ -608,14 +685,57 @@ fn native_trait_start_resume_and_transcript() {
             })
         };
         let until = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        let mut cancellation = None;
+        let mut original = None;
+        let cfg = crate::service::Config {
+            root: root.into(),
+            install: install.clone(),
+            ..crate::tests::cfg()
+        };
         let exit = loop {
-            match proc.exited() {
-                Ok(Some(code)) => break code,
+            if cancel_continuation && cancellation.is_none() {
+                proc.checkpoint(&cfg, &l, l.execution.unwrap())
+                    .expect("unknown checkpoint stops qualification; retain owned evidence");
+                original = Some(
+                    proc.native_identity()
+                        .expect("original creation identity required"),
+                );
+                if resume && cancellation.is_none() && proc.accepted().unwrap() {
+                    assert!(
+                        proc.termination().unwrap().is_none(),
+                        "continuation completed before cancel; no extra submission allowed"
+                    );
+                    let identity = original.as_ref().unwrap();
+                    std::fs::write(evidence.join("cancel-original.json"), serde_json::to_vec_pretty(&serde_json::json!({"pid":identity.pid,"started":identity.started,"session":session})).unwrap()).unwrap();
+                    let result = proc.kill();
+                    std::fs::write(
+                        evidence.join("cancel-request.json"),
+                        serde_json::to_vec_pretty(
+                            &serde_json::json!({"result":result,"acceptance":true,"submissions":2}),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+                    if let Err(error) = &result {
+                        assert_eq!(
+                            error, "Claude stop still pending; native process exit unconfirmed",
+                            "cancel refused/unknown; retain evidence without retry"
+                        );
+                    }
+                    cancellation = Some(std::time::Instant::now());
+                }
+            }
+            match proc.termination() {
+                Ok(Some(exit)) => break exit.code,
                 Ok(None) => {}
                 Err(reason) => eprintln!("qualification observation pending: {reason}"),
             }
             if std::time::Instant::now() >= until {
-                let cleanup = stop(proc.as_mut());
+                let cleanup = if cancel_continuation {
+                    Err("native qualification unknown; retain evidence, no repeated control".into())
+                } else {
+                    stop(proc.as_mut())
+                };
                 panic!(
                     "native qualification timed out; cleanup={cleanup:?}; evidence={}",
                     evidence.display()
@@ -623,6 +743,18 @@ fn native_trait_start_resume_and_transcript() {
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         };
+        if cancel_continuation && resume {
+            assert!(
+                cancellation.is_some(),
+                "continuation ended before cancellation; no extra submission allowed"
+            );
+            let original = original.as_ref().unwrap();
+            assert_ne!(
+                coreq::process::identity(original.pid).unwrap().as_ref(),
+                Some(original),
+                "cancel acknowledgement is not process exit"
+            );
+        }
         let accepted = proc.accepted();
         std::fs::write(evidence.join(format!("exit-{resume}.json")),serde_json::to_vec_pretty(&serde_json::json!({"exit":exit,"accepted":accepted,"session":native_session(&rt,&log)})).unwrap()).unwrap();
         assert!(
@@ -635,6 +767,54 @@ fn native_trait_start_resume_and_transcript() {
         }
         session = id;
         let (_, native) = worker_transcript(&rt, &session, &log).unwrap();
+        if cancel_continuation {
+            let adapter = agent(&rt).unwrap();
+            let mut source = adapter
+                .history(&session, None, Some(&native), None)
+                .unwrap();
+            let mut counts = vec![0; submitted_inputs.len()];
+            for page_number in 0..16 {
+                let page = source.poll().unwrap();
+                for (input, count) in submitted_inputs.iter().zip(counts.iter_mut()) {
+                    *count += page
+                        .events
+                        .iter()
+                        .filter(|event| {
+                            event["author"] == "user"
+                                && event["blocks"].as_array().is_some_and(|blocks| {
+                                    blocks.iter().any(|block| {
+                                        block["text"]
+                                            .as_str()
+                                            .is_some_and(|value| value.trim() == input.trim())
+                                    })
+                                })
+                        })
+                        .count();
+                }
+                if !page.more {
+                    assert_eq!(page.pending_bytes, 0, "partial source remains unknown");
+                    break;
+                }
+                assert!(
+                    page_number < 15,
+                    "bounded history exhausted; no replay conclusion"
+                );
+            }
+            assert!(
+                counts.iter().all(|count| *count == 1),
+                "exactly one native input per original reference, including prior turn; no replay: {counts:?}"
+            );
+            std::fs::write(
+                evidence.join(format!("source-{resume}.json")),
+                serde_json::to_vec_pretty(&source.checkpoint()).unwrap(),
+            )
+            .unwrap();
+            if resume {
+                rows.push(serde_json::json!({"resume":true,"session":session,"accepted":true,"exit":exit,"cancel_requested":true,"native_inputs":counts,"original_gone":true}));
+                drop(proc);
+                continue;
+            }
+        }
         assert!(
             std::fs::read_to_string(&native).unwrap().contains(&canary),
             "native transcript must contain this turn's fresh canary"
@@ -662,4 +842,55 @@ fn native_trait_start_resume_and_transcript() {
     )
     .unwrap();
     println!("{}\nevidence={}", manifest, evidence.display());
+}
+
+// R9/R12: canonical ACP must bind session/load before any prompt, replacing the native stream startup fence.
+#[test]
+fn acp_load_identity_mismatch_refuses_before_prompt() {
+    let root = std::env::temp_dir()
+        .canonicalize()
+        .unwrap()
+        .join(format!("taskq-acp-load-{}", uuid()));
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    let record = root.join("exchange.json");
+    let mut request = Request::new(
+        &root,
+        root.join("source.jsonl"),
+        "invented input that must not be sent",
+        "taskq",
+    );
+    request.command = vec![
+        python().into(),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/runtime-launch.py")
+            .into(),
+    ];
+    request.home = Some(root.join("home"));
+    request.env = vec![
+        ("TASKQ_FIXTURE_RT".into(), "antigravity".into()),
+        ("TASKQ_FIXTURE_RECORD".into(), record.clone().into()),
+        ("TASKQ_FIXTURE_WRONG_SESSION".into(), "1".into()),
+    ];
+    request.deadline = Some(std::time::Instant::now() + std::time::Duration::from_secs(20));
+    let adapter = agent("antigravity").unwrap();
+    let session = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    adapter.adopt(session, &request, &[]).unwrap();
+    let error = adapter
+        .resume(session, &request)
+        .err()
+        .expect("foreign session must refuse");
+    assert!(error.detail.contains("loaded session differs"), "{error:?}");
+    assert_eq!(error.stage, agentq_runtime::agent::InputStage::Unknown);
+    assert_eq!(error.session.as_deref(), Some(session));
+    let observed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
+    assert_eq!(
+        observed["messages"],
+        serde_json::json!(["initialize", "session/load"])
+    );
+    assert!(
+        observed["input"].is_null(),
+        "identity refusal must happen before prompt/input"
+    );
+    std::fs::remove_dir_all(root).unwrap();
 }

@@ -1108,23 +1108,27 @@ mod mac {
             }
         }
         cmd.env("HOME", home);
-        let spec = runtime::optimized(
-            runtime::RuntimeId::CodexApp.name(),
-            agentq_runtime::agent::NativeSpec {
-                root: p.root.clone(),
-                session: "-".into(),
-                resume: false,
-                args: p.args.iter().map(Into::into).collect(),
-                home: Some(PathBuf::from(
-                    p.authority["account_home"]
-                        .as_str()
-                        .ok_or("account home unknown")?,
-                )),
-                env: vec![],
-            },
-        )?;
-        let mut cmd =
-            runtime::agent(runtime::RuntimeId::CodexApp.name())?.app_server_command(cmd, &spec)?;
+        let spec = agentq_runtime::agent::NativeSpec {
+            root: p.root.clone(),
+            session: "-".into(),
+            resume: false,
+            args: p.args.iter().map(Into::into).collect(),
+            home: Some(PathBuf::from(
+                p.authority["account_home"]
+                    .as_str()
+                    .ok_or("account home unknown")?,
+            )),
+            env: vec![("AGENTQ_LAUNCHER".into(), "taskq".into())],
+            ..agentq_runtime::agent::NativeSpec::default()
+        };
+        // This authenticated host owns the native scope; the adapter supplies argument data only.
+        cmd.args(runtime::agent(runtime::RuntimeId::CodexApp.name())?.app_server_arguments(&spec)?)
+            .envs(spec.env.iter().map(|(key, value)| (key, value)))
+            .current_dir(&spec.root);
+        cmd.env(
+            runtime::CODEX_DIR_VAR,
+            spec.home.as_ref().ok_or("account home unknown")?,
+        );
         cmd.stdin(Stdio::piped()).stdout(stdout).stderr(stderr);
         resources::within(install, resources::WAIT, |s| {
             external_slots::reserved(install, s, &r.slot, runtime::CODEX)?;

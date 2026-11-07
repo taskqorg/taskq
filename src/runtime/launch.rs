@@ -19,21 +19,9 @@ pub(super) fn request(
     // AgentQ leaves its launcher marker to a TaskQ launch: without it, only a service that inherited one marks its workers.
     request.env.push(("AGENTQ_LAUNCHER".into(), "taskq".into()));
     request.home = accounts::log_home(&l.rt, log);
-    request.install = agentq_runtime::optimization::install_root();
-    let intent = request
-        .env
-        .iter()
-        .rev()
-        .find(|(key, _)| key == "AGENTQ_OPTIMIZATION")
-        .map(|(_, value)| value.clone())
-        .or_else(|| std::env::var_os("AGENTQ_OPTIMIZATION"));
-    request.optimization =
-        intent.map_or(Ok(agentq_runtime::optimization::Intent::Inherit), |value| {
-            value
-                .to_str()
-                .and_then(agentq_runtime::optimization::Intent::parse)
-                .ok_or("AGENTQ_OPTIMIZATION must be inherit, off or on")
-        })?;
+    request.session_store =
+        agentq_runtime::agent::SessionStore::new(env.install.join("runtime-sessions"));
+    request.lifetime = agentq_runtime::agent::Lifetime::Recoverable;
     let a = of(&l.rt);
     let build = build_cache_for(&l.rt, access, env);
     if let Some(path) = &build {
@@ -129,18 +117,23 @@ pub(super) fn request(
     Ok(request)
 }
 
-pub(super) fn submit(rt: &str, session: Option<&str>, request: &Request) -> Result<Run, String> {
+pub(super) fn submit(
+    rt: &str,
+    session: Option<&str>,
+    request: &Request,
+) -> Result<Run, StartError> {
     let adapter = agent(rt)?;
-    let run = match session {
+    match session {
         Some(session) => adapter.resume(session, request),
         None => adapter.launch(request),
-    }?;
-    eprintln!(
-        "AgentQ optimization ({}): {}",
-        of(rt).agent,
-        run.optimization().json()
-    );
-    Ok(run)
+    }
+    .map_err(|error| StartError {
+        message: error.detail,
+        class: "native-launch",
+        reportable: false,
+        no_start: error.stage == agentq_runtime::agent::InputStage::BeforeInput,
+        trust_pending: false,
+    })
 }
 
 pub(super) fn background(
@@ -149,17 +142,15 @@ pub(super) fn background(
     log: &Path,
     input: &str,
     access: &crate::policy::Effective,
-) -> Result<Result<std::process::Output, coreq::process::Failure>, StartError> {
+) -> Result<(Run, Request), StartError> {
     let mut request = request(env, l, log, input, access)?;
     request.mode = Mode::Background;
-    let mut run = submit(
+    let run = submit(
         &l.rt,
         l.resume.as_ref().map(|_| l.session.as_str()),
         &request,
     )?;
-    agent(&l.rt)?
-        .launcher_output(&mut run)
-        .map_err(|cause| StartError::from(cause.0))
+    Ok((run, request))
 }
 
 pub(super) struct Native {
@@ -201,22 +192,41 @@ impl Proc for Native {
     fn id(&self) -> u32 {
         self.run.id().expect("CLI launch has a child")
     }
+    fn start_failure(&self) -> Option<agentq_runtime::agent::LaunchError> {
+        agent(&self.rt).ok()?.report(&self.run).ok()?.start_failure
+    }
     fn exited(&mut self) -> Result<Option<i32>, String> {
+        self.termination()?
+            .map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into()))
+            .transpose()
+    }
+    fn termination(&mut self) -> Result<Option<Exit>, String> {
         let adapter = agent(&self.rt)?;
         let state = adapter.poll(&mut self.run)?;
         #[cfg(windows)]
-        let scope_exit = match self.scope.exited()? {
-            Some(code) => code,
-            None => return Ok(None),
-        };
+        if self.scope.termination()?.is_none() {
+            return Ok(None);
+        }
         if state == agentq_runtime::agent::State::Running {
             return Ok(None);
         }
         // A terminal report is distinct from native process exit, which it must explicitly carry.
-        let exit = adapter
-            .report(&self.run)?
-            .exit
-            .ok_or("native process exit unconfirmed")?;
+        let mut report = adapter.report(&self.run)?;
+        if matches!(
+            state,
+            agentq_runtime::agent::State::Finished | agentq_runtime::agent::State::Failed
+        ) && !matches!(
+            report.termination,
+            agentq_runtime::agent::ProcessTermination::Observed
+        ) {
+            adapter.cancel(&mut self.run)?;
+            adapter.poll(&mut self.run)?;
+            report = adapter.report(&self.run)?;
+        }
+        if let agentq_runtime::agent::ProcessTermination::Unknown { reason } = &report.termination {
+            return Err(format!("native process exit unconfirmed: {reason}"));
+        }
+        let exit = Exit { code: report.exit };
         if !self.recorded {
             self.recorded = true;
             if let Some(install) = &self.install {
@@ -230,15 +240,7 @@ impl Proc for Native {
                 }
             }
         }
-        #[cfg(windows)]
-        {
-            let _ = exit;
-            Ok(Some(scope_exit))
-        }
-        #[cfg(not(windows))]
-        {
-            Ok(Some(exit))
-        }
+        Ok(Some(exit))
     }
     fn kill(&mut self) -> Result<(), String> {
         #[cfg(windows)]
