@@ -3584,7 +3584,7 @@ fn saved_launch_records_classify_without_proving_no_start() {
                 bind(44),
                 launch("", "Workspace not trusted", Some(serde_json::Value::Null)),
             ],
-            false,
+            true, // A diagnostic classification is not affirmative no-start evidence.
         ),
         (
             "exit 0",
@@ -3629,6 +3629,12 @@ fn saved_launch_records_classify_without_proving_no_start() {
         ("no record", vec![bind(44)], false),
     ] {
         std::fs::write(attempt_log(&root, "worker", 7, 42), lines.join("\n")).unwrap();
+        if let Some(receipt) = recorded_background_launch(&root, 7, &x) {
+            assert!(
+                receipt.unknown.is_some(),
+                "{case}: historical text never proves native rejection"
+            );
+        }
         assert_eq!(
             recorded_background_launch(&root, 7, &x)
                 .and_then(|receipt| receipt.cause)
@@ -6635,9 +6641,8 @@ fn compaction_resends_header_and_index_only_to_claude() {
     );
     // #1531: the per-user Claude daemon spawns from its own env; settings carry this launch's values.
     // Risk: a worker reads another launch's TASKQ_* (install, task, attempt), or an operator session gets an attempt.
-    let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
+    let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"AGENTQ_LAUNCHER":"taskq", "TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
     let mut worker = want("7", "42", "worker");
-    worker["AGENTQ_LAUNCHER"] = "taskq".into();
     if let Some(p) = build_cache_for("claude", &access(&env, "claude").unwrap(), &env) {
         worker["RUSTC_WRAPPER"] = p.to_string_lossy().into();
     }

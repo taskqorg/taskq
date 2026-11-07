@@ -312,13 +312,13 @@ fn ten_mib_claude_transcript_pages_by_cursor() {
         n += 1;
     }
     writeln!(f, "{}", json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo  test\n--locked"}}]}})).unwrap();
-    write!(f, "{{\"type\":\"user\",\"mess").unwrap();
+    write!(f, "{{\"type\":\"user\",\"sessionId\":\"{id}\",\"mess").unwrap();
     drop(f);
     assert_eq!(
         crate::runtime::claude_transcript_in(&dir, id).unwrap(),
         path
     );
-    let open = before("claude-native", "-", &path, None).unwrap();
+    let open = before("claude-native", id, &path, None).unwrap();
     assert!(open.start > 0 && bounded(&open), "one bounded page");
     assert_eq!(
         text(&open.items).last().unwrap(),
@@ -330,7 +330,7 @@ fn ten_mib_claude_transcript_pages_by_cursor() {
     );
     let (mut cursor, mut pages, mut first) = (open.start, 1, None);
     while cursor > 0 {
-        let page = before("claude-native", "-", &path, Some(cursor)).unwrap();
+        let page = before("claude-native", id, &path, Some(cursor)).unwrap();
         assert!(page.end == cursor && page.start < cursor);
         cursor = page.start;
         first = text(&page.items).first().cloned();
@@ -340,11 +340,11 @@ fn ten_mib_claude_transcript_pages_by_cursor() {
     assert!(pages >= 40);
     let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
     write!(f, "age\":{{\"content\":\"next\"}}}}\n").unwrap();
-    let new = after("claude-native", "-", &path, open.end).unwrap();
+    let new = after("claude-native", id, &path, open.end).unwrap();
     assert_eq!(text(&new.items), vec![json!({"role":"user","text":"next"})]);
     assert_eq!(new.end, fs::metadata(&path).unwrap().len());
     assert_eq!(
-        last_line("claude-native", "-", &path).unwrap(),
+        last_line("claude-native", id, &path).unwrap(),
         Some(format!("{} {filler}", n - 1))
     );
     fs::remove_dir_all(dir).unwrap();
@@ -1036,7 +1036,7 @@ fn lifecycle_events_render_as_lines() {
         (
             "agy-stream",
             vec![
-                json!({"event":"init"}),
+                json!({"event":"init","conversation_id":"fixture-session"}),
                 json!({"event":"step_update","step_update":{"step_index":1,"step_type":"checkpoint","state":"DONE"}}),
             ],
             vec!["session started", "checkpoint"],
@@ -1048,7 +1048,12 @@ fn lifecycle_events_render_as_lines() {
             rows.iter().map(|r| format!("{r}\n")).collect::<String>(),
         )
         .unwrap();
-        let page = before(format, "-", &path, None).unwrap();
+        let session = if format == "agy-stream" {
+            "fixture-session"
+        } else {
+            "-"
+        };
+        let page = before(format, session, &path, None).unwrap();
         let got: Vec<_> = page
             .items
             .iter()

@@ -39,6 +39,7 @@ if os.environ.get('TASKQ_FIXTURE_BACKGROUND'):
         os.kill(state['row']['pid'], signal.SIGTERM)
         state['row'].pop('pid')
         state['row']['state'] = 'stopped'
+        state['row']['detail'] = 'invented fixture original process stopped'
         state['row']['status'] = 'idle'
         persist_background()
         print('invented stop acknowledgement', flush=True)

@@ -1050,6 +1050,32 @@ fn historical_unaccepted_exit_reports_blocked_despite_renewed_lease() {
 // R2/R11/R12, #2143: native pre-submit writer refusal must retain input, never replay unknown submission or stop the app.
 #[test]
 fn codex_writer_refusal_keeps_unknown_input_fenced_and_bounds_no_start_retry() {
+    struct NativeRefusal {
+        code: i32,
+        session: Option<String>,
+    }
+    impl Proc for NativeRefusal {
+        fn exited(&mut self) -> Result<Option<i32>, String> {
+            Ok(Some(self.code))
+        }
+        fn kill(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn id(&self) -> u32 {
+            1
+        }
+        fn start_failure(&self) -> Option<agentq_runtime::agent::LaunchError> {
+            self.session
+                .as_ref()
+                .map(|session| agentq_runtime::agent::LaunchError {
+                    stage: agentq_runtime::agent::InputStage::BeforeInput,
+                    cause: Some(agentq_runtime::agent::Cause("session-busy")),
+                    session: Some(session.clone()),
+                    detail: "invented owned native writer refusal".into(),
+                    native: None,
+                })
+        }
+    }
     for case in [
         "refused",
         "reap",
@@ -1123,11 +1149,11 @@ fn codex_writer_refusal_keeps_unknown_input_fenced_and_bounds_no_start_retry() {
                     .write_all(stream.as_bytes())
                     .unwrap();
                 Ok(Box::new(crate::runtime::CliTurn {
-                    proc: Box::new(FakeProc(Rc::new(RefCell::new(Some(if case == "signal" {
-                        -1
-                    } else {
-                        1
-                    }))))),
+                    proc: Box::new(NativeRefusal {
+                        code: if case == "signal" { -1 } else { 1 },
+                        // Only the explicit owned-native fixture supplies pre-input proof; raw logs cannot.
+                        session: matches!(case, "refused" | "reap").then(|| thread.to_owned()),
+                    }),
                     log,
                     pos: start,
                     start,

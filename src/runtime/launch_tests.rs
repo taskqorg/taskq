@@ -11,7 +11,10 @@ fn agentq_delayed_record_excludes_later_turn_bytes() {
     let root = std::env::temp_dir().join(format!("taskq-agentq-freeze-{}", uuid()));
     std::fs::create_dir_all(&root).unwrap();
     let log = root.join("native.log");
+    std::fs::create_dir_all(root.join("home")).unwrap();
     let mut request = Request::new(&root, &log, "invented input", "taskq");
+    request.home = Some(root.join("home"));
+    request.session_store = agentq_runtime::agent::SessionStore::new(root.join("owners"));
     request.command = vec![
         python().into(),
         Path::new(env!("CARGO_MANIFEST_DIR"))
