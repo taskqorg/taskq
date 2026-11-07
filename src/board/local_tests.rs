@@ -680,3 +680,156 @@ fn shared_2431_reopen_survives_an_unchanged_poll() {
         }
     }
 }
+
+// Chain: #2431 A4/R12: historical host evidence never establishes list-owned current presence.
+#[test]
+fn shared_2431_heartbeat_history_preserves_absence() {
+    for initially_present in [false, true] {
+        for confirmed in [false, true] {
+            let base = iso("2026-11-06T00:00:00Z").unwrap();
+            let stage = std::rc::Rc::new(std::cell::Cell::new(0));
+            let current = stage.clone();
+            let row = move |at| json!({"number":7,"title":"taskq host win","body":"beat","state":"open","author_association":"OWNER","created_at":stamp(base),"updated_at":stamp(base+at),"labels":[{"name":"taskq-host"}]});
+            let mut api = Api::new(
+                "https://fixture.invalid".into(),
+                format!("https://fixture.invalid/repos/o/{}", crate::runtime::uuid()),
+                "invented",
+            );
+            api.poll = Some(std::time::Duration::ZERO);
+            api.transport = Some(Box::new(move |_, url, _| {
+                let body = if url.contains("state=open") {
+                    if current.get() >= 2 || current.get() == 0 && initially_present {
+                        json!([row(300)])
+                    } else {
+                        json!([])
+                    }
+                } else if url.contains("labels=taskq") {
+                    json!([])
+                } else {
+                    json!([row(if current.get() == 3 { 450 } else { 100 })])
+                };
+                Ok(Reply {
+                    status: 200,
+                    headers: vec![("Date".into(), "Fri, 06 Nov 2026 00:10:00 GMT".into())],
+                    body: body.to_string(),
+                    operation: "read",
+                })
+            }));
+            let board = github::GitHub::new(api);
+            if confirmed {
+                shared::patch(&board.api, &github::parse_issue(&row(500)));
+            }
+            let initial = board.issues(None).unwrap();
+            assert_eq!(
+                initial.len(),
+                usize::from(initially_present),
+                "bootstrap: historical host is not current presence"
+            );
+            stage.set(1);
+            board.forget();
+            let history = board.issues(Some(base)).unwrap();
+            assert!(
+                history.iter().any(|i| i.number == 7),
+                "host history remains available as evidence"
+            );
+            if confirmed {
+                shared::patch(&board.api, &github::parse_issue(&row(500)));
+                assert!(
+                    shared::snapshot(&board.api, None, false)
+                        .unwrap()
+                        .is_empty(),
+                    "a patch cannot promote historical host presence"
+                );
+            }
+            assert!(
+                board.issues(None).unwrap().is_empty(),
+                "broad history cannot recreate absent host"
+            );
+            assert!(
+                board.issues(None).unwrap().is_empty(),
+                "unchanged poll cannot upgrade a historical ghost"
+            );
+            stage.set(2);
+            board.forget();
+            let present = board.issues(None).unwrap();
+            assert_eq!(
+                present[0].updated,
+                base + if confirmed { 500 } else { 300 },
+                "positive current list retains strict own-confirmation correction"
+            );
+            stage.set(3);
+            board.forget();
+            let history = board.issues(Some(base)).unwrap();
+            assert_eq!(
+                history[0].updated,
+                base + if confirmed { 500 } else { 450 },
+                "newer native host history remains evidence once current presence is listed"
+            );
+        }
+    }
+}
+
+// Chain: #2431 A4/R12: actual credential refresh expires shared confirmation, including a return to its old key.
+#[test]
+fn shared_2431_heartbeat_confirmation_does_not_survive_token_rotation() {
+    let root = std::env::temp_dir().join(format!("taskq-2431-rotate-{}", crate::runtime::uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let token = std::rc::Rc::new(std::cell::RefCell::new("invented-A".to_owned()));
+    let source = token.clone();
+    let transport_token = token.clone();
+    let rotate_during_poll = std::rc::Rc::new(std::cell::Cell::new(false));
+    let rotate = rotate_during_poll.clone();
+    let base = iso("2026-11-06T00:00:00Z").unwrap();
+    let mut api = Api::new(
+        "https://fixture.invalid".into(),
+        format!("https://fixture.invalid/repos/o/{}", crate::runtime::uuid()),
+        "invented-A",
+    );
+    api.poll = Some(std::time::Duration::from_secs(60));
+    api.token_source = Some((root.clone(), Box::new(move || Ok(source.borrow().clone()))));
+    api.transport = Some(Box::new(move |method, url, _| {
+        if url.contains("state=open") && rotate.replace(false) {
+            *transport_token.borrow_mut() = "invented-B".into();
+        }
+        let row = json!({"number":7,"title":"taskq host win","body":"beat","state":"open","author_association":"OWNER","created_at":stamp(base),"updated_at":stamp(base+if method=="PATCH" {500}else{100}),"labels":[{"name":"taskq-host"}]});
+        let body = if method == "PATCH" {
+            row
+        } else if url.contains("labels=taskq") {
+            json!([])
+        } else {
+            json!([row])
+        };
+        Ok(Reply {
+            status: 200,
+            headers: vec![("Date".into(), "Fri, 06 Nov 2026 00:10:00 GMT".into())],
+            body: body.to_string(),
+            operation: operation(method),
+        })
+    }));
+    let board = github::GitHub::new(api);
+    assert_eq!(board.issues(None).unwrap()[0].updated, base + 100);
+    board.edit(7, "beat").unwrap();
+    assert_eq!(board.issues(None).unwrap()[0].updated, base + 500);
+    *token.borrow_mut() = "invented-B".into();
+    assert_eq!(board.issues(None).unwrap()[0].updated, base + 100);
+    assert_eq!(board.api.generation.get(), 1);
+    *token.borrow_mut() = "invented-A".into();
+    assert_eq!(
+        board.issues(None).unwrap()[0].updated,
+        base + 100,
+        "A generation0 confirmation cannot return at generation2 without caller forget"
+    );
+    assert_eq!(board.api.generation.get(), 2);
+    rotate_during_poll.set(true);
+    board.forget();
+    assert!(
+        board
+            .issues(Some(0))
+            .unwrap_err()
+            .text()
+            .contains("credential generation changed during poll")
+    );
+    assert_eq!(board.api.generation.get(), 3);
+    assert_eq!(board.issues(None).unwrap()[0].updated, base + 100);
+    std::fs::remove_dir_all(root).unwrap();
+}

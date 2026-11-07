@@ -1290,6 +1290,7 @@ impl Api {
         let token = source()?;
         let auth = format!("Authorization: Bearer {token}");
         if self.credentials.borrow().auth != auth {
+            shared::credentials_changed(self)?;
             *self.credentials.borrow_mut() = Credentials {
                 auth,
                 budget: crate::requests::Shared::for_api(&self.root, &token),
@@ -1303,6 +1304,7 @@ impl Api {
             self.clock.replace(0);
             self.unchanged.set(false);
             self.generation.set(self.generation.get() + 1);
+            shared::credentials_changed(self)?;
         }
         Ok(())
     }

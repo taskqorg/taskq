@@ -22,18 +22,19 @@ struct Poll {
 #[derive(Clone, PartialEq)]
 enum Row {
     Current(Issue),
+    Historical(Issue),
     NotFound(Issue),
 }
 impl Row {
     fn issue(&self) -> &Issue {
         match self {
-            Self::Current(issue) | Self::NotFound(issue) => issue,
+            Self::Current(issue) | Self::Historical(issue) | Self::NotFound(issue) => issue,
         }
     }
     fn current(&self) -> Option<&Issue> {
         match self {
             Self::Current(issue) => Some(issue),
-            Self::NotFound(_) => None,
+            Self::Historical(_) | Self::NotFound(_) => None,
         }
     }
 }
@@ -53,8 +54,8 @@ struct Shared {
     epoch: AtomicU64,
     full: AtomicU64,
 }
+static BOARDS: OnceLock<Mutex<BTreeMap<String, Arc<Shared>>>> = OnceLock::new();
 fn inventory(api: &Api) -> Result<Arc<Shared>> {
-    static BOARDS: OnceLock<Mutex<BTreeMap<String, Arc<Shared>>>> = OnceLock::new();
     let key = crate::requests::key(&api.base, &api.credentials.borrow().auth);
     Ok(BOARDS
         .get_or_init(Default::default)
@@ -63,6 +64,28 @@ fn inventory(api: &Api) -> Result<Arc<Shared>> {
         .entry(key)
         .or_default()
         .clone())
+}
+/// A credential transition expires authority at both keys, including a previously used key.
+pub(super) fn credentials_changed(api: &Api) -> Result<()> {
+    let Some(boards) = BOARDS.get() else {
+        return Ok(());
+    };
+    let key = crate::requests::key(&api.base, &api.credentials.borrow().auth);
+    let shared = boards
+        .lock()
+        .map_err(|_| "shared board registry poisoned")?
+        .get(&key)
+        .cloned();
+    if let Some(shared) = shared {
+        let mut snapshot = shared
+            .snapshot
+            .lock()
+            .map_err(|_| "shared board snapshot poisoned")?;
+        snapshot.confirmed.clear();
+        shared.epoch.fetch_add(1, Ordering::AcqRel);
+        shared.full.fetch_add(1, Ordering::AcqRel);
+    }
+    Ok(())
 }
 pub(super) fn forget(api: &Api, full: bool) {
     if let Ok(shared) = inventory(api) {
@@ -87,9 +110,14 @@ pub(super) fn patch(api: &Api, issue: &Issue) {
             snapshot.confirmed.insert(issue.number, issue.clone());
         }
         if snapshot.rows.contains_key(&issue.number) {
-            snapshot
-                .rows
-                .insert(issue.number, Row::Current(issue.clone()));
+            let row = if crate::service::is_host(issue)
+                && snapshot.rows[&issue.number].current().is_none()
+            {
+                Row::Historical(issue.clone())
+            } else {
+                Row::Current(issue.clone())
+            };
+            snapshot.rows.insert(issue.number, row);
         }
     }
 }
@@ -112,7 +140,8 @@ fn rows(api: &Api, snapshot: Snapshot, since: Option<i64>, tasks: bool) -> Vec<I
         .into_values()
         .filter_map(|row| match row {
             Row::Current(issue) => Some(issue),
-            Row::NotFound(_) => None,
+            Row::Historical(issue) if since.is_some() => Some(issue),
+            Row::Historical(_) | Row::NotFound(_) => None,
         })
         .filter(|i| since.map_or(i.open, |since| i.updated >= since))
         .filter(|i| !tasks || i.labels.iter().any(|l| l == crate::service::TASK_LABEL))
@@ -177,6 +206,7 @@ pub(super) fn issues(
     {
         let began = Instant::now();
         let initial = poll.read.is_none();
+        let generation = api.generation.get();
         let previous = board.open.replace(poll.open.take());
         let mut changes = vec![];
         let list = board.poll_open(&mut changes, poll.full != full);
@@ -227,6 +257,7 @@ pub(super) fn issues(
                                 .iter()
                                 .any(|i| i.number == prior.number && i.updated >= prior.updated)
                     }
+                    Row::Historical(_) => false,
                     Row::NotFound(_) => list
                         .iter()
                         .chain(&changes)
@@ -255,7 +286,13 @@ pub(super) fn issues(
                         && issue.updated >= prior.updated
                         && issue.updated > 0 =>
                 {
-                    Row::Current(issue)
+                    if crate::service::is_host(&issue)
+                        && !list.iter().any(|listed| listed.number == issue.number)
+                    {
+                        Row::Historical(issue)
+                    } else {
+                        Row::Current(issue)
+                    }
                 }
                 Ok(_) => {
                     poll.open = None;
@@ -274,16 +311,26 @@ pub(super) fn issues(
             };
             direct.push((baseline, observed));
         }
+        if api.generation.get() != generation {
+            poll.open = None;
+            return Err(
+                "shared board credential generation changed during poll; reconciliation unknown"
+                    .into(),
+            );
+        }
         let mut saved = shared
             .snapshot
             .lock()
             .map_err(|_| "shared board snapshot poisoned")?;
         let mut next = saved.clone();
-        // Heartbeat presence is list-owned; only the confirmed older-row correction below may replace it.
-        next.rows.retain(|_, row| {
-            row.current()
-                .is_none_or(|issue| !issue.open || !crate::service::is_host(issue))
-        });
+        // Host history remains evidence; current presence comes only from the open list.
+        for row in next.rows.values_mut() {
+            if let Row::Current(issue) = row
+                && crate::service::is_host(issue)
+            {
+                *row = Row::Historical(issue.clone());
+            }
+        }
         // The confirmed reply can arrive while the poll is in flight; only older list rows are corrected.
         for issue in &mut list {
             if let Some(written) = next.confirmed.get(&issue.number).filter(|written| {
@@ -295,14 +342,35 @@ pub(super) fn issues(
                 *issue = written.clone();
             }
         }
-        for issue in list.into_iter().chain(changes) {
-            if next.rows.get(&issue.number).is_none_or(|prior| {
-                prior
-                    .current()
-                    .is_some_and(|prior| prior.updated <= issue.updated)
-            }) {
-                next.rows.insert(issue.number, Row::Current(issue));
+        for (issue, listed) in list
+            .into_iter()
+            .map(|i| (i, true))
+            .chain(changes.into_iter().map(|i| (i, false)))
+        {
+            let prior = next.rows.get(&issue.number);
+            if matches!(prior, Some(Row::NotFound(_))) {
+                continue;
             }
+            let row = if crate::service::is_host(&issue) {
+                if listed {
+                    Row::Current(issue)
+                } else {
+                    if prior.is_some_and(|row| row.issue().updated > issue.updated) {
+                        continue;
+                    }
+                    if prior.is_some_and(|row| row.current().is_some()) {
+                        Row::Current(issue)
+                    } else {
+                        Row::Historical(issue)
+                    }
+                }
+            } else {
+                if prior.is_some_and(|row| row.issue().updated > issue.updated) {
+                    continue;
+                }
+                Row::Current(issue)
+            };
+            next.rows.insert(row.issue().number, row);
         }
         // Current direct authority follows broad observations; a concurrent accepted row retains precedence.
         for (baseline, observed) in direct {
