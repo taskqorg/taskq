@@ -455,7 +455,8 @@ const tail = process.argv[2] === "--tail";
       await reason.fill("word\n".repeat(400).trim());
       await page.getByRole("button", { name: "Requeue", exact: true }).click();
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === tailStart + 1,
+        (count) => messages.filter((m) => m.a === "answer").length === count,
+        tailStart + 1,
       );
       const fallback = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
@@ -477,7 +478,8 @@ const tail = process.argv[2] === "--tail";
         .focus();
       await page.keyboard.press("Enter");
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === tailStart + 2,
+        (count) => messages.filter((m) => m.a === "answer").length === count,
+        tailStart + 2,
       );
       const cancel = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
@@ -513,7 +515,8 @@ const tail = process.argv[2] === "--tail";
       });
       await page.locator('.qac [data-qac="choose"]').first().click();
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === tailStart + 3,
+        (count) => messages.filter((m) => m.a === "answer").length === count,
+        tailStart + 3,
       );
       const late = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
@@ -588,7 +591,8 @@ const tail = process.argv[2] === "--tail";
       await page.evaluate((s) => taskq.receive(s), state);
       await page.getByRole("textbox", { name: "Your answer" }).press("Enter");
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === tailStart + 4,
+        (count) => messages.filter((m) => m.a === "answer").length === count,
+        tailStart + 4,
       );
       const action = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
@@ -628,7 +632,8 @@ const tail = process.argv[2] === "--tail";
       );
       await page.locator(".qac [data-qac=retry]").click();
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === tailStart + 5,
+        (count) => messages.filter((m) => m.a === "answer").length === count,
+        tailStart + 5,
       );
       assert.deepEqual(
         await page.evaluate(
@@ -674,7 +679,8 @@ const tail = process.argv[2] === "--tail";
       await steer.fill(long);
       await page.locator("[data-a=answer-steer]").click();
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === tailStart + 6,
+        (count) => messages.filter((m) => m.a === "answer").length === count,
+        tailStart + 6,
       );
       const steering = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
