@@ -6,6 +6,12 @@ const html = fs.readFileSync("build/web/workspace.html", "utf8");
 const fx = JSON.parse(
   fs.readFileSync("tests/fixtures/answer-card.json", "utf8"),
 );
+assert(
+  process.argv.length === 2 ||
+    (process.argv.length === 3 && process.argv[2] === "--tail"),
+  "usage: tray-answer.browser.cjs [--tail]",
+);
+const tail = process.argv[2] === "--tail";
 (async () => {
   const browser = await chromium.launch(require("./browser.cjs")());
   try {
@@ -58,231 +64,282 @@ const fx = JSON.parse(
         ai: { draft: "" },
         notify: { projects: {} },
       };
-      await page.evaluate((s) => taskq.receive(s), state);
-      await page.evaluate((c) => taskq.receive({ open: c }), {
-        page: "answer",
-        board,
-        task: rows[0].n,
-        revision: rows[0].revision,
-      });
-      // #1430: every poll rebuilt the menu and the card, so the textarea being typed in was replaced and native edits
-      // landed on the detached node; Send stayed disabled. Risk kept: a refresh that touches DOM it did not change.
-      await page.evaluate(() => {
-        window.mutations = 0;
-        new MutationObserver((l) => (mutations += l.length)).observe(
-          document.body,
-          {
-            subtree: true,
-            childList: true,
-            attributes: true,
-            characterData: true,
-          },
-        );
-      });
-      await page.evaluate((s) => taskq.receive(s), state);
-      assert.equal(
-        await page.evaluate(() => mutations),
-        0,
-        "an unchanged refresh changes no DOM",
-      );
-      // #1662 A3: the answer is typed in the shared composer below the card
       const text = page.locator("[data-c-field=answer]"),
-        typed = await text.elementHandle();
-      await typed.focus();
-      for (const ch of "yes") {
-        await page.keyboard.type(ch);
+        why = () => page.locator("#answer-draft-reason").textContent(),
+        send = page.locator("[data-a=answer-send]"),
+        long = "word ".repeat(53) + "ok";
+      if (!tail) {
         await page.evaluate((s) => taskq.receive(s), state);
-      }
-      assert(
-        await typed.evaluate(
-          (t) =>
-            t.isConnected && document.activeElement === t && t.value === "yes",
-        ),
-        "refreshes keep the node being typed in",
-      );
-      assert.equal(
-        await page.locator("[data-a=answer-send]").isDisabled(),
-        false,
-        "Send enables for a valid answer",
-      );
-      // #1816 / § 5: long replies send; an empty reply still explains how to enable Send.
-      const why = () => page.locator("#answer-draft-reason").textContent(),
-        send = page.locator("[data-a=answer-send]");
-      await text.fill("");
-      await typed.focus();
-      for (const line of [
-        "1. one",
-        "2. two",
-        "3. three",
-        "4. four",
-        "5. five",
-      ]) {
-        await page.keyboard.type(line);
-        await page.keyboard.press("Shift+Enter");
+        await page.evaluate((c) => taskq.receive({ open: c }), {
+          page: "answer",
+          board,
+          task: rows[0].n,
+          revision: rows[0].revision,
+        });
+        // #1430: every poll rebuilt the menu and the card, so the textarea being typed in was replaced and native edits
+        // landed on the detached node; Send stayed disabled. Risk kept: a refresh that touches DOM it did not change.
+        await page.evaluate(() => {
+          window.mutations = 0;
+          new MutationObserver((l) => (mutations += l.length)).observe(
+            document.body,
+            {
+              subtree: true,
+              childList: true,
+              attributes: true,
+              characterData: true,
+            },
+          );
+        });
         await page.evaluate((s) => taskq.receive(s), state);
+        assert.equal(
+          await page.evaluate(() => mutations),
+          0,
+          "an unchanged refresh changes no DOM",
+        );
+        // #1662 A3: the answer is typed in the shared composer below the card
+        const typed = await text.elementHandle();
+        await typed.focus();
+        for (const ch of "yes") {
+          await page.keyboard.type(ch);
+          await page.evaluate((s) => taskq.receive(s), state);
+        }
+        assert(
+          await typed.evaluate(
+            (t) =>
+              t.isConnected &&
+              document.activeElement === t &&
+              t.value === "yes",
+          ),
+          "refreshes keep the node being typed in",
+        );
+        assert.equal(
+          await page.locator("[data-a=answer-send]").isDisabled(),
+          false,
+          "Send enables for a valid answer",
+        );
+        // #1816 / § 5: long replies send; an empty reply still explains how to enable Send.
+        await text.fill("");
+        await typed.focus();
+        for (const line of [
+          "1. one",
+          "2. two",
+          "3. three",
+          "4. four",
+          "5. five",
+        ]) {
+          await page.keyboard.type(line);
+          await page.keyboard.press("Shift+Enter");
+          await page.evaluate((s) => taskq.receive(s), state);
+        }
+        assert.equal(await send.isDisabled(), false);
+        assert.equal(await why(), "");
+        await text.fill("word\n".repeat(400));
+        await page.evaluate((s) => taskq.receive(s), state);
+        assert.equal(await send.isDisabled(), false);
+        assert.equal(await why(), "");
+        assert.equal(long.length, 267);
+        await text.fill(long);
+        await page.evaluate((s) => taskq.receive(s), state);
+        assert.equal(await send.isDisabled(), false);
+        assert.equal(await why(), "");
+        if (process.env.TASKQ_EVIDENCE_1816 && theme === "dark" && font === 20)
+          await page.screenshot({
+            path: process.env.TASKQ_EVIDENCE_1816 + "/01-before-send.png",
+          });
+        await text.fill("");
+        assert(await send.isDisabled());
+        assert.match(await why(), /Type an answer/);
+        await text.fill("a valid answer");
+        await page.evaluate((s) => taskq.receive(s), state);
+        assert.equal(await send.isDisabled(), false);
+        assert.equal(await why(), "");
+        await text.fill("keep draft");
+        await text.focus();
+        await text.evaluate((t) => t.setSelectionRange(2, 4));
+        const scroll = () =>
+            page.locator(".content").evaluate((c) => c.scrollTop),
+          top = await scroll();
+        await page.evaluate((s) => taskq.receive(s), state);
+        assert.deepEqual(
+          await text.evaluate((t) => ({
+            draft: t.value,
+            focused: document.activeElement === t,
+            caret: [t.selectionStart, t.selectionEnd],
+          })),
+          { draft: "keep draft", focused: true, caret: [2, 4] },
+        );
+        // a changed refresh repaints and keeps draft, caret, focus and scroll
+        state.projects[0].tasks = [
+          { ...rows[0], title: rows[0].title + " (edited)" },
+        ];
+        await page.evaluate((s) => taskq.receive(s), state);
+        assert(
+          (await page.locator(".qac-head").textContent()).includes("(edited)"),
+        );
+        assert.deepEqual(
+          await text.evaluate((t) => ({
+            draft: t.value,
+            focused: document.activeElement === t,
+            caret: [t.selectionStart, t.selectionEnd],
+          })),
+          { draft: "keep draft", focused: true, caret: [2, 4] },
+        );
+        assert.equal(await scroll(), top);
+        state.projects[0].tasks = [rows[1]];
+        await page.evaluate((s) => taskq.receive(s), state);
+        assert.equal(
+          await page.locator(".qac").getAttribute("data-qac-state"),
+          "changed",
+        );
+        assert.equal(await text.inputValue(), "keep draft");
+        assert.equal(await send.isDisabled(), false);
+        assert.match(
+          await page.locator(".qac-receipt").textContent(),
+          /task note/,
+          "changed question keeps Send live and explains its destination",
+        );
+        await shot("01-changed-question-keeps-send");
+        await text.fill(long);
+        await send.click();
+        await page.waitForFunction(() =>
+          messages.some((m) => m.a === "answer"),
+        );
+        const op = await page.evaluate(
+          () => messages.find((m) => m.a === "answer").op,
+        );
+        assert.equal(op.text, long);
+        assert.equal(op.choice, undefined);
+        assert.equal(op.revision, rows[0].revision);
+        assert.equal(
+          await page.locator(".qac").getAttribute("data-qac-state"),
+          "sending",
+        );
+        await page.evaluate((s) => taskq.receive(s), state);
+        assert.equal(await text.inputValue(), long);
+        // A1: no question card remains outside ask, even while its receipt is pending.
+        state.projects[0].tasks = [
+          { ...rows[1], state: "doing", revision: rows[1].revision + 1 },
+        ];
+        await page.evaluate((s) => taskq.receive(s), state);
+        assert.equal(await page.locator(".qac").count(), 0);
+        assert(
+          (await page.locator("[role=status]").allTextContents()).some((t) =>
+            t.includes("sending"),
+          ),
+        );
+        // The refresh past the op's revision reconciles once with the same op.
+        assert.deepEqual(
+          await page.evaluate(() =>
+            messages.filter((m) => m.a === "answer").map((m) => m.op),
+          ),
+          [op, op],
+        );
+        await page.evaluate((r) => taskq.receive({ answerReceipt: r }), {
+          root,
+          id: op.id,
+          state: "unknown",
+          reason: "response lost",
+        });
+        await page.locator("[data-a=answer-retry]").click();
+        await page.waitForFunction(
+          () => messages.filter((m) => m.a === "answer").length === 3,
+        );
+        assert.deepEqual(
+          await page.evaluate(() =>
+            messages.filter((m) => m.a === "answer").map((m) => m.op),
+          ),
+          [op, op, op],
+        );
+        const rowTop = () =>
+          page
+            .locator(".content")
+            .evaluate((e) => e.getBoundingClientRect().top);
+        const before = await rowTop();
+        await page.evaluate((r) => taskq.receive({ answerReceipt: r }), {
+          root,
+          id: op.id,
+          state: "accepted",
+          reason: "Saved as a task note; queued to steer the worker",
+        });
+        await page.waitForFunction(() =>
+          [...document.querySelectorAll("[role=status]")].some((e) =>
+            e.textContent.includes("accepted"),
+          ),
+        );
+        // #1741 Q-A7: selected-thread receipts are inline once; global Answered/toast stays covered by tray-answer.test.cjs.
+        assert.equal(
+          await page.locator(".toast").count(),
+          0,
+          "no duplicate workspace toast",
+        );
+        assert.equal(
+          await rowTop(),
+          before,
+          "a receipt must not move task rows",
+        );
+        assert.equal(await page.locator(".qac").count(), 0);
+        assert.equal(
+          await page.locator(".qac textarea, [data-c-field=answer]").count(),
+          0,
+        );
+        if (process.env.TASKQ_EVIDENCE_1816 && theme === "dark" && font === 20)
+          await page.screenshot({
+            path: process.env.TASKQ_EVIDENCE_1816 + "/02-after-success.png",
+          });
+        assert.equal(
+          await page
+            .locator(".conversation-detail .body a[data-url]")
+            .first()
+            .getAttribute("href"),
+          board + "/" + rows[1].n,
+        );
+        assert.equal(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth > innerWidth,
+          ),
+          false,
+        );
+        await shot("02-note-receipt");
+      } else {
+        // An explicit synthetic accepted local receipt is setup, never a replay or authority about a board.
+        state.projects[0].tasks = [
+          { ...rows[1], state: "doing", revision: rows[1].revision + 1 },
+        ];
+        await page.evaluate((s) => taskq.receive(s), {
+          ...state,
+          workspace_local: {
+            [board + "#" + rows[0].n]: {
+              draft: "",
+              bound: rows[0].revision,
+              projectRoot: root,
+              op: {
+                id: "invented-tail-accepted",
+                task: rows[0].n,
+                revision: rows[0].revision,
+                text: long,
+              },
+              receipt: {
+                state: "accepted",
+                reason: "Synthetic accepted task note",
+                note: true,
+              },
+            },
+          },
+        });
+        await page.evaluate((open) => taskq.receive({ open }), {
+          page: "conversations",
+          board,
+          task: rows[0].n,
+        });
       }
-      assert.equal(await send.isDisabled(), false);
-      assert.equal(await why(), "");
-      await text.fill("word\n".repeat(400));
-      await page.evaluate((s) => taskq.receive(s), state);
-      assert.equal(await send.isDisabled(), false);
-      assert.equal(await why(), "");
-      const long = "word ".repeat(53) + "ok";
-      assert.equal(long.length, 267);
-      await text.fill(long);
-      await page.evaluate((s) => taskq.receive(s), state);
-      assert.equal(await send.isDisabled(), false);
-      assert.equal(await why(), "");
-      if (process.env.TASKQ_EVIDENCE_1816 && theme === "dark" && font === 20)
-        await page.screenshot({
-          path: process.env.TASKQ_EVIDENCE_1816 + "/01-before-send.png",
-        });
-      await text.fill("");
-      assert(await send.isDisabled());
-      assert.match(await why(), /Type an answer/);
-      await text.fill("a valid answer");
-      await page.evaluate((s) => taskq.receive(s), state);
-      assert.equal(await send.isDisabled(), false);
-      assert.equal(await why(), "");
-      await text.fill("keep draft");
-      await text.focus();
-      await text.evaluate((t) => t.setSelectionRange(2, 4));
-      const scroll = () =>
-          page.locator(".content").evaluate((c) => c.scrollTop),
-        top = await scroll();
-      await page.evaluate((s) => taskq.receive(s), state);
-      assert.deepEqual(
-        await text.evaluate((t) => ({
-          draft: t.value,
-          focused: document.activeElement === t,
-          caret: [t.selectionStart, t.selectionEnd],
-        })),
-        { draft: "keep draft", focused: true, caret: [2, 4] },
-      );
-      // a changed refresh repaints and keeps draft, caret, focus and scroll
-      state.projects[0].tasks = [
-        { ...rows[0], title: rows[0].title + " (edited)" },
-      ];
-      await page.evaluate((s) => taskq.receive(s), state);
-      assert(
-        (await page.locator(".qac-head").textContent()).includes("(edited)"),
-      );
-      assert.deepEqual(
-        await text.evaluate((t) => ({
-          draft: t.value,
-          focused: document.activeElement === t,
-          caret: [t.selectionStart, t.selectionEnd],
-        })),
-        { draft: "keep draft", focused: true, caret: [2, 4] },
-      );
-      assert.equal(await scroll(), top);
-      state.projects[0].tasks = [rows[1]];
-      await page.evaluate((s) => taskq.receive(s), state);
-      assert.equal(
-        await page.locator(".qac").getAttribute("data-qac-state"),
-        "changed",
-      );
-      assert.equal(await text.inputValue(), "keep draft");
-      assert.equal(await send.isDisabled(), false);
-      assert.match(
-        await page.locator(".qac-receipt").textContent(),
-        /task note/,
-        "changed question keeps Send live and explains its destination",
-      );
-      await shot("01-changed-question-keeps-send");
-      await text.fill(long);
-      await send.click();
-      await page.waitForFunction(() => messages.some((m) => m.a === "answer"));
-      const op = await page.evaluate(
-        () => messages.find((m) => m.a === "answer").op,
-      );
-      assert.equal(op.text, long);
-      assert.equal(op.choice, undefined);
-      assert.equal(op.revision, rows[0].revision);
-      assert.equal(
-        await page.locator(".qac").getAttribute("data-qac-state"),
-        "sending",
-      );
-      await page.evaluate((s) => taskq.receive(s), state);
-      assert.equal(await text.inputValue(), long);
-      // A1: no question card remains outside ask, even while its receipt is pending.
-      state.projects[0].tasks = [
-        { ...rows[1], state: "doing", revision: rows[1].revision + 1 },
-      ];
-      await page.evaluate((s) => taskq.receive(s), state);
-      assert.equal(await page.locator(".qac").count(), 0);
-      assert(
-        (await page.locator("[role=status]").allTextContents()).some((t) =>
-          t.includes("sending"),
-        ),
-      );
-      // The refresh past the op's revision reconciles once with the same op.
-      assert.deepEqual(
-        await page.evaluate(() =>
-          messages.filter((m) => m.a === "answer").map((m) => m.op),
-        ),
-        [op, op],
-      );
-      await page.evaluate((r) => taskq.receive({ answerReceipt: r }), {
-        root,
-        id: op.id,
-        state: "unknown",
-        reason: "response lost",
-      });
-      await page.locator("[data-a=answer-retry]").click();
-      await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === 3,
-      );
-      assert.deepEqual(
-        await page.evaluate(() =>
-          messages.filter((m) => m.a === "answer").map((m) => m.op),
-        ),
-        [op, op, op],
-      );
-      const rowTop = () =>
-        page.locator(".content").evaluate((e) => e.getBoundingClientRect().top);
-      const before = await rowTop();
-      await page.evaluate((r) => taskq.receive({ answerReceipt: r }), {
-        root,
-        id: op.id,
-        state: "accepted",
-        reason: "Saved as a task note; queued to steer the worker",
-      });
-      await page.waitForFunction(() =>
-        [...document.querySelectorAll("[role=status]")].some((e) =>
-          e.textContent.includes("accepted"),
-        ),
-      );
-      // #1741 Q-A7: selected-thread receipts are inline once; global Answered/toast stays covered by tray-answer.test.cjs.
-      assert.equal(
-        await page.locator(".toast").count(),
-        0,
-        "no duplicate workspace toast",
-      );
-      assert.equal(await rowTop(), before, "a receipt must not move task rows");
-      assert.equal(await page.locator(".qac").count(), 0);
-      assert.equal(
-        await page.locator(".qac textarea, [data-c-field=answer]").count(),
-        0,
-      );
-      if (process.env.TASKQ_EVIDENCE_1816 && theme === "dark" && font === 20)
-        await page.screenshot({
-          path: process.env.TASKQ_EVIDENCE_1816 + "/02-after-success.png",
-        });
-      assert.equal(
-        await page
-          .locator(".conversation-detail .body a[data-url]")
-          .first()
-          .getAttribute("href"),
-        board + "/" + rows[1].n,
+      const tailStart = await page.evaluate(
+        () => messages.filter((m) => m.a === "answer").length,
       );
       assert.equal(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth > innerWidth,
-        ),
-        false,
+        tailStart,
+        tail ? 0 : 3,
+        "tail hydration never replays input; full journey retains three same-op sends",
       );
-      await shot("02-note-receipt");
       // Receipt technical details retain their explicit toggle through refresh and Back.
       const answeredOpen = () =>
         page
@@ -306,9 +363,58 @@ const fx = JSON.parse(
         true,
         "refresh keeps an explicit toggle",
       );
-      await page.locator(".shell-overflow > summary").click();
-      await page.locator(".overflow-actions [data-route=sessions]").click();
+      const receiptSummary = page.locator(
+        'details.ids[data-view-key^="receipt:"] > summary',
+      );
+      const thread = await page
+        .locator(".conversation-detail")
+        .getAttribute("data-thread-id");
+      await receiptSummary.focus();
+      assert.equal(
+        await page.locator(".overflow-actions [data-route=sessions]").count(),
+        0,
+        "work sessions has no separate navigation mode",
+      );
+      // Legacy native deep links migrate to the common In progress view (TW1/unified reader).
+      await page.evaluate(() => taskq.receive({ open: { page: "sessions" } }));
+      assert.equal(
+        await page
+          .locator("[data-c=result-filter][data-filter=activity]")
+          .getAttribute("aria-pressed"),
+        "true",
+      );
+      assert.equal(
+        await page
+          .locator(".conversation-detail")
+          .getAttribute("data-thread-id"),
+        thread,
+        "sessions alias retains exact current thread",
+      );
+      assert.match(
+        await page.locator(".nav-title").innerText(),
+        /Conversations/,
+      );
       await page.locator("[data-a=back]").click();
+      assert.equal(
+        await page
+          .locator(".conversation-detail")
+          .getAttribute("data-thread-id"),
+        thread,
+        "Back restores the same thread",
+      );
+      assert(
+        await receiptSummary.evaluate(
+          (node) => document.activeElement === node,
+        ),
+        "Back restores receipt disclosure focus",
+      );
+      assert.equal(
+        await page.evaluate(
+          () => messages.filter((m) => m.a === "answer").length,
+        ),
+        tailStart,
+        "navigation never sends an answer",
+      );
       assert.equal(await answeredOpen(), true, "Back keeps an explicit toggle");
       await page
         .locator('details.ids[data-view-key^="receipt:"] > summary')
@@ -349,7 +455,7 @@ const fx = JSON.parse(
       await reason.fill("word\n".repeat(400).trim());
       await page.getByRole("button", { name: "Requeue", exact: true }).click();
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === 4,
+        () => messages.filter((m) => m.a === "answer").length === tailStart + 1,
       );
       const fallback = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
@@ -371,7 +477,7 @@ const fx = JSON.parse(
         .focus();
       await page.keyboard.press("Enter");
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === 5,
+        () => messages.filter((m) => m.a === "answer").length === tailStart + 2,
       );
       const cancel = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
@@ -407,7 +513,7 @@ const fx = JSON.parse(
       });
       await page.locator('.qac [data-qac="choose"]').first().click();
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === 6,
+        () => messages.filter((m) => m.a === "answer").length === tailStart + 3,
       );
       const late = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
@@ -447,7 +553,7 @@ const fx = JSON.parse(
         await page.evaluate(
           () => messages.filter((m) => m.a === "answer").length,
         ),
-        6,
+        tailStart + 3,
         "late receipt writes nothing",
       );
       // #1662 A4: a receipt named only its state, so two answers in flight read alike. Risk kept: a receipt without its choice.
@@ -482,7 +588,7 @@ const fx = JSON.parse(
       await page.evaluate((s) => taskq.receive(s), state);
       await page.getByRole("textbox", { name: "Your answer" }).press("Enter");
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === 7,
+        () => messages.filter((m) => m.a === "answer").length === tailStart + 4,
       );
       const action = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
@@ -522,7 +628,7 @@ const fx = JSON.parse(
       );
       await page.locator(".qac [data-qac=retry]").click();
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === 8,
+        () => messages.filter((m) => m.a === "answer").length === tailStart + 5,
       );
       assert.deepEqual(
         await page.evaluate(
@@ -568,7 +674,7 @@ const fx = JSON.parse(
       await steer.fill(long);
       await page.locator("[data-a=answer-steer]").click();
       await page.waitForFunction(
-        () => messages.filter((m) => m.a === "answer").length === 9,
+        () => messages.filter((m) => m.a === "answer").length === tailStart + 6,
       );
       const steering = await page.evaluate(
         () => messages.filter((m) => m.a === "answer").at(-1).op,
@@ -588,7 +694,9 @@ const fx = JSON.parse(
       );
       assert.deepEqual(errors, []);
       console.log(
-        "PASS tray HTML draft/focus, changed-question note, literal text, sending refresh, same-ID retry, accepted readback, board link;",
+        tail
+          ? "PASS answer tail: sessions migration/Back focus, fallback/close, late receipt, owner action/refusal/retry/steer;"
+          : "PASS tray HTML draft/focus, changed-question note, literal text, sending refresh, same-ID retry, accepted readback, board link;",
         theme,
         font + "px",
       );
