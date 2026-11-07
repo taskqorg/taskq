@@ -608,3 +608,6 @@ assert check['unnamed'](dict(changed=['R12'], removed=[], tests=[]), claim), 're
 
 assert check['unnamed'](dict(changed=[], removed=['R12'], tests=[]), claim), 'retention cannot authorize rule removal'
 assert 'tests/task-workspace.test.cjs' in web(['src/answer-card.css']), 'published adapter source binding retained'
+
+# CI consumes plan stdout directly as GITHUB_OUTPUT; retain the focused subprocess protocol regression.
+runpy.run_path(str(Path(__file__).with_name('check-plan.test.py')))

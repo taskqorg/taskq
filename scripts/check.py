@@ -780,7 +780,7 @@ def main():
     selected_web = focused_web if args.web else (web_checks(paths) if scope == 'web' else None)
     if args.plan:
         if selected_web is not None:
-            print('web checks:', ', '.join(selected_web))
+            print('web checks:', ', '.join(selected_web), file=sys.stderr)
         print('scope='+scope)
         print('Rust selection:', RUST_SELECTION, describe_pick(blast_radius(paths)), file=sys.stderr)
         return
