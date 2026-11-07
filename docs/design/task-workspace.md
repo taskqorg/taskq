@@ -28,3 +28,5 @@ Each release ships, under `SHA256SUMS`: `taskq-<v>-task-workspace.js`, `-task-wo
 These are distinct layout/filter-focus, detail/control adapter and keyboard-navigation risks, not a Cartesian size/theme matrix. The narrow journey retains its seven-row and filtered single-row counts; Escape still returns view-editor focus. Native cross-window focus behavior remains a separate host qualification.
 
 Each step names a selector, key or explicit host-reader handoff and an expectation (`count`, `open`, `focus`, `text`, `fits`, `sent`, exact `destination`/`navigationCount`, or revision-fenced `operation`), so a consumer replays them on its pinned version.
+
+The browser instrument accepts optional exact journey names, for example `node tests/task-workspace.browser.cjs large-text keyboard`; unknown names refuse before browser setup. A focused continuation retains independent passing journey evidence; no argument still replays the three distinct boundaries.

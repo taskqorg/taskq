@@ -772,6 +772,18 @@ const { create } = execution.module("workspace", {
               { class: "object-status" },
               t?.state_name || t?.state || "Status unavailable",
             ),
+            t &&
+              p &&
+              !row.archived &&
+              h("div", {
+                class: "row-actions",
+                dangerouslySetInnerHTML: {
+                  __html: require("./task-controls.js").render(t, {
+                    key: p.issues + "/" + t.n,
+                    project: p.name,
+                  }),
+                },
+              }),
             h(
               "a",
               {
@@ -853,18 +865,6 @@ const { create } = execution.module("workspace", {
               },
               h("summary", null, "Task info"),
               h("p", null, row.title),
-              t &&
-                p &&
-                !row.archived &&
-                h("div", {
-                  class: "row-actions",
-                  dangerouslySetInnerHTML: {
-                    __html: require("./task-controls.js").render(t, {
-                      key: p.issues + "/" + t.n,
-                      project: p.name,
-                    }),
-                  },
-                }),
               t &&
                 h(
                   "dl",

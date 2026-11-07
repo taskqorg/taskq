@@ -5,10 +5,19 @@ const fs = require("node:fs"),
   { chromium } = require("playwright");
 const fx = require("./fixtures/task-workspace.json"),
   css = fs.readFileSync("build/web/task-workspace.css", "utf8");
+// Optional exact journey names retain independent prior evidence without repeating it.
+const selected = process.argv.slice(2);
+assert(
+  selected.every((name) => fx.journeys.some((j) => j.id === name)),
+  "unknown journey",
+);
+const journeys = selected.length
+  ? fx.journeys.filter((j) => selected.includes(j.id))
+  : fx.journeys;
 (async () => {
   const browser = await chromium.launch(require("./browser.cjs")());
   try {
-    for (const j of fx.journeys) {
+    for (const j of journeys) {
       const p = await browser.newPage({
         viewport: { width: j.viewport[0], height: j.viewport[1] },
       });
@@ -53,6 +62,19 @@ const fx = require("./fixtures/task-workspace.json"),
               taskq.receive({ open });
             },
             { state: { ...fx.state, font: j.font }, open: destination },
+          );
+          const stop = p.locator(".sticky-object-head [data-control=stop]");
+          assert.equal(
+            await stop.count(),
+            1,
+            "one visible current-task header Stop",
+          );
+          assert.equal(await stop.getAttribute("aria-label"), "Stop a#7");
+          assert(await stop.isVisible(), "Stop is not hidden in metadata");
+          assert.equal(
+            await p.locator(".object-metadata [data-a=control]").count(),
+            0,
+            "no duplicate metadata controls",
           );
         }
         if (s.click) await p.locator(s.click).first().click();
@@ -164,7 +186,7 @@ const fx = require("./fixtures/task-workspace.json"),
                 document.scrollingElement.scrollWidth <= innerWidth &&
                 [
                   ...document.querySelectorAll(
-                    "#taskq-popover:popover-open,.task-inline-details",
+                    "#taskq-popover:popover-open,.task-inline-details,.sticky-object-head",
                   ),
                 ].every((x) => x.getBoundingClientRect().right <= innerWidth),
             ),
@@ -181,7 +203,7 @@ const fx = require("./fixtures/task-workspace.json"),
     }
     console.log(
       "PASS task workspace journeys on the published bundle: " +
-        fx.journeys.map((j) => j.id).join(", "),
+        journeys.map((j) => j.id).join(", "),
     );
   } finally {
     await browser.close();
