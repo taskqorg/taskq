@@ -4,6 +4,11 @@ use super::*;
 // Keep periodic renewal and fresh newer board edits; this fixture substitutes HTTP, not native traffic.
 #[test]
 fn lagging_lists_do_not_repeat_confirmed_heartbeats() {
+    lagging_lists(false);
+    lagging_lists(true);
+}
+
+fn lagging_lists(shared: bool) {
     use crate::board::{Reply, operation};
     use std::{cell::Cell, rc::Rc};
     let start = iso("2026-11-04T12:00:00Z").unwrap();
@@ -11,7 +16,12 @@ fn lagging_lists_do_not_repeat_confirmed_heartbeats() {
     let written = Rc::new(Cell::new(start - 30));
     let listing = Rc::new(Cell::new(0));
     let (now, beat, mode) = (clock.clone(), written.clone(), listing.clone());
-    let mut api = api("github.com", "o/r", "invented-token");
+    let mut api = api(
+        "github.com",
+        &format!("owner/lagging-{}", crate::runtime::uuid()),
+        "invented-token",
+    );
+    api.poll = shared.then_some(std::time::Duration::ZERO);
     api.transport = Some(Box::new(move |method, url, _| {
         let updated = if method == "PATCH" {
             beat.set(now.get());
@@ -33,6 +43,12 @@ fn lagging_lists_do_not_repeat_confirmed_heartbeats() {
                 "labels":[{"name":"taskq-host"}]});
         let body = if method == "PATCH" {
             row
+        } else if method == "GET" && url.contains("/issues?") {
+            if url.contains("labels=taskq") {
+                json!([])
+            } else {
+                json!([row])
+            }
         } else if mode.get() == 3 {
             json!({"data":{"repository":{"issues":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}})
         } else {
@@ -48,14 +64,7 @@ fn lagging_lists_do_not_repeat_confirmed_heartbeats() {
             operation: operation(method),
         })
     }));
-    let h = GitHub {
-        api,
-        rules: Default::default(),
-        open: Default::default(),
-        heartbeat: Default::default(),
-        evidence: Default::default(),
-        ci: Default::default(),
-    };
+    let h = GitHub::new(api);
     let mut writes = 0;
     for pass in 0..60 {
         clock.set(start + pass * 60);
@@ -127,14 +136,7 @@ fn repository_access_failure_is_plain() {
                 body: json!({"errors":[{"type":kind,"message":"invented refusal"}]}).to_string(),
             })
         }));
-        let board = GitHub {
-            api,
-            rules: Default::default(),
-            open: Default::default(),
-            heartbeat: Default::default(),
-            evidence: Default::default(),
-            ci: Default::default(),
-        };
+        let board = GitHub::new(api);
         assert!(
             board
                 .open_issues()

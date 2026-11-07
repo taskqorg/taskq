@@ -679,3 +679,132 @@ pub(crate) fn sources_samples(samples: &[crate::telemetry::Sample], now_ms: u64)
 #[cfg(test)]
 #[path = "requests_tests.rs"]
 pub(crate) mod tests;
+
+/// Completed HTTP attempts, distinct from the legacy process tally (a late 304 cannot be billed here).
+pub(crate) fn http_observation(
+    op: &str,
+    board: Option<&str>,
+    api: &str,
+    status: Option<u16>,
+    started: Option<u64>,
+    elapsed: Duration,
+    error: Option<&str>,
+) -> Value {
+    let mut counts = json!({"requests":1,"not_modified":u64::from(status == Some(304)),"unconfirmed":u64::from(status.is_none())});
+    if status.is_some() || op == FREE {
+        counts["billed"] = json!(u64::from(status != Some(304) && op != FREE));
+    }
+    let mut value = json!({"product":"taskq","version":crate::platform::VERSION,"kind":"board.request",
+        "operation":op.replace(' ', ":").replace('/', ".").replace('*', "other"),"project":board,"route":api_host(api),
+        "host":crate::profile::observation_host().filter(|host| !host.is_empty()),"started_ms":started,
+        "duration_us":elapsed.as_micros().min(u64::MAX as u128) as u64,"counts":counts,
+        "trace":null,"span":null,"outcome":if error.is_some(){"failed"}else{"ok"},"error":error.unwrap_or("none"),
+        "unknown":{"trace":"no-action","span":"no-action"}});
+    if value["route"] == "*" {
+        value["route"] = Value::Null;
+        value["unknown"]["route"] = json!("api-host-unavailable");
+    }
+    for (key, why) in [
+        ("host", "host-unavailable"),
+        ("project", "board-unavailable"),
+        ("started_ms", "clock-unavailable"),
+    ] {
+        if value[key].is_null() {
+            value["unknown"][key] = json!(why);
+        }
+    }
+    value
+}
+
+pub(crate) fn observations(
+    install: &std::path::Path,
+    since: Option<u64>,
+) -> Result<String, String> {
+    tracing::dispatcher::get_default(|d| {
+        d.downcast_ref::<coreq::telemetry::capture::Capture>()
+            .cloned()
+    })
+    .map(|capture| capture.flush())
+    .transpose()?;
+    let path = install.join("telemetry.log/universal.sqlite3");
+    if !path.try_exists().map_err(|e| e.to_string())? {
+        return Ok(render_observations(&[]));
+    }
+    let reader = coreq::telemetry::Reader::open(&path)?;
+    let mut assembler = coreq::telemetry::Assembler::default();
+    let mut cursor = 0;
+    let mut rows = vec![];
+    loop {
+        let page = reader.export_kinds(
+            &["board.request"],
+            since.unwrap_or(0).min(i64::MAX as u64) as i64,
+            cursor,
+            1024,
+        )?;
+        for row in page["events"]
+            .as_array()
+            .ok_or("invalid board request observation page")?
+        {
+            if let Some(value) = assembler.push(row["observation"].clone())? {
+                rows.push(value);
+            }
+        }
+        cursor = page["next"]
+            .as_i64()
+            .ok_or("board request observation cursor missing")?;
+        if page["more"] == false {
+            break;
+        }
+    }
+    assembler.finish()?;
+    Ok(render_observations(&rows))
+}
+
+fn render_observations(rows: &[Value]) -> String {
+    let mut groups: BTreeMap<(String, String, String, String), [u64; 4]> = BTreeMap::new();
+    let text = |v: &Value, key: &str| v[key].as_str().unwrap_or("unknown").to_owned();
+    for row in rows {
+        let Some(requests) = row["counts"]["requests"].as_u64() else {
+            continue;
+        };
+        let board = format!("{}/{}", text(row, "route"), text(row, "project"));
+        let counts = groups
+            .entry((
+                text(row, "product"),
+                text(row, "host"),
+                board,
+                text(row, "operation"),
+            ))
+            .or_default();
+        for (slot, n) in counts.iter_mut().zip([
+            requests,
+            row["counts"]["billed"].as_u64().unwrap_or(0),
+            row["counts"]["not_modified"].as_u64().unwrap_or(0),
+            row["counts"]["unconfirmed"]
+                .as_u64()
+                .unwrap_or(u64::from(row["counts"]["billed"].is_null())),
+        ]) {
+            *slot = slot.saturating_add(n);
+        }
+    }
+    if groups.is_empty() {
+        return "Board HTTP requests: unknown (no completed board.request observations)\n".into();
+    }
+    let mut out = String::from(
+        "Board HTTP requests (CoreQ observations):\nproduct | host | board | operation | requests | billed | 304 | billing unknown\n",
+    );
+    for ((product, host, board, op), counts) in groups {
+        out += &format!(
+            "{product} | {host} | {board} | {op} | {} | {} | {} | {}\n",
+            counts[0],
+            if counts[3] > 0 {
+                format!(">={}", counts[1])
+            } else {
+                counts[1].to_string()
+            },
+            counts[2],
+            counts[3]
+        );
+    }
+    out + "Unreported products, hosts and boards: unknown.\n"
+}

@@ -7,13 +7,17 @@ use serde_json::{Value, json};
 use std::cell::RefCell;
 
 mod error;
+pub(crate) mod local;
+mod shared;
 pub use error::{Error, Reason};
 
 pub type Result<T> = std::result::Result<T, Error>;
 /// Closed tasks per Completed page; each costs one comment read (§ 4 budget).
 pub const CLOSED_PAGE: usize = 10;
+// The existing board HTTP transport deadline also bounds its local read transport.
+const HTTP_WAIT: std::time::Duration = std::time::Duration::from_secs(65);
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Issue {
     pub number: u64,
     pub title: String,
@@ -855,13 +859,8 @@ fn curl(
             quote(&format!("@{}", files.path("request").display()))
         );
     }
-    let out = crate::http::with_config(
-        "board.http",
-        &["-K", "-"],
-        &cfg,
-        std::time::Duration::from_secs(65),
-    )
-    .map_err(Error::curl)?;
+    let out = crate::http::with_config("board.http", &["-K", "-"], &cfg, HTTP_WAIT)
+        .map_err(Error::curl)?;
     if !out.status.success() {
         return Err(Error::curl_exit(
             out.status.code(),
@@ -1082,6 +1081,15 @@ impl Kind {
         tool: &coreq::Tool,
     ) -> Result<Box<dyn Board>> {
         let schema = label_schema(schema)?;
+        let api = self.http(host, repo, tool)?;
+        *api.label_schema.borrow_mut() = schema;
+        if let Err(error) = local::register(self.name, host, repo, tool, &api) {
+            local::disclose(&format!("local reader startup failed: {error}"));
+        }
+        Ok(Box::new(Profiled((self.board)(api))))
+    }
+
+    fn http(&self, host: &str, repo: &str, tool: &coreq::Tool) -> Result<Api> {
         let token = (self.token)(tool, host)?;
         let mut api = (self.api)(host, repo, &token);
         api.credentials.get_mut().pause = Some(crate::requests::pause_file(
@@ -1097,8 +1105,14 @@ impl Kind {
             let (tool, host, lookup) = (tool.clone(), host.to_string(), self.token);
             api.token_source = Some((tool.install.clone(), Box::new(move || lookup(&tool, &host))));
         }
-        *api.label_schema.borrow_mut() = schema;
-        Ok(Box::new(Profiled((self.board)(api))))
+        api.install = Some(tool.install.clone());
+        if crate::host::active() {
+            let root = crate::paths::find_root()?;
+            let (cfg, _) = crate::config::load(&root)?;
+            api.pokes = Some([root.join(".taskq/poke"), tool.install.join("poke")]);
+            api.poll = Some(std::time::Duration::from_secs(cfg.poll));
+        }
+        Ok(api)
     }
 }
 
@@ -1107,6 +1121,11 @@ type Transport = Box<dyn Fn(&str, &str, Option<Value>) -> Result<Reply>>;
 
 /// The HTTP side every board shares: one API root, its token, the board clock and cached reads.
 pub struct Api {
+    install: Option<std::path::PathBuf>,
+    poll: Option<std::time::Duration>,
+    pokes: Option<[std::path::PathBuf; 2]>,
+    local_reader: bool,
+    proxy_listed: std::cell::Cell<Option<i64>>,
     /// `https://api.github.com/repos/o/r`, `https://host/api/v4/projects/o%2Fr`
     base: String,
     /// `https://api.github.com`, `https://host/api/v4`: the token goes nowhere else.
@@ -1227,6 +1246,11 @@ impl Api {
     fn new(root: String, base: String, token: &str) -> Api {
         let budget = crate::requests::Shared::for_api(&root, token);
         Api {
+            install: None,
+            poll: None,
+            pokes: None,
+            local_reader: false,
+            proxy_listed: Default::default(),
             base,
             root,
             token_source: None,
@@ -1258,6 +1282,7 @@ impl Api {
         let token = source()?;
         let auth = format!("Authorization: Bearer {token}");
         if self.credentials.borrow().auth != auth {
+            shared::credentials_changed(self)?;
             *self.credentials.borrow_mut() = Credentials {
                 auth,
                 budget: crate::requests::Shared::for_api(&self.root, &token),
@@ -1271,6 +1296,7 @@ impl Api {
             self.clock.replace(0);
             self.unchanged.set(false);
             self.generation.set(self.generation.get() + 1);
+            shared::credentials_changed(self)?;
         }
         Ok(())
     }
@@ -1334,16 +1360,7 @@ impl Api {
         }
     }
 
-    /// One request counted under `op`. While the board budget is exhausted nothing is sent (§ 4).
-    fn send(&self, method: &str, url: &str, body: Option<Value>, op: &str) -> Result<Reply> {
-        let url = self.absolute(url);
-        if !url.starts_with(&format!("{}/", self.root)) {
-            return Err(Error::new(
-                Reason::OutsideApi,
-                format!("refused: {url} is outside the board API"),
-            ));
-        }
-        self.refresh()?;
+    fn allowed(&self, method: &str, url: &str) -> Result<()> {
         if let Some(reason) = &self.credentials.borrow().budget.borrow().unknown {
             return Err(Error::new(
                 Reason::Held,
@@ -1355,6 +1372,27 @@ impl Api {
                 Reason::RateLimited,
                 format!("{method} {url}: {}", crate::requests::paused_text(reset)),
             ));
+        }
+        Ok(())
+    }
+
+    /// One request counted under `op`. While the board budget is exhausted nothing is sent (§ 4).
+    fn send(&self, method: &str, url: &str, body: Option<Value>, op: &str) -> Result<Reply> {
+        let url = self.absolute(url);
+        if !url.starts_with(&format!("{}/", self.root)) {
+            return Err(Error::new(
+                Reason::OutsideApi,
+                format!("refused: {url} is outside the board API"),
+            ));
+        }
+        self.refresh()?;
+        if let Some(reply) = local::raw(self, method, &url, body.as_ref()) {
+            return reply;
+        }
+        self.allowed(method, &url)?;
+        let mutates = method != "GET" && !local::read_query(method, &url, body.as_ref());
+        if mutates {
+            shared::forget(self, false);
         }
         let pace = self
             .credentials
@@ -1389,7 +1427,10 @@ impl Api {
         let etag = conditional
             .then(|| self.etags.borrow().get(&url).map(|(e, _)| e.clone()))
             .flatten();
-        crate::profile::measure_classified(
+        let began = std::time::Instant::now();
+        let started = crate::profile::now_ms();
+        let mut status = None;
+        let result = crate::profile::measure_classified(
             "forge.call",
             || {
                 #[cfg(test)]
@@ -1412,6 +1453,7 @@ impl Api {
                     etag.as_deref(),
                 );
                 let r = r?;
+                status = Some(r.status);
                 if let Some(t) = r.header("date").and_then(http_date) {
                     *self.clock.borrow_mut() = t;
                 }
@@ -1485,7 +1527,39 @@ impl Api {
                 Ok(r)
             },
             Error::class,
-        )
+        );
+        self.observe_http(op, status, started, began.elapsed(), result.as_ref().err());
+        if mutates {
+            shared::forget(self, false);
+        }
+        result
+    }
+
+    fn observe_http(
+        &self,
+        op: &str,
+        status: Option<u16>,
+        started: Option<u64>,
+        elapsed: std::time::Duration,
+        error: Option<&Error>,
+    ) {
+        let repo = self.repo();
+        let board = repo
+            .rsplit_once("/repos/")
+            .or_else(|| repo.rsplit_once("/projects/"))
+            .map(|(_, repo)| repo.replace("%2F", "/"));
+        let value = crate::requests::http_observation(
+            op,
+            board.as_deref(),
+            &self.root,
+            status,
+            started,
+            elapsed,
+            error.map(Error::class),
+        );
+        if let Err(reason) = coreq::telemetry::capture::observe(value) {
+            eprintln!("Board request observation: unknown ({reason})");
+        }
     }
 
     /// The full path of `repo` in a `Depends on <repo>#N` (§ 1); a bare name is under this board's owner. `sep` ends the
@@ -1537,13 +1611,23 @@ impl Api {
             .borrow_mut()
             .count(op.clone());
         crate::requests::tally(&op, &crate::requests::api_host(&self.root));
+        let began = std::time::Instant::now();
+        let started = crate::profile::now_ms();
         #[cfg(test)]
         if let Some(transport) = &self.transport {
             let form = form.map(|f| serde_json::json!({"file": f.file_name().map(|n| n.to_string_lossy().into_owned())}));
-            return transport(method, &url, form).map(|r| r.body.into_bytes());
+            let result = transport(method, &url, form);
+            self.observe_http(
+                &op,
+                result.as_ref().ok().map(|r| r.status),
+                started,
+                began.elapsed(),
+                result.as_ref().err(),
+            );
+            return result.map(|r| r.body.into_bytes());
         }
         let mut cfg = format!(
-            "silent\nshow-error\nfail\nurl = {}\nheader = {}\nheader = \"Expect:\"\nmax-time = 120\n",
+            "silent\nshow-error\nfail\nwrite-out = \"%{{http_code}}\"\nurl = {}\nheader = {}\nheader = \"Expect:\"\nmax-time = 120\n",
             quote(&url),
             quote(&self.credentials.borrow().auth)
         );
@@ -1561,17 +1645,29 @@ impl Api {
             &cfg,
             std::time::Duration::from_secs(125),
         )
-        .map_err(Error::curl)?;
+        .map_err(Error::curl);
+        let out = match out {
+            Ok(out) => out,
+            Err(error) => {
+                self.observe_http(&op, None, started, began.elapsed(), Some(&error));
+                return Err(error);
+            }
+        };
+        let (_, status) = crate::http::status_tail(&out);
         if !out.status.success() {
-            return Err(Error::curl_exit(
+            let error = Error::curl_exit(
                 out.status.code(),
                 format!(
                     "curl {method} {url}: {}",
                     String::from_utf8_lossy(&out.stderr).trim()
                 ),
-            ));
+            );
+            self.observe_http(&op, status, started, began.elapsed(), Some(&error));
+            return Err(error);
         }
-        files.response()
+        let result = files.response();
+        self.observe_http(&op, status, started, began.elapsed(), result.as_ref().err());
+        result
     }
 
     fn all(&self, url: &str) -> Result<Vec<Value>> {

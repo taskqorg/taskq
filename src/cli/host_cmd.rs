@@ -786,14 +786,18 @@ fn doctor_hosts(roots: Vec<PathBuf>, fresh: bool, json_out: bool) {
         gathered.push(health::Gathered::new(&cfg.repo));
         let shared = std::sync::Arc::new((cfg, raw));
         let (one, sent) = (shared.clone(), tx.clone());
+        let prefer = crate::board::local::preferred();
         std::thread::spawn(move || {
+            crate::board::local::prefer(prefer);
             let (cfg, raw) = &*one;
             doctor_board_hosts(cfg, raw, fresh, wait, start, &mut |e| {
                 let _ = sent.send((i, e));
             });
         });
         let sent = tx.clone();
+        let prefer = crate::board::local::preferred();
         std::thread::spawn(move || {
+            crate::board::local::prefer(prefer);
             let (cfg, raw) = &*shared;
             let event = match cfg.board.open(
                 &cfg.web_host,

@@ -58,7 +58,7 @@ fn native_http_child() {
     };
     phase("capture.start");
     let _runtime =
-        coreq::telemetry::capture::Runtime::install(&dir.join("db"), "fixtureq", "1").unwrap();
+        coreq::telemetry::capture::Runtime::install(&dir.join("db"), "taskq", "1").unwrap();
     phase("capture.ready");
     let installed = began.elapsed();
     crate::profile::tests::take_report();
@@ -127,9 +127,29 @@ fn native_http_child() {
             reply.len()
         )
         .unwrap();
+        drop(socket);
+        listener.set_nonblocking(false).unwrap();
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = vec![];
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let mut part = [0; 4096];
+            let count = socket.read(&mut part).unwrap();
+            assert_ne!(count, 0, "incomplete raw request");
+            request.extend_from_slice(&part[..count]);
+        }
+        socket
+            .write_all(
+                b"HTTP/1.1 304 Not Modified\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
     });
     phase("http.start");
-    let result = Api::new(base.clone(), base, "private-token").call("POST", "/request", Some(body));
+    let api = Api::new(base.clone(), base, "private-token");
+    let result = api.call("POST", "/request", Some(body));
+    let unchanged = api.raw("/unchanged", None);
     phase("http.returned");
     let joined = server.join();
     phase("http.joined");
@@ -140,6 +160,10 @@ fn native_http_child() {
         result.as_ref().err()
     );
     assert!(result.err().unwrap().text().contains("HTTP 503"));
+    assert!(
+        unchanged.unwrap().is_empty(),
+        "raw response body stays file-backed"
+    );
     assert!(crate::profile::tests::take_report().contains("http5xx:1"));
     phase("capture.qualify");
     let health = coreq::telemetry::capture::qualify().unwrap();
@@ -152,10 +176,20 @@ fn native_http_child() {
             .unwrap()
             .iter()
             .any(
-                |r| r["observation"]["operation"] == "fixtureq.operation.board.http"
+                |r| r["observation"]["operation"] == "taskq.operation.board.http"
                     && r["observation"]["kind"] == "method"
                     && r["observation"]["outcome"] == "ok"
             )
+    );
+    assert!(
+        exported["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["observation"]["kind"] == "board.request"
+                && r["observation"]["counts"]["not_modified"] == 1
+                && r["observation"]["counts"]["billed"] == 0),
+        "native raw 304 is unbilled, never an assumed 200: {exported}"
     );
     assert!(!exported.to_string().contains("private-"));
     assert_eq!(health["lost"], 0);
@@ -4084,6 +4118,13 @@ fn github_quota_reads_core_for_free_after_graphql_only() {
 // after its last beat + ttl, and this host's own write patches the kept list instead of writing again.
 #[test]
 fn heartbeats_leave_issue_reads_unbilled_and_stale_leases_show() {
+    let before = heartbeat_requests(false);
+    let after = heartbeat_requests(true);
+    eprintln!("#2431 multi-host billed requests/h: legacy={before}, shared={after}");
+    assert!(after <= before, "sharing must not raise billed requests");
+}
+
+fn heartbeat_requests(shared: bool) -> u64 {
     use std::{cell::Cell, collections::HashMap, rc::Rc};
     const TTL: i64 = 300;
     let start = iso("2026-10-14T04:00:00Z").unwrap();
@@ -4098,80 +4139,83 @@ fn heartbeats_leave_issue_reads_unbilled_and_stale_leases_show() {
     ]));
     let (now, issues) = (clock.clone(), state.clone());
     let last = RefCell::new(HashMap::<String, String>::new());
-    let h = http(
-        &github::KIND,
-        Some(true),
-        Box::new(move |method, url, _| {
-            let t = now.get();
-            let rest = |i: &Row| {
-                json!({"number": i.0, "title": i.1, "body": "beat", "state": "open", "updated_at": stamp(i.3),
+    let mut api = (github::KIND.api)(
+        "github.com",
+        &format!("owner/heartbeat-{}", crate::runtime::uuid()),
+        &format!("invented-{}", crate::runtime::uuid()),
+    );
+    api.poll = shared.then_some(std::time::Duration::ZERO);
+    *api.label_schema.borrow_mut() = Some(true);
+    let prefix = api.base.clone();
+    api.transport = Some(Box::new(move |method, url, _| {
+        let t = now.get();
+        let rest = |i: &Row| {
+            json!({"number": i.0, "title": i.1, "body": "beat", "state": "open", "updated_at": stamp(i.3),
                 "created_at": stamp(start - 7200), "author_association": "OWNER", "labels": i.2.iter().map(|l| json!({"name": l})).collect::<Vec<_>>()})
-            };
-            let path = url
-                .strip_prefix("https://api.github.com/repos/o/r")
-                .unwrap_or(url);
-            let value = match (method, path) {
-                ("POST", _) => {
-                    json!({"data": {"repository": {"issues": {"pageInfo": {"hasNextPage": false, "endCursor": null},
+        };
+        let path = url.strip_prefix(&prefix).unwrap_or(url);
+        let value = match (method, path) {
+            ("POST", _) => {
+                json!({"data": {"repository": {"issues": {"pageInfo": {"hasNextPage": false, "endCursor": null},
                     "nodes": issues.borrow().iter().map(|i| json!({"number": i.0, "title": i.1, "body": "beat", "updatedAt": stamp(i.3),
                         "createdAt": stamp(start - 7200), "authorAssociation": "OWNER",
                         "labels": {"nodes": i.2.iter().map(|l| json!({"name": l})).collect::<Vec<_>>()}})).collect::<Vec<_>>()}}}})
-                }
-                ("PATCH", p) => {
-                    let n: u64 = p.strip_prefix("/issues/").unwrap().parse().unwrap();
-                    let mut rows = issues.borrow_mut();
-                    let i = rows.iter_mut().find(|i| i.0 == n).unwrap();
-                    i.3 = t;
-                    rest(i)
-                }
-                ("GET", p) if p.starts_with("/issues?state=closed") => json!([]),
-                ("GET", p) if p.starts_with("/issues?") => {
-                    let since = p
-                        .split('&')
-                        .find_map(|q| q.strip_prefix("since="))
-                        .and_then(iso)
-                        .unwrap_or(0);
-                    let mut rows: Vec<Row> = issues
-                        .borrow()
-                        .iter()
-                        .filter(|i| {
-                            i.3 >= since && (!p.contains("labels=taskq") || i.2.contains(&"taskq"))
-                        })
-                        .cloned()
-                        .collect();
-                    rows.sort_by_key(|i| -i.3);
-                    json!(rows.iter().map(rest).collect::<Vec<_>>())
-                }
-                ("GET", "/issues/5/events?per_page=100") => {
-                    json!([{"id": 1, "event": "labeled", "label": {"name": "taskq"}, "created_at": stamp(start - 3600)}])
-                }
-                ("GET", _) => json!([]),
-                _ => panic!("{method} {url}"),
-            };
-            let body = value.to_string();
-            // GitHub answers a repeated GET whose reply did not change with an unbilled 304 (ETag: see the test below)
-            let same = method == "GET"
-                && last
-                    .borrow_mut()
-                    .insert(url.to_string(), body.clone())
-                    .as_deref()
-                    == Some(body.as_str());
-            let s = stamp(t);
-            let month = [
-                "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-            ][s[5..7].parse::<usize>().unwrap() - 1];
-            let date = format!("Wed, {} {month} {} {} GMT", &s[8..10], &s[0..4], &s[11..19]);
-            Ok(Reply {
-                status: if same { 304 } else { 200 },
-                headers: vec![
-                    ("ETag".into(), format!("\"{}\"", body.len())),
-                    ("Date".into(), date),
-                ],
-                body: if same { String::new() } else { body },
-                operation: operation(method),
-            })
-        }),
-    );
+            }
+            ("PATCH", p) => {
+                let n: u64 = p.strip_prefix("/issues/").unwrap().parse().unwrap();
+                let mut rows = issues.borrow_mut();
+                let i = rows.iter_mut().find(|i| i.0 == n).unwrap();
+                i.3 = t;
+                rest(i)
+            }
+            ("GET", p) if p.starts_with("/issues?state=closed") => json!([]),
+            ("GET", p) if p.starts_with("/issues?") => {
+                let since = p
+                    .split('&')
+                    .find_map(|q| q.strip_prefix("since="))
+                    .and_then(iso)
+                    .unwrap_or(0);
+                let mut rows: Vec<Row> = issues
+                    .borrow()
+                    .iter()
+                    .filter(|i| {
+                        i.3 >= since && (!p.contains("labels=taskq") || i.2.contains(&"taskq"))
+                    })
+                    .cloned()
+                    .collect();
+                rows.sort_by_key(|i| -i.3);
+                json!(rows.iter().map(rest).collect::<Vec<_>>())
+            }
+            ("GET", "/issues/5/events?per_page=100") => {
+                json!([{"id": 1, "event": "labeled", "label": {"name": "taskq"}, "created_at": stamp(start - 3600)}])
+            }
+            ("GET", _) => json!([]),
+            _ => panic!("{method} {url}"),
+        };
+        let body = value.to_string();
+        // GitHub answers a repeated GET whose reply did not change with an unbilled 304 (ETag: see the test below)
+        let same = method == "GET"
+            && last
+                .borrow_mut()
+                .insert(url.to_string(), body.clone())
+                .as_deref()
+                == Some(body.as_str());
+        let s = stamp(t);
+        let month = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ][s[5..7].parse::<usize>().unwrap() - 1];
+        let date = format!("Wed, {} {month} {} {} GMT", &s[8..10], &s[0..4], &s[11..19]);
+        Ok(Reply {
+            status: if same { 304 } else { 200 },
+            headers: vec![
+                ("ETag".into(), format!("\"{}\"", body.len())),
+                ("Date".into(), date),
+            ],
+            body: if same { String::new() } else { body },
+            operation: operation(method),
+        })
+    }));
+    let h: Box<dyn Board> = Box::new(github::GitHub::new(api));
     let (mut cache, mut deps) = (HashMap::new(), HashMap::new());
     let (mut history, mut reports) = (
         crate::incoming::History::default(),
@@ -4213,6 +4257,7 @@ fn heartbeats_leave_issue_reads_unbilled_and_stale_leases_show() {
         count("POST graphql") <= 14,
         "a kept heartbeat relists about once per ttl: {ops:?}"
     );
+    crate::requests::billed(&ops)
 }
 
 // Chain: § 4 budget (#1819). Risk: a repeated GET is counted by GitHub, or a 304 loses the body.

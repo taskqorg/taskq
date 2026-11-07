@@ -3,10 +3,10 @@ use crate::board::Board;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-const MONTH: i64 = 30 * 86400;
+pub(crate) const MONTH: i64 = 30 * 86400;
 const EVENT_READS: usize = 5;
 /// #2083: the longest between admission scans of every issue (§ 4 budget).
-const FULL_SCAN: i64 = 1800;
+pub(crate) const FULL_SCAN: i64 = 1800;
 /// #2352: seconds between two scans while none is unresolved; each pass of each project billed every task change once more.
 const READ_EVERY: std::time::Duration = std::time::Duration::from_secs(180);
 
@@ -32,6 +32,7 @@ impl Reader {
         let (request, requests) = std::sync::mpsc::sync_channel(1);
         let (responses, response) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
+            crate::host::enter(&cfg.root, &cfg.install);
             let board = cfg.board.open(
                 &cfg.web_host,
                 &cfg.repo,

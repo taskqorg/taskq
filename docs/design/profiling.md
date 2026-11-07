@@ -2,6 +2,8 @@
 
 ## CoreQ observations (contract detail)
 
+Completed HTTP attempts emit `board.request` observations: `product`, `host`, `project` (board repository), `route` (API host), normalized `operation`, and `counts.requests|billed|not_modified|unconfirmed`. A cached service read emits no HTTP attempt. `taskq profile` and `taskq profile board --since 1h` read these committed CoreQ records; missing products/dimensions and unconfirmed billing remain unknown. The legacy hourly source totals stay separate.
+
 TaskQ writes attempt stages, board operations, queue transitions and service passes to the installation CoreQ store under [taskq.md §4](../../taskq.md#telemetry-observations). Caller boundaries declare identity once; CoreQ carries project, task, attempt, actor and entry through nested work. Missing identity remains null with a reason. AgentQ runtime owns agent turn and model-call records; TaskQ delegates recording without a second parser or sampler.
 
 The CoreQ shipper uses the separately approved `coreq-observation/1` schema, the existing enrolled board scope and resource fence. It runs on a background thread beside the unchanged `taskq-telemetry/1` sender. Existing grants are not expanded: a new enrollment approval is required to add the schema. `status.json` exposes `observation_shipper` separately from `telemetry_sync`. CoreQ owns receipts, durable cursor and pruning; missing grants send nothing. Neither path is deleted before a later parity-qualified task.
