@@ -270,6 +270,28 @@ impl Proc for FakeProc {
     }
 }
 
+struct UnknownExit;
+impl Proc for UnknownExit {
+    fn accepted(&mut self) -> Result<bool, String> {
+        Ok(true)
+    }
+    fn exited(&mut self) -> Result<Option<i32>, String> {
+        Err("native exit code unknown".into())
+    }
+    fn termination(&mut self) -> Result<Option<crate::runtime::Exit>, String> {
+        Ok(Some(crate::runtime::Exit { code: None }))
+    }
+    fn refused(&self, _: u64, _: u64, _: u64, _: i32) -> Option<String> {
+        panic!("unknown numeric exit cannot prove pre-submission refusal")
+    }
+    fn kill(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn id(&self) -> u32 {
+        1
+    }
+}
+
 // Chain: § 2 visual evidence -> service copy -> tray inline (#1782). Risk: the app, which has no board token, never
 // gets the image of an open ask, or keeps copies of answered asks.
 #[test]
@@ -373,7 +395,7 @@ fn boot_after_intent_releases_only_this_hosts_older_executions() {
 
 // Chain: saved refused launch -> no-start release -> admission. Risk: a refused Claude launch blocks its task forever (#1557).
 #[test]
-fn a_saved_refused_claude_launch_reconciles_as_no_start() {
+fn historical_claude_diagnostics_never_release_or_replay() {
     for case in ["requeued", "doing", "review"] {
         let root = std::env::temp_dir().join(format!("taskq-1557-{case}-{}", std::process::id()));
         std::fs::create_dir_all(root.join(".taskq")).unwrap();
@@ -426,62 +448,18 @@ fn a_saved_refused_claude_launch_reconciles_as_no_start() {
                 }
             }),
         );
-        s.recover = Some(Box::new(|_, _| {
-            panic!("a refused launch needs no native observer")
-        }));
+        s.recover = Some(Box::new(|_, _| Err("canonical native proof unavailable; input remains unknown".into())));
         s.focus = vec!["all".into()];
-        let first = s.pass();
-        let log = entries(&b, n).unwrap();
-        assert_eq!(
-            core::executions(n, &log).last().unwrap().release,
-            if case != "requeued" {
-                None
-            } else {
-                Some(core::Release::NoStart)
-            },
-            "{case}"
-        );
-        assert!(
-            !s.execution_waits
-                .get(&n)
-                .is_some_and(|w| w.contains("input")),
-            "{case}: no 'accept input' wait"
-        );
-        if case != "requeued" {
-            for _ in 0..4 {
-                b.advance(60);
-                s.pass().unwrap();
-            }
-            let log = entries(&b, n).unwrap();
-            assert_eq!(
-                *launched.borrow(),
-                3,
-                "{case}: service retries setup and then starts the fresh input; first={first:?}; log={:?}; held={}; waits={:?}; cap={:?}",
-                s.log,
-                s.held.len(),
-                s.execution_waits,
-                s.cap
-            );
-            assert!(
-                core::executions(n, &log).last().unwrap().accepted,
-                "fresh input starts after repair"
-            );
-            assert_eq!(core::fold(n, &log, false).retries, 0);
-            assert!(
-                !log.iter()
-                    .any(|e| e.body.starts_with("taskq: gone") || e.body.starts_with("taskq: ask")),
-                "trust setup must not charge retries or wait for the owner"
-            );
-            assert_eq!(core::fold(n, &log, false).attempt, Some(a));
-        } else {
+        for _ in 0..4 {
             let _ = s.pass();
-            assert_eq!(
-                *launched.borrow(),
-                1,
-                "the requeued task is admitted again: {first:?} {:?}",
-                s.log
-            );
+            b.advance(60);
         }
+        let log = entries(&b, n).unwrap();
+        assert_eq!(*launched.borrow(), 0, "{case}: historical text cannot authorize new work");
+        assert_eq!(core::executions(n, &log).last().unwrap().release, None,
+            "{case}: no-start needs qualified canonical proof");
+        assert!(!log.iter().any(|entry| entry.body.starts_with("taskq: gone")),
+            "historical diagnostics cannot retire an uncertain execution");
         std::fs::remove_dir_all(root).unwrap();
     }
 }
@@ -5483,9 +5461,12 @@ fn turn_end(paused: bool) {
     let root = std::env::temp_dir().join(format!("taskq-turn-end-{paused}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     let b = Fake::default();
-    let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
+    let n = b
+        .create("T", "", &[TASK_LABEL.into(), "run-codex".into()])
+        .unwrap();
     let c = Config {
         root: root.clone(),
+        limits: BTreeMap::from([("codex".into(), 1)]),
         ..cfg("win")
     };
     let flags: Exits = Default::default();
@@ -6454,7 +6435,10 @@ fn a_live_process_reads_the_same_in_status_and_heartbeat() {
 // Chain: native observation -> aggregate heartbeat -> remote read -> durable terminal after lost response.
 #[test]
 fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {
-    for rt in crate::runtime::RUNTIMES {
+    for (rt, unknown_exit) in crate::runtime::RUNTIMES
+        .iter()
+        .flat_map(|rt| [false, true].map(|unknown| (*rt, unknown)))
+    {
         if crate::runtime::of(rt).has(crate::runtime::Cap::AppTurn)
             && !cfg!(any(target_os = "macos", windows))
         {
@@ -6696,6 +6680,9 @@ fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {
             .unwrap()
             .1
             .borrow_mut() = Some(0);
+        if unknown_exit {
+            s.kids.iter_mut().find(|k| k.attempt == a).unwrap().proc = Box::new(UnknownExit);
+        }
         b.state.borrow_mut().fail_comments = 1;
         s.reap_owned();
         s.beat().unwrap();
@@ -6708,6 +6695,20 @@ fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {
         b.state.borrow_mut().lose_comment_response = true;
         s.reap_owned();
         assert!(s.kids.is_empty());
+        let events = crate::telemetry::worker_events(&c.install);
+        let exit = events
+            .iter()
+            .find(|e| e.task == n && e.attempt == a && e.event == "exit")
+            .unwrap();
+        assert_eq!(exit.outcome, if unknown_exit { "unknown" } else { "ok" });
+        assert_eq!(
+            exit.reason,
+            if unknown_exit {
+                "exit-unknown"
+            } else {
+                "exit-0"
+            }
+        );
         b.state.borrow_mut().lose_comment_response = false;
         let log = entries(&b, n).unwrap();
         assert_eq!(
@@ -6745,8 +6746,8 @@ fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {
 // Chain: slow native children -> bounded observation round -> honest heartbeat -> fair next round.
 #[test]
 fn slow_observations_defer_without_releasing_and_rotate_fairly() {
-    // Windows file reads and scheduling can consume 10ms before the first fixture poll.
-    const POLL_MS: u64 = if cfg!(windows) { 100 } else { 10 };
+    // File reads and scheduling can consume 10ms before the first fixture poll on a loaded host.
+    const POLL_MS: u64 = 100;
     struct Slow {
         task: u64,
         calls: Rc<RefCell<Vec<u64>>>,
@@ -7713,39 +7714,59 @@ fn historical_no_host_repair_child() {
 // Chain: § 7 worker exit to review. Risk: a silent exit is not gone; a result gets no reviewer.
 #[test]
 fn exit_without_result_is_gone_and_result_brings_a_reviewer() {
-    let b = Fake::default();
-    let n = b.create("T", "", &["taskq".into()]).unwrap();
-    let c = cfg("mac");
-    let e: Exits = Default::default();
-    let mut s = service(&b, &c, e.clone());
-    s.pass().unwrap();
-    let a = task(&b, n).attempt.unwrap();
-    b.comment(
-        n,
-        &core::entry(
-            "result",
-            &["0123456789abcdef0123456789abcdef01234567"],
-            Some(a),
-            "ok",
-        ),
-    )
-    .unwrap();
-    *e.borrow()[0].1.borrow_mut() = Some(0);
-    s.pass().unwrap();
-    let t = task(&b, n);
-    assert_eq!(
-        (t.state, t.role.as_deref(), t.retries),
-        (State::Review, Some("reviewer"), 0)
-    );
-    let r = t.attempt.unwrap();
-    *e.borrow()[1].1.borrow_mut() = Some(1);
-    s.pass().unwrap(); // reviewer exits without a verdict: gone keeps the result
-    let t = task(&b, n);
-    assert_eq!(
-        (t.state, t.retries, t.result.is_some()),
-        (State::Review, 1, true)
-    );
-    assert_ne!(t.attempt, Some(r));
+    for unknown_exit in [false, true] {
+        let b = Fake::default();
+        let n = b.create("T", "", &["taskq".into()]).unwrap();
+        let c = cfg("mac");
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        s.pass().unwrap();
+        let a = task(&b, n).attempt.unwrap();
+        b.comment(
+            n,
+            &core::entry(
+                "result",
+                &["0123456789abcdef0123456789abcdef01234567"],
+                Some(a),
+                "ok",
+            ),
+        )
+        .unwrap();
+        *e.borrow()[0].1.borrow_mut() = Some(0);
+        s.pass().unwrap();
+        let t = task(&b, n);
+        assert_eq!(
+            (t.state, t.role.as_deref(), t.retries),
+            (State::Review, Some("reviewer"), 0)
+        );
+        let r = t.attempt.unwrap();
+        *e.borrow()[1].1.borrow_mut() = Some(1);
+        if unknown_exit {
+            s.kids[0].proc = Box::new(UnknownExit);
+        }
+        s.pass().unwrap(); // reviewer exits without a verdict: gone keeps the result
+        let t = task(&b, n);
+        assert_eq!(
+            (t.state, t.retries, t.result.is_some()),
+            (State::Review, 1, true)
+        );
+        assert_ne!(t.attempt, Some(r));
+        if unknown_exit {
+            let log = entries(&b, n).unwrap();
+            assert!(
+                log.iter().any(|entry| core::kind(n, &entry.body) == "gone"
+                    && entry.body.contains("exit unknown"))
+            );
+            assert!(
+                core::executions(n, &log)
+                    .iter()
+                    .find(|x| x.id == r)
+                    .unwrap()
+                    .release
+                    == Some(core::Release::Exit)
+            );
+        }
+    }
 }
 
 // Chain: native terminal reviewer -> same-pass gone -> retained result and classified stage.
@@ -7760,12 +7781,8 @@ fn terminal_reviewer_records_native_error_and_releases_lease() {
             Ok(Some(-1))
         }
         fn exit_error(&self) -> Option<&'static str> {
-            Some(crate::runtime::claude_failure(
-                &serde_json::json!({"id":"abcdef12", "state":"failed"}),
-                &self.root,
-                "abcdef12",
-                Some(&self.root),
-            ))
+            let rows = crate::runtime::background_rows(&[serde_json::json!({"id":"abcdef12", "state":"failed"})], &self.root, &self.root).ok()?;
+            crate::runtime::claude_failure(rows.first()?).ok()
         }
         fn kill(&mut self) -> Result<(), String> {
             Ok(())
@@ -7797,7 +7814,7 @@ fn terminal_reviewer_records_native_error_and_releases_lease() {
     std::fs::write(
         root.join("jobs/abcdef12/state.json"),
         serde_json::json!({
-            "cwd": root, "state":"failed", "detail":"ENAMETOOLONG: name too long, uv_spawn"
+            "cwd": root, "sessionId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee", "state":"failed", "detail":"ENAMETOOLONG: name too long, uv_spawn"
         })
         .to_string(),
     )
@@ -7831,38 +7848,19 @@ fn terminal_reviewer_records_native_error_and_releases_lease() {
                 .contains(&format!("review {n} {r} claude failed argument-too-long"))
         )
     });
-    let failure = |row: serde_json::Value, id: &str, project: &std::path::Path| {
-        crate::runtime::claude_failure(&row, project, id, Some(&root))
+    let failure = |state: &str, id: &str, project: &std::path::Path| {
+        let rows = crate::runtime::background_rows(&[serde_json::json!({"id":id,"state":state,"cwd":project})], project, &root)?;
+        crate::runtime::claude_failure(&rows[0])
     };
-    assert_eq!(
-        failure(
-            serde_json::json!({"state":"failed", "detail":"permission denied"}),
-            "abcdef12",
-            &root
-        ),
-        "permission"
-    );
-    assert_eq!(
-        failure(serde_json::json!({"state":"stopped"}), "abcdef12", &root),
-        "other"
-    );
-    assert_eq!(
-        failure(serde_json::json!({"state":"failed"}), "../abcdef12", &root),
-        "other"
-    );
-    assert_eq!(
-        failure(
-            serde_json::json!({"state":"failed"}),
-            "abcdef12",
-            &root.join("jobs")
-        ),
-        "other"
-    );
+    std::fs::write(root.join("jobs/abcdef12/state.json"), serde_json::json!({
+        "cwd":root,"sessionId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "state":"failed","detail":"permission denied"}).to_string()).unwrap();
+    assert_eq!(failure("failed", "abcdef12", &root), Ok("permission"));
+    assert!(failure("stopped", "abcdef12", &root).is_err(), "mismatched native state remains unknown");
+    assert!(failure("failed", "../abcdef12", &root).is_err(), "invalid identity cannot read a locator");
+    assert!(failure("failed", "abcdef12", &root.join("jobs")).is_err(), "foreign cwd remains unknown");
     std::fs::remove_file(root.join("jobs/abcdef12/state.json")).unwrap();
-    assert_eq!(
-        failure(serde_json::json!({"state":"failed"}), "abcdef12", &root),
-        "other"
-    );
+    assert!(failure("failed", "abcdef12", &root).is_err(), "missing failure evidence cannot become a generic native failure");
     std::fs::remove_dir_all(&root).unwrap();
 }
 
@@ -8943,7 +8941,7 @@ fn fallback_2118_native_admission_without_model() {
                     .map(|s| s.tasks.iter().map(|r| r.json()).collect::<Vec<_>>())
             );
             let identity = s.kids[0].proc.native_identity().unwrap();
-            assert_eq!(s.kids[0].proc.exited().unwrap(), None);
+            assert_eq!(s.kids[0].proc.termination().unwrap(), None);
             let attempt = task(&b, n).attempt;
             s.pass().unwrap();
             assert_eq!(
@@ -8982,11 +8980,11 @@ fn fallback_2118_native_admission_without_model() {
             let identity = kid.proc.native_identity().ok();
             kid.proc.kill().unwrap();
             let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            while kid.proc.exited().unwrap().is_none() && std::time::Instant::now() < until {
+            while kid.proc.termination().unwrap().is_none() && std::time::Instant::now() < until {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             assert!(
-                kid.proc.exited().unwrap().is_some(),
+                kid.proc.termination().unwrap().is_some(),
                 "native exit unconfirmed"
             );
             if let Some(identity) = identity {
@@ -9764,7 +9762,7 @@ fn claude_turn_ending_with_its_own_background_check_resumes_instead_of_gone() {
         );
         assert!(
             steers[k].body.contains(BACKGROUND_STEER)
-                && steers[k].body.contains("Full check")
+                && steers[k].body.contains("Bash")
                 && steers[k].body.contains("foreground"),
             "{}",
             steers[k].body
@@ -13248,7 +13246,7 @@ fn progress_health_lifecycle_captures_once_recovers_and_keeps_execution_fenced()
     s.progress_clock = |b| b.now().unwrap() + 5;
     use std::io::Write;
     let mut hot = fs::OpenOptions::new().append(true).open(&path).unwrap();
-    writeln!(hot,"{}",json!({"timestamp":crate::time::stamp(sampled),"type":"item.completed","item":{"type":"agent_message"}})).unwrap();
+    writeln!(hot,"{}",json!({"timestamp":crate::time::stamp(sampled),"event":"step_update","step_update":{"conversation_id":"invented","step_index":91,"state":"DONE","step_type":"agent_response"}})).unwrap();
     hot.set_times(
         fs::FileTimes::new()
             .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(sampled as u64)),

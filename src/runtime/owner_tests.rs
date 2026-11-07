@@ -210,33 +210,53 @@ fn owner_transcript_home_fixture() {
 fn only_the_idle_launched_job_is_released() {
     let r: Request = serde_json::from_value(json!({"schema": 1, "id": "c1", "created": 0, "host": "mac", "platform": "macos", "client": "tray", "runtime": "claude",
             "targets": [], "brief": "", "state": "launched", "job": "aa11", "session": "s1"})).unwrap();
+    let root = std::env::temp_dir().join(format!("taskq-owner-candidates-{}", super::super::uuid()));
+    fs::create_dir_all(root.join("home")).unwrap();
+    let candidates = |rows: &[serde_json::Value]| {
+        let rows: Vec<_> = rows.iter().cloned().map(|mut row| { row["cwd"] = json!(root); row }).collect();
+        let mut command = crate::platform::command(if cfg!(windows) { "python" } else { "python3" });
+        command.args(["-c", "import os; print(os.environ['TASKQ_FIXTURE_ROWS'])"])
+            .env("TASKQ_FIXTURE_ROWS", serde_json::to_string(&rows).unwrap());
+        super::super::agent("claude").unwrap().background_candidates(
+            command, &super::super::claude_spec(&root, Some(&root.join("home"))), false,
+            std::time::Duration::from_secs(10),
+        ).unwrap()
+    };
     // Real `claude agents --json` shape: an idle launched job still reports `state` `working` (#1762).
     let row = |id: &str, kind: &str, status: &str| json!({"id": id, "kind": kind, "sessionId": "s1", "status": status, "state": "working"});
-    assert_eq!(holds(&[], &r), Hold::Free);
+    assert_eq!(holds(&candidates(&[]), &r), Hold::Free);
     assert_eq!(
-        holds(&[json!({"sessionId": "s2", "kind": "interactive"})], &r),
+        holds(&candidates(&[json!({"sessionId": "s2", "kind": "interactive"})]), &r),
         Hold::Free
     );
-    assert_eq!(holds(&[row("aa11", "background", "idle")], &r), Hold::Own);
+    assert_eq!(holds(&candidates(&[row("aa11", "background", "idle")]), &r), Hold::Own);
     assert_eq!(
-        holds(&[row("aa11", "background", "busy")], &r),
+        holds(&candidates(&[row("aa11", "background", "busy")]), &r),
         Hold::Other,
         "a working job is a writer"
     );
     assert_eq!(
-        holds(&[row("bb22", "background", "idle")], &r),
+        holds(&candidates(&[row("bb22", "background", "idle")]), &r),
         Hold::Other,
         "another job holds"
     );
     assert_eq!(
         holds(
-            &[
+            &candidates(&[
                 row("aa11", "background", "idle"),
                 json!({"sessionId": "s1", "kind": "interactive", "status": "idle"})
-            ],
+            ]),
             &r
         ),
         Hold::Other,
         "an open terminal holds"
     );
+    for status in ["", "unknown"] {
+        assert_eq!(holds(&candidates(&[row("aa11", "background", status)]), &r), Hold::Other,
+            "absent or unrecognized activity retains occupancy");
+    }
+    let mut missing = row("aa11", "background", "idle");
+    missing.as_object_mut().unwrap().remove("status");
+    assert_eq!(holds(&candidates(&[missing]), &r), Hold::Other);
+    fs::remove_dir_all(root).unwrap();
 }

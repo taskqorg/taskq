@@ -1287,10 +1287,11 @@ pub(crate) fn write_kids(install: &Path, root: &Path, kids: &[data::KidLine]) ->
     let owner = coreq::process::identity(std::process::id())
         .map_err(|e| e.to_string())?
         .ok_or("service native identity missing")?;
-    let mut text = format!("pid {} {} executor-v1\n", owner.pid, owner.started);
+    let version = if kids.iter().any(|kid| kid.control.is_some()) { "executor-v2" } else { "executor-v1" };
+    let mut text = format!("pid {} {} {version}\n", owner.pid, owner.started);
     for k in kids {
         text += &format!(
-            "{} {} {} {} {} {} {}{}\n",
+            "{} {} {} {} {} {} {}{}{}\n",
             k.task,
             k.attempt,
             k.runtime,
@@ -1301,7 +1302,16 @@ pub(crate) fn write_kids(install: &Path, root: &Path, kids: &[data::KidLine]) ->
             k.job
                 .as_ref()
                 .map(|scope| format!(" {scope}"))
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            match &k.control {
+                Some(proof) => {
+                    use base64::Engine;
+                    format!(" control-v1:{}", base64::engine::general_purpose::STANDARD.encode(
+                        serde_json::to_vec(proof).map_err(|e| e.to_string())?
+                    ))
+                }
+                None => String::new(),
+            }
         );
     }
     data::kids(&text)?;
@@ -1325,6 +1335,9 @@ pub(crate) fn checkpoint_kid(install: &Path, root: &Path, kid: data::KidLine) ->
     if let Some(old) = kids.iter_mut().find(|k| k.task == kid.task) {
         if *old == kid {
             return Ok(());
+        }
+        if old.control.is_some() && (old.control != kid.control || old.process != kid.process) {
+            return Err("protected background control proof cannot be erased or transferred without explicit transition evidence".into());
         }
         // #1638: the same execution may move to a new process only after its recorded one exited (checked below).
         let same = old.execution == kid.execution
@@ -1369,13 +1382,15 @@ pub(crate) fn save_kids(s: &Service, root: &Path) -> Res<()> {
                 && x.release == Some(core::Release::Exit)
         }))
     };
+    let previous = kids_file(&s.cfg.install, root)?;
     let mut kids = vec![];
     for k in &s.kids {
         // #2297: a child without native identity leaves no record; the next image rebuilds it from the board (§ 3 unknown)
         let Ok(process) = k.proc.native_identity() else {
             continue;
         };
-        let line = data::KidLine {
+        let mut line = data::KidLine {
+            control: None,
             task: k.task,
             attempt: k.attempt,
             runtime: k.rt.clone(),
@@ -1384,6 +1399,13 @@ pub(crate) fn save_kids(s: &Service, root: &Path) -> Res<()> {
             offset: k.proc.input_offset()?,
             job: k.proc.job(),
         };
+        if let Some(old) = previous.iter().find(|old| old.task == line.task
+            && old.attempt == line.attempt && old.execution == line.execution
+            && old.runtime == line.runtime && old.process == line.process && old.job == line.job
+            && old.offset == line.offset)
+        {
+            line.control = old.control.clone();
+        }
         // #1561: a recorded process that exited resolves from its board exit; any other record passes to the next image (#2297)
         if recorded(&line).0 == "ended" && exited(k.task, k.attempt, k.execution, &k.rt)? {
             continue;
@@ -1391,7 +1413,7 @@ pub(crate) fn save_kids(s: &Service, root: &Path) -> Res<()> {
         kids.push(line);
     }
     let mut kept = vec![];
-    for old in kids_file(&s.cfg.install, root)? {
+    for old in previous {
         if kids.contains(&old) {
             continue;
         }

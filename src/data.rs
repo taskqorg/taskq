@@ -316,7 +316,34 @@ pub fn focus(root: &Path) -> Result<Vec<String>, String> {
 
 pub const KIDS_MAX: u64 = 1 << 20;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", deny_unknown_fields)]
+pub enum BackgroundAdmission {
+    Fresh,
+    Resume { session: String },
+}
+
+/// Complete new-execution evidence only; an absent legacy proof grants no control.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackgroundControlProof {
+    pub admission: BackgroundAdmission,
+    pub grant: crate::policy::Grant,
+    pub controller: agentq_runtime::agent::NativeProcess,
+    pub session_store: std::path::PathBuf,
+    pub lifetime: agentq_runtime::agent::Lifetime,
+    pub project: std::path::PathBuf,
+    pub home: std::path::PathBuf,
+    pub cwd: std::path::PathBuf,
+    pub job: String,
+    pub native_session: String,
+    pub before: usize,
+    pub input_sha256: String,
+    pub owner: Value,
+    pub source: Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct KidLine {
     pub task: u64,
     pub attempt: u64,
@@ -325,6 +352,7 @@ pub struct KidLine {
     pub execution: u64,
     pub offset: u64,
     pub job: Option<String>,
+    pub control: Option<BackgroundControlProof>,
 }
 
 /// #2266: a `kids` job scope token; `job-kill:` jobs end every member when their last handle closes, `job-global:` (older) ones do not.
@@ -386,14 +414,22 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
         .split_whitespace()
         .collect::<Vec<_>>();
     let owner = match header.as_slice() {
-        ["pid", pid, started, "executor-v1"] => identity(pid, started),
+        ["pid", pid, started, "executor-v1" | "executor-v2"] => identity(pid, started),
         _ => None,
     }
     .ok_or(
         "kids: native executor identity version missing; legacy launcher or malformed file kept",
     )?;
     let kid = |l: &str| -> Option<KidLine> {
-        let w: Vec<&str> = l.split_whitespace().collect();
+        let mut w: Vec<&str> = l.split_whitespace().collect();
+        let control = if let Some(encoded) = w.last().and_then(|v| v.strip_prefix("control-v1:")) {
+            if header.last() != Some(&"executor-v2") { return None; }
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+            let proof: BackgroundControlProof = serde_json::from_slice(&bytes).ok()?;
+            w.pop();
+            Some(proof)
+        } else { None };
         let (fields, job) = match w.as_slice() {
             [_, _, _, _, _, _, _] => (w.as_slice(), None),
             [fields @ .., scope] if fields.len() == 7 => {
@@ -409,8 +445,20 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
         let attempt = attempt.parse::<u64>().ok().filter(|n| *n > 0)?;
         let execution = execution.parse::<u64>().ok().filter(|n| *n >= attempt)?;
         let a = crate::runtime::of(rt);
-        if !a.has(Cap::Cli) || a.has(Cap::RemoteControl) && (offset != "0" || job.is_some()) {
+        if !a.has(Cap::Cli) || a.has(Cap::RemoteControl) && (job.is_some() || offset != "0" && control.is_none()) {
             return None;
+        }
+        if let Some(proof) = &control {
+            if !a.has(Cap::Background) || proof.grant.runtime != rt
+                || !crate::policy::MODES.contains(&proof.grant.mode.as_str())
+                || !proof.project.is_absolute() || !proof.home.is_absolute() || !proof.cwd.is_absolute()
+                || !proof.session_store.is_absolute()
+                || proof.controller.pid == 0 || proof.controller.started.is_empty()
+                || !crate::runtime::plain_thread(&proof.job) || !crate::runtime::plain_thread(&proof.native_session)
+                || proof.input_sha256.len() != 64 || !proof.input_sha256.bytes().all(|c| c.is_ascii_hexdigit())
+                || !proof.owner.is_object() || !proof.source.is_object()
+                || matches!(&proof.admission, BackgroundAdmission::Resume { session } if !crate::runtime::plain_thread(session))
+            { return None; }
         }
         Some(KidLine {
             task,
@@ -420,6 +468,7 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
             execution,
             offset: offset.parse().ok()?,
             job,
+            control,
         })
     };
     let v: Vec<KidLine> = lines

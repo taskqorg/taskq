@@ -330,8 +330,8 @@ fn live_windows_boundary_matrix() {
             let mut child = crate::runtime::spawn(&env, &l).unwrap_or_else(|e| panic!("{e}"));
             let began = std::time::Instant::now();
             let code = loop {
-                if let Some(code) = child.exited().unwrap() {
-                    break code;
+                if let Some(exit) = child.termination().unwrap() {
+                    break exit.code;
                 }
                 if began.elapsed().as_secs() > 180 {
                     crate::runtime::stop(child.as_mut()).expect("owned qualification cleanup");
@@ -501,7 +501,7 @@ fn live_windows_boundary_matrix() {
                 );
             }
             println!(
-                "QUALIFIED Windows Workspace {role} turn={turn} session={} retired_process_exit={code} proof={proof}",
+                "QUALIFIED Windows Workspace {role} turn={turn} session={} retired_process_exit={code:?} proof={proof}",
                 l.session
             );
         }

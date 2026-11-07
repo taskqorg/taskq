@@ -149,18 +149,12 @@ fn plist(label: &str, program: &str, key: &str, root: &str, environment: &Value)
 }
 fn environment(home: &Path) -> Value {
     let mut environment = serde_json::Map::new();
-    for name in [
-        "PATH",
-        "LANG",
-        "LC_ALL",
-        "TMPDIR",
-        "TERM",
-        "AGENTQ_OPTIMIZATION",
-    ] {
+    for name in ["PATH", "LANG", "LC_ALL", "TMPDIR", "TERM"] {
         if let Ok(value) = std::env::var(name) {
             environment.insert(name.into(), json!(value));
         }
     }
+    environment.insert("AGENTQ_LAUNCHER".into(), json!("taskq"));
     environment.insert("HOME".into(), json!(home));
     json!(environment)
 }

@@ -295,13 +295,13 @@ fn ten_mib_claude_transcript_pages_by_cursor() {
     let path = dir.join(format!("projects/-p/{id}.jsonl"));
     assert_eq!(
         crate::runtime::claude_transcript_in(&dir, id).unwrap_err(),
-        "Claude transcript unavailable; completion unknown"
+        "history session not found"
     );
     let mut f = fs::File::create(&path).unwrap();
     writeln!(
         f,
         "{}",
-        json!({"type":"user","message":{"role":"user","content":"first"}})
+        json!({"type":"user","sessionId":id,"message":{"role":"user","content":"first"}})
     )
     .unwrap();
     let filler = "x".repeat(1000);
@@ -653,24 +653,36 @@ fn codex_custom_tool_calls_read_as_commands() {
 /// #1833 review: a quote that never closes (a regex literal, a cut script) read past the script and panicked.
 #[test]
 fn codex_scripts_with_open_quotes_and_comments_read_without_panic() {
-    assert_eq!(codex_script("text(r.replace(/'/g, ''))"), None);
-    assert_eq!(codex_script("text('abc"), None);
+    let summary = |input: &str| {
+        let record = json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":input}});
+        let rows = read(true, &format!("{record}\n"));
+        let value = rows
+            .first()
+            .and_then(|row| row["text"].as_str())
+            .unwrap_or_default();
+        value
+            .strip_prefix("exec ")
+            .filter(|value| *value != input)
+            .map(str::to_owned)
+    };
+    assert_eq!(summary("text(r.replace(/'/g, ''))"), None);
+    assert_eq!(summary("text('abc"), None);
     assert_eq!(
-        codex_script("text(await tools.exec_command({cmd:\"echo a"),
+        summary("text(await tools.exec_command({cmd:\"echo a"),
         Some("echo a".into())
     );
     assert_eq!(
-        codex_script(
+        summary(
             "/* tools.exec_command({cmd:\"x\"}) 'it's */ text(await tools.exec_command({cmd:\"y\"}))"
         ),
         Some("y".into())
     );
-    assert_eq!(codex_script("/* open"), None);
-    assert_eq!(codex_script("/*/ tools.exec_command({cmd:\"x\"})"), None);
+    assert_eq!(summary("/* open"), None);
+    assert_eq!(summary("/*/ tools.exec_command({cmd:\"x\"})"), None);
     // every cut of a real script reads: Codex records may end mid-literal
     let js = "/* c */ const r=await tools.exec_command({cmd:'a \\'b\\' \\u00e9',\"workdir\": `w`}); // x\ntools.view_image({path:\"p\"})";
     for (k, _) in js.char_indices() {
-        codex_script(&js[..k]);
+        summary(&js[..k]);
     }
 }
 
