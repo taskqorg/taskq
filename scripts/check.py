@@ -25,12 +25,57 @@ SHOT = re.compile(r'^docs/shots/([^/]+\.png|manifest\.json)$')
 
 
 def selection(paths):
+    if web_checks(paths) is not None:
+        return 'web'
     if paths and all(SHOT.match(p) or (Path(p).suffix in {'.md', '.txt'} and p not in {'taskq.md', 'AGENTS.md', 'CLAUDE.md', PRODUCT_DOC}) for p in paths):
         # These pages carry published asset hashes, checked by the Node components.
         return 'web' if any(p in {'docs/design/answer-card.md', 'docs/design/shared-resource-controls.md'} for p in paths) else 'docs'
     if paths and all((p.startswith('src/') and Path(p).suffix in {'.js', '.css', '.html'}) or (p.startswith('tests/') and Path(p).suffix == '.cjs') for p in paths):
         return 'web'
     return 'full'
+
+
+# Explicit component edges; shared shells and unregistered inputs keep the broad gate.
+WEB_COMPONENTS = {
+    'answer-card': ('reply-files', 'tray-answer', 'finding-composer', 'report-decisions', 'task-workspace'),
+    'project-blocks': ('display-model', 'task-timing', 'finding-composer', 'task-workspace'),
+    'finding-composer': (),
+    'pm-composer': ('tray-answer', 'task-workspace'),
+    'task-workspace': (),
+}
+
+
+def web_checks(paths):
+    """Known component inputs -> model and real adapter checks; None means unknown impact."""
+    selected = set()
+    for path in paths:
+        owners = set()
+        for component, adapters in WEB_COMPONENTS.items():
+            stems = (component,)
+            if path in {f'src/{component}.js', f'src/{component}.css',
+                        f'docs/design/{component}.md', f'docs/design/{component}.sources.json',
+                        f'tests/fixtures/{component}.json'} or any(path == f'tests/{n}.{kind}.cjs' for n in stems for kind in ('test', 'browser')):
+                owners.add(component)
+        if path in {'src/reply-files.js', 'tests/reply-files.test.cjs'}:
+            owners.add('answer-card')
+        if not owners:
+            return None
+        selected.update(owners)
+    if not selected:
+        return None
+    names = {n for c in selected for n in (c, *WEB_COMPONENTS[c])}
+    if 'answer-card' in selected:
+        names.add('reply-files')
+    checks = sorted(f'tests/{n}.{kind}.cjs' for n in names for kind in ('test', 'browser')
+                  if (ROOT / f'tests/{n}.{kind}.cjs').is_file())
+    # Direct model consumers are additional adapters, not a visual permutation matrix.
+    for test in sorted((ROOT / 'tests').glob('*.test.cjs')):
+        if any(f'../src/{component}.js' in test.read_text(encoding='utf-8') for component in selected):
+            checks.append(test.relative_to(ROOT).as_posix())
+    checks = sorted(set(checks))
+    if 'answer-card' in selected:
+        checks.insert(0, 'tests/design-sources.test.cjs')
+    return checks
 
 
 # docs/runtime-qualification.md#runtime-adapters: the one data table that holds runtime names as values.
@@ -177,10 +222,17 @@ def in_scope(rule, bodies):
 
 def unnamed(findings, task_text, bodies=''):
     """Findings the task text neither names nor `bodies` declare in scope; a removal also needs `<ID> -> <destination>`."""
-    named = cited(task_text, set(sum(findings.values(), [])))
-    missing = [f'{k} ({kind})' for kind in ('changed', 'tests') for k in findings[kind] if k not in named and not in_scope(k, bodies)]
+    approvals = re.sub(r'^Retains:.*$', '', task_text, flags=re.M)
+    named = cited(approvals, set(sum(findings.values(), [])))
+    retained = set()
+    for rule, destination in re.findall(r'^Retains: (.+?)\s*(?:->|→)\s*(\S.*)$', task_text, re.M):
+        path, _, detector = destination.strip().partition('::')
+        file = ROOT / path
+        if (TEST_PATH.fullmatch(path) or re.fullmatch(r'tests/[^/]+\.cjs', path)) and file.resolve().is_relative_to(ROOT.resolve()) and file.is_file() and detector and detector in file.read_text(encoding='utf-8'):
+            retained.update(cited(rule, findings['tests']))
+    missing = [f'{k} ({kind})' for kind in ('changed', 'tests') for k in findings[kind] if k not in named and not in_scope(k, bodies) and not (kind == 'tests' and k in retained)]
     for k in findings['removed']:
-        if not re.search(id_pattern(k).pattern + r'\s*(?:->|→)\s*\S', task_text):
+        if not re.search(id_pattern(k).pattern + r'\s*(?:->|→)\s*\S', approvals):
             missing.append(f'{k} (removed; name `{k} -> <ID, file or none>`)')
     return missing
 
@@ -706,7 +758,11 @@ def main():
     parser.add_argument('--plan', action='store_true', help='print selection without running checks')
     parser.add_argument('--rules', action='store_true', help='run only the rule-change gate and coverage report')
     parser.add_argument('--lint', action='store_true', help='prepare and run only the pinned specq contract lint')
+    parser.add_argument('--web', nargs='+', metavar='PATH', help='run only registered affected web components and adapters')
     args = parser.parse_args()
+    focused_web = web_checks(args.web) if args.web else None
+    if args.web and (focused_web is None or args.full or args.rules or args.lint):
+        parser.error('--web requires only known component inputs and cannot combine with --full/--rules/--lint')
     if args.lint:
         command = contract_lint()
         run_lint(command)
@@ -717,11 +773,14 @@ def main():
             raise SystemExit(failed)
         return
     try:
-        paths = changes(args.base)
+        paths = args.web or changes(args.base)
         scope = 'full' if args.full or os.environ.get('CHECK_FULL') == 'true' else selection(paths)
     except (subprocess.CalledProcessError, UnicodeError):
         paths, scope = [], 'full'
+    selected_web = focused_web if args.web else (web_checks(paths) if scope == 'web' else None)
     if args.plan:
+        if selected_web is not None:
+            print('web checks:', ', '.join(selected_web))
         print('scope='+scope)
         print('Rust selection:', RUST_SELECTION, describe_pick(blast_radius(paths)), file=sys.stderr)
         return
@@ -753,6 +812,12 @@ def main():
         subprocess.run(command, cwd=ROOT, env=child_env, check=True, timeout=left)
 
     try:
+        if args.web:
+            run(['npm', 'run', 'build'])
+            for script in selected_web:
+                run(['node', script])
+            result = 'passed'
+            return
         # CI runs lint once in the plan job; local failures stop before tests or builds.
         if not os.environ.get('GITHUB_ACTIONS'):
             lint = contract_lint()
@@ -781,7 +846,7 @@ def main():
                 for command in format_commands(tracked):
                     run(command)
             # npm ci removes the documented no-save browser instrument dependency.
-            if os.environ.get('RUNNER_OS') is None and any(p.startswith('tests/') and p.endswith('.browser.cjs') for p in paths):
+            if os.environ.get('RUNNER_OS') is None and any(p.startswith('tests/') and p.endswith('.browser.cjs') for p in (selected_web if selected_web is not None else paths)):
                 run(['npm', 'install', '--no-save', '--package-lock=false', '--ignore-scripts', '--no-audit', '--no-fund', 'playwright@1.64.1'])
             with tempfile.TemporaryDirectory(prefix='taskq-tests-') as install:
                 test_env = test_environment(env, install)
@@ -791,12 +856,12 @@ def main():
                 print(f'Rust selection ({RUST_SELECTION}):', describe_pick(pick), flush=True)
                 full_requested = args.full or os.environ.get('CHECK_FULL') == 'true'
                 began_tests = time.monotonic()
-                if scope != 'full':
+                if scope != 'full' and selected_web is None:
                     run(['cargo', '+stable', 'test', '--locked', '--bin', 'taskq', 'core::tests'], environment=test_env)
-                elif narrows(RUST_SELECTION, os.environ.get('GITHUB_EVENT_NAME'), full_requested, pick):
+                elif scope == 'full' and narrows(RUST_SELECTION, os.environ.get('GITHUB_EVENT_NAME'), full_requested, pick):
                     for arguments in selected_commands(pick):
                         run(['cargo', '+stable', 'test', '--locked', *arguments], environment=test_env)
-                else:
+                elif scope == 'full':
                     run(['cargo', '+stable', 'test', '--locked'], environment=test_env)
                     # Only pull_request CI repeats the pick to time it: a local gate and the queue stay as they are.
                     if RUST_SELECTION == 'shadow' and scope == 'full' and os.environ.get('GITHUB_EVENT_NAME') == 'pull_request' and not full_requested:
@@ -805,14 +870,15 @@ def main():
                 with tempfile.TemporaryDirectory(prefix='taskq-gate-') as install:
                     run(['cargo', '+stable', 'run', '--locked', '--', 'selftest'], {'TASKQ_SELFTEST_OFFLINE':'1', 'TASKQ_INCIDENT_REPORTS':'off'}, environment=test_environment(env, install))
             if os.environ.get('RUNNER_OS') in (None, 'Linux'):
-                for script in sorted((ROOT / 'tests').glob('*.test.cjs')):
+                for script in ([ROOT / p for p in selected_web if p.endswith('.test.cjs')] if selected_web is not None else sorted((ROOT / 'tests').glob('*.test.cjs'))):
                     run(['node', script.relative_to(ROOT).as_posix()])
-                run(['sh', 'docs/shots/check.test.sh'])
-                run(['sh', 'docs/shots/update.test.sh'])
-                run(['sh', '.github/release-tag.test.sh'])
-                run(['sh', '.github/release-publish.test.sh'])
-                run([sys.executable, '.github/release-check.test.py'])
-        for path in paths:
+                if selected_web is None:
+                    run(['sh', 'docs/shots/check.test.sh'])
+                    run(['sh', 'docs/shots/update.test.sh'])
+                    run(['sh', '.github/release-tag.test.sh'])
+                    run(['sh', '.github/release-publish.test.sh'])
+                    run([sys.executable, '.github/release-check.test.py'])
+        for path in (selected_web if selected_web is not None else paths):
             if path.startswith('tests/') and path.endswith('.browser.cjs') and os.environ.get('RUNNER_OS') is None:
                 run(['node', path])
         result = 'passed'

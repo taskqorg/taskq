@@ -35,8 +35,40 @@ function derive(name) {
   }
   return derived;
 }
-module.exports = { names, derive, render };
-if (require.main === module) {
+function verifyAnswerCard(directory, version) {
+  const assert = require("node:assert/strict");
+  const derived = derive("answer-card");
+  assert.deepEqual(Object.keys(derived.files), [
+    "src/answer-card.js",
+    "src/reply-files.js",
+    "src/answer-card.css",
+    "tests/fixtures/answer-card.json",
+  ]);
+  assert.equal(
+    text("build/web/answer-card.sources.json"),
+    render(derived),
+    "stale answer-card source manifest",
+  );
+  for (const [source, suffix] of [
+    ["build/web/answer-card.js", "answer-card.js"],
+    ["src/answer-card.css", "answer-card.css"],
+    ["tests/fixtures/answer-card.json", "answer-card-fixtures.json"],
+    ["build/web/answer-card.sources.json", "answer-card-sources.json"],
+  ]) {
+    assert.equal(
+      sha(fs.readFileSync(path.join(directory, `taskq-${version}-${suffix}`))),
+      sha(fs.readFileSync(path.join(root, source))),
+      "staged bytes: " + suffix,
+    );
+  }
+}
+module.exports = { names, derive, render, verifyAnswerCard };
+if (require.main === module && process.argv[2] === "--verify-release") {
+  if (process.argv.length !== 5)
+    throw Error("usage: --verify-release DIST VERSION");
+  verifyAnswerCard(path.resolve(process.argv[3]), process.argv[4]);
+  console.log("PASS staged answer-card files and source binding");
+} else if (require.main === module) {
   const out = path.resolve(process.argv[2] || path.join(root, "build/web"));
   fs.mkdirSync(out, { recursive: true });
   for (const name of names)
