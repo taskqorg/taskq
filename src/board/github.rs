@@ -303,11 +303,12 @@ impl GitHub {
                 .map(parse_issue)
                 .collect()
         };
-        if let Some((_, written)) = self
-            .heartbeat
-            .borrow()
-            .as_ref()
-            .filter(|(g, _)| *g == self.api.generation.get())
+        if self.api.poll.is_none()
+            && let Some((_, written)) = self
+                .heartbeat
+                .borrow()
+                .as_ref()
+                .filter(|(g, _)| *g == self.api.generation.get())
         {
             if let Some(row) = list.iter_mut().find(|i| {
                 i.number == written.number

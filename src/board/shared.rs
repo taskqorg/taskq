@@ -82,6 +82,7 @@ pub(super) fn credentials_changed(api: &Api) -> Result<()> {
             .lock()
             .map_err(|_| "shared board snapshot poisoned")?;
         snapshot.confirmed.clear();
+        snapshot.ready = false;
         shared.epoch.fetch_add(1, Ordering::AcqRel);
         shared.full.fetch_add(1, Ordering::AcqRel);
     }

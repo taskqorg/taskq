@@ -806,9 +806,34 @@ fn shared_2431_heartbeat_confirmation_does_not_survive_token_rotation() {
             operation: operation(method),
         })
     }));
+    let mut old_api = Api::new(
+        "https://fixture.invalid".into(),
+        api.base.clone(),
+        "invented-A",
+    );
+    old_api.poll = Some(std::time::Duration::ZERO);
+    old_api.transport = Some(Box::new(move |method, url, _| {
+        let host = json!({"number":7,"title":"taskq host win","body":"beat","state":"open","author_association":"OWNER","created_at":stamp(base),"updated_at":stamp(base+if method=="PATCH" {500}else{100}),"labels":[{"name":"taskq-host"}]});
+        let task = json!({"number":9,"state":"open","updated_at":stamp(base+200),"labels":[{"name":"taskq"}]});
+        let body = if method == "PATCH" {
+            host
+        } else if url.contains("labels=taskq") {
+            json!([task])
+        } else {
+            json!([host, task])
+        };
+        Ok(Reply {
+            status: 200,
+            headers: vec![],
+            body: body.to_string(),
+            operation: operation(method),
+        })
+    }));
+    let old_owner = github::GitHub::new(old_api);
     let board = github::GitHub::new(api);
     assert_eq!(board.issues(None).unwrap()[0].updated, base + 100);
     board.edit(7, "beat").unwrap();
+    old_owner.edit(7, "beat").unwrap();
     assert_eq!(board.issues(None).unwrap()[0].updated, base + 500);
     *token.borrow_mut() = "invented-B".into();
     assert_eq!(board.issues(None).unwrap()[0].updated, base + 100);
@@ -831,5 +856,18 @@ fn shared_2431_heartbeat_confirmation_does_not_survive_token_rotation() {
     );
     assert_eq!(board.api.generation.get(), 3);
     assert_eq!(board.issues(None).unwrap()[0].updated, base + 100);
+    *token.borrow_mut() = "invented-A".into();
+    board.api.refresh().unwrap();
+    assert!(
+        shared::snapshot(&board.api, None, false).is_err(),
+        "old-generation snapshot stays unavailable until readback"
+    );
+    assert_eq!(board.issues(None).unwrap()[0].updated, base + 100);
+    let other = old_owner.issues(None).unwrap();
+    assert_eq!(
+        other.iter().find(|i| i.number == 7).unwrap().updated,
+        base + 100,
+        "an old adapter's private confirmation cannot bypass shared expiration"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
