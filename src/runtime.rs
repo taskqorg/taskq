@@ -105,6 +105,12 @@ pub fn session_name(l: &Launch) -> String {
     format!("{role} #{} {}", l.task, title.trim_end())
 }
 
+/// Confirmed native termination; a signal or cleanup need not have a numeric exit code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Exit {
+    pub code: Option<i32>,
+}
+
 /// A running child; a trait so the service can be tested with fake processes.
 pub trait Proc {
     /// Read-only progress source and current input byte boundary; never an execution verdict.
@@ -148,6 +154,11 @@ pub trait Proc {
     fn released(&mut self) {}
     /// The exit code once the child has exited; `Err` is an unknown read (§ 4 reconciliation), never an exit.
     fn exited(&mut self) -> Result<Option<i32>, String>;
+    /// Observed termination, independent of a numeric exit or a terminal turn record.
+    fn termination(&mut self) -> Result<Option<Exit>, String> {
+        self.exited()
+            .map(|ended| ended.map(|code| Exit { code: Some(code) }))
+    }
     fn exit_error(&self) -> Option<&'static str> {
         None
     }
@@ -165,12 +176,12 @@ pub trait Proc {
 }
 
 /// One owned stop attempt; a pending/failed read never releases the caller's process or capacity.
-pub fn stop(proc: &mut dyn Proc) -> Result<i32, String> {
+pub fn stop(proc: &mut dyn Proc) -> Result<Exit, String> {
     coreq::telemetry::capture::operation(
         "runtime.stop",
         || {
             proc.kill()?;
-            proc.exited()?
+            proc.termination()?
                 .ok_or_else(|| "stop pending; process exit unconfirmed".into())
         },
         |_| "stop-unconfirmed",
@@ -184,13 +195,21 @@ impl Proc for Child {
             .ok_or("native process already exited".into())
     }
     fn exited(&mut self) -> Result<Option<i32>, String> {
-        match self.try_wait() {
-            Ok(s) => Ok(s.map(|s| s.code().unwrap_or(-1))),
-            Err(e) => Err(format!("wait failed: {e}")),
-        }
+        self.termination()?
+            .map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into()))
+            .transpose()
+    }
+    fn termination(&mut self) -> Result<Option<Exit>, String> {
+        self.try_wait()
+            .map(|status| {
+                status.map(|status| Exit {
+                    code: status.code(),
+                })
+            })
+            .map_err(|e| format!("wait failed: {e}"))
     }
     fn kill(&mut self) -> Result<(), String> {
-        if self.exited()?.is_some() {
+        if self.termination()?.is_some() {
             return Ok(());
         }
         // Windows: the child is `cmd.exe` running `codex.cmd`; node and `codex.exe` below it survive a plain kill (#933)
@@ -694,7 +713,7 @@ pub fn quota_windows(log: &Path, rt: &str) -> Vec<(String, Option<i64>)> {
 pub fn auth_rejected(log: &Path, rt: &str) -> Option<String> {
     classify(rt, &log_text(log, 0)?)
         .filter(|r| r.error == "auth-rejected")?
-        .detail
+        .reason
 }
 
 /// A Codex turn that ended on a transient model failure (#1843, [transient model failure](docs/design/capacity.md#transient-model-failure)).
@@ -1122,11 +1141,16 @@ impl Proc for CliTurn {
         Ok(self.accepted)
     }
     fn exited(&mut self) -> Result<Option<i32>, String> {
+        self.termination()?
+            .map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into()))
+            .transpose()
+    }
+    fn termination(&mut self) -> Result<Option<Exit>, String> {
         let checkpoint = self.persist();
         let ended = self.ended();
         self.read_error = ended.as_ref().err().cloned();
-        if let Some(code) = self.proc.exited()? {
-            return Ok(Some(code));
+        if let Some(exit) = self.proc.termination()? {
+            return Ok(Some(exit));
         }
         if !self.stopping && ended? {
             self.stopping = true;
@@ -1137,7 +1161,7 @@ impl Proc for CliTurn {
         }
         if self.stopping {
             self.proc.kill()?;
-            self.proc.exited()
+            self.proc.termination()
         } else {
             checkpoint?;
             Ok(None)
@@ -4676,17 +4700,24 @@ impl Proc for AppTurn {
         Ok(self.accepted)
     }
     fn exited(&mut self) -> Result<Option<i32>, String> {
+        self.termination()?
+            .map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into()))
+            .transpose()
+    }
+    fn termination(&mut self) -> Result<Option<Exit>, String> {
         if let Some(h) = &mut self.hand {
-            let Some(code) = h.exited()? else {
+            let Some(exit) = h.termination()? else {
                 return Ok(None);
             };
             self.hand = None;
             if self.cancelled {
-                return Ok(Some(code));
+                return Ok(Some(exit));
             }
             self.thread = codex_thread(&self.log).unwrap_or_default();
             if self.thread.is_empty() {
-                return Ok(Some(if code == 0 { -1 } else { code }));
+                return Ok(Some(Exit {
+                    code: exit.code.map(|code| if code == 0 { -1 } else { code }),
+                }));
             }
             if let Err(e) = self.queue() {
                 self.queue_error = Some(format!("{e}; submission outcome unknown"));
@@ -4714,7 +4745,9 @@ impl Proc for AppTurn {
             self.queue_error = None;
         }
         if ended {
-            return Ok(Some(if self.history.aborted { -1 } else { 0 }));
+            return Ok(Some(Exit {
+                code: Some(if self.history.aborted { -1 } else { 0 }),
+            }));
         }
         if let Some(e) = &self.queue_error {
             return Err(e.clone());
@@ -4726,7 +4759,7 @@ impl Proc for AppTurn {
             self.cancelled = true;
             return h.kill();
         }
-        if self.exited()?.is_some() {
+        if self.termination()?.is_some() {
             return Ok(());
         }
         let turn = self.history.owned.as_deref().ok_or(

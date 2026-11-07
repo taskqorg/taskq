@@ -1514,8 +1514,8 @@ fn file_stdin_handoff_preserves_bytes_and_never_waits_for_a_reader() {
         }
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let status = loop {
-            if let Some(status) = child.exited().unwrap() {
-                break status;
+            if let Some(exit) = child.termination().unwrap() {
+                break exit.code;
             }
             if std::time::Instant::now() >= until {
                 let cleanup = stop(child.as_mut());
@@ -1525,7 +1525,7 @@ fn file_stdin_handoff_preserves_bytes_and_never_waits_for_a_reader() {
         };
         if mode == "read" {
             assert!(
-                status == 0,
+                status == Some(0),
                 "child could not read the original bytes after cache unlink"
             );
         }
@@ -1568,7 +1568,10 @@ fn native_stop_reaps_the_owned_process() {
         let requested = stop(proc);
         let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
-            if proc.exited().unwrap().is_some() {
+            if let Some(exit) = proc.termination().unwrap() {
+                if exit.code.is_none() {
+                    assert!(proc.exited().unwrap_err().contains("exit code unknown"));
+                }
                 break;
             }
             assert!(
@@ -2924,7 +2927,7 @@ fn app_turn_requires_its_input_and_matching_native_completion() {
     );
     assert_eq!(
         stop(&mut t),
-        Ok(0),
+        Ok(Exit { code: Some(0) }),
         "observed native completion resolves stop even when cancellation is unsupported"
     );
     t.running = || Ok(false);

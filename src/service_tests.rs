@@ -267,6 +267,28 @@ impl Proc for FakeProc {
     }
 }
 
+struct UnknownExit;
+impl Proc for UnknownExit {
+    fn accepted(&mut self) -> Result<bool, String> {
+        Ok(true)
+    }
+    fn exited(&mut self) -> Result<Option<i32>, String> {
+        Err("native exit code unknown".into())
+    }
+    fn termination(&mut self) -> Result<Option<crate::runtime::Exit>, String> {
+        Ok(Some(crate::runtime::Exit { code: None }))
+    }
+    fn refused(&self, _: u64, _: u64, _: u64, _: i32) -> Option<String> {
+        panic!("unknown numeric exit cannot prove pre-submission refusal")
+    }
+    fn kill(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+    fn id(&self) -> u32 {
+        1
+    }
+}
+
 // Chain: § 2 visual evidence -> service copy -> tray inline (#1782). Risk: the app, which has no board token, never
 // gets the image of an open ask, or keeps copies of answered asks.
 #[test]
@@ -6454,7 +6476,10 @@ fn a_live_process_reads_the_same_in_status_and_heartbeat() {
 // Chain: native observation -> aggregate heartbeat -> remote read -> durable terminal after lost response.
 #[test]
 fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {
-    for rt in crate::runtime::RUNTIMES {
+    for (rt, unknown_exit) in crate::runtime::RUNTIMES
+        .iter()
+        .flat_map(|rt| [false, true].map(|unknown| (*rt, unknown)))
+    {
         if crate::runtime::of(rt).has(crate::runtime::Cap::AppTurn)
             && !cfg!(any(target_os = "macos", windows))
         {
@@ -6696,6 +6721,9 @@ fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {
             .unwrap()
             .1
             .borrow_mut() = Some(0);
+        if unknown_exit {
+            s.kids.iter_mut().find(|k| k.attempt == a).unwrap().proc = Box::new(UnknownExit);
+        }
         b.state.borrow_mut().fail_comments = 1;
         s.reap_owned();
         s.beat().unwrap();
@@ -6708,6 +6736,20 @@ fn execution_heartbeat_is_fenced_visible_and_never_reopens_terminal() {
         b.state.borrow_mut().lose_comment_response = true;
         s.reap_owned();
         assert!(s.kids.is_empty());
+        let events = crate::telemetry::worker_events(&c.install);
+        let exit = events
+            .iter()
+            .find(|e| e.task == n && e.attempt == a && e.event == "exit")
+            .unwrap();
+        assert_eq!(exit.outcome, if unknown_exit { "unknown" } else { "ok" });
+        assert_eq!(
+            exit.reason,
+            if unknown_exit {
+                "exit-unknown"
+            } else {
+                "exit-0"
+            }
+        );
         b.state.borrow_mut().lose_comment_response = false;
         let log = entries(&b, n).unwrap();
         assert_eq!(
@@ -7713,39 +7755,59 @@ fn historical_no_host_repair_child() {
 // Chain: § 7 worker exit to review. Risk: a silent exit is not gone; a result gets no reviewer.
 #[test]
 fn exit_without_result_is_gone_and_result_brings_a_reviewer() {
-    let b = Fake::default();
-    let n = b.create("T", "", &["taskq".into()]).unwrap();
-    let c = cfg("mac");
-    let e: Exits = Default::default();
-    let mut s = service(&b, &c, e.clone());
-    s.pass().unwrap();
-    let a = task(&b, n).attempt.unwrap();
-    b.comment(
-        n,
-        &core::entry(
-            "result",
-            &["0123456789abcdef0123456789abcdef01234567"],
-            Some(a),
-            "ok",
-        ),
-    )
-    .unwrap();
-    *e.borrow()[0].1.borrow_mut() = Some(0);
-    s.pass().unwrap();
-    let t = task(&b, n);
-    assert_eq!(
-        (t.state, t.role.as_deref(), t.retries),
-        (State::Review, Some("reviewer"), 0)
-    );
-    let r = t.attempt.unwrap();
-    *e.borrow()[1].1.borrow_mut() = Some(1);
-    s.pass().unwrap(); // reviewer exits without a verdict: gone keeps the result
-    let t = task(&b, n);
-    assert_eq!(
-        (t.state, t.retries, t.result.is_some()),
-        (State::Review, 1, true)
-    );
-    assert_ne!(t.attempt, Some(r));
+    for unknown_exit in [false, true] {
+        let b = Fake::default();
+        let n = b.create("T", "", &["taskq".into()]).unwrap();
+        let c = cfg("mac");
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        s.pass().unwrap();
+        let a = task(&b, n).attempt.unwrap();
+        b.comment(
+            n,
+            &core::entry(
+                "result",
+                &["0123456789abcdef0123456789abcdef01234567"],
+                Some(a),
+                "ok",
+            ),
+        )
+        .unwrap();
+        *e.borrow()[0].1.borrow_mut() = Some(0);
+        s.pass().unwrap();
+        let t = task(&b, n);
+        assert_eq!(
+            (t.state, t.role.as_deref(), t.retries),
+            (State::Review, Some("reviewer"), 0)
+        );
+        let r = t.attempt.unwrap();
+        *e.borrow()[1].1.borrow_mut() = Some(1);
+        if unknown_exit {
+            s.kids[0].proc = Box::new(UnknownExit);
+        }
+        s.pass().unwrap(); // reviewer exits without a verdict: gone keeps the result
+        let t = task(&b, n);
+        assert_eq!(
+            (t.state, t.retries, t.result.is_some()),
+            (State::Review, 1, true)
+        );
+        assert_ne!(t.attempt, Some(r));
+        if unknown_exit {
+            let log = entries(&b, n).unwrap();
+            assert!(
+                log.iter().any(|entry| core::kind(n, &entry.body) == "gone"
+                    && entry.body.contains("exit unknown"))
+            );
+            assert!(
+                core::executions(n, &log)
+                    .iter()
+                    .find(|x| x.id == r)
+                    .unwrap()
+                    .release
+                    == Some(core::Release::Exit)
+            );
+        }
+    }
 }
 
 // Chain: native terminal reviewer -> same-pass gone -> retained result and classified stage.
@@ -8943,7 +9005,7 @@ fn fallback_2118_native_admission_without_model() {
                     .map(|s| s.tasks.iter().map(|r| r.json()).collect::<Vec<_>>())
             );
             let identity = s.kids[0].proc.native_identity().unwrap();
-            assert_eq!(s.kids[0].proc.exited().unwrap(), None);
+            assert_eq!(s.kids[0].proc.termination().unwrap(), None);
             let attempt = task(&b, n).attempt;
             s.pass().unwrap();
             assert_eq!(
@@ -8982,11 +9044,11 @@ fn fallback_2118_native_admission_without_model() {
             let identity = kid.proc.native_identity().ok();
             kid.proc.kill().unwrap();
             let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-            while kid.proc.exited().unwrap().is_none() && std::time::Instant::now() < until {
+            while kid.proc.termination().unwrap().is_none() && std::time::Instant::now() < until {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             assert!(
-                kid.proc.exited().unwrap().is_some(),
+                kid.proc.termination().unwrap().is_some(),
                 "native exit unconfirmed"
             );
             if let Some(identity) = identity {

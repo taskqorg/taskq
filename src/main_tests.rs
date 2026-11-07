@@ -4560,7 +4560,7 @@ fn handover_image_child() {
             fs::write(root.join("ready"), "").unwrap();
             let until = Instant::now() + Duration::from_secs(10);
             if cold == "ended" {
-                while s.kids[0].proc.exited().unwrap().is_none() {
+                while s.kids[0].proc.termination().unwrap().is_none() {
                     assert!(Instant::now() < until);
                     std::thread::sleep(Duration::from_millis(10));
                 }
@@ -4595,7 +4595,7 @@ fn handover_image_child() {
     );
     if cold != "ended" {
         assert_eq!(
-            s.kids[0].proc.exited(),
+            s.kids[0].proc.termination(),
             Ok(None),
             "the re-exec killed the live child"
         );
@@ -4642,7 +4642,11 @@ fn handover_image_child() {
         fs::write(root.join("exit"), "").unwrap();
     }
     if !s.kids.is_empty() {
-        while !s.kids[0].proc.exited().is_ok_and(|code| code.is_some()) {
+        while !s.kids[0]
+            .proc
+            .termination()
+            .is_ok_and(|code| code.is_some())
+        {
             assert!(Instant::now() < until);
             std::thread::sleep(Duration::from_millis(10));
         }

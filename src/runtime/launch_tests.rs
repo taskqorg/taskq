@@ -171,17 +171,18 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
             let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
             loop {
                 let began = std::time::Instant::now();
-                if let Some(code) = child.exited().unwrap() {
+                if let Some(exit) = child.termination().unwrap() {
                     let elapsed = began.elapsed();
                     drop(held);
                     assert!(
                         elapsed < std::time::Duration::from_millis(500),
                         "terminal polling waited on telemetry: {elapsed:?}"
                     );
-                    assert_ne!(
-                        code, 0,
-                        "a completed turn stops the deliberately lingering client"
+                    assert_eq!(
+                        exit.code, None,
+                        "cleanup never invents a numeric signal exit"
                     );
+                    assert!(child.exited().unwrap_err().contains("exit code unknown"));
                     assert_ne!(
                         coreq::process::identity(identity.pid).unwrap(),
                         Some(identity)
@@ -193,7 +194,7 @@ fn trait_launch_preserves_input_policy_environment_and_exit() {
                         "ok"
                     );
                     assert!(
-                        child.exited().unwrap().is_some(),
+                        child.termination().unwrap().is_some(),
                         "terminal reread must not duplicate records"
                     );
                     break;
@@ -415,7 +416,7 @@ fn trait_scope_retains_descendants_after_launcher_exit() {
         fn drop(&mut self) {
             let _ = self.0.kill();
             let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
-            while !self.0.exited().is_ok_and(|exit| exit.is_some())
+            while !self.0.termination().is_ok_and(|exit| exit.is_some())
                 && std::time::Instant::now() < until
             {
                 std::thread::sleep(std::time::Duration::from_millis(10));
@@ -468,28 +469,28 @@ fn trait_scope_retains_descendants_after_launcher_exit() {
         assert!(std::time::Instant::now() < until);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert_eq!(child.exited(), Ok(None));
+    assert_eq!(child.termination(), Ok(None));
     assert_eq!(
         coreq::process::identity(pid).unwrap(),
         Some(descendant.clone())
     );
     child.kill().unwrap();
-    while child.exited().unwrap().is_none() {
+    while child.termination().unwrap().is_none() {
         assert!(std::time::Instant::now() < until);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert_ne!(coreq::process::identity(pid).unwrap(), Some(descendant));
     assert_eq!(
-        child.exited(),
-        Ok(Some(-1)),
-        "cancelled scope preserves its terminal verdict"
+        child.termination(),
+        Ok(Some(Exit { code: None })),
+        "scope termination preserves the unknown numeric exit"
     );
     assert_eq!(
         coreq::process::identity(sentinel.id()).unwrap(),
         Some(sentinel.native_identity().unwrap())
     );
     sentinel.kill().unwrap();
-    while sentinel.exited().unwrap().is_none() {
+    while sentinel.termination().unwrap().is_none() {
         assert!(std::time::Instant::now() < until);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -609,8 +610,8 @@ fn native_trait_start_resume_and_transcript() {
         };
         let until = std::time::Instant::now() + std::time::Duration::from_secs(180);
         let exit = loop {
-            match proc.exited() {
-                Ok(Some(code)) => break code,
+            match proc.termination() {
+                Ok(Some(exit)) => break exit.code,
                 Ok(None) => {}
                 Err(reason) => eprintln!("qualification observation pending: {reason}"),
             }
@@ -812,7 +813,7 @@ fn native_worker_survives_service_restart() {
         };
         let until = Instant::now() + Duration::from_secs(100);
         let native = loop {
-            let _ = proc.exited();
+            let _ = proc.termination();
             if let Ok(native) = proc.native_identity()
                 && proc.checkpoint(&cfg, &l, attempt).is_ok()
             {

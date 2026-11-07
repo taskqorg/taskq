@@ -202,21 +202,28 @@ impl Proc for Native {
         self.run.id().expect("CLI launch has a child")
     }
     fn exited(&mut self) -> Result<Option<i32>, String> {
+        self.termination()?
+            .map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into()))
+            .transpose()
+    }
+    fn termination(&mut self) -> Result<Option<Exit>, String> {
         let adapter = agent(&self.rt)?;
         let state = adapter.poll(&mut self.run)?;
         #[cfg(windows)]
-        let scope_exit = match self.scope.exited()? {
-            Some(code) => code,
-            None => return Ok(None),
-        };
+        if self.scope.exited()?.is_none() {
+            return Ok(None);
+        }
         if state == agentq_runtime::agent::State::Running {
             return Ok(None);
         }
-        // A terminal report is distinct from native process exit, which it must explicitly carry.
-        let exit = adapter
-            .report(&self.run)?
-            .exit
-            .ok_or("native process exit unconfirmed")?;
+        let report = adapter.report(&self.run)?;
+        match report.termination {
+            agentq_runtime::agent::ProcessTermination::Observed => {}
+            agentq_runtime::agent::ProcessTermination::Unknown { reason } => {
+                return Err(format!("native process exit unconfirmed: {reason}"));
+            }
+        }
+        let exit = Exit { code: report.exit };
         if !self.recorded {
             self.recorded = true;
             if let Some(install) = &self.install {
@@ -230,15 +237,7 @@ impl Proc for Native {
                 }
             }
         }
-        #[cfg(windows)]
-        {
-            let _ = exit;
-            Ok(Some(scope_exit))
-        }
-        #[cfg(not(windows))]
-        {
-            Ok(Some(exit))
-        }
+        Ok(Some(exit))
     }
     fn kill(&mut self) -> Result<(), String> {
         #[cfg(windows)]

@@ -1231,10 +1231,16 @@ pub struct Kid {
 }
 
 impl Kid {
-    fn release(&self, board: &dyn Board, code: i32, evidence: &str) -> Result<bool, String> {
-        let refusal = self
-            .proc
-            .refused(self.task, self.attempt, self.execution, code);
+    fn release(
+        &self,
+        board: &dyn Board,
+        code: Option<i32>,
+        evidence: &str,
+    ) -> Result<bool, String> {
+        let refusal = code.filter(|code| *code != 0).and_then(|code| {
+            self.proc
+                .refused(self.task, self.attempt, self.execution, code)
+        });
         release_execution_text(
             board,
             self.task,
@@ -2057,7 +2063,7 @@ impl<'a> Service<'a> {
                 continue;
             }
             k.stopping = true;
-            let observed = match k.proc.exited() {
+            let observed = match k.proc.termination() {
                 Ok(Some(code)) => Ok(code),
                 _ => crate::runtime::stop(k.proc.as_mut()),
             };
@@ -2100,7 +2106,7 @@ impl<'a> Service<'a> {
                     Some("native observation deferred; reduced pass budget exhausted".into());
                 return true;
             }
-            let status = crate::runtime::observe_until(until, || k.proc.exited());
+            let status = crate::runtime::observe_until(until, || k.proc.termination());
             record_known_pid(
                 &self.cfg,
                 &mut self.unknown_pids,
@@ -2147,18 +2153,22 @@ impl<'a> Service<'a> {
             }) {
                 ("ended", _) => match k.release(
                     self.board,
-                    status.as_ref().unwrap().unwrap(),
+                    status.as_ref().unwrap().unwrap().code,
                     &k.proc.lost_input().unwrap_or_default(),
                 ) {
                     Ok(_) => {
-                        let code = status.as_ref().unwrap().unwrap();
+                        let code = status.as_ref().unwrap().unwrap().code;
                         let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| {
                             if r == "reviewer" { "review" } else { "work" }
                         });
-                        let exit_reason = k
-                            .proc
-                            .exit_error()
-                            .map_or_else(|| format!("exit-{code}"), String::from);
+                        let exit_reason = code.map_or_else(
+                            || "exit-unknown".into(),
+                            |code| {
+                                k.proc
+                                    .exit_error()
+                                    .map_or_else(|| format!("exit-{code}"), String::from)
+                            },
+                        );
                         crate::telemetry::record_worker(
                             &self.cfg.install,
                             &self.cfg.repo,
@@ -2169,7 +2179,11 @@ impl<'a> Service<'a> {
                             k.task,
                             k.attempt,
                             k.proc.id(),
-                            if code == 0 { "ok" } else { "failed" },
+                            match code {
+                                Some(0) => "ok",
+                                Some(_) => "failed",
+                                None => "unknown",
+                            },
                             &exit_reason,
                         );
                         retired.push((
@@ -4431,7 +4445,7 @@ impl<'a> Service<'a> {
             if handed {
                 k.proc.accept();
             }
-            let status = crate::runtime::observe_until(observation_until, || k.proc.exited());
+            let status = crate::runtime::observe_until(observation_until, || k.proc.termination());
             let role_code = self.begun.get(&k.attempt).map_or("work", |(r, _, _)| {
                 if r == "reviewer" { "review" } else { "work" }
             });
@@ -4523,7 +4537,8 @@ impl<'a> Service<'a> {
                 }),
                 status,
             ) {
-                (("ended", _), Ok(Some(code))) => {
+                (("ended", _), Ok(Some(exit))) => {
+                    let code = exit.code;
                     let hold = by_n
                         .get(&k.task)
                         .and_then(|v| {
@@ -4558,10 +4573,14 @@ impl<'a> Service<'a> {
                             return true;
                         }
                     };
-                    let exit_reason = k
-                        .proc
-                        .exit_error()
-                        .map_or_else(|| format!("exit-{code}"), String::from);
+                    let exit_reason = code.map_or_else(
+                        || "exit-unknown".into(),
+                        |code| {
+                            k.proc
+                                .exit_error()
+                                .map_or_else(|| format!("exit-{code}"), String::from)
+                        },
+                    );
                     crate::telemetry::record_worker(
                         &self.cfg.install,
                         &self.cfg.repo,
@@ -4572,7 +4591,11 @@ impl<'a> Service<'a> {
                         k.task,
                         k.attempt,
                         k.proc.id(),
-                        if code == 0 { "ok" } else { "failed" },
+                        match code {
+                            Some(0) => "ok",
+                            Some(_) => "failed",
+                            None => "unknown",
+                        },
                         &exit_reason,
                     );
                     retired.push((
@@ -4619,7 +4642,7 @@ impl<'a> Service<'a> {
         }
         for (n, a, code, failure, lost, source, recorded) in exited {
             self.ended(n, a, by_n.get(&n).copied(), failure, source, recorded);
-            if code == 0
+            if code == Some(0)
                 && let Some(v) = by_n.get(&n)
                 && let Some((rt, _)) = rt_of(&v.projection.task)
             {
@@ -4663,7 +4686,11 @@ impl<'a> Service<'a> {
                         a,
                         None,
                         now,
-                        &format!("exit {code}{}", self.last_message(n, a, t)),
+                        &format!(
+                            "exit {}{}",
+                            code.map_or_else(|| "unknown".into(), |code| code.to_string()),
+                            self.last_message(n, a, t)
+                        ),
                     )?;
                 }
                 touched.insert(n);
@@ -4725,7 +4752,7 @@ impl<'a> Service<'a> {
                     && x.runtime==k.rt && x.release==Some(core::Release::Exit)));
                 if let Ok(true)=exit {
                     k.proc.released();
-                    match crate::runtime::observe_until(native_until,||k.proc.exited()) {
+                    match crate::runtime::observe_until(native_until,||k.proc.termination()) {
                         Ok(Some(_))=>{
                             retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has(Cap::Cli),k.proc.id()));
                             released.insert(k.execution);stopped.push((k.task,k.attempt,k.proc.progress_source().ok(),k.proc.records_agent()));
@@ -4746,9 +4773,10 @@ impl<'a> Service<'a> {
                 let child=crate::snapshot::Child {exited:stop.is_ok(),unknown:stop.as_ref().err().map(String::as_str),stopping:true};
                 match crate::snapshot::verdict(&crate::snapshot::Signals {local:true,child:Some(child),..Default::default()}) {
                     _ if stop.is_ok() && pending_acceptance.contains(&k.attempt) => return true,
-                    ("ended",_) => match k.release(self.board,stop.unwrap(),"") {
+                    ("ended",_) => match k.release(self.board,stop.as_ref().unwrap().code,"") {
                         Ok(_)=>{
-                            crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, pid_before, "ok", kill_reason);
+                            let code = stop.unwrap().code;
+                            crate::telemetry::record_worker(&self.cfg.install, &self.cfg.repo, &self.cfg.me, &k.rt, role_code, "exit", k.task, k.attempt, pid_before, if code.is_some() { "ok" } else { "unknown" }, if code.is_none() { "exit-unknown" } else { kill_reason });
                             retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).has(Cap::Cli),k.proc.id()));
                             released.insert(k.execution);stopped.push((k.task,k.attempt,k.proc.progress_source().ok(),k.proc.records_agent()));
                         },
