@@ -3,7 +3,7 @@
 pub mod progress;
 pub mod protected_app_server;
 
-use agentq_runtime::agent::NativeSpec;
+use agentq_runtime::agent::{Event, NativeSpec};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -651,8 +651,8 @@ pub fn usage_limit(log: &Path, rt: &str) -> Option<Option<i64>> {
     classify(rt, &log_text(log, 0)?)?.reached
 }
 
-/// Provider metadata for the latest native turn. AgentQ remains the owner of quota-error classification.
-/// Unknown names/resets stay unknown; prose never invents a weekly or five-hour reset.
+/// The rejected windows of the latest native turn, read per record by AgentQ, which owns quota-error classification.
+/// Unknown names and resets stay unknown; prose never invents a weekly or five-hour reset.
 pub fn quota_windows(log: &Path, rt: &str) -> Vec<(String, Option<i64>)> {
     let Some(events) = events(log, 0) else {
         return vec![];
@@ -665,45 +665,30 @@ pub fn quota_windows(log: &Path, rt: &str) -> Vec<(String, Option<i64>)> {
         .unwrap_or(0);
     let mut windows = vec![];
     for e in &events[start..] {
-        let info = if e["type"] == "rate_limit_event" {
-            &e["rate_limit_info"]
-        } else {
-            &e["quotaLimits"]
+        let Some(report) = classify(rt, &e.to_string()) else {
+            return vec![];
         };
-        let reached = classify(rt, &e.to_string()).and_then(|r| r.reached);
-        if reached.is_some() || e["type"] == "rate_limit_event" && info["status"] == "rejected" {
-            let window = info["rateLimitType"]
-                .as_str()
-                .filter(|w| {
-                    w.len() <= 32 && w.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-                })
-                .unwrap_or("unknown");
-            windows.push((
-                window.into(),
-                info["resetsAt"].as_i64().or(reached.flatten()),
-            ));
+        let reached = report.reached.flatten();
+        let rejected: Vec<_> = report
+            .limits
+            .iter()
+            .filter(|w| w.rejected == Some(true))
+            .map(|w| {
+                let name = w
+                    .window
+                    .as_deref()
+                    .filter(|w| {
+                        w.len() <= 32 && w.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    })
+                    .unwrap_or("unknown");
+                let reset = w.resets_at.and_then(|r| i64::try_from(r).ok());
+                (name.to_string(), reset.or(reached))
+            })
+            .collect();
+        if rejected.is_empty() && report.reached.is_some() {
+            windows.push(("unknown".to_string(), reached));
         }
-        let rates = match e["type"].as_str() {
-            Some("rate_limits") => &e["rate_limits"],
-            Some("event_msg")
-                if matches!(
-                    e["payload"]["type"].as_str(),
-                    Some("rate_limits" | "token_count")
-                ) =>
-            {
-                &e["payload"]["rate_limits"]
-            }
-            _ => continue,
-        };
-        for key in ["primary", "secondary"] {
-            let w = &rates[key];
-            if w["used_percent"].as_f64().is_some_and(|v| v >= 100.0) {
-                let name = w["window_minutes"]
-                    .as_u64()
-                    .map_or_else(|| "unknown".into(), |m| format!("{m}m"));
-                windows.push((name, w["resets_at"].as_i64()));
-            }
-        }
+        windows.extend(rejected);
     }
     windows.sort();
     windows.dedup();
@@ -724,124 +709,27 @@ pub fn transient_failure(log: &Path, rt: &str) -> Option<String> {
         .detail
 }
 
-/// #2198 [background job at turn end](docs/design/capacity.md#background-job-at-turn-end): the labels of the Claude
-/// background jobs (Bash `run_in_background`, Monitor) the last turn started and never saw end, oldest first. A job
-/// ends with a terminal `<task-notification>` for its tool use or task id, or a TaskStop/KillShell naming its task id;
-/// an errored start never ran. Empty when unreadable or none.
-pub fn live_background(log: &Path) -> Vec<String> {
-    let Ok(bytes) = std::fs::read(log) else {
+/// #2198 [background job at turn end](docs/design/capacity.md#background-job-at-turn-end): the labels AgentQ reports for
+/// the background jobs the last turn started and never saw end, oldest first. Only the records after this attempt's
+/// last start or resume marker reach it. Empty when unreadable or none.
+pub fn live_background(log: &Path, rt: &str) -> Vec<String> {
+    let Some(text) = log_text(log, 0) else {
         return vec![];
     };
-    let text = String::from_utf8_lossy(&bytes);
-    let lines: Vec<&str> = text.lines().collect();
-    let json = |l: &str| serde_json::from_str::<serde_json::Value>(l).ok();
-    let start = lines
-        .iter()
-        .rposition(|l| {
-            l.contains("\"taskq.rules\"")
-                && json(l).is_some_and(|e| {
-                    e["type"] == "taskq.rules"
-                        && matches!(e["phase"].as_str(), Some("start" | "resume"))
-                })
-        })
-        .map_or(0, |i| i + 1);
-    let tag = |s: &str, t: &str| {
-        s.split_once(&format!("<{t}>"))
-            .and_then(|(_, r)| r.split_once(&format!("</{t}>")))
-            .map(|(v, _)| v.trim().to_string())
-    };
-    let (mut jobs, mut ids, mut ended) = (
-        Vec::<(String, String)>::new(),
-        std::collections::BTreeMap::<String, String>::new(),
-        std::collections::BTreeSet::<String>::new(),
-    );
-    for l in &lines[start..] {
-        // the notification sits in queue, attachment or user records alike: read it from the raw line
-        for block in l.split("<task-notification>").skip(1) {
-            let block = block
-                .split("</task-notification>")
-                .next()
-                .unwrap_or_default();
-            if tag(block, "status").is_some_and(|s| {
-                matches!(
-                    s.as_str(),
-                    "completed" | "failed" | "killed" | "stopped" | "error" | "timeout" | "expired"
-                )
-            }) {
-                ended.extend(
-                    tag(block, "tool-use-id")
-                        .into_iter()
-                        .chain(tag(block, "task-id")),
-                );
-            }
-        }
-        if !l.contains("tool_") {
-            continue;
-        }
-        let Some(e) = json(l) else { continue };
-        let Some(content) = e["message"]["content"]
-            .as_array()
-            .filter(|_| e["type"] == "assistant" || e["type"] == "user")
-        else {
-            continue;
-        };
-        for c in content {
-            let id = c["id"]
-                .as_str()
-                .or(c["tool_use_id"].as_str())
-                .unwrap_or_default()
-                .to_string();
-            match (c["type"].as_str(), c["name"].as_str()) {
-                (Some("tool_use"), Some(name))
-                    if name == "Monitor"
-                        || name == "Bash" && c["input"]["run_in_background"] == true =>
-                {
-                    let label = c["input"]["description"]
-                        .as_str()
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or(name);
-                    jobs.push((id, label.chars().take(80).collect()));
-                }
-                (Some("tool_use"), Some("TaskStop" | "KillShell" | "KillBash")) => {
-                    ended.extend(
-                        c["input"]
-                            .as_object()
-                            .into_iter()
-                            .flat_map(|o| o.values())
-                            .filter_map(|v| v.as_str())
-                            .map(String::from),
-                    );
-                }
-                (Some("tool_result"), _) if jobs.iter().any(|(j, _)| *j == id) => {
-                    if c["is_error"] == true {
-                        ended.insert(id);
-                        continue;
-                    }
-                    let out = c["content"]
-                        .as_str()
-                        .map(String::from)
-                        .unwrap_or_else(|| c["content"].to_string());
-                    let task = ["with ID: ", "(task "]
-                        .iter()
-                        .find_map(|p| out.split_once(p))
-                        .map(|(_, r)| {
-                            r.chars()
-                                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-                                .collect::<String>()
-                        });
-                    ids.insert(id, task.unwrap_or_default());
-                }
-                _ => {}
-            }
+    let mut start = 0;
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        at += line.len();
+        if line.contains("\"taskq.rules\"")
+            && serde_json::from_str::<serde_json::Value>(line).is_ok_and(|e| {
+                e["type"] == "taskq.rules"
+                    && matches!(e["phase"].as_str(), Some("start" | "resume"))
+            })
+        {
+            start = at;
         }
     }
-    jobs.into_iter()
-        .filter(|(j, _)| {
-            ids.get(j)
-                .is_some_and(|t| !ended.contains(j) && (t.is_empty() || !ended.contains(t)))
-        })
-        .map(|(_, l)| l)
-        .collect()
+    classify(rt, &text[start..]).map_or(vec![], |r| r.live_background)
 }
 
 /// `<install>/login-off/<bin>` (#1446): line 1 the `last_refresh` of `auth.json` when the login was rejected, line 2
@@ -902,6 +790,22 @@ pub fn last_message(log: &Path, rt: &str) -> Option<String> {
     let text = log_text(log, 0)?;
     if let Some(m) = classify(rt, &text).and_then(|r| r.text) {
         return Some(m);
+    }
+    if let Some(message) = agent(rt).ok().and_then(|agent| {
+        agent
+            .log_records(&text)
+            .into_iter()
+            .flat_map(|r| r.events)
+            .rev()
+            .find_map(|event| {
+                if let Event::Message { text, .. } = event {
+                    Some(text)
+                } else {
+                    None
+                }
+            })
+    }) {
+        return Some(message);
     }
     let mut tail: Vec<&str> = text
         .lines()
@@ -1054,13 +958,14 @@ impl CliTurn {
         let Some(end) = rest.iter().rposition(|b| *b == b'\n') else {
             return Ok(false);
         };
+        let agent = agent(&self.rt)?;
         let mut ended = false;
-        for v in String::from_utf8_lossy(&rest[..end])
+        for line in String::from_utf8_lossy(&rest[..end])
             .lines()
-            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|l| serde_json::from_str::<serde_json::Value>(l).is_ok())
         {
             if let Some(expected) = &self.session {
-                if let Some(id) = classify(&self.rt, &v.to_string()).and_then(|r| r.session) {
+                if let Some(id) = agent.classify(line).session {
                     if expected != "-" && *expected != id {
                         self.accepted = false;
                         return Err(
@@ -1070,24 +975,40 @@ impl CliTurn {
                     self.session = Some(id);
                 }
             }
-            self.accepted |= matches!(v["type"].as_str(), Some("turn.started" | "assistant"));
-            ended |= matches!(
-                v["type"].as_str(),
-                Some("turn.completed" | "turn.failed" | "result")
-            );
-            if matches!(v["event"].as_str(), Some("step_update" | "result"))
-                || matches!(
-                    v["type"].as_str(),
-                    Some("PLANNER_RESPONSE" | "TOOL_RESPONSE" | "turn.cancelled")
-                )
-            {
-                self.accepted = true;
-                ended = classify(&self.rt, &v.to_string()).is_some_and(|r| r.outcome != "unknown");
+            for record in agent.log_records(line) {
+                self.accepted |= takes_input(&self.rt, &record.events);
+                ended |= record
+                    .events
+                    .iter()
+                    .any(|e| matches!(e, Event::TurnEnd { outcome } if *outcome != "unknown"));
             }
         }
         self.pos += end as u64 + 1;
         Ok(ended)
     }
+}
+
+/// Whether one record proves the runtime took the input. Claude and Antigravity report init before they read input, so
+/// only a Codex turn start counts. A terminal record alone proves nothing on Claude (a launch refusal ends in a result
+/// whose text is no work) or on a completed or failed Codex turn; Antigravity's result and a cancelled Codex turn do.
+fn takes_input(rt: &str, events: &[Event]) -> bool {
+    let a = of(rt);
+    let end = events.iter().find_map(|e| match e {
+        Event::TurnEnd { outcome } => Some(outcome),
+        _ => None,
+    });
+    if let Some(outcome) = end {
+        return !a.has(Cap::Background) && (!a.has(Cap::ThreadLink) || *outcome == "cancelled");
+    }
+    events.iter().any(|e| match e {
+        Event::TurnStart => a.has(Cap::ThreadLink),
+        Event::Message { .. }
+        | Event::Text { .. }
+        | Event::ToolStart { .. }
+        | Event::ToolEnd { .. }
+        | Event::Progress => true,
+        _ => false,
+    })
 }
 
 impl Proc for CliTurn {
@@ -1399,10 +1320,7 @@ fn optimization(
             .and_then(Intent::parse)
             .ok_or("AGENTQ_OPTIMIZATION must be inherit, off or on")?,
     };
-    spec.env.extend([
-        (optimization::ENV.into(), intent.code().into()),
-        ("AGENTQ_LAUNCHER".into(), "taskq".into()),
-    ]);
+    spec.env.push(("AGENTQ_LAUNCHER".into(), "taskq".into()));
     let state = agent(rt)?.prepare(intent, "taskq", spec, install);
     if of(rt).has(Cap::RemoteControl) {
         let env = optimizer_settings(spec)["env"].clone();
@@ -1437,7 +1355,7 @@ fn optimizer_settings(spec: &NativeSpec) -> serde_json::Value {
     let env: serde_json::Map<String, serde_json::Value> = spec
         .env
         .iter()
-        .filter(|(k, _)| k == "AGENTQ_OPTIMIZATION" || k == "AGENTQ_LAUNCHER")
+        .filter(|(k, _)| k == "AGENTQ_LAUNCHER")
         .map(|(k, v)| {
             (
                 k.to_string_lossy().into_owned(),
@@ -3353,29 +3271,93 @@ pub(crate) fn native_job_id(id: &str) -> bool {
             }))
 }
 
-fn claude_input_event(event: &serde_json::Value, input: &str) -> bool {
-    if event["type"] != "user" {
-        return false;
-    }
-    let content = &event["message"]["content"];
-    content
-        .as_str()
-        .or_else(|| {
-            content
-                .as_array()
-                .filter(|a| a.len() == 1 && a[0]["type"] == "text")
-                .and_then(|a| a[0]["text"].as_str())
-        })
-        .is_some_and(|s| s.trim() == input)
+// Keep TaskQ's byte/identity guards while AgentQ owns native record decoding.
+#[derive(Default)]
+struct ClaudeRecords {
+    reader: NativeHistory,
+    history: Option<agentq_runtime::agent::history::History>,
+    alias: Option<String>,
+    pending: std::vec::IntoIter<serde_json::Value>,
 }
 
-/// One pre-submission permission/baseline read, using the same bounded native decoder.
+impl ClaudeRecords {
+    fn copied_from(&mut self, session: &str) -> Result<(), String> {
+        if self.alias.as_deref() == Some(session) {
+            return Ok(());
+        }
+        if self.history.is_some() || self.alias.is_some() {
+            return Err("Claude copied history binding changed".into());
+        }
+        self.alias = Some(session.into());
+        Ok(())
+    }
+    fn read(
+        &mut self,
+        path: &Path,
+        mut visit: impl FnMut(serde_json::Value) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let Self {
+            reader,
+            history,
+            alias,
+            pending,
+        } = self;
+        reader.lines(path, |line| {
+            if pending.len() == 0 {
+                if history.is_none() {
+                    use agentq_runtime::agent::history::History;
+                    let session = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .ok_or("Claude history session unavailable")?;
+                    *history = Some(match alias.as_deref() {
+                        Some(native) => History::with_native_session_alias(
+                            "claude-native",
+                            "worker-history",
+                            session,
+                            native,
+                        )?,
+                        None => History::new("claude-native", "worker-history", session)?,
+                    });
+                }
+                *pending = history.as_mut().unwrap().poll(path)?.events.into_iter();
+            }
+            let event = pending
+                .as_slice()
+                .first()
+                .ok_or("Claude history record unavailable")?;
+            if event["raw"].as_str() != Some(line) {
+                return Err("Claude history changed during observation".into());
+            }
+            if event["validity"]["status"] != "valid" {
+                return Err("Claude history record shape invalid or unknown".into());
+            }
+            visit(event.clone())?;
+            pending.next();
+            Ok(())
+        })
+    }
+}
+
+fn claude_input_event(event: &serde_json::Value, input: &str) -> bool {
+    event["author"] == "user"
+        && event["kind"] == "message"
+        && event["blocks"].as_array().is_some_and(|blocks| {
+            blocks.len() == 1
+                && blocks[0]["type"] == "text"
+                && blocks[0]["text"]
+                    .as_str()
+                    .is_some_and(|s| s.trim() == input)
+        })
+}
+
+/// One pre-submission permission/baseline read through the same bounded AgentQ decoder.
 fn claude_history(
     path: &Path,
     before: usize,
     mut visit: impl FnMut(serde_json::Value),
 ) -> Result<usize, String> {
-    let mut reader = NativeHistory::default();
+    let mut reader = ClaudeRecords::default();
     let mut count = 0;
     let until = observation_deadline(std::time::Duration::from_secs(5));
     loop {
@@ -3400,7 +3382,7 @@ fn claude_history(
 
 #[derive(Default)]
 struct ClaudeHistory {
-    reader: NativeHistory,
+    reader: ClaudeRecords,
     count: usize,
     found: bool,
     ended: bool,
@@ -3438,20 +3420,27 @@ impl ClaudeHistory {
                 );
             }
             if (*found || starts) && !*ended {
-                writeln!(output, "{v}")
-                    .map_err(|e| format!("Claude native observation log failed: {e}"))?;
-                if v["type"] == "assistant" {
-                    let text = v["message"]["content"].as_array().and_then(|blocks| {
+                write!(
+                    output,
+                    "{}",
+                    v["raw"]
+                        .as_str()
+                        .ok_or("Claude history source unavailable")?
+                )
+                .map_err(|e| format!("Claude native observation log failed: {e}"))?;
+                if v["author"] == "assistant" && v["kind"] == "message" {
+                    let text = v["blocks"].as_array().and_then(|blocks| {
                         blocks.iter().rev().find_map(|b| {
                             (b["type"] == "text").then(|| b["text"].as_str()).flatten()
                         })
                     });
-                    if let Some(code) = v["error"]
-                        .as_str()
-                        .or_else(|| (v["isApiErrorMessage"] == true).then_some("unknown"))
-                    {
-                        let text = text.unwrap_or("native API error without detail");
-                        let class = if code == "authentication_failed" {
+                    if v["assistant_failure"].is_object() {
+                        let detail = &v["assistant_failure"];
+                        let code = detail["code"].as_str().unwrap_or("unknown");
+                        let text = detail["detail"]
+                            .as_str()
+                            .unwrap_or("native API error without detail");
+                        let class = if detail["error"] == "auth-rejected" {
                             "auth"
                         } else {
                             crate::profile::class(text)
@@ -3463,7 +3452,7 @@ impl ClaudeHistory {
                         *failure = None;
                     }
                 }
-                *ended = v["type"] == "system" && v["subtype"] == "turn_duration";
+                *ended = v["lifecycle"] == "system turn duration";
             }
             *found |= starts;
             *count += 1;
@@ -3757,6 +3746,9 @@ impl ClaudeTurn {
         } else {
             0
         };
+        if !self.session.is_empty() && session != self.session {
+            self.history.reader.copied_from(&self.session)?;
+        }
         let read = self.history.read(
             &claude_transcript_in(home, &session)?,
             before,
@@ -3807,7 +3799,7 @@ impl ClaudeTurn {
                 .ok_or("Claude saved permissions unavailable")?;
             let mut mode = None;
             before = claude_history(&path, 0, |v| {
-                if let Some(m) = v["permissionMode"].as_str() {
+                if let Some(m) = v["permission_mode"].as_str() {
                     mode = Some(m.to_owned());
                 }
             })?;

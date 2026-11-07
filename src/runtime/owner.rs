@@ -207,11 +207,7 @@ pub(crate) fn codex_thread(
     code: Option<i32>,
     submit: impl FnOnce(&str) -> Res<()>,
 ) -> Launched {
-    let thread = stdout
-        .lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .find(|v| v["type"] == "thread.started")
-        .and_then(|v| v["thread_id"].as_str().map(String::from));
+    let thread = super::classify(rt, stdout).and_then(|r| r.session);
     let Some(thread) = thread else {
         if super::launch_cause(rt, &format!("{stdout}{stderr}")) == Some("login-required") {
             return Launched::NoStart(format!("{LOGIN} Codex asked for login"));
@@ -629,38 +625,23 @@ pub fn open_in(runtime: &str) -> String {
     format!("open in {runtime}; close it there first")
 }
 
-/// D5: the outcome only from the runtime's end record (Claude `result`, Codex `turn.completed`/`turn.failed`); exit alone is unknown.
+/// D5: the outcome only from AgentQ's report of the runtime's end record; exit alone is unknown.
 pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
     if super::owner_stream::handles(runtime) {
         return super::owner_stream::outcome(runtime, out);
     }
-    let codex = super::of(runtime).has(Cap::ThreadLink);
-    if codex && format!("{out}{err}").contains("already has an active writer") {
+    if super::of(runtime).has(Cap::ThreadLink)
+        && format!("{out}{err}").contains("already has an active writer")
+    {
         return open_in(runtime);
     }
-    for v in out
-        .lines()
-        .rev()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-    {
-        match (codex, v["type"].as_str()) {
-            (false, Some("result")) if v["is_error"] != true && v["subtype"] == "success" => {
-                return "success".into();
-            }
-            (false, Some("result")) => {
-                return format!("failed: {}", v["subtype"].as_str().unwrap_or("error"));
-            }
-            (true, Some("turn.completed")) => return "success".into(),
-            (true, Some("turn.failed")) => {
-                return format!(
-                    "failed: {}",
-                    v["error"]["message"].as_str().unwrap_or("error")
-                );
-            }
-            _ => {}
+    match super::classify(runtime, out) {
+        Some(r) if r.outcome == "ok" => "success".into(),
+        Some(r) if r.outcome != "unknown" => {
+            format!("failed: {}", r.detail.as_deref().unwrap_or(r.error))
         }
+        _ => "unknown: the turn ended without a result record".into(),
     }
-    "unknown: the turn ended without a result record".into()
 }
 
 /// The session's transcript (D1): Claude `projects/*/<id>.jsonl`, Codex `sessions/**/rollout-*-<id>.jsonl`.

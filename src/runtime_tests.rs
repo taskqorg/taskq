@@ -574,7 +574,7 @@ fn antigravity_turn_uses_its_log_boundary_and_preserves_quota_unknowns() {
         session: None,
         native: None,
         recovery: None,
-        rt: "codex".into(),
+        rt: "antigravity".into(),
     };
     assert_eq!(turn.exited(), Ok(None));
     assert_eq!(turn.accepted(), Ok(false));
@@ -585,7 +585,17 @@ fn antigravity_turn_uses_its_log_boundary_and_preserves_quota_unknowns() {
     )
     .unwrap();
     assert_eq!(turn.exited(), Ok(None));
-    assert_eq!(turn.accepted(), Ok(true));
+    assert_eq!(
+        turn.accepted(),
+        Ok(false),
+        "an unsupported state is not input proof"
+    );
+    for state in ["ACTIVE", "DONE"] {
+        writeln!(File::options().append(true).open(&log).unwrap(),"{}",
+            serde_json::json!({"event":"step_update","step_update":{"step_type":"tool","state":state,"tool_name":"Read","step_index":1}})).unwrap();
+        assert_eq!(turn.exited(), Ok(None));
+        assert_eq!(turn.accepted(), Ok(true));
+    }
     writeln!(
         File::options().append(true).open(&log).unwrap(),
         "{}",
@@ -663,7 +673,7 @@ fn optimization_preserves_policy_and_reports_effective_state() {
     )
     .unwrap();
     for name in ["claude", "codex"] {
-        for (intent, effective) in [("inherit", "on"), ("off", "off"), ("on", "on")] {
+        for intent in ["inherit", "off", "on"] {
             for resume in [false, true] {
                 let mut spec = NativeSpec {
                     root: root.clone(),
@@ -678,44 +688,46 @@ fn optimization_preserves_policy_and_reports_effective_state() {
                 };
                 let state = optimization(name, &mut spec, Some(&install)).unwrap();
                 assert_eq!(
-                    (state.intent, state.effective),
-                    (Intent::parse(intent).unwrap(), effective)
+                    (state.intent, state.effective, state.reason),
+                    (
+                        Intent::parse(intent).unwrap(),
+                        "off",
+                        "optimization_retired"
+                    )
                 );
                 assert_eq!(spec.session, "saved-native-id");
                 assert_eq!((spec.resume, spec.home.as_ref()), (resume, Some(&home)));
                 assert_eq!(&spec.args[..2], &["--permission-mode", "dontAsk"]);
+                assert_eq!(spec.args.len(), if name == "claude" { 4 } else { 2 });
                 assert_eq!(
-                    spec.args.len(),
-                    if name == "claude" || intent == "off" {
-                        4
-                    } else {
-                        2
-                    }
+                    spec.env
+                        .iter()
+                        .filter(|(key, _)| key == "AGENTQ_OPTIMIZATION")
+                        .count(),
+                    1,
+                    "no injected optimization override"
                 );
-                if intent == "off" && name == "codex" {
-                    assert_eq!(
-                        spec.args[3],
-                        "model_providers.agentq.http_headers.x-agentq-optimization=\"off\""
-                    );
-                }
-                if intent == "on" {
-                    assert_eq!(
-                        optimization(name, &mut spec, None).unwrap().reason,
-                        "not_installed"
-                    );
-                    std::fs::write(
-                        install.join("data/config.json"),
-                        r#"{"compression":{"enabled":false}}"#,
-                    )
-                    .unwrap();
-                    assert_eq!(
-                        optimization(name, &mut spec, Some(&install))
-                            .unwrap()
-                            .effective,
-                        "off"
-                    );
-                    std::fs::remove_file(install.join("data/config.json")).unwrap();
-                }
+                assert_eq!(
+                    spec.env
+                        .iter()
+                        .find(|(key, _)| key == "TASKQ_TASK")
+                        .unwrap()
+                        .1,
+                    "2111"
+                );
+                assert_eq!(
+                    spec.env
+                        .iter()
+                        .find(|(key, _)| key == "AGENTQ_LAUNCHER")
+                        .unwrap()
+                        .1,
+                    "taskq"
+                );
+                assert!(optimizer_settings(&spec)["env"]["AGENTQ_OPTIMIZATION"].is_null());
+                assert_eq!(
+                    optimization(name, &mut spec, None).unwrap().reason,
+                    "optimization_retired"
+                );
                 spec.env
                     .push(("AGENTQ_OPTIMIZATION".into(), "invalid".into()));
                 assert!(
@@ -794,7 +806,7 @@ fn optimization_reaches_background_settings_and_operator_attribution() {
         let settings: serde_json::Value =
             serde_json::from_str(&args[args.iter().position(|a| a == "--settings").unwrap() + 1])
                 .unwrap();
-        assert_eq!(settings["env"]["AGENTQ_OPTIMIZATION"], "off");
+        assert!(settings["env"]["AGENTQ_OPTIMIZATION"].is_null());
         assert_eq!(settings["env"]["AGENTQ_LAUNCHER"], "taskq");
         assert_eq!(settings["env"]["TASKQ_INSTALL"], "invented");
         assert_eq!(settings["hooks"]["SessionStart"], serde_json::json!([]));
@@ -872,19 +884,30 @@ fn session_links_follow_the_adapter() {
 #[test]
 fn balancing_quota_observations_keep_windows() {
     let log = std::env::temp_dir().join(format!("taskq-quota-metadata-{}", uuid()));
-    std::fs::write(&log,concat!("{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"rateLimitType\":\"seven_day\",\"resetsAt\":604800}}\n",
-            "{\"type\":\"rate_limits\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":18000}}}\n")).unwrap();
+    std::fs::write(&log,"{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"rateLimitType\":\"seven_day\",\"resetsAt\":604800}}\n").unwrap();
     assert_eq!(
-        quota_windows(&log, "codex"),
-        [
-            ("300m".into(), Some(18000)),
-            ("seven_day".into(), Some(604800))
-        ]
+        quota_windows(&log, "claude"),
+        [("seven_day".into(), Some(604800))]
     );
     rules_line(&log, "resume", "fixture input").unwrap();
     assert!(
-        quota_windows(&log, "codex").is_empty(),
+        quota_windows(&log, "claude").is_empty(),
         "a successful later turn must not reuse old quota events"
+    );
+    std::fs::write(&log,"{\"type\":\"rate_limits\",\"rate_limits\":{\"primary\":{\"used_percent\":100,\"window_minutes\":300,\"resets_at\":18000}}}\n").unwrap();
+    assert!(
+        quota_windows(&log, "codex").is_empty(),
+        "a usage snapshot alone is not native rejection"
+    );
+    std::fs::write(
+        &log,
+        "{\"type\":\"turn.failed\",\"error\":{\"message\":\"usage limit reached\"}}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        quota_windows(&log, "codex"),
+        [("unknown".into(), None)],
+        "an actual rejection with no window remains unknown"
     );
     std::fs::write(
         &log,
@@ -897,6 +920,56 @@ fn balancing_quota_observations_keep_windows() {
         "no guessed agy reset/window"
     );
     std::fs::remove_file(log).unwrap();
+}
+
+// Chain: #2448/capacity limited -> native rejection only; utilization and siblings cannot hold a working account.
+#[test]
+fn quota_2448_allowed_windows_do_not_hold_accounts() {
+    let log = std::env::temp_dir().join(format!("taskq-quota-rejection-{}", uuid()));
+    for status in ["allowed", "allowed_warning"] {
+        std::fs::write(&log, format!("{}\n", serde_json::json!({
+            "type":"rate_limit_event", "rate_limit_info":{
+                "status":status, "rateLimitType":"five_hour", "utilization":1.0, "resetsAt":100,
+                "unifiedWindows":{"seven_day":{"utilization":1.0,"resetsAt":700}}
+            }
+        }))).unwrap();
+        assert!(
+            quota_windows(&log, "claude").is_empty(),
+            "{status} is not native rejection"
+        );
+    }
+    std::fs::write(&log, format!("{}\n", serde_json::json!({
+        "type":"rate_limit_event", "rate_limit_info":{
+            "status":"rejected", "rateLimitType":"five_hour", "utilization":1.0, "resetsAt":100,
+            "unifiedWindows":{"seven_day":{"utilization":1.0,"resetsAt":700}}
+        }
+    }))).unwrap();
+    assert_eq!(
+        quota_windows(&log, "claude"),
+        [("five_hour".into(), Some(100))],
+        "a non-binding sibling must not extend the rejection"
+    );
+    std::fs::remove_file(log).unwrap();
+}
+
+// Chain: #2448/R12 native input boundary -> acceptance; an unsupported event must remain unknown.
+#[test]
+fn input_2448_unknown_is_not_accepted() {
+    assert!(!takes_input(
+        "claude",
+        &[Event::Unsupported {
+            reason: "future record"
+        }]
+    ));
+    assert!(!takes_input("claude", &[Event::Activity]));
+    assert!(!takes_input("claude", &[Event::TurnStart]));
+    assert!(takes_input(
+        "claude",
+        &[Event::Text {
+            item: None,
+            delta: "work".into()
+        }]
+    ));
 }
 
 // Chain: attempt log -> usage limit before work -> reset. Risk: a limit after work started skips its retry,
@@ -1015,11 +1088,11 @@ fn live_background_reads_jobs_the_last_turn_left_running() {
     let running = r#"{"type":"queue-operation","content":"<task-notification>\n<task-id>b7x9</task-id>\n<status>running</status>\n</task-notification>"}"#;
     let killed = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_4","name":"KillShell","input":{"shell_id":"b7x9"}}]}}"#;
     let cases: [(Vec<&str>, Vec<&str>); 8] = [
-        (vec![start, fg, fg_done, bash, started], vec!["Full check"]),
-        (vec![start, bash, started, running], vec!["Full check"]),
+        (vec![start, fg, fg_done, bash, started], vec!["Bash"]),
+        (vec![start, bash, started, running], vec!["Bash"]),
         (
             vec![start, bash, started, monitor, monitor_started],
-            vec!["Full check", "CI watch"],
+            vec!["Bash", "Monitor"],
         ),
         (vec![start, bash, started, done], vec![]),
         (vec![start, bash, started, killed], vec![]),
@@ -1030,11 +1103,11 @@ fn live_background_reads_jobs_the_last_turn_left_running() {
     for (lines, want) in cases {
         let text = lines.join("\n") + "\n";
         std::fs::write(&log, &text).unwrap();
-        assert_eq!(live_background(&log), want, "{text}");
+        assert_eq!(live_background(&log, "claude"), want, "{text}");
     }
     let _ = std::fs::remove_file(&log);
     assert!(
-        live_background(&log).is_empty(),
+        live_background(&log, "claude").is_empty(),
         "an unreadable log has no live job"
     );
 }
@@ -1949,6 +2022,20 @@ fn launcher_stderr_in_last_message_and_active_account_probe() {
         last_message(&log, "claude").as_deref(),
         Some("completed work")
     );
+    std::fs::write(&log, concat!(
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"earlier message\"}]}}\n",
+        "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"unfinished latest message\"}]}}\n"
+    )).unwrap();
+    assert_eq!(
+        classify("claude", &std::fs::read_to_string(&log).unwrap())
+            .unwrap()
+            .text,
+        None
+    );
+    assert_eq!(
+        last_message(&log, "claude").as_deref(),
+        Some("unfinished latest message")
+    );
     std::fs::write(&log, "{\"type\":\"taskq.rules\",\"phase\":\"start\"}\n{\"type\":\"thread.started\",\"thread_id\":\"t1\"}\n").unwrap();
     assert_eq!(last_message(&log, "codex"), None);
 
@@ -2574,10 +2661,17 @@ fn cli_acceptance_uses_only_native_events_after_its_input_boundary() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("turn.log");
     let old = "{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\"}\n";
-    for native in [
-        "",
-        "{\"type\":\"turn.started\"}\n",
-        "{\"type\":\"assistant\",\"message\":{}}\n",
+    for (rt, native) in [
+        ("codex", ""),
+        ("codex", "{\"type\":\"turn.started\"}\n"),
+        (
+            "claude",
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"work\"}]}}\n",
+        ),
+        (
+            "claude",
+            "{\"type\":\"stream_event\",\"event\":{\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"work\"}}}\n",
+        ),
     ] {
         std::fs::write(
             &path,
@@ -2595,7 +2689,7 @@ fn cli_acceptance_uses_only_native_events_after_its_input_boundary() {
             session: None,
             native: None,
             recovery: None,
-            rt: "codex".into(),
+            rt: rt.into(),
         };
         assert_eq!(turn.accepted(), Ok(false));
         assert_eq!(turn.exited(), Ok(Some(0)));
@@ -4283,9 +4377,9 @@ fn handed_in_copy_job_is_adopted_and_exits_without_recorded_process() {
         line(serde_json::json!({"type":"user","message":{"content":"earlier input"}})),
     )
     .unwrap();
-    std::fs::write(root.join("projects/a").join(format!("{copy}.jsonl")),line(serde_json::json!({"type":"user","message":{"content":input}}))
-            +&line(serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"handed in"}]}}))
-            +&line(serde_json::json!({"type":"system","subtype":"turn_duration"}))).unwrap();
+    std::fs::write(root.join("projects/a").join(format!("{copy}.jsonl")),line(serde_json::json!({"type":"user","sessionId":saved,"message":{"content":input}}))
+            +&line(serde_json::json!({"type":"assistant","sessionId":saved,"message":{"content":[{"type":"text","text":"handed in"}]}}))
+            +&line(serde_json::json!({"type":"system","sessionId":saved,"subtype":"turn_duration"}))).unwrap();
     for (id, session, intent) in [
         ("c3f6f318", &saved, "earlier input"),
         ("94f2ba2a", &copy, input.as_str()),
@@ -6546,9 +6640,6 @@ fn compaction_resends_header_and_index_only_to_claude() {
     // Risk: a worker reads another launch's TASKQ_* (install, task, attempt), or an operator session gets an attempt.
     let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
     let mut worker = want("7", "42", "worker");
-    worker["AGENTQ_OPTIMIZATION"] = std::env::var("AGENTQ_OPTIMIZATION")
-        .unwrap_or("inherit".into())
-        .into();
     worker["AGENTQ_LAUNCHER"] = "taskq".into();
     if let Some(p) = build_cache_for("claude", &access(&env, "claude").unwrap(), &env) {
         worker["RUSTC_WRAPPER"] = p.to_string_lossy().into();
@@ -7269,6 +7360,130 @@ fn a_differing_daemon_starts_no_background_job() {
     );
     assert!(!log.exists(), "no input is bound");
     std::fs::remove_dir_all(&root).ok();
+}
+
+// Chain: #2448/#2221: only a caller-validated copied job may observe the saved conversation's native records.
+#[test]
+fn claude_history_alias_2448_requires_bound_copy() {
+    let root = std::env::temp_dir().join(format!("taskq-claude-alias-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let (copy, saved, unrelated) = (uuid(), uuid(), uuid());
+    let path = root.join(format!("{copy}.jsonl"));
+    let line = |session: &str| {
+        serde_json::json!({
+            "type":"user", "sessionId":session, "message":{"content":"exact copied input"}
+        })
+        .to_string()
+            + "\n"
+    };
+    std::fs::write(&path, line(&saved)).unwrap();
+    assert!(
+        ClaudeRecords::default()
+            .read(&path, |_| Ok(()))
+            .unwrap_err()
+            .contains("native session differs")
+    );
+    let mut reader = ClaudeRecords::default();
+    reader.copied_from(&saved).unwrap();
+    assert!(
+        reader
+            .read(&path, |v| {
+                assert_eq!(v["session"], copy);
+                assert_eq!(v["native_session"], saved);
+                assert_eq!(v["session_binding"], "alias");
+                Ok(())
+            })
+            .unwrap()
+    );
+    assert!(
+        reader
+            .copied_from(&unrelated)
+            .unwrap_err()
+            .contains("binding changed")
+    );
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(line(&unrelated).as_bytes())
+        .unwrap();
+    assert!(
+        reader
+            .read(&path, |_| panic!("foreign session delivered"))
+            .unwrap_err()
+            .contains("native session differs")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// R12 / #2448: an AgentQ page buffered past TaskQ's byte budget cannot conceal changed source bytes.
+#[test]
+fn claude_history_buffered_records_still_require_exact_source() {
+    let root = std::env::temp_dir().join(format!("taskq-claude-buffer-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("transcript.jsonl");
+    let rows: Vec<_> = (0..10)
+        .map(|n| {
+            serde_json::json!({"type":"system", "n":n,"padding":"x".repeat(1024 * 1024)})
+                .to_string()
+                + "\n"
+        })
+        .collect();
+    std::fs::write(&path, rows.concat()).unwrap();
+    let mut reader = ClaudeRecords::default();
+    let mut seen = 0;
+    assert!(
+        !reader
+            .read(&path, |_| {
+                seen += 1;
+                Ok(())
+            })
+            .unwrap()
+    );
+    assert!(seen > 0 && seen < rows.len());
+    assert!(reader.pending.len() > 0);
+    let mut changed = rows.clone();
+    changed[seen] = changed[seen].replace(&format!("\"n\":{seen}"), "\"n\":99");
+    changed.push("{\"type\":\"system\"}\n".into());
+    std::fs::write(&path, changed.concat()).unwrap();
+    assert!(
+        reader
+            .read(&path, |_| panic!("changed buffered record delivered"))
+            .unwrap_err()
+            .contains("changed during observation")
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// R12 / #2448: previously ignored native metadata cannot hide an exact input or turn end.
+#[test]
+fn claude_history_ignores_metadata_without_accepting_invalid_records() {
+    let root = std::env::temp_dir().join(format!("taskq-claude-shape-{}", uuid()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("transcript.jsonl");
+    let log = root.join("attempt.log");
+    let input =
+        serde_json::json!({"type":"user","message":{"content":"exact input"}}).to_string() + "\n";
+    for (record, accepted) in [
+        (
+            serde_json::json!({"type":"file-history-snapshot","snapshot":{}}),
+            true,
+        ),
+        (serde_json::json!({}), false),
+    ] {
+        let text =
+            format!("{record}\n{input}{{\"type\":\"system\",\"subtype\":\"turn_duration\"}}\n");
+        std::fs::write(&path, text).unwrap();
+        let mut history = ClaudeHistory::default();
+        if accepted {
+            assert_eq!(history.read(&path, 0, "exact input", &log), Ok(true));
+            assert!(history.ended);
+        } else {
+            assert!(history.read(&path, 0, "exact input", &log).is_err());
+            assert!(!history.found);
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 // §4/A3: native session hooks delegate parsing and immutable IDs to AgentQ; old calls and private payload stay out.

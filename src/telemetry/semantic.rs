@@ -295,6 +295,14 @@ pub(super) fn visit_samples(
         let page = store.export_kinds(kinds, 0, after, 1024)?;
         for row in page["events"].as_array().ok_or("invalid semantic page")? {
             if let Some(value) = reader.push(row["observation"].clone())? {
+                // CoreQ resource readings share the kind, but are not timed TaskQ profile operations.
+                if value["kind"] == "operation"
+                    && value["operation"]
+                        .as_str()
+                        .is_some_and(|op| op.starts_with("resource."))
+                {
+                    continue;
+                }
                 accept(usize::from(!value["version"].is_null()), decoded(&value)?);
             }
         }
