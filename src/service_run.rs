@@ -1287,7 +1287,11 @@ pub(crate) fn write_kids(install: &Path, root: &Path, kids: &[data::KidLine]) ->
     let owner = coreq::process::identity(std::process::id())
         .map_err(|e| e.to_string())?
         .ok_or("service native identity missing")?;
-    let version = if kids.iter().any(|kid| kid.control.is_some()) { "executor-v2" } else { "executor-v1" };
+    let version = if kids.iter().any(|kid| kid.control.is_some()) {
+        "executor-v2"
+    } else {
+        "executor-v1"
+    };
     let mut text = format!("pid {} {} {version}\n", owner.pid, owner.started);
     for k in kids {
         text += &format!(
@@ -1306,9 +1310,11 @@ pub(crate) fn write_kids(install: &Path, root: &Path, kids: &[data::KidLine]) ->
             match &k.control {
                 Some(proof) => {
                     use base64::Engine;
-                    format!(" control-v1:{}", base64::engine::general_purpose::STANDARD.encode(
-                        serde_json::to_vec(proof).map_err(|e| e.to_string())?
-                    ))
+                    format!(
+                        " control-v1:{}",
+                        base64::engine::general_purpose::STANDARD
+                            .encode(serde_json::to_vec(proof).map_err(|e| e.to_string())?)
+                    )
                 }
                 None => String::new(),
             }
@@ -1399,11 +1405,15 @@ pub(crate) fn save_kids(s: &Service, root: &Path) -> Res<()> {
             offset: k.proc.input_offset()?,
             job: k.proc.job(),
         };
-        if let Some(old) = previous.iter().find(|old| old.task == line.task
-            && old.attempt == line.attempt && old.execution == line.execution
-            && old.runtime == line.runtime && old.process == line.process && old.job == line.job
-            && old.offset == line.offset)
-        {
+        if let Some(old) = previous.iter().find(|old| {
+            old.task == line.task
+                && old.attempt == line.attempt
+                && old.execution == line.execution
+                && old.runtime == line.runtime
+                && old.process == line.process
+                && old.job == line.job
+                && old.offset == line.offset
+        }) {
             line.control = old.control.clone();
         }
         // #1561: a recorded process that exited resolves from its board exit; any other record passes to the next image (#2297)

@@ -423,13 +423,19 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
     let kid = |l: &str| -> Option<KidLine> {
         let mut w: Vec<&str> = l.split_whitespace().collect();
         let control = if let Some(encoded) = w.last().and_then(|v| v.strip_prefix("control-v1:")) {
-            if header.last() != Some(&"executor-v2") { return None; }
+            if header.last() != Some(&"executor-v2") {
+                return None;
+            }
             use base64::Engine;
-            let bytes = base64::engine::general_purpose::STANDARD.decode(encoded).ok()?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .ok()?;
             let proof: BackgroundControlProof = serde_json::from_slice(&bytes).ok()?;
             w.pop();
             Some(proof)
-        } else { None };
+        } else {
+            None
+        };
         let (fields, job) = match w.as_slice() {
             [_, _, _, _, _, _, _] => (w.as_slice(), None),
             [fields @ .., scope] if fields.len() == 7 => {
@@ -445,20 +451,31 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
         let attempt = attempt.parse::<u64>().ok().filter(|n| *n > 0)?;
         let execution = execution.parse::<u64>().ok().filter(|n| *n >= attempt)?;
         let a = crate::runtime::of(rt);
-        if !a.has(Cap::Cli) || a.has(Cap::RemoteControl) && (job.is_some() || offset != "0" && control.is_none()) {
+        if !a.has(Cap::Cli)
+            || a.has(Cap::RemoteControl) && (job.is_some() || offset != "0" && control.is_none())
+        {
             return None;
         }
         if let Some(proof) = &control {
-            if !a.has(Cap::Background) || proof.grant.runtime != rt
+            if !a.has(Cap::Background)
+                || proof.grant.runtime != rt
                 || !crate::policy::MODES.contains(&proof.grant.mode.as_str())
-                || !proof.project.is_absolute() || !proof.home.is_absolute() || !proof.cwd.is_absolute()
+                || !proof.project.is_absolute()
+                || !proof.home.is_absolute()
+                || !proof.cwd.is_absolute()
                 || !proof.session_store.is_absolute()
-                || proof.controller.pid == 0 || proof.controller.started.is_empty()
-                || !crate::runtime::plain_thread(&proof.job) || !crate::runtime::plain_thread(&proof.native_session)
-                || proof.input_sha256.len() != 64 || !proof.input_sha256.bytes().all(|c| c.is_ascii_hexdigit())
-                || !proof.owner.is_object() || !proof.source.is_object()
+                || proof.controller.pid == 0
+                || proof.controller.started.is_empty()
+                || !crate::runtime::plain_thread(&proof.job)
+                || !crate::runtime::plain_thread(&proof.native_session)
+                || proof.input_sha256.len() != 64
+                || !proof.input_sha256.bytes().all(|c| c.is_ascii_hexdigit())
+                || !proof.owner.is_object()
+                || !proof.source.is_object()
                 || matches!(&proof.admission, BackgroundAdmission::Resume { session } if !crate::runtime::plain_thread(session))
-            { return None; }
+            {
+                return None;
+            }
         }
         Some(KidLine {
             task,

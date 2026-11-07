@@ -4322,10 +4322,17 @@ impl<'a> Service<'a> {
                 );
                 continue;
             }
-            if let Some(receipt) = crate::runtime::recorded_background_launch(&self.cfg.root, task, x)
+            if let Some(receipt) =
+                crate::runtime::recorded_background_launch(&self.cfg.root, task, x)
                 && let Some(cause) = receipt.cause
             {
-                self.execution_waits.insert(task, format!("{} launch diagnostic observed; canonical input proof unknown", cause.0));
+                self.execution_waits.insert(
+                    task,
+                    format!(
+                        "{} launch diagnostic observed; canonical input proof unknown",
+                        cause.0
+                    ),
+                );
             }
             // #1879: nothing native to recover; the resume step releases a lost spawn
             if self.lost_spawn(task, x) {
@@ -4663,7 +4670,8 @@ impl<'a> Service<'a> {
         }
         for (n, a, code, failure, lost, source, recorded) in exited {
             self.ended(n, a, by_n.get(&n).copied(), failure, source, recorded);
-            if code == Some(0) && failure.is_none()
+            if code == Some(0)
+                && failure.is_none()
                 && let Some(v) = by_n.get(&n)
                 && let Some((rt, _)) = rt_of(&v.projection.task)
             {

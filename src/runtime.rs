@@ -3,7 +3,10 @@
 pub mod progress;
 pub mod protected_app_server;
 
-use agentq_runtime::agent::{Event, NativeSpec, BackgroundCandidate, BackgroundKind, BackgroundState, BackgroundActivity, BackgroundPid};
+use agentq_runtime::agent::{
+    BackgroundActivity, BackgroundCandidate, BackgroundKind, BackgroundPid, BackgroundState, Event,
+    NativeSpec,
+};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -17,9 +20,9 @@ mod records;
 pub(crate) use records::settle as settle_records;
 mod table;
 #[cfg(test)]
-pub use native_fixture::{command, start_command, start_file};
-#[cfg(test)]
 pub(crate) use native_fixture::background_rows;
+#[cfg(test)]
+pub use native_fixture::{command, start_command, start_file};
 pub use table::*;
 use table::{ADAPTERS, OTHER};
 
@@ -170,7 +173,9 @@ pub trait Proc {
         None
     }
     /// Qualified current owned-run proof only; historical caller logs cannot produce this receipt.
-    fn start_failure(&self) -> Option<agentq_runtime::agent::LaunchError> { None }
+    fn start_failure(&self) -> Option<agentq_runtime::agent::LaunchError> {
+        None
+    }
     /// Definitive native pre-submission refusal, only after independently observed nonzero exit.
     fn refused(&self, _task: u64, _attempt: u64, _execution: u64, _code: i32) -> Option<String> {
         None
@@ -345,7 +350,9 @@ fn inherited_wait(pid: u32) -> Option<Option<Exit>> {
         // SAFETY: non-blocking wait on one pid this image inherited as its direct child
         let r = unsafe { libc::waitpid(pid as i32, &mut st, libc::WNOHANG) };
         if r == pid as i32 {
-            *slot = Some(Exit { code: libc::WIFEXITED(st).then(|| libc::WEXITSTATUS(st)) });
+            *slot = Some(Exit {
+                code: libc::WIFEXITED(st).then(|| libc::WEXITSTATUS(st)),
+            });
         } else if r < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD) {
             *slot = Some(Exit { code: None });
         }
@@ -390,7 +397,9 @@ impl Adopted {
 #[cfg(unix)]
 impl Proc for Adopted {
     fn exited(&mut self) -> Result<Option<i32>, String> {
-        self.termination()?.map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into())).transpose()
+        self.termination()?
+            .map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into()))
+            .transpose()
     }
     fn termination(&mut self) -> Result<Option<Exit>, String> {
         if self.ended.is_some() {
@@ -435,7 +444,9 @@ impl Proc for Adopted {
                 Ok(None)
             }
             r if r == pid => {
-                self.ended = Some(Exit { code: libc::WIFEXITED(st).then(|| libc::WEXITSTATUS(st)) });
+                self.ended = Some(Exit {
+                    code: libc::WIFEXITED(st).then(|| libc::WEXITSTATUS(st)),
+                });
                 Ok(self.ended)
             }
             _ if std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD) => {
@@ -1076,8 +1087,12 @@ impl Proc for CliTurn {
         if failure.stage != agentq_runtime::agent::InputStage::BeforeInput
             || failure.session.as_deref() != Some(thread)
             || failure.cause != Some(agentq_runtime::agent::Cause("session-busy"))
-        { return None; }
-        Some(format!("Codex writer refused; let active turn finish, then close that thread in Codex ({thread})"))
+        {
+            return None;
+        }
+        Some(format!(
+            "Codex writer refused; let active turn finish, then close that thread in Codex ({thread})"
+        ))
     }
 
     fn job(&self) -> Option<String> {
@@ -2420,7 +2435,11 @@ fn recovery_binding(
 }
 
 /// Historical product receipt only; classified diagnostics never prove no-start or permit input replay.
-pub fn recorded_background_launch(root: &Path, task: u64, x: &crate::core::Execution) -> Option<agentq_runtime::agent::BackgroundLaunchExchange> {
+pub fn recorded_background_launch(
+    root: &Path,
+    task: u64,
+    x: &crate::core::Execution,
+) -> Option<agentq_runtime::agent::BackgroundLaunchExchange> {
     if !of(&x.runtime).has(Cap::Background) || x.accepted || x.release.is_some() {
         return None;
     }
@@ -2447,8 +2466,11 @@ pub fn recorded_background_launch(root: &Path, task: u64, x: &crate::core::Execu
                 return None;
             }
             let _ = status;
-            refusal = Some(agent(&x.runtime).ok()?.background_launch_exchange(
-                v["stdout"].as_str()?, v["stderr"].as_str()?));
+            refusal = Some(
+                agent(&x.runtime)
+                    .ok()?
+                    .background_launch_exchange(v["stdout"].as_str()?, v["stderr"].as_str()?),
+            );
         }
     }
     refusal
@@ -2547,16 +2569,29 @@ pub fn recover(
             start: binding["offset"]
                 .as_u64()
                 .ok_or("native input boundary missing")?,
-            session: control.as_ref().map(|proof| proof.native_session.clone()).unwrap_or_else(|| {
-                if x.id == x.attempt { String::new() }
-                else { binding["native"]["session"].as_str().unwrap_or_default().to_owned() }
-            }),
-            id: control.as_ref().map_or_else(String::new, |proof| proof.job.clone()),
+            session: control
+                .as_ref()
+                .map(|proof| proof.native_session.clone())
+                .unwrap_or_else(|| {
+                    if x.id == x.attempt {
+                        String::new()
+                    } else {
+                        binding["native"]["session"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned()
+                    }
+                }),
+            id: control
+                .as_ref()
+                .map_or_else(String::new, |proof| proof.job.clone()),
             announced: false,
             accepted: false,
             history: ClaudeHistory::default(),
             before: control.as_ref().map_or_else(
-                || binding["native"]["before"].as_u64().unwrap_or(0) as usize, |proof| proof.before),
+                || binding["native"]["before"].as_u64().unwrap_or(0) as usize,
+                |proof| proof.before,
+            ),
             mode: "unknown: recovered observer".into(),
             input,
             _input_file: input_file,
@@ -3005,8 +3040,17 @@ struct BackgroundAdmissionCapture {
 fn background_grant(install: &Path, root: &Path) -> Option<crate::policy::Grant> {
     let policy = crate::policy::load(install).ok()?;
     let root = root.to_str()?;
-    policy.grants.iter().find(|grant| grant.runtime == CLAUDE && grant.project.as_deref() == Some(root))
-        .or_else(|| policy.grants.iter().find(|grant| grant.runtime == CLAUDE && grant.project.is_none())).cloned()
+    policy
+        .grants
+        .iter()
+        .find(|grant| grant.runtime == CLAUDE && grant.project.as_deref() == Some(root))
+        .or_else(|| {
+            policy
+                .grants
+                .iter()
+                .find(|grant| grant.runtime == CLAUDE && grant.project.is_none())
+        })
+        .cloned()
 }
 
 /// Native background sessions are not children of TaskQ. Keep their full identity and
@@ -3045,14 +3089,18 @@ pub struct ClaudeTurn {
 /// #2272: a resume with no native process and no transcript readback of its input this long after launch lost it.
 pub const CLAUDE_RESUME_ACCEPT: std::time::Duration = std::time::Duration::from_secs(300);
 
-pub(crate) fn claude_agents(root: &Path) -> Result<Vec<agentq_runtime::agent::BackgroundCandidate>, String> {
+pub(crate) fn claude_agents(
+    root: &Path,
+) -> Result<Vec<agentq_runtime::agent::BackgroundCandidate>, String> {
     let budget = observation_left(std::time::Duration::from_secs(10));
     if budget.is_zero() {
         return Err("Claude agents unavailable or timed out".into());
     }
     agent(CLAUDE)?.background_candidates(
         crate::platform::command(which(of(CLAUDE).bin)),
-        &claude_spec(root, None), true, budget,
+        &claude_spec(root, None),
+        true,
+        budget,
     )
 }
 
@@ -3080,27 +3128,50 @@ pub(crate) fn claude_home() -> Option<PathBuf> {
 
 pub(crate) fn claude_failure(row: &BackgroundCandidate) -> Result<&'static str, String> {
     let failure = agent(CLAUDE)?.background_failure(row)?;
-    let detail = failure.as_ref().and_then(|failure| failure.detail.as_deref())
+    let detail = failure
+        .as_ref()
+        .and_then(|failure| failure.detail.as_deref())
         .ok_or("Claude failure detail unavailable; state unknown")?;
     Ok(crate::profile::class(detail))
 }
 
 /// Attempt-bound reads use their exact home; display discovery may search all homes.
 fn claude_transcript(session: &str, home: Option<&Path>) -> Result<PathBuf, String> {
-    if let Some(home) = home { return claude_transcript_in(home, session); }
+    if let Some(home) = home {
+        return claude_transcript_in(home, session);
+    }
     let adapter = agent(CLAUDE)?;
     let mut found = None;
     for home in accounts::homes(CLAUDE) {
-        for source in adapter.history_sessions(Some(&home))?.into_iter().filter(|source| source.session == session) {
-            if found.is_some() { return Err("Claude session has multiple canonical sources; account binding required".into()); }
-            found = Some(adapter.history(&source.id, Some(&home), Some(&source.path), None)?.source().path.clone());
+        for source in adapter
+            .history_sessions(Some(&home))?
+            .into_iter()
+            .filter(|source| source.session == session)
+        {
+            if found.is_some() {
+                return Err(
+                    "Claude session has multiple canonical sources; account binding required"
+                        .into(),
+                );
+            }
+            found = Some(
+                adapter
+                    .history(&source.id, Some(&home), Some(&source.path), None)?
+                    .source()
+                    .path
+                    .clone(),
+            );
         }
     }
     found.ok_or_else(|| "Claude transcript unavailable; completion unknown".into())
 }
 
 pub(crate) fn claude_transcript_in(home: &Path, session: &str) -> Result<PathBuf, String> {
-    Ok(agent(CLAUDE)?.history(session, Some(home), None, None)?.source().path.clone())
+    Ok(agent(CLAUDE)?
+        .history(session, Some(home), None, None)?
+        .source()
+        .path
+        .clone())
 }
 
 pub(crate) fn native_job_id(id: &str) -> bool {
@@ -3158,7 +3229,11 @@ impl ClaudeRecords {
                             session,
                             native,
                         )?,
-                        None => History::new("claude-native", path.to_str().ok_or("Claude source path is not UTF-8")?, session)?,
+                        None => History::new(
+                            "claude-native",
+                            path.to_str().ok_or("Claude source path is not UTF-8")?,
+                            session,
+                        )?,
                     });
                 }
                 *pending = history.as_mut().unwrap().poll(path)?.events.into_iter();
@@ -3363,7 +3438,9 @@ fn claude_stopped(
     row: &BackgroundCandidate,
     known: Option<&coreq::process::Identity>,
 ) -> Result<bool, String> {
-    let state = row.state().map(BackgroundState::as_str)
+    let state = row
+        .state()
+        .map(BackgroundState::as_str)
         .ok_or("Claude state unavailable; stop unknown")?;
     let pid = claude_pid(row)?;
     if !matches!(
@@ -3394,21 +3471,31 @@ impl ClaudeTurn {
 
     /// The native home that holds this attempt's jobs and transcripts.
     fn native_home(&self) -> Option<PathBuf> {
-        self.admission.as_ref().and_then(|admission| admission.request.home.clone())
+        self.admission
+            .as_ref()
+            .and_then(|admission| admission.request.home.clone())
             .or_else(|| self.control.as_ref().map(|proof| proof.home.clone()))
-            .or_else(|| self.account()).or_else(claude_home)
+            .or_else(|| self.account())
+            .or_else(claude_home)
     }
 
     fn agents(&self) -> Result<Vec<BackgroundCandidate>, String> {
         if let Some(admission) = &self.admission {
             let request = &admission.request;
-            let (program, arguments) = request.command.split_first()
+            let (program, arguments) = request
+                .command
+                .split_first()
                 .ok_or("Claude original executable unavailable; observation unknown")?;
             let mut base = crate::platform::command(program);
             base.args(arguments).envs(request.env.iter().cloned());
             let mut spec = claude_spec(&self.root, request.home.as_deref());
             spec.env = request.env.clone();
-            return agent(CLAUDE)?.background_candidates(base, &spec, true, observation_left(std::time::Duration::from_secs(10)));
+            return agent(CLAUDE)?.background_candidates(
+                base,
+                &spec,
+                true,
+                observation_left(std::time::Duration::from_secs(10)),
+            );
         }
         claude_agents_in(&self.root, self.account().as_deref())
     }
@@ -3426,13 +3513,18 @@ impl ClaudeTurn {
         let mut budget = 8 * 1024 * 1024;
         let mut matched = vec![];
         for row in rows {
-            if row.kind() == BackgroundKind::Interactive { continue; }
-            if row.home() != home || !row.cwd().starts_with(&self.root) { continue; }
+            if row.kind() == BackgroundKind::Interactive {
+                continue;
+            }
+            if row.home() != home || !row.cwd().starts_with(&self.root) {
+                continue;
+            }
             let session = row.session();
-            let id = row.id().ok_or("Claude native job identity unavailable during recovery")?;
+            let id = row
+                .id()
+                .ok_or("Claude native job identity unavailable during recovery")?;
             let same = session == self.session;
-            if !same && !agent(CLAUDE)?.background_input(row, &self.input, &mut budget)?
-            {
+            if !same && !agent(CLAUDE)?.background_input(row, &self.input, &mut budget)? {
                 continue;
             }
             matched.push((row, id.to_owned(), session.to_owned(), same));
@@ -3442,9 +3534,7 @@ impl ClaudeTurn {
         if matched.len() > 1 {
             let mut checked = vec![];
             for (row, id, session, same) in matched {
-                if !same
-                    || agent(CLAUDE)?.background_input(row, &self.input, &mut budget)?
-                {
+                if !same || agent(CLAUDE)?.background_input(row, &self.input, &mut budget)? {
                     checked.push((row, id, session, same));
                 }
             }
@@ -3479,8 +3569,16 @@ impl ClaudeTurn {
             self.history.reader.copied_from(&self.session)?;
         }
         let source = if !self.session.is_empty() && session != self.session {
-            agent(CLAUDE)?.history_with_native_session_alias(&session, &self.session, Some(home), None, None)?
-        } else { agent(CLAUDE)?.history(&session, Some(home), None, None)? };
+            agent(CLAUDE)?.history_with_native_session_alias(
+                &session,
+                &self.session,
+                Some(home),
+                None,
+                None,
+            )?
+        } else {
+            agent(CLAUDE)?.history(&session, Some(home), None, None)?
+        };
         let read = self.history.read(
             &source.source().path,
             before,
@@ -3513,16 +3611,29 @@ impl ClaudeTurn {
                 &root,
                 crate::runtime::accounts::log_home(CLAUDE, log).as_deref(),
             )?;
-            let matching: Vec<_> = rows.iter().filter(|row| row.session() == l.session).collect();
-            if matching.is_empty() { return Err("Claude background session unavailable; no replacement".into()); }
+            let matching: Vec<_> = rows
+                .iter()
+                .filter(|row| row.session() == l.session)
+                .collect();
+            if matching.is_empty() {
+                return Err("Claude background session unavailable; no replacement".into());
+            }
             for row in &matching {
-                if row.kind() != BackgroundKind::Background || claude_pid(row)?.is_some()
+                if row.kind() != BackgroundKind::Background
+                    || claude_pid(row)?.is_some()
                     || row.activity() != BackgroundActivity::Idle
-                { return Err("Claude session writer live or unknown; no copy started".into()); }
+                {
+                    return Err("Claude session writer live or unknown; no copy started".into());
+                }
             }
             // Several retired jobs are observation only; the actual new launcher must identify its own job.
             if matching.len() == 1 {
-                expected_id = Some(matching[0].id().ok_or("Claude background ID missing")?.to_owned());
+                expected_id = Some(
+                    matching[0]
+                        .id()
+                        .ok_or("Claude background ID missing")?
+                        .to_owned(),
+                );
             }
             let home = crate::runtime::accounts::log_home(CLAUDE, log).or_else(claude_home);
             let path = claude_transcript(&l.session, home.as_deref())?;
@@ -3562,7 +3673,8 @@ impl ClaudeTurn {
             &input,
             serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}),
         )?;
-        let admission_grant = background_grant(env.install, &root).filter(|grant| grant.mode == access.mode);
+        let admission_grant =
+            background_grant(env.install, &root).filter(|grant| grant.mode == access.mode);
         let mut turn = Self {
             root: root.clone(),
             log: log.into(),
@@ -3597,19 +3709,27 @@ impl ClaudeTurn {
         let (run, request) = launch::background(env, l, log, &turn.input, access)?;
         turn.run = Some(run);
         turn.admission = admission_grant.map(|grant| BackgroundAdmissionCapture {
-                kind: if l.resume.is_some() { crate::data::BackgroundAdmission::Resume { session: l.session.clone() } }
-                    else { crate::data::BackgroundAdmission::Fresh },
-                grant, request,
-            });
+            kind: if l.resume.is_some() {
+                crate::data::BackgroundAdmission::Resume {
+                    session: l.session.clone(),
+                }
+            } else {
+                crate::data::BackgroundAdmission::Fresh
+            },
+            grant,
+            request,
+        });
         match agent(&l.rt)?.launcher_output(turn.run.as_mut().unwrap()) {
             Ok(out) => {
                 if let Err(error) = turn.finish_launch(out) {
                     turn.launch_error = Some(error.message);
                 }
             }
-            Err(error) => turn.launch_error = Some(format!(
-                "Claude launcher receipt unknown: {error}; canonical ownership retained"
-            )),
+            Err(error) => {
+                turn.launch_error = Some(format!(
+                    "Claude launcher receipt unknown: {error}; canonical ownership retained"
+                ))
+            }
         }
         Ok(turn)
     }
@@ -3619,16 +3739,28 @@ impl ClaudeTurn {
         out: Result<std::process::Output, coreq::process::Failure>,
     ) -> Result<(), StartError> {
         let adapter = agent(CLAUDE)?;
-        if let Some(failure) = self.run.as_ref().and_then(|run| adapter.report(run).ok()).and_then(|report| report.start_failure) {
+        if let Some(failure) = self
+            .run
+            .as_ref()
+            .and_then(|run| adapter.report(run).ok())
+            .and_then(|report| report.start_failure)
+        {
             if failure.stage == agentq_runtime::agent::InputStage::BeforeInput {
-                return Err(StartError { message: failure.detail, class: "native-launch", reportable: false,
-                    no_start: true, trust_pending: false });
+                return Err(StartError {
+                    message: failure.detail,
+                    class: "native-launch",
+                    reportable: false,
+                    no_start: true,
+                    trust_pending: false,
+                });
             }
         }
         let out = match out {
             Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
             Err(error) => {
-                self.launch_error = Some(format!("Claude background launch outcome unknown: {error}; reconcile original input"));
+                self.launch_error = Some(format!(
+                    "Claude background launch outcome unknown: {error}; reconcile original input"
+                ));
                 return Ok(());
             }
         };
@@ -3637,14 +3769,22 @@ impl ClaudeTurn {
         let receipt = adapter.background_launch_exchange(&stdout, &stderr);
         if let Some(id) = receipt.unverified_job {
             if !self.id.is_empty() && self.id != id {
-                self.launch_error = Some("Claude returned a different unverified job; reconcile original session/input".into());
+                self.launch_error = Some(
+                    "Claude returned a different unverified job; reconcile original session/input"
+                        .into(),
+                );
             }
             self.id = id;
         } else {
-            self.launch_error = Some("Claude returned no unverified job locator; launch/input outcome unknown".into());
+            self.launch_error = Some(
+                "Claude returned no unverified job locator; launch/input outcome unknown".into(),
+            );
         }
         if !out.status.success() || receipt.unknown.is_some() {
-            self.launch_error = Some(format!("Claude launcher outcome unknown: {}; reconcile original input", receipt.cause.map_or("unclassified", |cause| cause.0)));
+            self.launch_error = Some(format!(
+                "Claude launcher outcome unknown: {}; reconcile original input",
+                receipt.cause.map_or("unclassified", |cause| cause.0)
+            ));
         }
         if let Err(error) = File::options().append(true).open(&self.log).and_then(|mut file|
             writeln!(file, "{}", serde_json::json!({"type":"claude.launch","stdout":stdout,"stderr":stderr,"status":out.status.code()})))
@@ -3653,7 +3793,6 @@ impl ClaudeTurn {
         }
         Ok(())
     }
-
 }
 
 impl Proc for ClaudeTurn {
@@ -3698,8 +3837,12 @@ impl Proc for ClaudeTurn {
         });
         if self.bind_retained_run()? {
             let adapter = agent(CLAUDE)?;
-            let path = adapter.transcript(self.run.as_ref().unwrap()).map_err(|cause| cause.to_string())?;
-            let found = self.history.read(&path, self.before, &self.input, &self.log, &self.session)?;
+            let path = adapter
+                .transcript(self.run.as_ref().unwrap())
+                .map_err(|cause| cause.to_string())?;
+            let found =
+                self.history
+                    .read(&path, self.before, &self.input, &self.log, &self.session)?;
             self.accepted |= found || self.handed;
             self.capture_control_proof()?;
             return self.persist();
@@ -3781,22 +3924,44 @@ impl Proc for ClaudeTurn {
 
 impl ClaudeTurn {
     fn bind_retained_run(&mut self) -> Result<bool, String> {
-        let Some(run) = self.run.as_mut() else { return Ok(false); };
+        let Some(run) = self.run.as_mut() else {
+            return Ok(false);
+        };
         let adapter = agent(CLAUDE)?;
         if let Err(error) = adapter.poll(run) {
             self.launch_error = Some(format!("Claude owned observation unknown: {error}"));
             return Ok(false);
         }
-        let Ok(job) = adapter.background_job(run) else { return Ok(false); };
-        if !self.id.is_empty() && self.id != job.id || !self.session.is_empty() && self.session != job.session {
-            self.launch_error = Some("Claude owned identity differs; transition proof unavailable".into());
+        let Ok(job) = adapter.background_job(run) else {
+            return Ok(false);
+        };
+        if !self.id.is_empty() && self.id != job.id
+            || !self.session.is_empty() && self.session != job.session
+        {
+            self.launch_error =
+                Some("Claude owned identity differs; transition proof unavailable".into());
             return Ok(false);
         }
-        let pid = job.pid.ok_or("Claude owned process identity unavailable; proof remains unknown")?;
-        let pinned = job.process.as_ref().ok_or("Claude canonical process incarnation unavailable; proof remains unknown")?;
-        let process = coreq::process::Identity { pid:pinned.pid, started:pinned.started.clone() };
-        if pid != process.pid || coreq::process::identity(pid).map_err(|error| error.to_string())?.as_ref() != Some(&process) {
-            return Err("Claude canonical process incarnation changed; original execution retained".into());
+        let pid = job
+            .pid
+            .ok_or("Claude owned process identity unavailable; proof remains unknown")?;
+        let pinned = job
+            .process
+            .as_ref()
+            .ok_or("Claude canonical process incarnation unavailable; proof remains unknown")?;
+        let process = coreq::process::Identity {
+            pid: pinned.pid,
+            started: pinned.started.clone(),
+        };
+        if pid != process.pid
+            || coreq::process::identity(pid)
+                .map_err(|error| error.to_string())?
+                .as_ref()
+                != Some(&process)
+        {
+            return Err(
+                "Claude canonical process incarnation changed; original execution retained".into(),
+            );
         }
         if self.native.as_ref().is_some_and(|saved| saved != &process) {
             return Err("Claude owned process changed; original proof retained".into());
@@ -3809,71 +3974,136 @@ impl ClaudeTurn {
     }
 
     fn capture_control_proof(&mut self) -> Result<(), String> {
-        if self.control.is_some() { return Ok(()); }
+        if self.control.is_some() {
+            return Ok(());
+        }
         let (Some(run), Some(admission), Some(history), Some(process)) = (
-            self.run.as_ref(), self.admission.as_ref(), self.history.reader.history.as_ref(), self.native.as_ref(),
-        ) else { return Ok(()); };
+            self.run.as_ref(),
+            self.admission.as_ref(),
+            self.history.reader.history.as_ref(),
+            self.native.as_ref(),
+        ) else {
+            return Ok(());
+        };
         let adapter = agent(CLAUDE)?;
         let job = adapter.background_job(run).map_err(|e| e.to_string())?;
-        if job.id != self.id || job.session != self.session || job.pid != Some(process.pid)
-            || !job.process.as_ref().is_some_and(|pinned| pinned.pid == process.pid && pinned.started == process.started)
+        if job.id != self.id
+            || job.session != self.session
+            || job.pid != Some(process.pid)
+            || !job.process.as_ref().is_some_and(|pinned| {
+                pinned.pid == process.pid && pinned.started == process.started
+            })
         {
-            return Err("Claude canonical ownership differs from observed execution; proof not persisted".into());
+            return Err(
+                "Claude canonical ownership differs from observed execution; proof not persisted"
+                    .into(),
+            );
         }
         if job.cwd != self.root {
             // Observation remains valid; a new-cwd control admission has not been established.
             return Ok(());
         }
-        if matches!(&admission.kind, crate::data::BackgroundAdmission::Resume { session } if session != &job.session) {
+        if matches!(&admission.kind, crate::data::BackgroundAdmission::Resume { session } if session != &job.session)
+        {
             return Ok(()); // Missing transition proof cannot grant cold control; observation remains available.
         }
-        let home = job.home.ok_or("Claude bound account unavailable; control proof unknown")?;
+        let home = job
+            .home
+            .ok_or("Claude bound account unavailable; control proof unknown")?;
         let path = adapter.transcript(run).map_err(|e| e.to_string())?;
-        let source = adapter.history(&job.session, Some(&home), Some(&path), Some(&history.checkpoint()))?;
-        let owner = run.owner().ok_or("Claude canonical owner unavailable; control proof unknown")?
+        let source = adapter.history(
+            &job.session,
+            Some(&home),
+            Some(&path),
+            Some(&history.checkpoint()),
+        )?;
+        let owner = run
+            .owner()
+            .ok_or("Claude canonical owner unavailable; control proof unknown")?
             .checkpoint()?;
         let controller = agentq_runtime::agent::NativeProcess::read(std::process::id())?
             .ok_or("TaskQ controller creation identity unavailable")?;
         self.control = Some(crate::data::BackgroundControlProof {
-            admission: admission.kind.clone(), grant: admission.grant.clone(), controller,
-            session_store: admission.request.session_store.path.clone(), lifetime: admission.request.lifetime,
-            project: self.root.clone(), home, cwd: job.cwd, job: job.id, native_session: job.session,
+            admission: admission.kind.clone(),
+            grant: admission.grant.clone(),
+            controller,
+            session_store: admission.request.session_store.path.clone(),
+            lifetime: admission.request.lifetime,
+            project: self.root.clone(),
+            home,
+            cwd: job.cwd,
+            job: job.id,
+            native_session: job.session,
             before: self.before,
             input_sha256: ring::digest::digest(&ring::digest::SHA256, self.input.as_bytes())
-                .as_ref().iter().map(|byte| format!("{byte:02x}")).collect(),
-            owner, source: source.checkpoint(),
+                .as_ref()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            owner,
+            source: source.checkpoint(),
         });
         Ok(())
     }
 
     fn stop_recovered_owned(&mut self, base: &dyn Fn() -> Command) -> Result<(), String> {
-        let proof = self.control.clone().ok_or("Claude recovered protected control proof missing; original execution retained")?;
-        let context = self.recovery.as_ref().ok_or("Claude durable execution admission unavailable; control refused")?;
-        if proof.project != self.root || proof.cwd != self.root || context.root != self.root
-            || proof.job != self.id || proof.native_session != self.session || proof.before != self.before
-            || self.account().is_some_and(|home| home.canonicalize().ok().as_ref() != Some(&proof.home))
+        let proof = self.control.clone().ok_or(
+            "Claude recovered protected control proof missing; original execution retained",
+        )?;
+        let context = self
+            .recovery
+            .as_ref()
+            .ok_or("Claude durable execution admission unavailable; control refused")?;
+        if proof.project != self.root
+            || proof.cwd != self.root
+            || context.root != self.root
+            || proof.job != self.id
+            || proof.native_session != self.session
+            || proof.before != self.before
+            || self
+                .account()
+                .is_some_and(|home| home.canonicalize().ok().as_ref() != Some(&proof.home))
             || background_grant(&context.install, &self.root).as_ref() != Some(&proof.grant)
             || proof.session_store != context.install.join("runtime-sessions")
         {
             return Err("Claude original local execution/account/grant/store binding changed; control refused".into());
         }
         let input_hash: String = ring::digest::digest(&ring::digest::SHA256, self.input.as_bytes())
-            .as_ref().iter().map(|byte| format!("{byte:02x}")).collect();
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
         if input_hash != proof.input_sha256 {
             return Err("Claude protected input reference changed; control refused".into());
         }
-        let process = self.native.as_ref().ok_or("Claude saved process identity missing; control refused")?;
-        let native = agentq_runtime::agent::NativeProcess { pid: process.pid, started: process.started.clone() };
+        let process = self
+            .native
+            .as_ref()
+            .ok_or("Claude saved process identity missing; control refused")?;
+        let native = agentq_runtime::agent::NativeProcess {
+            pid: process.pid,
+            started: process.started.clone(),
+        };
         let saved = crate::service_run::kids_file(&context.install, &context.root)?;
-        if !saved.iter().any(|kid| kid.task == context.task && kid.attempt == context.attempt
-            && kid.execution == context.execution && kid.runtime == context.runtime
-            && kid.process == *process && kid.control.as_ref() == Some(&proof))
-        {
+        if !saved.iter().any(|kid| {
+            kid.task == context.task
+                && kid.attempt == context.attempt
+                && kid.execution == context.execution
+                && kid.runtime == context.runtime
+                && kid.process == *process
+                && kid.control.as_ref() == Some(&proof)
+        }) {
             return Err("Claude protected execution changed; control refused".into());
         }
         let adapter = agent(CLAUDE)?;
-        let source = adapter.history(&proof.native_session, Some(&proof.home), None, Some(&proof.source))?;
-        let mut request = agentq_runtime::agent::Launch::new(&proof.cwd, &self.log, &self.input, "taskq");
+        let source = adapter.history(
+            &proof.native_session,
+            Some(&proof.home),
+            None,
+            Some(&proof.source),
+        )?;
+        let mut request =
+            agentq_runtime::agent::Launch::new(&proof.cwd, &self.log, &self.input, "taskq");
         request.mode = agentq_runtime::agent::Mode::Background;
         request.home = Some(proof.home.clone());
         request.session_store = agentq_runtime::agent::SessionStore::new(&proof.session_store);
@@ -3889,34 +4119,70 @@ impl ClaudeTurn {
         let root = context.root.clone();
         self.persist()?;
         if crate::service_run::kids_file(&install, &root)? != saved {
-            return Err("Claude protected execution changed during persistence; control refused".into());
+            return Err(
+                "Claude protected execution changed during persistence; control refused".into(),
+            );
         }
         let expected = agentq_runtime::agent::BackgroundExecution {
-            owner_receipt: &proof.owner, project: &proof.project, job: &proof.job,
-            submitted_session: submitted, native_session: &proof.native_session,
-            process: &native, previous_process: None, input: &self.input, before: proof.before,
+            owner_receipt: &proof.owner,
+            project: &proof.project,
+            job: &proof.job,
+            submitted_session: submitted,
+            native_session: &proof.native_session,
+            process: &native,
+            previous_process: None,
+            input: &self.input,
+            before: proof.before,
         };
-        let until = std::time::Instant::now() + observation_left(std::time::Duration::from_secs(10));
-        let left = || until.checked_duration_since(std::time::Instant::now())
-            .filter(|time| !time.is_zero()).ok_or("Claude stop observation budget exhausted");
+        let until =
+            std::time::Instant::now() + observation_left(std::time::Duration::from_secs(10));
+        let left = || {
+            until
+                .checked_duration_since(std::time::Instant::now())
+                .filter(|time| !time.is_zero())
+                .ok_or("Claude stop observation budget exhausted")
+        };
         let exited = || -> Result<bool, String> {
             use agentq_runtime::agent::{BackgroundKind, BackgroundPid, BackgroundState};
-            let candidates = adapter.background_candidates(base(), &claude_spec(&proof.cwd, Some(&proof.home)), false, left()?)?;
-            let mut matching = candidates.iter().filter(|candidate| candidate.id() == Some(proof.job.as_str()));
-            let candidate = matching.next().ok_or("Claude original job exit readback unavailable")?;
-            if matching.next().is_some() || candidate.kind() != BackgroundKind::Background
-                || candidate.project() != proof.cwd || candidate.session() != proof.native_session
-                || candidate.cwd() != proof.cwd || candidate.home() != proof.home
-            { return Err("Claude original job exit binding differs; state unknown".into()); }
+            let candidates = adapter.background_candidates(
+                base(),
+                &claude_spec(&proof.cwd, Some(&proof.home)),
+                false,
+                left()?,
+            )?;
+            let mut matching = candidates
+                .iter()
+                .filter(|candidate| candidate.id() == Some(proof.job.as_str()));
+            let candidate = matching
+                .next()
+                .ok_or("Claude original job exit readback unavailable")?;
+            if matching.next().is_some()
+                || candidate.kind() != BackgroundKind::Background
+                || candidate.project() != proof.cwd
+                || candidate.session() != proof.native_session
+                || candidate.cwd() != proof.cwd
+                || candidate.home() != proof.home
+            {
+                return Err("Claude original job exit binding differs; state unknown".into());
+            }
             match candidate.pid() {
-                BackgroundPid::Malformed => return Err("Claude process identity malformed; exit unknown".into()),
-                BackgroundPid::Present(pid) if pid.get() != native.pid => return Err("Claude process changed; original execution retained".into()),
+                BackgroundPid::Malformed => {
+                    return Err("Claude process identity malformed; exit unknown".into());
+                }
+                BackgroundPid::Present(pid) if pid.get() != native.pid => {
+                    return Err("Claude process changed; original execution retained".into());
+                }
                 BackgroundPid::Present(_) => return Ok(false),
                 BackgroundPid::Absent => (),
             }
             match candidate.state() {
-                Some(BackgroundState::Done | BackgroundState::Blocked | BackgroundState::Failed
-                    | BackgroundState::Crashed | BackgroundState::Stopped) => (),
+                Some(
+                    BackgroundState::Done
+                    | BackgroundState::Blocked
+                    | BackgroundState::Failed
+                    | BackgroundState::Crashed
+                    | BackgroundState::Stopped,
+                ) => (),
                 Some(BackgroundState::Working | BackgroundState::Idle) => return Ok(false),
                 None => return Err("Claude native state unknown; exit unconfirmed".into()),
             }
@@ -3944,10 +4210,18 @@ impl ClaudeTurn {
             return self.stop_recovered_owned(&|| crate::platform::command(which(of(CLAUDE).bin)));
         }
         let adapter = agent(CLAUDE)?;
-        let context = self.recovery.as_ref().ok_or("Claude durable execution admission unavailable; control refused")?;
-        let admission = self.admission.as_ref().ok_or("Claude original product grant unavailable; control refused")?;
+        let context = self
+            .recovery
+            .as_ref()
+            .ok_or("Claude durable execution admission unavailable; control refused")?;
+        let admission = self
+            .admission
+            .as_ref()
+            .ok_or("Claude original product grant unavailable; control refused")?;
         if background_grant(&context.install, &self.root).as_ref() != Some(&admission.grant) {
-            return Err("Claude local product grant changed or was revoked; control refused".into());
+            return Err(
+                "Claude local product grant changed or was revoked; control refused".into(),
+            );
         }
         let run = self.run.as_mut().ok_or(
             "Claude recovered control proof missing: protected source prefix, original grant and actual-cwd admission required; original execution retained",
@@ -3958,14 +4232,29 @@ impl ClaudeTurn {
             return Err("Claude owned job differs from saved execution; control refused".into());
         }
         if !self.session.is_empty() && self.session != job.session {
-            return Err("Claude owned session differs from saved execution; control refused".into());
+            return Err(
+                "Claude owned session differs from saved execution; control refused".into(),
+            );
         }
         self.id = job.id;
         self.session = job.session;
-        let pid = job.pid.ok_or("Claude owned process identity unavailable; control refused")?;
-        let pinned = job.process.as_ref().ok_or("Claude owned process incarnation unverified; control refused")?;
-        let observed = coreq::process::Identity { pid:pinned.pid, started:pinned.started.clone() };
-        if pid != observed.pid || coreq::process::identity(pid).map_err(|error| error.to_string())?.as_ref() != Some(&observed) {
+        let pid = job
+            .pid
+            .ok_or("Claude owned process identity unavailable; control refused")?;
+        let pinned = job
+            .process
+            .as_ref()
+            .ok_or("Claude owned process incarnation unverified; control refused")?;
+        let observed = coreq::process::Identity {
+            pid: pinned.pid,
+            started: pinned.started.clone(),
+        };
+        if pid != observed.pid
+            || coreq::process::identity(pid)
+                .map_err(|error| error.to_string())?
+                .as_ref()
+                != Some(&observed)
+        {
             return Err("Claude owned process incarnation changed; control refused".into());
         }
         if self.native.as_ref().is_some_and(|saved| saved != &observed) {
@@ -3975,16 +4264,22 @@ impl ClaudeTurn {
         self.persist()?;
         let context = self.recovery.as_ref().unwrap();
         let saved = crate::service_run::kids_file(&context.install, &context.root)?;
-        if !saved.iter().any(|kid| kid.task == context.task && kid.attempt == context.attempt
-            && kid.execution == context.execution && kid.runtime == context.runtime
-            && self.native.as_ref() == Some(&kid.process) && kid.control == self.control)
-        {
+        if !saved.iter().any(|kid| {
+            kid.task == context.task
+                && kid.attempt == context.attempt
+                && kid.execution == context.execution
+                && kid.runtime == context.runtime
+                && self.native.as_ref() == Some(&kid.process)
+                && kid.control == self.control
+        }) {
             return Err("Claude protected execution changed; control refused".into());
         }
         adapter.cancel(self.run.as_mut().unwrap())?;
         // The native request acknowledges control only; retain occupancy until existing exit readback proves it.
         let rows = self.agents()?;
-        let row = rows.iter().find(|row| row.id() == Some(self.id.as_str()))
+        let row = rows
+            .iter()
+            .find(|row| row.id() == Some(self.id.as_str()))
             .ok_or("Claude stopped job readback unavailable; original execution retained")?;
         if claude_exit(row, self.native.as_ref(), self.handed)? {
             self.done = true;
@@ -4019,7 +4314,9 @@ impl ClaudeTurn {
         Ok(Some(0))
     }
     fn capture_identity(&mut self, row: &BackgroundCandidate) -> Result<(), String> {
-        if row.id() != Some(self.id.as_str()) || !self.session.is_empty() && row.session() != self.session {
+        if row.id() != Some(self.id.as_str())
+            || !self.session.is_empty() && row.session() != self.session
+        {
             return Err("Claude process locator differs from the original native job".into());
         }
         if let Some(pid) = claude_pid(row)? {
@@ -4103,7 +4400,9 @@ impl ClaudeTurn {
             }
         }
         let path = claude_transcript_in(row.home(), &self.session)?;
-        let found = self.history.read(&path, self.before, &self.input, &self.log, &self.session)?;
+        let found = self
+            .history
+            .read(&path, self.before, &self.input, &self.log, &self.session)?;
         if found {
             self.accepted = true;
             return Ok(None);
@@ -4111,7 +4410,9 @@ impl ClaudeTurn {
         let (secs, limit) = (age.as_secs(), CLAUDE_RESUME_ACCEPT.as_secs());
         let cause = format!(
             "no native process after resume: Claude job {} input not accepted {secs} s after launch",
-            row.state().map(BackgroundState::as_str).unwrap_or("unknown")
+            row.state()
+                .map(BackgroundState::as_str)
+                .unwrap_or("unknown")
         );
         if age < CLAUDE_RESUME_ACCEPT {
             return Err(format!("{cause}; released and requeued at {limit} s"));
@@ -4123,7 +4424,9 @@ impl ClaudeTurn {
 
     fn observe(&mut self, row: &BackgroundCandidate) -> Result<Option<i32>, String> {
         // Job outcome and process exit are separate native observations.
-        let state = row.state().map(BackgroundState::as_str)
+        let state = row
+            .state()
+            .map(BackgroundState::as_str)
             .ok_or("Claude job state unavailable; state unknown")?;
         if !matches!(
             state,
@@ -4196,7 +4499,10 @@ impl ClaudeTurn {
             return Err("Claude native activity unknown; occupancy retained".into());
         }
         if row.activity() != BackgroundActivity::Idle
-            && !matches!(row.state(), Some(BackgroundState::Idle | BackgroundState::Done | BackgroundState::Blocked))
+            && !matches!(
+                row.state(),
+                Some(BackgroundState::Idle | BackgroundState::Done | BackgroundState::Blocked)
+            )
         {
             return Ok(None);
         }
@@ -4204,14 +4510,18 @@ impl ClaudeTurn {
             if row.state() == Some(BackgroundState::Blocked) {
                 return Ok(None);
             }
-            if !claude_exit(row, self.native.as_ref(), self.handed)? { self.stop_owned()?; }
+            if !claude_exit(row, self.native.as_ref(), self.handed)? {
+                self.stop_owned()?;
+            }
             self.done = true;
             return Ok(Some(0));
         }
         if !self.history.ended && !self.handed {
             return Ok(None);
         }
-        if !claude_exit(row, self.native.as_ref(), self.handed)? { self.stop_owned()?; }
+        if !claude_exit(row, self.native.as_ref(), self.handed)? {
+            self.stop_owned()?;
+        }
         if self.handed && !self.history.ended {
             self.done = true;
             return Ok(Some(0));
@@ -4368,12 +4678,16 @@ pub fn claude_background(root: &Path, session: &str, home: Option<&Path>) -> Res
         let page = history.poll()?;
         for event in page.events {
             if event["validity"]["status"] != "valid" {
-                return Err("Claude source validity unknown; background identity unresolved".into());
+                return Err(
+                    "Claude source validity unknown; background identity unresolved".into(),
+                );
             }
             background |= event["presentation"]["session_kind"] == "bg";
         }
         if !page.more {
-            if page.pending_bytes != 0 { return Err("Claude source partial; background identity unresolved".into()); }
+            if page.pending_bytes != 0 {
+                return Err("Claude source partial; background identity unresolved".into());
+            }
             return Ok(background);
         }
         if std::time::Instant::now() >= until {

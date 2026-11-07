@@ -104,10 +104,12 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     };
     let mut run = match adapter.launch(&request) {
         Ok(run) => run,
-        Err(error) => return match error.stage {
-            agentq_runtime::agent::InputStage::BeforeInput => Launched::NoStart(error.detail),
-            agentq_runtime::agent::InputStage::Unknown => Launched::Unknown(error.detail),
-        },
+        Err(error) => {
+            return match error.stage {
+                agentq_runtime::agent::InputStage::BeforeInput => Launched::NoStart(error.detail),
+                agentq_runtime::agent::InputStage::Unknown => Launched::Unknown(error.detail),
+            };
+        }
     };
     loop {
         match adapter.poll(&mut run) {
@@ -221,7 +223,10 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     let mut run = match adapter.launch(&request) {
         Ok(run) => run,
         Err(error) => {
-            return Launched::Unknown(format!("Native background launch: {}; no replay", error.detail));
+            return Launched::Unknown(format!(
+                "Native background launch: {}; no replay",
+                error.detail
+            ));
         }
     };
     if let Ok(output) = adapter.launcher_output(&mut run) {
@@ -476,7 +481,10 @@ enum Hold {
 /// Only `status` tells a turn in progress: `claude agents --json` keeps `state` `working` on an idle launched job (#1762).
 fn holds(rows: &[agentq_runtime::agent::BackgroundCandidate], r: &Request) -> Hold {
     let mut hold = Hold::Free;
-    for v in rows.iter().filter(|v| Some(v.session()) == r.session.as_deref()) {
+    for v in rows
+        .iter()
+        .filter(|v| Some(v.session()) == r.session.as_deref())
+    {
         let own = v.kind() == agentq_runtime::agent::BackgroundKind::Background
             && v.id() == r.job.as_deref();
         if !own || v.activity() != agentq_runtime::agent::BackgroundActivity::Idle {

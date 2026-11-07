@@ -448,18 +448,30 @@ fn historical_claude_diagnostics_never_release_or_replay() {
                 }
             }),
         );
-        s.recover = Some(Box::new(|_, _| Err("canonical native proof unavailable; input remains unknown".into())));
+        s.recover = Some(Box::new(|_, _| {
+            Err("canonical native proof unavailable; input remains unknown".into())
+        }));
         s.focus = vec!["all".into()];
         for _ in 0..4 {
             let _ = s.pass();
             b.advance(60);
         }
         let log = entries(&b, n).unwrap();
-        assert_eq!(*launched.borrow(), 0, "{case}: historical text cannot authorize new work");
-        assert_eq!(core::executions(n, &log).last().unwrap().release, None,
-            "{case}: no-start needs qualified canonical proof");
-        assert!(!log.iter().any(|entry| entry.body.starts_with("taskq: gone")),
-            "historical diagnostics cannot retire an uncertain execution");
+        assert_eq!(
+            *launched.borrow(),
+            0,
+            "{case}: historical text cannot authorize new work"
+        );
+        assert_eq!(
+            core::executions(n, &log).last().unwrap().release,
+            None,
+            "{case}: no-start needs qualified canonical proof"
+        );
+        assert!(
+            !log.iter()
+                .any(|entry| entry.body.starts_with("taskq: gone")),
+            "historical diagnostics cannot retire an uncertain execution"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }
@@ -7781,7 +7793,12 @@ fn terminal_reviewer_records_native_error_and_releases_lease() {
             Ok(Some(-1))
         }
         fn exit_error(&self) -> Option<&'static str> {
-            let rows = crate::runtime::background_rows(&[serde_json::json!({"id":"abcdef12", "state":"failed"})], &self.root, &self.root).ok()?;
+            let rows = crate::runtime::background_rows(
+                &[serde_json::json!({"id":"abcdef12", "state":"failed"})],
+                &self.root,
+                &self.root,
+            )
+            .ok()?;
             crate::runtime::claude_failure(rows.first()?).ok()
         }
         fn kill(&mut self) -> Result<(), String> {
@@ -7849,26 +7866,52 @@ fn terminal_reviewer_records_native_error_and_releases_lease() {
         )
     });
     let failure = |state: &str, id: &str, project: &std::path::Path| {
-        let rows = crate::runtime::background_rows(&[serde_json::json!({"id":id,"state":state,"cwd":project})], project, &root)?;
+        let rows = crate::runtime::background_rows(
+            &[serde_json::json!({"id":id,"state":state,"cwd":project})],
+            project,
+            &root,
+        )?;
         crate::runtime::claude_failure(&rows[0])
     };
-    std::fs::write(root.join("jobs/abcdef12/state.json"), serde_json::json!({
+    std::fs::write(
+        root.join("jobs/abcdef12/state.json"),
+        serde_json::json!({
         "cwd":root,"sessionId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-        "state":"failed","detail":"permission denied"}).to_string()).unwrap();
+        "state":"failed","detail":"permission denied"})
+        .to_string(),
+    )
+    .unwrap();
     assert_eq!(failure("failed", "abcdef12", &root), Ok("permission"));
     for detail in [None, Some(serde_json::Value::Null)] {
         let mut state = serde_json::json!({
             "cwd":root,"sessionId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","state":"failed"
         });
-        if let Some(detail) = detail { state["detail"] = detail; }
+        if let Some(detail) = detail {
+            state["detail"] = detail;
+        }
         std::fs::write(root.join("jobs/abcdef12/state.json"), state.to_string()).unwrap();
-        assert!(failure("failed", "abcdef12", &root).is_err(), "absent native detail remains unknown");
+        assert!(
+            failure("failed", "abcdef12", &root).is_err(),
+            "absent native detail remains unknown"
+        );
     }
-    assert!(failure("stopped", "abcdef12", &root).is_err(), "mismatched native state remains unknown");
-    assert!(failure("failed", "../abcdef12", &root).is_err(), "invalid identity cannot read a locator");
-    assert!(failure("failed", "abcdef12", &root.join("jobs")).is_err(), "foreign cwd remains unknown");
+    assert!(
+        failure("stopped", "abcdef12", &root).is_err(),
+        "mismatched native state remains unknown"
+    );
+    assert!(
+        failure("failed", "../abcdef12", &root).is_err(),
+        "invalid identity cannot read a locator"
+    );
+    assert!(
+        failure("failed", "abcdef12", &root.join("jobs")).is_err(),
+        "foreign cwd remains unknown"
+    );
     std::fs::remove_file(root.join("jobs/abcdef12/state.json")).unwrap();
-    assert!(failure("failed", "abcdef12", &root).is_err(), "missing failure evidence cannot become a generic native failure");
+    assert!(
+        failure("failed", "abcdef12", &root).is_err(),
+        "missing failure evidence cannot become a generic native failure"
+    );
     std::fs::remove_dir_all(&root).unwrap();
 }
 

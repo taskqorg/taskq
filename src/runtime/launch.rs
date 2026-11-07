@@ -117,13 +117,20 @@ pub(super) fn request(
     Ok(request)
 }
 
-pub(super) fn submit(rt: &str, session: Option<&str>, request: &Request) -> Result<Run, StartError> {
+pub(super) fn submit(
+    rt: &str,
+    session: Option<&str>,
+    request: &Request,
+) -> Result<Run, StartError> {
     let adapter = agent(rt)?;
     match session {
         Some(session) => adapter.resume(session, request),
         None => adapter.launch(request),
-    }.map_err(|error| StartError {
-        message: error.detail, class: "native-launch", reportable: false,
+    }
+    .map_err(|error| StartError {
+        message: error.detail,
+        class: "native-launch",
+        reportable: false,
         no_start: error.stage == agentq_runtime::agent::InputStage::BeforeInput,
         trust_pending: false,
     })
@@ -138,7 +145,11 @@ pub(super) fn background(
 ) -> Result<(Run, Request), StartError> {
     let mut request = request(env, l, log, input, access)?;
     request.mode = Mode::Background;
-    let run = submit(&l.rt, l.resume.as_ref().map(|_| l.session.as_str()), &request)?;
+    let run = submit(
+        &l.rt,
+        l.resume.as_ref().map(|_| l.session.as_str()),
+        &request,
+    )?;
     Ok((run, request))
 }
 
@@ -185,21 +196,29 @@ impl Proc for Native {
         agent(&self.rt).ok()?.report(&self.run).ok()?.start_failure
     }
     fn exited(&mut self) -> Result<Option<i32>, String> {
-        self.termination()?.map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into())).transpose()
+        self.termination()?
+            .map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into()))
+            .transpose()
     }
     fn termination(&mut self) -> Result<Option<Exit>, String> {
         let adapter = agent(&self.rt)?;
         let state = adapter.poll(&mut self.run)?;
         #[cfg(windows)]
-        if self.scope.termination()?.is_none() { return Ok(None); }
+        if self.scope.termination()?.is_none() {
+            return Ok(None);
+        }
         if state == agentq_runtime::agent::State::Running {
             return Ok(None);
         }
         // A terminal report is distinct from native process exit, which it must explicitly carry.
         let mut report = adapter.report(&self.run)?;
-        if matches!(state, agentq_runtime::agent::State::Finished | agentq_runtime::agent::State::Failed)
-            && !matches!(report.termination, agentq_runtime::agent::ProcessTermination::Observed)
-        {
+        if matches!(
+            state,
+            agentq_runtime::agent::State::Finished | agentq_runtime::agent::State::Failed
+        ) && !matches!(
+            report.termination,
+            agentq_runtime::agent::ProcessTermination::Observed
+        ) {
             adapter.cancel(&mut self.run)?;
             adapter.poll(&mut self.run)?;
             report = adapter.report(&self.run)?;

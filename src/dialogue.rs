@@ -552,7 +552,14 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
     adapter.adopt(session, &request, &[])?;
     let mut run = match adapter.resume(session, &request) {
         Ok(run) => run,
-        Err(reason) => return finish(install, own, t, format!("unknown: {}; no replay", reason.detail)),
+        Err(reason) => {
+            return finish(
+                install,
+                own,
+                t,
+                format!("unknown: {}; no replay", reason.detail),
+            );
+        }
     };
     t.pid = run.id();
     t.started = t

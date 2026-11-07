@@ -279,7 +279,10 @@ pub fn transcript(own: &Path, r: &Request) -> Res<std::path::PathBuf> {
 pub fn write_input(own: &Path, runtime: &str, text: &str) -> Res<()> {
     if super::agent(runtime)?.descriptor().has("acp") {
         // Intent is already durable in brief.txt or turn.json; ACP owns its physical representation.
-        fs::OpenOptions::new().create(true).append(true).open(log(own))
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log(own))
             .map_err(|_| "Native source unavailable")?;
         Ok(())
     } else {

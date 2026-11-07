@@ -705,7 +705,9 @@ impl Proc for Execution {
             .unwrap_or_else(|| self.native.as_ref().unwrap().pid)
     }
     fn exited(&mut self) -> Result<Option<i32>, String> {
-        self.termination()?.map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into())).transpose()
+        self.termination()?
+            .map(|exit| exit.code.ok_or_else(|| "native exit code unknown".into()))
+            .transpose()
     }
     fn termination(&mut self) -> Result<Option<super::Exit>, String> {
         if self.terminal.is_some() {
@@ -721,7 +723,9 @@ impl Proc for Execution {
             child
                 .try_wait()
                 .map_err(|e| e.to_string())?
-                .map(|status| super::Exit { code: status.code() })
+                .map(|status| super::Exit {
+                    code: status.code(),
+                })
         } else if let Some(launcher) = &self.launcher {
             match unsafe { WaitForSingleObject(launcher.as_raw_handle(), 0) } {
                 258 => None,
@@ -730,7 +734,9 @@ impl Proc for Execution {
                     if unsafe { GetExitCodeProcess(launcher.as_raw_handle(), &mut code) } == 0 {
                         return Err(io::Error::last_os_error().to_string());
                     }
-                    Some(super::Exit { code: Some(code as i32) })
+                    Some(super::Exit {
+                        code: Some(code as i32),
+                    })
                 }
                 _ => return Err(io::Error::last_os_error().to_string()),
             }

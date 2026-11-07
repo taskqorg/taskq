@@ -111,14 +111,25 @@ fn acp_intent_never_prefixes_or_mutates_physical_records() {
     let root = std::env::temp_dir().join(format!("taskq-acp-intent-{}", super::super::uuid()));
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join("brief.txt"), "durable initial intent").unwrap();
-    fs::write(root.join("turn.json"), r#"{"input":"durable reply intent"}"#).unwrap();
+    fs::write(
+        root.join("turn.json"),
+        r#"{"input":"durable reply intent"}"#,
+    )
+    .unwrap();
     write_input(&root, "antigravity", "durable initial intent").unwrap();
     assert_eq!(fs::read(log(&root)).unwrap(), b"");
     let canonical = b"{\"type\":\"acp\",\"message\":{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"sessionId\":\"saved\"}}}\n";
     fs::write(log(&root), canonical).unwrap();
     write_input(&root, "antigravity", "durable reply intent").unwrap();
     assert_eq!(fs::read(log(&root)).unwrap(), canonical);
-    assert_eq!(fs::read_to_string(root.join("brief.txt")).unwrap(), "durable initial intent");
-    assert!(fs::read_to_string(root.join("turn.json")).unwrap().contains("durable reply intent"));
+    assert_eq!(
+        fs::read_to_string(root.join("brief.txt")).unwrap(),
+        "durable initial intent"
+    );
+    assert!(
+        fs::read_to_string(root.join("turn.json"))
+            .unwrap()
+            .contains("durable reply intent")
+    );
     fs::remove_dir_all(root).unwrap();
 }

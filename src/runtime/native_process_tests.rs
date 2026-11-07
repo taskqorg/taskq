@@ -77,17 +77,36 @@ pub fn start_file(command: &mut Command, input: File) -> Result<Box<dyn Proc>, S
 }
 
 /// Invented native rows enter through the public decoder, never a consumer constructor.
-pub(crate) fn background_rows(rows: &[serde_json::Value], root: &Path, home: &Path) -> Result<Vec<agentq_runtime::agent::BackgroundCandidate>, String> {
+pub(crate) fn background_rows(
+    rows: &[serde_json::Value],
+    root: &Path,
+    home: &Path,
+) -> Result<Vec<agentq_runtime::agent::BackgroundCandidate>, String> {
     let mut rows = rows.to_vec();
     for row in &mut rows {
-        let object = row.as_object_mut().ok_or("invented row must be an object")?;
-        object.entry("kind").or_insert(serde_json::json!("background"));
+        let object = row
+            .as_object_mut()
+            .ok_or("invented row must be an object")?;
+        object
+            .entry("kind")
+            .or_insert(serde_json::json!("background"));
         object.entry("id").or_insert(serde_json::json!("c37eb75a"));
-        object.entry("sessionId").or_insert(serde_json::json!("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"));
+        object
+            .entry("sessionId")
+            .or_insert(serde_json::json!("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"));
         object.entry("cwd").or_insert(serde_json::json!(root));
     }
     let python = super::which(if cfg!(windows) { "python" } else { "python3" });
     let mut command = crate::platform::command(python);
-    command.args(["-c", "import sys;print(sys.argv[1])", &serde_json::to_string(&rows).unwrap()]);
-    super::agent(super::CLAUDE)?.background_candidates(command, &super::claude_spec(root, Some(home)), false, std::time::Duration::from_secs(10))
+    command.args([
+        "-c",
+        "import sys;print(sys.argv[1])",
+        &serde_json::to_string(&rows).unwrap(),
+    ]);
+    super::agent(super::CLAUDE)?.background_candidates(
+        command,
+        &super::claude_spec(root, Some(home)),
+        false,
+        std::time::Duration::from_secs(10),
+    )
 }
