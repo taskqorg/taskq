@@ -387,8 +387,8 @@ const tail = process.argv[2] === "--tail";
         await page
           .locator(".conversation-detail")
           .getAttribute("data-thread-id"),
-        thread,
-        "sessions alias retains exact current thread",
+        "",
+        "changing the session filter clears selection instead of showing an unrelated thread",
       );
       assert.match(
         await page.locator(".nav-title").innerText(),
