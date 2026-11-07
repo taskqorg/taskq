@@ -186,7 +186,14 @@ fn owner_transcript_home_fixture() {
         };
         let path = home.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, "invented transcript\n").unwrap();
+        let record = if runtime == "claude" {
+            json!({"type":"user","sessionId":session,"cwd":root,
+                "message":{"role":"user","content":"invented transcript"}})
+        } else {
+            json!({"type":"session_meta","payload":{"id":session,"cwd":root}})
+        };
+        let source = format!("{record}\n");
+        fs::write(&path, &source).unwrap();
         assert_eq!(transcript(runtime, session).unwrap(), path);
         assert!(transcript(runtime, "../../escape").is_err());
         assert!(transcript(runtime, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee").is_err());
@@ -196,12 +203,12 @@ fn owner_transcript_home_fixture() {
             format!("sessions/2026/10/30/rollout-duplicate-{session}.jsonl")
         });
         fs::create_dir_all(duplicate.parent().unwrap()).unwrap();
-        fs::write(&duplicate, "invented duplicate\n").unwrap();
+        fs::write(&duplicate, &source).unwrap();
         assert!(
             transcript(runtime, session).is_err(),
             "ambiguous native identity must stay unknown"
         );
-        assert_eq!(fs::read_to_string(&path).unwrap(), "invented transcript\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
     }
 }
 
