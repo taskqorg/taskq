@@ -92,7 +92,11 @@ const base = require("./fixtures/task-workspace.json").state;
           () => messages.find((m) => m.a === "workspace")?.open,
         );
         assert.equal(open.task, 7);
-        assert.equal(open.page, "answer");
+        assert.equal(
+          open.page,
+          "conversations",
+          "M3.6/M3.17: Open question opens the exact Conversations task",
+        );
         assert.equal(open.board, board);
       }
       await page.setContent(
