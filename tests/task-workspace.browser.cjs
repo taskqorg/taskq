@@ -35,6 +35,26 @@ const fx = require("./fixtures/task-workspace.json"),
       );
       for (const [i, s] of j.steps.entries()) {
         const at = j.id + " step " + i;
+        if (s.reader) {
+          const destination = await p.evaluate(
+            () => messages.filter((m) => m.a === "workspace").at(-1).open,
+          );
+          // The actual host handoff opens the unified reader, never a synthetic inline detail.
+          await p.setContent(
+            fs.readFileSync("build/web/workspace.html", "utf8"),
+          );
+          await p.evaluate(() => {
+            window.messages = [];
+            window.ipc = { postMessage: (m) => messages.push(JSON.parse(m)) };
+          });
+          await p.evaluate(
+            ({ state, open }) => {
+              taskq.receive(state);
+              taskq.receive({ open });
+            },
+            { state: { ...fx.state, font: j.font }, open: destination },
+          );
+        }
         if (s.click) await p.locator(s.click).first().click();
         if (s.press && !s.until) await p.keyboard.press(s.press);
         if (s.until) {
@@ -58,7 +78,59 @@ const fx = require("./fixtures/task-workspace.json"),
               [sel, n],
               { timeout: 2000 },
             )
-            .catch(() => assert.fail(at + ": " + sel + " count is not " + n));
+            .catch(async () =>
+              assert.fail(
+                at +
+                  ": " +
+                  sel +
+                  " expected " +
+                  n +
+                  ", actual " +
+                  (await p.locator(sel).count()),
+              ),
+            );
+        if ("navigationCount" in e) {
+          const destinations = await p.evaluate(() =>
+            messages.filter((m) => m.a === "workspace"),
+          );
+          assert.equal(
+            destinations.length,
+            e.navigationCount,
+            at + ": one navigation per activation",
+          );
+          if (e.destination)
+            assert.deepEqual(
+              destinations.at(-1).open,
+              e.destination,
+              at + ": exact task destination",
+            );
+        }
+        if (e.operation) {
+          await p.waitForFunction(
+            () => messages.some((m) => m.a === "answer"),
+            null,
+            { timeout: 2000 },
+          );
+          const operations = await p.evaluate(() =>
+            messages.filter((m) => m.a === "answer"),
+          );
+          assert.equal(
+            operations.length,
+            1,
+            at + ": one keyboard control operation",
+          );
+          const { root, board, op } = operations[0];
+          assert.deepEqual(
+            {
+              root,
+              board,
+              task: op.task,
+              revision: op.revision,
+              action: op.action,
+            },
+            e.operation,
+          );
+        }
         if ("open" in e)
           await p
             .waitForFunction(
@@ -80,7 +152,9 @@ const fx = require("./fixtures/task-workspace.json"),
           );
         for (const [sel, text] of Object.entries(e.text || {}))
           assert(
-            (await p.locator(sel).innerText()).includes(text),
+            (await p.locator(sel).innerText())
+              .replace(/\s+/g, " ")
+              .includes(text),
             at + ": " + sel + " lacks " + text,
           );
         if (e.fits)
