@@ -522,6 +522,8 @@ fn trait_scope_retains_descendants_after_launcher_exit() {
 #[ignore = "paid native qualification; TASKQ_NATIVE_RUNTIME and TASKQ_NATIVE_INSTALL require owner approval"]
 fn native_trait_start_resume_and_transcript() {
     let rt = std::env::var("TASKQ_NATIVE_RUNTIME").expect("TASKQ_NATIVE_RUNTIME");
+    let cancel_continuation = std::env::var("TASKQ_NATIVE_CANCEL_CONTINUATION").as_deref() == Ok("1");
+    if cancel_continuation { assert_eq!(rt, CLAUDE, "owned background caller qualification is Claude-only"); }
     assert!(RuntimeId::parse(&rt).is_some());
     let install =
         PathBuf::from(std::env::var_os("TASKQ_NATIVE_INSTALL").expect("TASKQ_NATIVE_INSTALL"));
@@ -534,6 +536,10 @@ fn native_trait_start_resume_and_transcript() {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
     let root = root.as_path();
+    if cancel_continuation {
+        assert!(std::env::var_os("TASKQ_NATIVE_ROOT").is_some(), "explicit disposable project required");
+        assert!(install.starts_with(root) && install != root, "preauthorized disposable install must be inside project");
+    }
     let exe = std::env::current_exe().unwrap();
     let authority = Env {
         context: "",
@@ -552,32 +558,39 @@ fn native_trait_start_resume_and_transcript() {
     std::fs::create_dir_all(&fixture).unwrap();
     println!("evidence={}", evidence.display());
     let env = Env {
-        install: &fixture,
+        install: if cancel_continuation { &install } else { &fixture },
         ..authority
     };
     let log = evidence.join("native.log");
     File::create(&log).unwrap();
     let mut session = String::from("-");
     let mut rows = vec![];
+    let mut submitted_inputs = vec![];
     for resume in [false, true] {
         let access = access(&authority, &rt).unwrap();
         let canary = format!("TaskQ-Qualification-2427-{}", uuid());
-        let text = format!(
+        let mut text = format!(
             "This is an approved non-task TaskQ Qualification probe. Reply with exactly {canary}. Do no work, edit no files, run no commands and make no taskq or board writes. Read this turn's input file if the launcher refers to it; use no other tools."
         );
+        if cancel_continuation && resume {
+            text = format!("Approved disposable qualification continuation {canary}. Produce a long numbered explanation of arithmetic, at least 20000 words. Use no tools, edit no files and make no board writes. The controller will cancel this turn after native acceptance.");
+        }
         let l = Launch {
             files: String::new(),
-            execution: None,
-            task: 0,
+            execution: cancel_continuation.then_some(if resume { 2 } else { 1 }),
+            task: if cancel_continuation { if resume { 8 } else { 7 } } else { 0 },
             title: "TaskQ Qualification 2427".into(),
-            attempt: 0,
-            role: "operator".into(),
+            attempt: if cancel_continuation { 1 } else { 0 },
+            role: if cancel_continuation { "worker" } else { "operator" }.into(),
             rt: rt.clone(),
             session: session.clone(),
             url: String::new(),
             resume: resume.then(|| text.clone()),
         };
         std::fs::write(evidence.join(format!("input-{resume}.json")),serde_json::to_vec_pretty(&serde_json::json!({"runtime":rt,"resume":resume,"session":session,"input":text,"access":access.json()})).unwrap()).unwrap();
+        if cancel_continuation {
+            submitted_inputs.push(claude_reference(&execution_input(root, l.task, l.attempt, l.execution.unwrap()).unwrap()).unwrap());
+        }
         let pos = std::fs::metadata(&log).unwrap().len();
         let mut proc: Box<dyn Proc> = if of(&rt).has(Cap::AppTurn) {
             assert!(
@@ -627,14 +640,32 @@ fn native_trait_start_resume_and_transcript() {
             })
         };
         let until = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        let mut cancellation = None;
+        let mut original = None;
+        let cfg = crate::service::Config { root:root.into(), install:install.clone(), ..crate::tests::cfg() };
         let exit = loop {
+            if cancel_continuation && cancellation.is_none() {
+                proc.checkpoint(&cfg, &l, l.execution.unwrap()).expect("unknown checkpoint stops qualification; retain owned evidence");
+                original = Some(proc.native_identity().expect("original creation identity required"));
+                if resume && cancellation.is_none() && proc.accepted().unwrap() {
+                    assert!(proc.termination().unwrap().is_none(), "continuation completed before cancel; no extra submission allowed");
+                    let identity = original.as_ref().unwrap();
+                    std::fs::write(evidence.join("cancel-original.json"), serde_json::to_vec_pretty(&serde_json::json!({"pid":identity.pid,"started":identity.started,"session":session})).unwrap()).unwrap();
+                    let result = proc.kill();
+                    std::fs::write(evidence.join("cancel-request.json"), serde_json::to_vec_pretty(&serde_json::json!({"result":result,"acceptance":true,"submissions":2})).unwrap()).unwrap();
+                    if let Err(error) = &result {
+                        assert_eq!(error, "Claude stop still pending; native process exit unconfirmed", "cancel refused/unknown; retain evidence without retry");
+                    }
+                    cancellation = Some(std::time::Instant::now());
+                }
+            }
             match proc.termination() {
                 Ok(Some(exit)) => break exit.code,
                 Ok(None) => {}
                 Err(reason) => eprintln!("qualification observation pending: {reason}"),
             }
             if std::time::Instant::now() >= until {
-                let cleanup = stop(proc.as_mut());
+                let cleanup = if cancel_continuation { Err("native qualification unknown; retain evidence, no repeated control".into()) } else { stop(proc.as_mut()) };
                 panic!(
                     "native qualification timed out; cleanup={cleanup:?}; evidence={}",
                     evidence.display()
@@ -642,6 +673,11 @@ fn native_trait_start_resume_and_transcript() {
             }
             std::thread::sleep(std::time::Duration::from_millis(200));
         };
+        if cancel_continuation && resume {
+            assert!(cancellation.is_some(), "continuation ended before cancellation; no extra submission allowed");
+            let original = original.as_ref().unwrap();
+            assert_ne!(coreq::process::identity(original.pid).unwrap().as_ref(), Some(original), "cancel acknowledgement is not process exit");
+        }
         let accepted = proc.accepted();
         std::fs::write(evidence.join(format!("exit-{resume}.json")),serde_json::to_vec_pretty(&serde_json::json!({"exit":exit,"accepted":accepted,"session":native_session(&rt,&log)})).unwrap()).unwrap();
         assert!(
@@ -654,6 +690,27 @@ fn native_trait_start_resume_and_transcript() {
         }
         session = id;
         let (_, native) = worker_transcript(&rt, &session, &log).unwrap();
+        if cancel_continuation {
+            let adapter = agent(&rt).unwrap();
+            let mut source = adapter.history(&session, None, Some(&native), None).unwrap();
+            let mut counts = vec![0; submitted_inputs.len()];
+            for page_number in 0..16 {
+                let page = source.poll().unwrap();
+                for (input, count) in submitted_inputs.iter().zip(counts.iter_mut()) {
+                    *count += page.events.iter().filter(|event| event["author"] == "user"
+                        && event["blocks"].as_array().is_some_and(|blocks| blocks.iter().any(|block| block["text"].as_str().is_some_and(|value| value.trim() == input.trim())))).count();
+                }
+                if !page.more { assert_eq!(page.pending_bytes, 0, "partial source remains unknown"); break; }
+                assert!(page_number < 15, "bounded history exhausted; no replay conclusion");
+            }
+            assert!(counts.iter().all(|count| *count == 1), "exactly one native input per original reference, including prior turn; no replay: {counts:?}");
+            std::fs::write(evidence.join(format!("source-{resume}.json")), serde_json::to_vec_pretty(&source.checkpoint()).unwrap()).unwrap();
+            if resume {
+                rows.push(serde_json::json!({"resume":true,"session":session,"accepted":true,"exit":exit,"cancel_requested":true,"native_inputs":counts,"original_gone":true}));
+                drop(proc);
+                continue;
+            }
+        }
         assert!(
             std::fs::read_to_string(&native).unwrap().contains(&canary),
             "native transcript must contain this turn's fresh canary"
