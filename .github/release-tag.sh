@@ -1,7 +1,7 @@
 #!/bin/sh
 # release.yml tag job (taskq.md § 8 item 1): prints `tag=v<version>` for GITHUB_OUTPUT when this run must release.
-# Tag push: that tag. Live push or main demand: the next unused vX.Y.Z, the greater of the Cargo.toml version and the highest
-# vX.Y.Z tag plus one patch, created here on the pushed commit; Cargo.toml is never bumped by a commit.
+# Tag push: that tag. Live push or main demand: max(4.YYMMDD.1 in UTC, manifest, highest tag + one patch).
+# One immutable tag stamps every OS; Cargo.toml is never bumped by a commit.
 # A pushed commit that already has a tag reuses it while its release is absent or a draft (rerun), else releases nothing.
 # An unreadable or invalid version or tag list fails without a tag. An existing tag never moves.
 set -eu
@@ -29,10 +29,17 @@ if [ -n "$own" ]; then
   exit 0
 fi
 top=$(printf '%s\n' "$refs" | sed -n 's|^refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\) .*|\1|p' | sort -V | tail -1)
-next=$cargo
+day=$(date -u +%y%m%d) || fail "cannot read UTC release date"
+case "$day" in
+  [0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+  *) fail "invalid UTC YYMMDD release date";;
+esac
+# SemVer numeric components have no leading zeroes; the maximum also fences a century/clock rollback.
+day=$(printf '%s\n' "$day" | sed 's/^0*//')
+next=$(printf '%s\n%s\n' "$cargo" "4.$day.1" | sort -V | tail -1)
 if [ -n "$top" ]; then
   bumped=$(echo "$top" | awk -F. '{ print $1 "." $2 "." $3 + 1 }')
-  [ "$(printf '%s\n%s\n' "$cargo" "$bumped" | sort -V | tail -1)" = "$cargo" ] || next=$bumped
+  [ "$(printf '%s\n%s\n' "$next" "$bumped" | sort -V | tail -1)" = "$next" ] || next=$bumped
 fi
 gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$next" -f sha="$GITHUB_SHA" > /dev/null ||
   fail "cannot create v$next"
