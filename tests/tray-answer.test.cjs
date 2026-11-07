@@ -269,6 +269,22 @@ const plain = (x) => JSON.parse(JSON.stringify(x));
     const o = { ...op, id: "readback-" + state },
       before = sent.length,
       pending = call("answerSend", board, o);
+    project.tasks = [];
+    call("answerReadback");
+    assert.equal(
+      sent.length,
+      before + 1,
+      "missing task cannot trigger reconciliation",
+    );
+    project.complete = false;
+    project.tasks = [{ n: 841, state: "ask", revision: 5 }];
+    call("answerReadback");
+    assert.equal(
+      sent.length,
+      before + 1,
+      "incomplete snapshot cannot trigger reconciliation",
+    );
+    project.complete = true;
     project.tasks = [{ n: 841, state: "ask", revision: 4 }];
     call("answerReadback");
     assert.equal(sent.length, before + 1, "unchanged question: no reconcile");

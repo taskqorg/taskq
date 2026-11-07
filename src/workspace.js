@@ -2372,6 +2372,7 @@ const { create } = execution.module("workspace", {
           operations.focusReadback();
           operations.lifecycleReadback();
           answers.hydrate(s.workspace_local);
+          answers.answerReadback();
           state.hydrate({ ...s, navigation: s.workspace_navigation });
           if (first && view.aiRoot === null)
             view.aiRoot = s.ai?.root || s.projects?.[0]?.root || null;
