@@ -3080,7 +3080,9 @@ pub(crate) fn claude_home() -> Option<PathBuf> {
 
 pub(crate) fn claude_failure(row: &BackgroundCandidate) -> Result<&'static str, String> {
     let failure = agent(CLAUDE)?.background_failure(row)?;
-    Ok(crate::profile::class(failure.as_ref().map(|failure| failure.detail.as_str()).unwrap_or_default()))
+    let detail = failure.as_ref().and_then(|failure| failure.detail.as_deref())
+        .ok_or("Claude failure detail unavailable; state unknown")?;
+    Ok(crate::profile::class(detail))
 }
 
 /// Attempt-bound reads use their exact home; display discovery may search all homes.

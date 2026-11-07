@@ -7856,6 +7856,14 @@ fn terminal_reviewer_records_native_error_and_releases_lease() {
         "cwd":root,"sessionId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
         "state":"failed","detail":"permission denied"}).to_string()).unwrap();
     assert_eq!(failure("failed", "abcdef12", &root), Ok("permission"));
+    for detail in [None, Some(serde_json::Value::Null)] {
+        let mut state = serde_json::json!({
+            "cwd":root,"sessionId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","state":"failed"
+        });
+        if let Some(detail) = detail { state["detail"] = detail; }
+        std::fs::write(root.join("jobs/abcdef12/state.json"), state.to_string()).unwrap();
+        assert!(failure("failed", "abcdef12", &root).is_err(), "absent native detail remains unknown");
+    }
     assert!(failure("stopped", "abcdef12", &root).is_err(), "mismatched native state remains unknown");
     assert!(failure("failed", "../abcdef12", &root).is_err(), "invalid identity cannot read a locator");
     assert!(failure("failed", "abcdef12", &root.join("jobs")).is_err(), "foreign cwd remains unknown");
